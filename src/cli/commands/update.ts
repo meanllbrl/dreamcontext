@@ -24,6 +24,7 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
+import { isDesignSkillPath } from '../../lib/core-design-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
@@ -282,7 +283,9 @@ export function registerUpdateCommand(program: Command): void {
           }
         } else if (opts.packsOnly && !opts.coreOnly) {
           for (const [path, entry] of Object.entries(oldManifest.files)) {
-            if (entry.kind === 'core' || entry.kind === 'agent' || entry.kind === 'hook') {
+            // The design skill was a pack before it became core: an older manifest lists it as
+            // 'pack-skill', and a packs-only run neither reinstalls it nor may offer it for deletion.
+            if (entry.kind === 'core' || entry.kind === 'agent' || entry.kind === 'hook' || isDesignSkillPath(path)) {
               newManifest.files[path] = entry;
             }
           }

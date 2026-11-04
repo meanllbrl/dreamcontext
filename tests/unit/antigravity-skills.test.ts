@@ -67,7 +67,7 @@ describe('syncAntigravitySkills', () => {
       mkdirSync(join(pkg, sub), { recursive: true });
       writeFileSync(join(pkg, sub, 'SKILL.md'), `---\nname: ${sub === 'skill' ? 'dreamcontext' : sub.replace('skill-', '')}\n---\n${body}`);
     };
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps']) make(s, 'v1');
+    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design']) make(s, 'v1');
     const packageDir = (sub: string): string => join(pkg, sub);
     syncAntigravitySkills('primary', { home, packageDir });
     mkdirSync(join(skills(), 'agent-made'));
@@ -85,7 +85,7 @@ describe('syncAntigravitySkills', () => {
 
   it('never follows a symlink out of the package, and reports instead of throwing', () => {
     const pkg = join(home, 'pkg');
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps']) {
+    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design']) {
       mkdirSync(join(pkg, s), { recursive: true });
       writeFileSync(join(pkg, s, 'SKILL.md'), `---\nname: ${s.replace('skill-', 'x-')}\n---\n`);
     }

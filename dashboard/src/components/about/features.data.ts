@@ -306,7 +306,7 @@ export const FEATURES: FeatureItem[] = [
     id: 'skill-packs',
     title: 'Skill packs',
     tagline: 'Curated, installable skills by domain — one command.',
-    body: 'Extend an agent with domain packs — engineering, design, growth, brand-voice and more — each a base skill plus on-demand sub-skills. Install interactively or name a pack directly; prerequisites resolve automatically.',
+    body: 'Extend an agent with domain packs — engineering, growth, brand-voice and more — each a base skill plus on-demand sub-skills. Install interactively or name a pack directly; prerequisites resolve automatically.',
     defaultOpen: true,
     tag: 'Skills',
     flow: SKILLS_FLOW,

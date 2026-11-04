@@ -99,9 +99,11 @@ describe('GET /api/packs', () => {
         expect(typeof p.installed).toBe('boolean');
       }
       const engineering = payload.packs.find((p) => p.name === 'engineering');
-      const design = payload.packs.find((p) => p.name === 'design');
+      const growth = payload.packs.find((p) => p.name === 'growth');
       expect(engineering?.installed).toBe(true);   // SKILL.md present on disk
-      expect(design?.installed).toBe(false);        // not installed → false (NOT driven by config.packs)
+      expect(growth?.installed).toBe(false);        // not installed → false (NOT driven by config.packs)
+      // design is a core skill now, never offered as a pack.
+      expect(payload.packs.find((p) => p.name === 'design')).toBeUndefined();
     });
   });
 });

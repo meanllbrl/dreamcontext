@@ -499,6 +499,7 @@ export {
 import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform, AGENT_CORE_SKILL } from '../../lib/catalog.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
+import { DESIGN_SKILL, DESIGN_SKILL_SOURCE, installDesignSkill } from '../../lib/core-design-skill.js';
 import {
   installPack,
   installAgentForPlatform,
@@ -645,6 +646,10 @@ export function directPackInstall(
   const selectedNames = new Set(packNames);
 
   for (const name of packNames) {
+    if (name === DESIGN_SKILL) {
+      info(`${chalk.bold(DESIGN_SKILL)} is a core skill now: setup and \`dreamcontext update\` install it on every project.`);
+      continue;
+    }
     const isPackName = catalog.packs.some((p) => p.name === name);
     try {
       info(isPackName ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
@@ -929,7 +934,7 @@ export async function installCoreForPlatform(
   // The foundational core skills below are each "non-fatal if absent", but `update` treats whatever
   // this install did not record as retired and prunes it. A package missing one of these folders
   // would therefore delete the project's copy, so a partial package fails here instead.
-  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns']
+  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', DESIGN_SKILL_SOURCE]
     .filter((dir) => !findPackageFile(dir, 'SKILL.md'));
   if (missingCore.length > 0) {
     throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
@@ -1053,6 +1058,32 @@ export async function installCoreForPlatform(
       cpSync(appsRefsSourceDir, join(appsDestDir, 'references'), { recursive: true });
       for (const rf of readdirSync(appsRefsSourceDir).filter((f) => f.endsWith('.md'))) {
         recordIfManifest(manifest, `${skillRootRel}/apps/references/${rf}`, 'core');
+      }
+    }
+  }
+
+  // Copy the `design` core skill (universal UI rules: hierarchy, states, contrast, a 4px grid, a
+  // truthful screen). It was an optional pack until 2026-11-04; every skill and agent that says
+  // "load `design`" (the /apps builder, Develop and Plan briefs) now finds it on every project.
+  // Unlike the copies above it honours edits: a file changed since we wrote it is kept and
+  // reported, never overwritten (see core-design-skill.ts). Shipped from `skill-design/`.
+  {
+    const designSkillMd = findPackageFile(DESIGN_SKILL_SOURCE, 'SKILL.md');
+    if (designSkillMd) {
+      const designSource = dirname(designSkillMd);
+      const design = installDesignSkill(designSource, skillRoot, skillRootRel, readManifest(projectRoot));
+      for (const w of design.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
+      for (const k of design.kept) {
+        // Still tracked, so `update` never offers the owner's own copy for deletion.
+        if (k.reason !== 'not-ours') recordIfManifest(manifest, k.rel, 'core', k.baselineSha ? { baselineSha: k.baselineSha } : undefined);
+        notes.push(chalk.dim(k.reason === 'edited'
+          ? `Kept ${k.rel}: it was edited after dreamcontext wrote it. Delete it and run \`dreamcontext update\` to take the shipped version.`
+          : k.reason === 'symlink'
+            ? `Left ${k.rel} alone: it is a symlink, never written through.`
+            : `Left ${k.rel} alone: it was not written by dreamcontext.`));
+      }
+      if (design.written.length > 0) {
+        installed.push(platformPrefixed(platform, `${skillRootRel}/${DESIGN_SKILL}/ ${chalk.dim(`(${design.written.length} file${design.written.length === 1 ? '' : 's'})`)}`));
       }
     }
   }

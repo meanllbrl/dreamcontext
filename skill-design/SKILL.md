@@ -1,4 +1,5 @@
 ---
+name: design
 description: "Universal design rules for any UI an agent builds: hierarchy before deletion, height as a budget, colour spent only on what needs action, say each thing once, every state designed, the screen tells the truth, tokens on a 4px grid, contrast measured in both themes, and done means measured on the rendered screen. Sub-skills: product-ui (app screens: information architecture, copy, forms, pickers, lists, filters, dialogs, states, data truth, charts), frontend-principles (tokens, i18n, reuse-first components, permission gates, measuring the rendered screen), design-web (responsive, marketing pages, conversion, promo and print output), design-mobile (phone layout traps, keyboard, haptics, native transitions, widgets, App Store screenshots), onboarding-design (paywalls, signup funnels, questionnaire UX)."
 alwaysApply: true
 ruleType: "Design System"

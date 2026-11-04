@@ -683,16 +683,17 @@ dreamcontext theses list                                   # board: draft → op
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
 
-Five more skills install with the core (no pack needed) and run only when the moment calls for them:
+More skills install with the core (no pack needed) and run only when the moment calls for them:
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
 - **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
 - **`patterns`** — the drift-free bridge to your project's documented patterns (`_dream_context/knowledge/patterns/`): `/patterns` lists them, `/patterns <slug>` loads one — so the agent reaches for a documented pattern before rebuilding something the project already solved.
+- **`design`** — universal UI rules for any screen an agent builds: hierarchy, every state designed, measured contrast, a 4px grid, a screen that tells the truth. Sub-files for app screens (`product-ui`), frontend code, web, mobile and onboarding. It gives principles, never a look, and `/apps` builds on it. An installed copy you edited is kept on `update`, never overwritten.
 
 ```bash
 dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs engineering design # Install specific packs directly
+dreamcontext install-skill --packs engineering growth # Install specific packs directly
 dreamcontext install-skill --skill firebase-firestore # Install a single sub-skill or standalone skill
 dreamcontext install-skill --list                     # See everything available
 ```
@@ -702,7 +703,6 @@ dreamcontext install-skill --list                     # See everything available
 | Pack | What it covers | Inside |
 |------|---------------|--------|
 | **engineering** _(always-on)_ | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
-| **design** _(always-on)_ | Design systems, typography, color, accessibility | product-ui, frontend-principles, design-web, design-mobile, onboarding-design |
 | **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
 | **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
 | **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
