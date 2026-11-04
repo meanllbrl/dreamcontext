@@ -214,6 +214,21 @@ export function ensureMemberCards(s: SuperState, id: SuperId): string[] {
   return added;
 }
 
+/**
+ * A member's stage has its OWN agenda, like main's (plan-r10 AC1, AC18): its notepad lines and
+ * its "Görevleri". Main's agenda is put on the stage by the hand-over, the app's start and its
+ * reload; a member has neither a hand-over nor a reload of its record (the window paints it from
+ * its birth and its pushes), so every write of a member record keeps one: a missing agenda is
+ * added at main's default place (first, floating, large). One that is there is never touched (the
+ * owner's drop, size, group and minimise stand). Main's record is never written here. A full
+ * record makes room first. Returns the id it added, else null.
+ */
+export function ensureMemberAgenda(s: SuperState, id: SuperId): string | null {
+  if (id === 'main' || s.containers.some((c) => c.kind === 'agenda')) return null;
+  if (s.containers.length >= MAX_CONTAINERS) makeRoom(s, 1);
+  return ensureAgendaCard(s, { first: true, owner: true });
+}
+
 /** Is any of these card ids a member card (the owner's, never an agent verb's)? */
 export function pinnedMemberCard(s: Pick<SuperState, 'containers'>, ids: readonly string[]): string | null {
   const set = new Set(ids);
@@ -484,6 +499,8 @@ export async function writeSuper(
     const out = fn(draft) ?? draft;
     // A member's three cards are always there, an off member's too (plan r4 G3).
     ensureMemberCards(out, superId);
+    // …and its own agenda (main's comes with its hand-over and reload).
+    ensureMemberAgenda(out, superId);
     floatLiveChildren(out);
     noteHeld(out);
     // A picture question's cards: presented at the head, put back once it closes (ask-show.ts).
