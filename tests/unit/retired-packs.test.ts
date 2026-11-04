@@ -145,6 +145,16 @@ describe('pruneRetiredPacks', () => {
     expect(r.notes.join('\n')).toMatch(/still lists the retired oldpack skill/);
   });
 
+  it('with no manifest and only edited files left: still told, once', () => {
+    delete oldM.packs.oldpack;
+    oldM.version = 'pre-manifest';
+    put('.claude/skills/oldpack/SKILL.md', '# edited\n', false);
+    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    expect(r.notes.join('\n')).toMatch(/Kept 1 file\(s\)/);
+    const again = emptyManifest(); // the manifest written after the first run is no longer pre-manifest
+    expect(pruneRetiredPacks(root, again, emptyManifest(), PACKS_DIR, [FAKE]).notes).toEqual([]);
+  });
+
   it('a legacy reviewer in a project that never had the pack is not touched', () => {
     delete oldM.packs.oldpack;
     put('.claude/agents/reviewer.md', OLD_REVIEWER, false);
@@ -165,7 +175,8 @@ describe('pruneRetiredPacks', () => {
     expect(newM.files['.claude/agents/reviewer.md']).toEqual(oldM.files['.claude/agents/reviewer.md']);
   });
 
-  it('a shipped file that cannot be removed does not abort the run: kept, tracked, reported', () => {
+  // A read-only folder stops a delete only on POSIX, and never for root.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a shipped file that cannot be removed does not abort the run: kept, tracked, reported', () => {
     put('.claude/skills/oldpack/SKILL.md', SHIPPED['SKILL.md']);
     put('.claude/skills/oldpack/sub/ref.md', SHIPPED['sub/ref.md']);
     const sub = join(root, '.claude/skills/oldpack/sub');

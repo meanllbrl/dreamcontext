@@ -61,6 +61,8 @@ export const RETIRED_PACKS: readonly RetiredPack[] = [
       'firebase-firestore/references/web_sdk_usage.md': ['c07f07b09b9e6744b6d3168f27dfaec07c4ed3371bf8817b160a909c1af0a9bf'],
     },
     // Every reviewer.md the package shipped up to 0.40.6, canonical form (model/effort excluded).
+    // Frozen on purpose: a later reviewer is installed with a manifest record (pack-agent),
+    // so only a pre-0.40.7 copy can ever need proving by content.
     keepAgents: {
       reviewer: [
         '4f4894bf7d897ae2e34bdadcac08c22ff8acfd6da3866307999e9ac2e064074d',
@@ -190,9 +192,11 @@ export function pruneRetiredPacks(
     }
 
     // "Once": this is the run that retires the pack, i.e. it removed shipped files, still had
-    // the user's files tracked, or still had the pack recorded. Afterwards none of those holds.
+    // the user's files tracked, still had the pack recorded, or is the first run with no
+    // manifest (a fresh clone: the bootstrap stamps it pre-manifest). Afterwards none holds.
     const removedHere = result.removed.some((r) => r.startsWith(prefix));
-    const retiringNow = removedHere || keptTracked.length > 0 || Boolean(oldManifest.packs[pack.name]);
+    const retiringNow = removedHere || keptTracked.length > 0 || Boolean(oldManifest.packs[pack.name])
+      || (isDir && oldManifest.version === PRE_MANIFEST_VERSION);
     if (removedHere) {
       result.notes.push(`Removed the retired ${pack.name} skill pack: ${pack.replacedBy}.`);
     }
