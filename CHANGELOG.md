@@ -4,6 +4,10 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-04
+
+First public release since 0.40.0. It carries every local cut from 0.40.1 to 0.40.7 below: every AI Team member is a Super Agent of its own, with a Team row in the drawer; the Super Agent answers a Bypass child's permissions and its record stays on your Mac; account usage that is right and fast; Codex can ask you a question and Gemini (Antigravity, beta) tool rows are honest; board groups reorder by drag; the design skill comes with every project and the engineering skill is folded into the agents.
+
 ## [0.40.7] - 2026-11-04
 
 Patch on 0.40.6: four approved branches in one local build. Nothing limits how many references you can attach to a Super message, board groups reorder by drag, the design skill ships with every project, and the engineering skill is folded into the agents that build and review code. Local build; not published.
