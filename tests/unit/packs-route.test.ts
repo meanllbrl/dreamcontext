@@ -86,8 +86,8 @@ describe('GET /api/packs', () => {
       tmp = join(tmpdir(), `packs-route-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       mkdirSync(join(tmp, '_dream_context'), { recursive: true });
       // Physically install ONE real catalog pack under .claude/skills/ (no .config.json touched).
-      mkdirSync(join(tmp, '.claude', 'skills', 'engineering'), { recursive: true });
-      writeFileSync(join(tmp, '.claude', 'skills', 'engineering', 'SKILL.md'), '# engineering\n');
+      mkdirSync(join(tmp, '.claude', 'skills', 'growth'), { recursive: true });
+      writeFileSync(join(tmp, '.claude', 'skills', 'growth', 'SKILL.md'), '# growth\n');
 
       const { res, status, body } = makeRes();
       await handlePacksGet(makeGetReq(), res, {}, join(tmp, '_dream_context'));
@@ -98,9 +98,9 @@ describe('GET /api/packs', () => {
       for (const p of [...payload.packs, ...payload.standalone]) {
         expect(typeof p.installed).toBe('boolean');
       }
-      const engineering = payload.packs.find((p) => p.name === 'engineering');
+      const growth = payload.packs.find((p) => p.name === 'growth');
       const design = payload.packs.find((p) => p.name === 'design');
-      expect(engineering?.installed).toBe(true);   // SKILL.md present on disk
+      expect(growth?.installed).toBe(true);   // SKILL.md present on disk
       expect(design?.installed).toBe(false);        // not installed → false (NOT driven by config.packs)
     });
   });
