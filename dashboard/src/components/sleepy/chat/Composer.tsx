@@ -833,9 +833,6 @@ export function Composer({
   // share a bucket (a file staged in one reappearing in the other).
   const convId = session.scratchId || session.claudeId;
   const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
-  /** `refused` as last seen: a NEW refusal (a sixth ↩) shows the max notice, a remount does not. */
-  const refusedSeenRef = useRef(readScratch(convId).refused ?? 0);
-  const [maxNotice, setMaxNotice] = useState(0);
   /** Why the last Attach files…/folders… opened nothing (null: it opened, or was cancelled). */
   const [pickNotice, setPickNotice] = useState<string | null>(null);
   /** The Super dock's page chip, drawn in the toolbar: every other attachment is a chip IN the
@@ -843,13 +840,7 @@ export function Composer({
   const pageChip = attachments.find((a) => a.kind === 'page');
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
-    refusedSeenRef.current = readScratch(convId).refused ?? 0;
-    return subscribeScratch(convId, (next) => {
-      setAttachments(next.attachments);
-      const refused = next.refused ?? 0;
-      if (refused > refusedSeenRef.current) setMaxNotice((n) => n + 1);
-      refusedSeenRef.current = refused;
-    });
+    return subscribeScratch(convId, (next) => setAttachments(next.attachments));
   }, [convId]);
 
   // ── Inline reference chips (the Super view, owner 2026-10-24; pictures everywhere, 10-27) ──
@@ -1005,11 +996,6 @@ export function Composer({
     const id = window.setTimeout(() => setPickNotice(null), 6000);
     return () => window.clearTimeout(id);
   }, [pickNotice]);
-  useEffect(() => {
-    if (!maxNotice) return;
-    const id = window.setTimeout(() => setMaxNotice(0), 3000);
-    return () => window.clearTimeout(id);
-  }, [maxNotice]);
 
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
@@ -1062,7 +1048,6 @@ export function Composer({
       lastCaretRef.current = rec.caret;
       pendingCaret.current = { pos: rec.caret };
       if (r.flash.length) flashRef(r.flash[0]);
-      if (r.max) setMaxNotice((n) => n + 1);
       return;
     }
     let addedFile = false;
@@ -2653,7 +2638,6 @@ export function Composer({
         {/* Below the field row, not in it: reached by Tab, it shows on a line of its own and
             never squeezes the textarea its mirror is aligned to. */}
         <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />
-        {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
         {pickNotice && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-pick-notice">{pickNotice}</div>}
         {/* The hands-free phone's one status line for its chips ("2 photos · 1 uploading…"): under
             the text, never above it. */}

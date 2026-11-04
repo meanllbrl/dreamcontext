@@ -654,9 +654,11 @@ export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
 export const ABOUT_TASK_RE = /^\[About task ([a-z0-9][a-z0-9-]{0,251})\]/;
 export const MAX_SELECTION_QUOTE = 1000;
 
-/** At most this many references (agenda lines, replied messages) in one owner message; a
- *  header past the fifth is plain text. */
-export const MAX_MESSAGE_REFS = 5;
+/** A hidden technical ceiling on references (agenda lines, replied messages) in one owner
+ *  message, so a malformed or hostile message cannot make the parser walk without bound; a
+ *  header past it is plain text. Owner 2026-11-04: he never sees a limit, so it sits far above
+ *  any real message and no surface ever names it. */
+export const MAX_MESSAGE_REFS = 100;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
 export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
@@ -666,7 +668,7 @@ export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; 
  * one message). One rule on both sides of the wire: a header counts only at offset 0 or right
  * after a blank line (`\n\n`); a note's header must be followed by its well-formed `line:` JSON
  * line, a reply's and a card's by its `quote:` line; an item's header has no second line; and the block
- * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS. MIRRORED in
+ * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS (hidden). MIRRORED in
  * dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
  */
 export function aboutHeads(text: string): AboutHead[] {

@@ -211,14 +211,13 @@ describe('a paste never forges a chip (R3-1)', () => {
     expect(r.restore).toEqual([a]);
   });
 
-  it('five staged + a chip from recent: text, and the max notice', () => {
-    const five = ['n1', 'n2', 'n3', 'n4', 'n5'].map((id) => note(id, id));
-    const d = five.map(refToken).join(' ');
-    const back = note('n6', 'six');
-    const r = sanitizePaste(refToken(back), ctx(d, five, [back]));
-    expect(r.text).toBe(`${GLYPH_NOTE} six`);
-    expect(r.max).toBe(true);
-    expect(r.restore).toEqual([]);
+  it('eleven staged + a chip from recent: the twelfth is restored as a chip (no visible limit)', () => {
+    const eleven = Array.from({ length: 11 }, (_, i) => note(`n${i + 1}`, `n${i + 1}`));
+    const d = eleven.map((a) => refToken(a)).join(' ');
+    const back = note('n12', 'twelve');
+    const r = sanitizePaste(refToken(back), ctx(d, eleven, [back]));
+    expect(r.text).toBe(refToken(back));
+    expect(r.restore).toEqual([back]);
   });
 
   it('a token from another run (its nonce differs) or with another label is text', () => {
