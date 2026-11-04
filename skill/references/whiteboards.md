@@ -127,6 +127,11 @@ dreamcontext whiteboard create "Name" --group "Orbit metrics"
   group with the other's author: at worst one refusal or one allowed move, never a lost board.
 - A hand-written date (`group: 2026-10-28`) reads as its ISO string, and the next write of the
   board saves it that way (every frontmatter key behaves so).
+- **Group order.** The owner drags a group header among the groups (or uses the group's ⋯ menu,
+  Move up / Move down). The order lives in `whiteboards/.groups.json` (`{"order": [names, top
+  first]}`, matched like group names), syncs with the brain, and merges on its own: ours first,
+  a group only the other side added lands after its neighbour there. A group not listed sorts
+  after the listed ones, by name. `group rename` keeps the group's place. Never hand-edit it.
 
 - `--check` / `--uncheck` take a **1-based position** or an item id, and repeat.
 - `update --text` on a plain text element replaces its text.

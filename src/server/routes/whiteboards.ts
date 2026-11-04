@@ -26,6 +26,7 @@ import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
 import type { PageKind } from '../../lib/whiteboards/widgets.js';
 import { parseGroupInput, readGroup } from '../../lib/whiteboards/validate.js';
+import { readGroupOrder, writeGroupOrder } from '../../lib/whiteboards/group-order.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
   WhiteboardConflictError,
@@ -460,6 +461,35 @@ export async function handleWhiteboardGroupRename(
   }
   try {
     sendJson(res, 200, await renameWhiteboardGroup(contextRoot, body.from, body.to, { by: 'owner' }));
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+/** GET /api/whiteboards/groups/order → `{order}`: the explorer's group order, top first (group-order.ts). */
+export async function handleWhiteboardGroupOrderGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, { order: readGroupOrder(contextRoot) });
+}
+
+/** PUT /api/whiteboards/groups/order `{order}` → `{order}`. Replaces the whole order. */
+export async function handleWhiteboardGroupOrderPut(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body || !('order' in body)) {
+    sendError(res, 400, 'invalid', 'Send {order}: the group names, top first.');
+    return;
+  }
+  try {
+    sendJson(res, 200, { order: await writeGroupOrder(contextRoot, body.order) });
   } catch (err) {
     sendWhiteboardError(res, err);
   }

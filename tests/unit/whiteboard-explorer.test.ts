@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GROUP_MAX, addEmptyGroup, buildExplorer, emptyExplorerPrefs, groupLength, groupSpelling, keepGroupIfEmptied,
   pruneExplorerPrefs, realGroupNames, renameGroupInPrefs, sanitizeExplorerPrefs, toggleCollapsed, togglePin,
-  touchRecent, validGroupName, RECENT_MAX,
+  touchRecent, validGroupName, RECENT_MAX, moveGroup, stepGroup,
 } from '../../dashboard/src/pages/whiteboards/explorerLogic';
 import { fold } from '../../dashboard/src/pages/whiteboards/boardSwitcherLogic';
 import * as server from '../../src/lib/whiteboards/validate.js';
@@ -136,5 +136,40 @@ describe('the group PATCH body', () => {
     const { groupPatchBody } = await import('../../dashboard/src/hooks/useWhiteboards');
     expect(JSON.parse(JSON.stringify(groupPatchBody('G', undefined)))).toEqual({ group: 'G', expectGroup: null });
     expect(groupPatchBody(null, 'Old')).toEqual({ group: null, expectGroup: 'Old' });
+  });
+});
+
+describe('group order (drag a group header, or Move up / Move down)', () => {
+  const boards = [b('1', 'Alpha'), b('2', 'beta'), b('3', 'Gamma'), b('4')];
+  const names = (order: string[]) => buildExplorer(boards, emptyExplorerPrefs(), '', null, order).groups.map((g) => g.name);
+
+  it('listed groups come first in the stored order (by fold), the rest by name', () => {
+    expect(names([])).toEqual(['Alpha', 'beta', 'Gamma']);
+    expect(names(['GAMMA', 'Beta'])).toEqual(['Gamma', 'beta', 'Alpha']);
+    expect(names(['gone', 'alpha'])).toEqual(['Alpha', 'beta', 'Gamma']);
+    // Pinned, Recent and Ungrouped are not groups and never move.
+    expect(buildExplorer(boards, emptyExplorerPrefs(), '', null, ['Gamma']).ungrouped.map((x) => x.slug)).toEqual(['4']);
+  });
+
+  it('an empty group (prefs only) takes its stored place too', () => {
+    const prefs = { ...emptyExplorerPrefs(), emptyGroups: ['Zed'] };
+    expect(buildExplorer(boards, prefs, '', null, ['Zed']).groups.map((g) => g.name)).toEqual(['Zed', 'Alpha', 'beta', 'Gamma']);
+  });
+
+  it('moveGroup places before or after the target and returns every name; a no-op is null', () => {
+    const shown = buildExplorer(boards, emptyExplorerPrefs(), '', null, []).groups;
+    expect(moveGroup(shown, 'gamma', 'alpha', false)).toEqual(['Gamma', 'Alpha', 'beta']);
+    expect(moveGroup(shown, 'alpha', 'gamma', true)).toEqual(['beta', 'Gamma', 'Alpha']);
+    expect(moveGroup(shown, 'alpha', 'beta', false)).toBeNull();
+    expect(moveGroup(shown, 'alpha', 'alpha', true)).toBeNull();
+    expect(moveGroup(shown, 'nope', 'alpha', true)).toBeNull();
+  });
+
+  it('stepGroup moves one place and stops at the ends', () => {
+    const shown = buildExplorer(boards, emptyExplorerPrefs(), '', null, []).groups;
+    expect(stepGroup(shown, 'beta', -1)).toEqual(['beta', 'Alpha', 'Gamma']);
+    expect(stepGroup(shown, 'beta', 1)).toEqual(['Alpha', 'Gamma', 'beta']);
+    expect(stepGroup(shown, 'alpha', -1)).toBeNull();
+    expect(stepGroup(shown, 'gamma', 1)).toBeNull();
   });
 });

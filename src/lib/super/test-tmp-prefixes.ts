@@ -622,6 +622,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-wb-nav-cli-',
   'dc-wb-nav-home-',
   'dc-wb-nav-out-',
+  'dc-wb-order-',
   'dc-wb-outside-',
   'dc-wb-place-',
   'dc-wb-recall-',
