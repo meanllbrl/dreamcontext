@@ -421,8 +421,10 @@ describe('useWhiteboards request paths', () => {
       'get `${LIST_PATH}/default`',
       // The local trash: list it, restore from it.
       'get TRASH_PATH', 'post restoreUrl(id',
+      // Group order: read and saved through its own path.
+      'get GROUP_ORDER_PATH', 'put GROUP_ORDER_PATH',
     ]));
-    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|TRASH_PATH|restoreUrl\(id|boardUrl\(slug|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`|`\$\{LIST_PATH\}\/groups\/rename`)$/);
+    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|TRASH_PATH|restoreUrl\(id|boardUrl\(slug|GROUP_ORDER_PATH|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`|`\$\{LIST_PATH\}\/groups\/rename`)$/);
   });
 });
 

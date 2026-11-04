@@ -75,6 +75,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/super/superInsight.css::.super-tile-lane-bar:last-child': 'funnel silhouette bar (the last step)',
   'components/whiteboard/widgets/wikiWidget.css::.wb-wiki-row.is-drop-before::before, .wb-wiki-row.is-drop-after::after, .wb-wiki-section.is-drop-before::before, .wb-wiki-section.is-drop-after::after': 'drop marker (bar)',
   'pages/whiteboards/BoardTabs.css::.wbt-tab[data-drop]::before, .wbt-chip[data-drop]::before': 'drop marker (2px bar)',
+  'pages/whiteboards/BoardExplorer.css::.wbx-group[data-drop-line]::before': 'group drop marker (2px bar)',
   'components/sleepy/AgentTerminal.css::.agent-overlay-head': 'tinted surface (6% accent), body text on it',
   'components/sleepy/AgentTerminal.css::.agent-rail': 'tinted surface (4% accent), body text on it',
   'components/sleepy/AgentTerminal.css::.agent-pane-head': 'tinted surface (6% accent), body text on it',
