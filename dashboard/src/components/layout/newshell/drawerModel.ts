@@ -110,7 +110,7 @@ export interface DrawerProjectInput {
 export type DrawerChild =
   | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean }
   /** ONE Ekip row (plan-r10 1d): the project's own members, in the list's order; one count. */
-  | { kind: 'team'; vault: string; members: EkipMember[]; count: number; asking: boolean; selected: boolean }
+  | { kind: 'team'; vault: string; members: EkipMember[]; count: number; asking: boolean; selected: boolean; openSlug?: string }
   | {
     kind: 'window';
     id: string;
@@ -189,10 +189,10 @@ export function ekipOf(read: (DrawerEkipFacts & { team?: readonly DrawerTeamRow[
 
 /** The Ekip row of a project, or null when it has no member of its own. With `empty` (the desktop,
  *  owner 2026-11-03) a project with none still gets its row: it is where the first one is made. */
-export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean, empty = false): Extract<DrawerChild, { kind: 'team' }> | null {
+export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean, empty = false, openSlug?: string): Extract<DrawerChild, { kind: 'team' }> | null {
   const members = projectEkip(all);
   if (!members.length && !empty) return null;
-  return { kind: 'team', vault, members, count: ekipCount(members), asking: ekipAsking(members), selected };
+  return { kind: 'team', vault, members, count: ekipCount(members), asking: ekipAsking(members), selected, ...(selected && openSlug ? { openSlug } : {}) };
 }
 
 /**
@@ -414,7 +414,7 @@ function childrenOf(
   // Every project has it once its roster is read (owner 2026-11-03): empty, it makes the first
   // member. Before the read, no row: an empty slot would flash before the faces.
   const read = mine ?? far;
-  const team = teamChildOf(p.name, ekipOf(read), onChat && !!mine?.member, !!read?.members);
+  const team = teamChildOf(p.name, ekipOf(read), onChat && !!mine?.member, !!read?.members, mine?.member);
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
@@ -491,7 +491,7 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
   // The phone's Ekip row (r8-05 at 390): from `live-chats` `members`; names from a mounted
   // project's read, else the slug.
   const live = o.device.members?.find((x) => x.vault === p.name)?.members;
-  const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities }), onChat && !!mine?.member);
+  const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities }), onChat && !!mine?.member, false, mine?.member);
   if (!isOpen) {
     const chats = children.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
     const asking = chats.filter((c) => c.state === 'asking').length;

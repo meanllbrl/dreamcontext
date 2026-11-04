@@ -331,6 +331,8 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(t.count).toBe(1 + 3 + 1);
     expect(t.asking).toBe(true);
     expect(teamChildOf('acme', buildEkip([summary('reader', { unread: 3 })], []), false)!.asking).toBe(false);
+    expect(teamChildOf('acme', buildEkip([summary('reader')], []), true, false, 'reader')!.openSlug).toBe('reader');
+    expect(teamChildOf('acme', buildEkip([summary('reader')], []), false, false, 'reader')!.openSlug).toBeUndefined();
   });
 
   it('a member working only for the Super is listed with its tag, never counted', () => {

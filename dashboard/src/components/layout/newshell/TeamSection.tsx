@@ -52,10 +52,10 @@ export function MemberMark({ m }: { m: EkipMember }) {
   return null;
 }
 
-function MemberRow({ m, onOpen, popout = false }: { m: EkipMember; onOpen(m: EkipMember): void; popout?: boolean }) {
+function MemberRow({ m, onOpen, popout = false, current = false }: { m: EkipMember; onOpen(m: EkipMember): void; popout?: boolean; current?: boolean }) {
   return (
     <li className="ns-team-mrow-li">
-      <button type="button" className={`ns-team-mrow${popout ? ' is-pop' : ''}`} data-testid={popout ? 'team-popout' : 'team-list-member'} data-slug={m.slug}
+      <button type="button" className={`ns-team-mrow${popout ? ' is-pop' : ''}${current ? ' is-sel' : ''}`} aria-current={current ? 'page' : undefined} data-testid={popout ? 'team-popout' : 'team-list-member'} data-slug={m.slug}
         data-off={m.enabled ? undefined : 'true'} data-asking={m.enabled && m.asking && !m.superOnly ? 'true' : undefined}
         onClick={() => onOpen(m)}>
         <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={18} />
@@ -71,8 +71,8 @@ export interface TeamSectionProps {
   kind: 'project' | 'global';
   vault?: string | null;
   label: string;
-  /** The project's member stage is on screen. */
-  selected?: boolean;
+  /** Slug of the member whose stage is on screen: its row is the selected one (the Team row itself never is). */
+  openSlug?: string | null;
   className?: string;
   testid: string;
   onOpen(m: EkipMember): void;
@@ -100,6 +100,9 @@ export function TeamSection(p: TeamSectionProps) {
   const boxed = p.members.length > TEAM_BOX_ROWS;
   const shown = useMemo(() => (searchable ? filterMembers(p.members, query, locale ?? 'tr') : [...p.members]), [p.members, query, searchable, locale]);
 
+  /** Folded, the open member still shows under the row: it is how the owner sees where they are. */
+  const foldedCurrent = p.openSlug ? p.members.find((m) => m.slug === p.openSlug) : undefined;
+
   const named = [
     asking ? t('drawer.team.asks') : '',
     working > 0 ? t('shell.drawer.superWorking').replace('{n}', String(working)) : '',
@@ -121,7 +124,7 @@ export function TeamSection(p: TeamSectionProps) {
 
   return (
     <div className={`ns-team-sec${open ? ' is-open' : ''}`} data-testid={`${p.testid}-section`} data-open={open ? 'true' : 'false'}>
-      <button ref={rowRef} type="button" className={`ns-team-row ns-team-sec-row${p.selected ? ' is-sel' : ''} ${p.className ?? ''}`.trim()}
+      <button ref={rowRef} type="button" className={`ns-team-row ns-team-sec-row ${p.className ?? ''}`.trim()}
         data-testid={p.testid} data-vault={p.vault ?? undefined} data-asking={asking ? 'true' : undefined} data-empty={empty ? 'true' : undefined}
         aria-expanded={empty ? undefined : open} aria-haspopup={empty ? 'dialog' : undefined}
         aria-label={empty ? `${p.label} (${t('drawer.team.addFirst')})` : named ? `${p.label} (${named})` : p.label}
@@ -135,9 +138,10 @@ export function TeamSection(p: TeamSectionProps) {
           : count > 0 && <span className="ns-team-count" data-asking={asking ? 'true' : undefined} data-testid="team-row-count">{count}</span>}
       </button>
 
-      {!open && pop.shown.length > 0 && (
+      {!open && (pop.shown.length > 0 || foldedCurrent) && (
         <ul className="ns-team-mlist" data-testid="team-popouts">
-          {pop.shown.map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} popout />)}
+          {foldedCurrent && <MemberRow key={`cur-${foldedCurrent.slug}`} m={foldedCurrent} onOpen={p.onOpen} current />}
+          {pop.shown.filter((m) => m.slug !== p.openSlug).map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} popout />)}
           {pop.more > 0 && (
             <li className="ns-team-mrow-li">
               <button type="button" className="ns-team-more" data-testid="team-popout-more" onClick={() => toggle(true)}>
@@ -158,7 +162,7 @@ export function TeamSection(p: TeamSectionProps) {
           )}
           <ul ref={listRef} className={`ns-team-mlist${boxed ? ' is-box' : ''}`} data-testid={p.kind === 'global' ? 'global-team-list' : 'team-list'}
             data-boxed={boxed ? 'true' : undefined} style={boxed ? { maxHeight: `calc(${TEAM_BOX_ROWS} * var(--ns-team-mrow-h))` } : undefined}>
-            {shown.map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} />)}
+            {shown.map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} current={m.slug === p.openSlug} />)}
             {shown.length === 0 && <li className="ns-team-empty">{t('drawer.team.noMatch')}</li>}
           </ul>
           {p.onManage && (
