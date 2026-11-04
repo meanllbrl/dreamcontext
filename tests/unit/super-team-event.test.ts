@@ -11,7 +11,7 @@
  *  - the item rides the normal `[super events]` batch with the team line and the member's last
  *    line fenced; a later ending replaces a question; the record keeps the fields only in shape.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 
 vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -879,6 +879,11 @@ describe('every answer of a team job reaches the super once (brief ai-team-atomi
   });
 
   it('a run the owner answered: the resumed post leads, not the first turn\'s document', () => {
+    // The clock sits a few seconds after the run, as when this was written: the run is days old
+    // otherwise, past the 24 h trail, and the ending is never read.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(t0 + 5_000);
+    onTestFinished(() => { vi.useRealTimers(); });
     const { root, s, job, post } = vault();
     const dir = join(root, 'automations', 'output', 'fake-member');
     mkdirSync(dir, { recursive: true });
