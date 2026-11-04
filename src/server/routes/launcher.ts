@@ -221,7 +221,7 @@ export interface ScaffoldAnswers {
   projectPath?: string;
   /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
-  /** Optional skill-pack names to install after setup (e.g. ['engineering']). */
+  /** Optional skill-pack names to install after setup (e.g. ['design']). */
   packs?: string[];
   /** Run `git init` in the project once it is set up (now, or when Git finishes installing). */
   gitInit?: boolean;

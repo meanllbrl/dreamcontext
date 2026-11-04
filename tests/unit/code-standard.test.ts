@@ -94,3 +94,27 @@ describe('the code standard reaches every agent that builds or judges code', () 
     }
   });
 });
+
+describe('the engineering pack is gone', () => {
+  it('no shipped agent declares the engineering skill or tells itself to load it', () => {
+    const offenders: string[] = [];
+    for (const f of shippedAgentFiles()) {
+      const raw = read(f);
+      const skills = matter(raw).data.skills;
+      if (Array.isArray(skills) && skills.includes('engineering')) offenders.push(`${f}: skills`);
+      if (/skills\/engineering\b|`engineering`(?: skill| pack|:)|\*\*engineering\*\*/.test(raw)) offenders.push(`${f}: body`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the catalog no longer offers it, and no pack or agent points at it', () => {
+    const catalog = JSON.parse(read(join(ROOT, 'skill-packs', 'catalog.json')));
+    expect(catalog.packs.map((p: { name: string }) => p.name)).not.toContain('engineering');
+    expect(catalog.agents.filter((a: { pack: string }) => a.pack === 'engineering')).toEqual([]);
+    expect(catalog.agents.find((a: { name: string }) => a.name === 'reviewer')?.pack).toBe('goal-skill');
+    for (const e of [...catalog.packs, ...catalog.standalone]) {
+      for (const dep of e.crossPackDeps ?? []) expect(dep, e.name).not.toMatch(/^engineering\b/);
+    }
+    expect(existsSync(join(ROOT, 'skill-packs', 'engineering'))).toBe(false);
+  });
+});

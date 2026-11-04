@@ -43,19 +43,19 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ─── A1 / A2 — install engineering (claude) ───────────────────────────────────
+// ─── A1 / A2 — install design, goal-skill (claude) ────────────────────────────
 
-describe('installPack — engineering (claude)', () => {
+describe('installPack — design (claude)', () => {
   it('A1: writes SKILL.md, records pack-skill kind + pack entry, ANSI-free rel paths', () => {
-    const result = installPack('engineering', tmpDir, ['claude'], manifest);
+    const result = installPack('design', tmpDir, ['claude'], manifest);
 
-    const skillMd = join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md');
+    const skillMd = join(tmpDir, '.claude', 'skills', 'design', 'SKILL.md');
     expect(existsSync(skillMd)).toBe(true);
 
-    const baseRel = '.claude/skills/engineering/SKILL.md';
+    const baseRel = '.claude/skills/design/SKILL.md';
     expect(result.installed).toContain(baseRel);
     expect(manifest.files[baseRel]?.kind).toBe('pack-skill');
-    expect(manifest.packs.engineering).toBeDefined();
+    expect(manifest.packs.design).toBeDefined();
 
     // Every returned path is a clean, ANSI-free relative string.
     for (const p of result.installed) {
@@ -64,31 +64,35 @@ describe('installPack — engineering (claude)', () => {
     }
   });
 
-  it('A2: records the related reviewer agent under .claude/agents as pack-agent', () => {
-    const result = installPack('engineering', tmpDir, ['claude'], manifest);
+  it('A2: records the related reviewer agent under .claude/agents as pack-agent (goal-skill owns it since engineering retired)', () => {
+    const result = installPack('goal-skill', tmpDir, ['claude'], manifest);
 
     const reviewerRel = '.claude/agents/reviewer.md';
     expect(existsSync(join(tmpDir, '.claude', 'agents', 'reviewer.md'))).toBe(true);
     expect(result.installed).toContain(reviewerRel);
     expect(manifest.files[reviewerRel]?.kind).toBe('pack-agent');
   });
+
+  it('A2b: the retired engineering pack is no longer installable', () => {
+    expect(() => installPack('engineering', tmpDir, ['claude'], manifest)).toThrow(UnknownPackError);
+  });
 });
 
-// ─── A3 — uninstall engineering ───────────────────────────────────────────────
+// ─── A3 — uninstall design ────────────────────────────────────────────────────
 
-describe('uninstallPack — engineering (claude)', () => {
+describe('uninstallPack — design (claude)', () => {
   it('A3: removes skill dir files, deletes the manifest pack entry, removed lists files', () => {
-    installPack('engineering', tmpDir, ['claude'], manifest);
-    const skillMd = join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md');
+    installPack('design', tmpDir, ['claude'], manifest);
+    const skillMd = join(tmpDir, '.claude', 'skills', 'design', 'SKILL.md');
     expect(existsSync(skillMd)).toBe(true);
 
-    const result = uninstallPack('engineering', tmpDir, ['claude'], manifest);
+    const result = uninstallPack('design', tmpDir, ['claude'], manifest);
 
     expect(existsSync(skillMd)).toBe(false);
     // R9 happy path: the strict-child skill dir itself is gone.
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering'))).toBe(false);
-    expect(manifest.packs.engineering).toBeUndefined();
-    expect(result.removed).toContain('.claude/skills/engineering/SKILL.md');
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'design'))).toBe(false);
+    expect(manifest.packs.design).toBeUndefined();
+    expect(result.removed).toContain('.claude/skills/design/SKILL.md');
     expect(result.removed.length).toBeGreaterThan(0);
     // No removed path is unsafe to delete.
     for (const rel of result.removed) {
@@ -97,25 +101,25 @@ describe('uninstallPack — engineering (claude)', () => {
   });
 });
 
-// ─── A4 — agent sharing (engineering + goal-skill both list reviewer) ──────────
+// ─── A4 — agent sharing (multi-review + goal-skill both list review-security) ──
 
 describe('uninstallPack — shared agent', () => {
-  it('A4: uninstalling engineering keeps reviewer.md while goal-skill is still installed, then goal-skill removes it', () => {
-    installPack('engineering', tmpDir, ['claude'], manifest);
+  it('A4: uninstalling multi-review keeps review-security.md while goal-skill is still installed, then goal-skill removes it', () => {
+    installPack('multi-review', tmpDir, ['claude'], manifest);
     installPack('goal-skill', tmpDir, ['claude'], manifest);
 
-    const reviewer = join(tmpDir, '.claude', 'agents', 'reviewer.md');
-    expect(existsSync(reviewer)).toBe(true);
+    const agent = join(tmpDir, '.claude', 'agents', 'review-security.md');
+    expect(existsSync(agent)).toBe(true);
 
-    const r1 = uninstallPack('engineering', tmpDir, ['claude'], manifest);
-    // reviewer survives because goal-skill still depends on it.
-    expect(existsSync(reviewer)).toBe(true);
-    expect(r1.warnings.some((w) => w.includes('reviewer') && w.includes('goal-skill'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(false);
+    const r1 = uninstallPack('multi-review', tmpDir, ['claude'], manifest);
+    // review-security survives because goal-skill still depends on it.
+    expect(existsSync(agent)).toBe(true);
+    expect(r1.warnings.some((w) => w.includes('review-security') && w.includes('goal-skill'))).toBe(true);
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'multi-review', 'SKILL.md'))).toBe(false);
 
     const r2 = uninstallPack('goal-skill', tmpDir, ['claude'], manifest);
-    expect(existsSync(reviewer)).toBe(false);
-    expect(r2.removed).toContain('.claude/agents/reviewer.md');
+    expect(existsSync(agent)).toBe(false);
+    expect(r2.removed).toContain('.claude/agents/review-security.md');
   });
 });
 
@@ -150,7 +154,7 @@ describe('installPack — unknown name', () => {
 
 describe('uninstallPack — idempotent', () => {
   it('A8: uninstalling a never-installed (but catalog-valid) pack returns removed:[] and does not throw', () => {
-    const result = uninstallPack('engineering', tmpDir, ['claude'], manifest);
+    const result = uninstallPack('design', tmpDir, ['claude'], manifest);
     expect(result.removed).toEqual([]);
   });
 });

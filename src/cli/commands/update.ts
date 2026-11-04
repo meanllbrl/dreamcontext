@@ -25,6 +25,7 @@ import {
   type Manifest,
 } from '../../lib/manifest.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
+import { pruneRetiredPacks } from '../../lib/retired-packs.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
 
@@ -330,6 +331,12 @@ export function registerUpdateCommand(program: Command): void {
           info(chalk.dim('No installed packs detected.'));
         }
 
+        // Retired packs first: they decide per file by content (ours goes, an edited file
+        // stays untracked), and take their entries out of both manifests so the generic
+        // prune below never offers a file the user edited.
+        const retired = pruneRetiredPacks(projectRoot, oldManifest, newManifest, loadCatalog()?.packsDir ?? null);
+        for (const note of retired.notes) info(note);
+
         // Diff vs. old to prune stale files BEFORE persisting the new manifest.
         const pruneResult = await pruneStaleFiles(
           projectRoot,
@@ -370,7 +377,7 @@ export function registerUpdateCommand(program: Command): void {
           platforms,
           installedCount: installed.length,
           packs,
-          removed: pruneResult.removed,
+          removed: [...retired.removed, ...pruneResult.removed],
           setupVersion: newSetupVersion,
           rootInstructions,
         });

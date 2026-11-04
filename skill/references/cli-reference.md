@@ -854,8 +854,8 @@ For files beyond the auto-loaded index, `ls _dream_context/core/` to discover th
 
 ### Skill triage: the skills dreamcontext ships and their triggers
 
-   - UI / frontend / components, design systems → `design` + `engineering`
-   - Backend, APIs, security, refactor, testing, code standards → `engineering`
+   - UI / frontend / components, design systems → `design`
+   - Code standards (security, errors, testing) need no skill: the build and review agents carry them
    - Thorough multi-aspect review of a diff / PR → `multi-review`
    - Driving a big feature end-to-end (plan → review → implement → validate) → `goal-skill`
    - Meta / Facebook / Instagram ads, ROAS, cohorts → `meta-marketing` + `growth`

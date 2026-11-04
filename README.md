@@ -692,8 +692,8 @@ Five more skills install with the core (no pack needed) and run only when the mo
 
 ```bash
 dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs engineering design # Install specific packs directly
-dreamcontext install-skill --skill firebase-firestore # Install a single sub-skill or standalone skill
+dreamcontext install-skill --packs design growth      # Install specific packs directly
+dreamcontext install-skill --skill excalidraw        # Install a single sub-skill or standalone skill
 dreamcontext install-skill --list                     # See everything available
 ```
 
@@ -701,13 +701,12 @@ dreamcontext install-skill --list                     # See everything available
 
 | Pack | What it covers | Inside |
 |------|---------------|--------|
-| **engineering** _(always-on)_ | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
 | **design** _(always-on)_ | Design systems, typography, color, accessibility | product-ui, frontend-principles, design-web, design-mobile, onboarding-design |
 | **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
 | **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
 | **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
 | **multi-review** | Multi-agent code review (router + niche specialists) | `review-router` + security / cloud-functions / frontend / edge-cases agents |
-| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator` agents |
+| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator`, `reviewer` agents |
 
 **Standalone skills** (install individually with `--skill <name>`):
 
