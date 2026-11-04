@@ -1071,15 +1071,15 @@ export async function installCoreForPlatform(
     const designSkillMd = findPackageFile(DESIGN_SKILL_SOURCE, 'SKILL.md');
     if (designSkillMd) {
       const designSource = dirname(designSkillMd);
-      const design = installDesignSkill(designSource, skillRoot, skillRootRel, readManifest(projectRoot));
+      const design = installDesignSkill(designSource, projectRoot, skillRootRel, readManifest(projectRoot));
       for (const w of design.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
       for (const k of design.kept) {
         // Still tracked, so `update` never offers the owner's own copy for deletion.
         if (k.reason !== 'not-ours') recordIfManifest(manifest, k.rel, 'core', k.baselineSha ? { baselineSha: k.baselineSha } : undefined);
         notes.push(chalk.dim(k.reason === 'edited'
-          ? `Kept ${k.rel}: it was edited after dreamcontext wrote it. Delete it and run \`dreamcontext update\` to take the shipped version.`
+          ? `Kept ${k.rel}: it is edited (not a version dreamcontext shipped). Delete it and run \`dreamcontext update\` to take the shipped one.`
           : k.reason === 'symlink'
-            ? `Left ${k.rel} alone: it is a symlink, never written through.`
+            ? `Left ${k.rel} alone: it or a folder above it is a symlink, never written through.`
             : `Left ${k.rel} alone: it was not written by dreamcontext.`));
       }
       if (design.written.length > 0) {

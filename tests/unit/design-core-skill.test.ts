@@ -6,7 +6,7 @@ import matter from 'gray-matter';
 import { installCoreForPlatform } from '../../src/cli/commands/install-skill.js';
 import { emptyManifest, writeManifest, type Manifest } from '../../src/lib/manifest.js';
 import { TOOL_SKILL_SOURCES } from '../../src/lib/tool-skills.js';
-import { designFileSha, installDesignSkill, isDesignSkillPath } from '../../src/lib/core-design-skill.js';
+import { designFileIsUnchanged, designFileSha, installDesignSkill, isDesignSkillPath } from '../../src/lib/core-design-skill.js';
 
 /**
  * `design` became a core skill on 2026-11-04 (it was an optional pack): every skill and brief that
@@ -56,6 +56,8 @@ describe('design skill: shipped as core', () => {
     expect(apps).toMatch(/product-ui\.md/);
     expect(apps).not.toMatch(/load `frontend-design` and `design`/);
     expect(apps).toMatch(/`frontend-design`[^.]*never required/);
+    // design defers to "the project's style guide", which is the HOST's brand: never the app's.
+    expect(apps).toMatch(/style guide wins" line does not apply here/);
   });
 });
 
@@ -93,7 +95,7 @@ describe('design skill: core install and the edit guard', () => {
   const setup = (): { skillRoot: string; recorded: Manifest } => {
     const skillRoot = join(tmp, '.claude', 'skills');
     const recorded = emptyManifest();
-    const first = installDesignSkill(SOURCE, skillRoot, '.claude/skills', null);
+    const first = installDesignSkill(SOURCE, tmp, '.claude/skills', null);
     for (const w of first.written) recorded.files[w.rel] = { version: '1', kind: 'core', baselineSha: w.baselineSha };
     return { skillRoot, recorded };
   };
@@ -102,7 +104,7 @@ describe('design skill: core install and the edit guard', () => {
     const { skillRoot, recorded } = setup();
     const edited = join(skillRoot, 'design', 'product-ui.md');
     writeFileSync(edited, 'my own rules\n');
-    const r = installDesignSkill(SOURCE, skillRoot, '.claude/skills', recorded);
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', recorded);
     expect(readFileSync(edited, 'utf-8')).toBe('my own rules\n');
     expect(r.kept).toEqual([{ rel: '.claude/skills/design/product-ui.md', reason: 'edited', baselineSha: recorded.files['.claude/skills/design/product-ui.md'].baselineSha }]);
     expect(r.written).toHaveLength(SHIPPED.length - 1);
@@ -113,22 +115,59 @@ describe('design skill: core install and the edit guard', () => {
     const f = join(skillRoot, 'design', 'SKILL.md');
     writeFileSync(f, 'older shipped text\n');
     recorded.files['.claude/skills/design/SKILL.md'].baselineSha = designFileSha('older shipped text\n');
-    const r = installDesignSkill(SOURCE, skillRoot, '.claude/skills', recorded);
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', recorded);
     expect(readFileSync(f, 'utf-8')).toBe(readFileSync(join(SOURCE, 'SKILL.md'), 'utf-8'));
     expect(r.kept).toEqual([]);
   });
 
-  it('refreshes the old pack install (listed, no baseline) and leaves a file it never wrote', () => {
+  it('old pack install (listed, no baseline): a shipped version is refreshed, an edit is kept', () => {
     const skillRoot = join(tmp, '.claude', 'skills');
     mkdirSync(join(skillRoot, 'design'), { recursive: true });
     writeFileSync(join(skillRoot, 'design', 'SKILL.md'), 'old pack text\n');
+    writeFileSync(join(skillRoot, 'design', 'product-ui.md'), 'tuned by the owner\n');
     writeFileSync(join(skillRoot, 'design', 'design-web.md'), 'hand made\n');
     const recorded = emptyManifest();
     recorded.files['.claude/skills/design/SKILL.md'] = { version: '0.40.0', kind: 'pack-skill' };
-    const r = installDesignSkill(SOURCE, skillRoot, '.claude/skills', recorded);
+    recorded.files['.claude/skills/design/product-ui.md'] = { version: '0.40.0', kind: 'pack-skill' };
+    const shipped = { 'SKILL.md': [designFileSha('old pack text\n')] };
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', recorded, shipped);
     expect(readFileSync(join(skillRoot, 'design', 'SKILL.md'), 'utf-8')).toBe(readFileSync(join(SOURCE, 'SKILL.md'), 'utf-8'));
+    expect(readFileSync(join(skillRoot, 'design', 'product-ui.md'), 'utf-8')).toBe('tuned by the owner\n');
     expect(readFileSync(join(skillRoot, 'design', 'design-web.md'), 'utf-8')).toBe('hand made\n');
-    expect(r.kept).toEqual([{ rel: '.claude/skills/design/design-web.md', reason: 'not-ours' }]);
+    expect(r.kept).toEqual([
+      { rel: '.claude/skills/design/design-web.md', reason: 'not-ours' },
+      { rel: '.claude/skills/design/product-ui.md', reason: 'edited' },
+    ]);
+  });
+
+  it('no manifest (a fresh clone, a second machine): an edited copy is kept, a shipped one refreshed', () => {
+    const skillRoot = join(tmp, '.claude', 'skills');
+    mkdirSync(join(skillRoot, 'design'), { recursive: true });
+    writeFileSync(join(skillRoot, 'design', 'SKILL.md'), 'old pack text\n');
+    writeFileSync(join(skillRoot, 'design', 'product-ui.md'), 'the team tuned this\n');
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', null, { 'SKILL.md': [designFileSha('old pack text\n')] });
+    expect(readFileSync(join(skillRoot, 'design', 'SKILL.md'), 'utf-8')).toBe(readFileSync(join(SOURCE, 'SKILL.md'), 'utf-8'));
+    expect(readFileSync(join(skillRoot, 'design', 'product-ui.md'), 'utf-8')).toBe('the team tuned this\n');
+    expect(r.kept).toEqual([{ rel: '.claude/skills/design/product-ui.md', reason: 'edited' }]);
+  });
+
+  it('a CRLF checkout of the shipped text is not an edit', () => {
+    const { skillRoot, recorded } = setup();
+    const f = join(skillRoot, 'design', 'product-ui.md');
+    writeFileSync(f, readFileSync(join(SOURCE, 'product-ui.md'), 'utf-8').split('\n').join('\r\n'));
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', recorded);
+    expect(r.kept).toEqual([]);
+    expect(designFileSha('a\r\nb')).toBe(designFileSha('a\nb'));
+  });
+
+  it('designFileIsUnchanged: only an untouched copy may be pruned when a release drops it', () => {
+    const f = join(tmp, 'x.md');
+    writeFileSync(f, 'shipped\n');
+    expect(designFileIsUnchanged(f, designFileSha('shipped\n'))).toBe(true);
+    writeFileSync(f, 'edited\n');
+    expect(designFileIsUnchanged(f, designFileSha('shipped\n'))).toBe(false);
+    expect(designFileIsUnchanged(f, undefined)).toBe(false);
+    expect(designFileIsUnchanged(join(tmp, 'missing.md'), undefined)).toBe(false);
   });
 
   it('never writes through a symlink', () => {
@@ -137,9 +176,31 @@ describe('design skill: core install and the edit guard', () => {
     const outside = join(tmp, 'outside.md');
     writeFileSync(outside, 'outside\n');
     symlinkSync(outside, join(skillRoot, 'design', 'product-ui.md'));
-    const r = installDesignSkill(SOURCE, skillRoot, '.claude/skills', null);
+    const r = installDesignSkill(SOURCE, tmp, '.claude/skills', null);
     expect(readFileSync(outside, 'utf-8')).toBe('outside\n');
     expect(r.kept.map((k) => k.reason)).toEqual(['symlink']);
+  });
+
+  it('never writes through a linked folder on the way (design, or skills above it)', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dc-design-core-out-'));
+    try {
+      writeFileSync(join(outside, 'SKILL.md'), 'not ours\n');
+      mkdirSync(join(tmp, '.claude', 'skills'), { recursive: true });
+      symlinkSync(outside, join(tmp, '.claude', 'skills', 'design'));
+      const r = installDesignSkill(SOURCE, tmp, '.claude/skills', null);
+      expect(r.written).toEqual([]);
+      expect(r.kept.every((k) => k.reason === 'symlink')).toBe(true);
+      expect(readdirSync(outside)).toEqual(['SKILL.md']);
+      expect(readFileSync(join(outside, 'SKILL.md'), 'utf-8')).toBe('not ours\n');
+
+      rmSync(join(tmp, '.claude'), { recursive: true, force: true });
+      mkdirSync(join(tmp, '.claude'), { recursive: true });
+      symlinkSync(outside, join(tmp, '.claude', 'skills'));
+      expect(installDesignSkill(SOURCE, tmp, '.claude/skills', null).written).toEqual([]);
+      expect(readdirSync(outside)).toEqual(['SKILL.md']);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('the core install keeps an edited file tracked and says so', async () => {

@@ -24,7 +24,7 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
-import { isDesignSkillPath } from '../../lib/core-design-skill.js';
+import { designFileIsUnchanged, isDesignSkillPath } from '../../lib/core-design-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
@@ -154,12 +154,25 @@ export async function pruneStaleFiles(
 
   // Partition by old-manifest version. Heuristic (pre-manifest) files are never
   // deleted — they may be user-authored files adopted by the legacy bootstrap.
+  function editedDesignFile(p: string): boolean {
+    return isDesignSkillPath(p) && !designFileIsUnchanged(join(projectRoot, p), oldManifest.files[p]?.baselineSha);
+  }
   const heuristic = candidates.filter(
     (p) => oldManifest.files[p]?.version === PRE_MANIFEST_VERSION,
   );
   const owned = candidates.filter(
-    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION,
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && !editedDesignFile(p),
   );
+  // A design file a later release dropped is deleted only if nobody edited it; an edited one is
+  // someone's work, kept and tracked like the heuristic files above (and `upgrade` runs --yes).
+  const editedDesign = candidates.filter(
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && editedDesignFile(p),
+  );
+  if (editedDesign.length > 0) {
+    console.log();
+    warn(`${editedDesign.length} design skill file(s) no longer ship but were edited, not removed:`);
+    for (const p of editedDesign) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
+  }
 
   if (heuristic.length > 0) {
     console.log();

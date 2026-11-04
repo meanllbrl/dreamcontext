@@ -172,7 +172,7 @@ Colours live in tokens with semantic names (`--color-primary`, `--color-surface`
 - Scroll something into view only when the user opened it; a section open by default never scrolls the page.
 - **Every action answers three questions where the user is looking**: what happened, can I undo it, what is next. A toast alone is not enough when the result landed out of view: take the user to it.
 - Celebrate **real milestones only** (first payment received, setup finished), calmly and briefly. No confetti on routine actions. Polish is consistency and smoothness, not spectacle; in money, health and security products correct numbers and smooth flows ARE the trust signal.
-- **Density beats theatricality**: the result sits above the fold; work in progress is one calm line, not a show. A live indicator breathes with one rhythm across the product, and a running step reads in its verb tense ("Checking…", then "Checked"), not only in an icon.
+- **Density beats theatricality**: the result sits above the fold; non-blocking work in progress is one calm line, not a show. A live indicator moves with one rhythm across the product, and a running step reads in its verb tense ("Checking…", then "Checked"), not only in an icon.
 - Mascots and illustration appear at emotional moments (onboarding, first-run empty, error recovery, a real milestone) and nowhere else. The logo is identity; the mascot is emotion.
 
 ### Interaction states (every interactive element)
