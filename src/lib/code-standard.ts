@@ -13,9 +13,11 @@
  * that never read an agent file, so their briefs (planner-brief.ts, builder-brief.ts)
  * interpolate these constants directly.
  *
- * Which agent gets which block, and every rule of the old pack that was dropped with the
- * reason, is ledgered in the brain: `knowledge/features/optional-skill-packs.md`
- * (Constraints, 2026-11-04).
+ * The retirement ran behind a nothing-lost ledger: every rule of the old pack is in one of
+ * these blocks, in a specialist's own section (review-security, review-edge-cases,
+ * review-frontend, review-cloud-functions, goal-validator), or was dropped with a reason
+ * (how-to reference, vendor preference, style a reviewer is told not to flag). A rule added
+ * here is added once; the drift test carries it to every copy.
  */
 
 /** The shared bar for every agent that builds or judges code. */
