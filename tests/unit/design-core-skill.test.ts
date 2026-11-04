@@ -59,6 +59,16 @@ describe('design skill: shipped as core', () => {
   });
 });
 
+describe('design skill: principles, never the host identity', () => {
+  // An app built with this skill must not look like dreamcontext: no brand hue, mark, typeface or
+  // token value of ours (pattern a-template-default-must-not-carry-the-host-identity).
+  it.each(SHIPPED)('%s carries no dreamcontext identity and no em dash', (f) => {
+    const text = readFileSync(join(SOURCE, f), 'utf-8');
+    expect(text).not.toMatch(/violet|purple|magenta|dream gem|visby|wordmark|dreamcontext|sleepy|--color-violet|#641787|#781ca3|#8200a6|#db04b4/i);
+    expect(text).not.toContain('\u2014');
+  });
+});
+
 describe('design skill: core install and the edit guard', () => {
   let tmp: string;
   beforeEach(() => {
