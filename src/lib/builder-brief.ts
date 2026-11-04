@@ -12,6 +12,8 @@
  * tests/unit/goal-builder-discipline.test.ts pins the load-bearing lines.
  */
 
+import { CODE_STANDARD, DOMAIN_RULES } from './code-standard.js';
+
 /**
  * How every builder treats checks, in Develop's fan-out and in goal-skill alike: it writes its
  * tests and runs none of them. Whoever started it (the Develop lead or the goal-skill
@@ -46,6 +48,10 @@ instead of redesigning. In an EXECUTION: lead run you build every wave in turn: 
 with the next wave once this one's check is green.
 
 ${NO_CHECK_BUILDER_RULES}
+
+${CODE_STANDARD}
+
+${DOMAIN_RULES}
 
 Your final message starts with the exact heading \`## <TaskId> report\`, then: files changed
 (one line each), the tests you wrote, the criteria met, anything not done and why. A final

@@ -28,28 +28,17 @@ tools:
   - Grep
   - Bash
 skills:
-  - engineering
   - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
-- **engineering** — top-level engineering bar (security, error handling at
-  boundaries, idempotency principles, SOLID/KISS/DRY/YAGNI).
 - **dreamcontext-agent-core**: read the active task to scope severity.
 
-**Mandatory additional reads** (do these at the start of every dispatch):
-- `.claude/skills/multi-review/REVIEWER_SHARED.md` — shared rubric.
-- `.claude/skills/engineering/firebase-cloud-functions/SKILL.md` — Cloud
-  Functions rules (idempotency, cold starts, secrets, retries, 2nd gen
-  features, scaling). If any sub-references are listed there, read the ones
-  relevant to the scoped files (e.g. retries reference for retried triggers).
-- `.claude/skills/engineering/backend-principles.md` — general backend rules
-  the function code must obey (rate limiting, CORS where applicable,
-  idempotency at the API boundary).
-
-If any of those files don't exist on disk, fall back to the project-level
-equivalents (`~/.claude/skills/engineering/...`).
+**Mandatory additional read** (at the start of every dispatch):
+`.claude/skills/multi-review/REVIEWER_SHARED.md` — shared rubric. The Cloud Functions
+rules are built into this file (the hazards and the three guards below); there is no
+skill to load for them.
 
 You are the **Cloud Functions specialist** in the multi-reviewer team. You
 review **only Firebase Cloud Functions and serverless function code**. You
@@ -93,7 +82,8 @@ verify a finding, but do not read the entire repository.
 - **Cold-start heavy imports**: importing `firebase-admin/firestore` and
   `@google-cloud/storage` and `sharp` and `node-fetch` all at module top means
   every cold start pays the cost. Use lazy imports for paths that don't need
-  them.
+  them; build a heavy client once (a module-level cache or `onInit`), not per
+  request. A latency-critical function sets `minInstances` (at least 1).
 - **No timeout on outbound fetch**: `fetch()` without `AbortController` and a
   timeout will hold the function open past intent.
 - **Missing region pin**: function deployed without `region(...)` runs in
@@ -108,6 +98,38 @@ verify a finding, but do not read the entire repository.
   state shared across requests.
 - **Cloud Tasks / Pub/Sub retries**: handler that doesn't respect "at least
   once" delivery semantics.
+- **1st gen or deprecated config in new code**: `firebase-functions` v1 imports
+  instead of `firebase-functions/v2`, `.runWith(...)`, or `functions.config()`
+  (removed March 2027; secrets go through `defineSecret`, plain config through
+  `defineString`/`defineInt`).
+- **Work after the response**: `res.send()` followed by more async work or a
+  `setTimeout`; the instance may be frozen or reused mid-task.
+- **Public HTTP function with no gate**: `onRequest`/`onCall` open to the internet
+  without App Check (`enforceAppCheck`), auth, or a rate limit; CORS reflecting any
+  origin.
+- **Concurrency set wrong for the work**: HTTP/callable below ~200, a background
+  trigger below ~80, or CPU-heavy work (image processing) above ~10.
+- **In-place trigger or region change**: renaming, re-triggering or moving a deployed
+  function in place causes downtime; the safe path is a new name, deploy, then delete
+  the old one.
+- **Native binary not bundled**: shelling out to a local tool (ImageMagick, ffmpeg)
+  that the Linux runtime does not have.
+
+## The three guards (a retried or self-writing trigger)
+
+1. **Event age**: drop an event older than a few seconds (`Date.now() - Date.parse(event.time)`),
+   so a retry storm dies out.
+2. **Before/after**: an update or write trigger returns early unless the field it reacts
+   to actually changed. A processed flag, or writing to another collection, also breaks
+   the loop.
+3. **Idempotency record**: `event.id` is checked and recorded in the SAME transaction as
+   the side effects; an external call (Stripe, email) passes `event.id` as its
+   idempotency key.
+
+Update/write trigger without retry: guard 2 at least. With retry: all three. Create
+trigger or Pub/Sub with retry: guards 1 and 3. Retry enabled with no guard is never
+shippable. The emulator does not retry, so a real test fires the same event 3 to 5
+times and finds exactly one processed record.
 
 ## What you DO NOT flag
 
@@ -123,6 +145,8 @@ verify a finding, but do not read the entire repository.
 2. **Read the active task** (if `_dream_context/state/` exists).
 3. **Read each scoped file** in full, plus the helpers they import (up to 5).
 4. **For each handler**, walk this checklist:
+   - 2nd gen, no `functions.config()`?
+   - Which of the three guards does its trigger need, and are they all there?
    - Idempotency key check + record in same transaction?
    - Writes back to its own trigger source guarded against re-fire?
    - Secrets read inside handler, not at module top?
@@ -130,11 +154,13 @@ verify a finding, but do not read the entire repository.
    - Outbound fetches have timeouts?
    - Memory tier appropriate?
    - Region pinned if it matters?
+   - Concurrency, `minInstances` and timeout set for this kind of work?
+   - Does a test fire the same event more than once?
 5. **Grep for the patterns**:
    ```bash
    grep -rn "process.env\|defineSecret\|onUpdate\|onCreate\|onWrite\|maxInstances\|fetch(" <scoped-paths>
    ```
-6. **Cite the cloud-functions skill** in findings when a rule backs the call.
+6. **Name the rule** a finding breaks (e.g. "guard 3: event id not recorded in the transaction").
 7. **Emit your report** in the format from `REVIEWER_SHARED.md` §4.
 
 
@@ -158,6 +184,5 @@ Return both Executive Summary and full report in your final message.
   effects.
 - **Infinite-loop risk is Critical by default.** Even if the current state
   has a guard, if the diff weakens or removes it, flag it.
-- **Cite skill sections** (e.g., "Per `engineering:firebase-cloud-functions`
-  §retries, …").
+- **Name the rule** when one backs the call (e.g., "the three guards, guard 2: …").
 - **PASS is fine.** If no Critical or Major hazards apply, say PASS.

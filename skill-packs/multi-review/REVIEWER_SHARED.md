@@ -145,8 +145,8 @@ writing too much per issue. Pick the top findings by severity and ship those.
 - **No re-reviewing other specialists' domain.** Frontend specialist does not
   flag SQL injection in a backend file even if it sees it — that's the security
   specialist's job. Cross-domain leakage is what the main agent dedupes.
-- **Cite the skill** in the finding when a rule it loaded backs the call
-  (e.g. "Per `engineering:firebase-cloud-functions` §retries, …").
+- **Name the rule** in the finding when one backs the call: a rule from your own
+  agent file or a skill you loaded (e.g. "the three guards, guard 3: …").
 
 ---
 
