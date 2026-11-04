@@ -72,6 +72,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-agy-',
   'dc-agy-acct-',
   'dc-agy-conv-',
+  'dc-agy-cwd-',
   'dc-agy-doc-',
   'dc-agy-gate-',
   'dc-agy-hook-',
