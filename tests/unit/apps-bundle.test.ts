@@ -120,7 +120,8 @@ describe('ensureAppBundle', () => {
     const png = join(project, 'logo.png');
     writeFileSync(png, 'png');
     ensureAppBundle({ ...input, iconPath: png }, { exec, platform: 'darwin' });
-    expect(calls.filter(([c]) => c.endsWith('sips'))).toHaveLength(10);
+    // One to read the icon at 1024 (the tile mask), then the ten iconset sizes.
+    expect(calls.filter(([c]) => c.endsWith('sips'))).toHaveLength(11);
     expect(calls.some(([c]) => c.endsWith('iconutil'))).toBe(true);
 
     const icns = join(project, 'logo.icns');

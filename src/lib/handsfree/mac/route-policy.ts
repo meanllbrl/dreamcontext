@@ -628,6 +628,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/apps/trash': deny(WINDOW),
   'POST /api/apps/trash/restore': deny(WINDOW),
   'GET /api/apps/:slug/publish/preview': deny(SECRET),
+  'GET /api/apps/:slug/store': deny(WINDOW),
   'POST /api/apps/:slug/publish': deny(SECRET),
   'GET /api/apps/:slug/config': deny(SECRET),
   'POST /api/apps/:slug/config': deny(SECRET),

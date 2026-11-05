@@ -13,6 +13,7 @@
  * The report names the rule, the file and the line. It never writes a hard value.
  */
 
+import { SCREENSHOT_RE } from '../store-readme.js';
 import { createHash } from 'node:crypto';
 import { scrubContent } from '../../git-sync/scrub.js';
 import { isInstructionName } from '../data-dir.js';
@@ -79,6 +80,7 @@ export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 const ROOT_FILES = new Set(['dreamcontext-app.json', 'ASSISTANT.md', 'README.md', 'CHANGES.md', 'LICENSE', 'package.json', 'package-lock.json', 'server.mjs', 'server.js', 'server.cjs', 'server.ts']);
 const DIRS = ['public', 'src', 'lib'];
+
 const EXTS = new Set(['.html', '.css', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff2', '.md', '.txt']);
 const BINARY = new Set(['.png', '.jpg', '.jpeg', '.webp', '.woff2']);
 
@@ -87,6 +89,8 @@ const ext = (p: string): string => { const i = p.lastIndexOf('.'); const s = p.l
 /** Is the path on the allow-list? */
 export function allowedPath(path: string, include: readonly string[] = [], icon: string | null = null): boolean {
   if (ROOT_FILES.has(path) || (icon && path === icon)) return true;
+  // Store screenshots (README `## Screenshots`): flat images under `store/`, nothing else there.
+  if (SCREENSHOT_RE.test(path)) return true;
   const inDir = path.includes('/') && DIRS.includes(path.split('/')[0]);
   const included = include.some((inc) => path === inc || path.startsWith(inc + '/'));
   return (inDir || included) && EXTS.has(ext(path));

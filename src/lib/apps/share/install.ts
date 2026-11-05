@@ -32,6 +32,8 @@ import { runGate, type GateFile, type GateReport } from './gate.js';
 import { initHardRepo, installedGit, installedGitAsync, lsTree, readBlob, revParse } from './installed-git.js';
 import { writeEnvSecrets } from '../../env-secrets.js';
 import { licenseKind } from './publish.js';
+import { ICON_MAX_BYTES, imageDataUrl, storePage, type StorePage } from '../store-facts.js';
+import { isDefaultIconBytes } from '../icon.js';
 
 export class InstallError extends Error {
   constructor(public code: string, message: string, public report?: GateReport) { super(message); }
@@ -77,6 +79,10 @@ export interface InstallPreview {
   facts: InstallFacts;
   config: ConfigField[];
   readme: string;
+  /** The icon as a data URL (PNG/JPEG), null = the page draws the monogram. */
+  icon: string | null;
+  /** The store page: README words, screenshots, what the manifest says it can do. */
+  store: StorePage;
   gate: { ok: boolean; blocks: GateReport['blocks'] };
 }
 
@@ -196,6 +202,10 @@ export async function previewInstall(opts: { home: string; projectRoot: string; 
   writeFileSync(join(incomingDir(opts.home), `${previewId}.json`), JSON.stringify(meta), { mode: 0o600 });
   pruneIncoming(opts.home, previewId);
   const readme = files.find((f) => f.path === 'README.md')?.data.toString('utf-8') ?? '';
+  const blob = (path: string) => files.find((f) => f.path === path)?.data ?? null;
+  const iconPath = m.icon ? m.icon.replace(/^\.\//, '') : null;
+  const icon = iconPath && !isDefaultIconBytes(blob(iconPath), m.slug, m.name) ? imageDataUrl(iconPath, blob(iconPath), ICON_MAX_BYTES) : null;
+  const store = storePage(readme, m, blob);
   return {
     previewId, host: host.kind, fullName: repo.fullName, sha, publisher: repo.owner, publisherSince: publisherUser?.createdAt ?? null,
     repoCreated: repo.createdAt, repoUpdated: repo.pushedAt, public: !repo.private, name: m.name, slug: m.slug,
@@ -203,6 +213,7 @@ export async function previewInstall(opts: { home: string; projectRoot: string; 
     warning: installWarning(repo.owner), facts, config: m.config,
     // eslint-disable-next-line no-control-regex
     readme: readme.replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '').slice(0, 2000),
+    icon, store,
     gate: { ok: gate.ok, blocks: gate.blocks },
   };
 }

@@ -14,6 +14,9 @@ import { fromOwnerPage } from './assistant.js';
 import { holdOpen } from '../hold-open.js';
 import { appsHomeDir, findAppFor, projectRootOf, retireAppRuntime, refreshAppRuntime } from './apps.js';
 import { readManifest } from '../../lib/apps/manifest.js';
+import { parseStoreReadme, storeReadiness } from '../../lib/apps/store-readme.js';
+import { readAppFile, storePage } from '../../lib/apps/store-facts.js';
+import { isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
 import { writeEnvSecrets, SecretWriteError } from '../../lib/env-secrets.js';
@@ -73,9 +76,43 @@ export async function handlePublishPreview(req: IncomingMessage, res: ServerResp
   let login: string | null = null;
   try { login = host.signedIn ? (await host.me()).login : null; } catch { login = null; }
   try {
-    const pv = buildPublishTree(appsHomeDir(), rec, { visibility, login: login ?? 'you', repoName: url.searchParams.get('repo') || undefined });
-    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null });
+    // The words the publish screen will write into the README are checked with everything else.
+    const pv = buildPublishTree(appsHomeDir(), rec, { visibility, login: login ?? 'you', repoName: url.searchParams.get('repo') || undefined, note: url.searchParams.get('note')?.slice(0, 300) || undefined, tagline: url.searchParams.get('tagline')?.slice(0, 200) || undefined });
+    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null, store: publishStore(rec, pv) });
   } catch (e) { sendFailure(res, e); }
+}
+
+/**
+ * The publish screen's store block (app-paylasim-magaza r2 section 4): what the README already
+ * says, the first sentence to suggest for a missing tagline, and whether the icon is still the
+ * placeholder letter (a line to fix, never a block: the gate is unchanged).
+ */
+function publishStore(rec: AppRecord, pv: ReturnType<typeof buildPublishTree>) {
+  const text = pv.sourceReadme?.toString('utf-8') ?? '';
+  const s = parseStoreReadme(text);
+  const r = storeReadiness(s);
+  return {
+    tagline: s.taglineGuessed ? null : s.tagline,
+    suggestedTagline: s.taglineGuessed ? s.tagline : null,
+    hasAbout: !!s.about,
+    whatsNew: s.whatsNew[0] ?? null,
+    ready: r.ready,
+    missing: r.missing,
+    iconPlaceholder: isDefaultIconCached(pv.manifest.icon, pv.manifest.slug, pv.manifest.name),
+    hasIcon: servableIcon(pv.manifest.icon) !== null,
+  };
+}
+
+/** GET /api/apps/:slug/store: an app's own store page (README words, screenshots, what it can do). */
+export async function handleAppStore(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const m = readManifest(rec.root);
+  if (!m.ok) { sendError(res, 409, 'manifest_invalid', m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')); return; }
+  const readme = readAppFile(rec.root, 'README.md', 256 * 1024)?.toString('utf-8') ?? '';
+  const page = storePage(readme, m.manifest, (p) => readAppFile(rec.root, p, 2 * 1024 * 1024));
+  sendJson(res, 200, { tagline: page.readme.tagline, category: page.readme.category, about: page.readme.about, whatsNew: page.readme.whatsNew.slice(0, 1), shots: page.shots, can: page.can, readiness: page.readiness });
 }
 
 export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
@@ -92,6 +129,7 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       repoName: typeof b.repoName === 'string' && b.repoName.trim() ? b.repoName.trim() : undefined,
       invite: strings(b.invite), approvals: strings(b.approvals),
       note: typeof b.note === 'string' ? b.note : undefined,
+      tagline: typeof b.tagline === 'string' ? b.tagline : undefined,
       confirmName: typeof b.confirmName === 'string' ? b.confirmName : undefined,
       fresh: b.fresh === true,
     });
@@ -100,7 +138,7 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
   } catch (e) { sendFailure(res, e); }
 }
 
-// ─── Shared with you, install ───────────────────────────────────────────────────────
+// ─── Shared Apps, install ───────────────────────────────────────────────────────
 
 export async function handleSharedList(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;

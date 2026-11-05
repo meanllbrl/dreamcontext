@@ -149,7 +149,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
 
   apps
     .command('shared')
-    .description('Apps shared with you (and invitations waiting), from the signed-in GitHub account')
+    .description('Shared Apps: apps shared with you (and invitations waiting), from the signed-in GitHub account')
     .option('--json', 'JSON output')
     .action(async (opts: { json?: boolean }) => {
       try {
@@ -158,7 +158,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         for (const i of r.invitations) console.log(`invitation  ${i.fullName} from ${i.inviter} (accept on the Apps page)`);
         for (const a of r.shared) console.log(`shared      ${a.fullName}  ${a.name ?? ''}${a.installed ? '  (installed)' : ''}`);
         for (const a of r.mine) console.log(`published   ${a.fullName}  ${a.name ?? ''}`);
-        if (!r.invitations.length && !r.shared.length && !r.mine.length) info('Nothing shared with you yet.');
+        if (!r.invitations.length && !r.shared.length && !r.mine.length) info('Nothing in Shared Apps yet.');
       } catch (e) { h.fail(e); }
     });
 
@@ -181,7 +181,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         if (pv.facts.urls.length) console.log(`  addresses in its code: ${pv.facts.urls.slice(0, 10).join(', ')}`);
         if (pv.config.length) console.log(`  settings: ${pv.config.map((c) => `${c.key}${c.type === 'secret' ? ' (key)' : ''}`).join(', ')}`);
         if (!pv.gate.ok) error(`it cannot be installed: ${pv.gate.blocks.map((b) => `${b.file} (${b.label})`).join('; ')}`);
-        info('Installing is the owner\'s click: Apps page → Install a public app (or Shared with you).');
+        info('Installing is the owner\'s click: Apps page → Shared Apps, or "Install from a link".');
       } catch (e) { h.fail(e); }
     });
 

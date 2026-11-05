@@ -11,11 +11,12 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { basename, join } from 'node:path';
 import { appsHome, updateAppShare, type AppRecord } from '../registry.js';
 import { readManifest, type AppManifest, cleanText } from '../manifest.js';
+import { applyStoreEdits, parseStoreReadme, TAGLINE_MAX } from '../store-readme.js';
 import { readAppConfig } from '../app-config.js';
 import { parseDotenv } from '../redact.js';
 import { listVaults } from '../../vaults.js';
@@ -192,15 +193,33 @@ export interface PublishPreview {
   files: GateFile[];
   report: GateReport;
   digest: string;
+  /** The README with the store edits, when the publish changes it (written back after the push). */
+  storeReadme: string | null;
+  /** The README the source holds now (HEAD, or the copy's working tree). */
+  sourceReadme: Buffer | null;
 }
 
 const GITIGNORE = '.env\n.env.*\ndata/\nnode_modules/\n*.log\n';
 
 function readmeFor(m: AppManifest): string {
-  return `# ${m.name}\n\nA dreamcontext app. Install it from the Apps page in dreamcontext: "Shared with you", or "Install a public app" with this repo's link.\n`;
+  return readmeSkeletonLess(m.name);
 }
 
-export function buildPublishTree(home: string, rec: AppRecord, opts: { visibility: Visibility; login: string; approvals?: string[]; note?: string; repoName?: string }): PublishPreview {
+/** The README edits a publish carries (app-paylasim-magaza r2): the tagline field and the note. */
+export function storeReadmeFor(rec: Pick<AppRecord, 'publish'>, name: string, current: string | null, opts: { tagline?: string; note?: string }): string | null {
+  const parsed = parseStoreReadme(current ?? '');
+  const note = cleanText(opts.note ?? '', 300) || (!rec.publish?.lastSha && !parsed.whatsNew.length ? 'First version.' : '');
+  const tagline = cleanText(opts.tagline ?? '', TAGLINE_MAX + 40);
+  if (!note && !tagline) return null;
+  const next = applyStoreEdits(current ?? readmeSkeletonLess(name), { name, tagline: tagline || null, note: note || null, date: new Date().toISOString().slice(0, 10) });
+  return next === (current ?? '').replace(/\r\n?/g, '\n') ? null : next;
+}
+
+function readmeSkeletonLess(name: string): string {
+  return `# ${name}\n\nA dreamcontext app. Install it from the Apps page in dreamcontext: Shared Apps, or "Install from a link" with this repo's link.\n`;
+}
+
+export function buildPublishTree(home: string, rec: AppRecord, opts: { visibility: Visibility; login: string; approvals?: string[]; note?: string; tagline?: string; repoName?: string }): PublishPreview {
   const m = readManifest(rec.root);
   if (!m.ok) throw new PublishError('bad_manifest', `The manifest has problems: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}`);
   if (rec.provenance && !RESHARE_OK.has(rec.provenance.license)) throw new PublishError('license_forbids', `This app is a copy of ${rec.provenance.fullName}, whose licence (${rec.provenance.license}) does not allow sharing it again.`);
@@ -230,6 +249,15 @@ export function buildPublishTree(home: string, rec: AppRecord, opts: { visibilit
     generated.add('LICENSE');
     license = opts.visibility === 'public' ? 'MIT' : 'restricted';
   }
+  // The store page's words (tagline, What's new) are written into the README that goes; the
+  // edited README is the publisher's text again, so it is scanned like any other file.
+  const baseReadme = extra.find((f) => f.path === 'README.md')?.data.toString('utf-8') ?? byPath.get('README.md')?.data.toString('utf-8') ?? null;
+  const storeReadme = storeReadmeFor(rec, m.manifest.name, baseReadme, { tagline: opts.tagline, note: opts.note });
+  if (storeReadme !== null) {
+    const at = extra.findIndex((f) => f.path === 'README.md');
+    if (at >= 0) extra.splice(at, 1);
+    extra.push({ path: 'README.md', mode: '100644', data: Buffer.from(storeReadme) });
+  }
   if (!byPath.has('README.md') && !extra.some((f) => f.path === 'README.md')) { extra.push({ path: 'README.md', mode: '100644', data: Buffer.from(readmeFor(m.manifest)) }); generated.add('README.md'); }
   for (const f of extra) byPath.set(f.path, f);
   const all = [...byPath.values()];
@@ -245,7 +273,7 @@ export function buildPublishTree(home: string, rec: AppRecord, opts: { visibilit
   const sent = new Set(report.send.map((s) => s.path));
   const files = all.filter((f) => sent.has(f.path));
   files.push({ path: '.gitignore', mode: '100644', data: Buffer.from(GITIGNORE) });
-  return { manifest: m.manifest, visibility: opts.visibility, mode, repoName, fullName: rec.publish?.fullName ?? null, license, files, report, digest: treeDigest(files) };
+  return { manifest: m.manifest, visibility: opts.visibility, mode, repoName, fullName: rec.publish?.fullName ?? null, license, files, report, digest: treeDigest(files), storeReadme, sourceReadme: src.files.find((f) => f.path === 'README.md')?.data ?? null };
 }
 
 function rel(root: string, abs: string): string {
@@ -305,6 +333,8 @@ export interface PublishOptions {
   invite?: string[];
   approvals?: string[];
   note?: string;
+  /** The store page's one line (README `tagline:`). */
+  tagline?: string;
   /** A public publish: the owner types the app's name (it is public forever). */
   confirmName?: string;
   /** Start a NEW repo (a public copy with today's version only). */
@@ -323,7 +353,7 @@ export interface PublishResult {
 export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<PublishResult> {
   if (rec.origin === 'installed' && (rec.source || !rec.provenance)) throw new PublishError('not_yours', 'This app was installed from someone else. Make it your own copy first (it keeps where it came from for the licence check).');
   const user: HostUser = await opts.host.me();
-  const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
+  const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, tagline: opts.tagline, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
   if (!pv.report.ok) throw new PublishError('gate_blocked', pv.report.blocks.length ? `${pv.report.blocks.length} problem(s) must be fixed before publishing.` : `${pv.report.unapproved.length} line(s) wait for your approval.`, pv.report);
   if (opts.visibility === 'public' && (opts.confirmName ?? '').trim() !== pv.manifest.name) throw new PublishError('confirm_name', `A public app is public for good: type its name (${pv.manifest.name}) to publish.`);
 
@@ -387,6 +417,8 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   await host.withGit((env) => installedGitAsync(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
   updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
 
+  if (pv.storeReadme !== null) writeBackStoreReadme(rec, pv.storeReadme, pv.sourceReadme);
+
   await host.setTopics(fullName, [APP_TOPIC]);
   if (turningPublic) await host.setVisibility(fullName, true);
   // One invite that fails (a typo in a login) never undoes the publish: it is reported by name.
@@ -400,6 +432,30 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
     }
   }
   return { fullName, sha, url: host.kind === 'github' ? `https://github.com/${fullName}` : url, sent: pv.files.length, invited, inviteFailed };
+}
+
+/**
+ * The README that went, back into the app folder, so the next publish starts from it (its
+ * What's new keeps every entry). Only when the folder's README is still the one the publish read:
+ * an edit the publisher has not committed is never overwritten. In the app's own git the one file
+ * is committed; a copy of someone else's app has no git of its own, its folder is the source.
+ */
+export function writeBackStoreReadme(rec: Pick<AppRecord, 'root' | 'installId'>, text: string, read: Buffer | null): boolean {
+  const path = join(rec.root, 'README.md');
+  try {
+    const st = existsSync(path) ? lstatSync(path) : null;
+    if (st && (!st.isFile() || st.isSymbolicLink())) return false;
+    const now = st ? readFileSync(path) : null;
+    if (!(now === null ? read === null : read !== null && now.equals(read))) return false;
+    writeFileSync(path, text);
+    if (rec.installId) return true;
+    ownRepoGit(rec.root, ['add', '--', 'README.md']);
+    const commit = (extra: string[]) => ownRepoGit(rec.root, ['-c', 'commit.gpgsign=false', ...extra, 'commit', '-q', '-m', 'Store page: README', '--', 'README.md']);
+    try { commit([]); } catch { commit(['-c', 'user.name=dreamcontext', '-c', 'user.email=dreamcontext@users.noreply.github.com']); }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The approval id of a finding, for tests and the CLI. */

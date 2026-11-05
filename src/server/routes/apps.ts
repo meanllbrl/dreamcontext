@@ -47,7 +47,7 @@ import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifier.js';
 import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
 import { shareStatus } from './apps-share.js';
-import { iconIssue, servableIcon } from '../../lib/apps/icon.js';
+import { iconIssue, isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
 import { icnsToPng } from '../../lib/apps/icns-raster.js';
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
@@ -334,6 +334,8 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     assistant: assistantOf(rec),
     // Only what /icon can serve: a true on an .icns draws a broken image on the card.
     hasIcon: m.ok ? servableIcon(m.manifest.icon) !== null : false,
+    // Still the letter `apps new` drew: the page draws its one monogram fallback instead.
+    iconPlaceholder: m.ok ? isDefaultIconCached(m.manifest.icon, m.manifest.slug, m.manifest.name) : false,
     iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
     actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
     schedules: m.ok ? scheduleViews(home, rec) : [],

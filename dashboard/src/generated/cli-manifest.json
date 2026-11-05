@@ -358,7 +358,7 @@
     },
     {
       "path": "apps shared",
-      "desc": "Apps shared with you (and invitations waiting), from the signed-in GitHub account",
+      "desc": "Shared Apps: apps shared with you (and invitations waiting), from the signed-in GitHub account",
       "args": []
     },
     {

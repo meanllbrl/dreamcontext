@@ -20,6 +20,10 @@ Every app has its own icon, never the dreamcontext logo: `apps validate` is red 
 an `.icns` the card cannot show. You cannot see the Dock, and `lsappinfo` only proves a process:
 read the icon itself, then ask the owner to look.
 
+Its README is its store page (Shared Apps, the install page): a `tagline:` line in a `---` header,
+then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## What's new`.
+`apps validate` warns on a missing part; the `/apps` skill has the skeleton.
+
 | You want to | Do |
 |---|---|
 | See this project's apps | `dreamcontext apps list` |
@@ -34,7 +38,7 @@ read the icon itself, then ask the owner to look.
 | Re-add a removed app | `dreamcontext apps new <slug>` (its code and data come back) |
 | Check what a publish would send | `dreamcontext apps publish <slug> [--public]` (the push is the owner's click: Share) |
 | Fill an app's settings | `dreamcontext apps config <slug> [--suggest] [--set key=value]` (keys: `apps secret`, the owner's) |
-| See apps shared with you | `dreamcontext apps shared` |
+| See Shared Apps (shared with you, invitations) | `dreamcontext apps shared` |
 | Look at an app before installing | `dreamcontext apps install <owner/repo|link>` (installing is the owner's click) |
 | Check an installed app for an update | `dreamcontext apps update <slug>` |
 

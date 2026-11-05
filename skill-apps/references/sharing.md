@@ -1,7 +1,7 @@
 # Sharing an app
 
-An app can be published to GitHub with no data, and installed by someone else from "Shared with
-you" (a private repo they were invited to) or from a public link. This page is what an agent does;
+An app can be published to GitHub with no data, and installed by someone else from Shared Apps
+(a private repo they were invited to) or from a public link ("Install from a link"). This page is what an agent does;
 the decisions are the owner's clicks on the Apps page.
 
 ## What travels and what never does
@@ -9,7 +9,8 @@ the decisions are the owner's clicks on the Apps page.
 A publish reads the app's COMMITTED files only (commit first; an uncommitted change stops it), and
 only what an app is made of: `dreamcontext-app.json`, `ASSISTANT.md`, `README.md`, `CHANGES.md`,
 `LICENSE`, the icon, `server.{mjs,js,cjs,ts}`, `package.json`, `package-lock.json`, and
-`public/`, `src/`, `lib/` (html, css, js, ts, json, svg, images, woff2, md, txt). `share.include`
+`public/`, `src/`, `lib/` (html, css, js, ts, json, svg, images, woff2, md, txt), and up to three
+store screenshots as flat images in `store/` (png, jpg, webp). `share.include`
 in the manifest adds a folder. Everything else stays on the Mac and is listed as "stays".
 
 Never: `.env*`, `data/`, `node_modules/`, dotfiles, `CLAUDE.md`/`AGENTS.md`/`.claude/`, links,
@@ -36,7 +37,7 @@ AI Team, MCP, linked repo names, long numbers) are lines the owner ticks one by 
    `objective`, `agent`, `task-tag`, `mcp-tool`. A required empty setting keeps the app from starting.
 2. Fill the owner's own values: `dreamcontext apps config <slug> --set insight=<slug>` (never a
    secret; a key is the owner's: the secret card, or `apps secret <slug> <KEY>` in his terminal).
-3. Write `README.md` (what it does, what it asks for) and a `CHANGES.md` line, then commit.
+3. Fill `README.md` with the store skeleton (SKILL.md: tagline, What it does, Screenshots, What's new), then commit.
 4. `dreamcontext apps publish <slug> [--public]`: the gate's report. Fix what stops it; tell the
    owner which generic lines wait for his tick. The push is his click: Apps page → the card → Share.
 
