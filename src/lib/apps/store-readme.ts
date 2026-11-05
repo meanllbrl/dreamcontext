@@ -100,7 +100,8 @@ function headingText(line: string, level: 2 | 3): string | null {
 
 /** `---` header lines → its values (only the two the store reads). */
 function splitFrontmatter(text: string): { fields: Record<string, string>; body: string } {
-  const src = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  // Only the head of the file, each line cut short: every scan below stays cheap on any input.
+  const src = text.slice(0, README_MAX).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((l) => (l.length > LINE_MAX ? l.slice(0, LINE_MAX) : l)).join('\n');
   const m = /^---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(src);
   if (!m) return { fields: {}, body: src };
   const fields: Record<string, string> = {};
@@ -132,7 +133,8 @@ function firstParagraph(lines: string[]): string | null {
     if (/^(#|!\[|[-*+] |\d+\. |>|\||<)/.test(line)) { if (buf.length) break; continue; }
     buf.push(line);
   }
-  const p = buf.join(' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '');
+  // Only a sentence is wanted: the link strip runs on the first 1000 characters, never more.
+  const p = buf.join(' ').slice(0, 1000).replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '');
   return p.trim() ? p : null;
 }
 
@@ -160,7 +162,8 @@ export function parseStoreReadme(text: string): StoreReadme {
   const aboutText = sections.about ? sections.about.join('\n').replace(CONTROL, '').trim() : '';
 
   const screenshots: StoreReadme['screenshots'] = [];
-  for (const line of sections.screenshots ?? []) {
+  // At most 3 pictures are drawn: the first 20 lines of the section, 500 characters each, are enough.
+  for (const line of (sections.screenshots ?? []).filter((l) => l.trim()).slice(0, 20).map((l) => l.slice(0, 500))) {
     for (const m of line.matchAll(/!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
       const path = m[2].replace(/^\.\//, '');
       if (SCREENSHOT_RE.test(path) && !screenshots.some((s) => s.path === path) && screenshots.length < MAX_SCREENSHOTS) {
@@ -281,7 +284,11 @@ export function applyStoreEdits(text: string, edits: { name: string; tagline?: s
     }
     if (at >= 0) {
       lines.splice(at + 1, 0, '', ...entry.trimEnd().split('\n'));
-      src = lines.join('\n').replace(/\n{3,}(### )/g, '\n\n$1');
+      // One blank line around the new entry, found by walking the lines (no regex over the file).
+      const end = at + 1 + entry.trimEnd().split('\n').length + 1;
+      while (end < lines.length && lines[end] === '' && lines[end + 1] === '') lines.splice(end, 1);
+      if (end < lines.length && lines[end] !== '' && headingText(lines[end], 3) !== null) lines.splice(end, 0, '');
+      src = lines.join('\n');
     } else {
       src = `${src.trimEnd()}\n\n## What's new\n\n${entry}`;
     }

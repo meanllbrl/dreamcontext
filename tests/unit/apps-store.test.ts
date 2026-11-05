@@ -98,6 +98,11 @@ describe('the README standard, hostile and odd input', () => {
     parseStoreReadme(evil);
     parseStoreReadme(`---\ntagline: x${' '.repeat(50_000)}#\n---\n`);
     parseStoreReadme('# T\n\n' + 'word '.repeat(2_000_000));
+    // The two scans that use a regex, each fed its worst input at 500 KB: the screenshot section
+    // and the opening paragraph's link strip.
+    parseStoreReadme(`# T\n\n## Screenshots\n${'![](a'.repeat(100_000)}\n${'![](a\n'.repeat(50_000)}`);
+    parseStoreReadme(`# T\n\n${'[]('.repeat(170_000)}\n`);
+    applyStoreEdits(`# T\n\n## What's new\n${'\n'.repeat(100_000)}### 1\n- a\n`, { name: 'T', note: 'n', date: '2026-11-06' });
     expect(Date.now() - t0).toBeLessThan(1500);
   });
 
