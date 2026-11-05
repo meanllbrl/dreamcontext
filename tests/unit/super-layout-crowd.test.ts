@@ -197,3 +197,22 @@ describe('the end review\'s cases (r1)', () => {
     expect(p.cards['grp-a']?.where === 'float' || p.others.includes('grp-a')).toBe(true);
   });
 });
+
+describe('the owner\'s order (2026-11-06): the chat stays, his size is kept, extra jobs go to the pill', () => {
+  for (const s of [{ width: 1384, height: 814 }, { width: 1700, height: 990 }, { width: 1744, height: 994 }]) {
+    for (const size of ['large', 'medium'] as const) {
+      it(`${s.width}: an agenda he sized ${size}, 4 -> 16 jobs: the chat never narrows and the agenda keeps his size`, () => {
+        let last = 0;
+        for (let n = 4; n <= 16; n++) {
+          const cs = [agenda({ size, sizeBy: 'owner' }), ...Array.from({ length: n }, (_, i) => job(i))];
+          const p = planStage(items(cs), FLOAT, s);
+          expect(p.centre.width, `${n} jobs`).toBeGreaterThanOrEqual(last - 1e-6);
+          last = p.centre.width;
+          expect(p.cards['agenda-1'].size, `${n} jobs`).toBe(size);
+          for (let i = 0; i < n; i++) expect(p.others, `${n} jobs`).not.toContain(`chat-j${i}`);
+          sound(p);
+        }
+      });
+    }
+  }
+});

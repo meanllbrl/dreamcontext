@@ -678,12 +678,15 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
       //    `ownerAside` (asked by planStage only, owner 2026-10-29 "alan var mı?"): instead of
       //    giving up height, the owner's card leaves the column at the size he chose (it stands
       //    where he dropped it, not in the column), when that height fits the stage at all.
+      //    A card the owner SIZED keeps its size and its place while any live job can wait in the
+      //    pill instead (owner 2026-11-06: the chat stays, his size is kept, extra jobs go to the
+      //    pill); the stage's own agenda gives height, never its width (that would narrow the chat).
       const latest = [...items].reverse();
-      const shrink = (owner: boolean) => latest.find((s) => s.owner === owner && SIZE_UNITS[drawn.get(s.id)!].h > 1)
-        ?? latest.find((s) => s.owner === owner && drawn.get(s.id) === 'medium' && cols[side] >= 2);
+      const shrink = (owner: boolean) => latest.find((s) => s.owner === owner && !s.sized && SIZE_UNITS[drawn.get(s.id)!].h > 1)
+        ?? latest.find((s) => s.owner === owner && !s.sized && !s.agenda && drawn.get(s.id) === 'medium' && cols[side] >= 2);
       // A live job gives its place last of all, after the owner's own cards (owner 2026-10-23).
-      const drop = (owner: boolean, live: boolean) => latest.find((s) => s.owner === owner && !!s.live === live && !s.chat)
-        ?? latest.find((s) => s.owner === owner && !!s.live === live);
+      const drop = (owner: boolean, live: boolean) => latest.find((s) => s.owner === owner && !!s.live === live && !s.chat && !s.sized)
+        ?? latest.find((s) => s.owner === owner && !!s.live === live && !s.sized);
       const step = shrink(false) ?? null;
       if (step) { drawn.set(step.id, HEIGHT_STEP[drawn.get(step.id)!]!); continue; }
       const auto = drop(false, false);
@@ -695,23 +698,34 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
       // 3. Before a live job or the owner's card gives way here, the other side gives way for a
       //    small auto card to cross (live jobs win over pictures and finished cards on the whole
       //    stage, owner 2026-10-23): the height of its auto cards that are not live, then their
-      //    place (to Others). The agenda gives way as late as a live job: it keeps its size.
+      //    place (to Others); the stage's own agenda gives height before a job is hidden.
       if (crosser) {
         const o = [...inColumn(other)].reverse();
-        const tall = o.find((s) => !s.owner && !s.live && SIZE_UNITS[drawn.get(s.id)!].h > 1);
+        const tall = o.find((s) => !s.owner && !s.sized && !s.live && SIZE_UNITS[drawn.get(s.id)!].h > 1)
+          ?? o.find((s) => s.agenda && !s.owner && !s.sized && SIZE_UNITS[drawn.get(s.id)!].h > 1);
         if (tall) { drawn.set(tall.id, HEIGHT_STEP[drawn.get(tall.id)!]!); continue; }
-        const idle = o.find((s) => !s.owner && !s.live && !s.agenda);
+        const idle = o.find((s) => !s.owner && !s.sized && !s.live && !s.agenda);
         if (idle) { overflow.add(idle.id); continue; }
       }
       // What the owner sized keeps its size (owner 2026-11-06: "bir sonraki kart açılınca bozulmaz"):
       // an auto-placed live job waits in the "more" pill beside Others first, the agenda excepted.
-      const autoLive = latest.find((s) => !s.owner && !!s.live && !s.agenda);
-      if (autoLive && items.some((s) => s.sized && drawn.get(s.id) !== 'small')) { overflow.add(autoLive.id); continue; }
+      const sizedHere = items.some((s) => s.sized && drawn.get(s.id) !== 'small');
+      const autoLive = latest.find((s) => !s.owner && !!s.live && !s.agenda && !s.sized);
+      if (autoLive && sizedHere) { overflow.add(autoLive.id); continue; }
       const own = shrink(true);
       if (own) { drawn.set(own.id, HEIGHT_STEP[drawn.get(own.id)!]!); continue; }
+      // The owner's dropped live jobs wait in the pill before his sized card shrinks.
+      const ownLive = sizedHere ? latest.find((s) => s.owner && !!s.live && !s.agenda && !s.sized) : undefined;
+      if (ownLive) { overflow.add(ownLive.id); continue; }
       const last = drop(true, false) ?? drop(false, true) ?? drop(true, true);
-      if (!last) break;
-      overflow.add(last.id);
+      if (last) { overflow.add(last.id); continue; }
+      // Only his sized cards are left: they give height, then their place, as before.
+      const sizedStep = latest.find((s) => s.sized && SIZE_UNITS[drawn.get(s.id)!].h > 1)
+        ?? latest.find((s) => s.sized && drawn.get(s.id) === 'medium' && cols[side] >= 2);
+      if (sizedStep) { drawn.set(sizedStep.id, HEIGHT_STEP[drawn.get(sizedStep.id)!]!); continue; }
+      const sizedLast = latest.find((s) => s.sized && !s.live) ?? latest.find((s) => s.sized);
+      if (!sizedLast) break;
+      overflow.add(sizedLast.id);
     }
   }
   // The centre stays IN THE MIDDLE while it can (owner 2026-10-22: "I made a card bigger and the
@@ -1072,7 +1086,8 @@ export function planStage(
     const { dragging, ...still } = opts;
     const free = planStage(containers, view, stage, still);
     const v = VARIANT.get(free);
-    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band);
+    const seats = SEATS.get(free);
+    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band, seats?.demoted, seats?.compact);
   }
   // A card the owner placed and sized is drawn at his size wherever it fits (owner 2026-10-29,
   // "alan var mı?": a 2x2 he grew into an empty column was drawn smaller, so refused, for a column
@@ -1215,6 +1230,8 @@ function planStageOnce(
 
 /** Which of planStage's candidates a plan is (its internal options and its bottom band), so a
  *  running drag is held inside the plan the stage drew before the pickup. */
+/** The sized cards a float plan drew in Others or at 1x1 after its first pass (planWith). */
+const SEATS = new WeakMap<StagePlan, { demoted: ReadonlySet<string>; compact: ReadonlySet<string> }>();
 const VARIANT = new WeakMap<StagePlan, { band: boolean; opts: Pick<PlanOptions, 'leanNow' | 'agendaCap' | 'agendaCentred' | 'ownerAside'> }>();
 
 function planWith(
@@ -1676,7 +1693,8 @@ function planWith(
   }
   // A sized card the solve gave its width but the placement could not seat: plan again without it.
   const unseated = floating.filter((c) => cards[c.id]?.where === 'others' && !sol.overflow.has(c.id) && SIZE_UNITS[drawnOf(c.id)].w > 1);
-  if (unseated.length) {
+  // While a card is held, which cards fit was decided before the pickup (planStage passes those sets).
+  if (unseated.length && !drag) {
     const kept = unseated.filter(keeps).map((c) => c.id);
     const out = unseated.filter((c) => !keeps(c)).map((c) => c.id);
     return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
@@ -1713,6 +1731,7 @@ function planWith(
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
     ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
   const plan = finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
+  SEATS.set(plan, { demoted, compact });
   if (more && more.rect.x < f.othersRect.x && more.rect.y === plan.dock.y) {
     plan.dock = { ...plan.dock, width: Math.max(0, Math.min(plan.dock.width, more.rect.x - STAGE.GAP - plan.dock.x)) };
   }
