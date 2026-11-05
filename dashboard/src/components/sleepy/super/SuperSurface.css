@@ -1850,3 +1850,61 @@
 .super-team-job-reply textarea { flex: 1; min-width: 0; resize: none; font: inherit; color: inherit; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px); padding: var(--space-2, 8px); }
 /* The transcript's "the Super runs this chat" line belongs to a child: this card has its own foot. */
 .super-team-job .super-readonly-line { display: none; }
+
+/* ── The Super Agent's tool steps as one quiet line (SuperStepsLine, owner 2026-11-06 A) ──
+   One fixed 24px line, live or landed, so a long turn never makes the transcript jump. Grey on
+   purpose: the answer under it is the one heavy thing on screen. */
+.super-steps { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); max-width: 100%; }
+.super-steps-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-steps-line:hover { border-color: var(--color-border-hover); color: var(--color-text-secondary); }
+.super-steps-line:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* Live: no chip, just the ring and the step in hand. */
+.super-steps[data-live] .super-steps-line { background: transparent; padding: 0 2px; font-size: var(--font-size-sm); font-weight: 400; }
+.super-steps[data-open]:not([data-live]) .super-steps-line { background: transparent; border-color: var(--color-border); }
+.super-steps-ring {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  /* A closed ring that breathes (the Super surface's status motion; nothing here rotates).
+     Its base style is the resting look, so a paused or removed animation shows a plain ring. */
+  border: 2px solid var(--color-accent);
+  animation: var(--dc-motion-status-name, super-dot-breathe) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.super-steps[data-waiting] .super-steps-ring { animation: none; border-color: var(--color-warning); }
+.super-steps-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
+.super-steps-count { flex: none; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+.super-steps-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-steps-failed { flex: none; color: var(--color-error-ink); }
+.super-steps-caret { flex: none; font-size: 9px; }
+.super-steps-errors { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+/* Open: the plain Chat's rows, without their card frames, beside a thin rule. */
+.super-steps-rows { width: 100%; border-left: 2px solid var(--color-border); padding-left: var(--space-3); }
+.super-steps-rows .chat-toolcard {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.super-steps-rows .chat-toolcard + .chat-toolcard { margin-top: 0; }
+.super-steps-rows .chat-toolcard:hover { background: var(--color-bg-tertiary); }
+.super-steps-rows .chat-toolcard[data-status='error'] { background: var(--color-error-subtle, transparent); }
+@media (prefers-reduced-motion: reduce) { .super-steps-ring { animation: none; } }

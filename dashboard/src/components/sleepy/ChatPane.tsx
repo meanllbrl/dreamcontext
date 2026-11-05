@@ -24,7 +24,7 @@ import {
   isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
-import { isDreamcontextCommand, teamDoneRepeats } from './chat/dreamCommand';
+import { isDreamcontextCommand, teamDoneRepeats, teamDoneText } from './chat/dreamCommand';
 import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/toolAction';
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
@@ -85,6 +85,7 @@ import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/super
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
+import { SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
@@ -784,6 +785,8 @@ export function ChatPane({
   // question twice is how those two drift apart.
   const shelf = useShelf(session, vault);
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
+  /** A permission card waits on the owner: the Super view's live steps line says so. */
+  const waitingOnOwner = conv.pending.some((p) => p.kind === 'permission');
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   /**
@@ -1183,9 +1186,19 @@ export function ChatPane({
     // — a task created, a status moved, knowledge written — and folding them into a collapsed
     // "12 steps" header hides the one class of row whose object the reader most needs to see.
     // Everything the run card was built for still holds for the reads and greps around them.
-    if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
+    //
+    // The Super view is the exception (owner 2026-11-06, draft A): there nearly every step IS a
+    // dreamcontext call, so this rule left a routine turn as seven cards above a two-line
+    // answer. There the whole stretch folds into one quiet line (`SuperStepsLine`) whose chip
+    // opens the same rows, and a failed step still stands under it in full. Only a member's
+    // answer to Super (`super team done`, drawn as a quote) keeps its own place.
+    const command = bashCommand(item) ?? undefined;
+    if (superView) return teamDoneText(command) === null;
+    if (isDreamcontextCommand(command)) return false;
     return true;
   };
+  /** In the Super view one step is already a run: the quiet line replaces every step card. */
+  const minToolRun = superView ? 1 : MIN_TOOL_RUN;
 
   // What renders as NOTHING (owner report 08-02) — the other half of `isPlainToolCard`, and
   // the reason grouping looked broken in the field. A thinking model opens a thinking block
@@ -1268,7 +1281,7 @@ export function ChatPane({
       : i < feedLen + conv.history.length ? conv.history[i - feedLen] : conv.items[i - feedLen - conv.history.length]),
     isGroupable: isPlainToolCard,
     rendersNothing,
-    minRun: MIN_TOOL_RUN,
+    minRun: minToolRun,
   };
   // The CARD floor: how far back the following window has to reach for the transcript to hold
   // WINDOW_TAIL_CARDS things the reader can see. In an ordinary conversation this stops after
@@ -2139,6 +2152,8 @@ export function ChatPane({
    *  transcript is the lead's; a teammate's own steps live in its drill-in. */
   const probesOf = (seg: RunSegment<ChatItem>, accruing: boolean): StretchProbe[] => {
     if (seg.kind === 'run') {
+      // The Super view's quiet line carries no avatar: it ends a stretch like any other block.
+      if (superView) return [{ key: `run:${seg.items[0].id}`, step: false, invisible: false, actor: 'lead', running: false }];
       const running = accruing || seg.items.some((it) => it.kind === 'tool' && it.status === 'running');
       return [{ key: `run:${seg.items[0].id}`, step: true, invisible: false, actor: 'lead', running }];
     }
@@ -2166,6 +2181,18 @@ export function ChatPane({
   // pass). See the helper's own doc for why the accruing tail keys off its head instead.
   const renderSegment = (seg: RunSegment<ChatItem>, accruing: boolean, stretches: Map<string, NonNullable<Stretch>>): React.ReactNode => {
     if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id), accruing);
+    if (superView) {
+      return (
+        <SuperStepsLine
+          key={`run-${toolRunKeyItem(seg.items, accruing).id}`}
+          items={seg.items as ChatToolItem[]}
+          stillAccruing={accruing}
+          waiting={accruing && waitingOnOwner}
+          onOpenFile={handleOpenFile}
+          replyGroup={replyMap?.get(seg.items[0].id)?.groupId}
+        />
+      );
+    }
     const stretch = stretches.get(`run:${seg.items[0].id}`);
     return (
       <ToolRunCard
@@ -2216,7 +2243,7 @@ export function ChatPane({
         const ids = new Set(g.folded);
         for (const id of ids) inCard.add(id);
         const body = piece.filter((it) => ids.has(it.id));
-        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
       }
       kept = folded.kept;
       const keptIds = new Set(kept.map((it) => it.id));
@@ -2230,7 +2257,7 @@ export function ChatPane({
   const liveSlice = conv.items.slice(itemsFrom);
   // The member's closing words that repeat its answer to the Super Agent: drawn once (plan r4 E4).
   doneRepeats = teamDoneRepeats([...historySlice, ...liveSlice] as never);
-  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem);
   // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
   // the newest message: the turns that followed belong below them (owner, 2026-10-10). The
   // live slice is cut at each one's place and segmented piece by piece, so a tool run never
@@ -2299,11 +2326,11 @@ export function ChatPane({
   const liveSegments: RunSegment<ChatItem>[] = [];
   let pieceFrom = 0;
   for (const n of notices) {
-    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
     pieceFrom = Math.max(pieceFrom, n.cut);
     noticesAt.set(liveSegments.length, [...(noticesAt.get(liveSegments.length) ?? []), n]);
   }
-  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
   const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
     .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
   // One item asked twice across pieces: only its latest call is live (pieces are placed in
