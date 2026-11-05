@@ -238,15 +238,17 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   const [busy, setBusy] = useState<'preview' | 'install' | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const asked = useRef('');
+  // Every ask gets its own number: only the newest answer lands, so an older ask's error never
+  // sits under a newer, valid preview (the same link asked twice races too).
+  const asked = useRef(0);
   const preview = async (r = ref) => {
     // A new link starts from nothing: no tick, no key typed for another app.
-    asked.current = r;
+    const n = ++asked.current;
     setBusy('preview'); setErr(null); setPv(null); setValues({}); setUnderstood(false);
     try {
       const v = await api.post<Preview>('/apps/install/preview', { ref: r });
-      if (asked.current === r) setPv(v); // a link typed meanwhile wins over this answer
-    } catch (e) { if (asked.current === r) setErr(errText(e)); } finally { setBusy(null); }
+      if (asked.current === n) setPv(v);
+    } catch (e) { if (asked.current === n) setErr(errText(e)); } finally { if (asked.current === n) setBusy(null); }
   };
   useEffect(() => { if (initialRef) void preview(initialRef); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -273,7 +275,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
     ) : undefined}>
       {!initialRef && (
         <form className="share-row" onSubmit={(e) => { e.preventDefault(); void preview(); }}>
-          <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => { setRef(e.target.value); asked.current = ''; setPv(null); setValues({}); setUnderstood(false); }} placeholder="https://github.com/owner/repo" autoFocus /></label>
+          <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => { setRef(e.target.value); asked.current++; setBusy((b) => (b === 'preview' ? null : b)); setPv(null); setValues({}); setUnderstood(false); }} placeholder="https://github.com/owner/repo" autoFocus /></label>
           <button type="submit" className="app-card__stop" disabled={!ref.trim() || busy !== null}>{busy === 'preview' ? t('share.checking') : t('share.install.look')}</button>
         </form>
       )}
