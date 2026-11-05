@@ -1000,7 +1000,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
   const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
-  // The live jobs the rail's one column cannot hold, beside a page or a presentation.
+  // The live jobs with no room on the stage: beside a page or a presentation, or beside Others.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
 
   return (

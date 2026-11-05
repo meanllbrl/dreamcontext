@@ -246,8 +246,10 @@ export interface StagePlan {
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
-  /** Beside a page or a presentation: the live jobs the one rail column cannot hold, in a
-   *  temporary tile at its foot (its cards are drawn 'others' at its rect, never in `others`). */
+  /** The live jobs with no room: beside a page or a presentation, the ones the one rail column
+   *  cannot hold, in a temporary tile at its foot; on the floating stage, the ones its sides cannot
+   *  hold at the chat's width, in a pill beside Others (owner 2026-11-06). Its cards are drawn
+   *  'others' at its rect, never in `others`. */
   more?: { rect: Rect; ids: string[] };
   /** The one-line rail while it holds more jobs than fit: a window of `visible` from `start`. */
   rail?: { rect: Rect; start: number; visible: number; total: number };
@@ -379,7 +381,8 @@ export interface PlanOptions {
   miniRail?: boolean;
   /** The new shell's chat drawer stands beside the stage (owner 2026-10-31): the stage has lost
    *  width on the left, so the centre leans right and widens, and the right cards go to the margin.
-   *  Only while no card stands where the owner dropped it, and only when it costs no card. */
+   *  Only while no card stands where the owner dropped it, and only when it sends no card to the
+   *  Others stack (a live job may wait in the "more" pill: the chat first, owner 2026-11-06). */
   leanRight?: boolean;
   /** Set by `planStage` itself, once it has judged the leaning plan (callers leave it out). */
   leanNow?: boolean;
@@ -412,7 +415,7 @@ export const contains = (r: Rect, x: number, y: number) => x >= r.x && x < r.x +
 // ─── The orbit (2026-10-20) ─────────────────────────────────────────────────────
 
 /** One item in a side's list, in record order. `chat`: a child chat (or a group), kept longest. */
-interface Slot { id: string; owner: boolean; chat: boolean; live?: boolean }
+interface Slot { id: string; owner: boolean; chat: boolean; live?: boolean; /** The owner chose its size (`sizeBy`), not a running drag. */ sized?: boolean }
 
 /** Which item gives way first when a side is too full (lower goes first): every other card, then
  *  a chat or group, the auto-placed before the owner's; a LIVE job last of all (owner 2026-10-23:
@@ -627,14 +630,47 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
     return rows;
   };
   const heightOfRows = (rows: Row[]) => rows.reduce((t, r) => t + unitsPx(r.h), 0) + Math.max(0, rows.length - 1) * GAP;
+  // The chat's width for the sides as they stand (the placement below draws exactly this).
+  const widthNow = () => {
+    const need = Math.max(unitsPx(cols.left) + (cols.left ? GAP : 0), unitsPx(cols.right) + (cols.right ? GAP : 0));
+    const centred = Math.min(preferred, W - 2 * MARGIN - 2 * need);
+    // The agenda alone widens its side when it spans its column (a column widened to pair small
+    // cards is not the agenda's doing) and no other card there is as wide.
+    const agSide = ag && !agendaCentred && !overflow.has(ag.id) ? (sides.left.includes(ag) ? 'left' : 'right') : null;
+    const agendaWidens = !!agSide && cols[agSide] > cols[agSide === 'left' ? 'right' : 'left']
+      && SIZE_UNITS[drawn.get(ag!.id)!].w === cols[agSide]
+      && live(agSide).every((s) => s === ag || SIZE_UNITS[drawn.get(s.id)!].w < cols[agSide]);
+    const offMiddle = centred < STAGE.CENTRE_MIN - 1e-9 || (agendaWidens && centred < preferred - 1e-9);
+    const plainW = offMiddle ? Math.max(centred, STAGE.CENTRE_MIN, Math.min(preferred, avail())) : centred;
+    return { centred, agendaWidens, offMiddle, plainW };
+  };
+  const chatWidth = () => widthNow().plainW;
   for (const side of ['left', 'right'] as const) {
+    const other = side === 'left' ? 'right' : 'left';
     for (let guard = 0; guard < 200 && heightOfRows(rowsOf(side)) > span; guard++) {
       const items = inColumn(side);
       const smalls = items.filter((s) => drawn.get(s.id) === 'small').length;
-      // 1. Widen, when the centre can spare a tile and there are small cards to pair up.
+      // 1. Widen, when there are small cards to pair up and it costs the centre nothing (owner
+      //    2026-11-06, "birden buna döndü": a third column on one side is mirrored on the other,
+      //    so a ninth live job took 368 px off the chat). A card more never narrows the chat.
       if (cols[side] < STAGE.MAX_COLS + 1 && smalls >= 2 && avail() - T - GAP >= f.centreMin && cols[side] >= 1) {
+        const was = chatWidth();
         cols[side] += 1;
-        continue;
+        if (chatWidth() >= was - 1e-9) continue;
+        cols[side] -= 1;
+      }
+      // 1b. The other side has room: its latest small auto card crosses over, at its size, when
+      //     the other side keeps its width and still fits (that column re-centres around it).
+      const crosser = [...items].reverse().find((s) => !s.owner && !s.agenda && drawn.get(s.id) === 'small');
+      if (crosser) {
+        const before = { list: sides[other], from: sides[side], cols: cols[other], width: chatWidth() };
+        sides[other] = [...sides[other], crosser].sort((a, b) => a.z - b.z);
+        sides[side] = sides[side].filter((s) => s !== crosser);
+        cols[other] = Math.max(1, cols[other]);
+        if (heightOfRows(rowsOf(other)) <= span + 1e-9 && chatWidth() >= before.width - 1e-9) continue;
+        sides[other] = before.list;
+        sides[side] = before.from;
+        cols[other] = before.cols;
       }
       // 2. The auto-placed cards give way first, the latest first: their height, then their place
       //    (to Others, any card before a chat). Only then does the owner's own card give up
@@ -656,6 +692,21 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
         const out = latest.find((s) => s.owner && sizePx(drawn.get(s.id)!).height <= span + 1e-9);
         if (out) { aside.add(out.id); continue; }
       }
+      // 3. Before a live job or the owner's card gives way here, the other side gives way for a
+      //    small auto card to cross (live jobs win over pictures and finished cards on the whole
+      //    stage, owner 2026-10-23): the height of its auto cards that are not live, then their
+      //    place (to Others). The agenda gives way as late as a live job: it keeps its size.
+      if (crosser) {
+        const o = [...inColumn(other)].reverse();
+        const tall = o.find((s) => !s.owner && !s.live && SIZE_UNITS[drawn.get(s.id)!].h > 1);
+        if (tall) { drawn.set(tall.id, HEIGHT_STEP[drawn.get(tall.id)!]!); continue; }
+        const idle = o.find((s) => !s.owner && !s.live && !s.agenda);
+        if (idle) { overflow.add(idle.id); continue; }
+      }
+      // What the owner sized keeps its size (owner 2026-11-06: "bir sonraki kart açılınca bozulmaz"):
+      // an auto-placed live job waits in the "more" pill beside Others first, the agenda excepted.
+      const autoLive = latest.find((s) => !s.owner && !!s.live && !s.agenda);
+      if (autoLive && items.some((s) => s.sized && drawn.get(s.id) !== 'small')) { overflow.add(autoLive.id); continue; }
       const own = shrink(true);
       if (own) { drawn.set(own.id, HEIGHT_STEP[drawn.get(own.id)!]!); continue; }
       const last = drop(true, false) ?? drop(false, true) ?? drop(true, true);
@@ -667,21 +718,12 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   // agent in the centre was no longer centred; no need, there is room"): it narrows evenly on
   // both sides for the wider side, never over its preferred width. Only when even that would
   // take it under CENTRE_MIN does it move off the middle, right after the left side.
-  const need = Math.max(unitsPx(cols.left) + (cols.left ? GAP : 0), unitsPx(cols.right) + (cols.right ? GAP : 0));
-  const centred = Math.min(preferred, W - 2 * MARGIN - 2 * need);
+  const { agendaWidens, offMiddle, plainW } = widthNow();
   // The agenda is never mirrored (owner 2026-11-03, a ~1800 px window: "bu ekranda super agent daha
   // geniş olmalı ama değil daha sıkışmış duruyor"): a side made wider ONLY by the agenda would cost
   // the centre the same width again on the empty side (646 px of a 1430 px stage). Then the centre
   // keeps its preferred width in the room beside the sides instead, off the middle. A side widened
   // by any other card keeps the rule above: narrow evenly, stay in the middle.
-  const agSide = ag && !agendaCentred && !overflow.has(ag.id) ? (left.includes(ag) ? 'left' : 'right') : null;
-  // The agenda alone: it spans its column (a column widened to pair small cards is not the
-  // agenda's doing) and no other card there is as wide.
-  const agendaWidens = !!agSide && cols[agSide] > cols[agSide === 'left' ? 'right' : 'left']
-    && SIZE_UNITS[drawn.get(ag!.id)!].w === cols[agSide]
-    && live(agSide).every((s) => s === ag || SIZE_UNITS[drawn.get(s.id)!].w < cols[agSide]);
-  const offMiddle = centred < STAGE.CENTRE_MIN - 1e-9 || (agendaWidens && centred < preferred - 1e-9);
-  const plainW = offMiddle ? Math.max(centred, STAGE.CENTRE_MIN, Math.min(preferred, avail())) : centred;
   // Off the middle, the centre sits in the middle of the free room; beside an empty right side it
   // leans left just enough to leave the Others stack its narrowest beside it (else it would move to
   // the chat's head).
@@ -1023,6 +1065,15 @@ export function planStage(
   stage: { width: number; height: number },
   opts: PlanOptions = {},
 ): StagePlan {
+  // A running drag never picks the plan (owner 2026-11-06, "düzeltmeye çalıştığımda ne kadar salakça
+  // davranıyor"): the stage chooses its plan as if nothing were held, and the held card is held
+  // inside that plan.
+  if (opts.dragging) {
+    const { dragging, ...still } = opts;
+    const free = planStage(containers, view, stage, still);
+    const v = VARIANT.get(free);
+    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band);
+  }
   // A card the owner placed and sized is drawn at his size wherever it fits (owner 2026-10-29,
   // "alan var mı?": a 2x2 he grew into an empty column was drawn smaller, so refused, for a column
   // it does not stand in). The plan that sets such a card aside from its column is kept only when
@@ -1040,7 +1091,9 @@ export function planStage(
     const leaned = planStageOnce(containers, view, stage, { ...rest, leanNow: true, ...(agDrawn ? { agendaCap: SIZE_UNITS[agDrawn.size ?? 'small'].w } : {}) });
     const a = stageCost(leaned);
     const b = stageCost(centred);
-    return leaned.centre.width >= centred.centre.width - 1e-6 && a.unsound <= b.unsound && a.others <= b.others ? leaned : centred;
+    // The chat first (owner 2026-11-06): a live job may wait in the pill for the wider chat, no
+    // card more goes to the Others stack.
+    return leaned.centre.width >= centred.centre.width - 1e-6 && a.unsound <= b.unsound && leaned.others.length <= centred.others.length ? leaned : centred;
   }
   const base = planStageAgenda(containers, view, stage, opts);
   if (opts.ownerAside !== undefined) return base;
@@ -1048,7 +1101,7 @@ export function planStage(
     && base.cards[c.id] && (base.cards[c.id].where !== 'float' || (base.cards[c.id].size ?? 'small') !== c.size));
   if (!shrunk) return base;
   const alt = planStageAgenda(containers, view, stage, { ...opts, ownerAside: true });
-  const was = new Set(base.others);
+  const was = new Set([...base.others, ...(base.more?.ids ?? [])]);
   const a = stageCost(alt);
   const b = stageCost(base);
   const inFree = (r: Rect) => r.x >= alt.free.x - 1e-6 && r.y >= alt.free.y - 1e-6
@@ -1061,7 +1114,7 @@ export function planStage(
     if (before?.where === 'float' && sideOf(base, before.rect) !== sideOf(alt, c.rect)) return false;
     return (before?.where === 'float' && before.rect.x === c.rect.x && before.rect.y === c.rect.y) || inFree(c.rect);
   });
-  return calm && alt.others.every((id) => was.has(id)) && a.unsound === 0 && a.offMid <= b.offMid + 1e-6 ? alt : base;
+  return calm && [...alt.others, ...(alt.more?.ids ?? [])].every((id) => was.has(id)) && a.unsound === 0 && a.offMid <= b.offMid + 1e-6 ? alt : base;
 }
 
 function planStageAgenda(
@@ -1083,6 +1136,11 @@ function planStageAgenda(
   const full = Math.min(preferredCentre(stage.width, opts.centreMin), counts.centre.width) - 1e-6;
   for (let cap = own; cap > 1; cap--) {
     for (const p of planLeaning(containers, view, stage, { ...opts, agendaCap: cap })) {
+      // The agenda's list never costs the chat (owner 2026-11-03 "super agent daha geniş olmalı",
+      // 2026-11-06 "birden buna döndü": its allowance opened columns for jobs and the chat narrowed
+      // as they came). Narrower than beside the counts: the counts. An agenda the owner placed or
+      // sized keeps the width he gave it (the same day: what he arranged is kept).
+      if (!ag!.pos && ag!.sizeBy !== 'owner' && p.centre.width < counts.centre.width - 1e-6) continue;
       const c = stageCost(p);
       const placed = c.offMid <= worse.offMid + 1e-6 || p.centre.width >= full;
       if (placed && c.others <= worse.others && c.unsound <= worse.unsound) return p;
@@ -1095,8 +1153,8 @@ function planStageAgenda(
  * The agenda is never mirrored on an empty side (owner 2026-11-03, "super agent daha geniş
  * olmalı"): beside a side made wide only by the agenda, the centre leaves the middle to keep its
  * preferred width. That plan stands only against the centred one (the old rule) for the same
- * cards: a wider chat, no card drawn smaller or sent off the stage, none more off the stage or
- * over another. The
+ * cards: a wider chat, no card drawn smaller or sent to the Others stack (a live job may wait in
+ * the "more" pill, owner 2026-11-06), none more off the stage or over another. The
  * candidates, best first; the centred plan is always last.
  */
 function planLeaning(containers: readonly StageItem[], view: SuperView, stage: { width: number; height: number }, opts: PlanOptions): StagePlan[] {
@@ -1108,9 +1166,14 @@ function planLeaning(containers: readonly StageItem[], view: SuperView, stage: {
   // No card, the agenda included, is drawn smaller for the wider chat (owner 2026-10-29: the
   // agenda's list whenever there is room).
   const area = (p: StagePlan, id: string) => { const u = SIZE_UNITS[p.cards[id]?.size ?? 'small']; return u.w * u.h; };
-  const kept = Object.keys(centred.cards).every((id) => centred.cards[id].where !== 'float'
-    || (leaned.cards[id]?.where === 'float' && area(leaned, id) >= area(centred, id)));
-  const wins = kept && leaned.centre.width > centred.centre.width + 1e-6 && l.others <= k.others && l.unsound <= k.unsound;
+  // A live job may wait in the "more" pill for it, and an agenda the stage placed may be drawn a
+  // size smaller (it stays on the stage): the chat never narrows for a card more (owner
+  // 2026-11-06). Nothing goes to the Others stack; the owner's agenda keeps its size.
+  const pill = new Set(leaned.more?.ids ?? []);
+  const agendas = new Set(containers.filter((c) => c.kind === 'agenda' && !c.pos && c.sizeBy !== 'owner').map((c) => c.id));
+  const kept = Object.keys(centred.cards).every((id) => centred.cards[id].where !== 'float' || pill.has(id)
+    || (leaned.cards[id]?.where === 'float' && (agendas.has(id) || area(leaned, id) >= area(centred, id))));
+  const wins = kept && leaned.centre.width > centred.centre.width + 1e-6 && leaned.others.length <= centred.others.length && l.unsound <= k.unsound;
   return wins ? [leaned, centred] : [centred];
 }
 
@@ -1124,7 +1187,8 @@ function stageCost(p: StagePlan): { offMid: number; others: number; unsound: num
     if (p.mode === 'float' && overlaps(r, p.centre)) unsound++;
     for (const d of fl) if (c.id < d.id && overlaps(r, d.rect)) unsound++;
   }
-  return { offMid: Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2), others: p.others.length, unsound };
+  // A live job in the "more" pill is off the stage as much as one in Others.
+  return { offMid: Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2), others: p.others.length + (p.more?.ids.length ?? 0), unsound };
 }
 
 function planStageOnce(
@@ -1138,12 +1202,20 @@ function planStageOnce(
   // Others reserves the band and plans again (the same inputs always give the same screen).
   // An empty stage keeps the band: its first-run hint is drawn there (review Major).
   const narrow = Math.max(0, stage.width) < (opts.narrowPx ?? NARROW_STAGE_PX);
+  const tag = (p: StagePlan, band: boolean) => {
+    VARIANT.set(p, { band, opts: { leanNow: opts.leanNow, agendaCap: opts.agendaCap, agendaCentred: opts.agendaCentred, ownerAside: opts.ownerAside } });
+    return p;
+  };
   if (!narrow && !(opts.terminals ?? 0) && !opts.agendaPill && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
-    if (tall.others.length === 0) return tall;
+    if (tall.others.length === 0 && !tall.more) return tag(tall, false);
   }
-  return planWith(containers, view, stage, opts, true);
+  return tag(planWith(containers, view, stage, opts, true), true);
 }
+
+/** Which of planStage's candidates a plan is (its internal options and its bottom band), so a
+ *  running drag is held inside the plan the stage drew before the pickup. */
+const VARIANT = new WeakMap<StagePlan, { band: boolean; opts: Pick<PlanOptions, 'leanNow' | 'agendaCap' | 'agendaCentred' | 'ownerAside'> }>();
 
 function planWith(
   containers: readonly StageItem[],
@@ -1484,7 +1556,9 @@ function planWith(
   // compact counts, never sent to Others): it gives way as late as a live job does.
   const keeps = (c: StageItem) => !!c.live || c.kind === 'agenda';
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
-    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' || c.kind === 'agenda', ...(keeps(c) ? { live: true } : {}) }));
+    // The solve sees the stage as it was before a pickup (a drag start never changes the plan);
+    // only the placement below holds the dragged card at its rect.
+    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: !!c.pos, chat: c.kind === 'chat' || c.kind === 'group' || c.kind === 'agenda', ...(keeps(c) ? { live: true } : {}), ...(c.sizeBy === 'owner' ? { sized: true } : {}) }));
   const sizeById = new Map(floating.map((c) => [c.id, compact.has(c.id) ? 'small' as const : sizeOf(c)] as const));
   const agendaIds = new Set(floating.filter((c) => c.kind === 'agenda').map((c) => c.id));
   const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0, ...(agendaIds.has(sl.id) ? { agenda: true } : {}) });
@@ -1607,11 +1681,42 @@ function planWith(
     const out = unseated.filter((c) => !keeps(c)).map((c) => c.id);
     return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
   }
+  // Live jobs the stage has no room for wait in the "more" pill beside Others (owner 2026-11-06:
+  // the chat never narrows for them, and a running job is never lost in the stack): in the bottom
+  // band left of the Others stack, else in the bottom-left corner, else in Others as before.
+  const floatIds = new Set(floating.map((c) => c.id));
+  // A group stays in Others (its panel opens from there); the pill holds cards.
+  const liveOver = others.filter((id) => liveIds.has(id) && floatIds.has(id) && !isGroupId(id));
+  if (liveOver.length) {
+    const rest = others.length - liveOver.length;
+    const { GAP, OTHERS_MIN_W, OTHERS_W, AGENDA_PILL_W, MARGIN } = STAGE;
+    let rect: Rect | null = null;
+    // The terminals' dock holds the bottom band under the whole stage: the pill stands left of
+    // Others in it, and the dock ends before it.
+    if (!tallBottom) rect = rest ? { x: f.othersRect.x - GAP - OTHERS_W, y: f.othersRect.y, width: OTHERS_W, height: f.othersRect.height } : { ...f.othersRect };
+    else if (!rest && othersFit) rect = { ...f.othersRect };
+    else if (othersFit && rightRoom - f.othersRect.width - GAP >= OTHERS_MIN_W - 1e-9) {
+      const w = Math.min(OTHERS_W, rightRoom - f.othersRect.width - GAP);
+      rect = { x: f.othersRect.x - GAP - w, y: f.othersRect.y, width: w, height: f.othersRect.height };
+    } else if (pillFits && !opts.agendaPill) rect = { x: MARGIN, y: f.othersRect.y, width: Math.min(AGENDA_PILL_W, leftRoom), height: f.othersRect.height };
+    if (rect) {
+      more = { rect, ids: liveOver };
+      for (const id of liveOver) {
+        cards[id] = { ...cards[id], rect };
+        others.splice(others.indexOf(id), 1);
+      }
+      if (!others.length) inHead.others = false;
+    }
+  }
   // A card in Others flies to the stack where it is drawn (narrowed beside a tall centre).
   for (const id of others) cards[id] = { ...cards[id], rect: f.othersRect };
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
     ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
-  return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
+  const plan = finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
+  if (more && more.rect.x < f.othersRect.x && more.rect.y === plan.dock.y) {
+    plan.dock = { ...plan.dock, width: Math.max(0, Math.min(plan.dock.width, more.rect.x - STAGE.GAP - plan.dock.x)) };
+  }
+  return plan;
 }
 
 /** The layout a presentation is drawn in: the stored one while it takes this many cards, else the
