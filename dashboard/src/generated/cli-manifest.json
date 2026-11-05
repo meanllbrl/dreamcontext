@@ -803,7 +803,7 @@
     },
     {
       "path": "automations schedule",
-      "desc": "Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)",
+      "desc": "Show or edit an automation's fire slots and catch-up window — no YAML editing, no re-approval (neither is approval-hashed)",
       "args": [
         "<slug>"
       ],
@@ -812,7 +812,8 @@
         "--add",
         "--remove",
         "--days",
-        "--at"
+        "--at",
+        "--catchup"
       ]
     },
     {
