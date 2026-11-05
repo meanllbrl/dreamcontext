@@ -369,6 +369,34 @@ describe('automations CLI (integration)', () => {
     expect(run(['automations', 'list'], projectDir, home).stdout).toContain('mon–fri 16:30');
   }, 60_000); // a dozen real CLI subprocesses — the 5s default trips under a loaded full-suite run
 
+  it('schedule --catchup changes only the catch-up window and keeps the automation approved', () => {
+    run(['automations', 'create', 'late-digest', '--title', 'Late Digest', '--slot', 'mon@09:30'], projectDir, home);
+    const manifestPath = join(projectDir, '_dream_context', 'automations', 'late-digest.md');
+    expect(run(['automations', 'show', 'late-digest'], projectDir, home).stdout).toMatch(/approval:\s*approved/i);
+
+    const set = run(['automations', 'schedule', 'late-digest', '--catchup', '48'], projectDir, home);
+    expect(set.exitCode).toBe(0);
+    expect(set.stdout).toContain('catch-up: 48h');
+    expect(readFileSync(manifestPath, 'utf-8')).toMatch(/^catchup_hours: 48$/m);
+    const shown = run(['automations', 'show', 'late-digest'], projectDir, home).stdout;
+    expect(shown).toContain('catchup: 48h');
+    expect(shown).toMatch(/approval:\s*approved/i);
+    expect(shown).toContain('mon 09:30');
+
+    // With a slot edit in the same call, both land.
+    const both = run(['automations', 'schedule', 'late-digest', '--add', 'fri@17:00', '--catchup', '24', '--json'], projectDir, home);
+    const parsed = JSON.parse(both.stdout);
+    expect(parsed.catchupHours).toBe(24);
+    expect(parsed.schedule.slots).toHaveLength(2);
+
+    for (const bad of ['0', '169', '2.5', 'x']) {
+      const r = run(['automations', 'schedule', 'late-digest', '--catchup', bad], projectDir, home);
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toMatch(/--catchup .*whole hours between 1 and 168/);
+    }
+    expect(readFileSync(manifestPath, 'utf-8')).toMatch(/^catchup_hours: 24$/m);
+  }, 60_000);
+
   it('approve shows every hashed field after a manifest edit, and refuses non-interactively without --yes', () => {
     run(
       ['automations', 'create', 'weekly-report', '--title', 'Weekly Report', '--days', 'fri', '--at', '17:00'],

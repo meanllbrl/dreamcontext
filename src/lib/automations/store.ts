@@ -1805,6 +1805,9 @@ export interface UpdateAutomationInput {
   model?: string | null;
   effort?: EffortLevel | null;
   timeoutMinutes?: number;
+  /** How many hours after a missed slot the run may still fire (1-168). NOT
+   *  approval-hashed: changing it never re-blocks an approved automation. */
+  catchupHours?: number;
   enabled?: boolean;
   /** `null` clears the photo (back to initials); `undefined` leaves it. */
   photo?: string | null;
@@ -1948,6 +1951,7 @@ function updateLegacyManifest(
     model: patch.model === undefined ? manifest.model : patch.model,
     effort: patch.effort === undefined ? manifest.effort : patch.effort,
     timeoutMinutes: patch.timeoutMinutes,
+    catchupHours: patch.catchupHours,
     photo: patch.photo === undefined ? manifest.photo : patch.photo,
   });
 
@@ -1962,6 +1966,9 @@ function updateLegacyManifest(
   }
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
+  }
+  if (patch.catchupHours !== undefined) {
+    fields.catchup_hours = numberOrDefault(patch.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS);
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.photo !== undefined) fields.photo = patch.photo;
@@ -2015,6 +2022,7 @@ function updateBoundAutomation(
     mode: 'sched',
     slots: (nextSchedule ?? job.schedule ?? { slots: [{ kind: 'weekly', days: 'daily', at: '09:00' }] }).slots,
     timeoutMinutes: patch.timeoutMinutes,
+    catchupHours: patch.catchupHours,
   });
 
   const identity: AgentIdentityPatchInput = {};
@@ -2028,6 +2036,9 @@ function updateBoundAutomation(
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
+  }
+  if (patch.catchupHours !== undefined) {
+    fields.catchup_hours = numberOrDefault(patch.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS);
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.review !== undefined) fields.review = patch.review;
@@ -2052,6 +2063,7 @@ function updateAgentOnlyTarget(contextRoot: string, slug: string, patch: UpdateA
     patch.days !== undefined ||
     patch.at !== undefined ||
     patch.timeoutMinutes !== undefined ||
+    patch.catchupHours !== undefined ||
     patch.enabled !== undefined ||
     patch.review !== undefined;
   if (schedulish) {

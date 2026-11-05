@@ -403,7 +403,9 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   }
 
   const durationMs = Date.now() - wallStart;
-  recordTickCompleted(now, durationMs, home);
+  // The completion moment, not the start: `now` is when the tick BEGAN, so
+  // stamping it here made "last tick completed" always equal "last tick started".
+  recordTickCompleted(new Date(now.getTime() + durationMs), durationMs, home);
 
   return { projects, missing, startedAt: now.toISOString(), durationMs };
 }
