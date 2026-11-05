@@ -99,9 +99,9 @@ function headingText(line: string, level: 2 | 3): string | null {
 }
 
 /** `---` header lines → its values (only the two the store reads). */
-function splitFrontmatter(text: string): { fields: Record<string, string>; body: string } {
+function splitFrontmatter(text: string, full = false): { fields: Record<string, string>; body: string } {
   // Only the head of the file, each line cut short: every scan below stays cheap on any input.
-  const src = text.slice(0, README_MAX).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((l) => (l.length > LINE_MAX ? l.slice(0, LINE_MAX) : l)).join('\n');
+  const src = (full ? text : text.slice(0, README_MAX)).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((l) => (l.length > LINE_MAX ? l.slice(0, LINE_MAX) : l)).join('\n');
   const m = /^---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(src);
   if (!m) return { fields: {}, body: src };
   const fields: Record<string, string> = {};
@@ -143,8 +143,13 @@ function firstSentence(p: string): string {
   return clean(m ? m[1] : p, TAGLINE_MAX + 40);
 }
 
-export function parseStoreReadme(text: string): StoreReadme {
-  const { fields, body } = splitFrontmatter(text ?? '');
+/**
+ * `full`: the publisher's own README, read to its end (the version numbering and the insert point
+ * must see a What's new that starts past 64 KB). Someone else's README (a preview, Shared Apps) is
+ * read at its head only. Every scan is bounded per line either way.
+ */
+export function parseStoreReadme(text: string, opts: { full?: boolean } = {}): StoreReadme {
+  const { fields, body } = splitFrontmatter(text ?? '', !!opts.full);
   const lines = body.split('\n');
   const sections: Record<string, string[]> = {};
   const lead: string[] = [];
@@ -209,7 +214,7 @@ export function storeReadiness(s: StoreReadme): StoreReadiness {
 /** One line for `apps validate` per missing part; empty when the store page is complete. */
 export function storeWarnings(text: string | null): string[] {
   if (text === null) return ['README.md: missing. Write it with the store skeleton (/apps): a tagline line, ## What it does, ## What\'s new'];
-  const s = parseStoreReadme(text);
+  const s = parseStoreReadme(text, { full: true });
   const out: string[] = [];
   const r = storeReadiness(s);
   if (r.missing.includes('tagline')) out.push(`README.md tagline: ${s.taglineGuessed ? 'only guessed from the first sentence' : 'missing'}. Add "tagline: <one sentence>" in the --- header at the top (up to ${TAGLINE_MAX} characters)`);
@@ -247,7 +252,7 @@ export function applyStoreEdits(text: string, edits: { name: string; tagline?: s
   let src = (text ?? '').replace(/\r\n?/g, '\n');
   if (!src.trim()) src = `# ${edits.name.replace(/[\r\n]/g, ' ').trim()}\n`;
   const tagline = edits.tagline ? clean(edits.tagline, TAGLINE_MAX + 40) : '';
-  const before = parseStoreReadme(src);
+  const before = parseStoreReadme(src, { full: true });
   if (tagline && (before.tagline !== tagline || before.taglineGuessed)) {
     const fm = /^﻿?---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(src);
     if (fm) {
@@ -260,7 +265,7 @@ export function applyStoreEdits(text: string, edits: { name: string; tagline?: s
     }
   }
   const note = edits.note ? clean(edits.note, NOTE_MAX) : '';
-  const parsed = parseStoreReadme(src);
+  const parsed = parseStoreReadme(src, { full: true });
   if (note) {
     // The first publish replaces the skeleton's unshipped "1 · <creation date>" entry: the
     // version that ships first is 1, dated the day it ships.
@@ -286,7 +291,9 @@ export function applyStoreEdits(text: string, edits: { name: string; tagline?: s
       lines.splice(at + 1, 0, '', ...entry.trimEnd().split('\n'));
       // One blank line around the new entry, found by walking the lines (no regex over the file).
       const end = at + 1 + entry.trimEnd().split('\n').length + 1;
-      while (end < lines.length && lines[end] === '' && lines[end + 1] === '') lines.splice(end, 1);
+      let extra = 0;
+      while (end + extra + 1 < lines.length && lines[end + extra] === '' && lines[end + extra + 1] === '') extra++;
+      if (extra) lines.splice(end, extra);
       if (end < lines.length && lines[end] !== '' && headingText(lines[end], 3) !== null) lines.splice(end, 0, '');
       src = lines.join('\n');
     } else {

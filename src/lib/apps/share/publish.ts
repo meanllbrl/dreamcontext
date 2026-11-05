@@ -207,7 +207,7 @@ function readmeFor(m: AppManifest): string {
 
 /** The README edits a publish carries (app-paylasim-magaza r2): the tagline field and the note. */
 export function storeReadmeFor(rec: Pick<AppRecord, 'publish'>, name: string, current: string | null, opts: { tagline?: string; note?: string }): string | null {
-  const parsed = parseStoreReadme(current ?? '');
+  const parsed = parseStoreReadme(current ?? '', { full: true });
   const note = cleanText(opts.note ?? '', 300) || (!rec.publish?.lastSha && !parsed.whatsNew.length ? 'First version.' : '');
   const tagline = cleanText(opts.tagline ?? '', TAGLINE_MAX + 40);
   if (!note && !tagline) return null;

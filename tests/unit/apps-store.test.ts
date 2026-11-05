@@ -102,7 +102,8 @@ describe('the README standard, hostile and odd input', () => {
     // and the opening paragraph's link strip.
     parseStoreReadme(`# T\n\n## Screenshots\n${'![](a'.repeat(100_000)}\n${'![](a\n'.repeat(50_000)}`);
     parseStoreReadme(`# T\n\n${'[]('.repeat(170_000)}\n`);
-    applyStoreEdits(`# T\n\n## What's new\n${'\n'.repeat(100_000)}### 1\n- a\n`, { name: 'T', note: 'n', date: '2026-11-06' });
+    applyStoreEdits(`# T\n\n## What's new\n${'\n'.repeat(500_000)}### 1\n- a\n`, { name: 'T', note: 'n', date: '2026-11-06' });
+    applyStoreEdits(`# T\n\n## What's new\n${'\n'.repeat(500_000)}`, { name: 'T', note: 'n', date: '2026-11-06' });
     expect(Date.now() - t0).toBeLessThan(1500);
   });
 
@@ -126,6 +127,13 @@ describe('the README standard, hostile and odd input', () => {
     expect(parseStoreReadme(v('### 2026-11-01\n- x\n')).whatsNew[0].version).toBe('1');
     expect(parseStoreReadme(v('### 1 · 2026-11-01\n- a\n\n### 2 · 2026-11-02\n- b\n')).whatsNew[0].version).toBe('3');
     expect(parseStoreReadme(v('### 1.4.2\n- x\n')).whatsNew[0].version).toBe('1');
+  });
+
+  it('a What\'s new that starts past 64 KB in the publisher\'s own README still numbers on from its entries', () => {
+    const big = `# A\n\n${'Long text. '.repeat(20_000)}\n\n## What's new\n\n### 7 · 2026-01-01\n- x\n`;
+    expect(big.length).toBeGreaterThan(200_000);
+    expect(parseStoreReadme(applyStoreEdits(big, { name: 'A', note: 'n', date: '2026-11-06' }), { full: true }).whatsNew[0].version).toBe('8');
+    expect(storeWarnings(big).some((w) => w.includes("What's new"))).toBe(false);
   });
 
   it('the first publish replaces the skeleton\'s unshipped entry: version 1, dated the day it ships', () => {

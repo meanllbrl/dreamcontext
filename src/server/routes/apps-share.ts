@@ -89,7 +89,7 @@ export async function handlePublishPreview(req: IncomingMessage, res: ServerResp
  */
 function publishStore(rec: AppRecord, pv: ReturnType<typeof buildPublishTree>) {
   const text = pv.sourceReadme?.toString('utf-8') ?? '';
-  const s = parseStoreReadme(text);
+  const s = parseStoreReadme(text, { full: true });
   const r = storeReadiness(s);
   return {
     tagline: s.taglineGuessed ? null : s.tagline,
