@@ -31,6 +31,23 @@ export function memberOf(superId: SuperId | null | undefined): string | null {
   return id && id !== 'main' ? id.slice(MEMBER_SUPER_PREFIX.length) : null;
 }
 
+/**
+ * Where "+ New routine" on a member's stage goes (owner 2026-11-05): the id of that member's
+ * Routines card, to land as a chip in ITS Super's composer, or null for today's form. Only when the
+ * stage on screen is that member's, the chat on screen is that member's own Super and open, and its
+ * record holds the Routines card. Main's chat, another member's, a closed one or none: null.
+ */
+export function newRoutineCardId(
+  activeSuperId: SuperId | null | undefined,
+  slug: string,
+  chat: { agent: string | null | undefined; open: boolean } | null,
+  state: Pick<SuperStateView, 'containers'> | null | undefined,
+): string | null {
+  if (!slug || memberOf(activeSuperId) !== slug) return null;
+  if (!chat || !chat.open || chat.agent !== slug) return null;
+  return state?.containers.find((c) => c.kind === 'member' && c.ref === 'routines')?.id ?? null;
+}
+
 /** Which super a drawer intent shows: a member intent its member, the Super row main, anything
  *  else nothing (the active super stays). */
 export function superIdOfIntent(intent: DrawerIntent): SuperId | null {

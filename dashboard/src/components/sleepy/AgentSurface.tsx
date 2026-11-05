@@ -102,7 +102,7 @@ import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
-import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
+import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
@@ -4607,19 +4607,39 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
    * caret in the Super Agent's composer, its icon or its picture and its title, the way a picked
    * element arrives. The send writes `@card:<id> “<title>”` where it stands, as the drop always did.
    */
-  const askAboutCard = useCallback((id: string, title: string) => {
+  /** The chip itself: false when the Super chat cannot take one (closed, gone, or not yet a
+   *  conversation), so the caller picks its own fallback. */
+  const chipCard = useCallback((id: string, title: string): boolean => {
     const cs = superChatRef.current;
-    if (!cs || cs.status === 'closed') return;
+    if (!cs || cs.status === 'closed') return false;
     const convId = cs.scratchId || cs.claudeId;
+    if (!convId) return false;
     const info = stageCardOf(id);
-    if (!convId) { cs.sendText(cardReference(id, title, cs.getModel().draft)); return; }
     addAttachments(convId, [{
       id: nextAttachmentId(), kind: 'card', name: cleanCardTitle(title) || id, text: cardMentionText(id, title),
       ...(info ? { cardKind: info.kind } : {}), ...(info?.img ? { url: info.img } : {}),
       inline: true, pending: true,
     }]);
     requestAnimationFrame(() => cs.focus());
+    return true;
   }, [stageCardOf]);
+  const askAboutCard = useCallback((id: string, title: string) => {
+    if (chipCard(id, title)) return;
+    const cs = superChatRef.current;
+    if (cs && cs.status !== 'closed') cs.sendText(cardReference(id, title, cs.getModel().draft));
+  }, [chipCard]);
+  /**
+   * "+ New routine" on a member's own stage (owner 2026-11-05): no form there. The Routines card
+   * lands in that member's Super composer as a "New routine" chip, the caret after it, and the
+   * owner says what he wants; its briefing (MEMBER_NEW_ROUTINE_LINE) has it set the routine up.
+   * False (the card opens today's form) unless this member's own Super is the chat on screen.
+   */
+  const newRoutineChip = useCallback((slug: string, title: string): boolean => {
+    const cs = superChatRef.current;
+    const chat = cs ? { agent: chatAgentFor(cs.claudeId), open: cs.status !== 'closed' } : null;
+    const card = newRoutineCardId(activeSuperIdRef.current, slug, chat, superStateRef.current);
+    return !!card && chipCard(card, title);
+  }, [chipCard]);
 
   /** A card chip in a Super message was clicked: bring the stage up and that card into view. */
   const [cardFocus, setCardFocus] = useState<string | null>(null);
@@ -6842,6 +6862,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         enabled={stageSummary?.enabled !== false}
         working={(stageSummary?.ownerWorking ?? 0) > 0 || !!stageSummary?.superOnly || (stageSummary?.pending ?? 0) > 0}
         phone={isMacPhoneSurface()}
+        onNewRoutine={(title: string) => newRoutineChip(stageMember, title)}
         onDeleted={() => { setActiveSuperId(MAIN_SUPER); setSuperView('super'); }} />
     ),
   } : undefined;

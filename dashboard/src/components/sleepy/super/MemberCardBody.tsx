@@ -34,6 +34,9 @@ export interface MemberCardBodyProps {
   phone?: boolean;
   /** The member is gone: the stage goes back to main's. */
   onDeleted: () => void;
+  /** "+ New routine" on the stage: hands the job to this member's Super as a card chip titled
+   *  `title` (owner 2026-11-05). False = no Super chat can take it: the form opens as before. */
+  onNewRoutine?: (title: string) => boolean;
 }
 
 interface DeletePlan { slug: string; title: string; global: boolean; routines: Array<{ project: string; slug: string; title: string }>; blockers: string[] }
@@ -121,7 +124,8 @@ function RoutinesCard(p: CardProps) {
           {...(readOnly ? {} : { onDelete: () => void del(r) })} />
       ))}
       {!readOnly && (
-        <button type="button" className="mcb-new" data-testid="member-routine-new" onClick={() => setCreating(true)}>
+        <button type="button" className="mcb-new" data-testid="member-routine-new"
+          onClick={() => { if (!p.onNewRoutine?.(t('superStage.member.cards.routineNewChip'))) setCreating(true); }}>
           {t('superStage.member.cards.routineNew')}
         </button>
       )}

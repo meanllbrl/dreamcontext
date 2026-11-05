@@ -106,4 +106,14 @@ describe('member cards in the window', () => {
     expect(body).toMatch(/<WindowLayer>\s*<AutomationDialog/);
     expect(body).toMatch(/<WindowLayer>\s*<AgentIdentityDialog/);
   });
+
+  it('"+ New routine" tries the Super chip first and opens the form only when it is refused', () => {
+    const body = read('MemberCardBody.tsx');
+    expect(body).toContain("onClick={() => { if (!p.onNewRoutine?.(t('superStage.member.cards.routineNewChip'))) setCreating(true); }}");
+    const surface = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/AgentSurface.tsx', import.meta.url)), 'utf8');
+    expect(surface).toContain('onNewRoutine={(title: string) => newRoutineChip(stageMember, title)}');
+    // The chip is the drop's own: the same attachment `askAboutCard` adds, never a new message shape.
+    expect(surface).toMatch(/const newRoutineChip = [\s\S]{0,400}return !!card && chipCard\(card, title\);/);
+    expect(surface).toMatch(/const askAboutCard = useCallback\(\(id: string, title: string\) => \{\s*if \(chipCard\(id, title\)\) return;/);
+  });
 });
