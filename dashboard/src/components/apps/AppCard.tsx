@@ -117,11 +117,17 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
         {(app.schedules?.length ?? 0) > 0 && <div><dt>{t('apps.schedules')}</dt><dd>{app.schedules!.length}</dd></div>}
       </dl>
       {(following || app.provenance || app.publish) && (
-        <p className="app-card__origin">
-          {following ? ts('share.card.from', { who: app.source!.owner })
-            : app.provenance ? ts('share.card.ownCopy', { repo: app.provenance.fullName })
-            : ts(app.publish!.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish!.fullName })}
-        </p>
+        <div className="app-card__origin app-card__origin--row">
+          <span>
+            {following ? ts('share.card.from', { who: app.source!.owner })
+              : app.provenance ? ts('share.card.ownCopy', { repo: app.provenance.fullName })
+              : ts(app.publish!.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish!.fullName })}
+          </span>
+          {/* Auto-update is how it follows the original: a state of this line, not an action below. */}
+          {canLaunch && following && !app.source!.public && (
+            <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
+          )}
+        </div>
       )}
       {following && app.source!.available && (
         <div className="app-card__note app-card__note--accent app-card__mcp">
@@ -209,9 +215,6 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
           {(!installed || !following) && <button type="button" className="share-link" onClick={() => setSheet('publish')}>{t('share.card.share')}</button>}
           {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
-          {following && !app.source!.public && (
-            <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
-          )}
           {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
           {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
         </div>

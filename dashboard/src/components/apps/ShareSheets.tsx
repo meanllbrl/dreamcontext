@@ -454,7 +454,7 @@ export function ConfirmSheet({ kind, slug, name, onClose, onDone }: { kind: 'det
   return (
     <Sheet title={t(`share.${kind}.title`, { name })} onClose={onClose} foot={<>
       <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
-      <button type="button" className="app-card__launch" disabled={busy} onClick={() => void go()}>{t(`share.${kind}.go`)}</button>
+      <button type="button" className={`app-card__launch${kind === 'uninstall' ? ' app-card__launch--danger' : ''}`} disabled={busy} onClick={() => void go()}>{t(`share.${kind}.go`)}</button>
     </>}>
       <p className="share-lede">{t(`share.${kind}.body`)}</p>
       {kind === 'uninstall' && <label className="share-check"><input type="checkbox" checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)} /> {t('share.uninstall.data')}</label>}

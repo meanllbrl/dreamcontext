@@ -108,9 +108,7 @@
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere; /* a name wraps, it is never cut */
 }
 
 .app-card__state {
@@ -226,9 +224,7 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere; /* a name wraps, it is never cut */
 }
 
 .apps-other__note {
@@ -311,6 +307,30 @@
 }
 
 .share-link:hover { text-decoration: underline; }
+.share-report > .share-link { align-self: flex-start; text-align: left; }
+
+/* The browser's own blue never shows: every tick and choice on these screens is the accent. */
+.share-sheet input[type='radio'],
+.share-sheet input[type='checkbox'],
+.share-link--check input { accent-color: var(--color-accent); }
+
+/* A destructive confirm is never the filled accent (the Settings window's danger grammar). */
+.app-card__launch--danger {
+  background: transparent;
+  color: var(--color-error-ink);
+  border: 1px solid color-mix(in srgb, var(--color-error-ink) 45%, var(--color-border));
+}
+.app-card__launch--danger:hover:not(:disabled) { filter: none; border-color: var(--color-error-ink); }
+
+.apps-section .apps-others { margin-top: 0; }
+
+.app-card__origin--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  flex-wrap: wrap;
+}
 
 .share-link--check {
   display: inline-flex;
@@ -402,12 +422,15 @@
 .share-lede { font-size: var(--font-size-sm); color: var(--color-text); margin: 0; overflow-wrap: anywhere; }
 .share-muted { font-size: var(--font-size-xs); color: var(--color-text-secondary); margin: 0; overflow-wrap: anywhere; }
 
+.share-warning strong { font-weight: var(--font-weight-semibold); }
+
 .share-warning {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  /* The tint says "careful"; the words stay body ink, only the first sentence bold. */
   background: var(--color-warning-subtle);
-  color: var(--color-warning-ink);
+  color: var(--color-text);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: var(--font-size-sm);
@@ -463,9 +486,7 @@
 .share-field--grow { flex: 1; }
 
 .share-report {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
+  /* A section, not a box inside the dialog: its heading carries the hierarchy. */
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
