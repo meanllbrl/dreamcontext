@@ -24,7 +24,7 @@ export interface AppRow {
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
   /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
   origin?: 'own' | 'installed';
-  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null } | null;
+  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastUpdate?: { to: string; at: string; auto: boolean } | null } | null;
   provenance?: { fullName: string } | null;
   publish?: { fullName: string; public: boolean; at: string } | null;
   configCount?: number;
@@ -59,6 +59,10 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
   const ts = useShareT();
   const installed = app.origin === 'installed';
   const following = installed && !!app.source;
+  const undoUpdate = async () => {
+    setErr(null);
+    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); }
+  };
   const toggleAuto = async (on: boolean) => {
     setErr(null);
     try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setErr((e as Error).message); }
@@ -121,6 +125,12 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
         <div className="app-card__note app-card__note--accent app-card__mcp">
           <span>{t('share.card.updateReady')}</span>
           {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('update')}>{t('share.card.update')}</button>}
+        </div>
+      )}
+      {following && app.source!.lastUpdate && !app.source!.available && (
+        <div className="app-card__note app-card__note--warn app-card__mcp">
+          <span>{ts(app.source!.lastUpdate.auto ? 'share.card.updatedAuto' : 'share.card.updated', { when: new Date(app.source!.lastUpdate.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</span>
+          {canLaunch && <button type="button" className="app-card__stop" onClick={() => void undoUpdate()}>{t('share.update.undo')}</button>}
         </div>
       )}
       {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
@@ -191,7 +201,7 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
       </div>
       {canLaunch && (
         <div className="app-card__share">
-          {!installed && <button type="button" className="share-link" onClick={() => setSheet('publish')}>{t('share.card.share')}</button>}
+          {(!installed || !following) && <button type="button" className="share-link" onClick={() => setSheet('publish')}>{t('share.card.share')}</button>}
           {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
           {following && !app.source!.public && (
@@ -201,7 +211,7 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
           {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
         </div>
       )}
-      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
+      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} publishedPublic={app.publish?.public} onClose={() => setSheet(null)} onDone={onChanged} />}
       {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
       {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={onChanged} onDetach={() => setSheet('detach')} />}
       {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}

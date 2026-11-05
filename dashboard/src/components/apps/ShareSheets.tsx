@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -21,19 +21,42 @@ export function useShareT(): (key: string, vars?: Record<string, string>) => str
   return (key, vars) => (vars ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v), t(key)) : t(key));
 }
 
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Sheet({ title, onClose, children, foot }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode }) {
+  const t = useShareT();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  // Focus moves in on open and back to the opener on close (the ObjectionDialog pattern).
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [onClose]);
+    const opener = document.activeElement as HTMLElement | null;
+    const first = ref.current?.querySelector<HTMLElement>('.share-sheet__body ' + FOCUSABLE.split(', ').join(', .share-sheet__body ')) ?? ref.current?.querySelector<HTMLElement>(FOCUSABLE);
+    first?.focus();
+    return () => { opener?.focus?.(); };
+  }, []);
+  // Esc and Tab belong to the sheet: capture phase, so a drawer's own Esc does not fire too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close.current(); return; }
+      if (e.key !== 'Tab' || !ref.current) return;
+      const all = Array.from(ref.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (!all.length) return;
+      const active = document.activeElement as HTMLElement | null;
+      const inside = !!active && ref.current.contains(active);
+      if (e.shiftKey && (!inside || active === all[0])) { e.preventDefault(); all[all.length - 1].focus(); }
+      else if (!e.shiftKey && (!inside || active === all[all.length - 1])) { e.preventDefault(); all[0].focus(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   // On body: a page frame with a transform would otherwise hold the fixed backdrop inside it.
   return createPortal(
     <div className="share-sheet__backdrop" onClick={onClose}>
-      <div className="share-sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div className="share-sheet" ref={ref} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="share-sheet__head">
           <h2>{title}</h2>
-          <button type="button" className="share-sheet__x" aria-label="Close" onClick={onClose}>×</button>
+          <button type="button" className="share-sheet__x" aria-label={t('share.close')} onClick={onClose}>×</button>
         </header>
         <div className="share-sheet__body">{children}</div>
         {foot && <footer className="share-sheet__foot">{foot}</footer>}
@@ -56,10 +79,11 @@ function FileList({ title, items }: { title: string; items: string[] }) {
 
 // ─── Share (publish) ────────────────────────────────────────────────────────────────
 
-export function PublishSheet({ slug, name, onClose, onDone }: { slug: string; name: string; onClose: () => void; onDone: () => void }) {
+export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: { slug: string; name: string; publishedPublic?: boolean; onClose: () => void; onDone: () => void }) {
   const api = useApi();
   const t = useShareT();
-  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
+  // A public app stays public: the sheet starts where the app already is.
+  const [visibility, setVisibility] = useState<'private' | 'public'>(publishedPublic ? 'public' : 'private');
   const [invite, setInvite] = useState('');
   const [note, setNote] = useState('');
   const [confirmName, setConfirmName] = useState('');
@@ -67,11 +91,14 @@ export function PublishSheet({ slug, name, onClose, onDone }: { slug: string; na
   const [pv, setPv] = useState<{ login: string | null; signedIn: boolean; fullName: string | null; license: string; report: GateReport; published: { fullName: string } | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<{ fullName: string; url: string; invited: string[] } | null>(null);
+  const [done, setDone] = useState<{ fullName: string; url: string; invited: string[]; inviteFailed?: string[] } | null>(null);
 
   useEffect(() => {
-    setPv(null); setErr(null);
-    api.get<typeof pv>(`/apps/${encodeURIComponent(slug)}/publish/preview?visibility=${visibility}`).then(setPv, (e) => setErr(errText(e)));
+    // Only the newest answer counts: a slow report for the other visibility never lands here.
+    let live = true;
+    setPv(null); setErr(null); setApproved(new Set());
+    api.get<typeof pv>(`/apps/${encodeURIComponent(slug)}/publish/preview?visibility=${visibility}`).then((v) => { if (live) setPv(v); }, (e) => { if (live) setErr(errText(e)); });
+    return () => { live = false; };
   }, [api, slug, visibility]);
 
   const r = pv?.report;
@@ -86,7 +113,7 @@ export function PublishSheet({ slug, name, onClose, onDone }: { slug: string; na
   const publish = async () => {
     setBusy(true); setErr(null);
     try {
-      const out = await api.ownerPost<{ fullName: string; url: string; invited: string[] }>(`/apps/${encodeURIComponent(slug)}/publish`, {
+      const out = await api.ownerPost<{ fullName: string; url: string; invited: string[]; inviteFailed?: string[] }>(`/apps/${encodeURIComponent(slug)}/publish`, {
         visibility, invite: invite.split(/[\s,]+/).filter(Boolean), approvals: [...approved], note, confirmName,
       });
       setDone(out); onDone();
@@ -98,12 +125,13 @@ export function PublishSheet({ slug, name, onClose, onDone }: { slug: string; na
       <Sheet title={t('share.publish.doneTitle')} onClose={onClose} foot={<button type="button" className="app-card__launch" onClick={onClose}>{t('share.close')}</button>}>
         <p className="share-lede">{t('share.publish.done', { repo: done.fullName })}</p>
         {done.invited.length > 0 && <p className="share-muted">{t('share.publish.invited', { who: done.invited.join(', ') })}</p>}
+        {(done.inviteFailed?.length ?? 0) > 0 && <p className="app-card__note app-card__note--warn">{t('share.publish.inviteFailed', { who: done.inviteFailed!.join(', ') })}</p>}
       </Sheet>
     );
   }
 
   return (
-    <Sheet title={t('share.publish.title', { name })} onClose={onClose} foot={
+    <Sheet title={t('share.publish.title', { name })} onClose={onClose} foot={!pv ? undefined :
       <>
         {why && <span className="share-why">{why}</span>}
         <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
@@ -174,9 +202,14 @@ function ConfigInputs({ fields, values, setValues }: { fields: ConfigField[]; va
               {(f.choices ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           ) : (
-            <input type={f.type === 'secret' ? 'password' : f.type === 'number' ? 'number' : 'text'} autoComplete="off" value={values[f.key] ?? ''}
-              placeholder={f.type === 'secret' && f.set ? t('share.config.secretSet') : f.help ?? ''}
-              onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
+            f.type === 'secret' ? (
+              // Uncontrolled: a typed key never becomes the input's value attribute in the DOM.
+              <input type="password" autoComplete="off" placeholder={f.set ? t('share.config.secretSet') : f.help ?? ''}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
+            ) : (
+              <input type={f.type === 'number' ? 'number' : 'text'} autoComplete="off" value={values[f.key] ?? ''} placeholder={f.help ?? ''}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
+            )
           )}
         </label>
       ))}
@@ -206,7 +239,8 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   const [err, setErr] = useState<string | null>(null);
 
   const preview = async (r = ref) => {
-    setBusy('preview'); setErr(null); setPv(null);
+    // A new link starts from nothing: no tick, no key typed for another app.
+    setBusy('preview'); setErr(null); setPv(null); setValues({}); setUnderstood(false);
     try { setPv(await api.post<Preview>('/apps/install/preview', { ref: r })); } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
   useEffect(() => { if (initialRef) void preview(initialRef); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -234,7 +268,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
     ) : undefined}>
       {!initialRef && (
         <form className="share-row" onSubmit={(e) => { e.preventDefault(); void preview(); }}>
-          <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="https://github.com/owner/repo" autoFocus /></label>
+          <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => { setRef(e.target.value); setPv(null); setValues({}); setUnderstood(false); }} placeholder="https://github.com/owner/repo" autoFocus /></label>
           <button type="submit" className="app-card__stop" disabled={!ref.trim() || busy !== null}>{busy === 'preview' ? t('share.checking') : t('share.install.look')}</button>
         </form>
       )}
@@ -428,8 +462,11 @@ export function SharedWithYou({ onInstall, onChanged }: { onInstall: (fullName: 
   const [err, setErr] = useState<string | null>(null);
   const load = useMemo(() => (refresh = false) => api.get<SharedList>(`/apps/shared${refresh ? '?refresh=1' : ''}`).then((l) => { setList(l); setErr(null); }, (e) => setErr(errText(e))), [api]);
   useEffect(() => { void load(); }, [load]);
+  const [accepting, setAccepting] = useState<string | null>(null);
   const accept = async (id: string) => {
-    try { await api.ownerPost('/apps/shared/accept', { id }); await load(true); onChanged(); } catch (e) { setErr(errText(e)); }
+    if (accepting) return;
+    setAccepting(id);
+    try { await api.ownerPost('/apps/shared/accept', { id }); await load(true); onChanged(); } catch (e) { setErr(errText(e)); } finally { setAccepting(null); }
   };
   return (
     <section className="apps-section" aria-labelledby="apps-shared-h">
@@ -447,7 +484,7 @@ export function SharedWithYou({ onInstall, onChanged }: { onInstall: (fullName: 
           {list.invitations.map((i) => (
             <li key={i.id} className="apps-other">
               <div className="apps-other__text"><span className="apps-other__name">{i.fullName}</span><span className="apps-other__note">{t('share.shared.invited', { who: i.inviter })}</span></div>
-              <button type="button" className="apps-other__btn" onClick={() => void accept(i.id)}>{t('share.shared.accept')}</button>
+              <button type="button" className="apps-other__btn" disabled={accepting !== null} onClick={() => void accept(i.id)}>{t('share.shared.accept')}</button>
             </li>
           ))}
           {list.shared.map((s) => (
@@ -467,6 +504,7 @@ export function TrashList({ onChanged }: { onChanged: () => void }) {
   const t = useShareT();
   const [items, setItems] = useState<Array<{ id: string; name: string; fullName: string | null }>>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const load = useMemo(() => () => api.get<{ trash: typeof items }>('/apps/trash').then((r) => setItems(r.trash), () => setItems([])), [api]);
   useEffect(() => { void load(); }, [load]);
   if (!items.length) return null;
@@ -477,7 +515,7 @@ export function TrashList({ onChanged }: { onChanged: () => void }) {
         {items.map((i) => (
           <li key={i.id} className="apps-other">
             <div className="apps-other__text"><span className="apps-other__name">{i.name}</span>{i.fullName && <span className="apps-other__note">{i.fullName}</span>}</div>
-            <button type="button" className="apps-other__btn" onClick={async () => { try { await api.ownerPost('/apps/trash/restore', { id: i.id }); await load(); onChanged(); } catch (e) { setErr(errText(e)); } }}>{t('share.trash.restore')}</button>
+            <button type="button" className="apps-other__btn" disabled={restoring} onClick={async () => { setRestoring(true); try { await api.ownerPost('/apps/trash/restore', { id: i.id }); await load(); onChanged(); } catch (e) { setErr(errText(e)); } finally { setRestoring(false); } }}>{t('share.trash.restore')}</button>
           </li>
         ))}
       </ul>
