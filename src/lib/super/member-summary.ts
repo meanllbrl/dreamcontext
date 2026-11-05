@@ -22,9 +22,15 @@ function runsNow(sid: string): boolean {
   return a === 'working' || a === 'starting' || a === 'asking' || a === 'stale';
 }
 
-/** The member's OWN session runs a turn for the owner right now (plan r4 D7), never main's work. */
-function ownerTurnRuns(sid: string): boolean {
-  return runsNow(sid) && !isMainWork(memberTurnOrigin(sid));
+/** The member's OWN session runs a turn for the owner right now (plan r4 D7), never main's work.
+ *  A session still `starting` (spawned or resumed, no frame yet) has no turn: every member the
+ *  window attaches at once would otherwise flash "working" until its first frame (owner
+ *  2026-11-05). The roster counts `starting` as idle for the same reason. */
+export function ownerTurnRuns(sid: string): boolean {
+  const e = getChat(sid);
+  if (!e) return false;
+  const a = activityOf(e);
+  return (a === 'working' || a === 'asking' || a === 'stale') && !isMainWork(memberTurnOrigin(sid));
 }
 
 /**

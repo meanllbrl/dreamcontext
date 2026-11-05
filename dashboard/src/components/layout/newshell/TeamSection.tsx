@@ -3,7 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { ProjectChipBubbles } from '../ProjectTabs';
 import { ekipAsking, ekipCount, ekipPopOuts, ekipWorkingCount, type EkipMember } from '../../aiteam/teamModel';
-import { TeamFaces } from './TeamList';
+import { TeamFaces, photoVaultOf } from './TeamList';
 import './TeamList.css';
 
 /**
@@ -48,17 +48,33 @@ export function MemberMark({ m }: { m: EkipMember }) {
   }
   if (!m.superOnly && m.asking) return <span className="ns-team-chip" data-kind="question" data-testid="team-mark-question" aria-label={t('drawer.team.asks')}>?</span>;
   if (!m.superOnly && m.unread > 0) return <span className="ns-team-chip" data-kind="unread" data-testid="team-mark-unread">{m.unread}</span>;
-  if (m.superOnly) return <span className="ns-team-tag" data-testid="team-mark-super">{t('drawer.team.superOnly')}</span>;
+  // "Super için" is no end mark: it sits on the face (`SuperBadge`), so the name keeps the row.
   return null;
 }
 
-function MemberRow({ m, onOpen, popout = false, current = false }: { m: EkipMember; onOpen(m: EkipMember): void; popout?: boolean; current?: boolean }) {
+/** Works for the Super only: a small glyph on the member's face corner, never a word at the row's
+ *  end that takes the name's room (owner 2026-11-05: "Pacioli" read "P..."). Its own channel
+ *  (shape on the face), apart from the end mark; the tooltip and label say "Super için". */
+function SuperBadge({ m }: { m: EkipMember }) {
+  const { t } = useI18n();
+  if (!m.enabled || !m.superOnly || m.approval) return null;
+  return (
+    <span className="ns-team-super" data-testid="team-mark-super" role="img" aria-label={t('drawer.team.superOnly')} title={t('drawer.team.superOnly')}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
+    </span>
+  );
+}
+
+function MemberRow({ m, vault, onOpen, popout = false, current = false }: { m: EkipMember; vault?: string | null; onOpen(m: EkipMember): void; popout?: boolean; current?: boolean }) {
   return (
     <li className="ns-team-mrow-li">
       <button type="button" className={`ns-team-mrow${popout ? ' is-pop' : ''}${current ? ' is-sel' : ''}`} aria-current={current ? 'page' : undefined} data-testid={popout ? 'team-popout' : 'team-list-member'} data-slug={m.slug}
         data-off={m.enabled ? undefined : 'true'} data-asking={m.enabled && m.asking && !m.superOnly ? 'true' : undefined}
         onClick={() => onOpen(m)}>
-        <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={18} />
+        <span className="ns-team-mface">
+          <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} face={m.face ?? null} size={18} vault={photoVaultOf(m, vault)} />
+          <SuperBadge m={m} />
+        </span>
         <span className="ns-team-mname">{m.title}</span>
         <MemberMark m={m} />
       </button>
@@ -131,7 +147,7 @@ export function TeamSection(p: TeamSectionProps) {
         onClick={() => (empty ? p.onManage?.() : toggle())}
         onKeyDown={(e) => { if (e.key === 'Escape' && open) { e.preventDefault(); toggle(false); } else if (e.key === 'ArrowDown' && open) onListKey(e); }}>
         <svg className={`ns-team-chev${open && !empty ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>
-        {empty ? <span className="ns-team-faces" aria-hidden="true"><span className="ns-team-face ns-team-face--empty" data-testid="team-empty-slot" /></span> : <TeamFaces members={p.members} />}
+        {empty ? <span className="ns-team-faces" aria-hidden="true"><span className="ns-team-face ns-team-face--empty" data-testid="team-empty-slot" /></span> : <TeamFaces members={p.members} vault={p.vault} />}
         <span className="ns-team-label">{p.label}</span>
         {working > 0
           ? <span data-testid="team-row-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
@@ -140,8 +156,8 @@ export function TeamSection(p: TeamSectionProps) {
 
       {!open && (pop.shown.length > 0 || foldedCurrent) && (
         <ul className="ns-team-mlist" data-testid="team-popouts">
-          {foldedCurrent && <MemberRow key={`cur-${foldedCurrent.slug}`} m={foldedCurrent} onOpen={p.onOpen} current />}
-          {pop.shown.filter((m) => m.slug !== p.openSlug).map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} popout />)}
+          {foldedCurrent && <MemberRow key={`cur-${foldedCurrent.slug}`} m={foldedCurrent} vault={p.vault} onOpen={p.onOpen} current />}
+          {pop.shown.filter((m) => m.slug !== p.openSlug).map((m) => <MemberRow key={m.slug} m={m} vault={p.vault} onOpen={p.onOpen} popout />)}
           {pop.more > 0 && (
             <li className="ns-team-mrow-li">
               <button type="button" className="ns-team-more" data-testid="team-popout-more" onClick={() => toggle(true)}>
@@ -162,7 +178,7 @@ export function TeamSection(p: TeamSectionProps) {
           )}
           <ul ref={listRef} className={`ns-team-mlist${boxed ? ' is-box' : ''}`} data-testid={p.kind === 'global' ? 'global-team-list' : 'team-list'}
             data-boxed={boxed ? 'true' : undefined} style={boxed ? { maxHeight: `calc(${TEAM_BOX_ROWS} * var(--ns-team-mrow-h))` } : undefined}>
-            {shown.map((m) => <MemberRow key={m.slug} m={m} onOpen={p.onOpen} current={m.slug === p.openSlug} />)}
+            {shown.map((m) => <MemberRow key={m.slug} m={m} vault={p.vault} onOpen={p.onOpen} current={m.slug === p.openSlug} />)}
             {shown.length === 0 && <li className="ns-team-empty">{t('drawer.team.noMatch')}</li>}
           </ul>
           {p.onManage && (

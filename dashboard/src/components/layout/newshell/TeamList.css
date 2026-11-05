@@ -153,6 +153,23 @@
   color: var(--color-text-secondary);
 }
 
+/* "For Super": a small glyph on the face's corner, never a word that takes the name's room
+   (owner 2026-11-05); its tooltip and label say it. A plain fact, not an alert: secondary text
+   colour on a disc of the drawer's own surface, so it reads on a photo and on a figure. */
+.ns-team-mface { position: relative; flex: none; display: inline-flex; }
+.ns-team-super {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: inline-grid;
+  place-items: center;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+.ns-team-super svg { width: 9px; height: 9px; fill: currentColor; }
 .ns-team-tag {
   flex: none;
   padding: 0 var(--space-2);

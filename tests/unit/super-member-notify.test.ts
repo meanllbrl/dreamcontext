@@ -29,7 +29,7 @@ import { SUPER_STATE_REL, resetSuperIndex, superRecordPath } from '../../src/lib
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, memberTurnOrigin, startSuperInbox, superOwnerSpoke } from '../../src/lib/super/inbox.js';
 import { applyReadMarks, markSeen, noteReply, parseReadPatch, readReadMarks, sanitizeReadMarks, unseenReplies } from '../../src/lib/super/read-marks.js';
-import { memberSummaries, summarizeMember } from '../../src/lib/super/member-summary.js';
+import { memberSummaries, ownerTurnRuns, summarizeMember } from '../../src/lib/super/member-summary.js';
 import { createAgent } from '../../src/lib/agents/store.js';
 import { PushNotifier, pushFor } from '../../src/lib/handsfree/mac/push-notifier.js';
 import { handleSuperReadPost } from '../../src/server/routes/super-read.js';
@@ -159,6 +159,17 @@ describe('a member\'s own reply to the owner', () => {
     expect(summarizeMember('rota', s, facts, () => false, null, () => true).ownerWorking).toBe(1);
     expect(summarizeMember('rota', s, facts, () => false, null, () => false).ownerWorking).toBe(0);
     expect(summarizeMember('rota', s, facts, () => false, { since: 0, read: [], replies: [5, 9], seenAt: 6 }, () => false).unread).toBe(1);
+  });
+
+  it('a member session still starting (spawned, no frame yet) is not working; its turn is', () => {
+    const h = reg(ROTA);
+    expect(ownerTurnRuns(ROTA)).toBe(false);
+    const s = { ...emptySuperState(), session: ROTA, enabled: true } as SuperState;
+    const facts = { global: false, enabled: true, approval: false };
+    expect(summarizeMember('rota', s, facts).ownerWorking).toBe(0);
+    h.userSent('plan it');
+    expect(ownerTurnRuns(ROTA)).toBe(true);
+    expect(summarizeMember('rota', s, facts).ownerWorking).toBe(1);
   });
 });
 
