@@ -213,7 +213,7 @@ try {
       await shot(page, `1-yayin-ekrani-${w}`);
       if (w === 1440) {
         await page.getByRole('button', { name: 'Publish', exact: true }).click();
-        check(await seen(page, 'is on GitHub'), 'publish: no "up to date" after Publish');
+        check(await seen(page, 'is on GitHub'), 'publish: no "is on GitHub" after Publish');
         await shot(page, '1b-yayinlandi-1440');
       }
       await context.close();
