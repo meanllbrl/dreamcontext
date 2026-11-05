@@ -397,9 +397,12 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * legend. Actual 15,047.
    * 2026-11-03: +46 for the run card's one-line rule said plainly (Gemini and Codex both wrote
    * `"command":"ls\npwd"`, a card the chat drops). Merged in 0.40.5 with the rule above: actual 15,093 (to be checked); still under 15100.
+   * 2026-11-06: -> 15300, a RAISE for +184, a "## Scripts" section (owner 2026-11-05: a Bypass
+   * chat still asked him for a heredoc script, Claude Code's own parse check, and hands-free he
+   * could not answer). Written to a file, the same script asks nothing. Actual 15,277.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15100);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15300);
   });
 
   /**
@@ -410,7 +413,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15093)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15277)).toBeLessThanOrEqual(20);
   });
 
   /**

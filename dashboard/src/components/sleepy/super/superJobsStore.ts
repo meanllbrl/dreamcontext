@@ -1,3 +1,4 @@
+import type { PhonePermission } from './usePhoneSuperQuestions';
 import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
@@ -92,7 +93,7 @@ export interface SuperRemoteQuestions {
   answer: (item: SuperQueueItem, body: { picked: Record<string, string>; notes?: Record<string, string> } | { unclear: string }) => Promise<{ ok: boolean; retry: boolean }>;
   /** A child's permission that waits for the owner: its tool and command, as the server read
    *  them from the child (null: not a permission, or gone). */
-  permissionOf?: (itemId: string) => { tool: string; text: string } | null;
+  permissionOf?: (itemId: string) => PhonePermission | null;
   /** The owner's Allow or Deny on it, through the Mac window (`/api/agent/super-permission`). */
   answerPermission?: (item: SuperQueueItem, choice: 'allow' | 'deny') => Promise<{ ok: boolean; retry: boolean; error?: string }>;
 }

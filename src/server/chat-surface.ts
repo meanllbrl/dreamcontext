@@ -331,6 +331,14 @@ const BRIEFING_NATIVE_TOOLS = `## Claude Code's tools vs dreamcontext
 
 No \`dreamcontext window\` (a card, the Assistant): answer a plan request in prose. In a Chat tab with no \`# Mode:\` in force (system prompt or a later mode note): say Plan mode does this and add an \`ask\` button whose text, in the user's language, asks to switch; when they send it, run \`dreamcontext window mode plan\`. Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain, never Claude's own memory files.`;
 
+/** A script inlined into Bash (owner 2026-11-05, Bypass chat): a quoted heredoc holding a
+ *  Playwright `p.$$(".phone")` made Claude Code 2.1.318 ask him even in Bypass ("Dangerous rm
+ *  operation not ruled out — the shell may read this command differently than it was parsed",
+ *  a `safetyCheck` no rule or Bypass skips). A script written to a file and run asks nothing. */
+const BRIEFING_SHELL = `## Scripts
+
+A script over a line or two goes into a file (Write tool), then Bash runs it; never a heredoc or \`python3 -c\`: text Claude Code cannot parse asks the user even in Bypass.`;
+
 /** A dictated message the agent cannot read (task sesli-giris-bozuk…, owner 2026-10-24): retry
  *  the SAME audio once, then ask. The block is server-written from a bound take (agent-chat.ts). */
 const BRIEFING_VOICE_TAKE = `## A dictated message
@@ -351,6 +359,8 @@ ${BRIEFING_REST}
 ${BRIEFING_WINDOW}
 
 ${BRIEFING_NATIVE_TOOLS}
+
+${BRIEFING_SHELL}
 
 ${BRIEFING_VOICE_TAKE}
 

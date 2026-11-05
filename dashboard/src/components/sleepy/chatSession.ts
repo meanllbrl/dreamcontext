@@ -183,6 +183,11 @@ export interface PendingPermission {
   description?: string;
   suggestions?: unknown[];
   toolUseId?: string;
+  /** The CLI's own reason for asking (`decision_reason`) and its kind (`decision_reason_type`). */
+  decisionReason?: string;
+  decisionReasonType?: string;
+  /** The CLI refuses an "always allow" for this request (`suppress_always_allow_rule`). */
+  suppressAlwaysAllow?: boolean;
 }
 export interface PendingQuestion {
   kind: 'question';
@@ -2086,7 +2091,9 @@ export function createChatSession(
         // third interactive shape — one this parser didn't recognize — and it is exempt for
         // the same reason they are: the CLI asked for a person, so a remembered click on an
         // earlier prompt for the same tool name must not answer on their behalf.
-        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction) {
+        // Nor a request the CLI marked `suppress_always_allow_rule` (a safety check it runs even
+        // in Bypass): an earlier tick on another Bash card must not answer it unseen.
+        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction && !ev.suppressAlwaysAllow) {
           answer(ev.requestId, { behavior: 'allow', updatedInput: ev.input });
           return;
         }
@@ -2094,6 +2101,9 @@ export function createChatSession(
         const entry: PendingPermission = {
           kind: 'permission', requestId: ev.requestId, toolName: ev.toolName, displayName: ev.displayName,
           input: ev.input, description: ev.description, suggestions: ev.suggestions, toolUseId: ev.toolUseId,
+          ...(ev.decisionReason ? { decisionReason: ev.decisionReason } : {}),
+          ...(ev.decisionReasonType ? { decisionReasonType: ev.decisionReasonType } : {}),
+          ...(ev.suppressAlwaysAllow ? { suppressAlwaysAllow: true } : {}),
         };
         conv = { ...conv, pending: [...pending, entry] };
         session.asking = conv.pending.length > 0;

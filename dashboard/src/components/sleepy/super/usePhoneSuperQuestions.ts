@@ -34,9 +34,11 @@ export interface PhoneSuperQuestionWire {
   ownerText?: string;
   createdAt: number;
   card: SuperAskSpec | null;
-  /** A permission that waits for the owner: its tool and command (plain text, never HTML). */
-  permission?: { tool: string; text: string };
+  /** A permission that waits for the owner: its tool and command (plain text, never HTML), the
+   *  agent's one-line description and the CLI's own reason for asking. */
+  permission?: PhonePermission;
 }
+export interface PhonePermission { tool: string; text: string; description?: string; reason?: string; reasonType?: string }
 export interface PhoneSuperQuestionsWire { session: string | null; questions: PhoneSuperQuestionWire[] }
 
 interface Api {
@@ -54,10 +56,10 @@ export function retryableAnswerError(error: string | undefined): boolean {
 
 /** The wire as the cards read it: queue items (an `ask` carries its spec) and each child
  *  question's card. Pure. */
-export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: SuperQueueItem[]; cards: Map<string, SuperAskSpec | null>; permissions: Map<string, { tool: string; text: string }>; key: string } {
+export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: SuperQueueItem[]; cards: Map<string, SuperAskSpec | null>; permissions: Map<string, PhonePermission>; key: string } {
   const open: SuperQueueItem[] = [];
   const cards = new Map<string, SuperAskSpec | null>();
-  const permissions = new Map<string, { tool: string; text: string }>();
+  const permissions = new Map<string, PhonePermission>();
   for (const q of wire.questions ?? []) {
     if (!q || typeof q.id !== 'string') continue;
     if (q.kind === 'permission') {
@@ -67,7 +69,14 @@ export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: Super
         id: q.id, sessionId: q.sessionId, kind: 'permission', state: 'escalated', createdAt: q.createdAt, requestId: q.requestId,
         ...(q.ownerText ? { ownerText: q.ownerText } : {}),
       });
-      permissions.set(q.id, { tool: q.permission.tool, text: q.permission.text });
+      const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+      const description = str(q.permission.description);
+      const reason = str(q.permission.reason);
+      const reasonType = str(q.permission.reasonType);
+      permissions.set(q.id, {
+        tool: q.permission.tool, text: q.permission.text,
+        ...(description ? { description } : {}), ...(reason ? { reason } : {}), ...(reasonType ? { reasonType } : {}),
+      });
       continue;
     }
     if (q.kind !== 'ask' && q.kind !== 'question') continue;

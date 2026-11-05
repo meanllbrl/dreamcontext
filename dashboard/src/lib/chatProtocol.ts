@@ -343,7 +343,7 @@ export type ChatEvent =
    *  nonetheless carried NEITHER a plan nor a single parseable question — the answerable
    *  fallback (see {@link fromControlRequest}). It is what tells the session never to
    *  auto-allow this one from "always allow this session": the CLI asked for a person. */
-  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean }
+  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean; decisionReason?: string; decisionReasonType?: string; suppressAlwaysAllow?: boolean }
   /** `title` is the one-line context the card leads with; `source` is `metadata.source`
    *  (`"swipe"` asks for the swipe deck); `input` is the request verbatim, echoed back on
    *  answer so nothing the parser did not model is lost on the way to the tool. */
@@ -1064,6 +1064,12 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
     suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : undefined,
     toolUseId: str(request.tool_use_id),
     requiresInteraction: interactive || undefined,
+    // Why the CLI asks, in its own words (2.1.318: `safetyCheck` + "Dangerous rm operation not
+    // ruled out…" for a command it could not parse). `suppress_always_allow_rule`: the CLI will
+    // not let a remembered "always allow" answer this one, so neither may the session.
+    decisionReason: str(request.decision_reason),
+    decisionReasonType: str(request.decision_reason_type),
+    suppressAlwaysAllow: bool(request.suppress_always_allow_rule) || undefined,
   };
 }
 

@@ -47,9 +47,12 @@ export interface PhoneSuperQuestion {
   createdAt: number;
   card: SuperAskSpec | null;
   /** A permission that waits for the owner: the tool and the registry's capped command/path
-   *  text. This response travels only to the signed-in phone. */
-  permission?: { tool: string; text: string };
+   *  text, the agent's one-line description and the CLI's own reason for asking. This response
+   *  travels only to the signed-in phone. */
+  permission?: PhonePermission;
 }
+
+export interface PhonePermission { tool: string; text: string; description?: string; reason?: string; reasonType?: string }
 
 export interface PhoneSuperQuestions {
   /** The super session (its pin id), or null when the project is not handed over. */
@@ -85,6 +88,19 @@ export function ownerPermissionOpen(item: SuperQueueItem): boolean {
   return item.kind === 'permission' && !item.toSuper && item.state !== 'done' && !!item.requestId;
 }
 
+/**
+ * A permission the phone draws: the owner's, AND a Bypass child's the Super decides first
+ * (`toSuper`). Owner 2026-11-05: in hands-free a child's permission never reached the phone,
+ * because a `toSuper` one is nobody's card for up to SUPER_PERMISSION_GRACE_MS, and the Super
+ * that was asking HIM a question meanwhile never got the event. The Mac draws it in the child's
+ * own tab from the first second; the phone now does too. Whoever answers first wins: the other
+ * side's answer finds the request gone (`stale_request`). It stays out of the push and the
+ * waiting rows (phone-mirror.ts) until it is his alone, so the Super's grace still means quiet.
+ */
+export function phonePermissionOpen(item: SuperQueueItem): boolean {
+  return item.kind === 'permission' && item.state !== 'done' && !!item.requestId;
+}
+
 /** What the phone may draw, from the record and the live registry. Pure over its inputs. */
 export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session' | 'queue' | 'children'>, questionsOf: (item: SuperQueueItem) => RegistryQuestion[] | null | 'gone' = (item) => {
   const qs = childQuestions(item);
@@ -95,7 +111,7 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
     // A child's question is his from birth (`direct`), not only once the Super escalated it.
-    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q) || ownerPermissionOpen(q))
+    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q) || phonePermissionOpen(q))
     .sort((a, b) => a.createdAt - b.createdAt);
   const questions: PhoneSuperQuestion[] = [];
   for (const q of open) {
@@ -106,7 +122,17 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
     if (q.kind === 'permission') {
       // Hands-free: a permission that waits for the owner reaches his phone with Allow/Deny.
       const pq = permissionOf(q);
-      if (pq) questions.push({ ...base, card: null, permission: { tool: pq.toolName, text: pq.text } });
+      if (pq) {
+        questions.push({
+          ...base, card: null,
+          permission: {
+            tool: pq.toolName, text: pq.text,
+            ...(pq.description ? { description: pq.description } : {}),
+            ...(pq.reason ? { reason: pq.reason } : {}),
+            ...(pq.reasonType ? { reasonType: pq.reasonType } : {}),
+          },
+        });
+      }
       continue;
     }
     if (q.kind === 'ask') {
@@ -144,8 +170,11 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
   }, (item) => {
     if (!ownChild(state, vault, item)) return null;
     const pq = childPermission(item);
-    // The command text goes to the signed-in phone only: the laptop answers in the child's tab.
-    return pq && !isPhoneSocket(req) ? { ...pq, text: '' } : pq;
+    // The command text (and what describes it) goes to the signed-in phone only: the laptop
+    // answers in the child's tab.
+    if (!pq || isPhoneSocket(req)) return pq;
+    const { description: _d, reason: _r, ...rest } = pq;
+    return { ...rest, text: '' };
   }));
 }
 
@@ -212,7 +241,7 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   // The child HAS its answer: the reply says so whatever the record write does. Closed like the
   // super's own `answer` closes it: every item on that request (an item escalated twice too).
   try {
-    await writeSuper(contextRoot, (s) => {
+    await writeSuper(contextRoot, answerSuper, (s) => {
       for (const q of s.queue) if (q.kind === 'question' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
     });
   } catch (err) {
@@ -231,8 +260,11 @@ export async function handleSuperPhonePermission(req: IncomingMessage, res: Serv
   const requestId = typeof b.requestId === 'string' ? b.requestId : '';
   const choice = b.choice === 'allow' || b.choice === 'deny' ? b.choice : null;
   if (!id || !requestId || requestId.length > 200 || !choice) { sendError(res, 400, 'invalid_args', 'item, requestId and choice (allow or deny) are required'); return; }
+  // A member's Super answers through its own record (`?superId=m:<slug>`), as the GET listed it.
+  const permSuper = querySuperId(req, res, contextRoot);
+  if (!permSuper) return;
   let state: SuperState;
-  try { state = await readSuperState(contextRoot, superSanitizeOpts()); } catch (err) {
+  try { state = await readSuperState(contextRoot, permSuper, superSanitizeOpts()); } catch (err) {
     console.warn(`[super-phone] ${contextRoot}: the record could not be read for a permission: ${(err as Error).message}`);
     sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.');
     return;
@@ -249,7 +281,7 @@ export async function handleSuperPhonePermission(req: IncomingMessage, res: Serv
   const r = await sendSuperCommand(token, 'allow', { child: item.sessionId, requestId, behavior: choice, by: 'owner' });
   if (!r.ok) { sendJson(res, r.error === 'no_window' ? 409 : 200, { ok: false, error: r.error }); return; }
   try {
-    await writeSuper(contextRoot, (s) => {
+    await writeSuper(contextRoot, permSuper, (s) => {
       for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
     });
   } catch (err) {

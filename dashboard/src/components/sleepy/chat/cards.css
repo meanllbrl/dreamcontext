@@ -1237,7 +1237,41 @@ video.chat-msg-user-media-el { cursor: default; }
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
-.chat-permcard[data-mode='bypass'] .chat-permcard-explainer { color: var(--color-warning); }
+/* The lead: what happens, then ONE short line saying why it asks (permissionReason.ts). */
+.chat-permcard-lead { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-why {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+/* What it would run, folded by default behind one small text toggle (PermissionDetails). */
+.chat-permcard-details { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.chat-permcard-toggle:hover { color: var(--color-text); }
+.chat-permcard-toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-permcard-chevron { display: inline-block; width: 12px; transition: transform 180ms ease-out; }
+.chat-permcard-details[data-open] .chat-permcard-chevron { transform: rotate(90deg); }
+.chat-permcard-toggle-stat { margin-left: var(--space-1); }
+.chat-permcard-panel { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-panel .chat-m-terminal { max-height: 320px; overflow: auto; }
+.chat-permcard-panel-foot { display: flex; justify-content: flex-end; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-permcard-chevron { transition: none; }
+}
 
 /* ── Plan card (ExitPlanMode's approval gate) ─────────────────────────────────────── */
 
