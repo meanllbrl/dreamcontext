@@ -213,7 +213,7 @@ try {
       await shot(page, `1-yayin-ekrani-${w}`);
       if (w === 1440) {
         await page.getByRole('button', { name: 'Publish', exact: true }).click();
-        check(await seen(page, 'is up to date'), 'publish: no "up to date" after Publish');
+        check(await seen(page, 'is on GitHub'), 'publish: no "up to date" after Publish');
         await shot(page, '1b-yayinlandi-1440');
       }
       await context.close();
@@ -260,13 +260,13 @@ try {
     await card(page, 'Hava Notu').getByRole('button', { name: 'Share' }).click();
     await page.getByPlaceholder('First version').fill('Shows tomorrow too');
     await page.getByRole('button', { name: 'Publish the new version' }).click();
-    check(await seen(page, 'is up to date'), 'update publish failed');
+    check(await seen(page, 'is on GitHub'), 'update publish failed');
     await page.getByRole('button', { name: 'Close' }).last().click();
     await card(page, 'Sayac').getByRole('button', { name: 'Share' }).click();
     await page.getByText('Anyone with the link').click();
     await page.getByLabel(/Type the app's name/).fill('Sayac');
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    check(await seen(page, 'is up to date'), 'public publish failed');
+    check(await seen(page, 'is on GitHub'), 'public publish failed');
     await context.close();
     step('publisher pushed Hava Notu v2 and published Sayac publicly');
   }
@@ -290,7 +290,7 @@ try {
     step('installer changed the copy, the update asked, Merge kept both sides');
 
     await card(page, 'Hava Notu').getByRole('button', { name: 'Make it my own copy' }).click();
-    check(await seen(page, 'no updates come'), 'detach: the confirmation text is missing');
+    check(await seen(page, 'Updates stop'), 'detach: the confirmation text is missing');
     await shot(page, '4-kendi-kopyam-1440');
     await page.locator('.share-sheet__foot').getByRole('button', { name: 'Make it my own copy' }).click();
     check(await seen(page, 'Your own copy'), 'detach: the card does not say my own copy');
@@ -298,7 +298,7 @@ try {
 
     await page.getByRole('button', { name: 'Install a public app' }).click();
     await page.getByLabel(/GitHub link/).fill(`https://github.com/${PUBLISHER}/sayac-app`);
-    await page.getByRole('button', { name: 'Look at it' }).click();
+    await page.getByRole('button', { name: 'Preview' }).click();
     check(await seen(page, 'someone you do not know'), 'public install: the stronger warning is missing');
     await page.getByLabel(/Which city/).fill('Ankara');
     await page.getByText('I understand').click();

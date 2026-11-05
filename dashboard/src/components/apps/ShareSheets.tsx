@@ -21,6 +21,12 @@ export function useShareT(): (key: string, vars?: Record<string, string>) => str
   return (key, vars) => (vars ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v), t(key)) : t(key));
 }
 
+/** A counted phrase: `<key>.one` for 1, `<key>.other` (with `{n}`) for everything else. */
+function useShareN(): (key: string, n: number) => string {
+  const t = useShareT();
+  return (key, n) => t(`${key}.${n === 1 ? 'one' : 'other'}`, { n: String(n) });
+}
+
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Sheet({ title, onClose, children, foot }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode }) {
@@ -82,6 +88,7 @@ function FileList({ title, items }: { title: string; items: string[] }) {
 export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: { slug: string; name: string; publishedPublic?: boolean; onClose: () => void; onDone: () => void }) {
   const api = useApi();
   const t = useShareT();
+  const tn = useShareN();
   // A public app stays public: the sheet starts where the app already is.
   const [visibility, setVisibility] = useState<'private' | 'public'>(publishedPublic ? 'public' : 'private');
   const [invite, setInvite] = useState('');
@@ -105,8 +112,8 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
   const waiting = r ? r.approvable.filter((a) => !approved.has(a.id)).length : 0;
   const why = !pv ? null
     : !pv.signedIn ? t('share.publish.needSignIn')
-    : r!.blocks.length ? t('share.publish.fixFirst', { n: String(r!.blocks.length) })
-    : waiting ? t('share.publish.approveFirst', { n: String(waiting) })
+    : r!.blocks.length ? tn('share.publish.fixFirst', r!.blocks.length)
+    : waiting ? tn('share.publish.approveFirst', waiting)
     : visibility === 'public' && confirmName.trim() !== name ? t('share.publish.typeName', { name })
     : null;
 
@@ -143,7 +150,7 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
         <label><input type="radio" name="vis" checked={visibility === 'private'} onChange={() => setVisibility('private')} /> <span><strong>{t('share.publish.private')}</strong><small>{t('share.publish.privateHint')}</small></span></label>
         <label><input type="radio" name="vis" checked={visibility === 'public'} onChange={() => setVisibility('public')} /> <span><strong>{t('share.publish.public')}</strong><small>{t('share.publish.publicHint')}</small></span></label>
       </fieldset>
-      {pv && <p className="share-muted">{t('share.publish.repo', { repo: pv.fullName ?? '—', license: t(`share.license.${pv.license}`) })}</p>}
+      {pv && <p className="share-muted">{t('share.publish.repo', { repo: pv.fullName ?? '—' })}</p>}
       {visibility === 'private' && (
         <label className="share-field"><span>{t('share.publish.invite')}</span><input value={invite} onChange={(e) => setInvite(e.target.value)} placeholder={t('share.publish.invitePh')} /></label>
       )}
@@ -195,7 +202,7 @@ function ConfigInputs({ fields, values, setValues }: { fields: ConfigField[]; va
     <>
       {fields.map((f) => (
         <label key={f.key} className="share-field">
-          <span>{f.label}{f.required ? ' *' : ''}{f.type === 'secret' ? ` · ${t('share.config.secret')}` : ''}</span>
+          <span>{f.label}{f.required ? ' *' : ''}</span>
           {f.type === 'choice' ? (
             <select value={values[f.key] ?? ''} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}>
               <option value="">—</option>
@@ -231,6 +238,7 @@ function splitValues(fields: ConfigField[], values: Record<string, string>) {
 export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: string; onClose: () => void; onDone: (slug: string) => void }) {
   const api = useApi();
   const t = useShareT();
+  const tn = useShareN();
   const [ref, setRef] = useState(initialRef ?? '');
   const [pv, setPv] = useState<Preview | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -282,7 +290,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
       {busy === 'preview' && initialRef && <p className="share-muted">{t('share.checking')}</p>}
       {pv && f && (
         <>
-          <p className="share-lede"><strong>{pv.name}</strong> · {pv.fullName} · {pv.public ? t('share.public') : t('share.private')} · {t(`share.license.${pv.license}`)}</p>
+          <p className="share-lede">{pv.fullName} · {pv.public ? t('share.public') : t('share.private')} · {t(`share.license.${pv.license}`)}</p>
           <div className="share-warning" role="note">
             <strong>{t('share.install.warning', { who: pv.publisher })}</strong>
             {pv.public && <span>{t('share.install.publicWarning')}</span>}
@@ -291,8 +299,8 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
             <div><dt>{t('share.install.runs')}</dt><dd>{f.backend ? <code>{f.backend}</code> : t('share.install.pageOnly')}{f.build ? <> · <code>{f.build}</code></> : null}</dd></div>
             {f.agent && <div><dt>{t('share.install.assistant')}</dt><dd>{f.agent}</dd></div>}
             {f.mcp.length > 0 && <div><dt>MCP</dt><dd>{f.mcp.join(', ')}</dd></div>}
-            {(f.actions > 0 || f.schedules > 0) && <div><dt>{t('share.install.does')}</dt><dd>{t('share.install.doesN', { a: String(f.actions), s: String(f.schedules) })}{f.dangerActions ? ` · ${t('share.install.danger', { n: String(f.dangerActions) })}` : ''}</dd></div>}
-            {f.dependencies > 0 && <div><dt>npm</dt><dd>{t('share.install.deps', { n: String(f.dependencies) })}</dd></div>}
+            {(f.actions > 0 || f.schedules > 0) && <div><dt>{t('share.install.does')}</dt><dd>{[f.actions ? tn('share.install.actions', f.actions) : '', f.schedules ? tn('share.install.schedules', f.schedules) : ''].filter(Boolean).join(', ')}{f.dangerActions ? ` · ${t('share.install.danger', { n: String(f.dangerActions) })}` : ''}</dd></div>}
+            {f.dependencies > 0 && <div><dt>npm</dt><dd>{tn('share.install.deps', f.dependencies)}</dd></div>}
             <div><dt>{t('share.install.talksTo')}</dt><dd>{f.urls.length ? f.urls.join(', ') : t('share.install.noUrls')}</dd></div>
           </dl>
           {!pv.gate.ok && <ul className="share-blocks">{pv.gate.blocks.map((b) => <li key={b.id}><code>{b.file}</code> {b.label}</li>)}</ul>}
@@ -355,6 +363,7 @@ type Check =
 export function UpdateSheet({ slug, name, from, onClose, onDone, onDetach }: { slug: string; name: string; from: string; onClose: () => void; onDone: () => void; onDetach: () => void }) {
   const api = useApi();
   const t = useShareT();
+  const tn = useShareN();
   const [c, setC] = useState<Check | null>(null);
   const [approve, setApprove] = useState(false);
   const [how, setHow] = useState<'merge' | 'set-aside' | ''>('');
@@ -414,7 +423,7 @@ export function UpdateSheet({ slug, name, from, onClose, onDone, onDetach }: { s
           )}
           {av.edited && (
             <section className="share-report">
-              <h3>{t('share.update.edited', { n: String(av.edited.files.length) })}</h3>
+              <h3>{tn('share.update.edited', av.edited.files.length)}</h3>
               {av.wouldLose.length > 0 && <p className="share-muted">{t('share.update.wouldLose', { files: av.wouldLose.join(', ') })}</p>}
               <fieldset className="share-choice">
                 <label><input type="radio" name="how" checked={how === 'merge'} onChange={() => setHow('merge')} /> <span><strong>{t('share.update.merge')}</strong><small>{t('share.update.mergeHint')}</small></span></label>
@@ -496,7 +505,7 @@ export function SharedWithYou({ onInstall, onChanged }: { onInstall: (fullName: 
           ))}
           {list.shared.map((s) => (
             <li key={s.fullName} className="apps-other">
-              <div className="apps-other__text"><span className="apps-other__name">{s.name ?? s.fullName}</span><span className="apps-other__note">{t('share.shared.by', { who: s.owner, repo: s.fullName })}</span></div>
+              <div className="apps-other__text"><span className="apps-other__name">{s.name ?? s.fullName}</span><span className="apps-other__note">{t('share.shared.by', { who: s.owner, repo: s.fullName.split('/').pop() ?? s.fullName })}</span></div>
               {s.installed ? <span className="apps-other__note">{t('share.shared.installed')}</span> : <button type="button" className="apps-other__btn" onClick={() => onInstall(s.fullName)}>{t('share.install.go')}</button>}
             </li>
           ))}
