@@ -266,7 +266,7 @@ async function closeTop(page) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     const left = await page.locator('.share-sheet').count();
-    if (left >= n) { findings.push('Escape did not close the top sheet'); await page.locator('.share-sheet__x').last().click(); }
+    if (left >= n) { findings.push(`Escape did not close the top sheet (after: ${steps[steps.length - 1] ?? 'start'}; ${n} open)`); await page.locator('.share-sheet__x').last().click(); }
   }
 }
 
@@ -345,7 +345,7 @@ try {
     await shot(page, '2c-ayarlar');
     await page.locator('.share-sheet__foot').getByRole('button', { name: 'Install' }).click();
     await appPage(page).waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
-    check(await seen(page, 'by ornek-yayinci', 20_000), 'install: the page does not say who it came from');
+    check(await page.locator('.share-sheet--page').filter({ hasText: 'by ornek-yayinci' }).first().waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false), 'install: the page does not say who it came from');
     await shot(page, '2d-kuruldu');
     await closeTop(page);
     await tab(page, 'My apps');
@@ -422,7 +422,8 @@ try {
     await appPage(page).getByRole('button', { name: 'Install', exact: true }).click();
     await page.getByLabel(/Which city/).fill('Ankara');
     await page.locator('.share-sheet__foot').getByRole('button', { name: 'Install' }).click();
-    check(await seen(page, 'Sayac', 20_000), 'public install failed');
+    // The install sheet closes and the new app's page opens once the list has it: wait for that page.
+    check(await page.locator('.share-sheet--page').filter({ hasText: 'Sayac' }).first().waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false), 'public install: the app page did not open');
     await closeTop(page);
     step('installer installed Sayac from its public link');
 
