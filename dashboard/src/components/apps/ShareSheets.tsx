@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useApi } from '../../context/VaultContext';
+import { useApi, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
+import { AppIcon } from './AppIcon';
+import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
+import { askAgent } from './askAgent';
 
 /**
  * Shared apps on the Apps page (paylasilan-app-ler plan r3): Share, Install, Settings, Update,
@@ -29,7 +32,7 @@ function useShareN(): (key: string, n: number) => string {
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Sheet({ title, onClose, children, foot }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode }) {
+export function Sheet({ title, onClose, children, foot, page }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode; page?: boolean }) {
   const t = useShareT();
   const ref = useRef<HTMLDivElement | null>(null);
   const close = useRef(onClose);
@@ -59,9 +62,10 @@ export function Sheet({ title, onClose, children, foot }: { title: string; onClo
   // On body: a page frame with a transform would otherwise hold the fixed backdrop inside it.
   return createPortal(
     <div className="share-sheet__backdrop" onClick={onClose}>
-      <div className="share-sheet" ref={ref} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div className={`share-sheet${page ? ' share-sheet--page' : ''}`} ref={ref} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="share-sheet__head">
-          <h2>{title}</h2>
+          {/* A store page names the app in its own top block: the bar only closes. */}
+          <h2 className={page ? 'share-sheet__title--hidden' : undefined}>{title}</h2>
           <button type="button" className="share-sheet__x" aria-label={t('share.close')} onClick={onClose}>×</button>
         </header>
         <div className="share-sheet__body">{children}</div>
@@ -85,43 +89,77 @@ function FileList({ title, items }: { title: string; items: string[] }) {
 
 // ─── Share (publish) ────────────────────────────────────────────────────────────────
 
-export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: { slug: string; name: string; publishedPublic?: boolean; onClose: () => void; onDone: () => void }) {
+interface PublishStore { tagline: string | null; suggestedTagline: string | null; hasAbout: boolean; whatsNew: StoreEntry | null; ready: number; missing: string[]; iconPlaceholder: boolean; hasIcon: boolean }
+
+const TAGLINE_MAX = 80;
+
+export function PublishSheet({ slug, name, icon, placeholder, publishedPublic, onClose, onDone }: { slug: string; name: string; icon?: string | null; placeholder?: boolean; publishedPublic?: boolean; onClose: () => void; onDone: () => void }) {
   const api = useApi();
+  const { bus } = useVault();
   const t = useShareT();
   const tn = useShareN();
   // A public app stays public: the sheet starts where the app already is.
   const [visibility, setVisibility] = useState<'private' | 'public'>(publishedPublic ? 'public' : 'private');
   const [invite, setInvite] = useState('');
   const [note, setNote] = useState('');
+  const [tagline, setTagline] = useState<string | null>(null);
   const [confirmName, setConfirmName] = useState('');
   const [approved, setApproved] = useState<Set<string>>(new Set());
-  const [pv, setPv] = useState<{ login: string | null; signedIn: boolean; fullName: string | null; license: string; report: GateReport; published: { fullName: string } | null } | null>(null);
+  const [pv, setPv] = useState<{ login: string | null; signedIn: boolean; fullName: string | null; license: string; report: GateReport; published: { fullName: string } | null; store?: PublishStore } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<{ fullName: string; url: string; invited: string[]; inviteFailed?: string[] } | null>(null);
 
+  // The words the publish writes into the README travel too, so the check reads them: the preview
+  // is asked again a moment after the one line or the note changes. A tick on a line that is still
+  // there stays ticked.
+  const [typed, setTyped] = useState({ note: '', tagline: '' });
+  useEffect(() => {
+    const id = window.setTimeout(() => setTyped({ note, tagline: tagline ?? '' }), 600);
+    return () => window.clearTimeout(id);
+  }, [note, tagline]);
+  const lastVis = useRef(visibility);
   useEffect(() => {
     // Only the newest answer counts: a slow report for the other visibility never lands here.
     let live = true;
-    setPv(null); setErr(null); setApproved(new Set());
-    api.get<typeof pv>(`/apps/${encodeURIComponent(slug)}/publish/preview?visibility=${visibility}`).then((v) => { if (live) setPv(v); }, (e) => { if (live) setErr(errText(e)); });
+    setErr(null);
+    if (lastVis.current !== visibility) { lastVis.current = visibility; setPv(null); setApproved(new Set()); }
+    const q = new URLSearchParams({ visibility });
+    if (typed.note) q.set('note', typed.note);
+    if (typed.tagline) q.set('tagline', typed.tagline);
+    api.get<typeof pv>(`/apps/${encodeURIComponent(slug)}/publish/preview?${q}`).then((v) => {
+      if (!live || !v) return;
+      setPv(v);
+      setApproved((a) => new Set([...a].filter((id) => v.report.approvable.some((x) => x.id === id))));
+      // The one line starts as the README's (or its suggested first sentence); the owner's typing wins.
+      setTagline((cur) => (cur === null ? v.store?.tagline ?? v.store?.suggestedTagline ?? '' : cur));
+    }, (e) => { if (live) setErr(errText(e)); });
     return () => { live = false; };
-  }, [api, slug, visibility]);
+  }, [api, slug, visibility, typed]);
 
   const r = pv?.report;
   const waiting = r ? r.approvable.filter((a) => !approved.has(a.id)).length : 0;
+  const settling = typed.note !== note || typed.tagline !== (tagline ?? '');
   const why = !pv ? (err ? null : t('share.checking'))
     : !pv.signedIn ? t('share.publish.needSignIn')
+    : settling ? t('share.checking')
     : r!.blocks.length ? tn('share.publish.fixFirst', r!.blocks.length)
     : waiting ? tn('share.publish.approveFirst', waiting)
     : visibility === 'public' && confirmName.trim() !== name ? t('share.publish.typeName', { name })
     : null;
 
+  // Store page: x of 3, counting what this publish will write.
+  const st = pv?.store;
+  const has = { tagline: !!(tagline ?? '').trim(), about: !!st?.hasAbout, whatsNew: !!st?.whatsNew || !!note.trim() || !pv?.published };
+  const ready = Number(has.tagline) + Number(has.about) + Number(has.whatsNew);
+  const missingText = [!has.tagline && t('store.ready.tagline'), !has.about && t('store.ready.about'), !has.whatsNew && t('store.ready.whatsNew')].filter(Boolean).join(', ');
+  const ask = (what: 'about' | 'icon') => { onClose(); askAgent(bus, t(what === 'icon' ? 'store.ask.icon' : 'store.ask.about', { slug })); };
+
   const publish = async () => {
     setBusy(true); setErr(null);
     try {
       const out = await api.ownerPost<{ fullName: string; url: string; invited: string[]; inviteFailed?: string[] }>(`/apps/${encodeURIComponent(slug)}/publish`, {
-        visibility, invite: invite.split(/[\s,]+/).filter(Boolean), approvals: [...approved], note, confirmName,
+        visibility, invite: invite.split(/[\s,]+/).filter(Boolean), approvals: [...approved], note, tagline: tagline ?? '', confirmName,
       });
       setDone(out); onDone();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
@@ -145,6 +183,32 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
         <button type="button" className="app-card__launch" disabled={!pv || !!why || busy} onClick={() => void publish()}>{busy ? t('share.publish.publishing') : pv?.published ? t('share.publish.update') : t('share.publish.go')}</button>
       </>
     }>
+      <div className="pp-mini">
+        <AppIcon src={placeholder ? null : icon ?? null} name={name} slug={slug} size={64} />
+        <div className="pp-mini__text"><strong>{name}</strong>{(tagline ?? '').trim() ? <span>{tagline}</span> : <span className="share-muted">{t('store.looks')}</span>}</div>
+      </div>
+      {pv && (
+        <div className="pp-ready" role="status">
+          <span><strong>{t('store.ready.title')}</strong> · {t('store.ready.count', { n: String(ready) })}</span>
+          {ready < 3 && (
+            <span className="share-muted">
+              {t('store.ready.missing', { what: missingText })}
+              {!has.about && <> · <button type="button" className="share-link" onClick={() => ask('about')}>{t('store.ask')}</button></>}
+            </span>
+          )}
+        </div>
+      )}
+      {(placeholder || st?.iconPlaceholder) && (
+        <div className="app-card__note app-card__note--warn app-card__mcp">
+          <span>{t('store.icon.placeholder')}</span>
+          <button type="button" className="app-card__stop" onClick={() => ask('icon')}>{t('store.ask')}</button>
+        </div>
+      )}
+      <label className="share-field">
+        <span>{t('store.tagline')}</span>
+        <input value={tagline ?? ''} maxLength={TAGLINE_MAX} onChange={(e) => setTagline(e.target.value)} placeholder={st?.suggestedTagline ?? t('store.tagline.ph')} />
+        <small className="share-muted">{t('store.tagline.hint', { n: String(TAGLINE_MAX - (tagline ?? '').length) })}</small>
+      </label>
       <fieldset className="share-choice">
         <legend>{t('share.publish.who')}</legend>
         <label><input type="radio" name="vis" checked={visibility === 'private'} onChange={() => setVisibility('private')} /> <span><strong>{t('share.publish.private')}</strong><small>{t('share.publish.privateHint')}</small></span></label>
@@ -154,7 +218,7 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
       {visibility === 'private' && (
         <label className="share-field"><span>{t('share.publish.invite')}</span><input value={invite} onChange={(e) => setInvite(e.target.value)} placeholder={t('share.publish.invitePh')} /></label>
       )}
-      <label className="share-field"><span>{t('share.publish.note')}</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('share.publish.notePh')} /></label>
+      <label className="share-field"><span>{t('share.publish.note')}</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={pv?.published ? '' : t('share.publish.notePh')} /></label>
       {r && (
         <section className="share-report" aria-label={t('share.publish.check')}>
           <h3>{r.ok || (!r.blocks.length && !waiting) ? t('share.publish.clear') : t('share.publish.check')}</h3>
@@ -190,8 +254,10 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
 
 interface Preview {
   previewId: string; fullName: string; sha: string; publisher: string; publisherSince: string | null; repoUpdated: string | null; public: boolean;
-  name: string; license: string; warning: string; readme: string; config: ConfigField[];
+  name: string; slug: string; license: string; warning: string; readme: string; config: ConfigField[];
   facts: { backend: string | null; build: string | null; mcp: string[]; agent: string | null; schedules: number; actions: number; dangerActions: number; dependencies: number; urls: string[] };
+  icon?: string | null;
+  store?: { readme: { tagline: string | null; category: string | null; about: string | null; whatsNew: StoreEntry[] }; shots: Array<{ alt: string; src: string }>; can: CanLine[] };
   gate: { ok: boolean; blocks: GateFinding[] };
 }
 
@@ -244,6 +310,8 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   const [understood, setUnderstood] = useState(false);
   const [busy, setBusy] = useState<'preview' | 'install' | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The store page first; an app that asks for settings takes them on a second step, before Install.
+  const [step, setStep] = useState<'page' | 'settings'>('page');
 
   // Every ask gets its own number: only the newest answer lands, so an older ask's error never
   // sits under a newer, valid preview (the same link asked twice races too).
@@ -251,7 +319,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   const preview = async (r = ref) => {
     // A new link starts from nothing: no tick, no key typed for another app.
     const n = ++asked.current;
-    setBusy('preview'); setErr(null); setPv(null); setValues({}); setUnderstood(false);
+    setBusy('preview'); setErr(null); setPv(null); setValues({}); setUnderstood(false); setStep('page');
     try {
       const v = await api.post<Preview>('/apps/install/preview', { ref: r });
       if (asked.current === n) setPv(v);
@@ -263,7 +331,9 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   useEffect(() => { if (initialRef && !opened.current) { opened.current = true; void preview(initialRef); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const missing = pv ? pv.config.filter((f) => f.required && !values[f.key]).map((f) => f.label) : [];
-  const why = !pv ? null : !pv.gate.ok ? t('share.install.refused') : missing.length ? t('share.install.fill', { fields: missing.join(', ') }) : pv.public && !understood ? t('share.install.tick') : null;
+  // On the page, Install waits only for what the page asks (the gate, the tick); the settings come next.
+  const pageWhy = !pv ? null : !pv.gate.ok ? t('share.install.refused') : pv.public && !understood ? t('share.install.tick') : null;
+  const why = pageWhy ?? (missing.length ? t('share.install.fill', { fields: missing.join(', ') }) : null);
 
   const install = async () => {
     if (!pv) return;
@@ -273,48 +343,85 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
       onDone(out.slug);
     } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
+  const onInstall = () => { if (pv && pv.config.length && step === 'page') setStep('settings'); else void install(); };
 
   const f = pv?.facts;
+  const st = pv?.store;
+  const top = st?.readme.whatsNew[0];
+  const facts = f ? [
+    { value: String(f.actions), label: tn('store.facts.actions', f.actions) },
+    { value: String(f.schedules), label: tn('store.facts.schedules', f.schedules) },
+    { value: f.urls.length ? String(f.urls.length) : t('store.none'), label: t('store.fact.web') },
+    ...(top ? [{ value: `v${top.version}`, label: shortDate(top.date) || t('store.version.label') }] : pv?.repoUpdated ? [{ value: shortDate(pv.repoUpdated), label: t('store.fact.updated') }] : []),
+  ] : [];
+  const chip = pv ? (pv.public ? t('store.chip.public', { license: t(`share.license.${pv.license}`) }) : t('store.chip.private')) : '';
+  const installBtn = pv && (
+    <button type="button" className="app-card__launch pp-btn-lg" disabled={!!pageWhy || busy !== null} onClick={onInstall}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>
+  );
+
   return (
-    <Sheet title={pv ? t('share.install.titleOf', { name: pv.name }) : t('share.install.title')} onClose={onClose} foot={
-      <>
-        {why && <span className="share-why">{why}</span>}
-        <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
-        {pv && <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install()}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>}
-      </>
+    <Sheet page={!!pv && step === 'page'} title={pv ? t('share.install.titleOf', { name: pv.name }) : t('share.install.title')} onClose={onClose} foot={
+      step === 'settings' && pv ? (
+        <>
+          {why && <span className="share-why">{why}</span>}
+          <button type="button" className="app-card__stop" onClick={() => setStep('page')}>{t('store.back')}</button>
+          <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install()}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>
+        </>
+      ) : !pv ? <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button> : undefined
     }>
-      {!initialRef && (
-        <form className="share-row" onSubmit={(e) => { e.preventDefault(); void preview(); }}>
+      {!initialRef && step === 'page' && (
+        <form className="share-row pp-link" onSubmit={(e) => { e.preventDefault(); void preview(); }}>
           <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => { setRef(e.target.value); asked.current++; setBusy((b) => (b === 'preview' ? null : b)); setPv(null); setValues({}); setUnderstood(false); }} placeholder="https://github.com/owner/repo" autoFocus /></label>
           <button type="submit" className="app-card__stop" disabled={!ref.trim() || busy !== null}>{busy === 'preview' ? t('share.checking') : t('share.install.look')}</button>
         </form>
       )}
       {busy === 'preview' && initialRef && <p className="share-muted">{t('share.checking')}</p>}
-      {pv && f && (
+      {pv && f && step === 'page' && (
         <>
-          <p className="share-lede">{pv.fullName} · {pv.public ? t('share.public') : t('share.private')} · {t(`share.license.${pv.license}`)}</p>
-          <div className="share-warning" role="note">
-            <strong>{t('share.install.warning', { who: pv.publisher })}</strong>
-            {pv.public && <span>{t('share.install.publicWarning')}</span>}
-          </div>
-          <dl className="share-facts">
-            <div><dt>{t('share.install.runs')}</dt><dd>{f.backend ? <code>{f.backend}</code> : t('share.install.pageOnly')}{f.build ? <> · <code>{f.build}</code></> : null}</dd></div>
-            {f.agent && <div><dt>{t('share.install.assistant')}</dt><dd>{f.agent}</dd></div>}
-            {f.mcp.length > 0 && <div><dt>MCP</dt><dd>{f.mcp.join(', ')}</dd></div>}
-            {(f.actions > 0 || f.schedules > 0) && <div><dt>{t('share.install.does')}</dt><dd>{[f.actions ? tn('share.install.actions', f.actions) : '', f.schedules ? tn('share.install.schedules', f.schedules) : ''].filter(Boolean).join(', ')}{f.dangerActions ? ` · ${t('share.install.danger', { n: String(f.dangerActions) })}` : ''}</dd></div>}
-            {f.dependencies > 0 && <div><dt>npm</dt><dd>{tn('share.install.deps', f.dependencies)}</dd></div>}
-            <div><dt>{t('share.install.talksTo')}</dt><dd>{f.urls.length ? f.urls.join(', ') : t('share.install.noUrls')}</dd></div>
-          </dl>
-          {!pv.gate.ok && <ul className="share-blocks">{pv.gate.blocks.map((b) => <li key={b.id}><code>{b.file}</code> {b.label}</li>)}</ul>}
-          {pv.config.length > 0 && (
-            <section className="share-report">
-              <h3>{t('share.config.title')}</h3>
-              <p className="share-muted">{t('share.config.where')}</p>
-              <ConfigInputs fields={pv.config} values={values} setValues={setValues} />
-            </section>
-          )}
-          {pv.public && <label className="share-check"><input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} /> {t('share.install.understand')}</label>}
+          <ProductTop
+            icon={pv.icon ?? null}
+            name={pv.name}
+            slug={pv.slug}
+            by={pv.publisher}
+            tagline={st?.readme.tagline}
+            actions={<>{installBtn}<span className="app-chip">{chip}</span>{st?.readme.category && <span className="app-chip">{st.readme.category}</span>}</>}
+            note={pageWhy && <span className="share-why pp-why">{pageWhy}</span>}
+          />
+          <FactStrip facts={facts} />
+          <Shots shots={st?.shots ?? []} sub={t('store.shots.from')} />
+          <About text={st?.readme.about} />
+          <CanList lines={st?.can ?? []} />
+          <WhatsNew entry={top} />
+          <section className="pp-sec" aria-label={t('store.safety')}>
+            <h3>{t('store.safety')}</h3>
+            <div className={`pp-safety${pv.public ? ' pp-safety--public' : ''}`}>
+              <span className="pp-safety__mark" aria-hidden />
+              <div className="pp-safety__body">
+                <p className="share-lede">{t('share.install.warning', { who: pv.publisher })}</p>
+                <p className="share-muted">{pv.public ? t('share.install.publicWarning') : t('store.safety.private', { who: pv.publisher })}</p>
+                <dl className="share-facts">
+                  <div><dt>{t('share.install.runs')}</dt><dd>{f.backend ? <code>{f.backend}</code> : t('share.install.pageOnly')}{f.build ? <> · <code>{f.build}</code></> : null}</dd></div>
+                  {f.agent && <div><dt>{t('share.install.assistant')}</dt><dd>{f.agent}</dd></div>}
+                  {f.mcp.length > 0 && <div><dt>MCP</dt><dd>{f.mcp.join(', ')}</dd></div>}
+                  {f.dangerActions > 0 && <div><dt>{t('share.install.does')}</dt><dd>{t('share.install.danger', { n: String(f.dangerActions) })}</dd></div>}
+                  {f.dependencies > 0 && <div><dt>npm</dt><dd>{tn('share.install.deps', f.dependencies)}</dd></div>}
+                  <div><dt>{t('share.install.talksTo')}</dt><dd>{f.urls.length ? f.urls.join(', ') : t('share.install.noUrls')}</dd></div>
+                  <div><dt>{t('store.fact.repo')}</dt><dd>{pv.fullName} · {pv.public ? t('share.public') : t('share.private')} · {t(`share.license.${pv.license}`)}</dd></div>
+                </dl>
+                <p className="share-muted">{t('store.safety.nothing')}</p>
+                {!pv.gate.ok && <ul className="share-blocks">{pv.gate.blocks.map((b) => <li key={b.id}><code>{b.file}</code> {b.label}</li>)}</ul>}
+                {pv.public && <label className="share-check"><input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} /> {t('share.install.understand')}</label>}
+              </div>
+            </div>
+          </section>
         </>
+      )}
+      {pv && step === 'settings' && pv.config.length > 0 && (
+        <section className="share-report">
+          <div className="pp-mini"><AppIcon src={pv.icon ?? null} name={pv.name} slug={pv.slug} size={44} /><span>{t('share.config.title')}</span></div>
+          <p className="share-muted">{t('share.config.where')}</p>
+          <ConfigInputs fields={pv.config} values={values} setValues={setValues} />
+        </section>
       )}
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
     </Sheet>
@@ -465,55 +572,89 @@ export function ConfirmSheet({ kind, slug, name, onClose, onDone }: { kind: 'det
   );
 }
 
-// ─── Shared with you ────────────────────────────────────────────────────────────────
+// ─── Shared Apps ────────────────────────────────────────────────────────────────────
 
-interface SharedList {
+export interface SharedList {
   signedIn: boolean; login: string | null; host: string; problem?: string;
   invitations: Array<{ id: string; fullName: string; inviter: string }>;
-  shared: Array<{ fullName: string; owner: string; name: string | null; public: boolean; installed?: string }>;
+  shared: Array<{ fullName: string; owner: string; name: string | null; tagline?: string | null; public: boolean; installed?: string }>;
 }
 
-export function SharedWithYou({ onInstall, onChanged }: { onInstall: (fullName: string) => void; onChanged: () => void }) {
+/** An installed app as the store row needs it: its icon, and whether an update waits. */
+export interface InstalledLook { slug: string; name: string; icon: string | null; update: boolean }
+
+/**
+ * The Shared Apps tab (app-paylasim-magaza r2 section 2): invitations on top, then every app
+ * shared with this account. The button says the state: Get, Open, or Update. A row opens the app's
+ * page: the install page for one not here yet, its own page for one installed.
+ */
+export function SharedApps({ list, err, loading, installedLook, onRefresh, onInstall, onOpen, onAccepted }: {
+  list: SharedList | null; err: string | null; loading: boolean;
+  installedLook: (slug: string) => InstalledLook | null;
+  onRefresh: () => void; onInstall: (fullName: string) => void; onOpen: (slug: string) => void; onAccepted: () => void;
+}) {
   const api = useApi();
   const t = useShareT();
-  const [list, setList] = useState<SharedList | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const load = useMemo(() => (refresh = false) => api.get<SharedList>(`/apps/shared${refresh ? '?refresh=1' : ''}`).then((l) => { setList(l); setErr(null); }, (e) => setErr(errText(e))), [api]);
-  useEffect(() => { void load(); }, [load]);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [acceptErr, setAcceptErr] = useState<string | null>(null);
   const accept = async (id: string) => {
     if (accepting) return;
-    setAccepting(id);
-    try { await api.ownerPost('/apps/shared/accept', { id }); await load(true); onChanged(); } catch (e) { setErr(errText(e)); } finally { setAccepting(null); }
+    setAccepting(id); setAcceptErr(null);
+    try { await api.ownerPost('/apps/shared/accept', { id }); onAccepted(); } catch (e) { setAcceptErr(errText(e)); } finally { setAccepting(null); }
   };
+  const repoName = (fullName: string) => fullName.split('/').pop() ?? fullName;
   return (
-    <section className="apps-section" aria-labelledby="apps-shared-h">
-      <div className="apps-section__head">
-        <h2 id="apps-shared-h">{t('share.shared.title')}</h2>
-        {list?.signedIn && <button type="button" className="share-link" onClick={() => void load(true)}>{t('share.shared.refresh')}</button>}
-      </div>
-      {!list && !err && <p className="apps-page__muted">{t('share.checking')}</p>}
-      {err && <p className="app-card__note app-card__note--bad">{err}</p>}
+    <div className="apps-store">
+      {loading && !list && <p className="apps-page__muted">{t('share.checking')}</p>}
+      {(err || acceptErr) && <p className="app-card__note app-card__note--bad">{err ?? acceptErr}</p>}
       {list && !list.signedIn && <p className="apps-page__muted">{t('share.shared.signIn')}</p>}
       {list?.problem && <p className="app-card__note app-card__note--warn">{list.problem}</p>}
-      {list?.signedIn && !list.invitations.length && !list.shared.length && <p className="apps-page__muted">{t('share.shared.empty')}</p>}
-      {list && (list.invitations.length > 0 || list.shared.length > 0) && (
-        <ul className="apps-others">
-          {list.invitations.map((i) => (
-            <li key={i.id} className="apps-other">
-              <div className="apps-other__text"><span className="apps-other__name">{i.fullName}</span><span className="apps-other__note">{t('share.shared.invited', { who: i.inviter })}</span></div>
-              <button type="button" className="apps-other__btn" disabled={accepting !== null} onClick={() => void accept(i.id)}>{t('share.shared.accept')}</button>
-            </li>
-          ))}
-          {list.shared.map((s) => (
-            <li key={s.fullName} className="apps-other">
-              <div className="apps-other__text"><span className="apps-other__name">{s.name ?? s.fullName}</span><span className="apps-other__note">{t('share.shared.by', { who: s.owner, repo: s.fullName.split('/').pop() ?? s.fullName })}</span></div>
-              {s.installed ? <span className="apps-other__note">{t('share.shared.installed')}</span> : <button type="button" className="apps-other__btn" onClick={() => onInstall(s.fullName)}>{t('share.install.go')}</button>}
-            </li>
-          ))}
-        </ul>
+      {list && list.invitations.length > 0 && (
+        <section className="apps-shelf" aria-labelledby="apps-inv-h">
+          <div className="apps-shelf__head"><h2 id="apps-inv-h">{t('store.invitations')}</h2></div>
+          <ul className="store-list">
+            {list.invitations.map((i) => (
+              <li key={i.id} className="store-row">
+                <AppIcon src={null} name={repoName(i.fullName).replace(/-app$/, '').replace(/-/g, ' ')} slug={repoName(i.fullName)} size={64} />
+                <div className="store-row__t"><p className="store-row__nm">{repoName(i.fullName)}</p><p className="store-row__by">{t('share.shared.invited', { who: i.inviter })}</p></div>
+                <button type="button" className="app-tile__btn app-tile__btn--primary" disabled={accepting !== null} onClick={() => void accept(i.id)}>{t('share.shared.accept')}</button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
-    </section>
+      {list?.signedIn && (
+        <section className="apps-shelf" aria-labelledby="apps-shared-h">
+          <div className="apps-shelf__head">
+            <h2 id="apps-shared-h">{t('share.shared.title')}</h2>
+            <button type="button" className="share-link" onClick={onRefresh}>{t('share.shared.refresh')}</button>
+          </div>
+          {!list.shared.length && <p className="apps-page__muted">{t('share.shared.empty')}</p>}
+          {list.shared.length > 0 && (
+            <ul className="store-list">
+              {list.shared.map((s) => {
+                const look = s.installed ? installedLook(s.installed) : null;
+                const name = look?.name ?? s.name ?? repoName(s.fullName);
+                const open = () => (s.installed ? onOpen(s.installed) : onInstall(s.fullName));
+                return (
+                  <li key={s.fullName} className="store-row">
+                    <button type="button" className="store-row__open" onClick={open}>
+                      <AppIcon src={look?.icon ?? null} name={name} slug={look?.slug ?? repoName(s.fullName).replace(/-app$/, '')} size={64} />
+                      <span className="store-row__t">
+                        <span className="store-row__nm">{name}</span>
+                        <span className="store-row__by">{s.owner}{s.public ? ` · ${t('share.public')}` : ''}</span>
+                        {s.tagline && <span className="store-row__tg">{s.tagline}</span>}
+                      </span>
+                    </button>
+                    <button type="button" className="app-tile__btn" onClick={open}>{!s.installed ? t('store.get') : look?.update ? t('share.card.update') : t('store.open')}</button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -523,20 +664,26 @@ export function TrashList({ onChanged }: { onChanged: () => void }) {
   const [items, setItems] = useState<Array<{ id: string; name: string; fullName: string | null }>>([]);
   const [err, setErr] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [open, setOpen] = useState(false);
   const load = useMemo(() => () => api.get<{ trash: typeof items }>('/apps/trash').then((r) => setItems(r.trash), () => setItems([])), [api]);
   useEffect(() => { void load(); }, [load]);
   if (!items.length) return null;
   return (
-    <section className="apps-section" aria-labelledby="apps-trash-h">
-      <h2 id="apps-trash-h" className="apps-section__small">{t('share.trash.title')}</h2>
-      <ul className="apps-others">
-        {items.map((i) => (
-          <li key={i.id} className="apps-other">
-            <div className="apps-other__text"><span className="apps-other__name">{i.name}</span>{i.fullName && <span className="apps-other__note">{i.fullName}</span>}</div>
-            <button type="button" className="apps-other__btn" disabled={restoring} onClick={async () => { setRestoring(true); try { await api.ownerPost('/apps/trash/restore', { id: i.id }); await load(); onChanged(); } catch (e) { setErr(errText(e)); } finally { setRestoring(false); } }}>{t('share.trash.restore')}</button>
-          </li>
-        ))}
-      </ul>
+    <section className="apps-section apps-trash" aria-labelledby="apps-trash-h">
+      {/* Folded: removed apps are rare business, one quiet line until asked for. */}
+      <h2 id="apps-trash-h" className="apps-section__small">
+        <button type="button" className="apps-trash__toggle" aria-expanded={open} onClick={() => setOpen(!open)}>{t('share.trash.title')} ({items.length}) {open ? '▾' : '›'}</button>
+      </h2>
+      {open && (
+        <ul className="apps-others">
+          {items.map((i) => (
+            <li key={i.id} className="apps-other">
+              <div className="apps-other__text"><span className="apps-other__name">{i.name}</span>{i.fullName && <span className="apps-other__note">{i.fullName}</span>}</div>
+              <button type="button" className="apps-other__btn" disabled={restoring} onClick={async () => { setRestoring(true); try { await api.ownerPost('/apps/trash/restore', { id: i.id }); await load(); onChanged(); } catch (e) { setErr(errText(e)); } finally { setRestoring(false); } }}>{t('share.trash.restore')}</button>
+            </li>
+          ))}
+        </ul>
+      )}
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
     </section>
   );
