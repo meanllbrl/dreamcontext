@@ -4,6 +4,7 @@ import type { SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
 import { AGENDA_SECTIONS, superNotepad, type AgendaRow, type JobLook } from './superHandover';
+import { superApprovalSentence, type SuperApproval } from './superApprovals';
 import './SuperAgenda.css';
 
 /**
@@ -29,7 +30,7 @@ import './SuperAgenda.css';
  * no job behind it that has not changed for two hours is marked "unchanged". The owner moves a
  * note by hand with its own small button (Done / Put back): the server never moves it again.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, taskRows = [], onOpenTask, extra }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these two read. */
   state: Pick<SuperState, 'queue' | 'pad'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -48,6 +49,11 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
    *  stalled, a plan to approve. They need no Super session; each opens its task. */
   taskRows?: OwnerInboxRow[];
   onOpenTask?: (slug: string) => void;
+  /** What waits for his approval on this Mac (AI Team members and routines, `superApprovals`),
+   *  minus a member an open `approval` queue item already lists. Each brings its row of the
+   *  Super's approval card into view (`onShowApproval`). */
+  approvals?: SuperApproval[];
+  onShowApproval?: (key: string) => void;
   /** The owner moves a note by hand (`POST /api/super/pad`); absent = the notes are only read. */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
   /** Drawn after the sections in the full notepad: a member's "Görevleri" (plan-r10 1c). */
@@ -56,7 +62,7 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   const { t } = useI18n();
   const sections = superNotepad(state, look);
   // A folded Now line no longer counts as running; a Waiting one still waits on him, so it does.
-  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length : 0);
+  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + approvals.length : 0);
 
   if (variant === 'tile') {
     return (
@@ -162,6 +168,18 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                 {rows.filter((r) => r.stale).map(rowOf)}
               </details>
             )}
+            {sec === 'waiting' && approvals.map((a) => (
+              <div key={a.key} className="super-agenda-row" data-row={a.key} data-testid="super-agenda-row" data-state="waiting" data-kind="approval" data-chip="approval">
+                <button type="button" className="super-agenda-row-btn" onClick={() => onShowApproval?.(a.key)} disabled={!onShowApproval}>
+                  <span className="super-agenda-dot" aria-hidden />
+                  <span className="super-agenda-name" title={a.title}>{a.title}</span>
+                  <span className="super-agenda-meta">
+                    <span className="super-agenda-chip" data-kind="approval">{t('super.jobs.chip.approval')}</span>
+                  </span>
+                  <span className="super-agenda-line" title={superApprovalSentence(a, t)}>{superApprovalSentence(a, t)}</span>
+                </button>
+              </div>
+            ))}
             {sec === 'waiting' && taskRows.map((r) => (
               <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="task" data-chip={r.kind}>
                 <button type="button" className="super-agenda-row-btn" onClick={() => onOpenTask?.(r.ref)} title={tr(t, 'super.agenda.openTask', 'Open the task')}>

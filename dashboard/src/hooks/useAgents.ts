@@ -75,6 +75,8 @@ export interface AgentSummary {
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
   approvalReason: string | null;
+  /** Its `call.enabled` (the AI Team on/off switch). Optional: an older server sends none. */
+  enabled?: boolean;
   /** Its creator's login (`machine:<id>`, `unowned`); null on an unstamped file. Optional: an
    *  older server sends none. */
   owner?: string | null;

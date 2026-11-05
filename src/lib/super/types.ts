@@ -622,7 +622,8 @@ export interface SuperQueueItem {
   /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
    *  `createdAt`). Born `done`: a record, never delivered as a turn. */
   brief?: string;
-  /** An `approval` item's AI Team member (its agent slug). Its `sessionId` is the super's own. */
+  /** An `approval` item's AI Team member (its agent slug), or an `automation` item's member when
+   *  the owner decided on a MEMBER's approval (then it has no `automation`). Its `sessionId` is the super's own. */
   member?: string;
   /** An `automation` item's automation slug. */
   automation?: string;
@@ -1575,7 +1576,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 29;
+export const SUPER_BRIEF_REV = 30;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

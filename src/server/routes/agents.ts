@@ -8,6 +8,7 @@ import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
+import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
 import { placement } from '../../lib/agents/active.js';
 import { GLOBAL_REGISTRY_KEY, globalAgentExists, hasProjectMember } from '../../lib/agents/scope.js';
 import { composeRun } from '../../lib/agents/compose.js';
@@ -122,6 +123,8 @@ export interface AgentSummary {
   face: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
+  /** Its `call.enabled` (the AI Team on/off switch). */
+  enabled: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
   approvalReason: string | null;
   /** Its creator's login (`machine:<id>`, `unowned`), null on an unstamped file (B1-3). */
@@ -215,6 +218,7 @@ export function summarizeAgent(
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
     approvalReason: toRun.approved || readOnly ? null : toRun.reason,
+    enabled: target.enabled,
     owner,
     ownerLabel: owner ? ownerLabel(owner) : null,
     readOnly,
@@ -635,6 +639,8 @@ export async function handleAgentsSetEnabled(
   }
   try {
     setAgentCallEnabled(contextRoot, params.slug, body.enabled);
+    // Turned off from the Super Agent's approval card (its Decline): the super hears the NO.
+    if (body.enabled === false) await tellSuperMember(contextRoot, body.sessionId, params.slug, 'rejected');
     // Turned off: its live member Super stops (plan-r10 1, security r8-3), its keys die. Only a
     // member that has a Super record here; a pending request then waits and main hears it once.
     if (body.enabled === false) {
@@ -647,6 +653,18 @@ export async function handleAgentsSetEnabled(
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'enable_failed', 'Failed to switch the member.');
+  }
+}
+
+/** Queue an owner's decision on a member's approval for the Super Agent, when the card he used
+ *  sits in its chat (`sessionId` is the super's or a child's session). Never throws: the decision
+ *  itself is written either way. */
+async function tellSuperMember(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
+  try {
+    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision, Date.now(), 'member');
+  } catch {
+    return false;
   }
 }
 
@@ -771,10 +789,13 @@ export async function handleAgentsApprove(
     return;
   }
   try {
+    const body = (await parseJsonBody(req)) ?? {};
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
     approveAutomation(projectRoot, target, new Date());
     settleApprovalQuestions(contextRoot, params.slug);
+    // Approved on the Super Agent's own card: it hears the decision as an event.
+    await tellSuperMember(contextRoot, body.sessionId, params.slug, 'approved');
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'approve_failed', 'Failed to approve the agent.');

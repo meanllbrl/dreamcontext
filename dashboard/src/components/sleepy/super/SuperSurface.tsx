@@ -27,7 +27,11 @@ import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
-import { useOwnerInbox } from '../../../hooks/useAgents';
+import { useAgents, useOwnerInbox } from '../../../hooks/useAgents';
+import { useAutomations } from '../../../hooks/useAutomations';
+import { requestOpenAgents } from '../../../lib/openAgents';
+import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
+import { SuperApprovalBand } from './SuperApprovalBand';
 import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
@@ -927,6 +931,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   if (props.stageShowChild) props.stageShowChild.current = { show: showChild, showCard: actions.onSideBySide, ready: plan.width > 0 && props.visible };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
+    // An AI Team approval: its row on the Super's own approval card.
+    const asked = state.queue.find((q) => q.id === item);
+    if (asked?.kind === 'approval' && asked.member && showMemberApproval(asked.member, rootRef.current ?? document)) return;
     if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
@@ -973,6 +980,45 @@ export function SuperSurface(props: SuperSurfaceProps) {
     : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
   const taskRows = (useOwnerInbox().data ?? []).filter((r) => r.kind.startsWith('task-'));
+  // What waits for his approval on this Mac (owner 2026-11-06): asked here, on the main Super's
+  // screen, never only on the AI Team page. A member's own stage has its own band.
+  const teamAgents = useAgents({ enabled: !member, pollEveryMs: 15_000 }).data;
+  const teamAutomations = useAutomations({ enabled: !member, pollEveryMs: 15_000 }).data;
+  const approvals = useMemo(() => (member ? [] : superApprovals(teamAgents, teamAutomations)), [member, teamAgents, teamAutomations]);
+  // A member `super team ask` was refused for already has its own Waiting row (the queue's).
+  const agendaApprovals = agendaApprovalRows(approvals, state.queue);
+  // Its row on the card; when the card is not on screen (a presentation's folded chat, a folded
+  // stage), the member's AI Team stage, never a row that does nothing.
+  const showApproval = (key: string) => {
+    if (showApprovalRow(key, rootRef.current ?? document)) return;
+    const it = approvals.find((a) => a.key === key);
+    if (it) requestOpenAgents({ slug: it.member });
+  };
+  // The approval card takes room above the centre chat like a member's top area: the chat is
+  // re-placed when it comes, goes or changes height.
+  // The last decision's answer lives here, not in the card, so deciding the last row still says
+  // what happened where he is looking before the card goes.
+  const [approvalNote, setApprovalNote] = useState('');
+  useEffect(() => {
+    if (!approvalNote) return undefined;
+    const id = window.setTimeout(() => setApprovalNote(''), 4000);
+    return () => window.clearTimeout(id);
+  }, [approvalNote]);
+  const approvalsTop = !member && (approvals.length > 0 || approvalNote !== '');
+  useEffect(() => {
+    slotsChangedRef.current();
+    const el = memberTopRef.current;
+    if (!approvalsTop || !el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h === last) return;
+      last = h;
+      slotsChangedRef.current();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [approvalsTop]);
   const { bus } = useVaultId();
   const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
     <SuperAgenda
@@ -985,6 +1031,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
       taskRows={taskRows}
+      approvals={agendaApprovals}
+      onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onMoveNote={props.onMoveNote}
       extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
@@ -1062,6 +1110,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
                 </>
               )}
             />
+            {approvalsTop && (
+              <div className="super-member-top" ref={memberTopRef} data-testid="super-approvals-top">
+                <SuperApprovalBand items={approvals} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
+              </div>
+            )}
             {member && (
               <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
                 {member.task && (

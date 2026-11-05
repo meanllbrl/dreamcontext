@@ -332,3 +332,38 @@
   background: var(--color-bg-secondary); color: var(--color-text); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
 }
 .phone-member-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
+/* ── The Super's approval card (owner 2026-11-06): what waits for his approval, above the chat ── */
+.super-approvals { display: flex; flex-direction: column; gap: var(--space-2); }
+.super-approvals .aiteam-approval { max-height: none; overflow: visible; padding: 0; }
+.super-approvals-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.super-approvals-n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-xs);
+}
+.super-approvals .aiteam-approval-line { flex-wrap: wrap; }
+.super-approvals .aiteam-approval-text { flex: 1 1 220px; }
+.super-approval-actions { display: inline-flex; flex-wrap: wrap; flex-shrink: 0; gap: var(--space-2); margin-left: auto; }
+.super-approval-error { margin: 0; padding: 0 var(--space-3) var(--space-2); }
+.super-approval-row[data-flash='true'] { outline: 2px solid var(--color-warning); outline-offset: 1px; }
+/* A folded chat (a presentation's composer bar) keeps its height for the composer: the card waits
+   for the chat to unfold; Waiting on you and the queue head still point at it. */
+.super-centre[data-chat='bar'] [data-testid='super-approvals-top'] { display: none; }
+/* Above the chat the card shares 60% of the column: the text scrolls in its own box so Approve,
+   under it, stays in view without scrolling the card. */
+.super-approvals .aiteam-approval-pre { max-height: 160px; }

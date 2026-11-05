@@ -14,6 +14,7 @@ import {
 import type { Rect } from './superLayout';
 import { SuperAgentIcon } from '../../layout/NavIcons';
 import { cssEsc } from './StageMotion';
+import { showMemberApproval } from './superApprovals';
 import './JobBar.css';
 
 /**
@@ -341,7 +342,8 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
 
 /**
  * An AI Team member the Super Agent chose is not approved on this machine. Approving is the
- * owner's, in AI Team, where the text it grants is read first: this row only takes him there,
+ * owner's, on the Super's own approval card above the chat (owner 2026-11-06), where Review shows
+ * the text it grants: this row only brings that card's row into view (AI Team when none is drawn),
  * and Reply tells the Super Agent to give the job again. Nothing here approves anything.
  */
 function ApprovalHead({ item, onReplyToSuper }: { item: SuperQueueItem; onReplyToSuper: () => void }) {
@@ -358,8 +360,9 @@ function ApprovalHead({ item, onReplyToSuper }: { item: SuperQueueItem; onReplyT
           className="super-queue-btn super-queue-btn--option"
           data-testid="super-queue-open-team"
           disabled={!member}
-          onClick={() => requestOpenAgents({ slug: member })}
-        >{t('super.queue.openTeam')}</button>
+          // Its row on the Super's own approval card, above the chat; AI Team only when none is drawn.
+          onClick={() => { if (!showMemberApproval(member)) requestOpenAgents({ slug: member }); }}
+        >{t('super.approvals.reviewHere')}</button>
         <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
           {t('super.queue.reply')}
         </button>

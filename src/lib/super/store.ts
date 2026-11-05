@@ -363,12 +363,14 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // agent's words never caption one (not even a Bypass child's it hands to the owner), so none
     // survive on a permission item.
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
-    const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
+    // An automation item may name a member instead of an automation: the owner's decision on a
+    // member's approval (Super's approval card), never both.
+    const member = (q.kind === 'approval' || q.kind === 'automation') && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
-    // An automation item exists only for its automation and a decision the owner made.
-    const automation = q.kind === 'automation' && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
+    // An automation item exists only for its automation (or member) and a decision the owner made.
+    const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
-    if (q.kind === 'automation' && (!automation || !decision)) continue;
+    if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
     const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
@@ -405,6 +407,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
       ...(member ? { member } : {}),
       ...(automation && decision ? { automation, decision } : {}),
+      ...(q.kind === 'automation' && member && decision ? { decision } : {}),
       ...(wait ? { wait } : {}),
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),
