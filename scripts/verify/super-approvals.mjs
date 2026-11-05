@@ -52,7 +52,9 @@ const STANDIN = superStandin({
     if (text.startsWith('[super handover]')) { report({ kind: 'handover' }); return 'arranged'; }
     if (text.startsWith('[super')) { report({ kind: 'events', text: text.slice(0, 4000) }); return 'noted'; }
     if (text.includes('GO-SELF')) {
-      // The Super tries to give the approval itself, from its own process.
+      // The Super tries to give the approval itself, from its own process. Real Claude Code marks
+      // every command it runs with CLAUDECODE=1; the stand-in does the same.
+      process.env.CLAUDECODE = '1';
       const steps = [cli('agents', 'approve', ${JSON.stringify(MEMBER)}, '--yes'), cli('automations', 'approve', ${JSON.stringify(ROUTINE)}, '--yes')];
       report({ kind: 'self', steps });
       return 'tried';
@@ -207,10 +209,21 @@ async function main() {
       const sizeBtn = agendaCard.locator('[data-testid="super-card-size-btn"]');
       if (await sizeBtn.count()) { await agendaCard.hover(); await sizeBtn.click(); }
       else { await agendaCard.hover(); await agendaCard.locator('[data-testid="super-card-more"]').click(); }
-      await page.getByTestId('super-size-large').click();
+      // Large needs room beside the approval card and the chat: widen the window when it says so.
+      const large = page.getByTestId('super-size-large');
+      if (await large.isDisabled()) {
+        await page.keyboard.press('Escape');
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        await page.waitForTimeout(800);
+        await agendaCard.hover();
+        const btn = agendaCard.locator('[data-testid="super-card-size-btn"], [data-testid="super-card-more"]').first();
+        await btn.click();
+      }
+      ok('A2 the agenda can be sized large', !(await large.isDisabled()), await large.getAttribute('title').catch(() => ''));
+      if (!(await large.isDisabled())) await large.click();
     }
     const waiting = page.locator('[data-testid="super-agenda-section-waiting"]');
-    ok('A2 Waiting on you lists both approvals', await until(page, async () => (await waiting.locator('[data-kind="approval"]').count()) === 2, 15000),
+    ok('A2 Waiting on you lists both approvals', await until(page, async () => (await waiting.locator('[data-testid="super-agenda-row"][data-kind="approval"]').count()) === 2, 15000),
       await page.locator('[data-testid="super-agenda"]').first().innerText().catch(() => 'no agenda'));
     const n = Number(await page.locator('[data-testid="super-agenda-count-waiting"]').first().innerText().catch(() => '0'));
     ok('A2 its count includes them', n >= 2, String(n));
@@ -255,7 +268,7 @@ async function main() {
     ok('A5 the Super hears the NO', await until(page, async () => reports().filter((r) => r.kind === 'events').slice(eventsMid)
       .some((r) => r.text.includes(`event=automation member=${MEMBER} decision=rejected`)), 30000),
       JSON.stringify(reports().filter((r) => r.kind === 'events').map((r) => r.text.slice(0, 300))));
-    ok('A5 Waiting on you has no approval row left', (await waiting.locator('[data-kind="approval"]').count()) === 0);
+    ok('A5 Waiting on you has no approval row left', (await waiting.locator('[data-testid="super-agenda-row"][data-kind="approval"]').count()) === 0);
     await shot(page, '1440-light-after-decline');
 
     // 390 with something waiting again: a second teammate edit on the approved member.
