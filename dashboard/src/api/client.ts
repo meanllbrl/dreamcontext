@@ -193,6 +193,20 @@ export class ApiClient {
     });
   }
 
+  /**
+   * A POST in the owner's name (shared apps: publish, install, update…): carries the key only the
+   * shell holds, so an agent's request to the same route is refused. Null key = refused there.
+   */
+  async ownerPost<T>(path: string, body: unknown): Promise<T> {
+    const { ownerKey } = await import('../lib/desktop');
+    const key = await ownerKey();
+    return this.request<T>(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: key ? { 'X-Dreamcontext-Owner-Key': key } : {},
+    });
+  }
+
   patch<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>(path, {
       method: 'PATCH',

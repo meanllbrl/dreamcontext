@@ -7,7 +7,9 @@ import { openAgentSurface } from '../lib/agentSettings';
 import { COMPOSER_PREFILL_EVENT } from '../components/sleepy/chat/Composer';
 import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
+import { useState } from 'react';
 import { AppCard, type AppRow } from '../components/apps/AppCard';
+import { InstallSheet, SharedWithYou, TrashList } from '../components/apps/ShareSheets';
 import { revealPath } from '../lib/reveal';
 import './AppsPage.css';
 
@@ -38,6 +40,9 @@ export function AppsPage() {
   const others = data?.others ?? [];
   const openNote = (id: string) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'knowledge', id });
   const revealData = (path: string) => { void revealPath(api, path, 'reveal'); };
+  // Install: `''` = the public-link sheet, a repo name = an app from "Shared with you".
+  const [installRef, setInstallRef] = useState<string | null>(null);
+  const refresh = () => void qc.invalidateQueries({ queryKey: key });
 
   const askAgent = () => {
     openAgentSurface(bus);
@@ -61,6 +66,11 @@ export function AppsPage() {
           <p className="apps-page__lede">{t('apps.lede')}</p>
         </header>
       )}
+      {canLaunch && (
+        <div className="apps-page__actions">
+          <button type="button" className="app-card__stop" onClick={() => setInstallRef('')}>{t('share.install.public')}</button>
+        </div>
+      )}
       {isLoading && <p className="apps-page__muted">{t('apps.loading')}</p>}
       {error && <p className="error-state">{(error as Error).message}</p>}
       {!isLoading && !error && apps.length === 0 && (
@@ -70,6 +80,7 @@ export function AppsPage() {
           <button type="button" className="apps-empty__cta" onClick={askAgent}>{t('apps.empty.cta')}</button>
         </section>
       )}
+      {apps.length > 0 && canLaunch && <h2 className="apps-section__title">{t('share.mine')}</h2>}
       {apps.length > 0 && (
         <div className="apps-grid">
           {apps.map((a) => (
@@ -77,6 +88,9 @@ export function AppsPage() {
           ))}
         </div>
       )}
+      {canLaunch && <SharedWithYou onInstall={(fullName) => setInstallRef(fullName)} onChanged={refresh} />}
+      {canLaunch && <TrashList onChanged={refresh} />}
+      {installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={() => { setInstallRef(null); refresh(); }} />}
       {others.length > 0 && (
         <ul className="apps-others" aria-label={t('apps.others.label')}>
           {others.map((o) => (

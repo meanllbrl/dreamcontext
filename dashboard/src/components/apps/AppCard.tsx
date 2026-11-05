@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
+import { ConfigSheet, ConfirmSheet, PublishSheet, UpdateSheet, useShareT } from './ShareSheets';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
 export interface AppRow {
@@ -21,7 +22,16 @@ export interface AppRow {
   actions?: Array<{ id: string; title: string }>;
   schedules?: Array<{ id: string; enabled: boolean; next: string | null; last: { at: string; status: string; code: string | null } | null }>;
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
+  /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
+  origin?: 'own' | 'installed';
+  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null } | null;
+  provenance?: { fullName: string } | null;
+  publish?: { fullName: string; public: boolean; at: string } | null;
+  configCount?: number;
+  configMissing?: string[];
 }
+
+type ShareOpen = 'publish' | 'config' | 'update' | 'detach' | 'uninstall' | null;
 
 function when(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -45,6 +55,14 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
   const [err, setErr] = useState<string | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const [iconFailed, setIconFailed] = useState(false);
+  const [sheet, setSheet] = useState<ShareOpen>(null);
+  const ts = useShareT();
+  const installed = app.origin === 'installed';
+  const following = installed && !!app.source;
+  const toggleAuto = async (on: boolean) => {
+    setErr(null);
+    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setErr((e as Error).message); }
+  };
   const live = (app.windows ?? 0) > 0;
   const state = app.stoppedByOwner ? 'stopped' : app.state;
   const tone = STATE_TONE[state] ?? 'idle';
@@ -92,6 +110,26 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
         {(app.actions?.length ?? 0) > 0 && <div><dt>{t('apps.actions')}</dt><dd>{app.actions!.length}</dd></div>}
         {(app.schedules?.length ?? 0) > 0 && <div><dt>{t('apps.schedules')}</dt><dd>{app.schedules!.length}</dd></div>}
       </dl>
+      {(following || app.provenance || app.publish) && (
+        <p className="app-card__origin">
+          {following ? ts('share.card.from', { who: app.source!.owner })
+            : app.provenance ? ts('share.card.ownCopy', { repo: app.provenance.fullName })
+            : ts(app.publish!.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish!.fullName })}
+        </p>
+      )}
+      {following && app.source!.available && (
+        <div className="app-card__note app-card__note--accent app-card__mcp">
+          <span>{t('share.card.updateReady')}</span>
+          {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('update')}>{t('share.card.update')}</button>}
+        </div>
+      )}
+      {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
+      {(app.configMissing?.length ?? 0) > 0 && (
+        <div className="app-card__note app-card__note--warn app-card__mcp">
+          <span>{ts('share.card.settingsNeeded', { keys: app.configMissing!.join(', ') })}</span>
+          {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
+        </div>
+      )}
       {(app.schedules?.length ?? 0) > 0 && (
         <ul className="app-card__list">
           {app.schedules!.map((s) => (
@@ -151,6 +189,22 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
           <span className="app-card__mac-only">{t('apps.macOnly')}</span>
         )}
       </div>
+      {canLaunch && (
+        <div className="app-card__share">
+          {!installed && <button type="button" className="share-link" onClick={() => setSheet('publish')}>{t('share.card.share')}</button>}
+          {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
+          {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
+          {following && !app.source!.public && (
+            <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
+          )}
+          {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
+          {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
+        </div>
+      )}
+      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
+      {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
+      {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={onChanged} onDetach={() => setSheet('detach')} />}
+      {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
     </article>
   );
 }
