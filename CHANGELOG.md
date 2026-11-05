@@ -4,6 +4,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-11-05
+
+Patch on 0.41.1: the Super screen gets calmer and the Team list gets truthful. Local build; not published.
+
+- **Team rows look like the people they are.** Each member shows their real photo or face, a star marks the one that is the Super Agent, and nothing pretends to be loading when you open the list.
+- **A quieter Super head.** The line telling you that you talk only to the Super Agent is gone. New session and Turn off sit in a small ⋯ menu, and the left menu has a "+ New window".
+- **Routines are clickable.** On a member's card on the Super stage, click a routine row to open it.
+
 ## [0.41.1] - 2026-11-05
 
 Patch on 0.41.0: shared apps. An app you built can now go to other people, and an app someone shared can come to you. Local build; not published.
