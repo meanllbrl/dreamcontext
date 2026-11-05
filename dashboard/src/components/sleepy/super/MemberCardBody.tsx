@@ -11,6 +11,7 @@ import { routineOf, setMemberEnabled, type TeamAutomation } from '../../aiteam/t
 import { AutomationDialog } from '../../agents/AutomationDialog';
 import { AgentIdentityDialog } from '../../agents/AgentIdentityDialog';
 import type { MemberCardRef } from '../../../lib/superTypes';
+import { MarkdownPreview } from '../../core/MarkdownPreview';
 import './MemberCardBody.css';
 
 /**
@@ -139,37 +140,95 @@ function RoutinesCard(p: CardProps) {
   );
 }
 
+/** A job split for the card: its opening paragraph as the lede (plain words, the member's job in
+ *  a line or two) and the rest, drawn as markdown below it. A job that opens with a heading, a
+ *  list or a fence has no lede: all of it is the body, so nothing is said twice or lost. */
+export function instructionsParts(job: string): { lede: string; rest: string } {
+  const text = job.replace(/\r\n?/g, '\n').trim();
+  const cut = text.search(/\n\s*\n/);
+  const first = (cut < 0 ? text : text.slice(0, cut)).trim();
+  if (!first || /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|```|>|\|)/.test(first)) return { lede: '', rest: text };
+  return { lede: first.replace(/\s+/g, ' '), rest: cut < 0 ? '' : text.slice(cut).trim() };
+}
+
+/** Markdown read as plain words (a tile, a lede): no marks, one line. */
+export function plainWords(md: string): string {
+  return md.replace(/```[\s\S]*?```/g, ' ').replace(/[`*_~]+/g, '').replace(/^#{1,6}\s+/gm, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
+}
+
+/** How long a read may take before the card says so and offers a retry (a hung request would
+ *  otherwise read as "loading" forever). */
+const SLOW_READ_MS = 8000;
+
 function InstructionsCard(p: CardProps) {
   const { t } = useI18n();
   const detail = useAgent(p.slug);
   const agents = useAgents();
   const agent = findAgent(agents.data, p.slug);
+  const routines = useMemberRoutines(p.slug);
   const [editing, setEditing] = useState(false);
-  const soul = detail.data?.soul ?? '';
-  const job = detail.data?.prompt ?? agent?.description ?? '';
+  const [slow, setSlow] = useState(false);
+  // Each retry is a new attempt with its own clock: a retried request that hangs again is said
+  // again (the query stays pending across a refetch, so `pending` alone would not restart it).
+  const [attempt, setAttempt] = useState(0);
+  const pending = detail.isPending && detail.fetchStatus !== 'idle';
+  useEffect(() => {
+    if (!pending) { setSlow(false); return undefined; }
+    const timer = window.setTimeout(() => setSlow(true), SLOW_READ_MS);
+    return () => window.clearTimeout(timer);
+  }, [pending, attempt]);
+  // Only the full record: the roster's description is clipped by the server, never the job.
+  const soul = detail.data?.soul?.trim() ?? '';
+  const job = detail.data?.prompt?.trim() ?? '';
+  const { lede, rest } = useMemo(() => instructionsParts(job), [job]);
   if (p.variant === 'tile') {
+    const words = plainWords(job || agent?.description || '');
     return (
       <div className="mcb-tile" data-testid="member-card-tile" data-ref="instructions">
-        <span className="mcb-clip">{(soul || job || '').replace(/\s+/g, ' ').slice(0, 140)}</span>
+        <span className="mcb-clip">{words.slice(0, 220)}</span>
       </div>
     );
   }
+  const summary = detail.data?.agent ?? agent;
+  const model = summary?.model ? summary.model.charAt(0).toUpperCase() + summary.model.slice(1) : t('agents.profile.modelDefault');
+  const effort = summary?.effort ? t(`superStage.member.cards.effort.${summary.effort}`) : null;
+  const meta = [model, effort, t('superStage.member.cards.metaRoutines').replace('{n}', String(routines.length))].filter(Boolean).join(' · ');
+  const retry = () => { setSlow(false); setAttempt((n) => n + 1); void detail.refetch(); };
   return (
-    <div className="mcb-body mcb-instructions" data-testid="member-card-instructions">
-      <section className="mcb-section">
-        <h4 className="mcb-h">{t('superStage.member.cards.soul')}</h4>
-        {!detail.data ? <p className="mcb-muted">{t('agents.page.loading')}</p>
-          : soul ? <p className="mcb-text" data-testid="member-soul">{soul}</p> : <p className="mcb-muted">{t('agents.profile.soulEmpty')}</p>}
-      </section>
-      <section className="mcb-section">
-        <h4 className="mcb-h">{t('superStage.member.cards.job')}</h4>
-        <p className="mcb-text" data-testid="member-job">{job}</p>
-      </section>
-      {!agent?.readOnly && (
-        <button type="button" className="mcb-link" data-testid="member-instructions-edit" onClick={() => setEditing(true)}>
-          {t('superStage.member.cards.edit')}
-        </button>
-      )}
+    <div className="mcb-body mcb-ins" data-testid="member-card-instructions">
+      <div className="mcb-ins-top">
+        <span className="mcb-ins-meta" data-testid="member-instructions-meta" title={meta}>{detail.data ? meta : ''}</span>
+        {!agent?.readOnly && (
+          <button type="button" className="mcb-icon" data-testid="member-instructions-edit" disabled={!detail.data}
+            aria-label={t('superStage.member.cards.edit')} title={t('superStage.member.cards.edit')} onClick={() => setEditing(true)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.5 2.5l3 3L5.5 13.5H2.5v-3z" /><path d="M9 4l3 3" />
+            </svg>
+          </button>
+        )}
+      </div>
+      <div className="mcb-ins-scroll" data-testid="member-instructions-scroll">
+        {detail.isError || slow ? (
+          <div className="mcb-ins-state" role="status" data-testid="member-instructions-error">
+            <p className="mcb-muted">{t(detail.isError ? 'superStage.member.cards.readFailed' : 'superStage.member.cards.readSlow')}</p>
+            <button type="button" className="mcb-link" data-testid="member-instructions-retry" onClick={retry}>{t('superStage.member.retry')}</button>
+          </div>
+        ) : !detail.data ? (
+          <div className="mcb-ins-skeleton" aria-hidden="true" data-testid="member-instructions-pending"><span /><span /><span /></div>
+        ) : (
+          <>
+            {lede && <p className="mcb-ins-lede" data-testid="member-instructions-lede">{lede}</p>}
+            {rest && <div className="mcb-ins-md" data-testid="member-job"><MarkdownPreview content={rest} /></div>}
+            {!job && <p className="mcb-muted">{t('superStage.member.cards.jobEmpty')}</p>}
+            {soul && (
+              <section className="mcb-ins-soul" data-testid="member-soul">
+                <h4 className="mcb-h">{t('superStage.member.cards.soul')}</h4>
+                <div className="mcb-ins-md"><MarkdownPreview content={soul} /></div>
+              </section>
+            )}
+          </>
+        )}
+      </div>
       {editing && (
         <WindowLayer>
           <AgentIdentityDialog slug={p.slug} onClose={() => setEditing(false)}
