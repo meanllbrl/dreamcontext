@@ -257,7 +257,10 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
       if (asked.current === n) setPv(v);
     } catch (e) { if (asked.current === n) setErr(errText(e)); } finally { if (asked.current === n) setBusy(null); }
   };
-  useEffect(() => { if (initialRef) void preview(initialRef); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // The opening preview goes once: a second, simultaneous fetch of the same repo can fail and
+  // would then be the newest answer (React's dev double-run of effects does exactly that).
+  const opened = useRef(false);
+  useEffect(() => { if (initialRef && !opened.current) { opened.current = true; void preview(initialRef); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const missing = pv ? pv.config.filter((f) => f.required && !values[f.key]).map((f) => f.label) : [];
   const why = !pv ? null : !pv.gate.ok ? t('share.install.refused') : missing.length ? t('share.install.fill', { fields: missing.join(', ') }) : pv.public && !understood ? t('share.install.tick') : null;
