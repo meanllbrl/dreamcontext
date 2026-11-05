@@ -816,7 +816,7 @@
   margin-left: auto;
 }
 
-/* New chat with its chevron (r8-07): the row, and beside it the menu of Claude or a member. */
+/* New window (the project row once named New Chat, owner 2026-11-05) with its chevron (r8-07): the row, and beside it the menu of Claude or a member. */
 .ns-dr-newchat-wrap {
   display: flex;
   align-items: center;

@@ -187,7 +187,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 
 /* "Agenda" in the centre's head, while the card is off the stage: its badge counts what waits. */
 .super-agenda-open { margin-left: auto; }
-.super-agenda-open + .super-fresh { margin-left: 0; }
+.super-agenda-open + .super-head-more { margin-left: 0; }
 .super-agenda-open + .super-agenda-open { margin-left: 0; }
 .super-agenda-open-n {
   min-width: 20px;

@@ -11,6 +11,7 @@ import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
 import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
 import { BrowserCard } from './BrowserCard';
+import { useStageMenu } from './useStageMenu';
 import type { StageCue } from './useStageCues';
 import { targetPath, knowledgePath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
@@ -456,12 +457,13 @@ const ICONS: Record<IconName, ReactNode> = {
   more: <><circle cx="4" cy="8" r="0.9" /><circle cx="8" cy="8" r="0.9" /><circle cx="12" cy="8" r="0.9" /></>,
 };
 
-export function IconButton({ icon, label, onClick, testId, expanded }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean }) {
+export function IconButton({ icon, label, onClick, testId, expanded, menu }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean }) {
   return (
     <button
       type="button"
       className="super-icon-btn"
       data-testid={testId}
+      aria-haspopup={menu ? 'menu' : undefined}
       aria-expanded={expanded}
       aria-label={label}
       title={label}
@@ -562,34 +564,8 @@ function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onClose }: {
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
-  // The card re-renders on every push while its agent works: the menu takes focus ONCE, when it
-  // opens, and reads the latest close through a ref (a new arrow each render must not re-run it).
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    const items = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
-    (ref.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]:not(:disabled)') ?? items()[0])?.focus();
-    const onClose = () => closeRef.current();
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const list = items();
-      if (!list.length) return;
-      e.preventDefault();
-      const at = list.indexOf(document.activeElement as HTMLButtonElement);
-      const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
-      list[(at + step + list.length) % list.length].focus();
-    };
-    // Outside the menu closes it; its own card's toggle toggles it (closing here would reopen it).
-    const toggle = ref.current?.parentElement?.querySelector('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]') ?? null;
-    const onDown = (e: globalThis.PointerEvent) => {
-      const el = e.target as Node | null;
-      if (!ref.current?.contains(el) && !(toggle && el && toggle.contains(el))) onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    window.addEventListener('pointerdown', onDown, true);
-    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('pointerdown', onDown, true); };
-  }, []);
+  // Outside the menu closes it; its own card's toggle toggles it.
+  useStageMenu(ref, () => onClose(), () => ref.current?.parentElement?.querySelector('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]') ?? null);
   return (
     <div ref={ref} className="super-size-menu" role="menu" aria-label={t('super.size.label')} data-testid="super-card-size"
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>

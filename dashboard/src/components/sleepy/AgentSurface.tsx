@@ -1640,7 +1640,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           setChatWindows(seeded);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ rosterUnread = true; }
-      // An unread roster is no answer: the drawer offers no New Chat over chats it could not see.
+      // An unread roster is no answer: the drawer offers no New window over chats it could not see.
       finally { if (!cancelled) { hydratedRef.current = true; if (!rosterUnread) setRosterKnown(true); openOnRestoreRef.current(); } }
     })();
     return () => { cancelled = true; };
@@ -6769,7 +6769,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       <p className="mchat-empty-line">{canSpawn ? t('shell.windows.empty') : t('shell.windows.emptyBlocked')}</p>
       {canSpawn && (
         <button type="button" className="chat-btn primary" data-testid="chat-empty-new" onClick={() => addSession(claudeKind)}>
-          {t('shell.drawer.newChat')}
+          {t('shell.chat.new')}
         </button>
       )}
       {phoneSuperRow && (
@@ -7209,7 +7209,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
               <button
                 className="mchat-head-btn"
                 onClick={() => addSession(claudeKind)}
-                aria-label={chatMode ? t('shell.drawer.newChat') : 'New agent'}
+                aria-label={chatMode ? t('shell.chat.new') : 'New agent'}
                 data-testid="chat-head-new"
               >
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
