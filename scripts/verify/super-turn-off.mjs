@@ -91,7 +91,9 @@ const shot = (name) => page.screenshot({ path: join(app.shots, `${name}.png`) })
 const row = page.locator('[data-testid="drawer-super-row"]').first();
 const ring = () => row.locator('[data-testid="super-working-ring"]').count();
 const ringNumber = async () => ((await ring()) ? (await row.locator('[data-testid="super-working-ring"]').innerText()).trim() : '');
-const turnOff = page.locator('[data-testid="super-turn-off-btn"]');
+// Turn off lives in the head's ⋯ menu (owner 2026-11-05): open it first, then its row.
+const turnOff = page.locator('[data-testid="super-head-off"]');
+const openMenu = async () => { if (!(await page.getByTestId('super-head-menu').count())) await page.getByTestId('super-head-more').first().click(); };
 
 try {
   await page.goto(`${app.base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
@@ -112,7 +114,9 @@ try {
   await page.waitForTimeout(2500);
   await shot('1-idle');
   ok('T1 no ring on the Super row with no process behind the row', (await ring()) === 0, `ring reads "${await ringNumber()}"`);
-  ok('T1 the header has a Turn off button beside New session', (await turnOff.count()) === 1 && await turnOff.isVisible());
+  await openMenu();
+  ok('T1 the head\'s ⋯ menu has a Turn off row under New session', (await turnOff.count()) === 1 && await turnOff.isVisible());
+  await page.keyboard.press('Escape');
 
   await page.locator('.super-centre textarea').first().fill('START-CHILD');
   await page.keyboard.press('Enter');
@@ -120,6 +124,7 @@ try {
   ok('T2 the ring counts the running child, only it', await until(async () => (await ringNumber()) === '1', 15_000), `ring reads "${await ringNumber()}"`);
   await shot('2-running-child');
 
+  await openMenu();
   if (await turnOff.count()) {
     await turnOff.click();
     const dialog = page.getByRole('alertdialog').or(page.getByRole('dialog')).first();
@@ -131,6 +136,7 @@ try {
     await page.waitForTimeout(500);
     ok('T3 Cancel changes nothing', record().enabled === true && await page.getByTestId('super-centre').isVisible());
 
+    await openMenu();
     await turnOff.click();
     await dialog.waitFor({ timeout: 5000 });
     await dialog.getByRole('button', { name: 'Turn off' }).click();

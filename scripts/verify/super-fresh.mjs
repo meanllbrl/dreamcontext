@@ -200,9 +200,14 @@ async function openChat(page, base) {
     if (await nav.count()) { await nav.click().catch(() => {}); await page.waitForTimeout(1500); }
   }
 }
-const freshBtn = (page) => page.locator('[data-testid="super-fresh-btn"]');
-/** Pressable: aria-disabled, not `disabled` (a keyboard press keeps its focus). */
-const pressable = async (page) => (await freshBtn(page).getAttribute('aria-disabled')) === null;
+// New session is a row of the head's ⋯ menu (owner 2026-11-05); the busy state sits on the ⋯'s wrapper.
+const moreWrap = (page) => page.locator('[data-testid="super-centre"] .super-head-more');
+const busyOf = (page) => moreWrap(page).getAttribute('data-busy');
+const pressable = async (page) => (await moreWrap(page).count()) === 1 && (await busyOf(page)) === null;
+const pressFresh = async (page) => {
+  if (!(await page.getByTestId('super-head-menu').count())) await page.locator('[data-testid="super-centre"] [data-testid="super-head-more"]').click();
+  await page.getByTestId('super-head-fresh').click();
+};
 const stage = (r) => JSON.stringify({ children: Object.keys(r.children ?? {}).sort(), pool: (r.pool ?? []).map((p) => p.id).sort(), cards: (r.containers ?? []).map((c) => c.id).sort() });
 
 async function shots(page, engineName, name) {
@@ -245,10 +250,10 @@ async function run(engineName, base) {
   const tasksBefore = taskFiles();
 
   console.log(`── ${engineName}: New session`);
-  ok(tag('F2 the centre head shows the New session button'), await until(page, async () => (await freshBtn(page).count()) === 1 && await pressable(page), 15000));
+  ok(tag('F2 the centre head shows the ⋯ menu with New session'), await until(page, async () => await pressable(page), 15000));
   await shots(page, engineName, 'button');
-  await freshBtn(page).click();
-  ok(tag('F2 the press greys the button'), await until(page, async () => (await freshBtn(page).getAttribute('data-busy')) === 'true', 5000));
+  await pressFresh(page);
+  ok(tag('F2 the press greys the button'), await until(page, async () => (await busyOf(page)) === 'true', 5000));
   ok(tag('F2 the super got a [super fresh] turn and ran super handoff'), await until(page, async () => reports().some((r) => r.kind === 'fresh-handoff'), 30000));
   const fh = reports().find((r) => r.kind === 'fresh-handoff');
   ok(tag('F2 super handoff exited 0'), fh?.status === 0, fh?.out);
@@ -266,12 +271,12 @@ async function run(engineName, base) {
   ok(tag('F3 the record is kind super, acted and consumed'), rec1?.kind === 'super' && !!rec1?.actedAt && !!rec1?.consumedAt, JSON.stringify(rec1));
   ok(tag('F3 the same pane: no new process for the super'), reports().filter((r) => r.kind === 'spawn' && r.role === 'super').length === 1);
   await shots(page, engineName, 'rotated');
-  ok(tag('F3 the fresh session answered and the button is pressable again'), await until(page, async () => (await pressable(page)) && (await freshBtn(page).getAttribute('data-busy')) === null, 30000));
+  ok(tag('F3 the fresh session answered and the button is pressable again'), await until(page, async () => (await pressable(page)) && (await busyOf(page)) === null, 30000));
   ok(tag('F4 children, pool and cards are what they were'), stage(record()) === before, `${before}\n${stage(record())}`);
 
   console.log(`── ${engineName}: New session with no handoff written (fallback)`);
   writeFileSync(SKIP_FLAG, '1');
-  await freshBtn(page).click();
+  await pressFresh(page);
   ok(tag('F5 a second press queues a fresh turn'), await until(page, async () => reports().some((r) => r.kind === 'fresh-skipped'), 30000));
   ok(tag('F5 the server rotated anyway with the fallback prompt'), await until(page, async () => reports().filter((r) => r.kind === 'continue').length === 2, 30000)
     && /wrote none this time/.test(reports().filter((r) => r.kind === 'continue')[1]?.text ?? ''), JSON.stringify(reports().filter((r) => r.kind === 'continue')));

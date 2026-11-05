@@ -44,7 +44,7 @@ export interface ChatDrawerProps {
   /** Bumped by ⌘N: open the New chat window picker at its row. */
   newWindowNonce: number;
   /** A device shell (`readDeviceShell`): chats only. No New project, Project Relations, Open in
-   *  new window, Close project or drag. New chat is offered in every project it lists. */
+   *  new window, Close project or drag. New window is offered in every project it lists. */
   device?: boolean;
   /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
    *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
@@ -286,7 +286,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
       onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
   ));
 
-  /** A project's members for the New chat menu: its own, then the members of all projects. */
+  /** A project's members for the New window menu: its own, then the members of all projects. */
   const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
     const own = row.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
     const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));

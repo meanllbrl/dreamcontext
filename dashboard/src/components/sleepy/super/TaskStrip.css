@@ -106,7 +106,7 @@
 /* ── The member's head in the centre (mockup r8-08): face, name, "job · tek konuşma" ──
    One row, nothing overlaps: the member's head takes what the buttons leave (basis 0) and gives
    way first (subtitle, then the model chip and the tool note); the buttons never shrink under
-   their own width (main's `.super-fresh` may, it shares the row with less). */
+   their own width (main's ⋯ may, it shares the row with less). */
 .super-member-head {
   display: flex;
   align-items: center;
@@ -119,7 +119,7 @@
 .super-member-head > .super-member-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .super-member-head > .super-member-sub { flex: 1 1 0; }
 .super-member-head > .super-member-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.super-centre-head:has(.super-member-head) .super-fresh,
+.super-centre-head:has(.super-member-head) .super-head-more,
 .super-centre-head:has(.super-member-head) .super-add-btn,
 .super-centre-head:has(.super-member-head) .super-agenda-open { flex: none; }
 @container super-centre (max-width: 719px) {

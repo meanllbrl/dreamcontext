@@ -164,10 +164,12 @@
    the name never wraps, it is cut with an ellipsis only after the subtitle has given way. */
 .super-centre-name { font-weight: 700; color: var(--color-text); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-centre-head > img { flex: none; }
-/* "Yeni oturum" (task super-agent-devrini-…): the head's last item, pushed right. On a narrow
-   centre the sub line goes first, then the button keeps only its glyph (label in aria/title). */
+/* The head (owner 2026-11-05, less text): the name, then pushed right the ⋯ menu (New session,
+   Turn off) and "+ Add", the one worded action. Nothing in it wraps or gives way but the name. */
 .super-centre-clip { container-type: inline-size; container-name: super-centre; }
-.super-fresh { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-head-more { margin-left: auto; position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-head-more .super-icon-btn { width: 28px; height: 28px; flex: none; }
+.super-head-more .super-icon-btn[aria-expanded='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-fresh-btn,
 .super-add-btn {
   display: inline-flex;
@@ -194,18 +196,9 @@
 .super-add-btn:active { transform: scale(0.97); }
 .super-fresh-btn:focus-visible,
 .super-add-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.super-fresh-btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .super-fresh-glyph { flex: none; }
-.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-/* The subtitle takes only what the name and the buttons leave (basis 0), so it shrinks first; it
-   goes before it is a stub, earlier when Agenda shares the row. Then both buttons keep only their
-   glyph (the word stays in aria-label and title). */
-@container super-centre (max-width: 479px) {
-  .super-centre-sub { display: none; }
-}
-@container super-centre (max-width: 559px) {
-  .super-centre-head:has(.super-agenda-open) .super-centre-sub { display: none; }
-}
+/* The Agenda and Others buttons (the head's own when those cards are off the stage) keep only
+   their glyph on a narrow centre; the word stays in aria-label and title. */
 @container super-centre (max-width: 399px) {
   .super-fresh-btn { padding: 0 var(--space-1); }
   .super-fresh-btn-label { display: none; }
@@ -214,10 +207,36 @@
   .super-centre-head:has(.super-agenda-open) .super-fresh-btn { padding: 0 var(--space-1); }
   .super-centre-head:has(.super-agenda-open) .super-fresh-btn-label { display: none; }
 }
+.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* The ⋯ menu: the card size menu's frame, opened under its button, right-aligned, over the chat (an
+   open menu's step; the stage and the dock both define the scale, 30 is only a fallback). */
+.super-size-menu.super-head-menu { top: calc(100% + 6px); right: 0; z-index: var(--sz-card-open, 30); min-width: 184px; gap: 2px; padding: var(--space-1); }
+.super-head-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-head-menu-item:hover:not([aria-disabled='true']),
+.super-head-menu-item:focus-visible { background: var(--color-bg-tertiary); outline: none; }
+.super-head-menu-item[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.super-head-menu-item--off { color: var(--color-error-ink); }
+.super-head-menu-item--off:hover,
+.super-head-menu-item--off:focus-visible { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.super-head-menu-glyph { flex: none; }
+.super-head-menu-rule { height: 1px; margin: var(--space-1) 0; background: var(--color-border); }
 
-.super-centre-sub,
 .super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.super-centre-sub { flex: 1 1 0; text-align: right; }
 .super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .super-card-large-note { flex: 1 1 auto; }
 .super-slot {

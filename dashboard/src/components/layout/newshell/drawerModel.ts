@@ -6,7 +6,7 @@
  * Under each expanded project, in order: the Super Agent row (always, D6), ONE Ekip row when the
  * project has a member of its own (plan-r10 1d: faces and one count, from `summary=1` `members`;
  * ten members are still one row), and one row per chat window that holds a chat, with its own
- * ring and count (W3, D8). A project with none has one New Chat row instead: nothing here opens
+ * ring and count (W3, D8). A project with none has one New window row instead: nothing here opens
  * onto an empty screen. A collapsed project's row carries the sum of those same rows and hides
  * its Ekip row with the rest (owner 2026-11-03); a member's question still lights its asking dot. Members of all projects are in ONE Global ekip row at the very bottom (1f).
  */
@@ -443,7 +443,7 @@ function childrenOf(
   }
   // Only on a known answer: before the roster is restored, or after a failed read, no row is
   // better than offering a chat over chats that are there.
-  // A project with members keeps its New chat row (r8-07): its chevron is where a member's one
+  // A project with members keeps its New window row (r8-07): its chevron is where a member's one
   // conversation starts.
   if ((children.length === before || (team && team.members.length > 0)) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
   if (team) children.push(team);
@@ -474,7 +474,7 @@ function sumOf(children: readonly DrawerChild[], source: DrawerProjectRow['sourc
 /**
  * A device shell's project: its Super row (handed over) and its chats by name, and nothing else:
  * no Super Agent button (a phone never hands over), no AI Team members, no window rows. A project
- * with no chat of the owner's offers New chat, handed over or not. A project with a chat waiting
+ * with no chat of the owner's offers New window, handed over or not. A project with a chat waiting
  * on the owner opens by itself; folded, it sums its rows.
  */
 function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null; open: ReadonlySet<string>; facts: Readonly<Record<string, DrawerFacts | undefined>>; device: DeviceDrawerInput }): DrawerProjectRow {
@@ -502,7 +502,7 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team?.asking ? { superAsking: true } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
-  // Team last, after the chats and New chat, as on the desktop (plan r4 R5).
+  // Team last, after the chats and New window, as on the desktop (plan r4 R5).
   if (team) children.push(team);
   return { ...base, source: p.mounted ? 'mounted' : 'none', children };
 }

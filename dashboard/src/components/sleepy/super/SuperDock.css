@@ -64,11 +64,6 @@
   max-height: calc(100vh - var(--super-dock-lift) - 2 * var(--space-5));
   isolation: isolate;
 }
-/* The head at the dock's width: the subtitle goes (the centre's own 420 px rule) and New session
-   keeps only its glyph, so the two window buttons always fit (mockup finding 1). */
-.super-dock-window .super-centre-sub { display: none; }
-.super-dock-window .super-fresh-btn { padding: 0 var(--space-1); }
-.super-dock-window .super-fresh-btn-label { display: none; }
 .super-dock-actions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
 /* Sessions that ask but are not the Super's: today's dock tiles, one row each. */
 .super-dock-rows { flex: none; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) 0; }

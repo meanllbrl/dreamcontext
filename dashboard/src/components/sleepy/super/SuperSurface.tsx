@@ -32,7 +32,7 @@ import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
-import { NewSessionButton } from './NewSessionButton';
+import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { pickerOpen } from '../../../lib/desktop';
 import type { SuperOpenBody } from './superApi';
@@ -153,9 +153,11 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
 }
 
 /**
- * The Super chat's head: the dreamcontext logo, its name ("Super Agent", owner 2026-10-31), and (as a column) the subtitle, the stage's Agenda button when one is given and
- * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
- * agenda is a stage card) and its two buttons as `actions`.
+ * The Super chat's head: the dreamcontext logo and its name ("Super Agent", owner 2026-10-31), the
+ * stage's Agenda button when one is given, the ⋯ menu (New session, Turn off) and the head's own
+ * actions ("+ Add" on the stage, the window buttons on the dock). Less text (owner 2026-11-05): no
+ * subtitle, and no worded button but "+ Add". The stage centre and the Super dock both draw it;
+ * the dock passes no agenda (the agenda is a stage card) and no Turn off.
  */
 export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, actions, who }: {
   chat: string;
@@ -177,19 +179,14 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
         <>
           <BrandMark size={28} />
           <span className="super-centre-name">{t('super.centre.name')}</span>
-          {chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
         </>
       )}
       {chat === 'column' && agenda}
-      {chat === 'column' && !noNewSession && <NewSessionButton pending={pending} onPress={onNewSession} />}
-      {chat === 'column' && onTurnOff && (
-        <button type="button" className="super-fresh-btn super-off-btn" data-testid="super-turn-off-btn" aria-label={t('super.off.button')} title={t('super.off.title')} onClick={onTurnOff}>
-          <svg className="super-fresh-glyph" width={16} height={16} viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="M8 2.5V8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <path d="M4.6 4.4a5 5 0 1 0 6.8 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <span className="super-fresh-btn-label">{t('super.off.button')}</span>
-        </button>
+      {chat === 'column' && (
+        <SuperHeadMenu
+          fresh={noNewSession ? undefined : { pending, onPress: onNewSession }}
+          onTurnOff={onTurnOff}
+        />
       )}
       {actions}
     </div>
