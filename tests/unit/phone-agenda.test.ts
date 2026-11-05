@@ -66,6 +66,53 @@ function record(over: Partial<SuperState> = {}): SuperState {
 const wire = (s: SuperState) => readSuperDigest(JSON.parse(superDigestFrame(superDigest(s))))!;
 const strip = (s: SuperState | null) => renderToStaticMarkup(createElement(PhoneAgenda as never, { digest: s ? wire(s) : null, onWriteAbout: () => {}, onScreen: true } as never));
 
+const { SuperAgenda } = await import('../../dashboard/src/components/sleepy/super/SuperAgenda.js');
+const { superUnanswered, agendaAboutBlock } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
+
+describe('Cevaplanmadı: what the Super left unanswered (task super-hicbir-konuyu-kacirmaz)', () => {
+  const owed = [
+    { id: 'o1', kind: 'msg' as const, ref: 'abc123', seq: 1, at: 1, gist: 'Is the pricing page live?', nudges: 2 },
+    { id: 'o2', kind: 'result' as const, ref: 'def456', seq: 2, at: 2, gist: 'Pricing card: deploy', nudges: 1 },
+    { id: 'o3', kind: 'msg' as const, ref: 'ghi789', seq: 3, at: 3, gist: 'Stopped one', nudges: 0, parked: 'stop' as const, parkedAt: 1000 },
+    { id: 'o4', kind: 'msg' as const, ref: 'jkl012', seq: 4, at: 4, gist: 'closed', nudges: 2, closed: { at: 5, by: 'mark' as const } },
+  ];
+  it('the digest carries the open debts end to end, and a frame survives the wire intact', () => {
+    const d = superDigest(record({ owed } as never));
+    expect(d.owed.map((x) => x.id)).toEqual(['o1', 'o2', 'o3']);
+    const back = readSuperDigest(JSON.parse(superDigestFrame(d)))!;
+    expect(back.owed).toEqual(d.owed);
+    const { state } = digestToNotepadInput(back, 'Claude');
+    expect(state.owed!.map((x) => x.id)).toEqual(['o1', 'o2', 'o3']);
+  });
+  it('rows: nudged twice, or parked past ten minutes; one row each with a write-about header', () => {
+    expect(superUnanswered({ owed }, 2000).map((r) => r.owed)).toEqual(['o1']);
+    expect(superUnanswered({ owed }, 1000 + 10 * 60_000).map((r) => r.owed)).toEqual(['o1', 'o3']);
+    expect(agendaAboutBlock(superUnanswered({ owed }, 2000)[0])).toBe('[About agenda line owed=o1 section=unanswered]');
+  });
+  const look = { live: () => null, titleFor: (c: string) => c, superTitle: 'Claude' };
+  const draw = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(SuperAgenda as never, {
+    state: { queue: [], pad: [], owed }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {}, ...extra,
+  } as never));
+  it('the desktop draws the section above Waiting with "Gerek yok"; the phone draws it read only', () => {
+    const desk = draw({ onDropOwed: () => {} });
+    expect(desk).toContain('data-testid="super-agenda-section-unanswered"');
+    expect(desk.indexOf('super-agenda-section-unanswered')).toBeLessThan(desk.indexOf('super-agenda-section-waiting'));
+    expect(desk).toContain('data-testid="super-agenda-owed-drop"');
+    expect(desk).toContain('Is the pricing page live?');
+    const phone = draw({});
+    expect(phone).toContain('data-testid="super-agenda-section-unanswered"');
+    expect(phone).not.toContain('super-agenda-owed-drop');
+    // The phone's own agenda passes no drop door.
+    expect(read('dashboard/src/components/sleepy/super/PhoneAgenda.tsx')).not.toContain('onDropOwed');
+    // The small card (its counts tile) never reads "0 waiting" while one is unanswered.
+    const tile = renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [], owed }, look, variant: 'tile', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never));
+    const waitingTile = tile.slice(tile.indexOf('super-agenda-tile-waiting'));
+    expect(/class="super-agenda-tile-v">(\d+)</.exec(waitingTile)?.[1], tile).toBe('2'); // o1 nudged twice, o3 parked long ago
+        // Nothing unanswered: no section at all.
+    expect(renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [] }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never))).not.toContain('unanswered');
+  });
+});
+
 describe('the phone agenda is the desktop notepad', () => {
   it('digestToNotepadInput: text is ownerText, names are the Mac card titles, the Super is "Claude"', () => {
     const { state, look } = digestToNotepadInput(wire(record()), 'Claude');

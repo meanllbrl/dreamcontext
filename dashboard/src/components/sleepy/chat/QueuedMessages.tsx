@@ -62,7 +62,7 @@ function QueuedRow({
         ? { label: t('super.reply.toCard'), text: split.about.quote, reply: true }
       : agendaAboutStrip(split.about, [], () => '', {
         about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
       });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 

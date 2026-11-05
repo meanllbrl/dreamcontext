@@ -22,13 +22,14 @@ import './PhoneAgenda.css';
 
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
  *  the Mac's job card title (the short session id when the digest names none). */
-export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad'>; look: JobLook } {
+export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad' | 'owed'>; look: JobLook } {
   const queue: SuperQueueItem[] = d.waiting.map((w) => ({
     id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
     ...(w.text ? { ownerText: w.text } : {}),
   }));
   return {
-    state: { queue, pad: d.pad },
+    // What the Super left unanswered: drawn, never dropped here (the drop door is the Mac's only).
+    state: { queue, pad: d.pad, ...(d.owed?.length ? { owed: d.owed } : {}) },
     look: {
       live: () => null,
       titleFor: (c) => d.names[c] ?? c.slice(0, 8),
