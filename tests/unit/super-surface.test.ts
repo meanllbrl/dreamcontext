@@ -633,7 +633,7 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
       'drawer.team.manage': 'Üyeleri yönet', 'drawer.team.global': 'Global ekip', 'drawer.team.globalAll': 'Tüm projeler',
       'drawer.team.independent': 'Projelerden bağımsız', 'drawer.team.listTitle': '{project} · Ekip', 'drawer.team.approval': 'onay',
       'drawer.team.toggle': 'Aç/kapat', 'drawer.team.off': 'Kapalı', 'drawer.team.question': 'Soru: {text}', 'drawer.team.count': '{n} sana dönük',
-      'drawer.newChat.claude': 'Claude', 'drawer.newChat.menu': 'Yeni sohbet seçenekleri',
+      'drawer.newChat.claude': 'Claude', 'drawer.newChat.menu': 'Yeni pencere seçenekleri',
       'drawer.member.working': '{n} iş çalışıyor, {q} sırada', 'drawer.member.idle': 'Boşta · {when}',
       'aiteam.manage.openChat': 'Sohbeti aç', 'tasks.agent.openMember': '{name} sayfasını aç',
       'superStage.member.subtitle': '{job} · tek konuşma', 'superStage.member.claudeOnly': "Super Claude\\'da çalışır, çocukları {tool}\\'da",
