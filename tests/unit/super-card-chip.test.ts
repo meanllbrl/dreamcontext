@@ -75,7 +75,7 @@ describe('in the composer: a chip, never the raw words', () => {
 
   it('the drop stages the chip the way a picked element arrives (AgentSurface)', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8');
-    const drop = src.slice(src.indexOf('const askAboutCard = useCallback'), src.indexOf('/** A card chip in a Super message was clicked'));
+    const drop = src.slice(src.indexOf('const chipCard = useCallback'), src.indexOf('/** A card chip in a Super message was clicked'));
     expect(drop).toMatch(/addAttachments\(convId, \[\{/);
     expect(drop).toMatch(/kind: 'card'/);
     expect(drop).toMatch(/text: cardMentionText\(id, title\)/);
