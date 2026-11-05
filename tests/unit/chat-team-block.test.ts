@@ -276,6 +276,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('Write nothing between tool calls, and nothing'),
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Say'),
       expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
+      // rev 30 (2026-11-06, owed ledger): only a child's question waits behind his card.
+      '  `[super answer] …`, what came in meanwhile as `<super-while-you-asked>`: answer him, then',
       '  `super resume <child>` reopens it); `--idle` lists idle ones; `--force` only if the owner asked.',
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
@@ -308,6 +310,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'does it break one of his earlier decisions or a project pattern, what does it cost? Sound: say so',
       'in one line and why. Not: say where it breaks and what you would do instead; he decides in a `super ask`.',
       'Never agree by reflex, never argue by reflex. A clear task is not such a question: just do it.',
+      // rev 30 (2026-11-06, owed ledger): one subject per section, what the server keeps owed.
+      expect.stringContaining('event note, except a result or a send you tell'),
+      expect.stringContaining('subjects in a turn are one section each under its own mark'),
+      expect.stringContaining('no reply still gets one short line. The server keeps'),
+      expect.stringContaining('until a section under its ref says it'),
       // rev 26 (2026-11-02, merged into rev 27 with the weigh-first rule): which tool and model a child runs on.
       '- Which tool and model: `## Tools on this Mac` (a later `<super-tools>` replaces it) lists what is ready.',
       '  `--tool codex|antigravity --model <id>`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he',
@@ -316,6 +323,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
       expect.stringContaining('(a late line lands above the card);'),
+      expect.stringContaining('child questions that waited meanwhile as'),
       '  `super resume <child>` reopens it); `--force` only if the owner asked.',
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
@@ -337,8 +345,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=29>'),
+      expect.stringContaining('<super-brief rev=30>'),
     ]);
-    expect(after.length).toBe(before.length + 27); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line)
+    expect(after.length).toBe(before.length + 31); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +4 (rev 30: one subject per section, the owed ledger)
   });
 });

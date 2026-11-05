@@ -3863,7 +3863,8 @@
       "valueFlags": [
         "--mode",
         "--model",
-        "--effort"
+        "--effort",
+        "--origin"
       ]
     },
     {
@@ -3872,6 +3873,9 @@
       "args": [
         "<child>",
         "<text>"
+      ],
+      "valueFlags": [
+        "--origin"
       ]
     },
     {

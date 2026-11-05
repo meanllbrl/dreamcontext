@@ -1,3 +1,4 @@
+import { closeAllForTakeback } from './owed.js';
 import { randomUUID } from 'node:crypto';
 import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds, superDecidesPermission } from '../assistant/chat-registry.js';
 import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
@@ -196,7 +197,9 @@ export async function disableSuper(contextRoot: string): Promise<SuperState> {
     s.enabled = false;
     // The super's own question and a "New session" not yet delivered go with the hand-over: the
     // next hand-over must not rotate a session nobody asked to rotate.
-    for (const q of s.queue) if (q.kind === 'ask' || (q.kind === 'fresh' && q.state === 'pending')) q.state = 'done';
+    for (const q of s.queue) if (q.kind === 'ask' || (q.kind === 'fresh' && q.state === 'pending') || (q.kind === 'owed' && q.state === 'pending')) q.state = 'done';
+    // He is in the chat himself: nothing is owed him any more (owed.ts).
+    closeAllForTakeback(s, Date.now());
     for (const sid of Object.keys(s.children)) {
       // In memory, never from disk: a note being delivered right now is already gone from
       // memory, and its persist deletes only the value it delivered (store.ts clearSuperNote).

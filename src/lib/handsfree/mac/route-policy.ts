@@ -290,6 +290,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/fresh': deny(SUPER),
   'POST /api/super/end': deny(SUPER),
   'POST /api/super/seen': deny(SUPER),
+  'POST /api/super/owed/drop': deny(SUPER),
   'POST /api/super/pad': deny(SUPER),
   'POST /api/super/open': deny(SUPER),
   'POST /api/super/member': deny(SUPER),

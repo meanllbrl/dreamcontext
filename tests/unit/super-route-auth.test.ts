@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { handleSuperEnable, handleSuperFresh, handleSuperOpen, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperEnable, handleSuperFresh, handleSuperOpen, handleSuperOwedDrop, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
 import { handleWindowCommand } from '../../src/server/routes/window-control.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
@@ -188,6 +188,11 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperOpen, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
     expect((await owner(handleSuperOpen, { remote: '192.168.1.9' })).status).toBe(403);
     expect((await owner(handleSuperOpen, { phone: true })).status).toBe(403);
+    // His "Gerek yok" on an unanswered line (owed.ts): his window only.
+    expect((await owner(handleSuperOwedDrop, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await owner(handleSuperOwedDrop, { remote: '192.168.1.9' })).status).toBe(403);
+    expect((await owner(handleSuperOwedDrop, { phone: true })).status).toBe(403);
+    expect((await owner(handleSuperOwedDrop, { body: { id: 'o1' } })).status).toBe(404);
     // ...and this very window gets through.
     expect((await owner(handleSuperOpen, { body: { kind: 'task', ref: 'pocket-ledger' } })).status).toBe(200);
   });
@@ -196,7 +201,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/member', 'POST /api/super/open', 'POST /api/super/pad', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/member', 'POST /api/super/open', 'POST /api/super/owed/drop', 'POST /api/super/pad', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');
@@ -207,6 +212,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
       expect(phoneAllows('POST', '/api/super/open')).toBe(false);
       expect(phoneAllows('POST', '/api/super/member')).toBe(false);
       expect(phoneAllows('POST', '/api/super/seen')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/owed/drop')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }
   });

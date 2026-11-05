@@ -546,6 +546,11 @@ export interface SuperChild {
    *  ms; `seenAt` is the finish key his window showed): the grace of the pictures that result
    *  turned down counts from here (`forChild`). */
   seenMarkedAt?: number;
+  /** Outward actions this child completed that the Super has not told yet (`outwardAction`:
+   *  a push, a publish, a PR, a deploy, an MCP send), written by the server from its frames.
+   *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
+   *  and clears this. At most MAX_SENT. */
+  sent?: string[];
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
@@ -589,8 +594,11 @@ the turn that carried it, `result` is what the member's `super team done` said. 
 open; only `team done` closes it. `reply`: main Super's answer (`super team answer`) to a member's
 question about a request, written into the member's queue; its delivery closes the member's ask
 (`answers` names it). Both are solo: one per turn, never batched with another origin.
+`owed` (owed.ts): a natural turn end left owner debts open (`SuperState.owed`); one solo `[super owed]`
+turn names them (`owed` = their ids). Re-decided at delivery: dropped when none is still open.
+Its `sessionId` is the super's own.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -669,6 +677,10 @@ export interface SuperQueueItem {
    *  holds. Escalated (`super queue ask`) or unanswered past SUPER_PERMISSION_GRACE_MS, it loses
    *  the flag and is the owner's like any permission. Never on another kind. */
   toSuper?: true;
+  /** A result debt was opened for this item when it reached the Super (owed.ts): never twice. */
+  owedAt?: number;
+  /** An `owed` item's debts (`SuperOwed.id`), fixed when it was queued. */
+  owed?: string[];
 }
 
 /**
@@ -932,7 +944,63 @@ export interface SuperState {
   /** Batch ids of a member Super's turns that were main Super's work (`main:*`): the owner's unread
    *  skips them. A ring of MAX_MAIN_BATCHES beside `ownerBatches`. Absent = none. */
   mainBatches?: string[];
+  /** What the Super still owes the owner (owed.ts): every open debt, the newest MAX_OWED_CLOSED
+   *  closed ones. Absent = none. */
+  owed?: SuperOwed[];
+  /** The last debt number handed out (`o<owedSeq>`, its `seq`): monotonic. */
+  owedSeq?: number;
+  /** When this record started keeping debts (the first write after the upgrade): an item older
+   *  than this is never owed. Absent = now. */
+  owedSince?: number;
 }
+
+/**
+ * One thing the Super owes the owner (task super-hicbir-konuyu-kacirmaz): his message (`msg`), or
+ * a result he waits on or an outward action of a child (`result`). Opened by the server from
+ * facts only, closed only by evidence: a line-start `<!-- re:<ref> -->` section in a Super text
+ * (`mark`), his own drop (`owner`), or his take-back (`takeback`).
+ */
+export interface SuperOwed {
+  /** `o<seq>`. */
+  id: string;
+  kind: 'msg' | 'result';
+  /** The reference a section closes it with (`msgRef`, the child's origin, or a synthetic one). */
+  ref: string;
+  /** A multi-part message's part refs: a section under any of them closes it too. */
+  parts?: string[];
+  /** Its number (`owedSeq` when opened): a turn end decides only debts at or under its ceiling. */
+  seq: number;
+  at: number;
+  /** A result's queue item, child, team job. */
+  item?: string;
+  child?: string;
+  team?: string;
+  /** What it is about (his words, or the job's line): server-cut, always shown fenced. */
+  gist: string;
+  /** The outward actions of that job (`SuperChild.sent`). */
+  sent?: string[];
+  /** `[super owed]` turns that named it. At OWED_NUDGES it shows on his agenda instead. */
+  nudges: number;
+  /** Left open by an end he stopped (`stop`) or a limit refused (`limit`): shown after OWED_PARK_MS. */
+  parked?: 'stop' | 'limit';
+  parkedAt?: number;
+  closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+}
+export const OWED_ID_RE = /^o[1-9][0-9]{0,8}$/;
+/** Closed debts the record keeps (newest). Every open one is kept up to MAX_OWED_OPEN. */
+export const MAX_OWED_CLOSED = 40;
+/** A hidden ceiling on open debts, so a record cannot grow without bound; never a real limit. */
+export const MAX_OWED_OPEN = 200;
+/** `[super owed]` turns per debt before it is the owner's to see. */
+export const OWED_NUDGES = 2;
+/** A debt parked by his Stop or a limit shows on his agenda after this long with no natural end. */
+export const OWED_PARK_MS = 10 * 60_000;
+export const MAX_OWED_MSG_GIST = 300;
+export const MAX_OWED_RESULT_GIST = 120;
+/** Outward actions one child or debt holds (`SuperChild.sent`, `SuperOwed.sent`). */
+export const MAX_SENT = 8;
+/** One outward action's label (`outwardAction`): fixed words or a sanitized MCP tool name. */
+export const SENT_RE = /^[A-Za-z0-9 _./:-]{1,80}$/;
 
 /**
  * The agenda is a NOTEPAD the super agent writes itself (owner 2026-10-22 19:15: "like a
@@ -988,7 +1056,7 @@ export function cleanPadText(raw: unknown): string {
  * child's, so they never ride in his message: the super reads them fenced from `super state`).
  * `section=` is where the line stood when he wrote. Not `[super `: never an injected turn.
  */
-export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item|owed)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done|unanswered)\]/;
 /** The `line:` a note's About block carries, at most this long. */
 export const MAX_ABOUT_LINE = 200;
 
@@ -1044,7 +1112,7 @@ export const MAX_SELECTION_QUOTE = 1000;
 export const MAX_MESSAGE_REFS = 100;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'owed' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
@@ -1067,10 +1135,10 @@ export function aboutHeads(text: string): AboutHead[] {
     const t = a || c ? null : ABOUT_TASK_RE.exec(s);
     const r = a || c || t ? null : REPLY_TO_RE.exec(s);
     if (!a && !c && !t && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : t ? 'task' : 'reply';
+    const kind = a ? (a[1] as 'note' | 'item' | 'owed') : c ? 'card' : t ? 'task' : 'reply';
     let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item' || kind === 'task') {
+    if (kind === 'item' || kind === 'owed' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -1547,7 +1615,7 @@ export const SUPER_FRAME_CUE = 'super_cue' as const;
 
 /** The prefixes an injected super turn starts with; history replay renders them as event lines.
  *  `[super event]` stays for a transcript written before plan r4. */
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
 
 /** What a `super_event` frame says about the turn it opened: `batch` since plan r4 (the other
  *  kinds stay for replay of older transcripts). */
@@ -1575,7 +1643,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 29;
+export const SUPER_BRIEF_REV = 30;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

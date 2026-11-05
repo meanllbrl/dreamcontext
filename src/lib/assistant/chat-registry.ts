@@ -34,6 +34,7 @@
  * The assistant's OWN session is never registered — it would be watching itself.
  */
 
+import { outwardAction } from '../super/owed.js';
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
 
@@ -167,6 +168,10 @@ export interface ChatHandle {
   /** The bridge moved the process off `bypassPermissions` (it wrote `set_permission_mode`):
    *  {@link ChatEntry.bypass} is cleared for good. */
   notBypass(): void;
+  /** Stop settled with NO `result` (agent-chat settleAfterInterrupt): a running turn is stamped
+   *  ended and interrupted (every reader of the idle edge sees a stopped turn) and the entry goes
+   *  idle; an idle one is left alone. The interrupt flag is cleared either way, never kept. */
+  stopSettled(): void;
   exited(): void;
 }
 
@@ -179,6 +184,21 @@ export interface WatchResult {
   timedOut?: boolean;
   unknown?: boolean;
 }
+
+/**
+ * Who hears a chat's OUTWARD action that went through (a push, a publish, a PR, a deploy, an MCP
+ * send: owed.ts `outwardAction`), once per tool call: the Super inbox registers it (a registry
+ * never imports the Super). Told only on the call's non-error `tool_result`, so a push the owner
+ * denied is never told as sent.
+ */
+let outwardSink: ((sessionId: string, what: string, toolUseId: string) => void) | null = null;
+type OutwardSink = (sessionId: string, what: string, toolUseId: string) => void;
+/** Set the sink; returns the one it replaced (a test puts it back). */
+export function setOutwardSink(fn: OutwardSink | null): OutwardSink | null { const prev = outwardSink; outwardSink = fn; return prev; }
+/** Outward calls seen and not resolved yet, per chat (bounded). */
+const MAX_OUTWARD_OPEN = 64;
+/** Calls already told, per chat (bounded): a frame seen twice counts once. */
+const MAX_OUTWARD_TOLD = 256;
 
 const entries = new Map<string, ChatEntry>();
 /** Process-wide turn counter for {@link ChatEntry.lastTurn}. */
@@ -348,7 +368,7 @@ function settle(sessionId: string, w: Waiter, r: WatchResult): void {
 }
 
 /** Pull the plain text out of an `assistant` frame's content blocks. */
-function assistantText(frame: Record<string, unknown>): string {
+export function assistantText(frame: Record<string, unknown>): string {
   const msg = frame.message as { content?: unknown } | undefined;
   if (!msg || !Array.isArray(msg.content)) return '';
   return msg.content
@@ -490,6 +510,33 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   let interruptAsked = false;
   let limitAsked = false;
   const openTools = new Set<string>();
+  const outwardOpen = new Map<string, string>();
+  const outwardTold = new Set<string>();
+  /** Every assistant frame (top level and a sub-agent's): an outward call is remembered; every
+   *  user frame: its non-error result tells it, once. */
+  const noteOutward = (frame: Record<string, unknown>): void => {
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (!b || typeof b !== 'object') continue;
+      const blk = b as Record<string, unknown>;
+      if (frame.type === 'assistant' && blk.type === 'tool_use' && typeof blk.id === 'string') {
+        if (outwardTold.has(blk.id) || outwardOpen.has(blk.id)) continue;
+        const what = outwardAction(blk.name, blk.input);
+        if (!what) continue;
+        outwardOpen.set(blk.id, what);
+        if (outwardOpen.size > MAX_OUTWARD_OPEN) outwardOpen.delete(outwardOpen.keys().next().value as string);
+      } else if (frame.type === 'user' && blk.type === 'tool_result' && typeof blk.tool_use_id === 'string') {
+        const what = outwardOpen.get(blk.tool_use_id);
+        if (what === undefined) continue;
+        outwardOpen.delete(blk.tool_use_id);
+        if (blk.is_error === true) continue;
+        outwardTold.add(blk.tool_use_id);
+        if (outwardTold.size > MAX_OUTWARD_TOLD) outwardTold.delete(outwardTold.values().next().value as string);
+        try { outwardSink?.(e.sessionId, what, blk.tool_use_id); } catch { /* a sink never breaks the stream */ }
+      }
+    }
+  };
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
 
@@ -537,6 +584,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         if (pendingRequest(e, frame.request_id)) settlePending(frame.request_id);
         return;
       }
+      if (frame.type === 'assistant' || frame.type === 'user') noteOutward(frame);
       const q = readPendingQuestion(frame);
       if (q) {
         const prevRequestId = e.pendingQuestion?.requestId;
@@ -634,6 +682,18 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     },
     notBypass() {
       delete e.bypass;
+    },
+    stopSettled() {
+      if (dead) return;
+      interruptAsked = false;
+      if (e.status !== 'working' && e.status !== 'asking') return;
+      e.pendingQuestion = null;
+      delete e.earlierPending;
+      openTools.clear();
+      syncTools();
+      e.lastTurn = { endedAt: new Date().toISOString(), interrupted: true, resultSeq: ++resultSeq };
+      limitAsked = false;
+      setStatus(e, 'idle');
     },
     answered(requestId) {
       if (dead) return;

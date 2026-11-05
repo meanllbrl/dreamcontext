@@ -106,7 +106,7 @@ import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { getChat, registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -125,7 +125,7 @@ import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwedBlock, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -2847,6 +2847,9 @@ export function startChatSession(
   /** Armed when the CLI acked an interrupt: if no `result` follows, nothing was running and the
    *  turn is closed here (`settleAfterInterrupt`). */
   let interruptSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A Stop settled with no `result` (settleAfterInterrupt): a slow abort `result` arriving after
+   *  it, with no turn in flight, is the same stopped turn's, never a natural end (owed.ts). */
+  let stopSettledLate = false;
   /**
    * The last text WE handed to the CLI, kept so the post-hoc switch can resubmit the exact
    * turn the API refused. Without it a limit landing mid-turn can only be announced, and the
@@ -3117,12 +3120,13 @@ export function startChatSession(
    *  agent-chat-live.ts: sockets, pings and replays never touch them). */
   const openTurn = (): void => {
     turnsInFlight += 1;
+    stopSettledLate = false;
     if (live) markTurnStarted(live);
     armDetachReap();
   };
   /** A main `result`: the CLI has answered every user frame written before it, folded steers
    *  included (see `turnsInFlight`). */
-  const closeTurn = (): void => {
+  const closeTurn = (stopped = false): void => {
     turnsInFlight = 0;
     outstandingAsks.clear();
     // Every frame written before this result is answered by it (the CLI folds them in one turn).
@@ -3134,7 +3138,8 @@ export function startChatSession(
     // The Super Agent's event turn is over (an owner message steered into it was answered in
     // the same `result`); the queue's next batch may go now (D7).
     if (superEventTurnOpen) superEventTurnOpen = false;
-    if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId));
+    // One end per turn; a Stop says so (an owed decision is never made on it).
+    if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId, { stopped }));
   };
   /**
    * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
@@ -3144,8 +3149,12 @@ export function startChatSession(
    */
   const settleAfterInterrupt = (): void => {
     interruptSettleTimer = null;
+    // Taken BEFORE it is cleared: this end is a Stop (owed.ts decides nothing on it).
+    const stopped = stopAskedThisTurn;
     stopAskedThisTurn = false;
     if (!alive) return;
+    // Every chat: a running turn is stamped ended and interrupted, the flag never kept set.
+    registry?.stopSettled();
     // Stop with no `result`: a "New session" turn never rotates now, and a rotation that will
     // never see its continue result stops holding the Super Agent's inbox (fresh-session.ts).
     if (isSuper) {
@@ -3153,7 +3162,10 @@ export function startChatSession(
       if (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed') setHandoffRun(failHandoffRun(handoffRun, 'stopped'));
       stopRotating(chatRegistryId);
     }
-    if (turnsInFlight > 0) closeTurn();
+    if (turnsInFlight > 0) closeTurn(stopped);
+    // No turn in flight: still one end, marked stopped (a Stop is one end, never two).
+    else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true }));
+    stopSettledLate = true;
     sendMeta({ subtype: 'turn_state', busy: false });
   };
 
@@ -3441,6 +3453,9 @@ export function startChatSession(
     const abouts = isSuper ? aboutHeads(text).map(({ kind, id }) => ({ kind, id })) : [];
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
+    // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
+    const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text) : null;
+    if (owedBlock) content.push({ type: 'text', text: owedBlock });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
@@ -3450,6 +3465,8 @@ export function startChatSession(
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
+    // His message is owed an answer until a section of the Super's says it (never the server's own continue).
+    if (isSuper && wrote && !text.startsWith('/') && text !== RESET_CONTINUE_TEXT) void superOwnerOwes(chatRegistryId, text);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
@@ -3936,6 +3953,8 @@ export function startChatSession(
       const turnsBefore = turnsInFlight;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
       cardFeedback.noteFrame(obj);
+      // The Super's own text: its line-start `<!-- re:<ref> -->` sections close what it owed him.
+      if (isSuper && obj.type === 'assistant' && !obj.parent_tool_use_id) void superSaid(chatRegistryId, assistantText(obj));
       if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
         const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
         if (used > 0) lastMainContext = used;
@@ -3949,7 +3968,8 @@ export function startChatSession(
       const mainResult = obj.type === 'result' && obj.parent_tool_use_id === undefined;
 
       if (mainResult) {
-        closeTurn();
+        // A Stop's own `result`, or a slow abort `result` after the Stop already settled.
+        closeTurn(stopAskedThisTurn || (turnsBefore === 0 && stopSettledLate));
         // The turn may have used, broken or fixed an MCP server: read again once it settles.
         if (!scopedCard) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);

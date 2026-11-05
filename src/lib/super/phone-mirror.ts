@@ -385,7 +385,7 @@ function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRo
 // ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────
 
 /** The digest's fields, mirrored by `dashboard/src/lib/superTypes.ts` (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'owed', 'key'] as const;
 export const DIGEST_MAX_PAD = 40;
 export const DIGEST_MAX_PAD_TEXT = 160;
 export const DIGEST_MAX_WAITING = 40;
@@ -393,6 +393,9 @@ export const DIGEST_MAX_OWNER_TEXT = 300;
 export const DIGEST_MAX_BATCHES = 50;
 export const DIGEST_MAX_NAMES = 40;
 export const DIGEST_MAX_NAME = 80;
+/** Open debts a digest carries (owed.ts), and how much of each gist. */
+export const DIGEST_MAX_OWED = 40;
+export const DIGEST_MAX_OWED_GIST = 160;
 
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
@@ -403,6 +406,8 @@ export interface SuperDigestSource {
   mainBatches?: readonly string[];
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
   children: Readonly<Record<string, { brief: string; startedAt: number; workOrigin?: string }>>;
+  /** What the Super still owes him (owed.ts); absent = none. */
+  owed?: ReadonlyArray<{ id: string; kind: string; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number; closed?: unknown }>;
 }
 
 /**
@@ -424,6 +429,9 @@ export interface SuperDigest {
   /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
   mainBatches: string[];
   names: Record<string, string>;
+  /** The OPEN debts (owed.ts), so the phone draws "Cevaplanmadı" the way the desktop does. The
+   *  phone only reads them: no drop door is there. */
+  owed: Array<{ id: string; kind: 'msg' | 'result'; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number }>;
   /** Changes when (and only when) anything above changes. */
   key: string;
 }
@@ -482,11 +490,15 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     const name = childDigestName(state, sid);
     if (name) names[sid] = name;
   }
-  const body = { pad, waiting, ownerBatches, mainBatches, names };
+  const owed = (state.owed ?? []).filter((d) => d.closed === undefined && (d.kind === 'msg' || d.kind === 'result')).slice(-DIGEST_MAX_OWED).map((d) => ({
+    id: digestText(d.id, 12), kind: d.kind as 'msg' | 'result', ref: digestText(d.ref, 6), seq: d.seq, at: d.at, gist: digestText(d.gist, DIGEST_MAX_OWED_GIST), nudges: d.nudges,
+    ...(d.parked === 'stop' || d.parked === 'limit' ? { parked: d.parked, ...(typeof d.parkedAt === 'number' ? { parkedAt: d.parkedAt } : {}) } : {}),
+  }));
+  const body = { pad, waiting, ownerBatches, mainBatches, names, owed };
   return { ...body, key: fnv(JSON.stringify(body)) };
 }
 
 /** The `_meta` frame carrying `d` to a phone mirror. */
 export function superDigestFrame(d: SuperDigest): string {
-  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, mainBatches: d.mainBatches, names: d.names, key: d.key });
+  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, mainBatches: d.mainBatches, names: d.names, owed: d.owed, key: d.key });
 }
