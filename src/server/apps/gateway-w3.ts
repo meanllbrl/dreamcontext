@@ -38,6 +38,7 @@ import { mintEmbedToken } from './embed-token.js';
 import { buildAppLink } from '../../lib/app-link.js';
 import { issueLinkNonce } from './link-nonces.js';
 import { appendFinding } from '../../lib/apps/learn-queue.js';
+import { publicConfig, readAppConfig } from '../../lib/apps/app-config.js';
 
 const NOTIFY_PER_MINUTE = 30;
 
@@ -180,6 +181,15 @@ registerGatewayRoute('/__dc/mcp', { cookie: false, bearer: true }, async (gw, re
   } finally {
     release();
   }
+});
+
+// ─── config (paylasilan-app-ler plan r2 K2) ─────────────────────────────────────────
+
+registerGatewayRoute('/__dc/config', { cookie: true, bearer: true }, (gw, _req, res) => {
+  const rec = gw.runtime.rec;
+  const m = readManifest(rec.root);
+  const fields = m.ok ? m.manifest.config : [];
+  send(res, 200, { config: publicConfig(fields, readAppConfig(homeDir, rec.configId)) });
 });
 
 // ─── schedules ──────────────────────────────────────────────────────────────────────

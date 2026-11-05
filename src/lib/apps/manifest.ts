@@ -59,6 +59,19 @@ export interface AppAgent {
   readTools?: string[];
 }
 
+/** One setting the app asks for (paylasilan-app-ler plan r2 K2). The template travels in the
+ *  manifest; the VALUES live on the installer's Mac (app-config.ts), a secret only as a `.env` key. */
+export const CONFIG_TYPES = ['text', 'number', 'choice', 'secret', 'insight', 'objective', 'agent', 'task-tag', 'mcp-tool'] as const;
+export type ConfigType = (typeof CONFIG_TYPES)[number];
+export interface ConfigField {
+  key: string;
+  type: ConfigType;
+  label: string;
+  required: boolean;
+  help?: string;
+  choices?: string[];
+}
+
 export interface AppManifest {
   slug: string;
   name: string;
@@ -70,6 +83,10 @@ export interface AppManifest {
   mcp: string[];
   schedules: AppSchedule[];
   actions: AppAction[];
+  /** The settings template (empty for an app that asks for none). */
+  config: ConfigField[];
+  /** Extra paths a publish may carry beyond the allow-list (same extensions). */
+  share: { include: string[] };
 }
 
 export interface ManifestProblem {
@@ -91,8 +108,11 @@ export function cleanText(v: string, max: number): string {
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** Parse the manifest text of the app at `appRoot`. */
-export function parseManifest(text: string, appRoot: string): ManifestResult {
+/**
+ * Parse the manifest text of the app at `appRoot`. `appRoot: null` = a manifest read from a
+ * remote repo before install: the icon is taken by name (the install gate checks the file).
+ */
+export function parseManifest(text: string, appRoot: string | null): ManifestResult {
   const errors: ManifestProblem[] = [];
   const warnings: ManifestProblem[] = [];
   const err = (field: string, problem: string, fix: string) => errors.push({ field, problem, fix });
@@ -113,7 +133,10 @@ export function parseManifest(text: string, appRoot: string): ManifestResult {
   let icon: string | null = null;
   if (raw.icon !== undefined && raw.icon !== null) {
     if (typeof raw.icon !== 'string' || !raw.icon) err('icon', 'not a path', 'Point icon at a PNG, JPEG or ICNS file inside the app folder, e.g. "icon.png".');
-    else {
+    else if (appRoot === null) {
+      if (isAbsolute(raw.icon) || raw.icon.split('/').some((seg) => !seg || seg === '..' || seg.startsWith('.')) || !/\.(png|jpe?g|icns)$/i.test(raw.icon)) err('icon', 'not a plain PNG, JPEG or ICNS path', 'Point icon at a .png, .jpg or .icns inside the app.');
+      else icon = raw.icon;
+    } else {
       const inside = insideRoot(appRoot, raw.icon);
       if (!inside) err('icon', 'outside the app folder or missing', 'Put the icon file inside the app folder and name it relative to it.');
       else if (!/\.(png|jpe?g|icns)$/i.test(inside)) err('icon', 'not a PNG, JPEG or ICNS', 'Use a .png, .jpg or .icns icon (512x512 or larger).');
@@ -226,12 +249,53 @@ export function parseManifest(text: string, appRoot: string): ManifestResult {
     });
   }
 
+  const config: ConfigField[] = [];
+  if (raw.config !== undefined) {
+    if (!Array.isArray(raw.config)) err('config', 'not a list', 'Write config as a list of {"key","type","label","required?"}.');
+    else raw.config.slice(0, 40).forEach((c, i) => {
+      const f = `config[${i}]`;
+      if (!isObj(c)) { err(f, 'not an object', 'Each setting is {"key","type","label","required?","help?","choices?"}.'); return; }
+      const type = c.type as ConfigType;
+      if (!(CONFIG_TYPES as readonly string[]).includes(type as string)) { err(`${f}.type`, 'unknown type', `Use one of ${CONFIG_TYPES.join(', ')}.`); return; }
+      const key = typeof c.key === 'string' ? c.key : '';
+      const keyOk = type === 'secret' ? /^[A-Z][A-Z0-9_]{0,63}$/.test(key) : /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key);
+      if (!keyOk) { err(`${f}.key`, 'missing or not a key', type === 'secret' ? 'A secret is a .env key: capitals, digits and _, e.g. "META_TOKEN".' : 'Use letters, digits and _, starting with a letter, e.g. "insight".'); return; }
+      if (config.some((x) => x.key === key)) { err(`${f}.key`, `duplicate key "${key}"`, 'Give every setting its own key.'); return; }
+      const label = typeof c.label === 'string' ? cleanText(c.label, 80) : '';
+      if (!label) { err(`${f}.label`, 'missing', 'Say in a few words what the setting is, e.g. "Which insight to watch".'); return; }
+      let choices: string[] | undefined;
+      if (type === 'choice') {
+        choices = Array.isArray(c.choices) ? c.choices.filter((x): x is string => typeof x === 'string').map((x) => cleanText(x, 60)).filter(Boolean).slice(0, 30) : [];
+        if (!choices.length) { err(`${f}.choices`, 'a choice needs choices', 'List the options, e.g. ["daily","weekly"].'); return; }
+      }
+      config.push({
+        key, type, label, required: c.required === true,
+        ...(typeof c.help === 'string' && cleanText(c.help, 200) ? { help: cleanText(c.help, 200) } : {}),
+        ...(choices ? { choices } : {}),
+      });
+    });
+  }
+
+  const share = { include: [] as string[] };
+  if (raw.share !== undefined) {
+    const sh = raw.share;
+    if (!isObj(sh) || (sh.include !== undefined && (!Array.isArray(sh.include) || !sh.include.every((x) => typeof x === 'string')))) {
+      err('share', 'not {"include": [paths]}', 'Write share as {"include": ["assets"]}: extra folders a publish may carry.');
+    } else {
+      for (const inc of ((sh.include as string[] | undefined) ?? []).slice(0, 20)) {
+        const clean = inc.replace(/\/+$/, '');
+        if (!clean || isAbsolute(clean) || clean.split('/').some((seg) => !seg || seg === '..' || seg.startsWith('.'))) err('share.include', `"${cleanText(inc, 60)}" is not a plain relative path`, 'Name a folder or file inside the app, no dots, no "..".');
+        else share.include.push(clean);
+      }
+    }
+  }
+
   if (!backend && (actions.length || schedules.length)) {
     err('backend', 'actions and schedules need a backend', 'Add a backend (they call its routes), or remove the actions and schedules.');
   }
 
   if (errors.length) return { ok: false, errors, warnings };
-  return { ok: true, manifest: { slug, name, icon, backend, build, watch, agent, mcp, schedules, actions }, warnings };
+  return { ok: true, manifest: { slug, name, icon, backend, build, watch, agent, mcp, schedules, actions, config, share }, warnings };
 }
 
 /** Read and parse `<appRoot>/dreamcontext-app.json`. */

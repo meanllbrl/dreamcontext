@@ -36,6 +36,7 @@ import { join, relative, sep, win32 } from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import { readManifest, type AppManifest, type ManifestProblem } from './manifest.js';
+import { missingRequired, publicConfig, readAppConfig } from './app-config.js';
 import { type AppRecord } from './registry.js';
 import { AppDataError, appDataDir, ensureAppDataDir, migrateAppData, scanAppData } from './data-dir.js';
 import { backupAppData } from './data-backup.js';
@@ -419,6 +420,12 @@ export class AppRuntime {
     this.manifest = m.manifest;
     for (const w of m.warnings) this.warnings.push(`${w.field}: ${w.problem}`);
     this.refreshSecrets();
+    // A required setting left empty: nothing starts until the owner fills it (plan r2 K2).
+    const missing = missingRequired(m.manifest.config, readAppConfig(this.home, this.rec.configId), this.rec.root);
+    if (missing.length) {
+      this.setError(`settings needed: ${missing.join(', ')} (fill them on the app card or with \`dreamcontext apps config ${this.rec.slug}\`)`);
+      return;
+    }
     if (!m.manifest.backend) {
       if (!existsSync(join(this.rec.root, 'public'))) this.warnings.push('no backend and no public/ folder: nothing to show');
       this.state = 'running';
@@ -543,6 +550,7 @@ export class AppRuntime {
       DC_TOKEN: this.dcToken,
       DC_GATEWAY_SECRET: this.gatewaySecret,
       DC_DATA_DIR: this.dataDir(),
+      DC_CONFIG: JSON.stringify(publicConfig(this.manifest!.config, readAppConfig(this.home, this.rec.configId))),
     };
     const child = this.spawnShell(be.command, env);
     const release = this.deps.claimPort?.(port) ?? (() => {});

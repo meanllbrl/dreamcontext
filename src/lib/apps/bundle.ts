@@ -43,13 +43,17 @@ const STAMP_FILE = 'dreamcontext-bundle.stamp';
 const LSREGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
 
-/** Stable per (project, slug): the data dir, the runner's bundle id and the bundle name use it. */
-export function appHash(projectRoot: string, slug: string): string {
+/**
+ * Stable per (project, slug): the data dir, the runner's bundle id and the bundle name use it.
+ * An installed app adds its installId, so nothing (data, approvals, port) is inherited from an
+ * earlier app of the same slug (paylasilan-app-ler plan r2).
+ */
+export function appHash(projectRoot: string, slug: string, installId?: string): string {
   let root = projectRoot;
   try {
     root = realpathSync(projectRoot);
   } catch { /* a project that is gone still hashes */ }
-  return createHash('sha256').update(`${root}\0${slug}`).digest('hex').slice(0, 16);
+  return createHash('sha256').update(installId ? `${root}\0${slug}\0${installId}` : `${root}\0${slug}`).digest('hex').slice(0, 16);
 }
 
 export function appsBundleDir(home: string = homedir()): string {

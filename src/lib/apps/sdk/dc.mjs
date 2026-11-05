@@ -175,6 +175,9 @@ export const dc = {
     runs: () => api('GET', '/api/automations/runs'),
   },
   schedules: { list: () => call('GET', '/__dc/schedules') },
+  // The app's settings on this Mac (the manifest's `config` template, filled by the owner).
+  // Never a secret: those are keys of the app's own .env, read by the backend from process.env.
+  config: () => call('GET', '/__dc/config'),
   /** 'light' | 'dark' | 'system' */
   theme: async () => (await call('GET', '/__dc/theme')).theme,
   /** Copy text to the Mac pasteboard (Turkish characters intact). Page only. */

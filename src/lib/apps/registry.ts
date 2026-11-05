@@ -32,6 +32,49 @@ export interface AppRecord {
   gwPort?: number;
   /** The owner pressed Stop: nothing but the owner's Launch/Start brings the backend back. */
   stoppedByOwner?: boolean;
+  /**
+   * Shared apps (paylasilan-app-ler plan r3). `installed`: someone else's app, installed from a
+   * host. Sticky: no path turns an installed app into `own`, its own copy included. Absent = own.
+   */
+  origin?: 'own' | 'installed';
+  /** 16 random bytes, hex: an installed app's hash, source repo and trash entry hang off it. */
+  installId?: string;
+  /** The app's settings file `~/.dreamcontext/apps/config/<configId>.json` (not path-bound). */
+  configId?: string;
+  /** sha256 of the manifest text the owner approved at install or at the last update. */
+  approvedManifestSha?: string;
+  source?: AppSource;
+  /** Where a detached copy came from: read only by the re-share licence rule. */
+  provenance?: { fullName: string; license: string };
+  /** The owner's own publish of this app. */
+  publish?: AppPublish;
+}
+
+export interface AppSource {
+  host: 'github' | 'local';
+  fullName: string;
+  repoId: string;
+  ownerId: string;
+  owner: string;
+  public: boolean;
+  mode: 'following' | 'own';
+  autoUpdate: boolean;
+  /** The upstream commit the copy was installed or last updated from. */
+  upstreamSha: string;
+  lastCheck?: string;
+  /** An update seen by the last check, waiting for the owner. */
+  available?: { sha: string; at: string };
+  /** The last check could not reach the source (gone, no access, moved to another owner). */
+  problem?: 'no_access' | 'moved' | 'not_forward';
+}
+
+export interface AppPublish {
+  host: 'github' | 'local';
+  fullName: string;
+  repoId: string;
+  public: boolean;
+  lastSha: string;
+  at: string;
 }
 
 interface RegistryFile {
@@ -66,6 +109,47 @@ export function real(p: string): string {
   return parent === p ? p : join(real(parent), basename(p));
 }
 
+const HEX40 = /^[0-9a-f]{40}$/;
+const HEX = /^[0-9a-f]{16,64}$/;
+const FULL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
+const str = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+
+function sanitizeSource(v: unknown): AppSource | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const s = v as Record<string, unknown>;
+  if ((s.host !== 'github' && s.host !== 'local') || !str(s.fullName) || !FULL_NAME_RE.test(s.fullName) || !str(s.repoId) || !str(s.ownerId) || !str(s.owner) || !str(s.upstreamSha) || !HEX40.test(s.upstreamSha)) return undefined;
+  const av = s.available as Record<string, unknown> | undefined;
+  return {
+    host: s.host, fullName: s.fullName, repoId: s.repoId, ownerId: s.ownerId, owner: s.owner,
+    public: s.public === true,
+    mode: s.mode === 'own' ? 'own' : 'following',
+    autoUpdate: s.autoUpdate === true && s.public !== true,
+    upstreamSha: s.upstreamSha,
+    ...(str(s.lastCheck, 40) ? { lastCheck: s.lastCheck } : {}),
+    ...(av && typeof av === 'object' && str(av.sha) && HEX40.test(av.sha) && str(av.at, 40) ? { available: { sha: av.sha, at: av.at } } : {}),
+    ...(s.problem === 'no_access' || s.problem === 'moved' || s.problem === 'not_forward' ? { problem: s.problem } : {}),
+  };
+}
+
+function sanitizePublish(v: unknown): AppPublish | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const p = v as Record<string, unknown>;
+  if ((p.host !== 'github' && p.host !== 'local') || !str(p.fullName) || !FULL_NAME_RE.test(p.fullName) || !str(p.repoId) || !str(p.lastSha) || !HEX40.test(p.lastSha) || !str(p.at, 40)) return undefined;
+  return { host: p.host, fullName: p.fullName, repoId: p.repoId, public: p.public === true, lastSha: p.lastSha, at: p.at };
+}
+
+/** The installed-apps folder of a project: no `own` app is ever registered under it. */
+export function installedAppsDir(projectRoot: string): string {
+  return join(dirname(projectRoot), `${basename(projectRoot)}-apps`, 'installed');
+}
+
+/** Is `root` inside `<project>-apps/installed/` (realpath, segment boundary)? */
+export function isUnderInstalledDir(projectRoot: string, root: string): boolean {
+  const dir = real(installedAppsDir(projectRoot));
+  const r = real(root);
+  return r === dir || r.startsWith(dir + sep);
+}
+
 function sanitize(raw: unknown): AppRecord | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -81,6 +165,29 @@ function sanitize(raw: unknown): AppRecord | null {
     createdAt: r.createdAt as string,
     ...(typeof r.gwPort === 'number' && Number.isInteger(r.gwPort) && r.gwPort > 1023 && r.gwPort < 65536 ? { gwPort: r.gwPort } : {}),
     ...(r.stoppedByOwner === true ? { stoppedByOwner: true } : {}),
+    ...shareFields(r),
+  };
+}
+
+/**
+ * The shared-app fields. `origin` fails CLOSED: a record whose code sits under `installed/` or
+ * that carries an installId is installed, whatever its `origin` says (plan r2 K5.1).
+ */
+function shareFields(r: Record<string, unknown>): Partial<AppRecord> {
+  const installId = typeof r.installId === 'string' && HEX.test(r.installId) ? r.installId : undefined;
+  const underInstalled = typeof r.root === 'string' && /[\\/]installed[\\/][^\\/]+[\\/]?$/.test(r.root) && typeof r.projectRoot === 'string' && isUnderInstalledDir(r.projectRoot, r.root);
+  const installed = r.origin === 'installed' || !!installId || underInstalled;
+  const source = sanitizeSource(r.source);
+  const publish = sanitizePublish(r.publish);
+  const prov = r.provenance as Record<string, unknown> | undefined;
+  return {
+    ...(installed ? { origin: 'installed' as const } : {}),
+    ...(installId ? { installId } : {}),
+    ...(typeof r.configId === 'string' && HEX.test(r.configId) ? { configId: r.configId } : {}),
+    ...(typeof r.approvedManifestSha === 'string' && /^[0-9a-f]{64}$/.test(r.approvedManifestSha) ? { approvedManifestSha: r.approvedManifestSha } : {}),
+    ...(source ? { source } : {}),
+    ...(publish ? { publish } : {}),
+    ...(prov && typeof prov === 'object' && str(prov.fullName) && FULL_NAME_RE.test(prov.fullName) && str(prov.license, 40) ? { provenance: { fullName: prov.fullName, license: prov.license } } : {}),
   };
 }
 
@@ -171,13 +278,49 @@ export function getApp(home: string, projectRoot: string, slug: string): AppReco
 /** Register a new app (or refresh the name/root of an existing one). */
 export function registerApp(home: string, input: { projectRoot: string; vault: string; slug: string; name: string; root: string }): AppRecord {
   if (!APP_SLUG_RE.test(input.slug)) throw new Error(`bad app slug: ${input.slug}`);
+  // An installed app's folder is never registered as the owner's own app (plan r2 K5.1).
+  if (isUnderInstalledDir(input.projectRoot, input.root)) throw new Error('that folder holds an installed app; it cannot be registered as your own');
   const projectRoot = real(input.projectRoot);
   return mutateRegistry(home, (apps) => {
     const existing = apps.find((a) => same(a, projectRoot, input.slug));
+    if (existing?.origin === 'installed') throw new Error(`"${input.slug}" is an installed app; it cannot become your own`);
     const rec: AppRecord = existing
       ? { ...existing, name: input.name, root: real(input.root), vault: input.vault }
       : { slug: input.slug, vault: input.vault, projectRoot, root: real(input.root), hash: appHash(projectRoot, input.slug), name: input.name, createdAt: new Date().toISOString() };
     return { apps: [...apps.filter((a) => a !== existing), rec], result: rec };
+  });
+}
+
+/** Register an app installed from a host (share/install.ts): its own hash, never another app's. */
+export function registerInstalledApp(home: string, input: Omit<AppRecord, 'hash' | 'createdAt' | 'origin'> & { installId: string }): AppRecord {
+  if (!APP_SLUG_RE.test(input.slug)) throw new Error(`bad app slug: ${input.slug}`);
+  if (!HEX.test(input.installId)) throw new Error('bad install id');
+  const projectRoot = real(input.projectRoot);
+  return mutateRegistry(home, (apps) => {
+    if (apps.some((a) => same(a, projectRoot, input.slug))) throw new Error(`an app "${input.slug}" already exists in this project`);
+    const rec: AppRecord = { ...input, projectRoot, root: real(input.root), origin: 'installed', hash: appHash(projectRoot, input.slug, input.installId), createdAt: new Date().toISOString() };
+    return { apps: [...apps, rec], result: rec };
+  });
+}
+
+type SharePatch = Partial<Pick<AppRecord, 'configId' | 'approvedManifestSha' | 'source' | 'provenance' | 'publish'>>;
+
+/** Change an app's shared-app fields. `origin` and `installId` are never in the patch. */
+export function updateAppShare(home: string, projectRoot: string, slug: string, patch: SharePatch | ((rec: AppRecord) => SharePatch)): AppRecord | null {
+  return mutateRegistry(home, (apps) => {
+    const i = apps.findIndex((a) => same(a, projectRoot, slug));
+    if (i < 0) return { apps, result: null };
+    const p = typeof patch === 'function' ? patch(apps[i]) : patch;
+    const next: AppRecord = { ...apps[i] };
+    for (const k of ['configId', 'approvedManifestSha', 'source', 'provenance', 'publish'] as const) {
+      if (!(k in p)) continue;
+      const v = p[k];
+      if (v === undefined) delete next[k];
+      else (next as unknown as Record<string, unknown>)[k] = v;
+    }
+    const out = apps.slice();
+    out[i] = next;
+    return { apps: out, result: next };
   });
 }
 
