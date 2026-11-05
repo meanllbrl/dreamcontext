@@ -4,6 +4,17 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.3] - 2026-11-06
+
+Patch on 0.41.2: routines, a quieter Super, and approvals where you are. Local build; not published.
+
+- **"+ New routine" on a member's card.** It hands the job to that member's Super to set up; the plain form opens only if the Super cannot take it.
+- **Routines catch up.** A routine that was missed while the Mac slept can be set to run once when it wakes, and the schedule remembers when it last ran.
+- **A Super turn stays quiet.** While it works, its steps show as one calm line. When the answer lands the line goes away, and a faint "adımlar" link under the answer opens them again.
+- **A member's Instructions card reads whole.** One column, the opening line first, and if it is slow to load it says so and offers a retry.
+- **A plainer permission card in Bypass.** It says in one line why it asks and folds the command away. Allow and Deny work from the phone, and agents write long scripts to a file instead of pasting them.
+- **AI Team approvals on the Super screen.** When a team member waits for your yes, the question shows up on the Super screen, not somewhere else.
+
 ## [0.41.2] - 2026-11-05
 
 Patch on 0.41.1: the Super screen gets calmer and the Team list gets truthful. Local build; not published.
