@@ -15,7 +15,7 @@ import {
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
-import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
+import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, newRoutineCardId, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
 const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
@@ -549,5 +549,29 @@ describe('a member\'s phone mirror keeps the member\'s unread', () => {
     expect(pane).toMatch(/const paneSuperId: SuperId = paneMember \? memberSuperId\(paneMember\) : 'main';/);
     expect(src('dashboard/src/components/sleepy/ChatPaneHost.tsx')).toMatch(/superMember=\{superMember\}/);
     expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/superMember=\{memberMirrorsRef\.current\.get\(cs\.claudeId\)\}/);
+  });
+});
+
+describe('"+ New routine" on a member stage goes to its Super as a chip (owner 2026-11-05)', () => {
+  const state = { containers: [
+    { id: 'member-aa', kind: 'member', ref: 'instructions' },
+    { id: 'member-bb', kind: 'member', ref: 'routines' },
+  ] } as never;
+  const mine = { agent: 'rota', open: true };
+
+  it('names the Routines card when the stage and the open chat on screen are that member\'s', () => {
+    expect(newRoutineCardId('m:rota' as never, 'rota', mine, state)).toBe('member-bb');
+  });
+
+  it('null (the form opens) for main\'s stage, another member\'s chat, a closed chat, no chat, or no card', () => {
+    expect(newRoutineCardId('main' as never, 'rota', mine, state)).toBeNull();
+    expect(newRoutineCardId('m:pera' as never, 'rota', mine, state)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', { agent: 'pera', open: true }, state)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', { agent: '', open: true }, state)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', { agent: 'rota', open: false }, state)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', null, state)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', mine, { containers: [] } as never)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, 'rota', mine, null)).toBeNull();
+    expect(newRoutineCardId('m:rota' as never, '', mine, state)).toBeNull();
   });
 });

@@ -32,7 +32,7 @@ import { ensureMemberSuper } from '../../src/lib/super/member-birth.js';
 import { handleSuperMember, handleSuperVerb, superVerbRefusal } from '../../src/server/routes/super.js';
 import { createAgent, createGlobalAgent } from '../../src/lib/agents/store.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
-import { memberSlotOf, superBriefing, superMemberBriefing, MEMBER_ABOUT_TASK_LINE, MEMBER_ORIGIN_LINE } from '../../src/server/chat-modes.js';
+import { memberSlotOf, memberNewRoutineLine, superBriefing, superMemberBriefing, MEMBER_ABOUT_TASK_LINE, MEMBER_ORIGIN_LINE } from '../../src/server/chat-modes.js';
 import { aboutHeads } from '../../src/lib/super/types.js';
 
 let dir: string;
@@ -343,6 +343,11 @@ describe('the member slot in the Super briefing', () => {
     expect(b).toContain(MEMBER_ORIGIN_LINE);
     expect(b).toContain(MEMBER_ABOUT_TASK_LINE);
     expect(MEMBER_ABOUT_TASK_LINE).toBe('On `[About task X]` read it with `dreamcontext tasks show X`.');
+    // "+ New routine" on its stage arrives as a chip titled New routine: it sets the routine up as itself.
+    expect(b).toContain(memberNewRoutineLine('rota'));
+    expect(memberNewRoutineLine('rota')).toContain('titled “New routine”');
+    expect(memberNewRoutineLine('rota')).toContain('`dreamcontext automations create <routine-slug> --agent rota --job "<what to do>" --days <days> --at <HH:MM>`');
+    expect(superBriefing()).not.toContain('titled “New routine”');
     expect(b).toContain('state/.super/members/rota.handoff.md');
     // Not the team lead's lines: no team ask advice, no amend, no global-member line.
     expect(b).not.toContain('Your AI Team, when the project has one');

@@ -458,6 +458,12 @@ export const MEMBER_ABOUT_TASK_LINE = 'On `[About task X]` read it with `dreamco
 /** The member slot's origin rule (owner `wnfvtj`), pinned by the drift tests. */
 export const MEMBER_ORIGIN_LINE = 'A request from the Super Agent is the Super Agent\'s work: ask it, not the owner; work the owner started, ask the owner.';
 
+/** The member slot's new-routine rule (owner 2026-11-05): "+ New routine" on its stage is a chip,
+ *  never a form; this Super sets the routine up. Pinned by the drift tests. */
+export function memberNewRoutineLine(slug: string): string {
+  return `A \`@card:<id>\` chip titled “New routine” (or the same in his language) is him pressing + New routine on your Routines card: set up the routine his words ask for with \`dreamcontext automations create <routine-slug> --agent ${slug} --job "<what to do>" --days <days> --at <HH:MM>\` (one short question first only when what or when is missing).`;
+}
+
 /** The member slot: who this Super is, its cap, no leading, how a request ends. */
 export function superMemberSection(slot: MemberSlot): string {
   return `## You are a member's Super
@@ -466,6 +472,7 @@ You do not lead other members: never \`super team ask\` (it is refused); work ou
 A \`request\` from the Super Agent arrives as a server event naming its item: do it (through your children when it is real work, passing its model and effort to them), then close it with \`dreamcontext super team done <item> "<the result in a few lines>"\`. Never close one you did not finish.
 ${MEMBER_ORIGIN_LINE} (\`super ask --for <item|owner>\`, \`super delegate --for <item|owner>\` say whose it is.)
 ${MEMBER_ABOUT_TASK_LINE}
+${memberNewRoutineLine(slot.slug)}
 `;
 }
 
