@@ -278,7 +278,7 @@ try {
     writeFileSync(join(inst, 'public', 'index.html'), readFileSync(join(inst, 'public', 'index.html'), 'utf-8').replace('</body>', '<p>my own line</p></body>'));
     const { page, context } = await open('kur');
     await card(page, 'Hava Notu').getByRole('button', { name: 'Check for updates' }).click();
-    check(await seen(page, 'You changed this app'), 'update: the changed copy is not asked about');
+    check(await seen(page, 'You changed 1 file'), 'update: the changed copy is not asked about');
     check(await seen(page, 'Shows tomorrow too'), 'update: the change note is missing');
     await page.getByText('Merge', { exact: true }).click();
     await shot(page, '3-guncelleme-sorusu-1440');

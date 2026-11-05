@@ -486,7 +486,8 @@
 .share-field--grow { flex: 1; }
 
 .share-report {
-  /* A section, not a box inside the dialog: its heading carries the hierarchy. */
+  /* A section, not a box inside the dialog: its heading and the space above it carry the hierarchy. */
+  margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
