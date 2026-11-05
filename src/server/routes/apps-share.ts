@@ -54,7 +54,7 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
     origin: rec.origin ?? 'own',
     source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null, lastUpdate: rec.source.lastUpdate ?? null } : null,
     provenance: rec.origin === 'installed' && !rec.source && rec.provenance ? { fullName: rec.provenance.fullName } : null,
-    publish: rec.publish ? { fullName: rec.publish.fullName, public: rec.publish.public, at: rec.publish.at } : null,
+    publish: rec.publish && rec.publish.lastSha ? { fullName: rec.publish.fullName, public: rec.publish.public, at: rec.publish.at } : null,
     configCount: fields.length,
     configMissing: fields.length ? missingRequired(fields, values, rec.root) : [],
   };
@@ -217,7 +217,7 @@ export async function handleUpdateUndo(req: IncomingMessage, res: ServerResponse
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
   try {
-    const out = undoUpdate(appsHomeDir(), rec);
+    const out = await undoUpdate(appsHomeDir(), rec);
     refreshAppRuntime(getApp(appsHomeDir(), rec.projectRoot, rec.slug) ?? rec);
     sendJson(res, 200, { ok: true, ...out });
   } catch (e) { sendFailure(res, e); }

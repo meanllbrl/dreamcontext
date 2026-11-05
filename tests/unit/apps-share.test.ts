@@ -260,7 +260,7 @@ describe('install, update, my own copy, uninstall', () => {
     expect(readFileSync(join(inst.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = 2;\n');
     expect(createHash('sha256').update(readFileSync(join(home, '.dreamcontext', 'apps', 'config', `${inst.configId}.json`))).digest('hex')).toBe(cfgSha);
     expect(readFileSync(join(data, 'state.json'), 'utf-8')).toBe('{"n":1}');
-    undoUpdate(home, inst);
+    await undoUpdate(home, inst);
     expect(readFileSync(join(inst.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = 1;\n');
     expect(getApp(home, instProject, 'tahmin')!.source?.available?.sha).toBe((c as { sha: string }).sha);
   });
@@ -404,7 +404,7 @@ describe('review fixes', () => {
     const c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
     await applyUpdate(home, inst, { sha: (c as { sha: string }).sha });
     writeFileSync(join(inst.root, 'public', 'index.html'), 'after the update\n');
-    expect(() => undoUpdate(home, inst)).toThrow(/changed after the update/);
+    await expect(undoUpdate(home, inst)).rejects.toThrow(/changed after the update/);
     expect(readFileSync(join(inst.root, 'public', 'index.html'), 'utf-8')).toBe('after the update\n');
   });
 
@@ -461,6 +461,16 @@ describe('review fixes', () => {
     const lic = execFileSync('git', ['--git-dir', join(hostDir, 'kurucu', 'tahmin-app.git'), 'show', 'main:LICENSE'], { encoding: 'utf-8' });
     expect(lic).toMatch(/^MIT License/);
   });
+
+  it('a dependency install that fails after an update is said, not swallowed', async () => {
+    const { kur, inst } = await setup();
+    writeFileSync(join(appRoot, 'package-lock.json'), JSON.stringify({ name: 'tahmin', lockfileVersion: 3, requires: true, packages: { '': { name: 'tahmin', dependencies: {} } } }));
+    await commitPub('package.json', JSON.stringify({ name: 'tahmin', version: '1.0.0', dependencies: { 'left-pad': '1.3.0' } }));
+    const c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
+    const r = await applyUpdate(home, inst, { sha: (c as { sha: string }).sha });
+    expect(r.depsFailed).toMatch(/npm ci failed/);
+    expect(getApp(home, instProject, 'tahmin')!.source?.lastUpdate?.depsFailed).toMatch(/npm ci failed/);
+  }, 120_000);
 
   it('a following copy cannot be published as its installer\'s own', async () => {
     const { kur, inst } = await setup('public');

@@ -133,6 +133,20 @@ export interface ApplyResult {
   sha: string;
   before: string;
   patch?: string;
+  /** npm ci failed after the update: the app may not start until Undo or a fix. */
+  depsFailed?: string;
+}
+
+/** `npm ci` when the package files changed and the app has dependencies; the failure, or null. */
+async function syncDeps(root: string, changed: boolean, npm: boolean | undefined): Promise<string | null> {
+  if (!changed || npm === false || !existsSync(join(root, 'package.json'))) return null;
+  try {
+    const deps = Object.keys((JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')) as { dependencies?: object }).dependencies ?? {}).length;
+    if (deps) await runNpmCi(root);
+    return null;
+  } catch (e) {
+    return cleanText((e as Error).message, 300);
+  }
 }
 
 const stampNow = () => new Date().toISOString().replace(/[:.]/g, '-');
@@ -183,23 +197,17 @@ export async function applyUpdate(home: string, rec0: AppRecord, opts: ApplyOpti
   installedGit(dir, ['update-ref', 'refs/dc/upstream', opts.sha]);
   // What Undo checks: the copy as this update left it. A change after it is never undone away.
   installedGit(dir, ['update-ref', `refs/dc/after/${stamp}`, g(['rev-parse', 'HEAD']).trim()]);
-  // New or changed dependencies come in with the update.
-  const pkgChanged = g(['diff', '--name-only', before, 'HEAD', '--', 'package.json', 'package-lock.json']).trim();
-  if (pkgChanged && opts.npm !== false && existsSync(join(rec.root, 'package.json'))) {
-    try {
-      const deps = Object.keys((JSON.parse(readFileSync(join(rec.root, 'package.json'), 'utf-8')) as { dependencies?: object }).dependencies ?? {}).length;
-      if (deps) await runNpmCi(rec.root);
-    } catch { /* the card shows the backend's own error; Undo is there */ }
-  }
+  // New or changed dependencies come in with the update; a failure is said on the card, with Undo.
+  const depsFailed = await syncDeps(rec.root, g(['diff', '--name-only', before, 'HEAD', '--', 'package.json', 'package-lock.json']).trim() !== '', opts.npm);
   updateAppShare(home, rec.projectRoot, rec.slug, (r) => ({
     approvedManifestSha: newManifest ? manifestSha(newManifest) : r.approvedManifestSha,
-    source: r.source ? { ...r.source, upstreamSha: opts.sha, available: undefined, problem: undefined, lastUpdate: { from: src.upstreamSha, to: opts.sha, at: new Date().toISOString(), auto: opts.auto === true } } : undefined,
+    source: r.source ? { ...r.source, upstreamSha: opts.sha, available: undefined, problem: undefined, lastUpdate: { from: src.upstreamSha, to: opts.sha, at: new Date().toISOString(), auto: opts.auto === true, ...(depsFailed ? { depsFailed } : {}) } } : undefined,
   }));
-  return { sha: opts.sha, before, ...(patch ? { patch } : {}) };
+  return { sha: opts.sha, before, ...(patch ? { patch } : {}), ...(depsFailed ? { depsFailed } : {}) };
 }
 
 /** Undo the last update: back to the saved commit, local commits kept. */
-export function undoUpdate(home: string, rec0: AppRecord): { sha: string } {
+export async function undoUpdate(home: string, rec0: AppRecord, opts: { npm?: boolean } = {}): Promise<{ sha: string; depsFailed?: string }> {
   const rec = getApp(home, rec0.projectRoot, rec0.slug) ?? rec0;
   if (!rec.source) throw new InstallError('not_following', 'Nothing to undo.');
   const { dir, g } = gitOf(home, rec);
@@ -214,7 +222,10 @@ export function undoUpdate(home: string, rec0: AppRecord): { sha: string } {
   if (g(['status', '--porcelain']).trim() || (after && g(['rev-parse', 'HEAD']).trim() !== after)) {
     throw new InstallError('changed_since', 'This app was changed after the update: Undo would lose that change, so nothing was undone.');
   }
+  const headBefore = g(['rev-parse', 'HEAD']).trim();
   g(['reset', '-q', '--hard', before]);
+  // The dependencies go back with the code.
+  const depsFailed = await syncDeps(rec.root, g(['diff', '--name-only', headBefore, 'HEAD', '--', 'package.json', 'package-lock.json']).trim() !== '', opts.npm);
   for (const r of [refs[0], `refs/dc/before-upstream/${stamp}`, `refs/dc/after/${stamp}`]) { try { installedGit(dir, ['update-ref', '-d', r]); } catch { /* none */ } }
   installedGit(dir, ['update-ref', 'refs/dc/upstream', upstream]);
   const m = manifestAt(dir, upstream);
@@ -224,7 +235,7 @@ export function undoUpdate(home: string, rec0: AppRecord): { sha: string } {
     source: r.source ? { ...r.source, upstreamSha: upstream, lastUpdate: undefined, available: undone !== upstream ? { sha: undone, at: new Date().toISOString() } : undefined } : undefined,
   }));
   if (undone !== upstream) installedGit(dir, ['update-ref', 'refs/dc/upstream-next', undone]);
-  return { sha: before };
+  return { sha: before, ...(depsFailed ? { depsFailed } : {}) };
 }
 
 /** "Make it my own copy": no more updates, no tie to the original; origin stays `installed`. */

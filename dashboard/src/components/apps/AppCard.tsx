@@ -24,7 +24,7 @@ export interface AppRow {
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
   /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
   origin?: 'own' | 'installed';
-  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastUpdate?: { to: string; at: string; auto: boolean } | null } | null;
+  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastUpdate?: { to: string; at: string; auto: boolean; depsFailed?: string } | null } | null;
   provenance?: { fullName: string } | null;
   publish?: { fullName: string; public: boolean; at: string } | null;
   configCount?: number;
@@ -59,9 +59,11 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
   const ts = useShareT();
   const installed = app.origin === 'installed';
   const following = installed && !!app.source;
+  const [undoing, setUndoing] = useState(false);
   const undoUpdate = async () => {
-    setErr(null);
-    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); }
+    if (undoing) return;
+    setErr(null); setUndoing(true);
+    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setUndoing(false); }
   };
   const toggleAuto = async (on: boolean) => {
     setErr(null);
@@ -127,10 +129,13 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
           {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('update')}>{t('share.card.update')}</button>}
         </div>
       )}
-      {following && app.source!.lastUpdate && !app.source!.available && (
-        <div className="app-card__note app-card__note--warn app-card__mcp">
-          <span>{ts(app.source!.lastUpdate.auto ? 'share.card.updatedAuto' : 'share.card.updated', { when: new Date(app.source!.lastUpdate.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}</span>
-          {canLaunch && <button type="button" className="app-card__stop" onClick={() => void undoUpdate()}>{t('share.update.undo')}</button>}
+      {following && app.source!.lastUpdate && (
+        <div className={`app-card__mcp ${app.source!.lastUpdate.depsFailed ? 'app-card__note app-card__note--bad' : 'app-card__origin'}`}>
+          <span>
+            {ts(app.source!.lastUpdate.auto ? 'share.card.updatedAuto' : 'share.card.updated', { when: new Date(app.source!.lastUpdate.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}
+            {app.source!.lastUpdate.depsFailed ? ` ${ts('share.card.depsFailed', { why: app.source!.lastUpdate.depsFailed })}` : ''}
+          </span>
+          {canLaunch && <button type="button" className="share-link" disabled={undoing} onClick={() => void undoUpdate()}>{t('share.update.undo')}</button>}
         </div>
       )}
       {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}

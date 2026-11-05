@@ -242,7 +242,7 @@ export function runNpmCi(root: string): Promise<void> {
   const win = process.platform === 'win32';
   return new Promise((resolve, reject) => {
     execFile(win ? 'npm.cmd' : 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--userconfig', devNull], { cwd: root, timeout: 600_000, shell: win, maxBuffer: 16 * 1024 * 1024 }, (err, _out, stderr) => {
-      if (err) reject(new InstallError('npm_failed', `npm ci failed: ${String(stderr).trim().split('\\n').slice(-2).join(' ') || err.message}`));
+      if (err) reject(new InstallError('npm_failed', `npm ci failed: ${String(stderr).trim().split('\n').slice(-2).join(' ') || err.message}`));
       else resolve();
     });
   });

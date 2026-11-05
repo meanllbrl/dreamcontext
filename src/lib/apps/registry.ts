@@ -67,7 +67,7 @@ export interface AppSource {
   /** The last check could not reach the source (gone, no access, moved to another owner). */
   problem?: 'no_access' | 'moved' | 'not_forward';
   /** The last update applied (by the owner or automatically): Undo on the card goes back from it. */
-  lastUpdate?: { from: string; to: string; at: string; auto: boolean };
+  lastUpdate?: { from: string; to: string; at: string; auto: boolean; depsFailed?: string };
 }
 
 export interface AppPublish {
@@ -132,7 +132,7 @@ function sanitizeSource(v: unknown): AppSource | undefined {
     ...(str(s.lastCheck, 40) ? { lastCheck: s.lastCheck } : {}),
     ...(av && typeof av === 'object' && str(av.sha) && HEX40.test(av.sha) && str(av.at, 40) ? { available: { sha: av.sha, at: av.at } } : {}),
     ...(s.problem === 'no_access' || s.problem === 'moved' || s.problem === 'not_forward' ? { problem: s.problem } : {}),
-    ...(lu && typeof lu === 'object' && str(lu.from) && HEX40.test(lu.from) && str(lu.to) && HEX40.test(lu.to) && str(lu.at, 40) ? { lastUpdate: { from: lu.from, to: lu.to, at: lu.at, auto: lu.auto === true } } : {}),
+    ...(lu && typeof lu === 'object' && str(lu.from) && HEX40.test(lu.from) && str(lu.to) && HEX40.test(lu.to) && str(lu.at, 40) ? { lastUpdate: { from: lu.from, to: lu.to, at: lu.at, auto: lu.auto === true, ...(typeof lu.depsFailed === 'string' ? { depsFailed: lu.depsFailed.slice(0, 300) } : {}) } } : {}),
   };
 }
 
