@@ -510,6 +510,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-session-titles-',
   'dc-sessreg-',
   'dc-setup-machine-',
+  'dc-share-',
   'dc-sharing-',
   'dc-shrinkwrap-',
   'dc-signed-out-home-',
