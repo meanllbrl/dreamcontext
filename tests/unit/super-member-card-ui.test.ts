@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { applyLayoutPatch, patchEchoed } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { deleteDialog, memberRoutines } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
+import { deleteDialog, instructionsParts, memberRoutines, plainWords } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
 import { panelCloseOf } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/components/sleepy/super/${rel}`, import.meta.url)), 'utf8');
@@ -106,4 +106,36 @@ describe('member cards in the window', () => {
     expect(body).toMatch(/<WindowLayer>\s*<AutomationDialog/);
     expect(body).toMatch(/<WindowLayer>\s*<AgentIdentityDialog/);
   });
+
+  it('Talimatlar: the opening paragraph is the lede, the rest is the body; nothing is said twice or lost', () => {
+    const job = 'Sen Defne\'sin, gelir bekçisisin.\nYalnız okursun.\n\n### Önce oku\n- `knowledge/pricing/`\n\nSon cümle burada.';
+    const { lede, rest } = instructionsParts(job);
+    expect(lede).toBe('Sen Defne\'sin, gelir bekçisisin. Yalnız okursun.');
+    expect(rest).toBe('### Önce oku\n- `knowledge/pricing/`\n\nSon cümle burada.');
+    // A job that opens with a heading or a list has no lede: all of it is the body.
+    expect(instructionsParts('## İş\nOku.')).toEqual({ lede: '', rest: '## İş\nOku.' });
+    expect(instructionsParts('- bir\n- iki')).toEqual({ lede: '', rest: '- bir\n- iki' });
+    // One paragraph: the lede holds it whole.
+    expect(instructionsParts('Tek paragraf.')).toEqual({ lede: 'Tek paragraf.', rest: '' });
+    expect(instructionsParts('')).toEqual({ lede: '', rest: '' });
+    expect(plainWords('### Başlık\nOku `knowledge/x.md` ve **say**.')).toBe('Başlık Oku knowledge/x.md ve say.');
+  });
+
+  it('Talimatlar: a failed or hung read is said with a retry, never "Loading" forever, and never the clipped roster text', () => {
+    const src = read('MemberCardBody.tsx');
+    const card = src.slice(src.indexOf('function InstructionsCard'), src.indexOf('function SettingsCard'));
+    expect(card).not.toContain("t('agents.page.loading')");
+    expect(card).toMatch(/detail\.isError \|\| slow \?/);
+    expect(card).toContain('data-testid="member-instructions-retry"');
+    // A retry restarts the slow-read clock (the query stays pending across a refetch). The hang
+    // itself is measured in a real browser by scripts/verify/member-instructions-card.mjs.
+    expect(card).toMatch(/\}, \[pending, attempt\]\);/);
+    expect(card).toMatch(/const retry = \(\) => \{ setSlow\(false\); setAttempt\(\(n\) => n \+ 1\); void detail\.refetch\(\); \};/);
+    // The full card reads the job only from the full record (the roster's description is cut at 600).
+    expect(card).toMatch(/const job = detail\.data\?\.prompt\?\.trim\(\) \?\? '';/);
+    // Edit is the pencil in the card's top row, the identity dialog as before.
+    expect(card).toMatch(/className="mcb-ins-top"[\s\S]*data-testid="member-instructions-edit"[\s\S]*mcb-ins-scroll/);
+    expect(card).toContain('<AgentIdentityDialog slug={p.slug}');
+  });
 });
+
