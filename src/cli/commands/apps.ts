@@ -20,6 +20,8 @@ import { sdkSource } from '../../server/apps/gateway-w3.js';
 import { appDataDir, ensureAppDataDir } from '../../lib/apps/data-dir.js';
 import { backupAppData, listBackups, restoreAppData } from '../../lib/apps/data-backup.js';
 import { appendFinding, doneThrough, listFindings } from '../../lib/apps/learn-queue.js';
+import { allowAppDir } from '../../lib/apps/allow-dir.js';
+import { registerAppsShareCommands } from './apps-share.js';
 
 /** The first line every copy of the SDK carries: a file without it is the app's own, left alone. */
 export const SDK_HEADER = '// dreamcontext App SDK';
@@ -117,18 +119,6 @@ function starterPage(name: string): string {
 `;
 }
 
-/** Let the agent session edit the app folder: `.claude/settings.local.json` additionalDirectories. */
-function allowAppDir(projectRoot: string, appRoot: string): void {
-  const file = join(projectRoot, '.claude', 'settings.local.json');
-  let cfg: Record<string, unknown> = {};
-  try { cfg = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>; } catch { /* new file */ }
-  const perms = (cfg.permissions && typeof cfg.permissions === 'object' ? cfg.permissions : {}) as Record<string, unknown>;
-  const dirs = Array.isArray(perms.additionalDirectories) ? (perms.additionalDirectories as unknown[]).filter((d): d is string => typeof d === 'string') : [];
-  if (!dirs.includes(appRoot)) dirs.push(appRoot);
-  cfg.permissions = { ...perms, additionalDirectories: dirs };
-  mkdirSync(join(projectRoot, '.claude'), { recursive: true });
-  writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
-}
 
 export function registerAppsCommand(program: Command): void {
   const apps = program
@@ -143,6 +133,7 @@ export function registerAppsCommand(program: Command): void {
       try {
         const p = project();
         if (!APP_SLUG_RE.test(slug)) throw new AppsClientError('bad_slug', 'Use lowercase letters, digits and dashes, starting with a letter.');
+        if (slug === 'installed') throw new AppsClientError('bad_slug', '"installed" is the folder of apps installed from others; pick another name.');
         const root = appRootFor(p.projectRoot, slug);
         const name = opts.name?.trim() || slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
         if (existsSync(join(root, MANIFEST_FILE))) {
@@ -576,4 +567,6 @@ export function registerAppsCommand(program: Command): void {
         success(`${slug} removed; code kept at ${String(r.kept)}`);
       } catch (e) { fail(e); }
     });
+
+  registerAppsShareCommands(apps, { project, fail });
 }

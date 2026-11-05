@@ -44,7 +44,9 @@ import { readManifest, ACTION_METHODS } from '../../lib/apps/manifest.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
-import { notifierIconPath } from '../../lib/automations/notifier.js';
+import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifier.js';
+import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
+import { shareStatus } from './apps-share.js';
 import { iconIssue, servableIcon } from '../../lib/apps/icon.js';
 import { icnsToPng } from '../../lib/apps/icns-raster.js';
 import { sendPhotoFile } from './automations.js';
@@ -122,7 +124,12 @@ function isLoopbackHostRequest(req: IncomingMessage): boolean {
   return /^(127\.0\.0\.1|localhost):\d+$/.test(host) && !isPhoneSocket(req) && ['127.0.0.1', '::ffff:127.0.0.1', '::1'].includes(req.socket.remoteAddress ?? '');
 }
 
-const projectRootOf = (contextRoot: string) => (basename(contextRoot) === '_dream_context' ? dirname(contextRoot) : contextRoot);
+export const projectRootOf = (contextRoot: string) => (basename(contextRoot) === '_dream_context' ? dirname(contextRoot) : contextRoot);
+
+/** The apps store's home (a scratch one in tests). */
+export function appsHomeDir(): string {
+  return home;
+}
 
 function findApp(contextRoot: string, slug: string, res: ServerResponse): AppRecord | null {
   const rec = getApp(home, projectRootOf(contextRoot), slug);
@@ -186,10 +193,36 @@ export function startAppsSweeper(): () => void {
       }
     }
     if (++ticks % 3 === 0) { try { refreshIdleBundles(); } catch { /* the next open builds it */ } }
+    // Installed apps: a check two minutes after start, then every 6 hours (plan r2 K4).
+    if (ticks === 24 || ticks % 4320 === 0) void shareSweep();
     if (ticks % 60 === 0) pruneShots(home);
   }, 5000);
   sweeper.unref();
   return () => { if (sweeper) clearInterval(sweeper); sweeper = null; };
+}
+
+let shareSweeping = false;
+/** Check every installed app that follows its original; apply the ones the owner set to auto-update. */
+async function shareSweep(): Promise<void> {
+  if (shareSweeping) return;
+  shareSweeping = true;
+  try {
+    for (const rec of listApps(home)) {
+      if (rec.origin !== 'installed' || rec.source?.mode !== 'following') continue;
+      try {
+        const applied = await autoUpdateOne(home, rec);
+        if (applied) {
+          const next = getApp(home, rec.projectRoot, rec.slug);
+          if (next) refreshAppRuntime(next);
+          notifyViaBundle(`${rec.name} updated`, `Version ${applied.sha.slice(0, 7)} from ${rec.source.fullName}. Undo it on the app card.`, home);
+        } else if (!rec.source.autoUpdate) {
+          await checkUpdate(home, rec);
+        }
+      } catch { /* the next sweep tries again */ }
+    }
+  } finally {
+    shareSweeping = false;
+  }
 }
 
 /** What this app's bundle is built from right now. */
@@ -252,6 +285,27 @@ function memberState(rec: AppRecord, member: string): 'ready' | 'needs_approval'
 }
 
 /** Who talks in this app, for the card and the frame. */
+export const findAppFor = (contextRoot: string, slug: string, res: ServerResponse): AppRecord | null => findApp(contextRoot, slug, res);
+
+/** Stop everything an app runs before its folder moves (uninstall). The record stays. */
+export async function retireAppRuntime(rec: AppRecord): Promise<void> {
+  for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
+  forgetRuntime(rec.hash);
+  await closeMcpClients(rec.hash);
+  await closeGateway(rec.hash);
+  removeAppBundle(home, rec.slug, rec.hash);
+  removeShots(home, rec.hash);
+  removePins(home, rec.hash);
+}
+
+/** The runtime reads the new record (settings, an update): an app in error starts over. */
+export function refreshAppRuntime(rec: AppRecord): void {
+  const rt = existingRuntime(rec.hash);
+  if (!rt) return;
+  rt.setRecord(rec);
+  if (rt.status().state === 'error' && !rec.stoppedByOwner) void rt.ensureRunning();
+}
+
 function assistantOf(rec: AppRecord): 'own' | 'member' | 'none' {
   const m = readManifest(rec.root);
   return resolveAppAgent(m.ok ? m.manifest : null, null).kind;
@@ -284,6 +338,7 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
     schedules: m.ok ? scheduleViews(home, rec) : [],
     mcp: m.ok ? mcpStates(rec, m.manifest.mcp) : [],
+    ...shareStatus(rec),
   };
 }
 
@@ -655,6 +710,8 @@ export async function handleAppDelete(req: IncomingMessage, res: ServerResponse,
   if (!requireLocalDesktop(req, res)) return;
   const rec = findApp(contextRoot, params.slug, res);
   if (!rec) return;
+  // An installed app leaves through Uninstall (to the trash, restorable), never half-removed.
+  if (rec.origin === 'installed') { sendError(res, 409, 'use_uninstall', 'This app was installed from someone else: remove it with Uninstall on its card (it goes to the trash).'); return; }
   // Its conversations read from now on and spawn nothing; the ones running end here.
   for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
   forgetRuntime(rec.hash);

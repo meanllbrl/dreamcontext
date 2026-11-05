@@ -211,6 +211,23 @@
       ]
     },
     {
+      "path": "apps config",
+      "desc": "Show or fill the app's settings on this Mac (values never go into the app's repo)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--set"
+      ]
+    },
+    {
+      "path": "apps detach",
+      "desc": "Make your own copy (no more updates from the original): the owner's click on the Apps page",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "apps do",
       "desc": "Run one of the app's own actions (no Claude turn, no usage limit)",
       "args": [
@@ -219,6 +236,13 @@
       ],
       "valueFlags": [
         "--input"
+      ]
+    },
+    {
+      "path": "apps install",
+      "desc": "Preview an app from a repo (owner/repo or its link) before the owner installs it on the Apps page",
+      "args": [
+        "<repo>"
       ]
     },
     {
@@ -280,6 +304,16 @@
       ]
     },
     {
+      "path": "apps publish",
+      "desc": "Show what a publish would send and what stops it (the push itself is the owner's click: Apps page → Share)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--repo"
+      ]
+    },
+    {
       "path": "apps remove",
       "desc": "Unregister the app (its window bundle and data pins go; the code folder stays)",
       "args": [
@@ -315,6 +349,19 @@
       ]
     },
     {
+      "path": "apps secret",
+      "desc": "Type a key into the app's own .env on this Mac (hidden input; a terminal only)",
+      "args": [
+        "<slug>",
+        "<key>"
+      ]
+    },
+    {
+      "path": "apps shared",
+      "desc": "Apps shared with you (and invitations waiting), from the signed-in GitHub account",
+      "args": []
+    },
+    {
       "path": "apps start",
       "desc": "Same as open: start the app and open its window",
       "args": [
@@ -331,6 +378,20 @@
     {
       "path": "apps stop",
       "desc": "Stop the backend (stays stopped until opened again by the owner)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps uninstall",
+      "desc": "Remove an installed app (to the trash, restorable): the owner's click on the Apps page",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps update",
+      "desc": "Check an installed app for an update (applying it is the owner's click)",
       "args": [
         "<slug>"
       ]

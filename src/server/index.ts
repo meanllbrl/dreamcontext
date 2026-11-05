@@ -317,6 +317,11 @@ import {
   handleAppMcpRequest, handleAppScheduleToggle,
 } from './routes/apps.js';
 import { closeAllGateways, configureGateways } from './apps/gateway.js';
+import {
+  handleSharedList, handleSharedAccept, handleInstallPreview, handleInstall, handleTrashList, handleTrashRestore,
+  handlePublishPreview, handlePublish, handleAppConfigGet, handleAppConfigSet, handleUpdateCheck, handleUpdateUndo,
+  handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
+} from './routes/apps-share.js';
 import './apps/gateway-w3.js';
 import { stopAllRuntimes } from '../lib/apps/supervisor.js';
 import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
@@ -524,6 +529,23 @@ export function buildRouter(): Router {
   router.post('/api/apps/launch-window', handleAppsLaunchWindow);
   router.get('/api/apps/running', handleAppsRunning);
   router.post('/api/apps/embed-check', handleAppsEmbedCheck);
+  // Shared apps (src/server/routes/apps-share.ts): the fixed paths first.
+  router.get('/api/apps/shared', handleSharedList);
+  router.post('/api/apps/shared/accept', handleSharedAccept);
+  router.post('/api/apps/install/preview', handleInstallPreview);
+  router.post('/api/apps/install', handleInstall);
+  router.get('/api/apps/trash', handleTrashList);
+  router.post('/api/apps/trash/restore', handleTrashRestore);
+  router.get('/api/apps/:slug/publish/preview', handlePublishPreview);
+  router.post('/api/apps/:slug/publish', handlePublish);
+  router.get('/api/apps/:slug/config', handleAppConfigGet);
+  router.post('/api/apps/:slug/config', handleAppConfigSet);
+  router.post('/api/apps/:slug/update/check', handleUpdateCheck);
+  router.post('/api/apps/:slug/update/undo', handleUpdateUndo);
+  router.post('/api/apps/:slug/update', handleUpdateApply);
+  router.post('/api/apps/:slug/auto-update', handleAutoUpdate);
+  router.post('/api/apps/:slug/detach', handleDetach);
+  router.post('/api/apps/:slug/uninstall', handleUninstall);
   router.post('/api/apps/:slug/launch', handleAppLaunch);
   router.post('/api/apps/:slug/say', handleAppSay);
   router.get('/api/apps/:slug/chats', handleAppChats);

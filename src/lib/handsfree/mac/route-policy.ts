@@ -621,6 +621,22 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/apps/:slug/mcp-request': deny(SECRET),
   'POST /api/apps/:slug/schedules/:id': deny(WINDOW),
   'DELETE /api/apps/:slug': deny(WINDOW),
+  'GET /api/apps/shared': deny(WINDOW),
+  'POST /api/apps/shared/accept': deny(WINDOW),
+  'POST /api/apps/install/preview': deny(SECRET),
+  'POST /api/apps/install': deny(SECRET),
+  'GET /api/apps/trash': deny(WINDOW),
+  'POST /api/apps/trash/restore': deny(WINDOW),
+  'GET /api/apps/:slug/publish/preview': deny(SECRET),
+  'POST /api/apps/:slug/publish': deny(SECRET),
+  'GET /api/apps/:slug/config': deny(SECRET),
+  'POST /api/apps/:slug/config': deny(SECRET),
+  'POST /api/apps/:slug/update/check': deny(WINDOW),
+  'POST /api/apps/:slug/update/undo': deny(WINDOW),
+  'POST /api/apps/:slug/update': deny(WINDOW),
+  'POST /api/apps/:slug/auto-update': deny(WINDOW),
+  'POST /api/apps/:slug/detach': deny(WINDOW),
+  'POST /api/apps/:slug/uninstall': deny(SECRET),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

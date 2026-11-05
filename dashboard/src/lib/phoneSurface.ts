@@ -252,6 +252,22 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/apps/:slug/mcp-request',
   'POST /api/apps/:slug/schedules/:id',
   'DELETE /api/apps/:slug',
+  'GET /api/apps/shared',
+  'POST /api/apps/shared/accept',
+  'POST /api/apps/install/preview',
+  'POST /api/apps/install',
+  'GET /api/apps/trash',
+  'POST /api/apps/trash/restore',
+  'GET /api/apps/:slug/publish/preview',
+  'POST /api/apps/:slug/publish',
+  'GET /api/apps/:slug/config',
+  'POST /api/apps/:slug/config',
+  'POST /api/apps/:slug/update/check',
+  'POST /api/apps/:slug/update/undo',
+  'POST /api/apps/:slug/update',
+  'POST /api/apps/:slug/auto-update',
+  'POST /api/apps/:slug/detach',
+  'POST /api/apps/:slug/uninstall',
 ];
 
 /** A registered pattern as a matcher (the router's own rule). */
