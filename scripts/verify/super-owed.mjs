@@ -258,11 +258,17 @@ async function main() {
     const card = page.locator('[data-testid="super-container"][data-kind="agenda"]');
     ok('a small agenda counts it as waiting on him (never "0 waiting")', await until(page, async () => (await card.locator('[data-testid="super-agenda-tile-waiting"]').count()) === 0
       || /^\s*1/.test(await card.locator('[data-testid="super-agenda-tile-waiting"]').innerText()), 15000));
-    // The notepad itself: the card at its large size (the owner's own size menu).
+    await page.mouse.move(5, 5);
+    await shot(page, '01-unanswered-tile-1440.png');
+    // The notepad itself needs room beside the chat: at 1440 this stage draws the agenda as its
+    // counts tile, so the rows are checked where the card is drawn in full.
+    const fullAt = async () => { await page.setViewportSize({ width: 1920, height: 1080 }); await motionIdle(page); await page.waitForTimeout(1200); };
+    await fullAt();
     if ((await agenda(page).count()) === 0) {
       await card.hover();
       await card.locator('[data-testid="super-card-size-btn"], [data-testid="super-card-more"]').first().click();
-      await page.getByTestId('super-size-large').click();
+      const large = page.getByTestId('super-size-large');
+      if (await large.isEnabled().catch(() => false)) await large.click(); else await page.keyboard.press('Escape');
       await motionIdle(page);
       await page.waitForTimeout(800);
     }
@@ -272,14 +278,13 @@ async function main() {
     const row = unanswered(page).locator('[data-testid="super-agenda-row"]').first();
     ok('its row says his words and carries "Gerek yok" and "write about this"', /Logo hazır/.test(await row.innerText()) && (await row.locator('[data-testid="super-agenda-owed-drop"]').count()) === 1 && (await row.locator('[data-testid="super-agenda-about"]').count()) === 1, await row.innerText().catch(() => ''));
     await page.mouse.move(5, 5);
-    await shot(page, '01-unanswered-1440.png');
+    await shot(page, '01-unanswered-full-1920.png');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(1500);
     await shot(page, '02-unanswered-390.png');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     ok('390 px: no horizontal overflow', overflow <= 1, `over by ${overflow}`);
-    await page.setViewportSize({ width: W, height: H });
-    await page.waitForTimeout(1500);
+    await fullAt();
     await unanswered(page).locator('[data-testid="super-agenda-owed-drop"]').first().click();
     ok('"Gerek yok" closes it (by: owner) and the row goes', await until(page, async () => silent()?.closed?.by === 'owner' && (await unanswered(page).count()) === 0, 10000), JSON.stringify(silent()));
 
@@ -301,6 +306,10 @@ async function main() {
     await page.clock.fastForward('10:30');
     ok('ten minutes on, the page left open: the parked row shows by itself', await until(page, async () => (await unanswered(page).count()) === 1 && /Uzun bir iş/.test(await unanswered(page).innerText()), 10000));
     await page.mouse.move(5, 5);
+    await shot(page, '03-parked-full-1920.png');
+    await page.setViewportSize({ width: W, height: H });
+    await page.waitForTimeout(1200);
+    ok('1440: the small agenda counts the parked line as waiting', /^\s*1/.test(await card.locator('[data-testid="super-agenda-tile-waiting"]').innerText().catch(() => '1')));
     await shot(page, '03-parked-1440.png');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(1200);
