@@ -126,13 +126,69 @@ async function open(vault, width = 1440) {
   await page.waitForTimeout(1500);
   return { page, context };
 }
+// `--matrix before|after`: every shot also at the other width and in both themes, named
+// `<prefix>-<name>-<width>-<theme>.png`, and the rendered sheet (or page) is measured: text under
+// 4.5:1 against what is really behind it, and text cut by its own box.
+const mArg = process.argv.indexOf('--matrix');
+const MATRIX = mArg > 0 ? process.argv[mArg + 1] : null;
+const measured = [];
+async function measure(page, label) {
+  const out = await page.evaluate(() => {
+    const parse = (s) => { const n = (s.match(/-?[\d.]+(?:e-?\d+)?/g) || []).map(Number); return s.startsWith('color(') ? [n[0] * 255, n[1] * 255, n[2] * 255, n.length > 3 ? n[3] : 1] : [n[0], n[1], n[2], n.length > 3 ? n[3] : 1]; };
+    const lum = (c) => { const [r, g, b] = c.map((v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const root = document.querySelector('.share-sheet') ?? document.querySelector('.apps-page');
+    if (!root) return { low: [], cut: [], n: 0, min: null };
+    const low = []; const cut = []; let n = 0; let min = null;
+    for (const el of root.querySelectorAll('*')) {
+      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
+      const r = el.getBoundingClientRect();
+      if (!own && !(el instanceof HTMLInputElement && el.value)) continue;
+      if (!r.width || !r.height || getComputedStyle(el).visibility === 'hidden') continue;
+      const layers = []; let op = 1;
+      for (let n = el; n; n = n.parentElement) { const cs = getComputedStyle(n); op *= Number(cs.opacity); const bg = parse(cs.backgroundColor); if (bg[3] > 0) layers.push(bg); if (bg[3] >= 1) break; }
+      let base = [255, 255, 255];
+      if (!layers.length || layers[layers.length - 1][3] < 1) { const rt = parse(getComputedStyle(document.documentElement).backgroundColor); if (rt[3] >= 1) base = rt.slice(0, 3); }
+      for (let i = layers.length - 1; i >= 0; i--) { const [r2, g, b, a] = layers[i]; base = [r2 * a + base[0] * (1 - a), g * a + base[1] * (1 - a), b * a + base[2] * (1 - a)]; }
+      const fg = parse(getComputedStyle(el).color); const a = fg[3] * op;
+      const ink = [fg[0] * a + base[0] * (1 - a), fg[1] * a + base[1] * (1 - a), fg[2] * a + base[2] * (1 - a)];
+      const l1 = lum(ink); const l2 = lum(base);
+      const ratio = Math.round(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)) * 100) / 100;
+      const text = (own || el.value).slice(0, 40);
+      n++; if (!min || ratio < min.ratio) min = { ratio, text };
+      const disabled = el.closest('button:disabled, input:disabled');
+      if (ratio < 4.5 && !disabled) low.push(`${text} ${ratio}`);
+      if (el.scrollWidth > el.clientWidth + 1 && /hidden|clip/.test(getComputedStyle(el).overflowX)) cut.push(text);
+    }
+    return { low, cut, n, min };
+  });
+  measured.push({ shot: label, ...out });
+  for (const l of out.low) findings.push(`${label} low contrast: ${l}`);
+  for (const c of out.cut) findings.push(`${label} text cut: ${c}`);
+}
+async function capture(page, file, label) {
+  const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  if (over > 1) findings.push(`${label} overflows sideways by ${over}px`);
+  await page.screenshot({ path: file });
+  process.stdout.write(`screenshot: ${file}\n`);
+}
 const shot = async (page, name) => {
   await page.waitForTimeout(400); // the sheet's 200 ms fade settles first
-  const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  if (over > 1) findings.push(`${name} overflows sideways by ${over}px`);
-  const f = join(SHOTS, `${name}.png`);
-  await page.screenshot({ path: f });
-  process.stdout.write(`screenshot: ${f}\n`);
+  if (!MATRIX) { await capture(page, join(SHOTS, `${name}.png`), name); return; }
+  const size = page.viewportSize();
+  const base = name.replace(/-(?:390|1440)$/, '');
+  for (const w of size.width > 600 ? [1440, 390] : [390, 1440]) {
+    await page.setViewportSize({ width: w, height: w > 600 ? 900 : 844 });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+      await page.waitForTimeout(250);
+      const label = `${MATRIX}-${base}-${w}-${theme}`;
+      await measure(page, label);
+      await capture(page, join(SHOTS, `${label}.png`), label);
+    }
+  }
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+  await page.setViewportSize(size);
+  await page.waitForTimeout(250);
 };
 const seen = (page, text, ms = 10_000) => page.getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout: ms }).then(() => true, () => false);
 const card = (page, name) => page.locator('.app-card').filter({ hasText: name }).first();
@@ -271,7 +327,7 @@ try {
   await browser?.close().catch(() => {});
   killAll();
 }
-writeFileSync(join(SHOTS, 'report.json'), JSON.stringify({ steps, findings }, null, 1));
+writeFileSync(join(SHOTS, MATRIX ? `${MATRIX}-report.json` : 'report.json'), JSON.stringify({ steps, findings, measured }, null, 1));
 for (const f of findings) process.stdout.write(`FINDING: ${f}\n`);
-process.stdout.write(`${findings.length ? `${findings.length} finding(s)` : 'CLEAN'} (${join(SHOTS, 'report.json')})\n`);
+process.stdout.write(`${findings.length ? `${findings.length} finding(s)` : 'CLEAN'} (${join(SHOTS, MATRIX ? `${MATRIX}-report.json` : 'report.json')})\n`);
 process.exit(code);
