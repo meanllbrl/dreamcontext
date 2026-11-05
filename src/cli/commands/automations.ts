@@ -2061,28 +2061,40 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('schedule')
     .argument('<slug>', 'Automation slug')
-    .description("Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)")
+    .description("Show or edit an automation's fire slots and catch-up window — no YAML editing, no re-approval (neither is approval-hashed)")
     .option('--slot <spec>', 'Replace every slot with these (repeatable): mon-fri@16:30, 2w:mon@10:00, month:last@09:00, cron:…', collectSlot, [])
     .option('--add <spec>', 'Add a slot, keeping the others (repeatable)', collectSlot, [])
     .option('--remove <n>', 'Remove slot n (1-based, as numbered by this command), repeatable', collectSlot, [])
     .option('--days <daily|mon,wed>', 'One-slot shorthand, with --at: replace the schedule with one weekly slot')
     .option('--at <HH:MM>', 'One-slot shorthand, with --days')
+    .option('--catchup <hours>', `How long after a missed slot it may still run, in hours, 1-${MAX_CATCHUP_HOURS} (default ${DEFAULT_CATCHUP_HOURS})`)
     .option('--json', 'Emit the resulting schedule as JSON')
     .action((slug: string, opts: {
-      slot: string[]; add: string[]; remove: string[]; days?: string; at?: string; json?: boolean;
+      slot: string[]; add: string[]; remove: string[]; days?: string; at?: string; catchup?: string; json?: boolean;
     }) => {
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
         if (!manifest) return;
         const now = new Date();
-        const editing = opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0 || !!opts.days || !!opts.at;
+        const editingSlots = opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0 || !!opts.days || !!opts.at;
+        const editingCatchup = opts.catchup !== undefined;
+        const editing = editingSlots || editingCatchup;
+
+        let catchupHours: number | undefined;
+        if (editingCatchup) {
+          const n = Number(opts.catchup);
+          if (!Number.isInteger(n) || n < 1 || n > MAX_CATCHUP_HOURS) {
+            throw new AutomationError(`--catchup ${opts.catchup}: give whole hours between 1 and ${MAX_CATCHUP_HOURS}.`);
+          }
+          catchupHours = n;
+        }
 
         let updated = manifest;
-        if (editing) {
-          if (manifest.mode === 'call') {
-            throw new AutomationError(`"${slug}" is on-call — it has no schedule to edit. Recreate it with a schedule, or switch its mode in the dashboard.`);
-          }
+        if (editing && manifest.mode === 'call') {
+          throw new AutomationError(`"${slug}" is on-call — it has no schedule to edit. Recreate it with a schedule, or switch its mode in the dashboard.`);
+        }
+        if (editingSlots) {
           if ((opts.days || opts.at) && (opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0)) {
             throw new AutomationError('--days/--at replace the whole schedule with one slot — do not combine them with --slot, --add or --remove.');
           }
@@ -2116,13 +2128,16 @@ export function registerAutomationsCommand(program: Command): void {
           }
           // Validated by the store's one schedule validator on the way in.
           scheduleFromInput({ slots });
-          updated = updateAutomation(root, slug, { slots });
+          updated = updateAutomation(root, slug, { slots, catchupHours });
+        } else if (editingCatchup) {
+          updated = updateAutomation(root, slug, { catchupHours });
         }
 
         if (opts.json) {
           console.log(JSON.stringify({
             slug,
             schedule: updated.schedule,
+            catchupHours: updated.catchupHours,
             label: cadenceLabel(updated),
             nextFireAt: updated.schedule ? (nextFire(updated.schedule, now)?.toISOString() ?? null) : null,
           }, null, 2));
@@ -2143,7 +2158,8 @@ export function registerAutomationsCommand(program: Command): void {
         });
         const next = nextFireLabel(updated, now);
         console.log(next ? `  next fire: ${next}` : chalk.dim(updated.enabled ? '  no upcoming fire' : '  disabled — no upcoming fire'));
-        if (editing) success(`Schedule saved: ${cadenceLabel(updated)} (no re-approval needed).`);
+        console.log(`  catch-up: ${updated.catchupHours}h after a missed slot`);
+        if (editing) success(`Schedule saved: ${cadenceLabel(updated)}, catch-up ${updated.catchupHours}h (no re-approval needed).`);
       } catch (err) {
         handleAutomationsError(err);
       }

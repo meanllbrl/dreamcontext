@@ -386,6 +386,22 @@ describe('tickAll', () => {
     expect(hb.lastTickDurationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('stamps "last tick completed" at the END of the tick, not its start', async () => {
+    registerProject(projectRoot, home);
+    makeDue('eod-digest');
+    const slow = vi.fn(async (_c: string, slug: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return fakeOutcome(slug, 'ok');
+    }) as unknown as typeof runAutomation;
+
+    await tickAll({ now: NOW, home, runImpl: slow });
+
+    const hb = readDispatcherHeartbeat(home);
+    expect(hb.lastTickDurationMs).toBeGreaterThanOrEqual(30);
+    expect(hb.lastTickCompletedAt).toBe(new Date(NOW.getTime() + hb.lastTickDurationMs!).toISOString());
+    expect(hb.lastTickCompletedAt).not.toBe(hb.lastTickStartedAt);
+  });
+
   it('writes both heartbeat timestamps when there IS work to do, too', async () => {
     registerProject(projectRoot, home);
     makeDue('eod-digest');
