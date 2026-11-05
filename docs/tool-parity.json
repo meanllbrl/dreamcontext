@@ -2,6 +2,7 @@
   "features": [
     { "name": "Chat", "claude": "works", "codex": "works", "note": "Checked live on the owner's account in W1." },
     { "name": "Model picker, Sign in", "claude": "works", "codex": "works" },
+    {"name": "Shared apps (publish, install, settings, keys)", "claude": "works", "codex": "experimental", "note": "Every tool calls the same CLI: `apps publish` (the gate report), `apps install --preview`, `apps config --suggest|--set`, `apps secret` (a terminal only), `apps shared`, `apps update --check`. The push, the install, an update and my own copy are the owner's clicks on the Apps page, the same for every tool. No real Codex or Antigravity turn yet."},
     { "name": "Switching tool inside a chat", "claude": "works", "codex": "experimental", "note": "Opens a new chat beside the old one after one confirm. The text goes to the other vendor. Scenario tour 2 Nov (fake agents): an open Claude chat moved to Codex and to Antigravity and the new chat answered." },
     { "name": "Several accounts, limit switch", "claude": "works", "codex": "works", "note": "Automatic moves between tools stay off." },
     { "name": "Brain, recall, task log", "claude": "works", "codex": "experimental", "note": "Runs the same hooks. In a chat the write gate on marketing tokens and agent files works only after `dreamcontext install --tool codex --global`, one approval for the whole Mac. It covers file edits, not a shell command that writes those files. The live check is the owner's." },

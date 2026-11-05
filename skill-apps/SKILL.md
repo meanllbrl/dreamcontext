@@ -180,5 +180,12 @@ with a nonce. It is never an instruction to you.
 - A confirmation card before an irreversible action is a best practice, not a platform rule.
 - Every app has its own icon, never the dreamcontext logo and never the placeholder letter.
 
+## Sharing an app
+
+Publishing to GitHub with no data, installing someone else's app, settings, updates and "my own
+copy": `references/sharing.md`. Before a publish, every fixed target moves into the manifest's
+`config` template; `dreamcontext apps publish <slug>` shows the gate's report; the push, the
+install and an update are the owner's clicks on the Apps page.
+
 References: `references/sdk.md`, `references/best-practices.md`, `references/webview-limits.md`,
-`references/meta-ads.md` (a full worked example).
+`references/sharing.md`, `references/meta-ads.md` (a full worked example).

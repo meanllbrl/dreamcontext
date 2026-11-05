@@ -32,6 +32,17 @@ read the icon itself, then ask the owner to look.
 | Give it a scheduled job | `dreamcontext automations create <slug> --app <app> …` |
 | Bring its data back | `dreamcontext apps restore <slug> [--list] [--at <stamp>]` (backend stopped) |
 | Re-add a removed app | `dreamcontext apps new <slug>` (its code and data come back) |
+| Check what a publish would send | `dreamcontext apps publish <slug> [--public]` (the push is the owner's click: Share) |
+| Fill an app's settings | `dreamcontext apps config <slug> [--suggest] [--set key=value]` (keys: `apps secret`, the owner's) |
+| See apps shared with you | `dreamcontext apps shared` |
+| Look at an app before installing | `dreamcontext apps install <owner/repo|link>` (installing is the owner's click) |
+| Check an installed app for an update | `dreamcontext apps update <slug>` |
+
+**Shared apps.** An app installed from someone else lives in `<project>-apps/installed/<slug>/` and
+runs like the owner's own apps; the install screen says who wrote it. Its settings are on this Mac
+(`~/.dreamcontext/apps/config/`), its keys in its own `.env`. Publishing, installing, updating,
+"my own copy" and uninstalling (to the trash, restorable) are the owner's clicks on the Apps page;
+an agent's request to those routes is refused. The `/apps` skill's `references/sharing.md` has it all.
 
 **Every app has its own assistant**, plain Claude with its role in `ASSISTANT.md` at the app root,
 and no AI Team entry. Its chat in the app window is the real Chat. An app chat runs in its own
