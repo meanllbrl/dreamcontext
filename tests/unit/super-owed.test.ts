@@ -101,6 +101,12 @@ describe('outward actions (owner decision D3)', () => {
     expect(outwardAction('Bash', { command: '/bin/zsh -lc "git push origin main"' })).toBe('git push');
     expect(outwardAction('Bash', { command: "/bin/zsh -lc 'cd app && gh pr merge 3'" })).toBe('PR merge');
     expect(outwardAction('Bash', { command: '/bin/zsh -lc "echo \\"git push\\""' })).toBeNull();
+    // Codex's joined-pieces form (a command with both ' and $), as its own transcripts show.
+    expect(outwardAction('Bash', { command: `/bin/zsh -lc "git push -u origin "'$BRANCH'` })).toBe('git push');
+    expect(outwardAction('Bash', { command: `/bin/zsh -lc "gh pr create --title x --body "'$BODY'` })).toBe('PR create');
+    expect(outwardAction('Bash', { command: `/bin/zsh -lc "git push -u origin \\""'$(git branch --show-current)'"\\""` })).toBe('git push');
+    expect(outwardAction('Bash', { command: "/opt/homebrew/bin/bash -lc 'npm publish'" })).toBe('npm publish');
+    expect(outwardAction('Bash', { command: `/bin/zsh -lc "for i in 1 2; do printf '%s' "'$i; done"` })).toBeNull();
     // MCP verbs are whole words: `thread` is no `read`, `targeted` no `get`.
     expect(outwardAction('mcp__slack__slack_reply_to_thread', {})).toBe('mcp slack/slack_reply_to_thread');
     expect(outwardAction('mcp__mail__send_targeted_email', {})).toBe('mcp mail/send_targeted_email');

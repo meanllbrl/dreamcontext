@@ -46,13 +46,27 @@ function bareSegment(seg: string): string {
   return s;
 }
 
+/** The one argument of `<any path>/(ba|z)sh -c|-lc <word>`, decoded (quotes joined, `\"` and the
+ *  like unescaped), or null when the command is not that shape (or the argument is two words). */
+function shellWordArg(cmd: string): string | null {
+  const m = cmd.trim().match(/^(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+([\s\S]+)$/);
+  if (!m) return null;
+  let out = '';
+  for (const seg of m[1].match(/'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"]+|\s+/g) ?? []) {
+    if (/^\s+$/.test(seg)) return null;
+    out += seg[0] === "'" ? seg.slice(1, -1) : seg[0] === '"' ? seg.slice(1, -1).replace(/\\(["\\$`])/g, '$1') : seg;
+  }
+  return out;
+}
+
 /** A shell command with what is only DATA taken out: heredoc bodies and quoted strings (a brief
  *  written to a file, an `echo "git push"`, a prompt that mentions a push are no push). */
 function commandText(cmd: string): string {
-  // Codex runs every command as `/bin/zsh -lc "<command>"` (t3-bridge headless-envelope.ts):
-  // judge the command inside, never the quoted wrapper.
-  const wrapped = cmd.trim().match(/^(?:\/(?:usr\/)?bin\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/);
-  if (wrapped) cmd = wrapped[1] ?? (wrapped[2] ?? '').replace(/\\(["\\$`])/g, '$1');
+  // Codex runs every command as `<shell> -lc <one shell word>` (t3-bridge headless-envelope.ts):
+  // judge the command inside. That word may be built of joined pieces, `"…"'$X'"…"` (Codex's
+  // form for a command holding both `'` and `$`), so it is decoded piece by piece.
+  const inner = shellWordArg(cmd);
+  if (inner !== null) cmd = inner;
   return cmd
     .replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, '')
     .replace(/'[^']*'/g, "''")
