@@ -37,8 +37,8 @@ export function membersOf(summary: { members?: unknown } | null): EkipSummary[] 
 }
 
 /** Who the members are: the agents' names, faces and scope. */
-export function identitiesOf(agents: readonly Pick<AgentSummary, 'slug' | 'title' | 'hasPhoto' | 'scope'>[]): EkipIdentity[] {
-  return agents.map((a) => ({ slug: a.slug, title: a.title, hasPhoto: a.hasPhoto, global: a.scope === 'global' }));
+export function identitiesOf(agents: readonly (Pick<AgentSummary, 'slug' | 'title' | 'hasPhoto' | 'scope'> & { face?: AgentSummary['face'] })[]): EkipIdentity[] {
+  return agents.map((a) => ({ slug: a.slug, title: a.title, hasPhoto: a.hasPhoto, global: a.scope === 'global', ...(a.face ? { face: a.face } : {}) }));
 }
 
 /** A folded project's marks and Ekip read; null when the summary read failed, so no old number

@@ -74,6 +74,25 @@ describe('the Team row in place', () => {
     expect(html).toMatch(/data-slug="off" data-off="true"/);
   });
 
+  it('a photo is read from the row\'s project (the drawer sits outside every provider: owner 2026-11-05)', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    const html = render([member('pho', { hasPhoto: true }), member('fig', { face: { shape: 4, color: 3 } })]);
+    // Every <img> of the row (the faces in the header and the list) names the project.
+    const srcs = [...html.matchAll(/src="([^"]+)"/g)].map((x) => x[1].replace(/&amp;/g, '&'));
+    expect(srcs.length).toBeGreaterThan(0);
+    for (const src of srcs) expect(src).toBe('/api/agents/pho/photo?vault=acme');
+    // A member with no photo wears its picked figure, not the bare hash of its slug.
+    expect(html).toMatch(/data-shape="4" data-tone="sky"/);
+  });
+
+  it('"Super için" sits on the face, never at the row\'s end beside the name', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    const html = render([member('sup', { title: 'Pacioli', superOnly: true })]);
+    expect(html).toMatch(/class="ns-team-mface"><span class="agent-av[^]*?data-testid="team-mark-super"[^]*?<\/span><\/span><span class="ns-team-mname">Pacioli<\/span><\/button>/);
+    expect(html).toContain('aria-label="For Super"');
+    expect(html).not.toContain('ns-team-tag');
+  });
+
   it('folded: news pops out (max 3, then +N daha); working alone does not', () => {
     const html = render([
       member('a', { unread: 1 }), member('b', { asking: true }), member('c', { approval: true }), member('d', { unread: 2 }),

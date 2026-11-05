@@ -16,14 +16,19 @@ import './TeamList.css';
  *  is in ("Soru: ... · acme-storefront"). */
 export type TeamListMember = EkipMember & { project?: string | null };
 
-/** Up to three faces, the ones at work first. */
-export function TeamFaces({ members, size = 16 }: { members: readonly EkipMember[]; size?: number }) {
+/** The project a member's photo is read from: the row's, else (the Global row) where it opens. */
+export const photoVaultOf = (m: EkipMember & { openIn?: string | null }, vault?: string | null): string | null =>
+  vault ?? m.openIn ?? null;
+
+/** Up to three faces, the ones at work first. `vault`: the project they belong to (the drawer
+ *  sits outside every project's provider, so the photo must name it). */
+export function TeamFaces({ members, size = 16, vault }: { members: readonly EkipMember[]; size?: number; vault?: string | null }) {
   const faces = ekipFaces(members);
   return (
     <span className="ns-team-faces" aria-hidden="true">
       {faces.map((m) => (
         <span key={m.slug} className="ns-team-face" data-off={m.enabled ? undefined : 'true'}>
-          <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={size} />
+          <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} face={m.face ?? null} size={size} vault={photoVaultOf(m, vault)} />
         </span>
       ))}
     </span>
@@ -49,7 +54,7 @@ export function TeamRowButton({ members, count, asking, label, selected = false,
     <button type="button" className={`ns-team-row${selected ? ' is-sel' : ''} ${className}`.trim()} data-testid={testid}
       data-vault={vault} data-asking={asking ? 'true' : undefined} aria-haspopup="dialog" aria-expanded={expanded}
       aria-label={named} onClick={onClick}>
-      <TeamFaces members={members} />
+      <TeamFaces members={members} vault={vault} />
       <span className="ns-team-label">{label}</span>
       {count > 0 && <span className="ns-team-count" data-asking={asking ? 'true' : undefined}>{count}</span>}
     </button>
@@ -63,6 +68,8 @@ export interface TeamListProps {
   /** A phone: a bottom sheet, no "Üyeleri yönet". */
   sheet: boolean;
   testid: 'team-list' | 'global-team-list';
+  /** The project the list is of (its photos are read there); a global list leaves it out. */
+  vault?: string | null;
   /** Where the popover opens (the row's corner). */
   anchor: { x: number; y: number } | null;
   onOpen(m: TeamListMember): void;
@@ -163,7 +170,7 @@ export function TeamList(p: TeamListProps) {
               <li key={m.slug} className="ns-team-item" data-facing={facing ? 'true' : undefined} data-off={enabled ? undefined : 'true'}>
                 <button type="button" className="ns-team-open" data-testid="team-list-member" data-slug={m.slug}
                   onClick={() => p.onOpen(m)}>
-                  <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={24} />
+                  <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} face={m.face ?? null} size={24} vault={photoVaultOf(m, p.vault)} />
                   <span className="ns-team-text">
                     <span className="ns-team-name">{m.title}</span>
                     <span className="ns-team-line">{lineOf(m)}</span>

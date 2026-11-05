@@ -3,6 +3,7 @@ import type {
 } from '../../hooks/useAutomations';
 import type { AgentSummary } from '../../hooks/useAgents';
 import type { SuperMemberSummary } from '../../lib/superTypes';
+import type { AgentFace } from '../../../../src/lib/agents/figure.js';
 
 /**
  * THE AI TEAM, as data. Two pure functions and nothing that renders:
@@ -599,6 +600,8 @@ export interface EkipIdentity {
   title: string;
   hasPhoto: boolean;
   global?: boolean;
+  /** The figure the owner picked for it (drawn when it has no photo). */
+  face?: AgentFace | null;
 }
 
 /** One member of a project's Ekip list, everything its row draws. */
@@ -606,6 +609,8 @@ export interface EkipMember {
   slug: string;
   title: string;
   hasPhoto: boolean;
+  /** Its picked figure; absent draws the bare hash of its slug. */
+  face?: AgentFace | null;
   global: boolean;
   enabled: boolean;
   /** Owner-origin work running now (its children at work for the owner). */
@@ -679,6 +684,7 @@ export function buildEkip(
       slug: s.slug,
       title: id?.title || s.slug,
       hasPhoto: !!id?.hasPhoto,
+      ...(id?.face ? { face: id.face } : {}),
       global: s.global === true || id?.global === true,
       enabled: s.enabled !== false,
       ownerWorking,
@@ -786,6 +792,7 @@ export function buildGlobalEkip(
         ...had,
         title: had.title === had.slug ? m.title : had.title,
         hasPhoto: had.hasPhoto || m.hasPhoto,
+        face: had.face ?? m.face,
         enabled: had.enabled && m.enabled,
         ownerWorking: had.ownerWorking + m.ownerWorking,
         asking: had.asking || m.asking,

@@ -517,7 +517,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
       {teamOpen?.kind === 'project' && (
         <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
-          sheet={phone} testid="team-list" anchor={{ x: teamOpen.x, y: teamOpen.y }}
+          sheet={phone} testid="team-list" vault={teamOpen.vault} anchor={{ x: teamOpen.x, y: teamOpen.y }}
           onOpen={(m) => openMember(teamOpen.vault, m)}
           onSwitch={(m, enabled) => p.onSwitchMember?.(teamOpen.vault, m.slug, enabled) ?? Promise.resolve()}
           {...(!phone && p.onManage ? { onManage: () => p.onManage?.(teamOpen.vault) } : {})}
