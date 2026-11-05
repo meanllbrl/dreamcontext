@@ -84,6 +84,12 @@ export interface PendingQuestion {
    *  the CLI is no longer waiting on the request (it was rejected on a closed stream, say), so
    *  the request settles like a `control_cancel_request`. Absent on an older CLI. */
   toolUseId?: string;
+  /** A permission's own one-line description (`request.description`, the agent's words). */
+  description?: string;
+  /** Why the CLI asks (`decision_reason`, its own words) and the kind (`decision_reason_type`):
+   *  `safetyCheck` asks even in Bypass and takes no "always allow". */
+  reason?: string;
+  reasonType?: string;
 }
 
 export interface RegistryQuestionOption { label: string; description?: string; preview?: string }
@@ -444,7 +450,12 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path
       : typeof input.description === 'string' ? input.description : '';
-  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'], ...toolUse };
+  const why = {
+    ...(typeof req.description === 'string' && req.description.trim() ? { description: cap(req.description.trim(), 200) } : {}),
+    ...(typeof req.decision_reason === 'string' && req.decision_reason.trim() ? { reason: cap(req.decision_reason.trim(), 300) } : {}),
+    ...(typeof req.decision_reason_type === 'string' && /^[A-Za-z]{1,40}$/.test(req.decision_reason_type) ? { reasonType: req.decision_reason_type } : {}),
+  };
+  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'], ...toolUse, ...why };
 }
 
 /** Does its Super Agent decide this request first? Only a TOOL permission (never a question or a

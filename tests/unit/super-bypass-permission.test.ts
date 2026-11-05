@@ -5,7 +5,9 @@
  *  - the registry knows when a process runs Bypass, and forgets it for good (fail closed);
  *  - a request the CLI dropped (its tool already got a result: "Stream closed") leaves no ghost;
  *  - a Bypass child's permission is a `toSuper` item: delivered to the Super with its request id,
- *    tool and command, never the owner's head; a non-bypass child's is unchanged;
+ *    tool, command and Claude Code's own reason, never the owner's head; the hands-free phone
+ *    still draws it (owner 2026-11-05: away from the Mac he could not answer it); a non-bypass
+ *    child's is unchanged;
  *  - the Super's turn ending without a decision, `permissionToOwner` or the grace hands it to him.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -52,7 +54,12 @@ const reg = (sid: string, bypass = false, mode = 'basic'): ChatHandle =>
   registerChat({ sessionId: sid, conversationId: null, vault: 'acme', mode, bypass });
 const askPermission = (h: ChatHandle, requestId: string, toolUseId = `tu-${requestId}`, tool = 'Bash') => h.observe({
   type: 'control_request', request_id: requestId,
-  request: { subtype: 'can_use_tool', tool_name: tool, input: { command: 'rm -rf /tmp/wt-c1-copy' }, tool_use_id: toolUseId },
+  request: {
+    subtype: 'can_use_tool', tool_name: tool, input: { command: 'rm -rf /tmp/wt-c1-copy' }, tool_use_id: toolUseId,
+    description: 'Remove the temp copy',
+    decision_reason: 'Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed',
+    decision_reason_type: 'safetyCheck',
+  },
 });
 const settle = (h: ChatHandle) => { h.userSent(''); h.observe({ type: 'result' }); };
 
@@ -150,11 +157,22 @@ describe('the queue: a Bypass child asks its Super, any other the owner', () => 
     expect(delivered[0].text).toContain('request=perm-1 tool=Bash');
     expect(delivered[0].text).toContain('rm -rf /tmp/wt-c1-copy');
     expect(delivered[0].text).toContain('super allow');
+    expect(delivered[0].text).toContain('Why Claude Code asks: Dangerous rm operation not ruled out');
     const s = await readSuperState(root);
     expect(s.queue[0]).toMatchObject({ kind: 'permission', toSuper: true, requestId: 'perm-1' });
     expect(superQueueHead(s)).toBeNull();
+    // Quiet for the owner while the Super holds it: no head, no waiting row, no push...
     expect(superDigest({ ...s, pad: s.pad ?? [] } as Parameters<typeof superDigest>[0]).waiting).toHaveLength(0);
-    expect(phoneSuperQuestions(s, () => 'gone', () => ({ requestId: 'perm-1', toolName: 'Bash', isPermission: true, text: 'x', options: [] })).questions).toHaveLength(0);
+    // ...but the hands-free phone draws it from the first second, as the child's own tab does.
+    const phone = phoneSuperQuestions(s, () => 'gone', () => ({
+      requestId: 'perm-1', toolName: 'Bash', isPermission: true, text: 'x', options: [],
+      description: 'Remove the temp copy', reason: 'Dangerous rm operation not ruled out', reasonType: 'safetyCheck',
+    })).questions;
+    expect(phone).toHaveLength(1);
+    expect(phone[0]).toMatchObject({
+      kind: 'permission', requestId: 'perm-1',
+      permission: { tool: 'Bash', text: 'x', description: 'Remove the temp copy', reason: 'Dangerous rm operation not ruled out', reasonType: 'safetyCheck' },
+    });
   });
 
   it('a non-bypass child\'s permission is the owner\'s head and never a batch item', async () => {
