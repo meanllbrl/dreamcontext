@@ -110,7 +110,7 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
 
   const r = pv?.report;
   const waiting = r ? r.approvable.filter((a) => !approved.has(a.id)).length : 0;
-  const why = !pv ? null
+  const why = !pv ? (err ? null : t('share.checking'))
     : !pv.signedIn ? t('share.publish.needSignIn')
     : r!.blocks.length ? tn('share.publish.fixFirst', r!.blocks.length)
     : waiting ? tn('share.publish.approveFirst', waiting)
@@ -138,11 +138,11 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
   }
 
   return (
-    <Sheet title={t('share.publish.title', { name })} onClose={onClose} foot={!pv ? undefined :
+    <Sheet title={t('share.publish.title', { name })} onClose={onClose} foot={
       <>
         {why && <span className="share-why">{why}</span>}
         <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
-        <button type="button" className="app-card__launch" disabled={!!why || busy} onClick={() => void publish()}>{busy ? t('share.publish.publishing') : pv?.published ? t('share.publish.update') : t('share.publish.go')}</button>
+        <button type="button" className="app-card__launch" disabled={!pv || !!why || busy} onClick={() => void publish()}>{busy ? t('share.publish.publishing') : pv?.published ? t('share.publish.update') : t('share.publish.go')}</button>
       </>
     }>
       <fieldset className="share-choice">
@@ -155,7 +155,6 @@ export function PublishSheet({ slug, name, publishedPublic, onClose, onDone }: {
         <label className="share-field"><span>{t('share.publish.invite')}</span><input value={invite} onChange={(e) => setInvite(e.target.value)} placeholder={t('share.publish.invitePh')} /></label>
       )}
       <label className="share-field"><span>{t('share.publish.note')}</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('share.publish.notePh')} /></label>
-      {!pv && !err && <p className="share-muted">{t('share.checking')}</p>}
       {r && (
         <section className="share-report" aria-label={t('share.publish.check')}>
           <h3>{r.ok || (!r.blocks.length && !waiting) ? t('share.publish.clear') : t('share.publish.check')}</h3>
@@ -274,13 +273,13 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
 
   const f = pv?.facts;
   return (
-    <Sheet title={pv ? t('share.install.titleOf', { name: pv.name }) : t('share.install.title')} onClose={onClose} foot={pv ? (
+    <Sheet title={pv ? t('share.install.titleOf', { name: pv.name }) : t('share.install.title')} onClose={onClose} foot={
       <>
         {why && <span className="share-why">{why}</span>}
         <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
-        <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install()}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>
+        {pv && <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install()}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>}
       </>
-    ) : undefined}>
+    }>
       {!initialRef && (
         <form className="share-row" onSubmit={(e) => { e.preventDefault(); void preview(); }}>
           <label className="share-field share-field--grow"><span>{t('share.install.link')}</span><input value={ref} onChange={(e) => { setRef(e.target.value); asked.current++; setBusy((b) => (b === 'preview' ? null : b)); setPv(null); setValues({}); setUnderstood(false); }} placeholder="https://github.com/owner/repo" autoFocus /></label>
@@ -402,7 +401,7 @@ export function UpdateSheet({ slug, name, from, onClose, onDone, onDetach }: { s
       {why && <span className="share-why">{why}</span>}
       <button type="button" className="app-card__stop" onClick={onClose}>{t('share.later')}</button>
       <button type="button" className="app-card__launch" disabled={!!why || busy} onClick={() => void apply()}>{busy ? t('share.update.updating') : t('share.update.go')}</button>
-    </> : undefined}>
+    </> : <button type="button" className="app-card__stop" onClick={onClose}>{t('share.close')}</button>}>
       {!c && !err && <p className="share-muted">{t('share.checking')}</p>}
       {c?.state === 'none' && <p className="share-lede">{t('share.update.none')}</p>}
       {c?.state === 'problem' && <p className="app-card__note app-card__note--warn">{c.message}</p>}
