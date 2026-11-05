@@ -46,6 +46,17 @@ function opaqueBox(img: HTMLImageElement): { x: number; y: number; w: number; h:
   }
 }
 
+/**
+ * Scale the opaque square up to fill the mask, centred: a transform, because a page-wide
+ * `img { max-width: 100% }` would cap a wider-than-its-box width.
+ */
+function trimStyle(b: { x: number; y: number; w: number; h: number }): CSSProperties {
+  const s = 1 / Math.max(b.w, b.h);
+  const dx = -s * (b.x + b.w / 2 - 0.5) * 100;
+  const dy = -s * (b.y + b.h / 2 - 0.5) * 100;
+  return { transform: `translate(${dx}%, ${dy}%) scale(${s})`, transformOrigin: '50% 50%' };
+}
+
 export function AppIcon({ src, name, slug, size, running, className }: { src?: string | null; name: string; slug: string; size: number; running?: boolean; className?: string }) {
   const [failed, setFailed] = useState<string | null>(null);
   const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -63,10 +74,10 @@ export function AppIcon({ src, name, slug, size, running, className }: { src?: s
           draggable={false}
           onLoad={onLoad}
           onError={() => setFailed(src!)}
-          style={box ? { width: `${100 / box.w}%`, height: `${100 / box.h}%`, left: `${(-100 * box.x) / box.w}%`, top: `${(-100 * box.y) / box.h}%` } : undefined}
+          style={box ? trimStyle(box) : undefined}
         />
       ) : (
-        <span className="app-ic__mono" style={{ background: `linear-gradient(hsl(${hue} 68% 54%), hsl(${hue} 72% 34%))`, fontSize: Math.round(size * 0.44) }}>{initials(name)}</span>
+        <span className="app-ic__mono" style={{ backgroundColor: `hsl(${hue} 68% 30%)`, backgroundImage: `linear-gradient(hsl(${hue} 62% 38%), hsl(${hue} 72% 24%))`, fontSize: Math.round(size * 0.44) }}>{initials(name)}</span>
       )}
       </span>
       {running && <span className="app-ic__dot" />}

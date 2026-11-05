@@ -258,7 +258,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
       )}
       {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} icon={appIconSrc(app, vault, canLaunch)} placeholder={!!app.iconPlaceholder} publishedPublic={app.publish?.public} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} />}
       {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
-      {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={onChanged} onDetach={() => setSheet('detach')} />}
+      {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} onDetach={() => setSheet('detach')} />}
       {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={() => { onChanged(); if (sheet === 'uninstall') onClose(); }} />}
     </Sheet>
   );

@@ -32,6 +32,9 @@ function useShareN(): (key: string, n: number) => string {
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** The open sheets, oldest first: the last one is on top and owns the keyboard. */
+const OPEN_SHEETS: object[] = [];
+
 export function Sheet({ title, onClose, children, foot, page }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode; page?: boolean }) {
   const t = useShareT();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -44,9 +47,13 @@ export function Sheet({ title, onClose, children, foot, page }: { title: string;
     first?.focus();
     return () => { opener?.focus?.(); };
   }, []);
-  // Esc and Tab belong to the sheet: capture phase, so a drawer's own Esc does not fire too.
+  // Esc and Tab belong to the sheet: capture phase, so a drawer's own Esc does not fire too. A
+  // sheet opened from an app's page sits on top of it: only the topmost one answers the keys.
   useEffect(() => {
+    const token = {};
+    OPEN_SHEETS.push(token);
     const onKey = (e: KeyboardEvent) => {
+      if (OPEN_SHEETS[OPEN_SHEETS.length - 1] !== token) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close.current(); return; }
       if (e.key !== 'Tab' || !ref.current) return;
       const all = Array.from(ref.current.querySelectorAll<HTMLElement>(FOCUSABLE));
@@ -57,15 +64,19 @@ export function Sheet({ title, onClose, children, foot, page }: { title: string;
       else if (!e.shiftKey && (!inside || active === all[all.length - 1])) { e.preventDefault(); all[0].focus(); }
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      const at = OPEN_SHEETS.indexOf(token);
+      if (at >= 0) OPEN_SHEETS.splice(at, 1);
+    };
   }, []);
   // On body: a page frame with a transform would otherwise hold the fixed backdrop inside it.
   return createPortal(
     <div className="share-sheet__backdrop" onClick={onClose}>
       <div className={`share-sheet${page ? ' share-sheet--page' : ''}`} ref={ref} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="share-sheet__head">
-          {/* A store page names the app in its own top block: the bar only closes. */}
-          <h2 className={page ? 'share-sheet__title--hidden' : undefined}>{title}</h2>
+          {/* A store page names the app in its own top block (the dialog keeps its label): the bar only closes. */}
+          {!page && <h2>{title}</h2>}
           <button type="button" className="share-sheet__x" aria-label={t('share.close')} onClick={onClose}>×</button>
         </header>
         <div className="share-sheet__body">{children}</div>
