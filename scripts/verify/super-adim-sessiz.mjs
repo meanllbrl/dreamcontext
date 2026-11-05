@@ -2,9 +2,9 @@
 /**
  * The Super Agent's tool steps as one quiet line (owner 2026-11-06, draft A), at 1440 dark:
  *   1 while the turn runs: one line, a ring and the step in hand, its height fixed;
- *   2 once it lands: a grey chip "N steps · T", the answer under it, no step cards;
- *   3 a click opens the same rows, a second click closes them;
- *   4 a failed step is counted on the chip and drawn in full under it.
+ *   2 once it lands: the line is gone, only the answer stays (owner 2026-11-06, second look);
+ *   3 hovering the answer shows a faint "steps" link; a click opens the rows, a second closes them;
+ *   4 a failed step still stands on its own row.
  *
  *   npm run build && node scripts/verify/super-adim-sessiz.mjs [outDir]
  *
@@ -107,36 +107,47 @@ async function run(base) {
   ok('1 its height never changes while it runs', heights.length > 3 && heights.every((h) => h === heights[0]), heights.join(','));
   ok('1 no step card in the transcript', (await s.locator('.chat-transcript > .chat-toolcard, .chat-toolrun').count()) === 0);
 
-  console.log('── 2 the landed turn');
-  ok('2 the chip lands', await until(page, async () => (await lines.count()) === 1 && (await lines.first().getAttribute('data-live')) === null, 30000));
-  const chip = (await s.locator('[data-testid="super-steps-line"]').first().innerText()).replace(/\s+/g, ' ').trim();
-  ok('2 the chip reads "7 steps · N s"', /^7 steps · \d+ s/.test(chip), chip);
-  ok('2 the answer is on screen', (await s.getByText('Banner onaylı olarak işlendi', { exact: false }).count()) > 0);
-  const landedH = Math.round((await s.locator('[data-testid="super-steps-line"]').first().boundingBox())?.height ?? 0);
-  ok('2 the chip keeps the live line\'s height', landedH === heights[0], `${landedH} vs ${heights[0]}`);
+  console.log('── 2 the landed turn: only the answer stays');
+  const answer = s.locator('.chat-msg-assistant-row', { hasText: 'Banner onaylı olarak işlendi' }).first();
+  ok('2 the answer is on screen', await until(page, async () => (await answer.count()) === 1, 30000));
+  ok('2 no chip and no line once it landed', await until(page, async () => (await s.locator('[data-testid="super-steps-line"]').count()) === 0, 10000));
+  ok('2 nothing of the steps is drawn', (await s.locator('[data-testid="super-steps"]').count()) === 0);
+  const link = answer.locator('[data-testid="super-steps-link"]');
+  ok('2 the steps link is hidden until hover', Number(await link.evaluate((el) => getComputedStyle(el).opacity)) === 0);
+  await page.mouse.move(5, 5);
   await page.waitForTimeout(400);
-  await page.screenshot({ path: join(OUT, '2-tur-bitti-1440-dark.png') });
+  await page.screenshot({ path: join(OUT, '6-tur-bitti-yeni-1440-dark.png') });
 
-  console.log('── 3 open and close');
-  await s.locator('[data-testid="super-steps-line"]').first().click();
+  console.log('── 3 hover, open, close');
+  await answer.hover();
+  ok('3 hovering the answer shows a faint "steps" link', await until(page, async () => Number(await link.evaluate((el) => getComputedStyle(el).opacity)) > 0.5, 3000));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(OUT, '7-hover-adimlar-1440-dark.png') });
+  await link.click();
   ok('3 a click opens the seven rows', await until(page, async () => (await s.locator('[data-testid="super-steps-rows"] .chat-toolcard').count()) === 7, 5000));
   await page.waitForTimeout(300);
-  await page.screenshot({ path: join(OUT, '3-acilmis-1440-dark.png') });
-  await s.locator('[data-testid="super-steps-line"]').first().click();
+  await page.screenshot({ path: join(OUT, '7-hover-adimlar-acik-1440-dark.png') });
+  await link.click();
   ok('3 a second click closes them', await until(page, async () => (await s.locator('[data-testid="super-steps-rows"]').count()) === 0, 5000));
 
   console.log('── 4 a failed step');
   await sayOnStage(page, 'main', 'Checkout görevini taşı (hata)');
-  ok('4 the second chip lands', await until(page, async () => (await lines.count()) === 2 && (await lines.nth(1).getAttribute('data-live')) === null, 30000));
-  const chip2 = (await s.locator('[data-testid="super-steps-line"]').nth(1).innerText()).replace(/\s+/g, ' ').trim();
-  ok('4 the chip counts the failure', /4 steps · \d+ s · 1 failed/.test(chip2), chip2);
-  ok('4 the failed step stands under the line', await until(page, async () => (await lines.nth(1).locator('[data-testid="super-steps-errors"] .chat-toolcard[data-status="error"]').count()) === 1, 5000));
+  const answer2 = s.locator('.chat-msg-assistant-row', { hasText: 'Görevi taşıyamadım' }).first();
+  ok('4 the second answer lands', await until(page, async () => (await answer2.count()) === 1, 30000));
+  ok('4 the failed step stands on its own, with no chip', await until(page, async () => (await s.locator('[data-testid="super-steps-errors"] .chat-toolcard[data-status="error"]').count()) === 1
+    && (await s.locator('[data-testid="super-steps-line"]').count()) === 0, 10000));
+  await page.mouse.move(5, 5);
   await page.waitForTimeout(400);
-  await page.screenshot({ path: join(OUT, '4-hata-disarida-1440-dark.png') });
+  await page.screenshot({ path: join(OUT, '8-hata-disarida-yeni-1440-dark.png') });
 
   await applyTheme(page, 'light');
   await page.waitForTimeout(500);
-  await page.screenshot({ path: join(OUT, '5-acik-tema-1440-light.png') });
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(OUT, '6-tur-bitti-yeni-1440-light.png') });
+  await answer.hover();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(OUT, '7-hover-adimlar-1440-light.png') });
 
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
   ok('no failed requests', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));

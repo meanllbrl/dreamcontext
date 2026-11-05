@@ -787,6 +787,14 @@ export function ChatPane({
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
   /** A permission card waits on the owner: the Super view's live steps line says so. */
   const waitingOnOwner = conv.pending.some((p) => p.kind === 'permission');
+  /** The Super view's landed runs the owner opened from their answer's "steps" link, by run key
+   *  (the run's last item, which a reveal of older entries never moves). */
+  const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleSteps = useCallback((key: string) => setOpenSteps((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  }), []);
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   /**
@@ -1567,15 +1575,17 @@ export function ChatPane({
     const layer = replyLinesRef.current;
     if (!inner || !layer) return;
     const base = inner.getBoundingClientRect().top;
-    const spans = new Map<string, { top: number; bottom: number }>();
+    const spans = new Map<string, { top: number; bottom: number; n: number }>();
     for (const el of Array.from(inner.querySelectorAll<HTMLElement>(':scope > [data-reply-strip], :scope > [data-reply-grp]'))) {
       const id = el.dataset.replyStrip ?? el.dataset.replyGrp ?? '';
       const r = el.getBoundingClientRect();
       if (!id || r.height === 0) continue;
       const span = spans.get(id);
-      spans.set(id, { top: Math.min(span?.top ?? Infinity, r.top - base), bottom: Math.max(span?.bottom ?? -Infinity, r.bottom - base) });
+      spans.set(id, { top: Math.min(span?.top ?? Infinity, r.top - base), bottom: Math.max(span?.bottom ?? -Infinity, r.bottom - base), n: (span?.n ?? 0) + 1 });
     }
-    const lines = [...spans.values()];
+    // A line joins the pieces of one answer group. A group that is one piece (a lone answer once
+    // its steps were put away, owner 2026-11-06) joins nothing, so it draws no line.
+    const lines = [...spans.values()].filter((l) => l.n > 1);
     while (layer.childElementCount > lines.length) layer.lastElementChild?.remove();
     while (layer.childElementCount < lines.length) layer.appendChild(document.createElement('div')).className = 'chat-reply-line';
     lines.forEach((l, i) => {
@@ -2049,6 +2059,10 @@ export function ChatPane({
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
   /** Filled once the slices are known (below), read when the items are drawn. */
   let doneRepeats = new Set<string>();
+  /** Super view: answer id -> the landed run put away behind its "steps" link (filled below). */
+  const stepsHost = new Map<string, string>();
+  const hostedRuns = new Set<string>();
+  const runKeyOf = (items: readonly ChatItem[]) => items[items.length - 1].id;
 
   const itemNode = (item: ChatItem, stretch: Stretch, accruing = false): React.ReactNode => {
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
@@ -2133,6 +2147,9 @@ export function ChatPane({
         onReplyJump={superView ? handleReplyJump : undefined}
         replyHeads={replyHeads?.get(item.id)}
         onReplyTarget={superView ? handleReplyTarget : undefined}
+        stepsKey={stepsHost.get(item.id)}
+        stepsOpen={stepsHost.has(item.id) && openSteps.has(stepsHost.get(item.id)!)}
+        onToggleSteps={toggleSteps}
       />
     );
     if (!shape.parties.length && !shape.guarded) return view;
@@ -2187,6 +2204,8 @@ export function ChatPane({
           key={`run-${toolRunKeyItem(seg.items, accruing).id}`}
           items={seg.items as ChatToolItem[]}
           stillAccruing={accruing}
+          hidden={hostedRuns.has(runKeyOf(seg.items))}
+          open={openSteps.has(runKeyOf(seg.items))}
           waiting={accruing && waitingOnOwner}
           onOpenFile={handleOpenFile}
           replyGroup={replyMap?.get(seg.items[0].id)?.groupId}
@@ -2363,6 +2382,26 @@ export function ChatPane({
     liveTail -= 1;
   }
   const accruingAt = (i: number) => i === liveTail && session.busy;
+  // A LANDED turn's steps in the Super view (owner 2026-11-06): once the answer is written the
+  // quiet line goes away and only the answer stays; a faint "steps" link on the answer's hover
+  // opens the rows again. Only a run whose next visible thing IS that answer is put away: with
+  // nothing to hang the link on (a turn that ended on a card, or on more steps) the chip stays.
+  for (const [segs, accruing] of [[historySegments, () => false], [liveSegments, accruingAt]] as const) {
+    if (!superView) break;
+    segs.forEach((seg, i) => {
+      if (seg.kind !== 'run' || accruing(i) || seg.items.some((it) => it.kind === 'tool' && it.status === 'running')) return;
+      // The run that holds the live browser keeps its line: the window must never vanish.
+      if (browserHostToolId && seg.items.some((it) => it.id === browserHostToolId)) return;
+      let j = i + 1;
+      while (j < segs.length && segs[j].kind === 'single' && rendersNothing((segs[j] as { item: ChatItem }).item)) j += 1;
+      const next = segs[j];
+      // An answer that draws nothing (whitespace only) cannot carry the link: the chip stays.
+      if (!next || next.kind !== 'single' || next.item.kind !== 'text' || !next.item.text?.trim() || doneRepeats.has(next.item.id)) return;
+      const key = runKeyOf(seg.items);
+      stepsHost.set(next.item.id, key);
+      hostedRuns.add(key);
+    });
+  }
   // Reply strips (owner 2026-10-23, pick 1A): ONE per answer group, its own transcript row,
   // before the first segment of the group this render SHOWS (a group cut by the window edge,
   // the history divider or a notice still gets exactly one). Decided once, in reading order,

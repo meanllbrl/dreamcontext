@@ -32,6 +32,26 @@ describe('the quiet steps line', () => {
     expect(pane).toContain('<SuperStepsLine');
   });
 
+  it('puts a landed run away behind the answer that follows it, and only that answer', () => {
+    const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
+    // Landed only: never the accruing tail, never a run with a step still running.
+    expect(pane).toMatch(/seg\.kind !== 'run' \|\| accruing\(i\) \|\| seg\.items\.some\(\(it\) => it\.kind === 'tool' && it\.status === 'running'\)\) return;/);
+    // The next VISIBLE thing must be the answer text; otherwise the chip stays.
+    expect(pane).toContain("if (!next || next.kind !== 'single' || next.item.kind !== 'text' || !next.item.text?.trim() || doneRepeats.has(next.item.id)) return;");
+    // The run holding the live browser is never put away.
+    expect(pane).toContain('if (browserHostToolId && seg.items.some((it) => it.id === browserHostToolId)) return;');
+    expect(pane).toContain('hidden={hostedRuns.has(runKeyOf(seg.items))}');
+    expect(pane).toContain('stepsKey={stepsHost.get(item.id)}');
+    // A one-piece answer group (the lone answer) draws no reply line.
+    expect(pane).toContain('const lines = [...spans.values()].filter((l) => l.n > 1);');
+    const row = src('dashboard/src/components/sleepy/chat/TranscriptItem.tsx');
+    expect(row).toContain('className="super-steps-link"');
+    const css = src('dashboard/src/components/sleepy/super/SuperSurface.css');
+    // Absolute and hover-only: showing it never moves the transcript.
+    expect(css).toMatch(/\.super-steps-link \{\s*position: absolute;/);
+    expect(css).toContain('.chat-msg-assistant-row:hover > .super-steps-link');
+  });
+
   it('counts a failed step: the tool error, or a dreamcontext call that printed ✗', () => {
     expect(stepFailed(bash('a', 'ls', 'error'))).toBe(true);
     expect(stepFailed(bash('b', 'dreamcontext tasks status nope done', 'done', '✗ Task not found: nope'))).toBe(true);
@@ -57,7 +77,7 @@ describe('the quiet steps line', () => {
 
   it('has every visible string in EN and TR, without an em dash', () => {
     const i18n = src('dashboard/src/context/I18nContext.tsx');
-    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting']) {
+    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting', 'show', 'hide']) {
       const lines = i18n.split('\n').filter((l) => l.includes(`'super.steps.${key}':`));
       expect(lines, key).toHaveLength(2);
       for (const l of lines) expect(l).not.toContain('—');

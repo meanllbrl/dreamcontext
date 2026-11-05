@@ -17,13 +17,19 @@ import type { ChatToolItem } from '../chatSession';
  *
  * Two things never hide inside it: a step that failed is drawn in full UNDER the line (and
  * counted on the chip), and a permission the owner has to answer stays its own card below the
- * transcript; the line only says it is waiting. The line's height never changes between live
- * and landed, so a long turn does not make the transcript jump.
+ * transcript; the line only says it is waiting. The line's height never changes while it runs.
+ *
+ * Once the answer is written the line goes away entirely (owner 2026-11-06, second look): only
+ * the answer stays, and a faint "steps" link on its hover opens the rows here (`hidden`).
  */
 
 function SuperStepsLineInner({
-  items, stillAccruing, waiting = false, onOpenFile, replyGroup,
+  items, stillAccruing, waiting = false, onOpenFile, replyGroup, hidden = false, open: openFromAnswer = false,
 }: {
+  /** Landed and put away behind its answer's "steps" link (ChatPane decides): nothing of the line
+   *  shows, only a failed step's own row; `open` (the link's state) draws the rows here. */
+  hidden?: boolean;
+  open?: boolean;
   items: ChatToolItem[];
   /** The tail of a turn that has not spoken yet (see `toolRunPhase`). */
   stillAccruing: boolean;
@@ -33,7 +39,8 @@ function SuperStepsLineInner({
   replyGroup?: string;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOpen] = useState(false);
+  const open = hidden ? openFromAnswer : ownOpen;
   const live = stillAccruing || items.some((i) => i.status === 'running');
   const steps = items.filter((i) => !stepPhrase(i).quiet);
   const failed = items.filter(stepFailed);
@@ -43,6 +50,23 @@ function SuperStepsLineInner({
   const parts = [count];
   if (!live && summary.durationMs != null) parts.push(stepsDuration(summary.durationMs, t));
   const label = live ? (waiting ? t('super.steps.waiting') : nowStep(items) || t('super.steps.working')) : parts.join(' · ');
+
+  if (hidden) {
+    if (!open && !failed.length) return null;
+    return (
+      <div className="super-steps" data-testid="super-steps" data-hidden data-open={open || undefined}>
+        {open ? (
+          <div className="super-steps-rows" data-testid="super-steps-rows">
+            {items.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" stretch="follow" />)}
+          </div>
+        ) : (
+          <div className="super-steps-errors" data-testid="super-steps-errors">
+            {failed.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" />)}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div

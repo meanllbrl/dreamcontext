@@ -1908,3 +1908,33 @@
 .super-steps-rows .chat-toolcard:hover { background: var(--color-bg-tertiary); }
 .super-steps-rows .chat-toolcard[data-status='error'] { background: var(--color-error-subtle, transparent); }
 @media (prefers-reduced-motion: reduce) { .super-steps-ring { animation: none; } }
+/* A landed turn's steps, put away behind its answer (owner 2026-11-06): a faint link just above
+   the answer, on hover only. Absolute, so showing it never moves the transcript; it sits on the
+   row's edge, so the pointer can travel from the answer onto it without losing the hover. */
+.super-steps-link {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 2;
+  height: 18px;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.chat-msg-assistant-row:hover > .super-steps-link,
+.super-steps-link:focus-visible,
+.super-steps-link[data-open] { opacity: 0.8; pointer-events: auto; }
+.super-steps-link:hover { opacity: 1; color: var(--color-text-secondary); text-decoration: underline; }
+.super-steps-link:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+@media (hover: none) {
+  .chat-msg-assistant-row:focus-within > .super-steps-link { opacity: 0.8; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .super-steps-link { transition: none; } }
