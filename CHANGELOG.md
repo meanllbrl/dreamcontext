@@ -4,6 +4,15 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-11-05
+
+Patch on 0.41.0: shared apps. An app you built can now go to other people, and an app someone shared can come to you. Local build; not published.
+
+- **Share an app privately or by public link.** On the Apps page, pick who may open it (named GitHub accounts) or make a public link anyone can use. Only the app itself goes out, never your data or your keys.
+- **Install with a clear warning.** Opening a shared app link shows what the app is, who made it and what it will be able to do before anything is installed. It installs with its own settings and its own keys, empty.
+- **Update, or keep your own copy.** When the maker publishes a new version you choose: update, or make your own copy that stays as it is and is yours to change.
+- **Remove and restore.** Removing a shared app moves it to the trash; restore brings it back. If the packages fail to install after an update, you are told, and Undo puts the old ones back.
+
 ## [0.41.0] - 2026-11-04
 
 First public release since 0.40.0. It carries every local cut from 0.40.1 to 0.40.7 below: every AI Team member is a Super Agent of its own, with a Team row in the drawer; the Super Agent answers a Bypass child's permissions and its record stays on your Mac; account usage that is right and fast; Codex can ask you a question and Gemini (Antigravity, beta) tool rows are honest; board groups reorder by drag; the design skill comes with every project and the engineering skill is folded into the agents.
