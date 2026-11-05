@@ -547,6 +547,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-stray-home-',
   'dc-sublog-',
   'dc-super-handoff-',
+  'dc-superappr-',
+  'dc-superappr-home-',
   'dc-switch-policy-',
   'dc-sync-engine-',
   'dc-t3-',

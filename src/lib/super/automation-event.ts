@@ -3,7 +3,7 @@ import { countEvent, newQueueId, pumpSuper, writeSuper } from './inbox.js';
 import { mainRootOf, okMember, superOfChild, superOfSession } from './store.js';
 
 /**
- * The owner decided on an automation's approval card in the Super Agent's chat (or in one of its
+ * The owner decided on an automation's (or, `subject: 'member'`, an AI Team member's) approval card in the Super Agent's chat (or in one of its
  * children's): the super hears it as an `automation` event in its next batch, with the
  * automation's live state and next run read at delivery (inbox.ts `automationItemLines`).
  *
@@ -17,6 +17,7 @@ export async function tellSuperAutomationDecision(
   slug: string,
   decision: 'approved' | 'rejected',
   now = Date.now(),
+  subject: 'automation' | 'member' = 'automation',
 ): Promise<boolean> {
   if (!okMember(slug)) return false;
   const root = mainRootOf(superOfSession(sessionId)) ?? mainRootOf(superOfChild(sessionId));
@@ -24,7 +25,10 @@ export async function tellSuperAutomationDecision(
   let added = false;
   await writeSuper(root, (s) => {
     if (!s.enabled || !s.session) return;
-    s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'automation', state: 'pending', createdAt: now, automation: slug, decision });
+    // A member's decision (its approval card on the Super's screen) names the member, never an
+    // automation: the event line reads the member's own state.
+    const about = subject === 'member' ? { member: slug } : { automation: slug };
+    s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'automation', state: 'pending', createdAt: now, ...about, decision });
     countEvent(s);
     added = true;
   });
