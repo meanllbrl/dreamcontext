@@ -108,6 +108,10 @@ describe('Cevaplanmadı: what the Super left unanswered (task super-hicbir-konuy
     const tile = renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [], owed }, look, variant: 'tile', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never));
     const waitingTile = tile.slice(tile.indexOf('super-agenda-tile-waiting'));
     expect(/class="super-agenda-tile-v">(\d+)</.exec(waitingTile)?.[1], tile).toBe('2'); // o1 nudged twice, o3 parked long ago
+        // The phone chip counts it too: one unanswered line alone is never "nothing noted".
+    const only = { ...record({ queue: [], pad: [] }), owed: [owed[0]] } as never;
+    expect(strip(only)).toMatch(/data-testid="phone-agenda-chip"[^>]*data-waiting="true"/);
+    expect(strip(only)).toMatch(/data-testid="phone-agenda-waiting"[^>]*>(<[^>]*>)*1</);
         // Nothing unanswered: no section at all.
     expect(renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [] }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never))).not.toContain('unanswered');
   });

@@ -30,8 +30,10 @@ const SHELL_OUTWARD: ReadonlyArray<[RegExp, string]> = [
   [/^vercel\b.*\s--prod\b/, 'vercel deploy --prod'],
 ];
 /** An MCP tool's own name: these verbs send, these only look. */
-const MCP_SENDS = /(send|post|reply|publish|message|email|sms|whatsapp|slack)/;
-const MCP_LOOKS = /(list|get|read|search|fetch|draft)/;
+const MCP_SENDS = new Set(['send', 'post', 'reply', 'publish', 'message', 'email', 'sms', 'whatsapp', 'slack']);
+const MCP_LOOKS = new Set(['list', 'get', 'read', 'search', 'fetch', 'draft']);
+/** An MCP tool name's words (`send_targeted_email` → send, targeted, email; `postMessage` → post, message). */
+const toolWords = (tool: string): string[] => tool.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
 /** One shell segment with its wrappers taken off (`VAR=x`, `sudo`, `npx`, `command`, `time`). */
 function bareSegment(seg: string): string {
@@ -47,6 +49,10 @@ function bareSegment(seg: string): string {
 /** A shell command with what is only DATA taken out: heredoc bodies and quoted strings (a brief
  *  written to a file, an `echo "git push"`, a prompt that mentions a push are no push). */
 function commandText(cmd: string): string {
+  // Codex runs every command as `/bin/zsh -lc "<command>"` (t3-bridge headless-envelope.ts):
+  // judge the command inside, never the quoted wrapper.
+  const wrapped = cmd.trim().match(/^(?:\/(?:usr\/)?bin\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/);
+  if (wrapped) cmd = wrapped[1] ?? (wrapped[2] ?? '').replace(/\\(["\\$`])/g, '$1');
   return cmd
     .replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, '')
     .replace(/'[^']*'/g, "''")
@@ -72,8 +78,8 @@ export function outwardAction(name: unknown, input: unknown): string | null {
     return null;
   }
   if (name.startsWith('mcp__')) {
-    const tool = (name.split('__').pop() ?? '').split(/[./]/).pop()?.toLowerCase() ?? '';
-    if (!tool || !MCP_SENDS.test(tool) || MCP_LOOKS.test(tool)) return null;
+    const words = toolWords((name.split('__').pop() ?? '').split(/[./]/).pop() ?? '');
+    if (!words.some((w) => MCP_SENDS.has(w)) || words.some((w) => MCP_LOOKS.has(w))) return null;
     const label = `mcp ${name.slice(5).replace(/__/g, '/').replace(/[^A-Za-z0-9_./-]/g, '')}`.slice(0, 80);
     return SENT_RE.test(label) ? label : 'mcp send';
   }
@@ -261,9 +267,15 @@ export function owedStillOpen(s: Pick<SuperState, 'owed'>, ids: readonly string[
   return openDebts(s).filter((d) => want.has(d.id));
 }
 
-/** Open debts the owner's next message carries (`<super-owed>`): not yet his to see, not this message. */
-export function owedForMessage(s: Pick<SuperState, 'owed'>, exceptRef: string | null): SuperOwed[] {
-  return openDebts(s).filter((d) => d.nudges < OWED_NUDGES && d.ref !== exceptRef);
+/**
+ * Open debts the owner's next message carries (`<super-owed>`): not yet his to see, not this
+ * message, and never a result whose item waits to be delivered again (it is told then, once).
+ * A debt he wrote ABOUT (`[About agenda line owed=<id> …]`, his "write about this" on a
+ * Cevaplanmadı row) is always carried, whatever its nudges: its ref is how the Super closes it.
+ */
+export function owedForMessage(s: Pick<SuperState, 'owed' | 'queue'>, exceptRef: string | null, about: readonly string[] = []): SuperOwed[] {
+  const pending = (item?: string) => !!item && s.queue.some((q) => q.id === item && q.state === 'pending');
+  return openDebts(s).filter((d) => d.ref !== exceptRef && (about.includes(d.id) || (d.nudges < OWED_NUDGES && !(d.kind === 'result' && pending(d.item)))));
 }
 
 /** hh:mm of a debt, local time (the Super reads it in his day). */

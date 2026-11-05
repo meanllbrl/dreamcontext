@@ -3466,7 +3466,10 @@ export function startChatSession(
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
-    if (isSuper && wrote && !text.startsWith('/') && text !== RESET_CONTINUE_TEXT) void superOwnerOwes(chatRegistryId, text);
+    // A continue the server writes after a limit, a sign-in or a reset is never his message.
+    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
+      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

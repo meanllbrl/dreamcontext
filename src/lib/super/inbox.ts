@@ -624,8 +624,9 @@ export function superSocketAttached(sessionId: string): void {
 export async function sweepOrphanFresh(contextRoot: string, state: SuperState): Promise<SuperState> {
   const key = keyOf(contextRoot);
   const owned = new Set((carried.get(key) ?? []).map((c) => c.itemId));
-  const orphan = (q: SuperQueueItem) => q.kind === 'fresh' && q.state === 'delivered' && !owned.has(q.id)
-    && !(state.session && hasFreshLatch(state.session));
+  // An `owed` turn left delivered the same way would hold every later owed decision off for good.
+  const orphan = (q: SuperQueueItem) => q.state === 'delivered' && !owned.has(q.id)
+    && ((q.kind === 'fresh' && !(state.session && hasFreshLatch(state.session))) || q.kind === 'owed');
   if (!state.queue.some(orphan)) return state;
   return writeSuper(contextRoot, (s) => { for (const q of s.queue) if (orphan(q)) q.state = 'done'; });
 }
@@ -676,6 +677,7 @@ const turnsEnded = new Map<string, TurnEnd[]>();
 const openBatch = new Map<string, { batch: string; inboxId: string; root: string }>();
 
 function endTurn(sessionId: string, inboxId: string | null, exited: boolean, stopped = false): void {
+  ownSendDebt.delete(sessionId);
   const ob = openBatch.get(sessionId);
   if (ob && (inboxId === null || ob.inboxId === inboxId)) openBatch.delete(sessionId);
   const root = superKeyOfSession(sessionId);
@@ -1082,6 +1084,10 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
   if (!root || typeof text !== 'string' || !text.trim() || text.startsWith('/')) return Promise.resolve();
   return track(writeSuper(root, (s) => {
     if (!s.enabled || s.session !== sessionId) return;
+    // The same words again while their debt is still fresh (a message the bridge resubmits after
+    // a limit or an account switch): one debt, so one section answers it.
+    const ref = msgRefOf(text);
+    if (openDebts(s).some((d) => d.kind === 'msg' && d.ref === ref && (d.nudges === 0 || d.parked === 'limit'))) return;
     const d = openMessageDebt(s, text, now);
     d.gist = ownerGist(text);
   }));
@@ -1109,11 +1115,14 @@ export function superOwedBlock(sessionId: string, text: string): string | null {
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
-  const debts = owedForMessage(s, text.startsWith('/') ? null : msgRefOf(text));
+  // His "write about this" on a Cevaplanmadı row names that debt: it rides with its ref and gist.
+  const about = aboutHeads(text).filter((h) => h.kind === 'owed').map((h) => h.id);
+  const debts = owedForMessage(s, text.startsWith('/') ? null : msgRefOf(text), about);
   if (!debts.length) return null;
   const vault = superVaultName(root);
   return [
     `<super-owed items=${debts.length}>`,
+    ...(about.length ? [`He wrote about ${about.map((id) => `owed=${id}`).join(', ')} below: answer it in its own section under its ref.`] : []),
     ...debts.flatMap((d) => [
       `- owed=${d.id} kind=${d.kind} ref=${d.ref} at=${owedClock(d.at)}${d.sent?.length ? ` sent="${d.sent.join(', ')}"` : ''}`,
       wrapUntrusted(vault, `${d.kind === 'msg' ? 'His message' : 'The result'}: ${d.gist}`),
@@ -1130,6 +1139,9 @@ export async function dropOwed(contextRoot: string, superId: SuperId, id: string
   return dropped;
 }
 
+/** The debt a Super's own sends of the running turn ride (one per turn), per session; a turn end clears it. */
+const ownSendDebt = new Map<string, string>();
+
 // A child's outward action that went through (chat-registry.ts): kept on its row until told.
 // A Super that sends something out ITSELF (an MCP tool it was given; Tilki 2026-11-05: fifteen
 // WhatsApp messages from the Super's own session, none told) owes it at once: one result debt.
@@ -1139,7 +1151,13 @@ setOutwardSink((sessionId, what, toolUseId) => {
     if (!superEntry(own).enabled) return;
     void track(writeSuper(own, (s) => {
       if (!s.enabled || s.session !== sessionId) return;
-      openResultDebt(s, { ref: owedRef(`send:${toolUseId}`), gist: what, sent: [what] }, Date.now());
+      // One debt per turn, never one per send: it rides the debt of the message this turn
+      // answers (the section the Super writes for him anyway covers it), else this turn's own.
+      const msg = superOwnerMsgRef(sessionId);
+      const held = openDebts(s).find((d) => (msg && d.kind === 'msg' && d.ref === msg) || d.id === ownSendDebt.get(sessionId));
+      if (held) { held.sent = mergeSent([what], held.sent); return; }
+      const d = openResultDebt(s, { ref: owedRef(`send:${toolUseId}`), gist: what, sent: [what] }, Date.now());
+      ownSendDebt.set(sessionId, d.id);
     }));
     return;
   }
@@ -2880,6 +2898,7 @@ export function _resetSuperInbox(): void {
   unstartedTold.clear();
   owedEnds.clear();
   asksInFlight.clear();
+  ownSendDebt.clear();
   unsubscribe?.();
   unsubscribe = null;
 }

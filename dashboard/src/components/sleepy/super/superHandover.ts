@@ -659,6 +659,13 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   return out;
 }
 
+/** What waits on the owner everywhere a count is drawn (the tile, the phone chip, the Agenda
+ *  button and pill): Waiting on you plus what the Super left unanswered. One rule, so no surface
+ *  reads "nothing" while a line is unanswered. */
+export function agendaWaitingCount(state: Pick<SuperState, 'queue' | 'pad' | 'owed'>, look: JobLook, now = Date.now()): number {
+  return superNotepad(state, look, now).waiting.length + superUnanswered(state, now).length;
+}
+
 // ─── Writing about one agenda line (owner 2026-10-23) ────────────────────────────
 
 /** What a message written about an agenda line names: a pad note (with the line as he saw it)

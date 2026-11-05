@@ -3,7 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import type { SuperDigestWire, SuperQueueItem, SuperState } from '../../../lib/superTypes';
 import { PhoneSheet, PhoneSheetClose } from './PhoneSheet';
 import { SuperAgenda } from './SuperAgenda';
-import { superNotepad, type AgendaRow, type JobLook } from './superHandover';
+import { agendaWaitingCount, superNotepad, type AgendaRow, type JobLook } from './superHandover';
 import type { SuperEventContext } from './superJobsStore';
 import './PhoneAgenda.css';
 
@@ -71,7 +71,8 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
   const counts = useMemo(() => {
     if (!input) return { waiting: 0, now: 0, done: 0 };
     const s = superNotepad(input.state, input.look);
-    return { waiting: s.waiting.length, now: s.now.length, done: s.done.length };
+    // What the Super left unanswered waits on him too: the chip never reads "nothing noted" then.
+    return { waiting: agendaWaitingCount(input.state, input.look), now: s.now.length, done: s.done.length };
   }, [input]);
 
   useEffect(() => { if (!onScreen) setOpen(false); }, [onScreen]);

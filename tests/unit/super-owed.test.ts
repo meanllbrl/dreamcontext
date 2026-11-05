@@ -26,7 +26,7 @@ import {
   closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
-  OWED_PREFIX, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes,
+  OWED_PREFIX, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes,
   superOwnerSpoke, superSaid, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
@@ -97,7 +97,15 @@ describe('outward actions (owner decision D3)', () => {
     expect(outwardAction('mcp__whatsapp__list_chats', {})).toBeNull();
     expect(outwardAction('mcp__gmail__create_draft', {})).toBeNull();
     expect(outwardAction('mcp__gmail__get_message', {})).toBeNull();
-    expect(outwardAction('Read', { file_path: 'x' })).toBeNull();
+    // Codex wraps every command: `/bin/zsh -lc "<command>"` (headless-envelope.ts).
+    expect(outwardAction('Bash', { command: '/bin/zsh -lc "git push origin main"' })).toBe('git push');
+    expect(outwardAction('Bash', { command: "/bin/zsh -lc 'cd app && gh pr merge 3'" })).toBe('PR merge');
+    expect(outwardAction('Bash', { command: '/bin/zsh -lc "echo \\"git push\\""' })).toBeNull();
+    // MCP verbs are whole words: `thread` is no `read`, `targeted` no `get`.
+    expect(outwardAction('mcp__slack__slack_reply_to_thread', {})).toBe('mcp slack/slack_reply_to_thread');
+    expect(outwardAction('mcp__mail__send_targeted_email', {})).toBe('mcp mail/send_targeted_email');
+    expect(outwardAction('mcp__slack__slack_get_thread_replies', {})).toBeNull();
+        expect(outwardAction('Read', { file_path: 'x' })).toBeNull();
     expect(outwardAction(undefined, {})).toBeNull();
   });
 
@@ -402,11 +410,47 @@ describe('the ledger in the running inbox', () => {
     expect(delivered.length).toBe(0);
   });
 
-  it('a Super that sends something out itself owes it at once (Tilki field: its own WhatsApp sends)', async () => {
+  it('a Super that sends something out itself owes it, one debt per turn (Tilki field: its own WhatsApp sends)', async () => {
     const { h } = await boot();
-    h.observe(toolUse('own-1', 'mcp__whatsapp__send_message', { to: 'H.K.' }));
-    h.observe(toolResult('own-1'));
+    // An event turn (no message of his): the sends ride ONE debt of their own.
+    for (const id of ['own-1', 'own-2', 'own-3']) { h.observe(toolUse(id, 'mcp__whatsapp__send_message', { to: 'H.K.' })); h.observe(toolResult(id)); }
     await vi.waitFor(async () => expect(openDebts(await readSuperState(root)).map((d) => [d.kind, d.sent])).toEqual([['result', ['mcp whatsapp/send_message']]]), W);
+    // In his turn: they ride the debt of the message that turn answers.
+    superTurnEnded(SUPER);
+    await _superInboxDrained();
+    await writeSuper(root, (s) => { s.owed = []; s.queue = s.queue.filter((q) => q.kind !== 'owed'); });
+    noteSuperOwnerMsg(SUPER, msgRef('Tell E. the lesson moved'));
+    await superOwnerOwes(SUPER, 'Tell E. the lesson moved');
+    h.observe(toolUse('own-4', 'mcp__whatsapp__send_message', { to: 'E.' })); h.observe(toolResult('own-4'));
+    await vi.waitFor(async () => expect(openDebts(await readSuperState(root)).map((d) => [d.kind, d.ref, d.sent])).toEqual([['msg', msgRef('Tell E. the lesson moved'), ['mcp whatsapp/send_message']]]), W);
+  });
+
+  it('the same words resubmitted while their debt is fresh are one debt; <super-owed> skips a result waiting to be told again; a write-about names its debt', async () => {
+    const { h } = await boot({ children: { c1: child('c1', { row: 'working', awaited: true }) } });
+    void h;
+    await superOwnerOwes(SUPER, 'Is the invoice page done?');
+    await superOwnerOwes(SUPER, 'Is the invoice page done?');
+    expect(openDebts(await readSuperState(root)).length).toBe(1);
+    await writeSuper(root, (s) => {
+      s.queue.push({ id: 'q-r1', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: Date.now() });
+      openResultDebt(s, { ref: 'abc123', item: 'q-r1', child: 'c1', gist: 'invoice job' });
+      const d = openMessageDebt(s, 'old one', 1); d.nudges = 2;
+    });
+    const s = await readSuperState(root);
+    const block = superOwedBlock(SUPER, 'next')!;
+    expect(block).not.toContain('ref=abc123');
+    expect(block).not.toContain(`ref=${msgRef('old one')}`);
+    const old = openDebts(s).find((d) => d.ref === msgRef('old one'))!;
+    const about = superOwedBlock(SUPER, `[About agenda line owed=${old.id} section=unanswered]\nstill?`)!;
+    expect(about).toContain(`owed=${old.id} kind=msg ref=${msgRef('old one')}`);
+  });
+
+  it('an owed turn a restart left delivered never blocks later decisions', async () => {
+    makeVault({ queue: [{ id: 'q-owed-orphan', sessionId: SUPER, kind: 'owed', state: 'delivered', createdAt: 1, owed: ['o1'] }], owed: [{ id: 'o1', kind: 'msg', ref: 'abc123', seq: 1, at: 1, gist: 'x', nudges: 1 }], owedSeq: 1 } as never);
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    attachSuperInbox(fakeInbox().inbox);
+    await vi.waitFor(async () => expect((await readSuperState(root)).queue.find((q) => q.id === 'q-owed-orphan')?.state).toBe('done'), W);
   });
 
   it('his take-back closes every open debt', async () => {
