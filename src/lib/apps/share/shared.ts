@@ -71,6 +71,6 @@ export async function listShared(host: AppHost, opts: { force?: boolean; project
     cache.set(key, { at: Date.now(), value });
   }
   if (!opts.projectRoot) return value;
-  const installed = new Map(listApps(opts.home ?? homedir(), opts.projectRoot).filter((a) => a.source).map((a) => [a.source!.fullName, a.slug]));
+  const installed = new Map(listApps(opts.home ?? homedir(), opts.projectRoot).filter((a) => a.origin === 'installed').map((a) => [a.source?.fullName ?? a.provenance?.fullName ?? '', a.slug]));
   return { ...value, shared: value.shared.map((s) => (installed.has(s.fullName) ? { ...s, installed: installed.get(s.fullName) } : s)) };
 }

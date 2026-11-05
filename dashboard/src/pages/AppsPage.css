@@ -252,11 +252,12 @@
 }
 
 /* Shared apps (paylasilan-app-ler plan r3): sections, the card's share row, the sheets. */
-.apps-page__actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-4);
+.apps-section__head--top {
+  align-items: center;
+  margin-bottom: var(--space-3);
 }
+
+.apps-section__head--top h2 { margin: 0; }
 
 .apps-section__title,
 .apps-section__head h2 {

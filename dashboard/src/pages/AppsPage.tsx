@@ -43,6 +43,7 @@ export function AppsPage() {
   // Install: `''` = the public-link sheet, a repo name = an app from "Shared with you".
   const [installRef, setInstallRef] = useState<string | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: key });
+  const appsKey = apps.map((a) => `${a.slug}:${a.origin ?? ''}:${a.source ? 'f' : ''}`).join(',');
 
   const askAgent = () => {
     openAgentSurface(bus);
@@ -67,7 +68,8 @@ export function AppsPage() {
         </header>
       )}
       {canLaunch && (
-        <div className="apps-page__actions">
+        <div className="apps-section__head apps-section__head--top">
+          <h2>{t('share.mine')}</h2>
           <button type="button" className="app-card__stop" onClick={() => setInstallRef('')}>{t('share.install.public')}</button>
         </div>
       )}
@@ -80,7 +82,6 @@ export function AppsPage() {
           <button type="button" className="apps-empty__cta" onClick={askAgent}>{t('apps.empty.cta')}</button>
         </section>
       )}
-      {apps.length > 0 && canLaunch && <h2 className="apps-section__title">{t('share.mine')}</h2>}
       {apps.length > 0 && (
         <div className="apps-grid">
           {apps.map((a) => (
@@ -88,8 +89,9 @@ export function AppsPage() {
           ))}
         </div>
       )}
-      {canLaunch && <SharedWithYou onInstall={(fullName) => setInstallRef(fullName)} onChanged={refresh} />}
-      {canLaunch && <TrashList onChanged={refresh} />}
+      {/* Both re-read whenever the set of apps changes (an install, an uninstall, my own copy). */}
+      {canLaunch && <SharedWithYou key={`s:${appsKey}`} onInstall={(fullName) => setInstallRef(fullName)} onChanged={refresh} />}
+      {canLaunch && <TrashList key={`t:${appsKey}`} onChanged={refresh} />}
       {installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={() => { setInstallRef(null); refresh(); }} />}
       {others.length > 0 && (
         <ul className="apps-others" aria-label={t('apps.others.label')}>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 
@@ -26,7 +27,8 @@ export function Sheet({ title, onClose, children, foot }: { title: string; onClo
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
-  return (
+  // On body: a page frame with a transform would otherwise hold the fixed backdrop inside it.
+  return createPortal(
     <div className="share-sheet__backdrop" onClick={onClose}>
       <div className="share-sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="share-sheet__head">
@@ -36,7 +38,8 @@ export function Sheet({ title, onClose, children, foot }: { title: string; onClo
         <div className="share-sheet__body">{children}</div>
         {foot && <footer className="share-sheet__foot">{foot}</footer>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
