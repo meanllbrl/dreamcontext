@@ -46,6 +46,17 @@ describe('member cards in the window', () => {
     expect(src).not.toContain('MemberCardBody');
   });
 
+  it('a floating member card\'s live body takes the pointer (owner 2026-11-05: a routine row did nothing)', () => {
+    // Every floating body is inert by CSS (the card is one grab handle); a `data-inert` marker
+    // alone does not make a body live. The member's live body gets the agenda's carve-out; a
+    // small tile (data-inert) and the head stay the handle. The click itself is measured in a
+    // real browser by scripts/verify/member-card-click.mjs.
+    const css = read('SuperSurface.css');
+    expect(css).toMatch(/\.super-card-frame\[data-where='float'\] \.super-card-body \{ pointer-events: none;/);
+    expect(css).toMatch(/\.super-card-frame\[data-where='float'\]\[data-kind='member'\] \.super-card-large:not\(\[data-inert\]\) > \.super-card-large-body \{ pointer-events: auto; \}/);
+    expect(read('SuperContainer.tsx')).toMatch(/<div className="super-card-large-body">\{p\.member\?\.\(c\.ref as MemberCardRef/);
+  });
+
   it('Rutinler: an unsplit member\'s own manifest is no row; a split member\'s same-name routine is', () => {
     const r = (slug: string, agent: string) => ({ slug, agent, runKind: 'automation', mode: 'sched', enabled: true, title: slug }) as never;
     const all = [r('ua', 'ua'), r('morning', 'ua'), r('other', 'x')];
