@@ -255,8 +255,8 @@ describe('install, update, my own copy, uninstall', () => {
     await republish('public/app.js', 'export const x = 2;\n', 'Faster charts');
     const c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
     expect(c).toMatchObject({ state: 'available', manifestChanged: false, edited: null, notes: ['Faster charts'] });
-    expect(() => applyUpdate(home, inst, { sha: 'f'.repeat(40) })).toThrow(/changed since the card/);
-    applyUpdate(home, inst, { sha: (c as { sha: string }).sha });
+    await expect(applyUpdate(home, inst, { sha: 'f'.repeat(40) })).rejects.toThrow(/changed since the card/);
+    await applyUpdate(home, inst, { sha: (c as { sha: string }).sha });
     expect(readFileSync(join(inst.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = 2;\n');
     expect(createHash('sha256').update(readFileSync(join(home, '.dreamcontext', 'apps', 'config', `${inst.configId}.json`))).digest('hex')).toBe(cfgSha);
     expect(readFileSync(join(data, 'state.json'), 'utf-8')).toBe('{"n":1}');
@@ -272,13 +272,13 @@ describe('install, update, my own copy, uninstall', () => {
     await republish('dreamcontext-app.json', JSON.stringify(m, null, 2), 'Uses Meta');
     let c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
     expect(c).toMatchObject({ state: 'available', manifestChanged: true, manifestChanges: ['mcp'] });
-    expect(() => applyUpdate(home, inst, { sha: (c as { sha: string }).sha })).toThrow(/changes what the app may do/);
+    await expect(applyUpdate(home, inst, { sha: (c as { sha: string }).sha })).rejects.toThrow(/changes what the app may do/);
     // The installer (or the app's own assistant) changes the copy.
     writeFileSync(join(inst.root, 'public', 'index.html'), '<h1>mine</h1>\n');
     c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
     expect((c as { edited: { files: string[] } }).edited.files).toEqual(['public/index.html']);
-    expect(() => applyUpdate(home, inst, { sha: (c as { sha: string }).sha, approveManifest: true })).toThrow(/You changed this app/);
-    applyUpdate(home, inst, { sha: (c as { sha: string }).sha, approveManifest: true, how: 'merge' });
+    await expect(applyUpdate(home, inst, { sha: (c as { sha: string }).sha, approveManifest: true })).rejects.toThrow(/You changed this app/);
+    await applyUpdate(home, inst, { sha: (c as { sha: string }).sha, approveManifest: true, how: 'merge' });
     expect(readFileSync(join(inst.root, 'public', 'index.html'), 'utf-8')).toBe('<h1>mine</h1>\n');
     expect(JSON.parse(readFileSync(join(inst.root, 'dreamcontext-app.json'), 'utf-8')).mcp).toEqual(['meta-ads']);
     // Both sides change the same line: nothing changes.
@@ -286,9 +286,9 @@ describe('install, update, my own copy, uninstall', () => {
     await republish('public/app.js', 'export const x = "theirs";\n');
     c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
     expect((c as { wouldLose: string[] }).wouldLose).toEqual(['public/app.js']);
-    expect(() => applyUpdate(home, inst, { sha: (c as { sha: string }).sha, how: 'merge' })).toThrow(/same lines/);
+    await expect(applyUpdate(home, inst, { sha: (c as { sha: string }).sha, how: 'merge' })).rejects.toThrow(/same lines/);
     expect(readFileSync(join(inst.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = "mine";\n');
-    const r = applyUpdate(home, inst, { sha: (c as { sha: string }).sha, how: 'set-aside' });
+    const r = await applyUpdate(home, inst, { sha: (c as { sha: string }).sha, how: 'set-aside' });
     expect(readFileSync(join(inst.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = "theirs";\n');
     expect(readFileSync(r.patch!, 'utf-8')).toContain('+export const x = "mine";');
   });
@@ -306,9 +306,7 @@ describe('install, update, my own copy, uninstall', () => {
     expect(own.origin).toBe('installed');
     expect(own.provenance).toEqual({ fullName: 'yayinci/tahmin-app', license: 'restricted' });
     expect((await checkUpdate(home, own, kur)).state).toBe('problem');
-    git(own.root, 'init', '-q');
-    git(own.root, 'add', '-A');
-    git(own.root, 'commit', '-qm', 'mine');
+    // A copy of a restricted app is never published again (owner decision 6).
     await expect(publishApp(own, { home, host: kur, visibility: 'private' })).rejects.toMatchObject({ code: 'license_forbids' });
   });
 
@@ -360,6 +358,113 @@ describe('askpass', () => {
     const evil = run("Password for 'https://x-access-token@evil.example': ");
     expect(evil.stdout).toBe('');
     expect(evil.status).toBe(1);
+  });
+});
+
+describe('review fixes', () => {
+  async function setup(visibility: 'private' | 'public' = 'private') {
+    const rec = pubRec();
+    if (visibility === 'public') await publishApp(rec, { home, host: host('yayinci'), visibility: 'public', confirmName: 'Tahmin' });
+    else await publishFirst(rec);
+    const kur = host('kurucu');
+    if (visibility === 'private') { const inv = await kur.listInvitations(); await kur.acceptInvitation(inv[0].id); }
+    const pv = await previewInstall({ home, projectRoot: instProject, ref: 'yayinci/tahmin-app', host: kur });
+    const { rec: inst } = await installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: pv.sha, config: { insight: 'x-insight' }, npm: false });
+    return { kur, inst };
+  }
+  const commitPub = async (file: string, text: string, opts: Partial<Parameters<typeof publishApp>[1]> = {}) => {
+    writeFileSync(join(appRoot, file), text);
+    git(appRoot, 'add', '-A');
+    git(appRoot, 'commit', '-qm', 'c');
+    return publishApp(getApp(home, pubProject, 'tahmin')!, { home, host: host('yayinci'), visibility: 'private', ...opts });
+  };
+
+  it('the commit note is gated like the files', async () => {
+    await expect(publishFirst(pubRec(), { note: 'fixed for ayse@ornek.co' })).rejects.toMatchObject({ code: 'gate_blocked' });
+  });
+
+  it('a private publish onto a public repo is refused', async () => {
+    await publishApp(pubRec(), { home, host: host('yayinci'), visibility: 'public', confirmName: 'Tahmin' });
+    await expect(commitPub('public/app.js', 'export const x = 9;\n')).rejects.toMatchObject({ code: 'already_public' });
+  });
+
+  it('an update that rewrites history is refused (forward only)', async () => {
+    const { kur, inst } = await setup();
+    const w = join(home, 'rewrite');
+    execFileSync('git', ['clone', '-q', join(hostDir, 'yayinci', 'tahmin-app.git'), w]);
+    writeFileSync(join(w, 'public', 'app.js'), 'rewritten\n');
+    git(w, 'commit', '-q', '--amend', '-am', 'rewritten');
+    git(w, 'push', '-q', '-f', 'origin', 'HEAD:main');
+    expect(await checkUpdate(home, inst, kur)).toMatchObject({ state: 'problem', code: 'not_forward' });
+  });
+
+  it('Undo refuses when the copy changed after the update, and keeps that change', async () => {
+    const { kur, inst } = await setup();
+    await commitPub('public/app.js', 'export const x = 2;\n');
+    const c = await checkUpdate(home, getApp(home, instProject, 'tahmin')!, kur);
+    await applyUpdate(home, inst, { sha: (c as { sha: string }).sha });
+    writeFileSync(join(inst.root, 'public', 'index.html'), 'after the update\n');
+    expect(() => undoUpdate(home, inst)).toThrow(/changed after the update/);
+    expect(readFileSync(join(inst.root, 'public', 'index.html'), 'utf-8')).toBe('after the update\n');
+  });
+
+  it('an install click is bound to the sha the preview showed', async () => {
+    await publishFirst(pubRec());
+    const kur = host('kurucu');
+    await kur.acceptInvitation((await kur.listInvitations())[0].id);
+    const pv = await previewInstall({ home, projectRoot: instProject, ref: 'yayinci/tahmin-app', host: kur });
+    await expect(installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: 'a'.repeat(40), npm: false })).rejects.toMatchObject({ code: 'stale_preview' });
+  });
+
+  it('a temporary error is not stored as lost access', async () => {
+    const { inst } = await setup();
+    const flaky = Object.assign(Object.create(host('kurucu')), { getRepo: async () => { throw new Error('offline'); } });
+    expect(await checkUpdate(home, inst, flaky)).toMatchObject({ state: 'problem', code: 'fetch_failed' });
+    expect(getApp(home, instProject, 'tahmin')!.source?.problem).toBeUndefined();
+  });
+
+  it('restore never overwrites or deletes data that took the place', async () => {
+    const { inst } = await setup();
+    const data = join(instProject, '_dream_context', 'apps', 'tahmin');
+    mkdirSync(data, { recursive: true });
+    writeFileSync(join(data, 'a.json'), 'A');
+    const t = uninstallApp(home, getApp(home, instProject, 'tahmin')!, { deleteData: true });
+    mkdirSync(data, { recursive: true });
+    writeFileSync(join(data, 'b.json'), 'B');
+    expect(() => restoreFromTrash(home, t.id)).toThrow(/nothing was restored/);
+    expect(readFileSync(join(home, '.dreamcontext', 'apps', 'trash', t.id, 'data', 'a.json'), 'utf-8')).toBe('A');
+    expect(readFileSync(join(data, 'b.json'), 'utf-8')).toBe('B');
+    expect(existsSync(inst.root)).toBe(false);
+  });
+
+  it('share.include travels and installs', async () => {
+    const m = JSON.parse(readFileSync(join(appRoot, 'dreamcontext-app.json'), 'utf-8'));
+    m.share = { include: ['assets'] };
+    writeFileSync(join(appRoot, 'dreamcontext-app.json'), JSON.stringify(m));
+    mkdirSync(join(appRoot, 'assets'), { recursive: true });
+    writeFileSync(join(appRoot, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    git(appRoot, 'add', '-A');
+    git(appRoot, 'commit', '-qm', 'assets');
+    const { inst } = await setup();
+    expect(readFileSync(join(inst.root, 'assets', 'logo.svg'), 'utf-8')).toContain('<svg');
+  });
+
+  it('a copy of an MIT app is shared again under the new name, with the source named', async () => {
+    const { kur, inst } = await setup('public');
+    const own = detachApp(home, inst);
+    expect(own.provenance).toEqual({ fullName: 'yayinci/tahmin-app', license: 'MIT' });
+    // On one test Mac the original's login is also a vault name here: those lines are the owner's to tick.
+    const approvals = buildPublishTree(home, own, { visibility: 'private', login: 'kurucu' }).report.approvable.map((a) => a.id);
+    await expect(publishApp(own, { home, host: kur, visibility: 'private', approvals })).resolves.toMatchObject({ fullName: 'kurucu/tahmin-app' });
+    const readme = execFileSync('git', ['--git-dir', join(hostDir, 'kurucu', 'tahmin-app.git'), 'show', 'main:README.md'], { encoding: 'utf-8' });
+    expect(readme).toContain('Derived from yayinci/tahmin-app (MIT).');
+    const lic = execFileSync('git', ['--git-dir', join(hostDir, 'kurucu', 'tahmin-app.git'), 'show', 'main:LICENSE'], { encoding: 'utf-8' });
+    expect(lic).toMatch(/^MIT License/);
+  });
+
+  it('a following copy cannot be published as its installer\'s own', async () => {
+    const { kur, inst } = await setup('public');
+    await expect(publishApp(inst, { home, host: kur, visibility: 'private' })).rejects.toMatchObject({ code: 'not_yours' });
   });
 });
 

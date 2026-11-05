@@ -17,8 +17,9 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { appsHome, appRootFor, getApp, installedAppsDir, listApps, registerInstalledApp, unregisterApp, type AppRecord } from '../registry.js';
 import { APP_SLUG_RE } from '../bundle.js';
@@ -28,7 +29,8 @@ import { appDataDir } from '../data-dir.js';
 import { allowAppDir } from '../allow-dir.js';
 import { HostError, parseAppRepoRef, resolveAppHost, type AppHost } from './host.js';
 import { runGate, type GateFile, type GateReport } from './gate.js';
-import { initHardRepo, installedGit, lsTree, readBlob, revParse } from './installed-git.js';
+import { initHardRepo, installedGit, installedGitAsync, lsTree, readBlob, revParse } from './installed-git.js';
+import { writeEnvSecrets } from '../../env-secrets.js';
 import { licenseKind } from './publish.js';
 
 export class InstallError extends Error {
@@ -102,11 +104,12 @@ function treeFiles(gitDir: string, ref: string): GateFile[] {
   }));
 }
 
-export function installGate(files: GateFile[], icon: string | null): GateReport {
-  return runGate(files, { mode: 'install', icon });
+/** The install gate: the same allow-list the publisher had, its `share.include` included. */
+export function installGate(files: GateFile[], icon: string | null, include: readonly string[] = []): GateReport {
+  return runGate(files, { mode: 'install', icon, include });
 }
 
-function factsOf(files: GateFile[], manifest: NonNullable<ReturnType<typeof parseManifest> & { ok: true }>['manifest']): InstallFacts {
+export function factsOf(files: GateFile[], manifest: NonNullable<ReturnType<typeof parseManifest> & { ok: true }>['manifest']): InstallFacts {
   const urls = new Set<string>();
   for (const f of files) {
     if (!/\.(m?js|cjs|ts|tsx|html|json)$/.test(f.path) || f.path === 'package-lock.json') continue;
@@ -148,7 +151,7 @@ function factsOf(files: GateFile[], manifest: NonNullable<ReturnType<typeof pars
 
 async function fetchInto(host: AppHost, gitDir: string, fullName: string, ref: string): Promise<void> {
   const url = host.cloneUrl(fullName);
-  await host.withGit((env) => installedGit(gitDir, ['fetch', '-q', '--no-tags', url, `+refs/heads/main:${ref}`], { env, allowFile: host.allowFile, timeoutMs: 300_000 }));
+  await host.withGit((env) => installedGitAsync(gitDir, ['fetch', '-q', '--no-tags', url, `+refs/heads/main:${ref}`], { env, allowFile: host.allowFile, timeoutMs: 300_000 }));
 }
 
 /** The host to read a repo with: signed in when possible, anonymous for a public repo otherwise. */
@@ -184,7 +187,7 @@ export async function previewInstall(opts: { home: string; projectRoot: string; 
   const parsed = manifestFile ? parseManifest(manifestFile.data.toString('utf-8'), null) : null;
   if (!parsed || !parsed.ok) { rmSync(gitDir, { recursive: true, force: true }); throw new InstallError('not_an_app', `${repo.fullName} is not a dreamcontext app (no valid dreamcontext-app.json).`); }
   const m = parsed.manifest;
-  const gate = installGate(files, m.icon);
+  const gate = installGate(files, m.icon, m.share.include);
   const facts = factsOf(files, m);
   if (facts.npmProblem) gate.blocks.push({ id: 'npm', rule: 'npm', file: 'package.json', label: facts.npmProblem });
   gate.ok = gate.blocks.length === 0;
@@ -231,7 +234,19 @@ function freeSlug(home: string, projectRoot: string, base: string): string {
   throw new InstallError('slug_taken', 'No free name for this app in this project.');
 }
 
-const EXCLUDE = '.env\n.env.*\ndata/\nnode_modules/\n*.log\n';
+// Never the installer's edits: keys, data, dependencies, logs and build output.
+const EXCLUDE = '.env\n.env.*\ndata/\nnode_modules/\n*.log\ndist/\nbuild/\n.next/\ntmp/\n.cache/\n';
+
+/** `npm ci` without scripts, without the user's npmrc; never blocks the server. */
+export function runNpmCi(root: string): Promise<void> {
+  const win = process.platform === 'win32';
+  return new Promise((resolve, reject) => {
+    execFile(win ? 'npm.cmd' : 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--userconfig', devNull], { cwd: root, timeout: 600_000, shell: win, maxBuffer: 16 * 1024 * 1024 }, (err, _out, stderr) => {
+      if (err) reject(new InstallError('npm_failed', `npm ci failed: ${String(stderr).trim().split('\\n').slice(-2).join(' ') || err.message}`));
+      else resolve();
+    });
+  });
+}
 
 export function manifestSha(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -246,6 +261,8 @@ export interface InstallOptions {
   config?: Record<string, unknown>;
   /** Run `npm ci --ignore-scripts` for an app with dependencies (tests turn it off). */
   npm?: boolean;
+  /** Keys the owner typed on the install screen: written into the copy's own `.env`. */
+  secrets?: Record<string, unknown>;
 }
 
 export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord; renamed: boolean }> {
@@ -261,7 +278,7 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const parsed = parseManifest(manifestText, null);
   if (!parsed.ok) throw new InstallError('not_an_app', 'not a dreamcontext app');
   const m = parsed.manifest;
-  const gate = installGate(files, m.icon);
+  const gate = installGate(files, m.icon, m.share.include);
   if (!gate.ok) throw new InstallError('gate_blocked', 'This app holds something an app may not.', gate);
   const facts = factsOf(files, m);
   if (facts.npmProblem) throw new InstallError('npm', facts.npmProblem);
@@ -271,16 +288,26 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const configId = newConfigId();
   const src = sourceRepo(opts.home, installId);
   mkdirSync(sourcesDir(opts.home), { recursive: true, mode: 0o700 });
-  renameSync(incoming, src);
-  rmSync(join(dir, `${opts.previewId}.json`), { force: true });
   const root = join(installedAppsDir(opts.projectRoot), slug);
-  mkdirSync(root, { recursive: true });
-  const g = (args: string[]) => installedGit(src, args, { workTree: root });
-  installedGit(src, ['config', 'core.bare', 'false']);
-  mkdirSync(join(src, 'info'), { recursive: true });
-  writeFileSync(join(src, 'info', 'exclude'), EXCLUDE);
-  installedGit(src, ['update-ref', 'refs/dc/upstream', opts.sha]);
-  g(['checkout', '-q', '-f', '-B', 'local', opts.sha]);
+  renameSync(incoming, src);
+  // Until the record is written, any failure puts everything back as the preview left it.
+  try {
+    mkdirSync(root, { recursive: true });
+    const g = (args: string[]) => installedGit(src, args, { workTree: root });
+    installedGit(src, ['config', 'core.bare', 'false']);
+    mkdirSync(join(src, 'info'), { recursive: true });
+    writeFileSync(join(src, 'info', 'exclude'), EXCLUDE);
+    installedGit(src, ['update-ref', 'refs/dc/upstream', opts.sha]);
+    g(['checkout', '-q', '-f', '-B', 'local', opts.sha]);
+    if (facts.dependencies && opts.npm !== false) await runNpmCi(root);
+    const secrets = Object.entries(opts.secrets ?? {}).filter(([k, v]) => m.config.some((f) => f.type === 'secret' && f.key === k) && typeof v === 'string' && v.length > 0).map(([key, value]) => ({ key, value: value as string }));
+    if (secrets.length) writeEnvSecrets(root, '.env', secrets);
+  } catch (e) {
+    rmSync(root, { recursive: true, force: true });
+    try { installedGit(src, ['config', 'core.bare', 'true']); renameSync(src, incoming); } catch { rmSync(src, { recursive: true, force: true }); }
+    throw e;
+  }
+  rmSync(join(dir, `${opts.previewId}.json`), { force: true });
 
   const rec = registerInstalledApp(opts.home, {
     slug, vault: opts.vault, projectRoot: opts.projectRoot, root, name: m.name, installId, configId,
@@ -291,9 +318,6 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const values = Object.fromEntries(Object.entries(opts.config ?? {}).filter(([k]) => m.config.some((f) => f.key === k && f.type !== 'secret')));
   if (Object.keys(values).length) setAppConfig(opts.home, configId, m.config, values);
   try { allowAppDir(opts.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
-  if (facts.dependencies && opts.npm !== false) {
-    execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--userconfig', '/dev/null'], { cwd: root, stdio: 'ignore', timeout: 600_000 });
-  }
   return { rec, renamed: slug !== m.slug };
 }
 
@@ -307,6 +331,16 @@ export interface TrashEntry {
   at: string;
 }
 
+/** rename, or copy + remove across volumes (EXDEV) and when a rename is refused. */
+function move(from: string, to: string): void {
+  try { renameSync(from, to); return; } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== 'EXDEV' && code !== 'EPERM' && code !== 'EBUSY') throw e;
+  }
+  cpSync(from, to, { recursive: true, verbatimSymlinks: true });
+  rmSync(from, { recursive: true, force: true });
+}
+
 /** Move an installed app to the trash. Its data stays where it is unless `deleteData`. */
 export function uninstallApp(home: string, rec: AppRecord, opts: { deleteData?: boolean } = {}): TrashEntry {
   if (rec.origin !== 'installed' || !rec.installId) throw new InstallError('not_installed', 'Only an app installed from someone else goes to the trash this way.');
@@ -314,15 +348,16 @@ export function uninstallApp(home: string, rec: AppRecord, opts: { deleteData?: 
   const id = `${rec.installId}-${stamp}`;
   const t = join(trashDir(home), id);
   mkdirSync(t, { recursive: true, mode: 0o700 });
-  writeFileSync(join(t, 'record.json'), JSON.stringify(rec, null, 2), { mode: 0o600 });
-  if (existsSync(rec.root)) renameSync(rec.root, join(t, 'code'));
+  if (existsSync(rec.root)) move(rec.root, join(t, 'code'));
   const src = sourceRepo(home, rec.installId);
-  if (existsSync(src)) renameSync(src, join(t, 'source.git'));
-  if (rec.configId) { try { renameSync(appConfigPath(home, rec.configId), join(t, 'config.json')); } catch { /* no settings */ } }
+  if (existsSync(src)) move(src, join(t, 'source.git'));
+  if (rec.configId) { try { move(appConfigPath(home, rec.configId), join(t, 'config.json')); } catch { /* no settings */ } }
   if (opts.deleteData) {
     const data = appDataDir(rec.projectRoot, rec.slug);
-    if (existsSync(data)) { cpSync(data, join(t, 'data'), { recursive: true }); rmSync(data, { recursive: true, force: true }); }
+    if (existsSync(data)) move(data, join(t, 'data'));
   }
+  // The record last: an entry without one is a move that did not finish, never a restorable app.
+  writeFileSync(join(t, 'record.json'), JSON.stringify(rec, null, 2), { mode: 0o600 });
   unregisterApp(home, rec.projectRoot, rec.slug);
   return { id, name: rec.name, slug: rec.slug, fullName: rec.source?.fullName ?? rec.provenance?.fullName ?? null, at: new Date().toISOString() };
 }
@@ -345,15 +380,18 @@ export function restoreFromTrash(home: string, id: string): AppRecord {
   if (!/^[0-9a-f]{32}-[0-9TZ-]+$/.test(id)) throw new InstallError('bad_request', 'bad trash id');
   const t = join(trashDir(home), id);
   const rec = JSON.parse(readFileSync(join(t, 'record.json'), 'utf-8')) as AppRecord;
-  if (getApp(home, rec.projectRoot, rec.slug) || existsSync(rec.root)) throw new InstallError('slug_taken', `An app "${rec.slug}" is there again; remove it first.`);
-  mkdirSync(join(rec.root, '..'), { recursive: true });
-  if (existsSync(join(t, 'code'))) renameSync(join(t, 'code'), rec.root);
-  if (existsSync(join(t, 'source.git'))) { mkdirSync(sourcesDir(home), { recursive: true, mode: 0o700 }); renameSync(join(t, 'source.git'), sourceRepo(home, rec.installId!)); }
-  if (rec.configId && existsSync(join(t, 'config.json'))) { mkdirSync(join(appConfigPath(home, rec.configId), '..'), { recursive: true, mode: 0o700 }); renameSync(join(t, 'config.json'), appConfigPath(home, rec.configId)); }
+  if (!rec.installId || !/^[0-9a-f]{32}$/.test(rec.installId)) throw new InstallError('bad_request', 'bad trash entry');
   const data = appDataDir(rec.projectRoot, rec.slug);
-  if (existsSync(join(t, 'data')) && !existsSync(data)) { mkdirSync(join(data, '..'), { recursive: true }); renameSync(join(t, 'data'), data); }
+  // Every refusal comes before the first move: a restore either happens whole or not at all.
+  if (getApp(home, rec.projectRoot, rec.slug) || existsSync(rec.root)) throw new InstallError('slug_taken', `An app "${rec.slug}" is there again; remove it first.`);
+  if (existsSync(join(t, 'data')) && existsSync(data)) throw new InstallError('data_taken', `Another app's data is in "${rec.slug}"'s place now; nothing was restored.`);
+  mkdirSync(join(rec.root, '..'), { recursive: true });
+  if (existsSync(join(t, 'code'))) move(join(t, 'code'), rec.root);
+  if (existsSync(join(t, 'source.git'))) { mkdirSync(sourcesDir(home), { recursive: true, mode: 0o700 }); move(join(t, 'source.git'), sourceRepo(home, rec.installId)); }
+  if (rec.configId && existsSync(join(t, 'config.json'))) { mkdirSync(join(appConfigPath(home, rec.configId), '..'), { recursive: true, mode: 0o700 }); move(join(t, 'config.json'), appConfigPath(home, rec.configId)); }
+  if (existsSync(join(t, 'data'))) { mkdirSync(join(data, '..'), { recursive: true }); move(join(t, 'data'), data); }
   const { hash: _h, createdAt: _c, origin: _o, ...rest } = rec;
-  const back = registerInstalledApp(home, { ...rest, installId: rec.installId! });
+  const back = registerInstalledApp(home, { ...rest, installId: rec.installId });
   rmSync(t, { recursive: true, force: true });
   return back;
 }

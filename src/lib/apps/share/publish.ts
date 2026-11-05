@@ -23,7 +23,7 @@ import { readLinkedRepoRegistry } from '../../linked-repos.js';
 import { sdkSource } from '../../../server/apps/gateway-w3.js';
 import { APP_TOPIC, HostError, type AppHost, type HostUser } from './host.js';
 import { findingId, PUBLISH_TRAILER, runGate, treeDigest, type GateFile, type GateFinding, type GateMode, type GateReport, type GateTerms } from './gate.js';
-import { initHardRepo, installedGit, lsTree, readBlob, revParse } from './installed-git.js';
+import { initHardRepo, installedGit, installedGitAsync, lsTree, readBlob, revParse } from './installed-git.js';
 
 export class PublishError extends Error {
   constructor(public code: string, message: string, public report?: GateReport) { super(message); }
@@ -85,7 +85,7 @@ export const RESHARE_OK = new Set(['MIT', 'Apache-2.0', 'BSD', 'ISC']);
 
 // ─── The source: the app's committed files ──────────────────────────────────────────
 
-function ownGit(root: string, args: string[], binary = false): string | Buffer {
+function ownRepoGit(root: string, args: string[], binary = false): string | Buffer {
   const out = execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=', '-C', root, ...args], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   return binary ? out : out.toString('utf-8');
 }
@@ -95,25 +95,50 @@ export interface SourceTree {
   files: GateFile[];
 }
 
-/** HEAD's files of the app's own repo. A change not committed yet stops here (it would not travel). */
-export function readSourceTree(root: string): SourceTree {
+/**
+ * HEAD's files of the app's repo: its own git, or for a copy of someone else's app the source
+ * repo kept outside its folder. A change not committed yet stops here (it would not travel).
+ */
+export function readSourceTree(rec: Pick<AppRecord, 'root' | 'installId'>, home: string = homedir()): SourceTree {
+  const root = rec.root;
+  const files: GateFile[] = [];
+  const nlinkOf = (path: string) => { try { return lstatSync(join(root, path)).nlink; } catch { return 1; } };
+  if (rec.installId) {
+    // A copy of someone else's app: its git is kept outside the folder, so the owner cannot commit
+    // there. What travels is the copy as it is now (ignored files excluded), read through a
+    // throwaway index: the copy's own branch is not touched.
+    const srcRepo = join(appsHome(home), 'sources', `${rec.installId}.git`);
+    const idx = mkdtempSync(join(tmpdir(), 'dc-copy-idx-'));
+    try {
+      const env = { GIT_INDEX_FILE: join(idx, 'index') };
+      installedGit(srcRepo, ['add', '-A'], { workTree: root, env });
+      for (const line of installedGit(srcRepo, ['ls-files', '-s', '-z'], { workTree: root, env }).split('\0')) {
+        if (!line) continue;
+        const tab = line.indexOf('\t');
+        const [mode, sha] = line.slice(0, tab).split(/\s+/);
+        const path = line.slice(tab + 1);
+        files.push({ path, mode, data: mode === '160000' ? Buffer.alloc(0) : readBlob(srcRepo, sha), nlink: nlinkOf(path) });
+      }
+      const head = installedGit(srcRepo, ['rev-parse', 'HEAD'], { workTree: root }).trim();
+      return { head, files };
+    } finally {
+      rmSync(idx, { recursive: true, force: true });
+    }
+  }
   let head: string;
-  try { head = (ownGit(root, ['rev-parse', '--verify', 'HEAD^{commit}']) as string).trim(); } catch {
+  try { head = (ownRepoGit(root, ['rev-parse', '--verify', 'HEAD^{commit}']) as string).trim(); } catch {
     throw new PublishError('no_commits', 'The app has no commit yet: commit it first (`git add -A && git commit` in the app folder).');
   }
-  const dirty = (ownGit(root, ['status', '--porcelain', '--untracked-files=no']) as string).trim();
+  const dirty = (ownRepoGit(root, ['status', '--porcelain', '--untracked-files=no']) as string).trim();
   if (dirty) throw new PublishError('uncommitted', `The app has changes not committed yet (${dirty.split('\n').length} file(s)). Commit them first: only committed files are published.`);
-  const out = ownGit(root, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD']) as string;
-  const files: GateFile[] = [];
-  for (const rec of out.split('\0')) {
-    if (!rec) continue;
-    const tab = rec.indexOf('\t');
-    const [mode, , sha] = rec.slice(0, tab).split(/\s+/);
-    const path = rec.slice(tab + 1);
-    const data = mode === '160000' ? Buffer.alloc(0) : (ownGit(root, ['cat-file', 'blob', sha], true) as Buffer);
-    let nlink = 1;
-    try { nlink = lstatSync(join(root, path)).nlink; } catch { /* deleted in the tree: the commit is what counts */ }
-    files.push({ path, mode, data, nlink });
+  const out = ownRepoGit(root, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD']) as string;
+  for (const line of out.split('\0')) {
+    if (!line) continue;
+    const tab = line.indexOf('\t');
+    const [mode, , sha] = line.slice(0, tab).split(/\s+/);
+    const path = line.slice(tab + 1);
+    const data = mode === '160000' ? Buffer.alloc(0) : (ownRepoGit(root, ['cat-file', 'blob', sha], true) as Buffer);
+    files.push({ path, mode, data, nlink: nlinkOf(path) });
   }
   return { head, files };
 }
@@ -178,7 +203,8 @@ function readmeFor(m: AppManifest): string {
 export function buildPublishTree(home: string, rec: AppRecord, opts: { visibility: Visibility; login: string; approvals?: string[]; note?: string; repoName?: string }): PublishPreview {
   const m = readManifest(rec.root);
   if (!m.ok) throw new PublishError('bad_manifest', `The manifest has problems: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}`);
-  const src = readSourceTree(rec.root);
+  if (rec.provenance && !RESHARE_OK.has(rec.provenance.license)) throw new PublishError('license_forbids', `This app is a copy of ${rec.provenance.fullName}, whose licence (${rec.provenance.license}) does not allow sharing it again.`);
+  const src = readSourceTree(rec, home);
   const mode: GateMode = opts.visibility === 'public' ? 'strict' : 'normal';
   const year = new Date().getUTCFullYear();
   const byPath = new Map(src.files.map((f) => [f.path, f]));
@@ -212,7 +238,8 @@ export function buildPublishTree(home: string, rec: AppRecord, opts: { visibilit
   const report = runGate(all, { mode, terms, approvals: new Set(opts.approvals ?? []), include: m.manifest.share.include, icon: m.manifest.icon ? rel(rec.root, m.manifest.icon) : null, sdk: sdkOrNull(), generated });
   // The repo name, the description and the commit message are published too.
   const repoName = opts.repoName ?? rec.publish?.fullName.split('/')[1] ?? `${m.manifest.slug}-app`;
-  const meta = runGate([{ path: '(repo name and message)', mode: '100644', data: Buffer.from(`${repoName}\n${m.manifest.name}\n${opts.note ?? ''}`) }], { mode, terms, approvals: new Set(opts.approvals ?? []), include: ['(repo name and message)'] });
+  const META = '(repo name and message).txt';
+  const meta = runGate([{ path: META, mode: '100644', data: Buffer.from(`${repoName}\n${m.manifest.name}\n${opts.note ?? ''}`) }], { mode, terms, approvals: new Set(opts.approvals ?? []), include: [META] });
   mergeMeta(report, meta);
 
   const sent = new Set(report.send.map((s) => s.path));
@@ -290,10 +317,11 @@ export interface PublishResult {
   url: string;
   sent: number;
   invited: string[];
+  inviteFailed: string[];
 }
 
 export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<PublishResult> {
-  if (rec.origin === 'installed' && !rec.provenance) throw new PublishError('not_yours', 'This app was installed from someone else. Make it your own copy first (it keeps where it came from for the licence check).');
+  if (rec.origin === 'installed' && (rec.source || !rec.provenance)) throw new PublishError('not_yours', 'This app was installed from someone else. Make it your own copy first (it keeps where it came from for the licence check).');
   const user: HostUser = await opts.host.me();
   const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
   if (!pv.report.ok) throw new PublishError('gate_blocked', pv.report.blocks.length ? `${pv.report.blocks.length} problem(s) must be fixed before publishing.` : `${pv.report.unapproved.length} line(s) wait for your approval.`, pv.report);
@@ -310,7 +338,12 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
       if (e instanceof HostError && e.code === 'exists') throw new PublishError('repo_exists', `${user.login}/${pv.repoName} already exists. Pick another repo name.`);
       throw e;
     }
+    // Recorded at once: a push or an invite that fails after this is retried on the same repo.
+    updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName: repo.fullName, repoId: repo.repoId, public: !repo.private, lastSha: '', at: new Date().toISOString() } });
   }
+  // Publishing "to invitees" onto a repo the world can read would be a public publish under
+  // the private check: refused.
+  if (!repo.private && opts.visibility === 'private') throw new PublishError('already_public', `${repo.fullName} is public: publish it as public, or start a new private repo.`);
   const fullName = repo.fullName;
   const url = host.cloneUrl(fullName);
   const turningPublic = opts.visibility === 'public' && repo.private;
@@ -318,9 +351,9 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   const mirror = opts.fresh ? join(appsHome(opts.home), 'published', `${rec.hash}-${Date.now()}.git`) : publishMirror(opts.home, rec);
   if (!existsSync(mirror)) { mkdirSync(join(mirror, '..'), { recursive: true, mode: 0o700 }); initHardRepo(mirror, true); }
   const gitOpts = { allowFile: host.allowFile };
-  await host.withGit((env) => {
-    const heads = installedGit(mirror, ['ls-remote', '--heads', url, 'main'], { ...gitOpts, env, timeoutMs: 120_000 }).trim();
-    if (heads) installedGit(mirror, ['fetch', '-q', '--no-tags', url, '+refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 });
+  await host.withGit(async (env) => {
+    const heads = (await installedGitAsync(mirror, ['ls-remote', '--heads', url, 'main'], { ...gitOpts, env, timeoutMs: 120_000 })).trim();
+    if (heads) await installedGitAsync(mirror, ['fetch', '-q', '--no-tags', url, '+refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 });
     else try { installedGit(mirror, ['update-ref', '-d', 'refs/heads/main']); } catch { /* none */ }
   });
   const parent = revParse(mirror, 'refs/heads/main');
@@ -351,21 +384,22 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   } finally {
     rmSync(idx, { recursive: true, force: true });
   }
-  await host.withGit((env) => installedGit(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
+  await host.withGit((env) => installedGitAsync(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
+  updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
 
   await host.setTopics(fullName, [APP_TOPIC]);
   if (turningPublic) await host.setVisibility(fullName, true);
+  // One invite that fails (a typo in a login) never undoes the publish: it is reported by name.
   const invited: string[] = [];
+  const inviteFailed: string[] = [];
   if (opts.visibility === 'private') {
     for (const login of opts.invite ?? []) {
       const l = login.trim().replace(/^@/, '');
       if (!l || l === user.login) continue;
-      await host.addCollaborator(fullName, l);
-      invited.push(l);
+      try { await host.addCollaborator(fullName, l); invited.push(l); } catch { inviteFailed.push(l); }
     }
   }
-  updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
-  return { fullName, sha, url: host.kind === 'github' ? `https://github.com/${fullName}` : url, sent: pv.files.length, invited };
+  return { fullName, sha, url: host.kind === 'github' ? `https://github.com/${fullName}` : url, sent: pv.files.length, invited, inviteFailed };
 }
 
 /** The approval id of a finding, for tests and the CLI. */

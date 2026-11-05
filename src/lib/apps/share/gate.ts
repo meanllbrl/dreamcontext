@@ -15,7 +15,7 @@
 
 import { createHash } from 'node:crypto';
 import { scrubContent } from '../../git-sync/scrub.js';
-import { INSTRUCTION_NAMES } from '../data-dir.js';
+import { isInstructionName } from '../data-dir.js';
 
 export type GateMode = 'normal' | 'strict' | 'install';
 
@@ -101,9 +101,8 @@ export function neverReason(path: string, mode: GateMode): string | null {
   if (lower[0] === 'data') return 'the app data folder (data never travels)';
   if (lower.includes('node_modules')) return 'node_modules';
   if (lower.includes('.git')) return 'git internals';
-  for (const n of INSTRUCTION_NAMES) {
-    if (n.endsWith('/') ? lower.includes(n.slice(0, -1)) : lower[lower.length - 1] === n) return "another tool's instruction file";
-  }
+  // Folded like the rest of the product (NFKC + case): `AGENTſ.md` is `AGENTS.md` on APFS.
+  if (segs.some((seg, i) => isInstructionName(seg, i < segs.length - 1))) return "another tool's instruction file";
   if (path === '.gitignore') return null;
   if (segs.some((s) => s.startsWith('.'))) return mode === 'install' ? 'a dotfile' : 'a dotfile (it may hold settings or keys)';
   return null;

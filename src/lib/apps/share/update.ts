@@ -15,13 +15,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { appsHome, getApp, updateAppShare, type AppRecord } from '../registry.js';
 import { cleanText, parseManifest } from '../manifest.js';
 import { resolveAppHost, type AppHost } from './host.js';
-import { installGate, InstallError, manifestSha, sourceRepo } from './install.js';
-import { installedGit, isAncestor, lsTree, readBlob, revParse } from './installed-git.js';
+import { factsOf, installGate, InstallError, manifestSha, runNpmCi, sourceRepo } from './install.js';
+import { installedGit, installedGitAsync, isAncestor, lsTree, readBlob, revParse } from './installed-git.js';
 
 export type UpdateCheck =
   | { state: 'none'; sha: string }
@@ -87,12 +87,13 @@ export async function checkUpdate(home: string, rec: AppRecord, host?: AppHost):
     return { state: 'problem', code, message };
   };
   let repo;
-  try { repo = await h.getRepo(src.fullName); } catch { repo = null; }
+  // Only a confirmed "not there / no access" is stored; offline, 5xx and rate limits are not.
+  try { repo = await h.getRepo(src.fullName); } catch (e) { return { state: 'problem', code: 'fetch_failed', message: `Could not reach the original: ${(e as Error).message}` }; }
   if (!repo) return setProblem('no_access', 'You no longer reach the original: the app keeps working, updates do not come. You can make it your own copy.');
   if (repo.repoId !== src.repoId || repo.ownerId !== src.ownerId) return setProblem('moved', 'The original changed hands (another repo or owner now): no updates from it. You can make it your own copy.');
   const { dir, g } = gitOf(home, rec);
   try {
-    await h.withGit((env) => installedGit(dir, ['fetch', '-q', '--no-tags', h.cloneUrl(src.fullName), '+refs/heads/main:refs/dc/upstream-next'], { env, allowFile: h.allowFile, timeoutMs: 300_000 }));
+    await h.withGit((env) => installedGitAsync(dir, ['fetch', '-q', '--no-tags', h.cloneUrl(src.fullName), '+refs/heads/main:refs/dc/upstream-next'], { env, allowFile: h.allowFile, timeoutMs: 300_000 }));
   } catch (e) {
     return { state: 'problem', code: 'fetch_failed', message: `Could not reach the original: ${(e as Error).message}` };
   }
@@ -105,8 +106,10 @@ export async function checkUpdate(home: string, rec: AppRecord, host?: AppHost):
   const files = lsTree(dir, next).map((e) => ({ path: e.path, mode: e.mode, data: e.type === 'blob' && e.size <= 2 * 1024 * 1024 ? readBlob(dir, e.sha) : Buffer.alloc(e.size > 2 * 1024 * 1024 ? 2 * 1024 * 1024 + 1 : 0) }));
   const nextManifest = files.find((f) => f.path === 'dreamcontext-app.json')?.data.toString('utf-8') ?? null;
   const pm = nextManifest ? parseManifest(nextManifest, null) : null;
-  const gate = installGate(files, pm?.ok ? pm.manifest.icon : null);
-  if (!pm?.ok || !gate.ok) return { state: 'problem', code: 'gate', message: `The new version holds something an app may not: ${gate.blocks.map((b) => `${b.file} (${b.label})`).slice(0, 5).join('; ') || 'no valid manifest'}.` };
+  const gate = installGate(files, pm?.ok ? pm.manifest.icon : null, pm?.ok ? pm.manifest.share.include : []);
+  const npmProblem = pm?.ok ? factsOf(files, pm.manifest).npmProblem : null;
+  if (npmProblem) gate.blocks.push({ id: 'npm', rule: 'npm', file: 'package.json', label: npmProblem });
+  if (!pm?.ok || gate.blocks.length) return { state: 'problem', code: 'gate', message: `The new version holds something an app may not: ${gate.blocks.map((b) => `${b.file} (${b.label})`).slice(0, 5).join('; ') || 'no valid manifest'}.` };
   const changes = manifestChanges(manifestAt(dir, src.upstreamSha), nextManifest);
   const notes = g(['log', '--format=%s', '-n', '20', `${src.upstreamSha}..${next}`]).split('\n').map((s) => cleanText(s, 200)).filter(Boolean);
   const edited = localEdits(home, rec);
@@ -134,7 +137,7 @@ export interface ApplyResult {
 
 const stampNow = () => new Date().toISOString().replace(/[:.]/g, '-');
 
-export function applyUpdate(home: string, rec0: AppRecord, opts: ApplyOptions): ApplyResult {
+export async function applyUpdate(home: string, rec0: AppRecord, opts: ApplyOptions & { auto?: boolean; npm?: boolean }): Promise<ApplyResult> {
   const rec = getApp(home, rec0.projectRoot, rec0.slug) ?? rec0;
   const src = rec.source;
   if (rec.origin !== 'installed' || !src || src.mode !== 'following') throw new InstallError('not_following', 'This app does not follow an original.');
@@ -178,9 +181,19 @@ export function applyUpdate(home: string, rec0: AppRecord, opts: ApplyOptions): 
     g(['reset', '-q', '--hard', opts.sha]);
   }
   installedGit(dir, ['update-ref', 'refs/dc/upstream', opts.sha]);
+  // What Undo checks: the copy as this update left it. A change after it is never undone away.
+  installedGit(dir, ['update-ref', `refs/dc/after/${stamp}`, g(['rev-parse', 'HEAD']).trim()]);
+  // New or changed dependencies come in with the update.
+  const pkgChanged = g(['diff', '--name-only', before, 'HEAD', '--', 'package.json', 'package-lock.json']).trim();
+  if (pkgChanged && opts.npm !== false && existsSync(join(rec.root, 'package.json'))) {
+    try {
+      const deps = Object.keys((JSON.parse(readFileSync(join(rec.root, 'package.json'), 'utf-8')) as { dependencies?: object }).dependencies ?? {}).length;
+      if (deps) await runNpmCi(rec.root);
+    } catch { /* the card shows the backend's own error; Undo is there */ }
+  }
   updateAppShare(home, rec.projectRoot, rec.slug, (r) => ({
     approvedManifestSha: newManifest ? manifestSha(newManifest) : r.approvedManifestSha,
-    source: r.source ? { ...r.source, upstreamSha: opts.sha, available: undefined, problem: undefined } : undefined,
+    source: r.source ? { ...r.source, upstreamSha: opts.sha, available: undefined, problem: undefined, lastUpdate: { from: src.upstreamSha, to: opts.sha, at: new Date().toISOString(), auto: opts.auto === true } } : undefined,
   }));
   return { sha: opts.sha, before, ...(patch ? { patch } : {}) };
 }
@@ -196,16 +209,19 @@ export function undoUpdate(home: string, rec0: AppRecord): { sha: string } {
   const before = revParse(dir, refs[0])!;
   const upstream = revParse(dir, `refs/dc/before-upstream/${stamp}`) ?? rec.source.upstreamSha;
   const undone = rec.source.upstreamSha;
-  if (g(['status', '--porcelain']).trim()) { g(['add', '-A']); g(['commit', '-q', '-m', 'Local changes'], { env: LOCAL_ID }); }
+  // Undo goes back over the update only: a change made after it would be lost, so it refuses.
+  const after = revParse(dir, `refs/dc/after/${stamp}`);
+  if (g(['status', '--porcelain']).trim() || (after && g(['rev-parse', 'HEAD']).trim() !== after)) {
+    throw new InstallError('changed_since', 'This app was changed after the update: Undo would lose that change, so nothing was undone.');
+  }
   g(['reset', '-q', '--hard', before]);
-  installedGit(dir, ['update-ref', '-d', refs[0]]);
-  try { installedGit(dir, ['update-ref', '-d', `refs/dc/before-upstream/${stamp}`]); } catch { /* none */ }
+  for (const r of [refs[0], `refs/dc/before-upstream/${stamp}`, `refs/dc/after/${stamp}`]) { try { installedGit(dir, ['update-ref', '-d', r]); } catch { /* none */ } }
   installedGit(dir, ['update-ref', 'refs/dc/upstream', upstream]);
   const m = manifestAt(dir, upstream);
   updateAppShare(home, rec.projectRoot, rec.slug, (r) => ({
     approvedManifestSha: m ? manifestSha(m) : r.approvedManifestSha,
     // The undone version is still there to take again.
-    source: r.source ? { ...r.source, upstreamSha: upstream, available: undone !== upstream ? { sha: undone, at: new Date().toISOString() } : undefined } : undefined,
+    source: r.source ? { ...r.source, upstreamSha: upstream, lastUpdate: undefined, available: undone !== upstream ? { sha: undone, at: new Date().toISOString() } : undefined } : undefined,
   }));
   if (undone !== upstream) installedGit(dir, ['update-ref', 'refs/dc/upstream-next', undone]);
   return { sha: before };
@@ -228,7 +244,7 @@ export async function autoUpdateOne(home: string, rec: AppRecord, host?: AppHost
   if (!rec.source?.autoUpdate || rec.source.public || rec.source.mode !== 'following') return null;
   const c = await checkUpdate(home, rec, host);
   if (c.state !== 'available' || c.manifestChanged || c.edited) return null;
-  return applyUpdate(home, rec, { sha: c.sha });
+  return applyUpdate(home, rec, { sha: c.sha, auto: true });
 }
 
 export function digestOf(text: string): string {

@@ -22,7 +22,7 @@ if (/username/i.test(prompt)) {
 // The token goes to github.com only (paylasilan-app-ler plan r2 K3): a prompt for any other
 // host (a redirect, a URL a repo planted) gets nothing.
 const host = /https?:\/\/(?:[^@/\s'"]*@)?([^/:\s'"]+)/i.exec(prompt);
-if (host && host[1].toLowerCase() !== 'github.com') {
+if (!host || host[1].toLowerCase() !== 'github.com') {
   process.exit(1);
 }
 

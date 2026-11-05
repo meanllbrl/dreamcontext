@@ -214,7 +214,7 @@ async function shareSweep(): Promise<void> {
         if (applied) {
           const next = getApp(home, rec.projectRoot, rec.slug);
           if (next) refreshAppRuntime(next);
-          notifyViaBundle(`${rec.name} updated`, `Version ${applied.sha.slice(0, 7)} from ${rec.source.fullName}. Undo it on the app card.`, home);
+          notifyViaBundle(`${rec.name} updated`, `Version ${applied.sha.slice(0, 7)} from ${rec.source.fullName}. Undo it on its card in Apps.`, home);
         } else if (!rec.source.autoUpdate) {
           await checkUpdate(home, rec);
         }

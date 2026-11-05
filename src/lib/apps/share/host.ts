@@ -116,6 +116,7 @@ export class GitHubHost implements AppHost {
         if (e.kind === 'not_found') throw new HostError('not_found', 'not found (or no access)');
         if (e.kind === 'auth') throw new HostError(this.token ? 'no_access' : 'not_signed_in', this.token ? 'GitHub refused the request' : 'sign in with GitHub first');
         if (e.kind === 'rate_limited') throw new HostError('rate_limited', 'GitHub rate limit reached; try again later');
+        if (e.kind === 'invalid' && /already exists/i.test(e.message)) throw new HostError('exists', 'that repo already exists');
       }
       throw new HostError('host_error', (e as Error).message);
     }

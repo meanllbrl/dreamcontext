@@ -52,7 +52,7 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
   const values = readAppConfig(appsHomeDir(), rec.configId);
   return {
     origin: rec.origin ?? 'own',
-    source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null } : null,
+    source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null, lastUpdate: rec.source.lastUpdate ?? null } : null,
     provenance: rec.origin === 'installed' && !rec.source && rec.provenance ? { fullName: rec.provenance.fullName } : null,
     publish: rec.publish ? { fullName: rec.publish.fullName, public: rec.publish.public, at: rec.publish.at } : null,
     configCount: fields.length,
@@ -150,8 +150,8 @@ export async function handleInstall(req: IncomingMessage, res: ServerResponse, _
       home: appsHomeDir(), projectRoot, vault,
       previewId: String(b.previewId ?? ''), sha: String(b.sha ?? ''),
       config: b.config && typeof b.config === 'object' ? (b.config as Record<string, unknown>) : undefined,
+      secrets: b.secrets && typeof b.secrets === 'object' ? (b.secrets as Record<string, unknown>) : undefined,
     });
-    writeSecrets(rec, b.secrets);
     clearSharedCache();
     sendJson(res, 200, { ok: true, slug: rec.slug, renamed });
   } catch (e) { sendFailure(res, e); }
@@ -206,7 +206,7 @@ export async function handleUpdateApply(req: IncomingMessage, res: ServerRespons
   const b = (await parseJsonBody(req)) ?? {};
   const how = b.how === 'merge' || b.how === 'set-aside' ? (b.how as ApplyHow) : undefined;
   try {
-    const out = applyUpdate(appsHomeDir(), rec, { sha: String(b.sha ?? ''), approveManifest: b.approveManifest === true, how });
+    const out = await applyUpdate(appsHomeDir(), rec, { sha: String(b.sha ?? ''), approveManifest: b.approveManifest === true, how });
     refreshAppRuntime(getApp(appsHomeDir(), rec.projectRoot, rec.slug) ?? rec);
     sendJson(res, 200, { ok: true, ...out });
   } catch (e) { sendFailure(res, e); }

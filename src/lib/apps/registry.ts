@@ -66,6 +66,8 @@ export interface AppSource {
   available?: { sha: string; at: string };
   /** The last check could not reach the source (gone, no access, moved to another owner). */
   problem?: 'no_access' | 'moved' | 'not_forward';
+  /** The last update applied (by the owner or automatically): Undo on the card goes back from it. */
+  lastUpdate?: { from: string; to: string; at: string; auto: boolean };
 }
 
 export interface AppPublish {
@@ -73,6 +75,7 @@ export interface AppPublish {
   fullName: string;
   repoId: string;
   public: boolean;
+  /** Empty while a first publish is under way (the repo exists, nothing pushed yet). */
   lastSha: string;
   at: string;
 }
@@ -119,6 +122,7 @@ function sanitizeSource(v: unknown): AppSource | undefined {
   const s = v as Record<string, unknown>;
   if ((s.host !== 'github' && s.host !== 'local') || !str(s.fullName) || !FULL_NAME_RE.test(s.fullName) || !str(s.repoId) || !str(s.ownerId) || !str(s.owner) || !str(s.upstreamSha) || !HEX40.test(s.upstreamSha)) return undefined;
   const av = s.available as Record<string, unknown> | undefined;
+  const lu = s.lastUpdate as Record<string, unknown> | undefined;
   return {
     host: s.host, fullName: s.fullName, repoId: s.repoId, ownerId: s.ownerId, owner: s.owner,
     public: s.public === true,
@@ -128,13 +132,14 @@ function sanitizeSource(v: unknown): AppSource | undefined {
     ...(str(s.lastCheck, 40) ? { lastCheck: s.lastCheck } : {}),
     ...(av && typeof av === 'object' && str(av.sha) && HEX40.test(av.sha) && str(av.at, 40) ? { available: { sha: av.sha, at: av.at } } : {}),
     ...(s.problem === 'no_access' || s.problem === 'moved' || s.problem === 'not_forward' ? { problem: s.problem } : {}),
+    ...(lu && typeof lu === 'object' && str(lu.from) && HEX40.test(lu.from) && str(lu.to) && HEX40.test(lu.to) && str(lu.at, 40) ? { lastUpdate: { from: lu.from, to: lu.to, at: lu.at, auto: lu.auto === true } } : {}),
   };
 }
 
 function sanitizePublish(v: unknown): AppPublish | undefined {
   if (!v || typeof v !== 'object') return undefined;
   const p = v as Record<string, unknown>;
-  if ((p.host !== 'github' && p.host !== 'local') || !str(p.fullName) || !FULL_NAME_RE.test(p.fullName) || !str(p.repoId) || !str(p.lastSha) || !HEX40.test(p.lastSha) || !str(p.at, 40)) return undefined;
+  if ((p.host !== 'github' && p.host !== 'local') || !str(p.fullName) || !FULL_NAME_RE.test(p.fullName) || !str(p.repoId) || typeof p.lastSha !== 'string' || (p.lastSha !== '' && !HEX40.test(p.lastSha)) || !str(p.at, 40)) return undefined;
   return { host: p.host, fullName: p.fullName, repoId: p.repoId, public: p.public === true, lastSha: p.lastSha, at: p.at };
 }
 

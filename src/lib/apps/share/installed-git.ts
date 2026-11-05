@@ -12,7 +12,7 @@
  *   repo's own config.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export interface HardGitOptions {
   workTree?: string;
@@ -51,7 +51,7 @@ export class ShareGitError extends Error {
 
 function gitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = {};
-  for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR', 'USER', 'SystemRoot']) if (process.env[k]) base[k] = process.env[k];
+  for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR', 'USER', 'SystemRoot', 'USERPROFILE', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'ComSpec', 'PATHEXT']) if (process.env[k]) base[k] = process.env[k];
   return {
     ...base,
     GIT_CONFIG_GLOBAL: '/dev/null',
@@ -87,6 +87,27 @@ export function installedGit(gitDir: string, args: string[], opts: HardGitOption
     const stderr = err.stderr ? err.stderr.toString('utf-8') : '';
     throw new ShareGitError(`git ${args[0]} failed: ${stderr.trim().split('\n').slice(-2).join(' ') || err.message}`, stderr);
   }
+}
+
+/**
+ * The same, without blocking: every NETWORK call (fetch, push, ls-remote) goes here, so a slow
+ * remote never freezes the server's other windows and app gateways.
+ */
+export function installedGitAsync(gitDir: string, args: string[], opts: HardGitOptions = {}): Promise<string> {
+  const argv = [
+    ...HARD_CONFIG,
+    ...(opts.allowFile ? ['-c', 'protocol.file.allow=always'] : []),
+    `--git-dir=${gitDir}`,
+    ...(opts.workTree ? [`--work-tree=${opts.workTree}`] : []),
+    ...args,
+  ];
+  return new Promise((resolve, reject) => {
+    const child = execFile('git', argv, { env: gitEnv(opts.env), timeout: opts.timeoutMs ?? 120_000, maxBuffer: 64 * 1024 * 1024, ...(opts.workTree ? { cwd: opts.workTree } : {}) }, (err, stdout, stderr) => {
+      if (err) reject(new ShareGitError(`git ${args[0]} failed: ${String(stderr).trim().split('\n').slice(-2).join(' ') || err.message}`, String(stderr)));
+      else resolve(String(stdout));
+    });
+    child.stdin?.end();
+  });
 }
 
 /** A fresh repo for a source, a preview or a publish mirror. Never a hook template. */
