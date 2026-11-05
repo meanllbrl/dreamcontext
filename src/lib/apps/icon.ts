@@ -258,16 +258,35 @@ export function iconIssue(icon: string | null | undefined, logoPath: string | nu
 }
 
 /** The same check on bytes already read (a repo blob before install). */
+/** The default letter of each slug and name, drawn once per process (a 1024 render costs ~0.4 s). */
+const defaultRenders = new Map<string, Buffer>();
+function defaultRender(slug: string, name: string): Buffer {
+  const key = `${slug}\0${name}`;
+  let hit = defaultRenders.get(key);
+  if (!hit) {
+    hit = renderDefaultIcon(slug, name);
+    if (defaultRenders.size > 100) defaultRenders.clear();
+    defaultRenders.set(key, hit);
+  }
+  return hit;
+}
+
+/** The same check on bytes already read (a repo blob before install). */
 export function isDefaultIconBytes(data: Buffer | null | undefined, slug: string, name: string): boolean {
   if (!data || data.length < 100) return false;
-  try { return data.equals(renderDefaultIcon(slug, name)); } catch { return false; }
+  // An icon that is not a PNG of the default's kind is never drawn to compare.
+  if (data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return false;
+  try { return data.equals(defaultRender(slug, name)); } catch { return false; }
 }
 
 /** Has nobody replaced the letter `apps new` drew? */
 export function isDefaultIcon(icon: string | null | undefined, slug: string, name: string): boolean {
   if (!icon) return false;
   try {
-    return readFileSync(icon).equals(renderDefaultIcon(slug, name));
+    const known = defaultRenders.get(`${slug}\0${name}`);
+    // Size first: a different size is a different picture, no read and no render.
+    if (known && statSync(icon).size !== known.length) return false;
+    return isDefaultIconBytes(readFileSync(icon), slug, name);
   } catch {
     return false;
   }

@@ -91,6 +91,46 @@ describe('the README standard', () => {
   });
 });
 
+describe('the README standard, hostile and odd input', () => {
+  it('a long run of spaces in a heading parses at once (no backtracking), and a huge README is read only at its head', () => {
+    const evil = `## a${' '.repeat(5000)}x\n### b${' '.repeat(5000)}x\n![](${'!['.repeat(3000)}\n`;
+    const t0 = Date.now();
+    parseStoreReadme(evil);
+    parseStoreReadme(`---\ntagline: x${' '.repeat(50_000)}#\n---\n`);
+    parseStoreReadme('# T\n\n' + 'word '.repeat(2_000_000));
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+
+  it('a tagline with a # survives, quoted on write; an unquoted trailing comment is dropped', () => {
+    expect(parseStoreReadme('---\ntagline: The #1 habit tracker\n---\n').tagline).toBe('The #1 habit tracker');
+    expect(parseStoreReadme('---\ntagline: "The #1 habit tracker"\n---\n').tagline).toBe('The #1 habit tracker');
+    expect(parseStoreReadme('---\ncategory: Weather   # optional\n---\n').category).toBe('Weather');
+    const out = applyStoreEdits('# A\n', { name: 'A', tagline: 'The #1 habit tracker', date: '2026-11-06' });
+    expect(out.startsWith('---\ntagline: "The #1 habit tracker"\n---')).toBe(true);
+    expect(parseStoreReadme(out).tagline).toBe('The #1 habit tracker');
+  });
+
+  it('CRLF, a BOM and a ## inside a code fence change nothing', () => {
+    const s = parseStoreReadme('\uFEFF---\r\ntagline: One.\r\n---\r\n# A\r\n```\r\n## What it does\r\n```\r\n## What it does\r\nReal.\r\n');
+    expect(s.tagline).toBe('One.');
+    expect(s.about).toBe('Real.');
+  });
+
+  it('the next version is one more than the highest whole number, wherever it sits; dates and dotted versions do not count', () => {
+    const v = (body: string) => applyStoreEdits(`# A\n\n## What's new\n${body}`, { name: 'A', note: 'n', date: '2026-11-06' });
+    expect(parseStoreReadme(v('### 2026-11-01\n- x\n')).whatsNew[0].version).toBe('1');
+    expect(parseStoreReadme(v('### 1 · 2026-11-01\n- a\n\n### 2 · 2026-11-02\n- b\n')).whatsNew[0].version).toBe('3');
+    expect(parseStoreReadme(v('### 1.4.2\n- x\n')).whatsNew[0].version).toBe('1');
+  });
+
+  it('the first publish replaces the skeleton\'s unshipped entry: version 1, dated the day it ships', () => {
+    const out = applyStoreEdits(readmeSkeleton('A', '2026-11-01'), { name: 'A', note: 'Hello.', date: '2026-11-06', firstPublish: true });
+    expect(parseStoreReadme(out).whatsNew).toEqual([{ version: '1', date: '2026-11-06', notes: ['Hello.'] }]);
+    const later = applyStoreEdits(readmeSkeleton('A', '2026-11-01'), { name: 'A', note: 'Hello.', date: '2026-11-06' });
+    expect(parseStoreReadme(later).whatsNew.map((e) => e.version)).toEqual(['2', '1']);
+  });
+});
+
 describe('what it can do, pictures', () => {
   it('says schedules in plain words and lists actions, settings and the assistant', () => {
     expect(scheduleText({ days: 'daily', at: '08:00' }, 'x')).toBe('Every day at 08:00');
@@ -225,6 +265,46 @@ describe('the publish writes the store words, the install preview reads them', (
     expect(prev.store.can.map((c) => c.kind)).toEqual(['action', 'schedule']);
     const list = await listShared(reader, { force: true });
     expect(list.mine[0].tagline).toBe('Shows the weather note.');
+  });
+
+  it('commits the README in a repo with no git identity, and puts the folder back when the commit cannot run', () => {
+    const bare = join(home, 'bare-app');
+    mkdirSync(bare);
+    execFileSync('git', ['init', '-q'], { cwd: bare, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+    writeFileSync(join(bare, 'a.txt'), 'a\n');
+    git(bare, 'add', '-A');
+    git(bare, 'commit', '-qm', 'first');
+    // No identity anywhere: the fallback identity commits it.
+    const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const prevNames = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL'].map((k) => [k, process.env[k]] as const);
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+    for (const [k] of prevNames) delete process.env[k];
+    try {
+      expect(writeBackStoreReadme({ root: bare, installId: undefined } as never, '# A\n', null)).toBe(true);
+      expect(git(bare, 'status', '--porcelain').trim()).toBe('');
+      // A held index lock: the commit fails, the README goes back to what it was, nothing staged.
+      const before = readFileSync(join(bare, 'README.md'));
+      writeFileSync(join(bare, '.git', 'index.lock'), '');
+      expect(writeBackStoreReadme({ root: bare, installId: undefined } as never, '# B\n', before)).toBe(false);
+      rmSync(join(bare, '.git', 'index.lock'));
+      expect(readFileSync(join(bare, 'README.md'), 'utf-8')).toBe('# A\n');
+      expect(git(bare, 'status', '--porcelain').trim()).toBe('');
+    } finally {
+      if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+      for (const [k, v] of prevNames) if (v !== undefined) process.env[k] = v;
+    }
+  });
+
+  it('writes a copy of someone else\'s app (no git of its own) without a commit, and never through a dangling link', () => {
+    const copy = join(home, 'copy-app');
+    mkdirSync(copy);
+    expect(writeBackStoreReadme({ root: copy, installId: 'x'.repeat(32) } as never, '# C\n', null)).toBe(true);
+    expect(readFileSync(join(copy, 'README.md'), 'utf-8')).toBe('# C\n');
+    const linked = join(home, 'linked-app');
+    mkdirSync(linked);
+    symlinkSync(join(home, 'outside-readme.md'), join(linked, 'README.md'));
+    expect(writeBackStoreReadme({ root: linked, installId: 'y'.repeat(32) } as never, '# D\n', null)).toBe(false);
+    expect(() => readFileSync(join(home, 'outside-readme.md'))).toThrow();
   });
 
   it('never overwrites a README the publisher changed and did not commit', () => {

@@ -133,7 +133,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
   const live = (app.windows ?? 0) > 0;
   const { busy, err, setErr, run } = useRun(app.slug, onChanged);
   const [undoing, setUndoing] = useState(false);
-  const store = useQuery({ queryKey: ['app-store', vault, app.slug], queryFn: () => api.get<OwnStore>(`/apps/${encodeURIComponent(app.slug)}/store`), staleTime: 10_000 });
+  const store = useQuery({ queryKey: ['app-store', vault, app.slug], queryFn: () => api.get<OwnStore>(`/apps/${encodeURIComponent(app.slug)}/store`), staleTime: 10_000, enabled: canLaunch });
   const s = store.data;
 
   const undoUpdate = async () => {
@@ -141,9 +141,11 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     setErr(null); setUndoing(true);
     try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setUndoing(false); }
   };
+  // Its error stands under Manage, beside the switch the owner just used.
+  const [manageErr, setManageErr] = useState<string | null>(null);
   const toggleAuto = async (on: boolean) => {
-    setErr(null);
-    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setErr((e as Error).message); }
+    setManageErr(null);
+    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setManageErr((e as Error).message); }
   };
 
   const by = following ? ts('store.by', { who: app.source!.owner })
@@ -254,9 +256,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
             {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
           </div>
+          {manageErr && <p className="app-card__note app-card__note--bad" role="alert">{manageErr}</p>}
         </section>
       )}
-      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} icon={appIconSrc(app, vault, canLaunch)} placeholder={!!app.iconPlaceholder} publishedPublic={app.publish?.public} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} />}
+      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} icon={appIconSrc(app, vault, canLaunch)} placeholder={!!app.iconPlaceholder} publishedPublic={app.publish?.public} onClose={() => setSheet(null)} onLeave={onClose} onDone={() => { onChanged(); void store.refetch(); }} />}
       {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
       {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} onDetach={() => setSheet('detach')} />}
       {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={() => { onChanged(); if (sheet === 'uninstall') onClose(); }} />}

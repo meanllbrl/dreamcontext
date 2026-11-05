@@ -124,7 +124,7 @@ export function encodePng(img: Rgba): Buffer {
   header.writeUInt32BE(img.height, 4);
   header[8] = 8;
   header[9] = 6;
-  return Buffer.concat([SIG, chunk('IHDR', header), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([SIG, chunk('IHDR', header), chunk('IDAT', deflateSync(raw, { level: 6 })), chunk('IEND', Buffer.alloc(0))]);
 }
 
 /** Does the picture draw its own tile (its four corners see through)? */

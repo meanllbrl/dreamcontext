@@ -30,6 +30,10 @@ export const TAGLINE_MAX = 80;
 const ABOUT_MAX = 1500;
 const NOTE_MAX = 300;
 const MAX_ENTRIES = 10;
+/** Only the head of a README is read, and each line only so far: no input can make a parse slow. */
+const README_MAX = 64 * 1024;
+const LINE_MAX = 2000;
+const HEADING_MAX = 300;
 
 /** A screenshot path the store draws: a flat image under `store/`, nothing else. */
 export const SCREENSHOT_RE = /^store\/[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:png|jpe?g|webp)$/;
@@ -60,6 +64,40 @@ function clean(s: string, max: number): string {
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
+/**
+ * One header value: a quoted value is taken whole (`"The #1 tracker"`); an unquoted one loses a
+ * trailing ` # comment` (space, hash, space), never a `#` inside a word.
+ */
+function fieldValue(raw: string): string {
+  const v = raw.trim();
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    try { const j = JSON.parse(v); if (typeof j === 'string') return j; } catch { /* plain */ }
+    return v.slice(1, -1);
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+  const hash = v.search(/[ \t]#[ \t]/);
+  return (hash >= 0 ? v.slice(0, hash) : v.endsWith(' #') ? v.slice(0, -2) : v).trim();
+}
+
+/** A header value as written back: quoted when a reader would cut or misread it. */
+function writeValue(v: string): string {
+  return /#|^['"]|:\s|^\s|\s$/.test(v) ? JSON.stringify(v) : v;
+}
+
+/**
+ * The text of a `##` (or `###`) heading line, or null. No regex runs on the line: a long run of
+ * spaces in a hostile README cannot make it backtrack.
+ */
+function headingText(line: string, level: 2 | 3): string | null {
+  if (line.length > HEADING_MAX) return null;
+  const marks = '#'.repeat(level);
+  if (!line.startsWith(marks) || line[level] === '#' || (line[level] !== ' ' && line[level] !== '\t')) return null;
+  let t = line.slice(level).trim();
+  while (t.endsWith('#')) t = t.slice(0, -1);
+  t = t.trim();
+  return t || null;
+}
+
 /** `---` header lines → its values (only the two the store reads). */
 function splitFrontmatter(text: string): { fields: Record<string, string>; body: string } {
   const src = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
@@ -69,10 +107,7 @@ function splitFrontmatter(text: string): { fields: Record<string, string>; body:
   for (const line of m[1].split('\n')) {
     const kv = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line);
     if (!kv) continue;
-    // A trailing `# comment` is the writer's, not the value (a value with " #" in it is rare).
-    let v = kv[2].replace(/\s+#.*$/, '').trim();
-    if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
-    fields[kv[1].toLowerCase()] = v;
+    fields[kv[1].toLowerCase()] = fieldValue(kv[2]);
   }
   return { fields, body: src.slice(m[0].length) };
 }
@@ -115,8 +150,8 @@ export function parseStoreReadme(text: string): StoreReadme {
   let fence = false;
   for (const line of lines) {
     if (line.trim().startsWith('```')) fence = !fence;
-    const h2 = !fence ? /^##\s+(.+?)\s*#*\s*$/.exec(line) : null;
-    if (h2 && !line.startsWith('###')) { cur = sectionKey(h2[1]) ?? `other:${h2[1]}`; sections[cur] ??= []; continue; }
+    const h2 = !fence ? headingText(line, 2) : null;
+    if (h2) { cur = sectionKey(h2) ?? `other:${h2}`; sections[cur] ??= []; continue; }
     if (cur) sections[cur].push(line); else lead.push(line);
   }
 
@@ -137,10 +172,10 @@ export function parseStoreReadme(text: string): StoreReadme {
   const whatsNew: StoreEntry[] = [];
   let entry: StoreEntry | null = null;
   for (const line of sections.whatsNew ?? []) {
-    const h3 = /^###\s+(.+?)\s*$/.exec(line);
+    const h3 = headingText(line, 3);
     if (h3) {
       if (whatsNew.length >= MAX_ENTRIES) break;
-      const [v, d] = h3[1].split(/\s+[·—–-]\s+/);
+      const [v, d] = h3.split(/\s[·—–-]\s/).map((x) => x.trim());
       entry = { version: clean(v.replace(/^v(?=\d)/i, ''), 20), date: d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim()) ? d.trim() : null, notes: [] };
       whatsNew.push(entry);
       continue;
@@ -189,8 +224,15 @@ export function readmeSkeleton(name: string, date: string): string {
 
 /** The next version number: one more than the newest numbered entry, else 1. */
 export function nextVersion(s: StoreReadme): string {
-  const n = Number.parseInt(s.whatsNew[0]?.version ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? String(n + 1) : '1';
+  // One more than the highest whole-number version, wherever it sits (newest-first or not); a date
+  // or a dotted version is not a number this counts.
+  const nums = s.whatsNew.map((e) => (/^\d{1,6}$/.test(e.version) ? Number(e.version) : 0));
+  return String(Math.max(0, ...nums) + 1);
+}
+
+/** The untouched entry `apps new` writes: one "First version." line. */
+function isSkeletonEntry(s: StoreReadme): boolean {
+  return s.whatsNew.length === 1 && s.whatsNew[0].version === '1' && s.whatsNew[0].notes.length === 1 && s.whatsNew[0].notes[0] === 'First version.';
 }
 
 /**
@@ -198,7 +240,7 @@ export function nextVersion(s: StoreReadme): string {
  * `### N · date` entry on top of What's new for the note. Everything else stays byte for byte.
  * With nothing to change, the same text comes back (normalised to `\n` line ends).
  */
-export function applyStoreEdits(text: string, edits: { name: string; tagline?: string | null; note?: string | null; date: string }): string {
+export function applyStoreEdits(text: string, edits: { name: string; tagline?: string | null; note?: string | null; date: string; firstPublish?: boolean }): string {
   let src = (text ?? '').replace(/\r\n?/g, '\n');
   if (!src.trim()) src = `# ${edits.name.replace(/[\r\n]/g, ' ').trim()}\n`;
   const tagline = edits.tagline ? clean(edits.tagline, TAGLINE_MAX + 40) : '';
@@ -208,23 +250,34 @@ export function applyStoreEdits(text: string, edits: { name: string; tagline?: s
     if (fm) {
       const lines = fm[1].split('\n');
       const at = lines.findIndex((l) => /^tagline\s*:/i.test(l));
-      if (at >= 0) lines[at] = `tagline: ${tagline}`; else lines.unshift(`tagline: ${tagline}`);
+      if (at >= 0) lines[at] = `tagline: ${writeValue(tagline)}`; else lines.unshift(`tagline: ${writeValue(tagline)}`);
       src = `---\n${lines.join('\n')}\n---\n${src.slice(fm[0].length)}`;
     } else {
-      src = `---\ntagline: ${tagline}\n---\n\n${src.replace(/^﻿/, '')}`;
+      src = `---\ntagline: ${writeValue(tagline)}\n---\n\n${src.replace(/^﻿/, '')}`;
     }
   }
   const note = edits.note ? clean(edits.note, NOTE_MAX) : '';
   const parsed = parseStoreReadme(src);
   if (note) {
-    const entry = `### ${nextVersion(parsed)} · ${edits.date}\n- ${note}\n`;
-    const lines = src.split('\n');
+    // The first publish replaces the skeleton's unshipped "1 · <creation date>" entry: the
+    // version that ships first is 1, dated the day it ships.
+    const replace = !!edits.firstPublish && isSkeletonEntry(parsed);
+    const entry = `### ${replace ? '1' : nextVersion(parsed)} · ${edits.date}\n- ${note}\n`;
+    let lines = src.split('\n');
     let fence = false;
     let at = -1;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].trim().startsWith('```')) fence = !fence;
-      const h2 = !fence ? /^##\s+(.+?)\s*#*\s*$/.exec(lines[i]) : null;
-      if (h2 && !lines[i].startsWith('###') && sectionKey(h2[1]) === 'whatsNew') { at = i; break; }
+      const h2 = !fence ? headingText(lines[i], 2) : null;
+      if (h2 && sectionKey(h2) === 'whatsNew') { at = i; break; }
+    }
+    if (at >= 0 && replace) {
+      const from = lines.findIndex((l, i) => i > at && headingText(l, 3) !== null);
+      if (from > at) {
+        let to = from + 1;
+        while (to < lines.length && headingText(lines[to], 3) === null && headingText(lines[to], 2) === null) to++;
+        lines = [...lines.slice(0, from), ...lines.slice(to)];
+      }
     }
     if (at >= 0) {
       lines.splice(at + 1, 0, '', ...entry.trimEnd().split('\n'));

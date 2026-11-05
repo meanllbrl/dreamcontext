@@ -145,7 +145,11 @@ async function settle(rt: AppRuntime, ms: number): Promise<void> {
   await Promise.race([rt.ensureRunning(), new Promise((r) => setTimeout(r, ms))]);
 }
 
-/** A closed app whose icon or name changed: rebuilt now, so a Dock click starts the new bundle. */
+/**
+ * A closed app whose icon or name changed: rebuilt now, so a Dock click starts the new bundle.
+ * One per tick: a stamp change makes every bundle stale at once (the tile mask did), and each
+ * rebuild is seconds of synchronous work the server must not do in one go.
+ */
 function refreshIdleBundles(): void {
   const runner = shellRunnerPath();
   if (!runner) return;
@@ -153,7 +157,7 @@ function refreshIdleBundles(): void {
     const input = bundleInput(rec, runner);
     const bundleExists = existsSync(appBundlePath(home, rec.slug, rec.hash));
     if (!bundleExists || !bundleIsStale(input)) continue;
-    if (shouldRefreshIdleBundle({ bundleExists, stale: true, processRunning: probeBundle(runnerBundleId(rec.hash)) })) ensureAppBundle(input);
+    if (shouldRefreshIdleBundle({ bundleExists, stale: true, processRunning: probeBundle(runnerBundleId(rec.hash)) })) { ensureAppBundle(input); return; }
   }
 }
 

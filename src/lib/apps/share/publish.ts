@@ -211,7 +211,7 @@ export function storeReadmeFor(rec: Pick<AppRecord, 'publish'>, name: string, cu
   const note = cleanText(opts.note ?? '', 300) || (!rec.publish?.lastSha && !parsed.whatsNew.length ? 'First version.' : '');
   const tagline = cleanText(opts.tagline ?? '', TAGLINE_MAX + 40);
   if (!note && !tagline) return null;
-  const next = applyStoreEdits(current ?? readmeSkeletonLess(name), { name, tagline: tagline || null, note: note || null, date: new Date().toISOString().slice(0, 10) });
+  const next = applyStoreEdits(current ?? readmeSkeletonLess(name), { name, tagline: tagline || null, note: note || null, date: new Date().toISOString().slice(0, 10), firstPublish: !rec.publish?.lastSha });
   return next === (current ?? '').replace(/\r\n?/g, '\n') ? null : next;
 }
 
@@ -348,6 +348,8 @@ export interface PublishResult {
   sent: number;
   invited: string[];
   inviteFailed: string[];
+  /** The store README went back into the app folder (null: the publish did not change it). */
+  readmeWrittenBack: boolean | null;
 }
 
 export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<PublishResult> {
@@ -417,7 +419,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   await host.withGit((env) => installedGitAsync(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
   updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
 
-  if (pv.storeReadme !== null) writeBackStoreReadme(rec, pv.storeReadme, pv.sourceReadme);
+  const readmeWrittenBack = pv.storeReadme !== null ? writeBackStoreReadme(rec, pv.storeReadme, pv.sourceReadme) : null;
 
   await host.setTopics(fullName, [APP_TOPIC]);
   if (turningPublic) await host.setVisibility(fullName, true);
@@ -431,7 +433,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
       try { await host.addCollaborator(fullName, l); invited.push(l); } catch { inviteFailed.push(l); }
     }
   }
-  return { fullName, sha, url: host.kind === 'github' ? `https://github.com/${fullName}` : url, sent: pv.files.length, invited, inviteFailed };
+  return { fullName, sha, url: host.kind === 'github' ? `https://github.com/${fullName}` : url, sent: pv.files.length, invited, inviteFailed, readmeWrittenBack };
 }
 
 /**
@@ -442,18 +444,29 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
  */
 export function writeBackStoreReadme(rec: Pick<AppRecord, 'root' | 'installId'>, text: string, read: Buffer | null): boolean {
   const path = join(rec.root, 'README.md');
+  let now: Buffer | null = null;
   try {
-    const st = existsSync(path) ? lstatSync(path) : null;
+    // lstat, never exists: a dangling link reads as absent to exists and would be written through.
+    let st: ReturnType<typeof lstatSync> | null = null;
+    try { st = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
     if (st && (!st.isFile() || st.isSymbolicLink())) return false;
-    const now = st ? readFileSync(path) : null;
+    now = st ? readFileSync(path) : null;
     if (!(now === null ? read === null : read !== null && now.equals(read))) return false;
-    writeFileSync(path, text);
-    if (rec.installId) return true;
+  } catch {
+    return false;
+  }
+  try { writeFileSync(path, text, { flag: now === null ? 'wx' : 'w' }); } catch { return false; }
+  if (rec.installId) return true;
+  try {
     ownRepoGit(rec.root, ['add', '--', 'README.md']);
     const commit = (extra: string[]) => ownRepoGit(rec.root, ['-c', 'commit.gpgsign=false', ...extra, 'commit', '-q', '-m', 'Store page: README', '--', 'README.md']);
     try { commit([]); } catch { commit(['-c', 'user.name=dreamcontext', '-c', 'user.email=dreamcontext@users.noreply.github.com']); }
     return true;
   } catch {
+    // The commit failed (a held index lock, say): put the folder back as the publish found it, so
+    // the next publish is not refused for an uncommitted README nobody wrote by hand.
+    try { ownRepoGit(rec.root, ['reset', '-q', '--', 'README.md']); } catch { /* not staged */ }
+    try { if (now === null) rmSync(path, { force: true }); else writeFileSync(path, now); } catch { /* left as written */ }
     return false;
   }
 }
