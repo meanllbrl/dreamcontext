@@ -1562,6 +1562,10 @@
 /* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
    rows are buttons and it scrolls; the card around it is still the grab handle. */
 .super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }
+/* A member's own card is live from medium up too (plan r4 G2; owner 2026-11-05: a routine row on
+   the floating Rutinler card did nothing): its body below the head takes the pointer, the head
+   stays the grab handle. A small tile keeps `data-inert` and stays one handle. */
+.super-card-frame[data-where='float'][data-kind='member'] .super-card-large:not([data-inert]) > .super-card-large-body { pointer-events: auto; }
 
 /* A live page's card (owner 2026-10-22): one tree in every state, so its frame never reloads.
    Shown, the page fills the body; hidden (a 1×1 tile, parked) it keeps its last size, unseen. */
