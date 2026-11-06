@@ -258,7 +258,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/apps/install',
   'GET /api/apps/trash',
   'POST /api/apps/trash/restore',
-  'GET /api/apps/:slug/publish/preview',
+  'POST /api/apps/:slug/publish/grant',
   'GET /api/apps/:slug/store',
   'POST /api/apps/:slug/publish',
   'GET /api/apps/:slug/config',

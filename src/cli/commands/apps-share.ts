@@ -1,8 +1,9 @@
 /**
  * Shared-app verbs of `dreamcontext apps` (paylasilan-app-ler plan r3). Every tool (Claude, Codex,
- * Antigravity) calls these same verbs. What is the OWNER's to decide (the push of a publish, an
- * install, an update, making a copy one's own, removing) is a click on the Apps page: the CLI
- * shows the preview and says where the click is.
+ * Antigravity) calls these same verbs. What is the OWNER's to decide (an install, an update,
+ * making a copy one's own, removing) is a click on the Apps page: the CLI shows the preview and
+ * says where the click is. A publish is the owner's Publish click too, but Claude does it: the
+ * click hands it a one-hour grant for that app, and `publish --go --grant` spends it.
  */
 
 import type { Command } from 'commander';
@@ -10,7 +11,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { error, info, success } from '../../lib/format.js';
-import { AppsClientError, type ProjectRef } from '../../lib/apps/client.js';
+import { AppsClientError, appsApi, type ProjectRef } from '../../lib/apps/client.js';
 import { readManifest, type AppManifest, type ConfigField } from '../../lib/apps/manifest.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
@@ -65,24 +66,52 @@ function suggestions(projectRoot: string, type: ConfigField['type']): string[] {
 export function registerAppsShareCommands(apps: Command, h: Helpers): void {
   apps
     .command('publish <slug>')
-    .description("Show what a publish would send and what stops it (the push itself is the owner's click: Apps page → Share)")
-    .option('--public', 'Check as a public app (strict: LICENSE and README required)')
+    .description("Check what a publish would send and what stops it; with --go and the grant the owner's Publish click gave you, publish it")
+    .option('--public', 'As a public app (strict check: LICENSE and README required; public is for good)')
     .option('--dry-run', 'Only the report (the default; kept for clarity)')
     .option('--repo <name>', 'Repo name (default <slug>-app)')
+    .option('--go', 'Publish now (needs --grant)')
+    .option('--grant <id>', "The one-hour grant from the owner's Publish click (in the prompt it handed you)")
+    .option('--invite <logins...>', 'GitHub usernames to invite (a private app)')
+    .option('--approve <ids...>', 'Generic-word lines the owner let go in the chat (the [id] in the report)')
+    .option('--note <text>', "What changed, one line (becomes the README's What's new entry and the commit)")
+    .option('--tagline <text>', "The store page's one line (README tagline:)")
+    .option('--confirm-name <name>', "A public app: the app's name, as the owner confirmed it")
     .option('--json', 'JSON output')
-    .action(async (slug: string, opts: { public?: boolean; repo?: string; json?: boolean }) => {
+    .action(async (slug: string, opts: { public?: boolean; repo?: string; go?: boolean; grant?: string; invite?: string[]; approve?: string[]; note?: string; tagline?: string; confirmName?: string; json?: boolean }) => {
       try {
         const p = h.project();
         const { rec } = appOf(p, slug);
+        if (opts.go) {
+          if (!opts.grant) throw new AppsClientError('grant_missing', "Publishing needs the grant the owner's Publish click opened (the app's page → Manage → Share). Ask him to press it, then use the --grant in its prompt.");
+          const out = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/publish`, {
+            grant: opts.grant, visibility: opts.public ? 'public' : 'private',
+            ...(opts.repo ? { repoName: opts.repo } : {}),
+            invite: (opts.invite ?? []).flatMap((x) => x.split(/[\s,]+/)).filter(Boolean),
+            approvals: opts.approve ?? [],
+            ...(opts.note !== undefined ? { note: opts.note } : {}),
+            ...(opts.tagline !== undefined ? { tagline: opts.tagline } : {}),
+            ...(opts.confirmName !== undefined ? { confirmName: opts.confirmName } : {}),
+          }, { timeoutMs: 600_000 });
+          if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+          success(`${slug} is on GitHub: ${String(out.fullName)} (${Number(out.sent ?? 0)} file(s))`);
+          const invited = (out.invited as string[] | undefined) ?? [];
+          const failed = (out.inviteFailed as string[] | undefined) ?? [];
+          if (invited.length) info(`Invited: ${invited.join(', ')}`);
+          if (failed.length) error(`Could not invite: ${failed.join(', ')}`);
+          if (out.readmeWrittenBack) info('The README with the new What\'s new entry went back into the app folder and is committed.');
+          return;
+        }
         let login = 'the-publisher';
         try { login = (await resolveAppHost(homedir()).me()).login; } catch { /* not signed in: the report still runs */ }
-        const pv = buildPublishTree(homedir(), rec, { visibility: opts.public ? 'public' : 'private', login, repoName: opts.repo });
+        const pv = buildPublishTree(homedir(), rec, { visibility: opts.public ? 'public' : 'private', login, repoName: opts.repo, approvals: opts.approve, note: opts.note, tagline: opts.tagline });
         if (opts.json) { console.log(JSON.stringify({ repoName: pv.repoName, fullName: pv.fullName, license: pv.license, report: pv.report }, null, 2)); return; }
         info(`${pv.manifest.name} → ${pv.fullName ?? `${login}/${pv.repoName}`} (${opts.public ? 'public' : 'private'}, licence ${pv.license})`);
         printGateReport(pv.report);
-        info('The push is the owner\'s click: Apps page → the app card → Share.');
+        info("Publishing: --go --grant <id> (the grant comes with the owner's Publish click).");
       } catch (e) {
         if (e instanceof PublishError) h.fail(new AppsClientError(e.code, e.message));
+        if (e instanceof AppsClientError && e.code === 'gate_blocked') h.fail(new AppsClientError(e.code, `${e.message} Run \`dreamcontext apps publish ${slug}\` for the report.`));
         h.fail(e);
       }
     });

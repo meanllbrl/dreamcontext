@@ -14,15 +14,14 @@ import { fromOwnerPage } from './assistant.js';
 import { holdOpen } from '../hold-open.js';
 import { appsHomeDir, findAppFor, projectRootOf, retireAppRuntime, refreshAppRuntime } from './apps.js';
 import { readManifest } from '../../lib/apps/manifest.js';
-import { parseStoreReadme, storeReadiness } from '../../lib/apps/store-readme.js';
 import { readAppFile, storePage } from '../../lib/apps/store-facts.js';
-import { isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
 import { writeEnvSecrets, SecretWriteError } from '../../lib/env-secrets.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
-import { buildPublishTree, publishApp, PublishError } from '../../lib/apps/share/publish.js';
+import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
+import { mintPublishGrant, takePublishGrant } from '../../lib/apps/share/publish-grant.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
@@ -65,44 +64,6 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
 
 // ─── Publish ────────────────────────────────────────────────────────────────────────
 
-export async function handlePublishPreview(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
-  if (!requireLocalDesktop(req, res)) return;
-  holdOpen(req);
-  const rec = findAppFor(contextRoot, params.slug, res);
-  if (!rec) return;
-  const url = new URL(req.url ?? '/', 'http://x');
-  const visibility = url.searchParams.get('visibility') === 'public' ? 'public' : 'private';
-  const host = resolveAppHost(appsHomeDir());
-  let login: string | null = null;
-  try { login = host.signedIn ? (await host.me()).login : null; } catch { login = null; }
-  try {
-    // The words the publish screen will write into the README are checked with everything else.
-    const pv = buildPublishTree(appsHomeDir(), rec, { visibility, login: login ?? 'you', repoName: url.searchParams.get('repo') || undefined, note: url.searchParams.get('note')?.slice(0, 300) || undefined, tagline: url.searchParams.get('tagline')?.slice(0, 200) || undefined });
-    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null, store: publishStore(rec, pv) });
-  } catch (e) { sendFailure(res, e); }
-}
-
-/**
- * The publish screen's store block (app-paylasim-magaza r2 section 4): what the README already
- * says, the first sentence to suggest for a missing tagline, and whether the icon is still the
- * placeholder letter (a line to fix, never a block: the gate is unchanged).
- */
-function publishStore(rec: AppRecord, pv: ReturnType<typeof buildPublishTree>) {
-  const text = pv.sourceReadme?.toString('utf-8') ?? '';
-  const s = parseStoreReadme(text, { full: true });
-  const r = storeReadiness(s);
-  return {
-    tagline: s.taglineGuessed ? null : s.tagline,
-    suggestedTagline: s.taglineGuessed ? s.tagline : null,
-    hasAbout: !!s.about,
-    whatsNew: s.whatsNew[0] ?? null,
-    ready: r.ready,
-    missing: r.missing,
-    iconPlaceholder: isDefaultIconCached(pv.manifest.icon, pv.manifest.slug, pv.manifest.name),
-    hasIcon: servableIcon(pv.manifest.icon) !== null,
-  };
-}
-
 /** GET /api/apps/:slug/store: an app's own store page (README words, screenshots, what it can do). */
 export async function handleAppStore(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
@@ -115,12 +76,34 @@ export async function handleAppStore(req: IncomingMessage, res: ServerResponse, 
   sendJson(res, 200, { tagline: page.readme.tagline, category: page.readme.category, about: page.readme.about, whatsNew: page.readme.whatsNew.slice(0, 1), shots: page.shots, can: page.can, readiness: page.readiness });
 }
 
-export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+/**
+ * POST /api/apps/:slug/publish/grant: the owner pressed Publish on the app's own page (owner
+ * 2026-11-06). That click is his decision to publish, and Claude does the work: one grant for this
+ * app, one hour, spent by the push (`dreamcontext apps publish <slug> --go --grant <id>`).
+ */
+export async function handlePublishGrant(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!ownerOnly(req, res)) return;
-  holdOpen(req);
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
+  if (rec.origin === 'installed' && (rec.source || !rec.provenance)) { sendError(res, 409, 'not_yours', 'This app was installed from someone else. Make it your own copy first.'); return; }
+  const g = mintPublishGrant(rec.projectRoot, rec.slug);
+  sendJson(res, 200, { grant: g.id, expiresAt: new Date(g.expiresAt).toISOString() });
+}
+
+/**
+ * POST /api/apps/:slug/publish: the push. The owner's page, or Claude holding the grant his
+ * Publish click opened for THIS app (`grant` in the body). Anything else: 403 owner_page_only.
+ * The gate runs inside `publishApp` either way; a grant passes nothing it stops.
+ */
+export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  holdOpen(req);
+  const owner = fromOwnerPage(req);
   const b = (await parseJsonBody(req)) ?? {};
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const done = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
+  if (!owner && !done) { sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Publish click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is missing, used, expired or for another app.'); return; }
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
   try {
     const out = await publishApp(rec, {
@@ -133,9 +116,10 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       confirmName: typeof b.confirmName === 'string' ? b.confirmName : undefined,
       fresh: b.fresh === true,
     });
+    done?.(true);
     clearSharedCache();
     sendJson(res, 200, { ok: true, ...out });
-  } catch (e) { sendFailure(res, e); }
+  } catch (e) { done?.(false); sendFailure(res, e); }
 }
 
 // ─── Shared Apps, install ───────────────────────────────────────────────────────
