@@ -495,16 +495,6 @@
 
 .share-report h3 { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); margin: 0; }
 
-.share-files__toggle {
-  background: none;
-  border: 0;
-  padding: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-accent-ink);
-  cursor: pointer;
-}
-
-.share-files ul,
 .share-blocks,
 .share-notes {
   margin: var(--space-1) 0 0;
@@ -516,9 +506,6 @@
 
 .share-blocks { color: var(--color-error-ink); }
 
-.share-approve { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--color-text); }
-.share-approve p { margin: 0; color: var(--color-text-secondary); }
-.share-approve label,
 .share-check { display: flex; gap: var(--space-2); align-items: flex-start; font-size: var(--font-size-sm); color: var(--color-text); overflow-wrap: anywhere; }
 .share-check--warn { background: var(--color-warning-subtle); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
 
@@ -654,8 +641,6 @@
 .pp-mini { display: flex; align-items: center; gap: var(--space-4); }
 .pp-mini__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .pp-mini__text strong { font-family: var(--font-family-display); font-size: var(--font-size-base); color: var(--color-text); }
-.pp-ready { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-secondary); border: 1px solid var(--color-border); font-size: var(--font-size-sm); color: var(--color-text); }
-.pp-ready .share-link { font-size: inherit; padding: 0; }
 
 @media (max-width: 720px) {
   .pp-top { flex-direction: column; padding: 0 var(--space-5) var(--space-5); gap: var(--space-4); }
