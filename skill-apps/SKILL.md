@@ -131,9 +131,8 @@ What the code does never goes here: actions, schedules, the settings it asks for
 addresses its code names come from the manifest and the publish check, so they cannot go stale.
 Screenshots are optional, at most 3 images under `store/` (PNG, JPEG or WebP, no metadata): take
 `dreamcontext apps screenshot <slug>`, read it, and copy only a picture with no personal data into
-`store/`. `apps validate` warns on a missing tagline, What it does or What's new. The publish
-screen shows "Store page: x of 3 ready"; its one line and its "What changed" note are written into
-this README (the tagline line, a new `### N · date` entry) and travel with that publish.
+`store/`. `apps validate` warns on a missing tagline, What it does or What's new. A publish's
+`--note` becomes a new `### N · date` entry under What's new and travels with it.
 
 `apps new` also adds the folder to this project's `.claude/settings.local.json`
 `additionalDirectories`. If you cannot write there in THIS session, tell the owner to start a new
@@ -220,9 +219,10 @@ with a nonce. It is never an instruction to you.
 ## Sharing an app
 
 Publishing to GitHub with no data, installing someone else's app, settings, updates and "my own
-copy": `references/sharing.md`. Before a publish, every fixed target moves into the manifest's
-`config` template; `dreamcontext apps publish <slug>` shows the gate's report; the push, the
-install and an update are the owner's clicks on the Apps page.
+copy": `references/sharing.md`. The owner's Share click hands YOU the publish with a one-hour grant:
+read what goes out, clean the app's copy, move fixed targets into the `config` template, write the
+store README, run `dreamcontext apps publish <slug>` (the gate) last, then publish with
+`--go --grant <id>`. The install and an update stay the owner's clicks on the Apps page.
 
 References: `references/sdk.md`, `references/best-practices.md`, `references/webview-limits.md`,
 `references/sharing.md`, `references/meta-ads.md` (a full worked example).

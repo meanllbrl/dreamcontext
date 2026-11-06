@@ -7,7 +7,10 @@
  * a stand-in shell, so every click goes through the real owner-only routes. The "signed-in account"
  * switches by restarting the API with another DREAMCONTEXT_APPS_LOCAL_LOGIN on the same port.
  *
- *   publisher: an app's own page → Share (store block, private, invite) → publish; a second app
+ *   publisher: an app's own page → Share hands the publish to Claude (no form: Chat opens with the
+ *              prompt and a one-hour grant); the trial stands in for Claude and publishes with
+ *              `apps publish --go --grant` (private, invite); a second app; a wrong, spent or
+ *              another app's grant is refused
  *   installer: Shared Apps → Accept → the store page → Install → settings → the app's page → the
  *              backend answers; My apps shows Made here and From others
  *   publisher: a new version, and a third app published publicly
@@ -157,6 +160,9 @@ async function startApi(login) {
   api.on('error', () => {});
   api.stdin.write(`${KEY}\n`);
   await waitFor(`http://127.0.0.1:${apiPort}/api/health`, api);
+  // The CLI finds the app's server through this file (the real app writes it; a server run from
+  // source does not).
+  writeFileSync(join(home, '.dreamcontext', 'desktop-server.json'), JSON.stringify({ schema: 1, pid: api.pid, port: apiPort, launchToken: 'x'.repeat(43), appBundleId: 'com.dreamcontext.trial' }), { mode: 0o600 });
 }
 
 const SHELL = `window.__TAURI_INTERNALS__ = { invoke: async (cmd) => (cmd === 'owner_key' ? ${JSON.stringify(KEY)} : null), transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
@@ -172,6 +178,7 @@ async function open(vault, width = 1440) {
   const where = `${vault}@${width}`;
   page.on('console', (m) => { if (m.type() === 'error' && !NOISE.test(m.text()) && !/status of 4\d\d/.test(m.text())) findings.push(`${where} console: ${m.text().slice(0, 200)}`); });
   page.on('pageerror', (e) => findings.push(`${where} crash: ${String(e.message).slice(0, 200)}`));
+  page.on('websocket', (ws) => chatSockets.push(ws.url()));
   await page.goto(`${base}/?vault=${vault}`, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
   if (width <= 600) {
@@ -256,6 +263,41 @@ async function openPage(page, name) {
   await tile(page, name).locator('.app-tile__open').click();
   await appPage(page).waitFor({ state: 'visible', timeout: 10_000 });
 }
+/**
+ * Share on the app's page (owner 2026-11-06, yayinla-claude): no publish form opens, Chat comes up
+ * with the publish prompt in its box. Returns the grant the prompt carries; `shotName` saves Chat.
+ */
+async function handOff(page, name, shotName) {
+  await manage(page, name, 'Share');
+  // The chat on screen takes it in its box; with none (or a draft in it) a new chat starts with it.
+  // Only THIS app's prompt counts: an earlier, unsent one can still sit in a box as its draft.
+  const inBox = () => page.evaluate((n) => [...document.querySelectorAll('textarea.chat-cmp-input')].find((t) => t.offsetParent && t.value.includes(`Publish the app "${n}"`))?.value ?? null, name);
+  // A new chat carries its opening prompt on the socket it opens to the server.
+  const handed = () => chatSockets.map((u) => { try { return new URL(u).searchParams.get('prompt'); } catch { return null; } }).find((t) => t && t.includes(`Publish the app "${name}"`)) ?? null;
+  let text = null; let via = null;
+  for (const end = Date.now() + 25_000; Date.now() < end && !text; await page.waitForTimeout(300)) {
+    const box = await inBox();
+    if (box) { text = box; via = 'the chat box'; break; }
+    const sent = handed();
+    if (sent && !handedSeen.has(sent)) { handedSeen.add(sent); text = sent; via = 'a new chat'; }
+  }
+  check(!!text, `${name}: Share did not hand the publish prompt to Chat`);
+  if (!text) { await shot(page, `x-handoff-missing-${name.toLowerCase().replace(/ /g, '-')}`); return null; }
+  check(text.includes(`/apps Publish the app`) && text.includes(`(${name.toLowerCase().replace(/ /g, '-')})`), `${name}: the prompt is not the publish ask: ${text.slice(0, 120)}`);
+  check(await page.locator('.share-sheet').count() === 0, `${name}: a sheet is still open after Share (the old form?)`);
+  check(!(await page.getByText('Who can install it').count()), `${name}: the publish form is on screen`);
+  await page.waitForTimeout(800);
+  if (shotName) await shot(page, shotName);
+  step(`${name}: Share → ${via} got the publish prompt`);
+  return /--grant ([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? null;
+}
+const handedSeen = new Set();
+const chatSockets = [];
+/** Claude's last step, the CLI push with the grant (the trial stands in for Claude). */
+function cliPublish(slug, grant, ...flags) {
+  const r = dc(pub, 'apps', 'publish', slug, '--go', '--grant', String(grant), ...flags);
+  return { ok: r.status === 0, out: `${r.stdout}${r.stderr}` };
+}
 async function manage(page, name, action) {
   await openPage(page, name);
   await appPage(page).getByRole('button', { name: action, exact: true }).click();
@@ -289,27 +331,25 @@ try {
     check(await seen(page, 'Shows the weather note for the city you set.'), 'own page: the README tagline is missing');
     check(await seen(page, 'Every day at 08:00'), 'own page: the schedule is not said in words');
     await shot(page, '0b-kendi-sayfam');
-    await appPage(page).getByRole('button', { name: 'Share', exact: true }).click();
-    check(await seen(page, 'Ready to go'), 'publish sheet: the gate is not clear');
-    check(await seen(page, '3 of 3 ready'), 'publish sheet: Hava Notu store page is not 3 of 3');
-    await page.getByPlaceholder('ali, ayse').fill(INSTALLER);
-    await shot(page, '1-yayin-ekrani');
-    await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    check(await seen(page, 'is on GitHub', 45_000), 'publish: no "is on GitHub" after Publish');
-    await shot(page, '1b-yayinlandi');
-    await page.getByRole('button', { name: 'Close' }).last().click();
     await closeTop(page);
-    // Kreatif Takip: no tagline yet; the suggested first sentence fills the field, the icon is the placeholder.
-    await manage(page, 'Kreatif Takip', 'Share');
-    check(await seen(page, 'placeholder icon'), 'publish sheet: the placeholder icon line is missing');
-    check(await seen(page, '2 of 3 ready') || await seen(page, '3 of 3 ready'), 'publish sheet: no store readiness line');
-    await page.getByLabel('One line about it').fill('Lists this week\'s creatives with their spend.');
-    await page.getByPlaceholder('ali, ayse').fill(INSTALLER);
-    await page.waitForTimeout(1200);
-    await shot(page, '1c-yayin-eksikli');
-    await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    check(await seen(page, 'is on GitHub', 45_000), 'publish Kreatif Takip failed');
     await context.close();
+  }
+  {
+    const { page, context } = await open('pub');
+    const grant = await handOff(page, 'Hava Notu', '1-yayinla-sohbet');
+    await context.close();
+    check((await cliPublish('hava-notu', 'not-the-grant', '--invite', INSTALLER)).out.includes('Publishing needs the owner'), 'publish: a made-up grant was not refused');
+    const k = await open('pub');
+    const otherGrant = await handOff(k.page, 'Kreatif Takip', null);
+    await k.context.close();
+    check(!(await cliPublish('hava-notu', otherGrant)).ok, 'publish: another app\'s grant published Hava Notu');
+    const first = cliPublish('hava-notu', grant, '--invite', INSTALLER);
+    check(first.ok && first.out.includes('is on GitHub'), `publish Hava Notu with the grant failed: ${first.out.slice(-300)}`);
+    check((await cliPublish('hava-notu', grant)).out.includes('Publishing needs the owner'), 'publish: a spent grant published again');
+    // Kreatif Takip: no tagline yet, the placeholder icon; Claude writes the one line.
+    const kt1 = cliPublish('kreatif-takip', otherGrant, '--invite', INSTALLER, '--tagline', 'Lists this week\'s creatives with their spend.');
+    check(kt1.ok, `publish Kreatif Takip failed: ${kt1.out.slice(-300)}`);
+    step('Share handed both publishes to Chat (prompt + grant, no form); a made-up, another app\'s and a spent grant were refused');
     const log = execFileSync('git', ['--git-dir', join(hostDir, PUBLISHER, 'hava-notu-app.git'), 'log', '--format=%an|%ae|%cd', '--date=raw'], { encoding: 'utf-8' }).trim();
     check(/^ornek-yayinci\|0\+ornek-yayinci@users\.noreply\.github\.com\|\d+ \+0000$/.test(log), `publish: commit identity is ${log}`);
     const files = execFileSync('git', ['--git-dir', join(hostDir, PUBLISHER, 'hava-notu-app.git'), 'ls-tree', '-r', '--name-only', 'main'], { encoding: 'utf-8' });
@@ -366,21 +406,17 @@ try {
   {
     writeFileSync(join(havaRoot, 'public', 'note.js'), 'export const version = 2;\n');
     git(havaRoot, 'commit', '-qam', 'v2');
-    const { page, context } = await open('pub');
-    await manage(page, 'Hava Notu', 'Share');
-    await page.getByLabel(/What changed/).fill('Shows tomorrow too');
-    await page.waitForTimeout(1200);
-    await page.getByRole('button', { name: 'Publish the new version' }).click();
-    check(await seen(page, 'is on GitHub', 45_000), 'update publish failed');
-    await page.getByRole('button', { name: 'Close' }).last().click();
-    await closeTop(page);
-    await manage(page, 'Sayac', 'Share');
-    await page.getByText('Anyone with the link').click();
-    await page.getByLabel(/Type the app's name/).fill('Sayac');
-    await page.waitForTimeout(1500);
-    await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    check(await seen(page, 'is on GitHub', 45_000), 'public publish failed');
-    await context.close();
+    const a = await open('pub');
+    const g2 = await handOff(a.page, 'Hava Notu', null);
+    await a.context.close();
+    const v2 = cliPublish('hava-notu', g2, '--note', 'Shows tomorrow too');
+    check(v2.ok, `update publish failed: ${v2.out.slice(-300)}`);
+    const b = await open('pub');
+    const g3 = await handOff(b.page, 'Sayac', null);
+    await b.context.close();
+    check(!cliPublish('sayac', g3, '--public').ok, 'public publish went out without the name confirmed');
+    const pubOut = cliPublish('sayac', g3, '--public', '--confirm-name', 'Sayac');
+    check(pubOut.ok, `public publish failed: ${pubOut.out.slice(-300)}`);
     const hn = readFileSync(join(havaRoot, 'README.md'), 'utf-8');
     check(/### 2 · \d{4}-\d{2}-\d{2}\n- Shows tomorrow too/.test(hn), 'publish: the note did not become What\'s new version 2');
     step('publisher pushed Hava Notu v2 (README What\'s new 2) and published Sayac publicly');

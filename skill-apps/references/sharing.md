@@ -1,8 +1,9 @@
 # Sharing an app
 
 An app can be published to GitHub with no data, and installed by someone else from Shared Apps
-(a private repo they were invited to) or from a public link ("Install from a link"). This page is what an agent does;
-the decisions are the owner's clicks on the Apps page.
+(a private repo they were invited to) or from a public link ("Install from a link"). This page is what an agent does.
+A publish is YOURS to do: the owner presses Share on the app's page and you get the job. Installing,
+updating and the rest stay his clicks on the Apps page.
 
 ## What travels and what never does
 
@@ -19,14 +20,21 @@ git history, name, e-mail and time zone never do.
 
 The gate stops a publish on: a key or token, an `.env` or setting value, an e-mail, a phone
 number, a person's name (people, git name, Mac user), a home path, an account id, image metadata.
-Nobody can pass those: fix the app. Generic words of the owner's own (project, insight, objective,
-AI Team, MCP, linked repo names, long numbers) are lines the owner ticks one by one.
+Nobody can pass those, not the owner and not you with `--approve`: fix the app. Generic words of the
+owner's own (project, insight, objective, AI Team, MCP, linked repo names, long numbers) are lines
+the owner lets go one by one: ask him in the chat, then pass their ids with `--approve`.
 
-## Your part before a publish
+## Publishing (the owner pressed Share)
 
-1. Move every fixed target into settings: an insight slug, a member, an MCP tool, a label. Write a
-   `config` template in the manifest and read the values with `dc.config()` (page or backend) or
-   `process.env.DC_CONFIG`:
+His Share click on the app's page opens a grant on this Mac for THAT app, for one hour and one
+publish, and puts a prompt in Chat with it. There is no publish form: you do all of it.
+
+1. Read every file that would go out: `dreamcontext apps publish <slug>` lists them. Open each
+   one, and look at the pixels of every image and store screenshot.
+2. Find personal or business data: names, customers, e-mails, keys, real numbers, home paths,
+   account ids, sample data that is real. Clean it in the app's own folder and commit. Every fixed
+   target moves into settings: write a `config` template in the manifest and read the values with
+   `dc.config()` (page or backend) or `process.env.DC_CONFIG`:
    ```json
    "config": [
      { "key": "insight", "type": "insight", "label": "Which insight to watch", "required": true },
@@ -35,11 +43,20 @@ AI Team, MCP, linked repo names, long numbers) are lines the owner ticks one by 
    ```
    Types: `text`, `number`, `choice` (+ `choices`), `secret` (a `.env` key, capitals), `insight`,
    `objective`, `agent`, `task-tag`, `mcp-tool`. A required empty setting keeps the app from starting.
-2. Fill the owner's own values: `dreamcontext apps config <slug> --set insight=<slug>` (never a
+   Fill the owner's own values with `dreamcontext apps config <slug> --set insight=<slug>` (never a
    secret; a key is the owner's: the secret card, or `apps secret <slug> <KEY>` in his terminal).
-3. Fill `README.md` with the store skeleton (SKILL.md: tagline, What it does, Screenshots, What's new), then commit.
-4. `dreamcontext apps publish <slug> [--public]`: the gate's report. Fix what stops it; tell the
-   owner which generic lines wait for his tick. The push is his click: Apps page → the card → Share.
+3. Write or refresh `README.md`, the store page (SKILL.md: tagline, What it does, Screenshots),
+   then commit. What's new comes from `--note`.
+4. `dreamcontext apps publish <slug> [--public]` again: the gate is the last hard stop. Fix every
+   block in the app; never work around one.
+5. Ask the owner ONE question, only for what you cannot decide: who gets it (people he invites, by
+   GitHub username; or anyone with the link, public for good, and then he confirms its name), and
+   the generic-word lines he may let go.
+6. Publish: `dreamcontext apps publish <slug> --go --grant <id> --note "<what changed>"
+   [--invite <logins>] [--approve <ids>] [--public --confirm-name "<name>"]`. A stopped publish
+   frees the grant for a retry within the hour; a sent one spends it. No grant, a used one or
+   another app's: 403 `owner_page_only` (ask him to press Share again).
+7. End with a short plain list: what you cleaned, what went out, where.
 
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public
 publish is for good, so the owner types the app's name to confirm.
