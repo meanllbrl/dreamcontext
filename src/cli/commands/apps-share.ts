@@ -67,7 +67,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
   apps
     .command('publish <slug>')
     .description("Check what a publish would send and what stops it; with --go and the grant the owner's Publish click gave you, publish it")
-    .option('--public', 'As a public app (strict check: LICENSE and README required; public is for good)')
+    .option('--public', 'As a public app (strict check: LICENSE and README required; public is for good, and only a grant from the owner\'s "Share publicly" click allows it)')
     .option('--dry-run', 'Only the report (the default; kept for clarity)')
     .option('--repo <name>', 'Repo name (default <slug>-app)')
     .option('--go', 'Publish now (needs --grant)')
@@ -76,7 +76,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--approve <ids...>', 'Generic-word lines the owner let go in the chat (the [id] in the report)')
     .option('--note <text>', "What changed, one line (becomes the README's What's new entry and the commit)")
     .option('--tagline <text>', "The store page's one line (README tagline:)")
-    .option('--confirm-name <name>', "A public app: the app's name, as the owner confirmed it")
+    .option('--confirm-name <name>', "Not needed with a grant (the owner's \"Share publicly\" click confirms a public app)")
     .option('--json', 'JSON output')
     .action(async (slug: string, opts: { public?: boolean; repo?: string; go?: boolean; grant?: string; invite?: string[]; approve?: string[]; note?: string; tagline?: string; confirmName?: string; json?: boolean }) => {
       try {
@@ -92,7 +92,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
             ...(opts.note !== undefined ? { note: opts.note } : {}),
             ...(opts.tagline !== undefined ? { tagline: opts.tagline } : {}),
             ...(opts.confirmName !== undefined ? { confirmName: opts.confirmName } : {}),
-          }, { timeoutMs: 600_000 });
+          }, { timeoutMs: 900_000 });
           if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
           success(`${slug} is on GitHub: ${String(out.fullName)} (${Number(out.sent ?? 0)} file(s))`);
           const invited = (out.invited as string[] | undefined) ?? [];

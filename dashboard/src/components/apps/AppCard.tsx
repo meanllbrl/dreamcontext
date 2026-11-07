@@ -152,12 +152,12 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
    * prompt that has Claude clean, write the store page, run the gate and publish with the CLI.
    */
   const [handing, setHanding] = useState(false);
-  const handToClaude = async () => {
+  const handToClaude = async (visibility: 'private' | 'public') => {
     if (handing) return;
     setManageErr(null); setHanding(true);
     try {
-      const g = await api.ownerPost<{ grant: string }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, {});
-      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, published: app.publish ?? null });
+      const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
+      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null });
       askAgent(bus, prompt, {
         taken: () => { setHanding(false); onClose(); },
         // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
@@ -279,7 +279,8 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
           )}
           <div className="app-card__share">
-            {(!installed || !following) && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude()}>{t('share.card.share')}</button>}
+            {(!installed || !following) && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('private')}>{t('share.card.share')}</button>}
+            {(!installed || !following) && !app.publish?.public && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('public')}>{t('share.card.sharePublic')}</button>}
             {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
             {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
             {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}

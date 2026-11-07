@@ -337,6 +337,10 @@ export interface PublishOptions {
   tagline?: string;
   /** A public publish: the owner types the app's name (it is public forever). */
   confirmName?: string;
+  /** The owner already confirmed a public publish another way (his "Share publicly" click). */
+  confirmed?: boolean;
+  /** Called the moment the push went out (the grant is spent there, whatever fails after). */
+  onPushed?: () => void;
   /** Start a NEW repo (a public copy with today's version only). */
   fresh?: boolean;
 }
@@ -357,7 +361,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   const user: HostUser = await opts.host.me();
   const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, tagline: opts.tagline, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
   if (!pv.report.ok) throw new PublishError('gate_blocked', pv.report.blocks.length ? `${pv.report.blocks.length} problem(s) must be fixed before publishing.` : `${pv.report.unapproved.length} line(s) wait for your approval.`, pv.report);
-  if (opts.visibility === 'public' && (opts.confirmName ?? '').trim() !== pv.manifest.name) throw new PublishError('confirm_name', `A public app is public for good: type its name (${pv.manifest.name}) to publish.`);
+  if (opts.visibility === 'public' && !opts.confirmed && (opts.confirmName ?? '').trim() !== pv.manifest.name) throw new PublishError('confirm_name', `A public app is public for good: type its name (${pv.manifest.name}) to publish.`);
 
   const host = opts.host;
   const prev = opts.fresh ? undefined : rec.publish;
@@ -417,6 +421,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
     rmSync(idx, { recursive: true, force: true });
   }
   await host.withGit((env) => installedGitAsync(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
+  opts.onPushed?.();
   updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
 
   const readmeWrittenBack = pv.storeReadme !== null ? writeBackStoreReadme(rec, pv.storeReadme, pv.sourceReadme) : null;

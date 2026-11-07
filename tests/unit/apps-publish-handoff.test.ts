@@ -12,7 +12,7 @@ const ROOT = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 describe('the publish prompt', () => {
-  const text = publishPrompt({ slug: 'hava-notu', name: 'Hava Notu', grant: 'G-123_abc', published: null });
+  const text = publishPrompt({ slug: 'hava-notu', name: 'Hava Notu', grant: 'G-123_abc', visibility: 'private', published: null });
 
   it('has Claude do the whole publish, in order, with the grant on the CLI', () => {
     expect(text.startsWith('/apps Publish the app "Hava Notu" (hava-notu).')).toBe(true);
@@ -30,10 +30,18 @@ describe('the publish prompt', () => {
     expect(text).toContain('and commit');
     expect(text).toContain('never work around one');
     expect(text).toContain('It has never been published.');
+    expect(text).toContain('Private: people I invite');
+    expect(text).not.toContain('--public');
   });
 
-  it('a new version keeps the visibility it has', () => {
-    expect(publishPrompt({ slug: 's', name: 'S', grant: 'g', published: { fullName: 'ornek/s-app', public: true } })).toContain('already on GitHub as ornek/s-app (public)');
+  it('a public click says public; the app\'s name never goes on a command line', () => {
+    const name = 'Evil"$(rm -rf ~)"';
+    const pub = publishPrompt({ slug: 's', name, grant: 'g', visibility: 'public', published: { fullName: 'ornek/s-app', public: true } });
+    expect(pub).toContain('Public: anyone with the link, for good');
+    expect(pub).toContain('--go --grant g --public');
+    expect(pub).toContain('already on GitHub as ornek/s-app');
+    for (const cmd of pub.match(/`[^`]*`/g) ?? []) expect(cmd, cmd).not.toContain(name);
+    expect(pub).not.toContain('--confirm-name');
   });
 });
 
@@ -44,7 +52,8 @@ describe('the Share button', () => {
     expect(existsSync(join(ROOT, 'dashboard/src/components/apps/PublishSheet.tsx'))).toBe(false);
     expect(read('dashboard/src/components/apps/ShareSheets.tsx')).not.toContain('PublishSheet');
     expect(card).not.toMatch(/PublishSheet|setSheet\('publish'\)/);
-    expect(card).toMatch(/onClick=\{\(\) => void handToClaude\(\)\}>\{t\('share\.card\.share'\)\}/);
+    expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('private'\)\}>\{t\('share\.card\.share'\)\}/);
+    expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('public'\)\}>\{t\('share\.card\.sharePublic'\)\}/);
     expect(card).toContain('/publish/grant');
     expect(card).toMatch(/askAgent\(bus, prompt, \{/);
     // No chat on screen can take it: a new chat starts with it, shown.
@@ -56,8 +65,12 @@ describe('the Share button', () => {
     const grantFn = route.slice(route.indexOf('export async function handlePublishGrant'), route.indexOf('export async function handlePublish('));
     expect(grantFn).toMatch(/if \(!ownerOnly\(req, res\)\) return;/);
     const pushFn = route.slice(route.indexOf('export async function handlePublish('), route.indexOf('// ─── Shared Apps'));
-    expect(pushFn).toMatch(/const done = owner \? null : takePublishGrant\(rec\.projectRoot, rec\.slug, b\.grant\);/);
-    expect(pushFn).toMatch(/if \(!owner && !done\) \{ sendError\(res, 403, 'owner_page_only'/);
+    expect(pushFn).toMatch(/const held = owner \? null : takePublishGrant\(rec\.projectRoot, rec\.slug, b\.grant\);/);
+    expect(pushFn).toMatch(/sendError\(res, 403, 'owner_page_only'/);
+    // Going public needs the owner's own public click; the grant is spent once the push went out.
+    expect(pushFn).toMatch(/held\.visibility !== requested\) \{\s*held\.done\(false\);\s*sendError\(res, 403, 'grant_scope'/);
+    expect(pushFn).toContain('onPushed: () => done?.(true)');
+    expect(read('src/lib/apps/share/publish.ts')).toMatch(/refs\/heads\/main:refs\/heads\/main'\][^\n]*\n\s*opts\.onPushed\?\.\(\);/);
   });
 });
 

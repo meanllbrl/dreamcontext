@@ -26,8 +26,10 @@ the owner lets go one by one: ask him in the chat, then pass their ids with `--a
 
 ## Publishing (the owner pressed Share)
 
-His Share click on the app's page opens a grant on this Mac for THAT app, for one hour and one
-publish, and puts a prompt in Chat with it. There is no publish form: you do all of it.
+His click on the app's page opens a grant on this Mac for THAT app, for one hour and one publish,
+and puts a prompt in Chat with it. There is no publish form: you do all of it. **Share** opens a
+private publish (people he invites); **Share publicly** a public one (for good). The grant holds
+that choice: you cannot turn a private click into a public publish (403 `grant_scope`).
 
 1. Read every file that would go out: `dreamcontext apps publish <slug>` lists them. Open each
    one, and look at the pixels of every image and store screenshot.
@@ -49,17 +51,18 @@ publish, and puts a prompt in Chat with it. There is no publish form: you do all
    then commit. What's new comes from `--note`.
 4. `dreamcontext apps publish <slug> [--public]` again: the gate is the last hard stop. Fix every
    block in the app; never work around one.
-5. Ask the owner ONE question, only for what you cannot decide: who gets it (people he invites, by
-   GitHub username; or anyone with the link, public for good, and then he confirms its name), and
-   the generic-word lines he may let go.
-6. Publish: `dreamcontext apps publish <slug> --go --grant <id> --note "<what changed>"
-   [--invite <logins>] [--approve <ids>] [--public --confirm-name "<name>"]`. A stopped publish
-   frees the grant for a retry within the hour; a sent one spends it. No grant, a used one or
-   another app's: 403 `owner_page_only` (ask him to press Share again).
+5. Ask the owner ONE question, only for what you cannot decide: the GitHub usernames to invite (a
+   private publish), what changed, and the generic-word lines he may let go.
+6. Publish, with a 15 minute timeout on the command:
+   `dreamcontext apps publish <slug> --go --grant <id> --note "<what changed>" [--public] [--invite <logins>] [--approve <ids>]`. The
+   grant is spent the moment the push goes out; a publish the gate stopped frees it for a retry
+   within the hour. Refused: `grant_expired` or `owner_page_only` (used, replaced, the app
+   restarted): ask him to press Share again and publish with the new grant, your work stays;
+   `publish_running`: wait, never publish twice.
 7. End with a short plain list: what you cleaned, what went out, where.
 
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public
-publish is for good, so the owner types the app's name to confirm.
+publish is for good, so only the owner's own "Share publicly" click opens one.
 
 ## Installing (the installer's side)
 

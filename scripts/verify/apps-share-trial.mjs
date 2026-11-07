@@ -267,13 +267,18 @@ async function openPage(page, name) {
  * Share on the app's page (owner 2026-11-06, yayinla-claude): no publish form opens, Chat comes up
  * with the publish prompt in its box. Returns the grant the prompt carries; `shotName` saves Chat.
  */
-async function handOff(page, name, shotName) {
-  await manage(page, name, 'Share');
+async function handOff(page, name, shotName, action = 'Share') {
+  // The grant this click opened, from the server's own answer (never an older one in a draft).
+  const granted = page.waitForResponse((r) => r.url().includes('/publish/grant') && r.request().method() === 'POST', { timeout: 15_000 }).then((r) => r.json()).catch(() => null);
+  await manage(page, name, action);
+  const minted = await granted;
+  check(!!minted?.grant, `${name}: ${action} opened no grant`);
+  if (!minted?.grant) return null;
   // The chat on screen takes it in its box; with none (or a draft in it) a new chat starts with it.
   // Only THIS app's prompt counts: an earlier, unsent one can still sit in a box as its draft.
-  const inBox = () => page.evaluate((n) => [...document.querySelectorAll('textarea.chat-cmp-input')].find((t) => t.offsetParent && t.value.includes(`Publish the app "${n}"`))?.value ?? null, name);
+  const inBox = () => page.evaluate((g) => [...document.querySelectorAll('textarea.chat-cmp-input')].find((t) => t.offsetParent && t.value.includes(`--grant ${g}`))?.value ?? null, minted.grant);
   // A new chat carries its opening prompt on the socket it opens to the server.
-  const handed = () => chatSockets.map((u) => { try { return new URL(u).searchParams.get('prompt'); } catch { return null; } }).find((t) => t && t.includes(`Publish the app "${name}"`)) ?? null;
+  const handed = () => chatSockets.map((u) => { try { return new URL(u).searchParams.get('prompt'); } catch { return null; } }).find((t) => t && t.includes(`--grant ${minted.grant}`)) ?? null;
   let text = null; let via = null;
   for (const end = Date.now() + 25_000; Date.now() < end && !text; await page.waitForTimeout(300)) {
     const box = await inBox();
@@ -289,7 +294,8 @@ async function handOff(page, name, shotName) {
   await page.waitForTimeout(800);
   if (shotName) await shot(page, shotName);
   step(`${name}: Share → ${via} got the publish prompt`);
-  return /--grant ([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? null;
+  check(text.includes(action === 'Share' ? 'Private: people I invite' : 'Public: anyone with the link'), `${name}: the prompt does not carry the visibility clicked`);
+  return minted.grant;
 }
 const handedSeen = new Set();
 const chatSockets = [];
@@ -343,6 +349,7 @@ try {
     const otherGrant = await handOff(k.page, 'Kreatif Takip', null);
     await k.context.close();
     check(!(await cliPublish('hava-notu', otherGrant)).ok, 'publish: another app\'s grant published Hava Notu');
+    check((await cliPublish('hava-notu', grant, '--public')).out.includes('grant_scope'), 'publish: a private click published publicly');
     const first = cliPublish('hava-notu', grant, '--invite', INSTALLER);
     check(first.ok && first.out.includes('is on GitHub'), `publish Hava Notu with the grant failed: ${first.out.slice(-300)}`);
     check((await cliPublish('hava-notu', grant)).out.includes('Publishing needs the owner'), 'publish: a spent grant published again');
@@ -412,10 +419,9 @@ try {
     const v2 = cliPublish('hava-notu', g2, '--note', 'Shows tomorrow too');
     check(v2.ok, `update publish failed: ${v2.out.slice(-300)}`);
     const b = await open('pub');
-    const g3 = await handOff(b.page, 'Sayac', null);
+    const g3 = await handOff(b.page, 'Sayac', '1d-herkese-acik-sohbet', 'Share publicly');
     await b.context.close();
-    check(!cliPublish('sayac', g3, '--public').ok, 'public publish went out without the name confirmed');
-    const pubOut = cliPublish('sayac', g3, '--public', '--confirm-name', 'Sayac');
+    const pubOut = cliPublish('sayac', g3, '--public');
     check(pubOut.ok, `public publish failed: ${pubOut.out.slice(-300)}`);
     const hn = readFileSync(join(havaRoot, 'README.md'), 'utf-8');
     check(/### 2 · \d{4}-\d{2}-\d{2}\n- Shows tomorrow too/.test(hn), 'publish: the note did not become What\'s new version 2');

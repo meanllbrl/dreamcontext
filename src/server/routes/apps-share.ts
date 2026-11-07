@@ -83,11 +83,16 @@ export async function handleAppStore(req: IncomingMessage, res: ServerResponse, 
  */
 export async function handlePublishGrant(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!ownerOnly(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
   if (rec.origin === 'installed' && (rec.source || !rec.provenance)) { sendError(res, 409, 'not_yours', 'This app was installed from someone else. Make it your own copy first.'); return; }
-  const g = mintPublishGrant(rec.projectRoot, rec.slug);
-  sendJson(res, 200, { grant: g.id, expiresAt: new Date(g.expiresAt).toISOString() });
+  // The visibility is the owner's click: Share is private, "Share publicly" public. An app that
+  // is already public stays public (a new version).
+  const visibility = b.visibility === 'public' || rec.publish?.public ? 'public' : 'private';
+  const g = mintPublishGrant(rec.projectRoot, rec.slug, visibility);
+  if (!g) { sendError(res, 409, 'publish_running', 'A publish of this app is still running. Wait for it to finish.'); return; }
+  sendJson(res, 200, { grant: g.id, visibility: g.visibility, expiresAt: new Date(g.expiresAt).toISOString() });
 }
 
 /**
@@ -102,8 +107,21 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
   const b = (await parseJsonBody(req)) ?? {};
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
-  const done = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
-  if (!owner && !done) { sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Publish click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is missing, used, expired or for another app.'); return; }
+  const held = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
+  if (held && !held.ok) {
+    if (held.why === 'running') { sendError(res, 409, 'publish_running', 'A publish on this grant is still running. Wait, then run `dreamcontext apps list` to see whether it went out; do not publish again.'); return; }
+    if (held.why === 'expired') { sendError(res, 403, 'grant_expired', 'The grant ran out (one hour). The work you did stays: ask the owner to press Share on the app\'s page again, then publish with the new grant.'); return; }
+    sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Share click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is not it (made up, used, replaced by a newer click, for another app, or the app restarted): ask him to press Share again.');
+    return;
+  }
+  const done = held?.ok ? held.done : null;
+  const requested = b.visibility === 'public' ? 'public' : 'private';
+  // Going public is for good: only the owner's own "Share publicly" click opens it.
+  if (held?.ok && held.visibility !== requested) {
+    held.done(false);
+    sendError(res, 403, 'grant_scope', held.visibility === 'private' ? 'The owner opened a private publish (Share). Going public needs his own "Share publicly" click on the app\'s page.' : 'The owner opened a public publish: publish with --public.');
+    return;
+  }
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
   try {
     const out = await publishApp(rec, {
@@ -113,8 +131,12 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       invite: strings(b.invite), approvals: strings(b.approvals),
       note: typeof b.note === 'string' ? b.note : undefined,
       tagline: typeof b.tagline === 'string' ? b.tagline : undefined,
-      confirmName: typeof b.confirmName === 'string' ? b.confirmName : undefined,
+      // A public grant IS the owner's confirmation (his "Share publicly" click).
+      confirmName: held?.ok && held.visibility === 'public' ? undefined : typeof b.confirmName === 'string' ? b.confirmName : undefined,
+      confirmed: held?.ok && held.visibility === 'public',
       fresh: b.fresh === true,
+      // Spent the moment the push went out: a failure after it never frees it for a second push.
+      onPushed: () => done?.(true),
     });
     done?.(true);
     clearSharedCache();

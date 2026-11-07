@@ -654,3 +654,5 @@
   .apps-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .store-row { align-items: flex-start; }
 }
+
+.share-link:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
