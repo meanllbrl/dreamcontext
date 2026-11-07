@@ -135,6 +135,23 @@ describe('the record invariant (every write)', () => {
     expect(floatCount(s)).toBe(MAX_FLOAT);
   });
 
+  it('what the owner placed or sized never goes to Others for a live job (owner 2026-11-06)', () => {
+    const s = base({
+      containers: [
+        { id: 'agenda-a', kind: 'agenda', ref: 'agenda', shape: 'square', place: 'float' },
+        pic(1, { pos: { x: 0.1, y: 0.1 } }), pic(2, { size: 'large', sizeBy: 'owner' }),
+        ...Array.from({ length: MAX_FLOAT - 3 }, (_, i) => chat(`l${i}`)),
+        chat('w', 'others'),
+      ],
+      children: Object.fromEntries([...Array.from({ length: MAX_FLOAT - 3 }, (_, i) => `l${i}`), 'w'].map((k) => [k, child(k, { row: 'working' })])) as SuperState['children'],
+    });
+    expect(floatCount(s)).toBe(MAX_FLOAT);
+    const out = floatLiveChildren(s, idle);
+    expect(out.floated).toEqual([cid('w')]);
+    expect(out.stacked).toEqual([]);
+    expect(s.containers.filter((c) => c.kind === 'image').map((c) => c.place)).toEqual(['float', 'float']);
+  });
+
   it('a stage of live jobs only: the cap gives way, every live card floats', () => {
     const sids = Array.from({ length: MAX_FLOAT + 1 }, (_, i) => `w${i}`);
     const s = base({

@@ -203,11 +203,11 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
 });
 
 describe('the centre takes the larger share and never moves (stage v2, 2026-10-20)', () => {
-  it('56% of the stage (within its floor and ceiling), centred, whatever opens or closes', () => {
+  it('its width from the stage alone (56%, or two columns a side on a wide stage, owner 2026-11-06), centred, whatever opens or closes', () => {
     for (const s of STAGES) for (let n = 0; n <= MAX_FLOAT; n++) {
       const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 2 ? 'square' : 'tall')), FLOAT, s);
       expect(p.centre.width, `${n} cards at ${s.width}`).toBeCloseTo(preferredCentre(s.width), 6);
-      expect(p.centre.width / s.width).toBeGreaterThanOrEqual(0.55);
+      expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN);
       expectCentred(p);
     }
   });

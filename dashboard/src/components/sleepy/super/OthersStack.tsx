@@ -24,8 +24,9 @@ export function OthersStack({ items, rect, open, onToggle, stackRef, more = fals
   open: boolean;
   onToggle: () => void;
   stackRef?: RefObject<HTMLButtonElement | null>;
-  /** The rail's temporary "more" tile beside a page or a presentation (owner 2026-10-28): the same
-   *  pill, its own name, its live jobs' dots; it lives only as long as that view. */
+  /** The "more" pill: live jobs with no room on the stage, beside a page or a presentation (owner
+   *  2026-10-28) or beside Others (owner 2026-11-06): the same pill, its own name, its live jobs'
+   *  dots; it lives only as long as they have no room. */
   more?: boolean;
 }) {
   const { t } = useI18n();

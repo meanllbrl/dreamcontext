@@ -98,8 +98,9 @@ describe('a card grows into the empty column beside the centre', () => {
       c('tB', 'task', { pos: { x: 0.868, y: 0.633 } }),
     ];
     const { before, after, fits, cp } = grow(cs, OWNER, 'tB', 'large');
-    const g: Rect = { x: cp.rect.x, y: cp.rect.y, width: 344, height: 344 };
-    expect(Object.values(before.cards).some((d) => d.id !== 'tB' && d.where === 'float' && overlaps(g, d.rect, STAGE.GAP - 1))).toBe(false);
+    // The chat keeps the stage's width (owner 2026-11-06); the check and the drawn stage agree.
+    expect(before.centre.width).toBeCloseTo(preferredCentre(OWNER.width), 6);
+    expect(after.centre.width).toBeCloseTo(before.centre.width, 6);
     expect(fits).toBe(true);
     expect(after.cards.tB).toMatchObject({ where: 'float', size: 'large' });
     expect(after.cards.tB.rect.x).toBeCloseTo(cp.rect.x, 0);
@@ -134,7 +135,7 @@ describe('a card grows into the empty column beside the centre', () => {
     expectSound(after, 'owner');
   });
 
-  it('a size that truly cannot be drawn is still refused: 3x2 beside a centre already at its floor', () => {
+  it('a size that truly cannot be drawn is refused: two 2x2 sides do not fit beside the chat at a 1440 window (owner 2026-11-06)', () => {
     const cs = [
       c('pic', 'image', { size: 'large', sizeBy: 'owner', pos: { x: 0, y: 0.2 } }),
       c('a', 'task', { pos: { x: 0.9, y: 0.5 } }),
@@ -143,7 +144,10 @@ describe('a card grows into the empty column beside the centre', () => {
     // 2x2 on the left, 3x2 on the right and the centre at its floor are wider than the stage.
     expect(2 * STAGE.MARGIN + 344 + 528 + 2 * STAGE.GAP + STAGE.CENTRE_MIN).toBeGreaterThan(before.width);
     expect(fits).toBe(false);
-    expect(grow(cs, S1440, 'a', 'large').fits).toBe(true);
+    // His 2x2 on the left takes the second column there; the chat keeps its width, so a 2x2 on the
+    // right is refused too, and a 2x1 is not either.
+    expect(grow(cs, S1440, 'a', 'large').fits).toBe(false);
+    expect(before.centre.width).toBeCloseTo(preferredCentre(S1440.width), 6);
   });
 
   it('on any stage: a 2x2 whose rect is free beside the card it grows from is never refused, and is drawn sound', () => {
@@ -177,7 +181,7 @@ describe('a card grows into the empty column beside the centre', () => {
     expect(tried).toBeGreaterThan(300);
   });
 
-  it('review r1: setting his cards aside never sends a live job to Others (two 2x2 of his, six live chats, 1440x900)', () => {
+  it('review r1: setting his cards aside never sends a live job to the Others stack (two 2x2 of his, six live chats, 1440x900)', () => {
     const cs = [
       c('o1', 'task', { size: 'large', sizeBy: 'owner', pos: { x: 0.95, y: 0.1 } }),
       c('o2', 'task', { size: 'large', sizeBy: 'owner', pos: { x: 0.95, y: 0.8 } }),
@@ -185,7 +189,9 @@ describe('a card grows into the empty column beside the centre', () => {
     ];
     const live = ['a', 'b', 'd', 'e', 'f', 'g'];
     const p = planStage(stageItems(cs, [], FLOAT, (k) => live.includes(k.id)), FLOAT, S1440);
-    for (const id of live) expect(p.cards[id].where, id).toBe('float');
+    // A live job with no room waits in the "more" pill (owner 2026-11-06), never in the stack.
+    for (const id of live) expect(p.cards[id].where === 'float' || !!p.more?.ids.includes(id), id).toBe(true);
+    for (const id of live) expect(p.others, id).not.toContain(id);
     // His cards stay on his side of the centre.
     for (const id of ['o1', 'o2']) if (p.cards[id].where === 'float') expect(p.cards[id].rect.x).toBeGreaterThan(p.centre.x);
     expectSound(p, 'six live');
