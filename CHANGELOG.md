@@ -4,6 +4,25 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.5] - 2026-11-08
+
+Patch on 0.41.4: one batch of fixes and small features, built together. Local build; not published.
+
+- **The Super stage keeps its width.** With many live cards open, the middle chat no longer narrows, and the cards you placed yourself stay where you put them.
+- **A picture card is only as wide as its picture.** Extra width goes back to the chat.
+- **A picture chip shows its picture on hover.**
+- **Super card buttons are clearer.** A small "minimize", an X menu that can close a card together with its own card, and no "add" in the Super header.
+- **A team member's click never shows a blank page.**
+- **Approval only for what comes from outside.** Whatever you do on this Mac (a member, a routine, writing instructions) is approved at once, with no card.
+- **A simpler composer.** The branch chip sits beside the plus, and while it works there is one send button.
+- **Routines run on time.** The scheduler no longer stalls under background throttling, and one project no longer holds another's routine back.
+- **A board presents, it does not limit.** A member with a home board runs by its autonomy level; limiting it to the board is now an opt-in.
+- **Agents know the tools of your apps.** Every agent sees the tools of the apps installed on this Mac and takes the answer from the app itself.
+- **The Super's agenda stays on your Mac.** It no longer leaks to a teammate's computer, and sleep and session files are not synced by email.
+- **A job's servers close when the job ends.**
+- **The Super never claims a summary it did not write.** Everything it wants you to see is in its visible text, and there is no thinking box in the Super chat.
+- **The same code is not tested twice.** A passed check leaves a receipt tied to the code.
+
 ## [0.41.4] - 2026-11-07
 
 Patch on 0.41.3: the Super keeps every topic, the Super chat stops jumping, and Apps becomes a store. Local build; not published.
