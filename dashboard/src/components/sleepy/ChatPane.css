@@ -322,6 +322,12 @@
   text-decoration: underline;
   cursor: pointer;
 }
+/* A routine run in a member's conversation (aiteam/RunFoot.tsx): what opens under its last row. */
+.run-foot { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3); min-width: 0; }
+.run-foot-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.run-view { position: relative; display: flex; flex-direction: column; height: min(60vh, 520px); min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg); }
+.run-report { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); min-width: 0; overflow-wrap: anywhere; }
+.run-view-note { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
 .chat-feed-end {
   align-self: center;
   margin: var(--space-4, 16px) 0 var(--space-2, 8px);

@@ -1050,10 +1050,11 @@ export async function handleAgentsStage(
 }
 
 /**
- * GET /api/agents/:slug/history?before=<lastAt>|<key>&exclude=<claudeId> — one page of the agent's
+ * GET /api/agents/:slug/history?before=<lastAt>|<key>&exclude=<claudeId>&kind=run — one page of the agent's
  * history for its stage pane: every routine run and every talk with the owner, newest activity
  * first (lib/agents/history.ts). Desktop only, like the stage. A talk a live socket holds (a Chat
- * tab in use) waits until it ends; `exclude` is the stage's own live session.
+ * tab in use) waits until it ends; `exclude` is the stage's own live session. `kind=run`: routine
+ * runs only, the member Super page's feed (`ListHistoryOptions.runsOnly`).
  */
 export async function handleAgentsHistory(
   req: IncomingMessage,
@@ -1084,6 +1085,7 @@ export async function handleAgentsHistory(
       before: before && before.length <= 512 ? before : null,
       exclude,
       markTurns: true,
+      runsOnly: url.searchParams.get('kind') === 'run',
       isLive: (id) => findLiveChat(id) !== null,
       isHeld: (id) => !!findLiveChat(id)?.holder?.(),
       isRunActive: (source, runId) => runIsActive(activityOf(source), runId) || runChildAlive(contextRoot, source, runId),

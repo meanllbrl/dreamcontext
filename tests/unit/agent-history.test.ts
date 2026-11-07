@@ -495,3 +495,29 @@ describe('lastTalkAt: the lasting fact that a member was talked with here', () =
     expect(lastTalkAt(contextRoot, 'nobody', home)).toBeNull();
   });
 });
+
+describe('runsOnly: a member\'s Super page (its own conversation is the talk)', () => {
+  it('every routine of the member, in one feed, with no talk', () => {
+    makeAgent();
+    routine('daily-sum', 'Herodot daily');
+    routine('weekly-sum', 'Herodot weekly');
+    run('daily-sum', '2026-10-26T09:00:00.000Z', '2026-10-26T09:01:00.000Z');
+    run('weekly-sum', '2026-10-26T10:00:00.000Z', '2026-10-26T10:02:00.000Z');
+    talk(uuid(7), '2026-10-26T11:00:00.000Z', '2026-10-26T11:05:00.000Z', [['user', 'hi'], ['text', 'hello']]);
+    const all = walk();
+    const runs = walk({ runsOnly: true });
+    expect(all.some((s) => s.kind === 'talk')).toBe(true);
+    expect(runs.map((s) => s.key)).toEqual(['weekly-sum::2026-10-26T10:00:00.000Z', 'daily-sum::2026-10-26T09:00:00.000Z']);
+    expect(runs.every((s) => s.kind === 'run' && s.status === 'ok')).toBe(true);
+  });
+
+  it('a run still in flight reads running, so the page shows it live', () => {
+    makeAgent();
+    routine('daily-sum', 'Herodot daily');
+    put('daily-sum', '2026-10-27', { runId: '2026-10-27T11:59:00.000Z', kind: 'system', event: 'started', at: '2026-10-27T11:59:00.000Z', text: '' });
+    const [s] = listAgentHistory(contextRoot, 'herodot', {
+      audience: 'owner', home, now: NOW, runsOnly: true, isRunActive: () => true,
+    }).sessions;
+    expect(s.status).toBe('running');
+  });
+});

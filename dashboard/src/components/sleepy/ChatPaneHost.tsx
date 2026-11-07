@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback, useMemo } from 'react';
+import { memo, type ComponentProps, type ReactNode, useCallback, useMemo } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
@@ -10,6 +10,8 @@ import type { ChatTool } from '../../lib/chatToolBinding';
 import { useI18n } from '../../context/I18nContext';
 import { codexModelConfig, useAgentTools } from '../../hooks/useAgentCapabilities';
 import type { ChatFeed } from './chat/chatFeed';
+import { chatAgentFor } from '../../lib/chatAgentBinding';
+import { useMemberRunFeed } from './super/useMemberRunFeed';
 
 /**
  * The MEMO BOUNDARY between AgentSurface and a chat transcript.
@@ -154,40 +156,49 @@ function ChatPaneHostInner({
     ...(lockNote ? { lock: { note: lockNote, openLabel: lockOpen } } : {}),
   } : undefined), [pickTool, codexInfo, antigravityInfo, session, modelConfig, lockNote, lockOpen]);
 
-  return (
-    <ChatPane
-      session={session}
-      modelConfig={paneConfig}
-      model={paneModel}
-      effort={paneEffort}
-      onModelChange={onModelChange}
-      onEffortChange={onEffortChange}
-      onAccountChange={onAccountChange}
-      onContinueInTerminal={onContinueInTerminal}
-      permissionMode={permissionMode}
-      onPermissionModeChange={onPermissionModeChange}
-      mode={mode}
-      onModeChange={onModeChange}
-      onAgentPick={actions.pickAgent ? onAgentPick : undefined}
-      toolPick={toolPick}
-      onHandoffToDevelop={onHandoffToDevelop}
-      onResume={onResume}
-      automation={automation}
-      onOpenAppPage={onOpenAppPage}
-      onSignIn={onSignIn}
-      canSignInInApp={canSignInInApp}
-      signInCommand={signInCommand}
-      bare={bare}
-      agentBound={agentBound}
-      idlePlaceholder={idlePlaceholder}
-      superMember={superMember}
-      readOnly={readOnly}
-      aboveComposer={aboveComposer}
-      sendVia={sendVia}
-      quietResume={quietResume}
-      feed={feed}
-    />
-  );
+  const paneProps: ComponentProps<typeof ChatPane> = {
+    session,
+    modelConfig: paneConfig,
+    model: paneModel,
+    effort: paneEffort,
+    onModelChange,
+    onEffortChange,
+    onAccountChange,
+    onContinueInTerminal,
+    permissionMode,
+    onPermissionModeChange,
+    mode,
+    onModeChange,
+    onAgentPick: actions.pickAgent ? onAgentPick : undefined,
+    toolPick,
+    onHandoffToDevelop,
+    onResume,
+    automation,
+    onOpenAppPage,
+    onSignIn,
+    canSignInInApp,
+    signInCommand,
+    bare,
+    agentBound,
+    idlePlaceholder,
+    superMember,
+    readOnly,
+    aboveComposer,
+    sendVia,
+    quietResume,
+    feed,
+  };
+  // A member's Super chat (mode super, bound to its member): that member's routine runs, live and
+  // past, drawn in its conversation (useMemberRunFeed). Every other chat is exactly as before.
+  const runMember = !feed && mode === 'super' ? chatAgentFor(session.claudeId) : '';
+  return runMember ? <MemberRunFeedPane member={runMember} {...paneProps} /> : <ChatPane {...paneProps} />;
+}
+
+/** The pane with its member's routine runs as its feed. A session's member never changes, so
+ *  this and the plain pane never swap under one session. */
+function MemberRunFeedPane({ member, ...props }: ComponentProps<typeof ChatPane> & { member: string }) {
+  const feed = useMemberRunFeed(member);
+  return <ChatPane {...props} feed={feed} />;
 }
 
 export const ChatPaneHost = memo(ChatPaneHostInner);

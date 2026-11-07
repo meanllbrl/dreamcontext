@@ -29,7 +29,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedGroups, feedMarks, feedRunWorking, feedShift, firstKnownTs, inlinePlacement, itemTimeMs, liveDividerShown, splitFeedAt, type ChatFeed, type FeedGroup, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { AppChatContext } from './chat/appChatContext';
@@ -1268,7 +1268,17 @@ export function ChatPane({
   // (Read at render time, not reactively: if no event arrives after the quiet elapses, the
   // snap simply waits for the next one — a delay in a memory optimization, not a leak.)
   const [firstShownState, setFirstShownState] = useState(0);
-  const feedItems: readonly FeedItem[] = feed?.items ?? NO_FEED;
+  const allFeedItems: readonly FeedItem[] = feed?.items ?? NO_FEED;
+  // An interleaved feed (a member's Super page): only runs older than the conversation take the
+  // head of the window; the rest are drawn between its rows by time (`inlineFeed`, chatFeed.ts).
+  const interleave = !!feed?.interleave;
+  const convStartMs = interleave ? firstKnownTs(conv.history, conv.items) : null;
+  const feedSplit = useMemo(
+    () => (interleave ? splitFeedAt(allFeedItems, convStartMs) : { head: allFeedItems, inline: NO_FEED }),
+    [interleave, allFeedItems, convStartMs],
+  );
+  const feedItems: readonly FeedItem[] = feedSplit.head;
+  const inlineFeed: readonly FeedItem[] = feedSplit.inline;
   const feedLatest = useRef(feed);
   feedLatest.current = feed;
   const runReports = useRef(new Map<string, (text: string) => void>());
@@ -1498,7 +1508,7 @@ export function ChatPane({
   // The chained reveal: an older page just landed above the window (the head moved by its rows).
   const chainRevealRef = useRef(false);
   // Any change of the feed's rows above an unpinned reader (an older page, a live merge) is held.
-  useLayoutEffect(() => { holdAnchorSteady(); }, [feedLen, feedItems, holdAnchorSteady]);
+  useLayoutEffect(() => { holdAnchorSteady(); }, [feedLen, feedItems, inlineFeed, holdAnchorSteady]);
   useLayoutEffect(() => {
     if (!chainRevealRef.current || feed?.olderLoading) return;
     chainRevealRef.current = false;
@@ -2473,17 +2483,112 @@ export function ChatPane({
   // lines and the rest are bare verbs under it (`stepStretches`). This pass only sets props;
   // it never wraps rows, so every single stays a direct child of the transcript. The history
   // divider is something the reader sees, so a stretch never runs across it.
+  // A run row's card hand-back, one stable function per run (the rows are memoized).
+  const runReportFor = (meta: FeedItem['feed']): ((text: string) => void) | undefined => {
+    if (meta.sessionKind !== 'run' || !feed?.onRunReport) return undefined;
+    let fn = runReports.current.get(meta.sessionKey);
+    if (!fn) {
+      fn = (text: string) => feedLatest.current?.onRunReport?.(feedLatest.current.items.find((x) => x.feed.sessionKey === meta.sessionKey)?.feed ?? meta, text);
+      runReports.current.set(meta.sessionKey, fn);
+    }
+    return fn;
+  };
+  /** The feed's rows `[from, to)` of `list`: day rule (`withDay`, the head only), unread divider,
+   *  each session's boundary, its rows, its foot and its working line. */
+  const pushFeedRows = (nodes: React.ReactNode[], list: readonly FeedItem[], from: number, to: number, withDay: boolean): void => {
+    if (!feed) return;
+    const dividerKey = feed.divider?.key ?? null;
+    for (let i = from; i < to; i++) {
+      const it = list[i];
+      const meta = it.feed;
+      const marks = feedMarks(list, i, dividerKey, from);
+      if (withDay && marks.day !== null) {
+        nodes.push(<div key={`fday-${it.id}`} className="agents-feed-day chat-feed-day" data-feed-day><span>{feed.labels.day(meta.lastAt)}</span></div>);
+      }
+      if (marks.divider && feed.divider) {
+        nodes.push(
+          <div key="feed-new" className="agents-feed-new chat-feed-new" data-feed-divider>
+            <span>{feed.labels.divider(feed.divider.count, feed.divider.moreAbove)}</span>
+          </div>,
+        );
+      }
+      if (marks.boundary) {
+        nodes.push(
+          <button
+            key={`fbound-${meta.sessionKey}`}
+            type="button"
+            className={`chat-history-divider chat-feed-boundary${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`}
+            data-feed-boundary={meta.sessionKey}
+            onClick={() => feed.onBoundary(meta)}
+          >
+            {feed.labels.boundary(meta)}
+            <span className="chat-feed-boundary-go" aria-hidden>›</span>
+          </button>,
+        );
+        if (meta.missing) nodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
+        if (meta.truncated) {
+          nodes.push(
+            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => feed.onBoundary(meta)}>
+              {feed.labels.truncated}
+            </button>,
+          );
+        }
+      }
+      if (!meta.empty) {
+        const said = it.kind === 'text' ? feed.labels.note(meta) : null;
+        const row = <ItemView key={it.id} item={said !== null ? { ...it, text: said } : it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />;
+        nodes.push(meta.origin === 'failure' ? <div key={it.id} className="chat-feed-failure" data-feed-failure>{row}</div> : row);
+      }
+      if (marks.last && meta.sessionKind === 'run' && feed.runFoot) {
+        nodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta, { openFile: handleOpenFile })}</Fragment>);
+      }
+      if (feedRunWorking(meta, marks)) {
+        nodes.push(
+          <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
+            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
+          </div>,
+        );
+      }
+      // What the read observer watches: a run session's end (its last row, or its boundary).
+      if (marks.last && meta.sessionKind === 'run') {
+        nodes.push(<div key={`fseen-${meta.sessionKey}`} className="chat-feed-seen" data-feed-seen={meta.sessionKey} aria-hidden />);
+      }
+    }
+  };
+  // An interleaved feed's runs inside the conversation: each before the first row that came after
+  // it, a run in flight (and anything newer than the last row) after the last row.
+  const inlineAt = new Map<RunSegment<ChatItem>, FeedGroup[]>();
+  const inlineTail: FeedGroup[] = [];
+  if (feed && inlineFeed.length > 0) {
+    const shownSegs = [...(showsHistory ? historySegments : []), ...liveSegments];
+    const segTs = (seg: RunSegment<ChatItem>): number => itemTimeMs(seg.kind === 'run' ? seg.items[0] : seg.item);
+    const groups = feedGroups(inlineFeed);
+    inlinePlacement(groups, shownSegs.map(segTs)).forEach((at, k) => {
+      if (at >= shownSegs.length) { inlineTail.push(groups[k]); return; }
+      const seg = shownSegs[at];
+      inlineAt.set(seg, [...(inlineAt.get(seg) ?? []), groups[k]]);
+    });
+  }
+  const inlineProbesOf = (groups: readonly FeedGroup[] | undefined): StretchProbe[] => (groups ?? [])
+    .map((g) => ({ key: `feed:${g.key}`, step: false, invisible: false, actor: 'lead', running: false }));
+  const inlineNodesOf = (groups: readonly FeedGroup[] | undefined): React.ReactNode[] => {
+    const out: React.ReactNode[] = [];
+    for (const g of groups ?? []) pushFeedRows(out, inlineFeed, g.from, g.to, false);
+    return out;
+  };
   const stretches = stepStretches([
-    ...historySegments.flatMap((seg) => [...stripProbes(seg), ...probesOf(seg, false), ...questionProbes(seg)]),
-    { key: 'history-divider', step: false, invisible: !showsHistory || !!feed, actor: 'lead', running: false },
-    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...stripProbes(seg), ...probesOf(seg, accruingAt(i)), ...questionProbes(seg)]),
+    ...historySegments.flatMap((seg) => [...inlineProbesOf(inlineAt.get(seg)), ...stripProbes(seg), ...probesOf(seg, false), ...questionProbes(seg)]),
+    { key: 'history-divider', step: false, invisible: !showsHistory || (!!feed && !interleave), actor: 'lead', running: false },
+    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...inlineProbesOf(inlineAt.get(seg)), ...stripProbes(seg), ...probesOf(seg, accruingAt(i)), ...questionProbes(seg)]),
     ...noticeProbes(liveSegments.length),
+    ...inlineProbesOf(inlineTail),
   ]);
-  const historyNodes = historySegments.flatMap((seg) => [...stripNodes(seg), renderSegment(seg, false, stretches), ...questionNodes(seg)]);
+  const historyNodes = historySegments.flatMap((seg) => [...inlineNodesOf(inlineAt.get(seg)), ...stripNodes(seg), renderSegment(seg, false, stretches), ...questionNodes(seg)]);
   const noticeNodes = (i: number) => (noticesAt.get(i) ?? []).map((n) => n.node);
   const liveNodes = [
-    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), ...stripNodes(seg), renderSegment(seg, accruingAt(i), stretches), ...questionNodes(seg)]),
+    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), ...inlineNodesOf(inlineAt.get(seg)), ...stripNodes(seg), renderSegment(seg, accruingAt(i), stretches), ...questionNodes(seg)]),
     ...noticeNodes(liveSegments.length),
+    ...inlineNodesOf(inlineTail),
   ];
   // Only a party still AT WORK trails the transcript: one whose first call is older than the
   // window, or that no call here placed. A running team must never vanish with the call that
@@ -2518,19 +2623,9 @@ export function ChatPane({
     && !turnHasVisibleProgress(conv.items, conv.pending.length, !superView);
   const isEmpty = !working
     && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0
-    && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
+    && (!feed || (feedLen === 0 && inlineFeed.length === 0 && !feed.loading && !feed.failed));
 
   // ── The feed segment: an agent's past sessions above this conversation (chatFeed.ts) ──
-  // A run row's card hand-back, one stable function per run (the rows are memoized).
-  const runReportFor = (meta: FeedItem['feed']): ((text: string) => void) | undefined => {
-    if (meta.sessionKind !== 'run' || !feed?.onRunReport) return undefined;
-    let fn = runReports.current.get(meta.sessionKey);
-    if (!fn) {
-      fn = (text: string) => feedLatest.current?.onRunReport?.(feedLatest.current.items.find((x) => x.feed.sessionKey === meta.sessionKey)?.feed ?? meta, text);
-      runReports.current.set(meta.sessionKey, fn);
-    }
-    return fn;
-  };
   const feedNodes: React.ReactNode[] = [];
   if (feed) {
     if (feed.loading) {
@@ -2543,69 +2638,13 @@ export function ChatPane({
         </div>,
       );
     }
-    if (feedLen > 0 && feedFrom === 0 && !feed.hasMore) {
+    if (feedLen > 0 && feedFrom === 0 && !feed.hasMore && feed.labels.end) {
       feedNodes.push(<div key="feed-end" className="chat-feed-end" data-feed-end>{feed.labels.end}</div>);
     }
-    const dividerKey = feed.divider?.key ?? null;
-    for (let i = feedFrom; i < feedLen; i++) {
-      const it = feedItems[i];
-      const meta = it.feed;
-      const marks = feedMarks(feedItems, i, dividerKey, feedFrom);
-      if (marks.day !== null) {
-        feedNodes.push(<div key={`fday-${it.id}`} className="agents-feed-day chat-feed-day" data-feed-day><span>{feed.labels.day(meta.lastAt)}</span></div>);
-      }
-      if (marks.divider && feed.divider) {
-        feedNodes.push(
-          <div key="feed-new" className="agents-feed-new chat-feed-new" data-feed-divider>
-            <span>{feed.labels.divider(feed.divider.count, feed.divider.moreAbove)}</span>
-          </div>,
-        );
-      }
-      if (marks.boundary) {
-        feedNodes.push(
-          <button
-            key={`fbound-${meta.sessionKey}`}
-            type="button"
-            className={`chat-history-divider chat-feed-boundary${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`}
-            data-feed-boundary={meta.sessionKey}
-            onClick={() => feed.onBoundary(meta)}
-          >
-            {feed.labels.boundary(meta)}
-            <span className="chat-feed-boundary-go" aria-hidden>›</span>
-          </button>,
-        );
-        if (meta.missing) feedNodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
-        if (meta.truncated) {
-          feedNodes.push(
-            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => feed.onBoundary(meta)}>
-              {feed.labels.truncated}
-            </button>,
-          );
-        }
-      }
-      if (!meta.empty) {
-        const said = it.kind === 'text' ? feed.labels.note(meta) : null;
-        const row = <ItemView key={it.id} item={said !== null ? { ...it, text: said } : it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />;
-        feedNodes.push(meta.origin === 'failure' ? <div key={it.id} className="chat-feed-failure" data-feed-failure>{row}</div> : row);
-      }
-      if (marks.last && meta.sessionKind === 'run' && feed.runFoot) {
-        feedNodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta)}</Fragment>);
-      }
-      if (feedRunWorking(meta, marks)) {
-        feedNodes.push(
-          <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
-            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
-          </div>,
-        );
-      }
-      // What the read observer watches: a run session's end (its last row, or its boundary).
-      if (marks.last && meta.sessionKind === 'run') {
-        feedNodes.push(<div key={`fseen-${meta.sessionKey}`} className="chat-feed-seen" data-feed-seen={meta.sessionKey} aria-hidden />);
-      }
-    }
+    pushFeedRows(feedNodes, feedItems, feedFrom, feedLen, true);
     // A typed draft counts: the owner left something there ("Continuing · started …").
     const liveEmpty = !session.busy && !conv.draft && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
-    if (liveDividerShown({ loading: feed.loading, failed: feed.failed, feedLen, liveEmpty })) {
+    if (feed.labels.live && liveDividerShown({ loading: feed.loading, failed: feed.failed, feedLen, liveEmpty })) {
       feedNodes.push(<div key="feed-live" className="chat-history-divider" data-feed-live aria-hidden>{feed.labels.live}</div>);
     }
   }
@@ -2619,7 +2658,7 @@ export function ChatPane({
     const root = scrollRef.current;
     const inner = contentRef.current;
     if (!hasFeed || !root || !inner || typeof IntersectionObserver === 'undefined') return;
-    const byKey = new Map(feedItems.map((it) => [it.feed.sessionKey, it.feed]));
+    const byKey = new Map(allFeedItems.map((it) => [it.feed.sessionKey, it.feed]));
     const io = new IntersectionObserver((seen) => {
       for (const en of seen) {
         if (!en.isIntersecting) continue;
@@ -2629,7 +2668,7 @@ export function ChatPane({
     }, { root, threshold: 0.5 });
     inner.querySelectorAll('[data-feed-seen]').forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [hasFeed, feedItems, feedFrom]);
+  }, [hasFeed, allFeedItems, feedFrom]);
   // With unread, the pane opens with the "N new" divider at the top of the viewport, unpinned —
   // once per open (a remount within the open, a respawn, reopens pinned to the bottom).
   const dividerKeyNow = feed?.divider?.key ?? null;
@@ -2921,7 +2960,7 @@ export function ChatPane({
             {showsHistory && (
               <>
                 {historyNodes}
-                {!feed && !quietResume && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
+                {(!feed || interleave) && !quietResume && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
               </>
             )}
             {liveNodes}

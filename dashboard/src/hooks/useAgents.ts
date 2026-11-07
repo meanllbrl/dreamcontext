@@ -440,15 +440,17 @@ export interface AgentHistoryPage {
   unreadCount: number;
 }
 
-/** Read one page of an agent's history. `exclude` = the stage's own live session. */
+/** Read one page of an agent's history. `exclude` = the stage's own live session; `runsOnly` = routine runs. */
 export function fetchAgentHistory(
   api: { get: <T>(path: string) => Promise<T> },
   slug: string,
-  opts: { before?: string | null; exclude?: string | null } = {},
+  opts: { before?: string | null; exclude?: string | null; runsOnly?: boolean } = {},
 ): Promise<AgentHistoryPage> {
   const q = new URLSearchParams();
   if (opts.before) q.set('before', opts.before);
   if (opts.exclude) q.set('exclude', opts.exclude);
+  // Routine runs only: a member's Super page, whose own conversation is the talk.
+  if (opts.runsOnly) q.set('kind', 'run');
   const qs = q.toString();
   return api.get<AgentHistoryPage>(`/agents/${encodeURIComponent(slug)}/history${qs ? `?${qs}` : ''}`);
 }

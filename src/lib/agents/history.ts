@@ -9,7 +9,7 @@ import { readMachineIdentity } from '../machine-id.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
 import { feedCutoffDay, readRunHead, runDocumentPath, runUnread } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
-import { ownerQuietReader } from '../automations/super-quiet.js';
+import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
 import { runChatSession } from '../automations/run-chat.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
@@ -113,6 +113,9 @@ export interface ListHistoryOptions {
   markTurns?: boolean;
   maxSessions?: number;
   maxRows?: number;
+  /** Routine runs only (a member's Super page): no talks, and no job the main Super gave this
+   *  member (its request and answer are already on that page, `super-quiet.ts`). */
+  runsOnly?: boolean;
 }
 
 export const HISTORY_PAGE_SESSIONS = 8;
@@ -324,6 +327,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const candidates: Candidate[] = [];
   let unreadCount = 0;
   const quietOf = ownerQuietReader(contextRoot);
+  const isSuperJob = opts.runsOnly ? superJobReader(contextRoot) : null;
   const nowMs = (opts.now ?? new Date()).getTime();
   const agentTitle = (() => {
     try {
@@ -352,6 +356,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
     }
     const title = titleOf(source);
     for (const [runId, runEntries] of byRun) {
+      if (isSuperJob?.(source, runEntries)) continue;
       // Unread exactly as the feed counts it: the run's entries inside the feed's window.
       const windowed = runEntries.filter((e) => windowIds.has(e.id));
       const u = runUnread(windowed, watermark, quietOf(source, runEntries));
@@ -410,7 +415,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   }
 
   // Talks: this machine's index. Ordering needs no parse — start = index `at`, last = mtime.
-  const sessions: AgentSessionEntry[] = listAgentSessions(projectRoot, slug, home);
+  const sessions: AgentSessionEntry[] = opts.runsOnly ? [] : listAgentSessions(projectRoot, slug, home);
   if (sessions.length) {
     const lookup = newTalkLookup(contextRoot, home);
     const found: string[] = [];
