@@ -257,6 +257,9 @@
 .aiteam-approval-lead { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
 .aiteam-approval-pre { margin: 0; max-height: 280px; overflow: auto; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); font-size: var(--font-size-xs); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .aiteam-approval-foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* The board question answers in the row itself: its two buttons sit under the sentence. */
+.aiteam-approval-row > .aiteam-approval-foot { flex-wrap: wrap; padding: 0 var(--space-3) var(--space-3); }
+.aiteam-approval-row > .agp-error { margin: 0 var(--space-3) var(--space-2); }
 @container (max-width: 759px) {
   .aiteam-approval { padding: var(--space-2) var(--space-3) 0; }
   .aiteam-approval-line { flex-wrap: wrap; }

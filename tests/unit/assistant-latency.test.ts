@@ -290,7 +290,7 @@ describe('chatDeniedToolArgs (2026-10-17: "planla" in Basic opened native plan m
     const cardSpawn = (agent: string, whiteboard: string | null) => {
       const m = createAutomation(ctx, {
         slug: agent, title: agent, mode: 'call', prompt: 'Keep the board tidy.', review: 'agent', learning: false,
-        ...(whiteboard ? { whiteboard } : {}),
+        ...(whiteboard ? { whiteboard, boardOnly: true } : {}),
       });
       approveAutomation(projectRoot, m, new Date(), fakeHome);
       const ws = new FakeWs();

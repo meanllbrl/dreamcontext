@@ -30,7 +30,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt' | 'boardQuestion'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -141,7 +141,7 @@ export function buildRoster(
     const needs = mine.some((m) => m.question !== null || m.status === 'needs-you')
       || routines.some((r) => r.pendingQuestion !== null);
     const readOnly = agent.readOnly === true;
-    const approval = !readOnly && pendingApprovals(agent, routines).length > 0;
+    const approval = !readOnly && pendingApprovals(agent, routines).some((p) => p.kind !== 'board-scope');
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     // A member whose routines are all off raises no alarm: nothing will run, so nothing waits
     // on the owner. Its pending approval/question stays visible on the AI Team page itself.
@@ -217,7 +217,9 @@ export function buildRoster(
  *  - `routine`: one of its routines will not fire until approved (new here, or changed).
  */
 export type PendingApproval = {
-  kind: 'agent' | 'routine';
+  /** `board-scope`: the one question an older home-board agent owes (should it stay limited to
+   *  its board?). It blocks nothing: the agent works, limited, until it is answered. */
+  kind: 'agent' | 'routine' | 'board-scope';
   slug: string;
   title: string;
   /** Approving this is what lets the owner's next message through. */
@@ -265,7 +267,7 @@ export function amendmentDiff(before: string, after: string): Array<{ added: boo
 /** What waits for approval, in the order it matters: what blocks talking first, then the
  *  routines, then the call target's own runs (boards and tasks). Empty when all is approved. */
 export function pendingApprovals(
-  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason'>,
+  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'boardQuestion'>,
   routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason'>[],
 ): PendingApproval[] {
   // `say` runs the routine that shares the agent's slug when there is one, else the call target.
@@ -283,6 +285,10 @@ export function pendingApprovals(
     if (!r.approved) {
       out.push({ kind: 'routine', slug: r.slug, title: r.title, reason: r.approvalReason, blocksTalk: r.slug === agent.slug });
     }
+  }
+  // Asked only once it is approved as it stands: an approval card comes first.
+  if (agent.boardQuestion && agent.approvedToRun) {
+    out.push({ kind: 'board-scope', slug: agent.slug, title: agent.title, reason: null, blocksTalk: false });
   }
   return out.sort((x, y) => Number(y.blocksTalk) - Number(x.blocksTalk));
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
-import { useAgent, useApproveAgent } from '../../hooks/useAgents';
+import { useAgent, useAnswerBoardScope, useApproveAgent } from '../../hooks/useAgents';
 import { useApproveAutomation, useAutomation } from '../../hooks/useAutomations';
 import type { PendingApproval } from './teamModel';
 import { TeamIcon } from './TeamIcons';
@@ -34,7 +34,9 @@ export function TeamApproval({
   if (pending.length === 0) return null;
   return (
     <div className="aiteam-approval" data-team-approval role="region" aria-label={t('aiteam.approval.aria').replace('{name}', agentTitle)}>
-      {pending.map((p) => (
+      {pending.map((p) => p.kind === 'board-scope' ? (
+        <BoardScopeRow key={`${p.kind}:${p.slug}`} item={p} agentTitle={agentTitle} onToast={onToast} />
+      ) : (
         <ApprovalRow
           key={`${p.kind}:${p.slug}`}
           item={p}
@@ -58,6 +60,46 @@ export function approvalSentence(p: PendingApproval, agentTitle: string, t: (k: 
       ? (changed ? 'aiteam.approval.talkChanged' : 'aiteam.approval.talkNew')
       : 'aiteam.approval.runOnly';
   return t(key).replace('{name}', agentTitle).replace('{routine}', p.title);
+}
+
+/**
+ * The ONE question an older home-board agent owes (owner 2026-11-07): boards stopped limiting
+ * their agents, and an agent that was limited before stays limited until the owner says which it
+ * is. Keep writes `scope: board` into its file (his own edit); Let it work opens it on this Mac.
+ * Nothing waits on it: the agent keeps working, limited, until he answers.
+ */
+function BoardScopeRow({ item, agentTitle, onToast }: { item: PendingApproval; agentTitle: string; onToast: (msg: string) => void }) {
+  const { t } = useI18n();
+  const answer = useAnswerBoardScope();
+  const [error, setError] = useState<string | null>(null);
+  const send = (keep: boolean) => {
+    if (answer.isPending) return;
+    setError(null);
+    answer.mutate({ slug: item.slug, keep }, {
+      onSuccess: () => onToast(t(keep ? 'aiteam.boardScope.kept' : 'aiteam.boardScope.lifted').replace('{name}', agentTitle)),
+      onError: (err: unknown) => setError((err as Error).message),
+    });
+  };
+  return (
+    <div className="aiteam-approval-row" data-approval-item={`board-scope:${item.slug}`}>
+      <div className="aiteam-approval-line">
+        <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name="lock" size={12} /></span>
+        <span className="aiteam-approval-text">
+          {t('aiteam.boardScope.question').replace('{name}', agentTitle)}
+          <span className="aiteam-approval-fields"> {t('aiteam.boardScope.why')}</span>
+        </span>
+      </div>
+      {error && <p className="agp-error" role="alert">{error}</p>}
+      <div className="aiteam-approval-foot">
+        <button type="button" className="agent-btn" onClick={() => send(true)} disabled={answer.isPending} data-board-scope="keep">
+          {t('aiteam.boardScope.keep')}
+        </button>
+        <button type="button" className="agent-btn agent-btn--primary" onClick={() => send(false)} disabled={answer.isPending} data-board-scope="lift">
+          {t('aiteam.boardScope.lift')}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function ApprovalRow({

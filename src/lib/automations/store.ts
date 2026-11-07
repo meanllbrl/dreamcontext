@@ -796,6 +796,9 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     // slug: dropping a bad value would silently unscope the agent, keeping it
     // means the spawn path refuses it (no such board) and fails closed.
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
+    // `scope: board` beside a home board (a legacy file is its own agent); absent otherwise, so
+    // every other file reads field for field as before and keeps its hash.
+    ...(typeof data.scope === 'string' && data.scope.trim().toLowerCase() === 'board' && typeof data.whiteboard === 'string' && data.whiteboard.trim() ? { boardOnly: true } : {}),
     // Only when set, so a file that is no app's reads field for field as before and keeps its hash.
     ...(typeof data.app === 'string' && data.app.trim() ? { app: data.app.trim() } : {}),
     // Every file read here is an AUTOMATION run target, exactly as before the
@@ -1444,6 +1447,8 @@ export interface CreateAutomationInput {
    *  on-disk state. Cannot be combined with `outputDir`: a home-board agent's
    *  writable output folder is always `automations/output/<slug>/`. */
   whiteboard?: string | null;
+  /** `scope: board`: limit the home-board agent to its board. Needs `whiteboard`. */
+  boardOnly?: boolean;
   /** The app this scheduled job belongs to (dreamcontext-apps). Set by the gateway or the
    *  owner's `--app`, never by a page. */
   app?: string;
@@ -1514,6 +1519,9 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   // disk; this stops one from being created that way.
   if (i.review !== undefined && !(REVIEW_MODES as readonly string[]).includes(i.review)) {
     throw new AutomationError(`Invalid review mode "${i.review}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
+  }
+  if (i.boardOnly && !i.whiteboard) {
+    throw new AutomationError('Only an agent with a home board can be limited to it: give it --whiteboard <board> too.');
   }
   if (i.whiteboard !== undefined && i.whiteboard !== null) {
     if (!isValidWhiteboardSlug(i.whiteboard)) {
@@ -1775,6 +1783,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     // Written ONLY when set, so an ordinary agent's manifest carries no
     // `whiteboard` key at all, exactly as before this field existed.
     ...(i.whiteboard ? { whiteboard: i.whiteboard } : {}),
+    ...(i.whiteboard && i.boardOnly ? { scope: 'board' } : {}),
     ...(i.app ? { app: i.app } : {}),
   };
 

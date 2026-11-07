@@ -941,7 +941,8 @@ export function registerAutomationsCommand(program: Command): void {
       '--review <mode>',
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
-    .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
+    .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): where its work shows and its card lives')
+    .option('--board-only', 'With --whiteboard: limit it to that board (scope: board): no Bash, node, MCP or .env')
     .option('--app <slug>', 'This job belongs to an app of this project: its run carries the app\'s brief')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
@@ -953,7 +954,7 @@ export function registerAutomationsCommand(program: Command): void {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string; app?: string;
+      learning?: boolean; review?: string; whiteboard?: string; boardOnly?: boolean; agent?: string; job?: string; answer?: string; app?: string;
     }) => {
       const root = ensureContextRoot();
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
@@ -1037,6 +1038,7 @@ export function registerAutomationsCommand(program: Command): void {
           // refusal here rather than a gate the owner believes they installed.
           review: opts.review as ReviewMode | undefined,
           whiteboard,
+          ...(opts.boardOnly ? { boardOnly: true } : {}),
           ...appOption(root, opts.app),
         });
 

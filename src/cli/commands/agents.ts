@@ -27,6 +27,9 @@ import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js'
 import { listInboxRows } from '../../lib/owner-inbox.js';
 import { listAgentHistory, searchAgentHistory } from '../../lib/agents/history.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
+import { effectiveEnvelopeLine } from '../../lib/automations/board-scope.js';
+import { levelChatMode } from '../../lib/agents/permission.js';
+import { agentBoardView, answerBoardScope } from '../../lib/agents/board-question.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
 import {
@@ -236,20 +239,28 @@ export function registerAgentsCommand(program: Command): void {
       }
       const usage = agentUsage(root, slug);
       const pattern = parsePattern(agent.pattern);
+      const target = getRunTarget(root, slug, 'agent');
+      const envelope = target ? agentBoardView(root, slug, target) : { board: null, limited: false, held: false, question: false };
       if (opts.json) {
         console.log(JSON.stringify({
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
-            learning: agent.learning, whiteboard: agent.whiteboard, shared: agent.shared, implicit: agent.implicit,
+            learning: agent.learning, whiteboard: agent.whiteboard, boardOnly: agent.boardOnly === true, shared: agent.shared, implicit: agent.implicit,
             reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
             approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
+            effective: effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy)).replace(/^effective: /, ''),
+            boardLimited: envelope.limited, boardQuestion: envelope.question,
           },
         }, null, 2));
         return;
       }
       console.log(header(`${agent.title} (${agent.slug})`));
       console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${agent.autonomy}`);
-      if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}`);
+      if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}${agent.boardOnly ? '  (scope: board)' : ''}`);
+      console.log(`  ${effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy))}`);
+      if (envelope.question) {
+        console.log(chalk.yellow(`  Should ${agent.title} still be limited to its board? Answer on its AI Team page, or: dreamcontext agents board-scope ${slug} keep|lift`));
+      }
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
       if (usage.automations.length > 0) console.log(`  automations: ${usage.automations.join(', ')}`);
@@ -274,10 +285,11 @@ export function registerAgentsCommand(program: Command): void {
     .option('--soul-template <id>', `Start the soul from a template (${SOUL_TEMPLATE_LIST})`)
     .option('--model <model>', 'Model override')
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')})`)
-    .option('--whiteboard <board>', 'Home board: the agent acts only on it')
+    .option('--whiteboard <board>', 'Home board: where its work shows and its card lives (not a limit: it runs under its autonomy)')
+    .option('--board-only', 'Limit it to its home board (scope: board): only the board, the read verbs and its output folder; no Bash, node, MCP or .env')
     .option('--no-learning', 'Do not keep a pattern of lessons')
     .option('--scope <scope>', 'project (this brain, default) or global (this machine: listed in every project, never in a brain)', 'project')
-    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean; scope: string }) => {
+    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning: boolean; scope: string }) => {
       if (opts.scope !== 'project' && opts.scope !== 'global') {
         fail(new Error(`--scope is project or global, not "${opts.scope}".`));
         return;
@@ -336,6 +348,7 @@ export function registerAgentsCommand(program: Command): void {
           model: opts.model ?? null,
           effort: readEffort(opts.effort) ?? null,
           whiteboard: opts.whiteboard ?? null,
+          ...(opts.boardOnly ? { boardOnly: true } : {}),
           learning: opts.learning,
         }, approve);
         trace(dirname(root));
@@ -356,13 +369,15 @@ export function registerAgentsCommand(program: Command): void {
     .option('--soul-template <id>', `Replace the soul with a template (${SOUL_TEMPLATE_LIST})`)
     .option('--model <model>', 'Model override ("" for the default)')
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')}, or none)`)
-    .option('--whiteboard <board>', 'Home board ("" for none)')
+    .option('--whiteboard <board>', 'Home board: where its work shows ("" for none). Not a limit unless --board-only')
+    .option('--board-only', 'Limit it to its home board (scope: board): no Bash, node, MCP or .env')
+    .option('--no-board-only', 'Lift the board limit: it runs under its autonomy level like any member')
     .option('--learning', 'Keep a pattern of lessons')
     .option('--no-learning', 'Stop keeping a pattern of lessons')
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
     .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -374,6 +389,7 @@ export function registerAgentsCommand(program: Command): void {
         const effort = readEffort(opts.effort);
         if (effort !== undefined) patch.effort = effort;
         if (opts.whiteboard !== undefined) patch.whiteboard = opts.whiteboard || null;
+        if (opts.boardOnly !== undefined) patch.boardOnly = opts.boardOnly;
         if (opts.learning !== undefined) patch.learning = opts.learning;
         const autonomy = readAutonomyOption(opts.autonomy);
         if (autonomy !== undefined) patch.autonomy = autonomy;
@@ -421,6 +437,29 @@ export function registerAgentsCommand(program: Command): void {
         success(`Saved "${slug}".`);
       } catch (err) {
         fail(err instanceof AmendmentRefused ? new AutomationError(`${err.code}: ${err.message}`) : err);
+      }
+    });
+
+  agents
+    .command('board-scope')
+    .argument('<slug>', 'Agent slug')
+    .argument('<answer>', 'keep (stay limited to its board: writes scope: board) or lift (run under its autonomy level)')
+    .description('Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)')
+    .action((slug: string, answer: string) => {
+      if (refuseSelfApproval(process.env)) return;
+      if (answer !== 'keep' && answer !== 'lift') {
+        fail(new AutomationError(`Answer keep or lift, not "${answer}".`));
+        return;
+      }
+      const root = ensureContextRoot();
+      try {
+        const r = answerBoardScope(root, slug, answer === 'keep');
+        settleApprovalQuestions(root, slug);
+        success(r.kept
+          ? `${r.title} stays limited to its board (scope: board is in its file now; untick it in its Edit dialog to lift it later).`
+          : `${r.title} now runs under its autonomy level; its board still shows its work.`);
+      } catch (err) {
+        fail(err);
       }
     });
 

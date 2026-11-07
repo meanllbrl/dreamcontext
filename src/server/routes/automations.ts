@@ -487,6 +487,8 @@ export async function handleAutomationsShow(
         tool: manifest.tool ?? 'claude',
         // Hashed when set: which app's brief the run gets.
         app: manifest.app ?? '',
+        // Hashed when true, LAST: `scope: board`, limited to its home board.
+        boardOnly: manifest.boardOnly === true,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:

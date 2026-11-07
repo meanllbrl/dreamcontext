@@ -45,6 +45,7 @@ function boardAgentWithCallOutputDir(): AutomationManifest {
     mode: 'call',
     prompt: 'Keep the board tidy.',
     whiteboard: board,
+    boardOnly: true,
   });
   const { agent } = legacyPair(legacy);
   return composeRun({ ...agent, call: { ...agent.call, outputDir: 'reports/adhoc' } }, null);
@@ -72,6 +73,8 @@ describe("resolveSpawnScope(…, use)", () => {
     expect(resolveSpawnScope(contextRoot, target, home, 'identity')).toEqual({
       ok: true,
       scope: { board, self: 'board-pilot' },
+      homeBoard: board,
+      held: false,
     });
   });
 
@@ -82,6 +85,7 @@ describe("resolveSpawnScope(…, use)", () => {
       mode: 'call',
       prompt: 'Keep the board tidy.',
       whiteboard: board,
+      boardOnly: true,
     });
     const { agent } = legacyPair(legacy);
     const digestSrc = createAutomation(contextRoot, {
@@ -99,6 +103,8 @@ describe("resolveSpawnScope(…, use)", () => {
     expect(resolveSpawnScope(contextRoot, callTarget, home, 'identity')).toEqual({
       ok: true,
       scope: { board, self: 'board-pilot' },
+      homeBoard: board,
+      held: false,
     });
     const run = resolveSpawnScope(contextRoot, callTarget, home, 'run');
     expect(run.ok).toBe(false);
@@ -112,6 +118,7 @@ describe("resolveSpawnScope(…, use)", () => {
       mode: 'call',
       prompt: 'Keep the board tidy.',
       whiteboard: board,
+      boardOnly: true,
     });
     const { agent } = legacyPair(legacy);
     const other = createWhiteboard(contextRoot, 'Other Board').slug;

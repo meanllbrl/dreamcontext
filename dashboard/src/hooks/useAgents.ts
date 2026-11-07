@@ -58,8 +58,14 @@ export interface AgentSummary {
   /** The tool it runs on, and the Codex account it is pinned to. */
   tool?: 'claude' | 'codex' | 'antigravity';
   account?: string | null;
-  /** Its home board, or null. */
+  /** Its home board, or null: where its work shows and its card lives. */
   whiteboard: string | null;
+  /** `scope: board`: limited to its home board by its own file. Optional: an older server sends none. */
+  boardOnly?: boolean;
+  /** Limited to its board right now (its own `scope: board`, or held from before boards stopped limiting). */
+  boardLimited?: boolean;
+  /** The one question an older board agent owes: should it still be limited to its board? */
+  boardQuestion?: boolean;
   shared: boolean;
   /** `reports_to` as written: the agent it reports to, or null (it reports to the owner). The
    *  tree's read rules (a missing manager, a loop) live in `src/lib/agents/tree.ts`. Unhashed. */
@@ -137,6 +143,8 @@ export interface AgentIdentityDraft {
   tool?: 'claude' | 'codex' | 'antigravity';
   account?: string | null;
   whiteboard?: string | null;
+  /** Limit it to its home board (`scope: board`). Meaningless without a board. */
+  boardOnly?: boolean;
   learning?: boolean;
   /** How it works. `''` clears it on an edit. Nothing records a template it started from. */
   soul?: string;
@@ -290,6 +298,17 @@ export function useApproveAgent() {
       // The approval can lift a blocked automation's gate too.
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
     },
+  });
+}
+
+/** The owner's answer to "Should <agent> still be limited to its board?" (`agents board-scope`). */
+export function useAnswerBoardScope() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, keep }: { slug: string; keep: boolean }) =>
+      api.post<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/board-scope`, { keep }).then((r) => r.agent),
+    onSuccess: (_agent, { slug }) => invalidateAgent(queryClient, slug),
   });
 }
 

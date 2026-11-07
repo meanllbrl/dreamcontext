@@ -39,7 +39,10 @@ describe('skill/references/whiteboards.md: the agent card', () => {
   });
 
   it('states the scope: own board only, dontAsk, and the fail-closed refusal', () => {
-    expect(WHITEBOARDS_MD).toContain('**A home-board agent acts only on its board.**');
+    expect(WHITEBOARDS_MD).toContain('**A board-only agent acts only on its board.**');
+    // A home board alone presents, never limits (owner 2026-11-07).
+    expect(WHITEBOARDS_MD).toContain('**A home board presents; it does not limit**');
+    expect(AUTOMATIONS_MD).toContain('**A home board is a presentation surface, never a permission scope**');
     expect(WHITEBOARDS_MD).toContain('--permission-mode dontAsk --setting-sources project');
     expect(WHITEBOARDS_MD).toContain('Could not limit <title> to its board: <reason>');
   });
@@ -79,11 +82,11 @@ describe('skill/references/whiteboards.md: the agent card', () => {
 });
 
 describe('skill/references/automations.md: the whiteboard field and its approval', () => {
-  it('counts the approval-hashed fields as sixteen, matching APPROVAL_DIFF_FIELDS', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(16);
-    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('app');
-    expect(AUTOMATIONS_MD).toContain('across all sixteen of those fields');
-    expect(AUTOMATIONS_MD).not.toMatch(/all (nine|ten|eleven|twelve|thirteen|fourteen)\b|those (nine|ten|eleven|twelve|thirteen|fourteen) fields/);
+  it('counts the approval-hashed fields as seventeen, matching APPROVAL_DIFF_FIELDS', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(17);
+    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('boardOnly');
+    expect(AUTOMATIONS_MD).toContain('across all seventeen of those fields');
+    expect(AUTOMATIONS_MD).not.toMatch(/all (nine|ten|eleven|twelve|thirteen|fourteen|sixteen)\b|those (nine|ten|eleven|twelve|thirteen|fourteen|sixteen) fields/);
   });
 
   it('has the Board agents recipe and the manifest field row', () => {
@@ -132,7 +135,8 @@ describe('skill/SKILL.md and README.md: the capability is visible at a glance', 
 
   it('README names the agent card and the board-only scope', () => {
     expect(README_MD).toContain('An **agent card** puts an automation agent on the board');
-    expect(README_MD).toContain('**A board agent acts only on its board.**');
+    expect(README_MD).toContain('**A board-only agent acts only on its board.**');
+    expect(README_MD).toContain('**A home board shows an agent\'s work; it does not limit it.**');
   });
 });
 

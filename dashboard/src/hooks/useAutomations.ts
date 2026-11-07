@@ -296,6 +296,9 @@ export interface AutomationManifestDetail {
   /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
   readTools?: string[];
   tool?: 'claude' | 'codex' | 'antigravity';
+  /** Hashed when true, LAST: `scope: board`, the agent is limited to its home board.
+   *  Absent on an older backend, which means not limited. */
+  boardOnly?: boolean;
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;

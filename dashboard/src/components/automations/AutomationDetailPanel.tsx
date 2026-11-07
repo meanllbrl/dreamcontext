@@ -611,19 +611,27 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           )}
                         </div>
                       </div>
-                      {/* Hashed: where this agent may write. A home board narrows a
-                          run to that one board; adding, removing or moving it changes
-                          what the approval covers, so it is printed like the rest. */}
+                      {/* Hashed: the home board shows the agent's work; `boardOnly`
+                          (scope: board) is what narrows a run to that one board.
+                          Both change what the approval covers, so both are printed. */}
                       <div className="adp-review-row">
                         <span className="adp-review-label">whiteboard</span>
                         <span className="adp-review-value">
                           {automation.whiteboard ? (
-                            <>{automation.whiteboard}: its runs can change only this board</>
+                            automation.boardOnly
+                              ? <>{automation.whiteboard}: its runs can change only this board</>
+                              : <>{automation.whiteboard}: its board shows its work</>
                           ) : (
                             <em>none</em>
                           )}
                         </span>
                       </div>
+                      {automation.boardOnly && (
+                        <div className="adp-review-row" data-review-board-only>
+                          <span className="adp-review-label">board only</span>
+                          <span>yes: limited to its board</span>
+                        </div>
+                      )}
                       {/* The pattern belongs IN the review, not after it. This
                           is the moment a human decides whether to admit a
                           self-written notes file into a bypassPermissions run;
