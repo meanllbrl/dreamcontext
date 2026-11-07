@@ -1,7 +1,8 @@
 "$schema" = "schemas/schema.json"
 
-# Hand the notch the key the owner route asks for. See src/owner_key.rs.
+# Hand the owner's own pages (notch, Launcher, project windows) the key the owner routes ask for.
+# The command itself refuses every other window and every other origin. See src/owner_key.rs.
 [[permission]]
 identifier = "allow-owner-key"
-description = "Read the per-launch key that proves a request came from the owner's own notch."
+description = "Read the per-launch key that proves a request came from the owner's own window."
 commands.allow = ["owner_key"]

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), Dock-bounce + native notification banners for the \"Claude is asking\" alarm, shell spawn/kill scoped to the Node child, and claiming a parked dreamcontext:// link (allow-take-app-link). The Notifications window (`inbox`) is here too because it routes links exactly like a project window does: it emits to other windows and opens project and viewer windows.",
+  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), Dock-bounce + native notification banners for the \"Claude is asking\" alarm, shell spawn/kill scoped to the Node child, and claiming a parked dreamcontext:// link (allow-take-app-link). The owner key (allow-owner-key) proves a decision is the owner's click on his own page (the Apps page's Share, install, update, settings, uninstall); the command hands it only to `main` and `vault-*` on the app's own origin, never the inbox (src/owner_key.rs). The Notifications window (`inbox`) is here too because it routes links exactly like a project window does: it emits to other windows and opens project and viewer windows.",
   "windows": ["main", "vault-*", "inbox"],
   "remote": {
     "urls": ["http://localhost:*", "http://127.0.0.1:*"]
@@ -24,6 +24,7 @@
     "allow-mic-take",
     "allow-confirm-dialog",
     "allow-take-app-link",
+    "allow-owner-key",
     "allow-quit-app",
     "allow-focus-diag",
     "allow-assistant-apply-hotkey",
