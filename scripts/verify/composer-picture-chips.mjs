@@ -223,7 +223,7 @@ async function chipState(page, scope) {
       marks: marks.map((m) => {
         const th = m.querySelector('.chat-cmp-hl-thumb');
         const r = th.getBoundingClientRect();
-        return { state: m.getAttribute('data-state'), bg: getComputedStyle(th).backgroundImage.slice(0, 10), w: Math.round(r.width), h: Math.round(r.height), lines: m.getClientRects().length };
+        return { state: m.getAttribute('data-state'), img: !!th.querySelector('img.chat-cmp-hl-thumb-img')?.getAttribute('src'), w: Math.round(r.width), h: Math.round(r.height), lines: m.getClientRects().length };
       }),
       stripImages: root.querySelectorAll('.chat-cmp-attachments .chat-cmp-attachment-image').length,
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -277,7 +277,7 @@ async function main() {
     const ready2 = await until(page, async () => { const s = await chipState(page, SCOPE); return s.marks.length === 2 && s.marks.every((m) => m.state === 'ready'); }, 20000);
     const s1 = await chipState(page, SCOPE);
     ok('two pictures are chips IN the text, uploaded', ready2, JSON.stringify(s1));
-    ok('each chip shows its thumbnail (a blob preview, at least 24x14 px, on one line)', s1.marks.length === 2 && s1.marks.every((m) => m.bg.startsWith('url(') && m.w >= 24 && m.h >= 14 && m.lines === 1), JSON.stringify(s1.marks));
+    ok('each chip shows its thumbnail (a blob preview, at least 24x14 px, on one line)', s1.marks.length === 2 && s1.marks.every((m) => m.img && m.w >= 24 && m.h >= 14 && m.lines === 1), JSON.stringify(s1.marks));
     ok('no picture in the row above the box', s1.stripImages === 0, String(s1.stripImages));
     const v1 = await input.inputValue();
     ok('the words stand right after each chip', /⁩ şu kısmı sevmedim\n⁨/.test(v1) && /⁩ buralara animasyon lazım$/.test(v1), JSON.stringify(v1));
@@ -309,7 +309,7 @@ async function main() {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(800);
     const sp = await chipState(page, SCOPE);
-    ok('at 390 px both chips keep their thumbnails, no horizontal overflow', sp.marks.length === 2 && sp.marks.every((m) => m.bg.startsWith('url(') && m.lines === 1) && !sp.overflow, JSON.stringify(sp));
+    ok('at 390 px both chips keep their thumbnails, no horizontal overflow', sp.marks.length === 2 && sp.marks.every((m) => m.img && m.lines === 1) && !sp.overflow, JSON.stringify(sp));
     await shot(page, '3-chat-two-pictures-390.png');
     await page.setViewportSize({ width: W, height: H });
     await page.waitForTimeout(500);
@@ -345,7 +345,7 @@ async function main() {
     await page.waitForTimeout(300);
     await page.keyboard.type('hero kesik görünüyor', { delay: 6 });
     const SUPER_SCOPE = '[data-super-slot="centre"]';
-    ok('a picture is a chip in the Super composer too', await until(page, async () => { const s = await chipState(page, SUPER_SCOPE); return s.marks.length === 1 && s.marks[0].state === 'ready' && s.marks[0].bg.startsWith('url(') && s.stripImages === 0; }, 15000), JSON.stringify(await chipState(page, SUPER_SCOPE)));
+    ok('a picture is a chip in the Super composer too', await until(page, async () => { const s = await chipState(page, SUPER_SCOPE); return s.marks.length === 1 && s.marks[0].state === 'ready' && s.marks[0].img && s.stripImages === 0; }, 15000), JSON.stringify(await chipState(page, SUPER_SCOPE)));
     await shot(page, '5-super-picture-1440.png');
     const sb = frames().length;
     await page.keyboard.press('Enter');

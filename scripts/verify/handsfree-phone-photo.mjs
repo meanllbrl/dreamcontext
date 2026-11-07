@@ -263,7 +263,7 @@ const imgs = (page, scope, needle) => page.evaluate(([s, n]) => [...document.que
 const chipPics = (page, scope, needle) => page.evaluate(async ([s, n]) => {
   const urls = [...document.querySelectorAll(`${s} .chat-cmp-hl-thumb`)]
     .filter((t) => t.getBoundingClientRect().height > 0)
-    .map((t) => /url\("?(.*?)"?\)/.exec(t.style.backgroundImage || '')?.[1] ?? '')
+    .map((t) => t.querySelector('img.chat-cmp-hl-thumb-img')?.getAttribute('src') ?? '')
     .filter((u) => decodeURIComponent(u).includes(n));
   return Promise.all(urls.map((u) => new Promise((res) => { const i = new Image(); i.onload = () => res({ w: i.naturalWidth, ok: i.naturalWidth > 0 }); i.onerror = () => res({ w: 0, ok: false }); i.src = u; })));
 }, [scope, needle]);
@@ -442,7 +442,7 @@ try {
     const base = await phone.locator('.chat-cmp-hl .chat-cmp-hl-img:visible').evaluateAll((els) => els.map((e) => {
       const r = e.getBoundingClientRect();
       const th = e.querySelector('.chat-cmp-hl-thumb');
-      return { text: (e.textContent ?? '').replace(/ /g, ' ').trim(), img: !!th?.style.backgroundImage, icon: th?.getAttribute('data-icon') ?? '', state: e.getAttribute('data-state'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      return { text: (e.textContent ?? '').replace(/ /g, ' ').trim(), img: !!th?.querySelector('img.chat-cmp-hl-thumb-img'), icon: th?.getAttribute('data-icon') ?? '', state: e.getAttribute('data-state'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
     }));
     return base;
   };

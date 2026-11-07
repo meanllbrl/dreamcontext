@@ -62,6 +62,7 @@ import {
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
+import { usePicturePeek } from './PicturePeek';
 import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
 import { ComposerModelPicker } from './model-picker/ComposerModelPicker';
@@ -989,6 +990,23 @@ export function Composer({
         return;
       }
     }
+  };
+  /** A picture chip under the pointer shows the picture itself (owner 2026-11-07): the same
+   *  hover card as a sent chip. The chip is drawn in the mirror BEHIND the textarea, so the
+   *  pointer is hit-tested against its marks, like a click; never while its popover is open. */
+  const picPeek = usePicturePeek();
+  const peekRefAt = (x: number, y: number) => {
+    if (!hlRef.current || refPop) { picPeek.hide(); return; }
+    for (const m of Array.from(hlRef.current.querySelectorAll<HTMLElement>('mark.chat-cmp-hl-img[data-ref-id]'))) {
+      for (const r of Array.from(m.getClientRects())) {
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        const att = attachments.find((a) => a.id === m.dataset.refId);
+        if (att?.kind === 'image' && att.url) { picPeek.show(att.id, att.url, { left: r.left, top: r.top, right: r.right, bottom: r.bottom }); return; }
+        picPeek.hide();
+        return;
+      }
+    }
+    picPeek.hide();
   };
   // Not past this many milliseconds: each notice says its sentence, then goes.
   useEffect(() => {
@@ -2449,6 +2467,7 @@ export function Composer({
               {MIRROR_TAIL}
             </div>
           )}
+          {picPeek.node}
           {refPop && (() => {
             const att = attachments.find((a) => a.id === refPop.id);
             return att ? (
@@ -2552,10 +2571,13 @@ export function Composer({
             }}
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
-            onClick={(e) => { onFieldTap?.(); openRefAt(e.clientX, e.clientY); }}
+            onClick={(e) => { onFieldTap?.(); picPeek.hide(); openRefAt(e.clientX, e.clientY); }}
+            onMouseMove={(e) => peekRefAt(e.clientX, e.clientY)}
+            onMouseLeave={picPeek.hide}
             aria-describedby={srRefs.length ? srListId : undefined}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              picPeek.hide();
               // The `@` arm sits FIRST and returns: the two menus are mutually exclusive by
               // construction (the caret is in at most one token), so order is about intent,
               // not conflict — an open picker owns ↑/↓/⏎ before anything else claims them.

@@ -540,16 +540,42 @@
   box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 .chat-cmp-hl-thumb {
+  position: relative;
   padding-block: 0.12em;
   background-color: var(--color-bg-tertiary);
-  background-size: cover;
-  background-position: center;
   border-radius: var(--radius-sm);
 }
+/* The picture itself, laid over the glyph's room (owner 2026-11-07: the thumbnail was an empty
+   grey box in the Mac app). An <img>, not a background: WebKit does not paint a background
+   image on this inline run. Absolute, so the line box and the textarea's caret are untouched. */
+.chat-cmp-hl-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  pointer-events: none;
+}
+/* A picture chip's hover card: the picture whole, floating by the chip, never moving the text. */
+.chat-pic-peek {
+  position: fixed;
+  /* With the chip popover (1150): over the agent overlay (1100), under the viewers (1200). */
+  z-index: 1150;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--color-bg-elevated);
+  outline: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: chat-pic-peek-in 160ms ease-out;
+}
+.chat-pic-peek img { display: block; width: 100%; height: 100%; object-fit: contain; }
+@keyframes chat-pic-peek-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-pic-peek { animation: none; } }
 /* An inline chip with no thumbnail (a file, a folder, a board item, an element with no picture,
    owner 2026-10-30): its kind's icon, centred in the same room. The mirror's text is
    transparent, so the icon names its own colour. */
-.chat-cmp-hl-thumb[data-icon] { position: relative; }
 .chat-cmp-hl-thumb[data-icon]::after {
   content: attr(data-icon);
   position: absolute;
