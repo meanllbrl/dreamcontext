@@ -127,7 +127,7 @@ import { chatOnScreen } from './chatOnScreen';
 import { deviceRefusesIntent, historyPickRefused, openChatPlan } from '../layout/newshell/drawerModel';
 import { markClosed } from './phoneClosed';
 import type { HomeRow } from './phoneHome';
-import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
+import { arrivalCovers, DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
@@ -5743,14 +5743,20 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // the chat area, before the browser paints. A project opens on no page in between, no other
   // chat of its own shows, and nothing zooms in: the main area waits plainly until the intent
   // above has run. The drawer's rows follow the target, not whatever happens to be restoring.
+  // The wait is for a project the click brings forward: the one already on screen, ready, on its
+  // chat area keeps its stage until the click has run (`arrivalCovers`). Read as of the commit
+  // BEFORE the click's: a passive effect, so the arrival's layout effect below still sees it.
+  const shownReadyRef = useRef(false);
+  useEffect(() => {
+    shownReadyRef.current = isActive && expanded && caps !== null && settingsReady && hydratedRef.current && superKnownRef.current;
+  });
   const arrivalNonce = arrival?.nonce;
   useLayoutEffect(() => {
     if (!arrival || !windowed) return;
     setExpanded(true);
     setArrived(true);
     setSuperPeek(null);
-    // A History pick travels by its own path; it opens the surface and has nothing to wait for.
-    if (arrival.intent.kind !== 'open-session') setArriving(arrival.intent.kind);
+    if (arrivalCovers(arrival.intent, shownReadyRef.current)) setArriving(arrival.intent.kind);
     // Read at the nonce: the same click must not land twice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivalNonce, windowed]);

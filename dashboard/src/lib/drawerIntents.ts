@@ -79,6 +79,18 @@ export interface DrawerWindowFact {
   tabs: number;
 }
 
+/**
+ * Whether a drawer click covers the main area while it lands (the plain `agent-arriving` wait).
+ * Only for a project the click brings forward or that is still restoring: there the cover hides a
+ * page or chat the project would otherwise flash first. The project already on screen, ready, on
+ * its chat area keeps what it shows until the click has run (owner 2026-11-07: "Product Owner"
+ * under Team gave a blank white main area, the Super row still selected, before its stage came).
+ * A History pick travels by its own path and never waits.
+ */
+export function arrivalCovers(intent: DrawerIntent, shownReady: boolean): boolean {
+  return intent.kind !== 'open-session' && !shownReady;
+}
+
 /** A click that opens something on the chat area: the project lands on it from its first frame
  *  (`AgentSurface`'s arrival), never on the page it would otherwise start on. */
 export function landsOnChat(intent: DrawerIntent): boolean {
