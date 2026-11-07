@@ -314,8 +314,10 @@
    Owner 2026-11-07: "put main next to the +". Same chip, new place: it sits right after the
    attach `+` (Composer.tsx, `CheckoutChips`), so the shelf row it used to stand on alone is
    gone. It carries the shelf's type ladder itself (the `.pin-shelf` ancestor is not there),
-   and it is the one thing on that row allowed to shrink: a long branch name ellipsizes before
-   the model picker or Send is ever squeezed. */
+   and it only ever takes the row's FREE space: basis 0, growing up to its own width. A shrink
+   weight was not enough (measured 2026-11-07: the model cluster still lost a fraction of a
+   pixel, and that alone ellipsized "Opus 5.5"), so a long branch name ellipsizes instead and
+   nothing beside it moves. */
 .pin-inline {
   --pin-text-sm: calc(12.5px * var(--zoom, 1));
   --pin-num: calc(12px * var(--zoom, 1));
@@ -323,12 +325,14 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 1000 1 0;
+  min-width: calc(40px * var(--zoom, 1));
+  max-width: max-content;
+  overflow: hidden;
   margin-left: 4px;
   font-family: var(--font-family-text);
 }
-.pin-inline .pin-chip { flex: 0 1 auto; min-width: 0; }
+.pin-inline .pin-chip { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .pin-inline .pin-chip-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* A narrow composer: the worktree marker drops to its glyph, as it did on a narrow shelf. */
 @container chatcmp (max-width: 470px) {
@@ -336,3 +340,6 @@
   .pin-inline .pin-chip-word { display: none; }
   .pin-inline .pin-chip.is-marker { padding: 0 5px; }
 }
+/* The folded phone composer (MobileChat.css) is one line: the field and Send. The chip folds
+   away with the model and the spacer, and comes back when the composer opens. */
+.agent-surface[data-mobile] .chat-cmp[data-folded]:has(.chat-cmp-input:placeholder-shown) .pin-inline { display: none; }

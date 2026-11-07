@@ -136,7 +136,7 @@ import { useStageCards } from '../super/stageCards';
  *             running and the CLI folds it in at its next tool boundary (07-29 — the first cut
  *             held it back until the turn settled, which on a long turn made ⏎ useless for the
  *             correction it exists for). "Not this turn, the next one" is still available, as
- *             its own ⇡ button, and lands as an editable row in the strip above
+ *             ⌥⏎ (once the ⇡ disc, gone 2026-11-07), and lands as an editable row in the strip above
  *             (QueuedMessages.tsx). The queue lives on the session model, not here, so it
  *             survives minimize/restore and drains where the busy edge is observed.
  *   HISTORY — ↑/↓ walk this conversation's own past prompts (`promptHistory`, newest first,
@@ -1628,8 +1628,8 @@ export function Composer({
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
-   *  `queue` — hold for the NEXT turn whatever is happening now. No button draws it since the
-   *  ⇡ disc left the toolbar (owner 2026-11-07); kept as a delivery for a caller. */
+   *  `queue` — hold for the NEXT turn whatever is happening now. ⌥⏎ while a turn runs; its
+   *  ⇡ disc left the toolbar (owner 2026-11-07). */
   type SubmitMode = 'auto' | 'queue';
 
   // ── Assistant mode: push-to-talk ──────────────────────────────────────────────────
@@ -2077,8 +2077,8 @@ export function Composer({
     //                 settled, which on a long turn is the difference between a ten-second
     //                 correction and a five-minute one.
     //   any,   queue → held as an editable row above (QueuedMessages.tsx) and sent when this
-    //                 turn settles. No toolbar disc offers it any more (owner 2026-11-07); a
-    //                 refused steer still lands here.
+    //                 turn settles. ⌥⏎ asks for it (its disc left, owner 2026-11-07); a refused
+    //                 steer lands here too.
     //
     // The steer can refuse (a card is open, the process is gone, the socket shut) and then the
     // message falls back into the queue — the one thing that must never happen is ⏎ eating the
@@ -2117,7 +2117,7 @@ export function Composer({
       void session.takeBack().then((ok: boolean) => {
         if (!ok) return;
         // The same three deliveries as any send, now that the chat is here: a turn the Mac was
-        // running is steered (or queued), a ⇡ queues, an idle chat starts a turn.
+        // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
         if (mode === 'queue') session.enqueue(message);
         else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
         else if (session.send(message) === false) return;
@@ -2628,8 +2628,15 @@ export function Composer({
                 e.preventDefault();
                 return;
               }
-              // ⏎ sends on a computer; on a phone it is a new line and only the button sends.
               const n = e.nativeEvent;
+              // ⌥⏎ while a turn runs: hold it for the NEXT turn. The keyboard home of the queue
+              // since its disc left the toolbar (owner 2026-11-07), so "not this turn, the next
+              // one" is still one gesture away.
+              if (e.key === 'Enter' && e.altKey && busy && !(n.isComposing || composingRef.current)) {
+                e.preventDefault(); submit('queue');
+                return;
+              }
+              // ⏎ sends on a computer; on a phone it is a new line and only the button sends.
               if (enterSends({ key: e.key, shiftKey: e.shiftKey, keyCode: n.keyCode, isComposing: n.isComposing || composingRef.current })) {
                 e.preventDefault(); submit();
               }
@@ -2765,13 +2772,10 @@ export function Composer({
         {/* Round icon buttons, sized to sit level with the model/effort text beside them —
             a label would only repeat what ⏎ already does.
 
-            While a turn runs, up to THREE are offered, because all three actions are live and
-            they are genuinely different asks: Stop ends the turn, ⇡ holds the message for the
-            next one, ↑ hands it to this one. ⏎ maps to ↑, so the pointer path and the keyboard
-            path agree — and ⇡ exists precisely because ⏎ no longer queues, which would
-            otherwise have left "not this turn, the next one" with no way to say it at all.
-            Both text buttons appear only once there is something to send, so an idle-handed
-            Stop stays the single obvious control. */}
+            While a turn runs, TWO: Stop ends the turn, ↑ hands the message to it (⏎ maps to ↑).
+            "Not this turn, the next one" is ⌥⏎; its own disc left because a phone did not fit
+            three (owner 2026-11-07). Send appears only once there is something to send, so an
+            idle-handed Stop stays the single obvious control. */}
         {/* THE VOICE LINE: two to four words, one line, cut with an ellipsis — never a sentence
             (owner, 2026-10-21: the long ones overflowed the narrow composer). What it does not
             say, the mic's `title` does. It sits LEFT of the mic on purpose: its width changes
@@ -2880,7 +2884,7 @@ export function Composer({
             disabled={!canCompose || !hasSendableContent || awaitingUpload}
             onClick={() => submit('auto')}
             title={awaitingUpload ? 'Attaching the pasted image…'
-              : busy ? 'Send into the running turn (⏎) — picked up at the next step'
+              : busy ? 'Send into the running turn (⏎), picked up at the next step · ⌥⏎ holds it for the next turn'
                 : 'Send (⏎)'}
             aria-label={busy ? 'Send into the running turn' : 'Send'}
           >

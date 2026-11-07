@@ -65,4 +65,8 @@ describe('two discs while Claude works', () => {
     expect(read(COMPOSER)).not.toContain('is-queue');
     expect(read(COMPOSER_CSS)).not.toContain('is-queue');
   });
+
+  it('the deliberate queue keeps a way in: ⌥⏎ while a turn runs', () => {
+    expect(read(COMPOSER)).toMatch(/e\.key === 'Enter' && e\.altKey && busy[^\n]*\n\s*e\.preventDefault\(\); submit\('queue'\);/);
+  });
 });

@@ -126,6 +126,37 @@ async function run(base) {
     if (box) await page.screenshot({ path: join(OUT, `${TAG}-${w}-composer.png`), clip: { x: 0, y: Math.max(0, box.y - 90), width: w, height: Math.min(h, box.height + 100) } });
   }
 
+  console.log('── a long branch at 390: the chip gives way, the model name keeps its room');
+  spawnSync('git', ['-C', PROJ, 'checkout', '-q', '-b', 'feature/a-rather-long-descriptive-branch-name-for-tests'], { encoding: 'utf-8' });
+  ok('the chip follows the new branch', await until(page, async () => (await s.locator('.pin-chip', { hasText: 'feature/' }).count()) > 0, 30000));
+  await page.waitForTimeout(500);
+  const long = await s.evaluate((root) => {
+    const toolbar = (root.querySelector('[data-super-slot="centre"] .chat-cmp-card') || root.querySelector('.chat-cmp-card'))?.querySelector('.chat-cmp-toolbar');
+    const chip = toolbar?.querySelector('.pin-inline');
+    const plus = toolbar?.querySelector('button[aria-label="Attach"]');
+    const model = toolbar?.querySelector('.chat-cmp-right .chat-cmp-model-wrap .chat-cmp-modeltrigger-model');
+    const cb = chip?.getBoundingClientRect(); const pb = plus?.getBoundingClientRect();
+    return {
+      chipRightOfPlus: !!(cb && pb && cb.left >= pb.right - 1),
+      chipWidth: cb ? Math.round(cb.width) : -1,
+      modelCut: model ? model.scrollWidth > model.clientWidth + 1 : null,
+      toolbarOverflow: toolbar ? toolbar.scrollWidth - toolbar.clientWidth : -1,
+    };
+  });
+  console.log('   390 long', JSON.stringify(long));
+  ok('390 long branch: the chip stays right of the +', long.chipRightOfPlus);
+  ok('390 long branch: the model name is not cut', long.modelCut === false);
+  ok('390 long branch: no toolbar overflow', long.toolbarOverflow <= 0, `overflow ${long.toolbarOverflow}`);
+  const card = s.locator('.chat-cmp-card').last();
+  const box = await card.boundingBox();
+  if (box) await page.screenshot({ path: join(OUT, `${TAG}-390-uzun-dal.png`), clip: { x: 0, y: Math.max(0, box.y - 90), width: 390, height: Math.min(844, box.height + 100) } });
+
+  console.log('── ⌥⏎ still holds a message for the next turn');
+  await input.click();
+  await input.fill('Bunu sonraki tura sakla');
+  await input.press('Alt+Enter');
+  ok('⌥⏎ while working puts a row in the queue strip', await until(page, async () => (await s.locator('.chat-queue-row', { hasText: 'sonraki tura' }).count()) === 1, 8000));
+
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
   ok('no failed requests', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));
   await browser.close();
