@@ -109,6 +109,7 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
   if (!rec) return;
   const held = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
   if (held && !held.ok) {
+    if (held.why === 'used') { sendError(res, 409, 'grant_used', `This grant already published the app${held.fullName ? ` as ${held.fullName}` : ''}. It went out: do not publish again, and never ask for a new grant for it.`); return; }
     if (held.why === 'running') { sendError(res, 409, 'publish_running', 'A publish on this grant is still running. Wait, then run `dreamcontext apps list` to see whether it went out; do not publish again.'); return; }
     if (held.why === 'expired') { sendError(res, 403, 'grant_expired', 'The grant ran out (one hour). The work you did stays: ask the owner to press Share on the app\'s page again, then publish with the new grant.'); return; }
     sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Share click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is not it (made up, used, replaced by a newer click, for another app, or the app restarted): ask him to press Share again.');
@@ -123,6 +124,7 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
     return;
   }
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
+  let pushedTo: string | null = null;
   try {
     const out = await publishApp(rec, {
       home: appsHomeDir(), host: resolveAppHost(appsHomeDir()),
@@ -136,12 +138,17 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       confirmed: held?.ok && held.visibility === 'public',
       fresh: b.fresh === true,
       // Spent the moment the push went out: a failure after it never frees it for a second push.
-      onPushed: () => done?.(true),
+      onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); },
     });
     done?.(true);
     clearSharedCache();
     sendJson(res, 200, { ok: true, ...out });
-  } catch (e) { done?.(false); sendFailure(res, e); }
+  } catch (e) {
+    done?.(false);
+    // The push went out and a later step (topics, visibility, an invite) failed: it IS published.
+    if (pushedTo) { clearSharedCache(); sendJson(res, 200, { ok: true, pushed: true, fullName: pushedTo, warning: (e as Error).message }); return; }
+    sendFailure(res, e);
+  }
 }
 
 // ─── Shared Apps, install ───────────────────────────────────────────────────────

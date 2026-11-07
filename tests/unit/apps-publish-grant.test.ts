@@ -50,9 +50,11 @@ describe('publish grant', () => {
     first.done(false);
     const second = take('/p', 'hava', g.id);
     if (!second.ok) throw new Error('not taken again');
-    second.done(true);
+    second.done(true, 'ornek/hava-app');
     second.done(false); // a failure after the push never frees it again
     expect(checkPublishGrant('/p', 'hava', g.id)).toBe(false);
-    expect(take('/p', 'hava', g.id)).toEqual({ ok: false, why: 'unknown' });
+    // A retry is told it went out, never sent for a new click.
+    expect(take('/p', 'hava', g.id)).toMatchObject({ ok: false, why: 'used', fullName: 'ornek/hava-app' });
+    expect(take('/p', 'hava', 'something-else')).toEqual({ ok: false, why: 'unknown' });
   });
 });

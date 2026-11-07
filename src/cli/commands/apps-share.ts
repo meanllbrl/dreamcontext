@@ -94,6 +94,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
             ...(opts.confirmName !== undefined ? { confirmName: opts.confirmName } : {}),
           }, { timeoutMs: 900_000 });
           if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+          if (out.pushed) { success(`${slug} is on GitHub: ${String(out.fullName)}`); error(`It went out, but a step after it failed: ${String(out.warning)}. Do not publish again.`); return; }
           success(`${slug} is on GitHub: ${String(out.fullName)} (${Number(out.sent ?? 0)} file(s))`);
           const invited = (out.invited as string[] | undefined) ?? [];
           const failed = (out.inviteFailed as string[] | undefined) ?? [];

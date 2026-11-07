@@ -165,7 +165,7 @@ async function startApi(login) {
   writeFileSync(join(home, '.dreamcontext', 'desktop-server.json'), JSON.stringify({ schema: 1, pid: api.pid, port: apiPort, launchToken: 'x'.repeat(43), appBundleId: 'com.dreamcontext.trial' }), { mode: 0o600 });
 }
 
-const SHELL = `window.__TAURI_INTERNALS__ = { invoke: async (cmd) => (cmd === 'owner_key' ? ${JSON.stringify(KEY)} : null), transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
+const SHELL = `window.__TAURI_INTERNALS__ = { invoke: async (cmd) => (cmd === 'owner_key' ? ${JSON.stringify(KEY)} : cmd === 'confirm_dialog' ? true : null), transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
 
 let browser;
 let base;
@@ -352,7 +352,7 @@ try {
     check((await cliPublish('hava-notu', grant, '--public')).out.includes('grant_scope'), 'publish: a private click published publicly');
     const first = cliPublish('hava-notu', grant, '--invite', INSTALLER);
     check(first.ok && first.out.includes('is on GitHub'), `publish Hava Notu with the grant failed: ${first.out.slice(-300)}`);
-    check((await cliPublish('hava-notu', grant)).out.includes('Publishing needs the owner'), 'publish: a spent grant published again');
+    check((await cliPublish('hava-notu', grant)).out.includes('grant_used'), 'publish: a spent grant was not told it already went out');
     // Kreatif Takip: no tagline yet, the placeholder icon; Claude writes the one line.
     const kt1 = cliPublish('kreatif-takip', otherGrant, '--invite', INSTALLER, '--tagline', 'Lists this week\'s creatives with their spend.');
     check(kt1.ok, `publish Kreatif Takip failed: ${kt1.out.slice(-300)}`);

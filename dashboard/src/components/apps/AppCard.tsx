@@ -9,6 +9,7 @@ import { askAgent } from './askAgent';
 import { publishPrompt } from './publishPrompt';
 import { preparePrompt } from '../../lib/agentPrompt';
 import { requestDelegateAgent } from '../../lib/delegateAgent';
+import { confirmAction } from '../../lib/desktop';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
 export interface AppRow {
@@ -154,6 +155,8 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
   const [handing, setHanding] = useState(false);
   const handToClaude = async (visibility: 'private' | 'public') => {
     if (handing) return;
+    // Public is for good: the owner's own yes, one line, before anything is handed over.
+    if (visibility === 'public' && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
     setManageErr(null); setHanding(true);
     try {
       const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });

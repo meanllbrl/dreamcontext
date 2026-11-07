@@ -53,12 +53,13 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    block in the app; never work around one.
 5. Ask the owner ONE question, only for what you cannot decide: the GitHub usernames to invite (a
    private publish), what changed, and the generic-word lines he may let go.
-6. Publish, with a 15 minute timeout on the command:
+6. Publish, with a 10 minute timeout on the command:
    `dreamcontext apps publish <slug> --go --grant <id> --note "<what changed>" [--public] [--invite <logins>] [--approve <ids>]`. The
    grant is spent the moment the push goes out; a publish the gate stopped frees it for a retry
-   within the hour. Refused: `grant_expired` or `owner_page_only` (used, replaced, the app
-   restarted): ask him to press Share again and publish with the new grant, your work stays;
-   `publish_running`: wait, never publish twice.
+   within the hour. Cut off or an error: run the SAME command again, it is safe. `grant_used`:
+   it already went out, stop. `publish_running`: wait, never publish twice. Only `grant_expired`
+   or `owner_page_only` (replaced, the app restarted): ask him to press Share again and publish
+   with the new grant, your work stays.
 7. End with a short plain list: what you cleaned, what went out, where.
 
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public

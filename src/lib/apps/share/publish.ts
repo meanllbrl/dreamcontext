@@ -340,7 +340,7 @@ export interface PublishOptions {
   /** The owner already confirmed a public publish another way (his "Share publicly" click). */
   confirmed?: boolean;
   /** Called the moment the push went out (the grant is spent there, whatever fails after). */
-  onPushed?: () => void;
+  onPushed?: (fullName: string) => void;
   /** Start a NEW repo (a public copy with today's version only). */
   fresh?: boolean;
 }
@@ -421,7 +421,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
     rmSync(idx, { recursive: true, force: true });
   }
   await host.withGit((env) => installedGitAsync(mirror, ['push', '-q', url, 'refs/heads/main:refs/heads/main'], { ...gitOpts, env, timeoutMs: 300_000 }));
-  opts.onPushed?.();
+  opts.onPushed?.(fullName);
   updateAppShare(opts.home, rec.projectRoot, rec.slug, { publish: { host: host.kind, fullName, repoId: repo.repoId, public: opts.visibility === 'public', lastSha: sha, at: new Date().toISOString() } });
 
   const readmeWrittenBack = pv.storeReadme !== null ? writeBackStoreReadme(rec, pv.storeReadme, pv.sourceReadme) : null;

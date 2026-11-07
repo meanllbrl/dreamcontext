@@ -55,6 +55,7 @@ describe('the Share button', () => {
     expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('private'\)\}>\{t\('share\.card\.share'\)\}/);
     expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('public'\)\}>\{t\('share\.card\.sharePublic'\)\}/);
     expect(card).toContain('/publish/grant');
+    expect(card).toMatch(/visibility === 'public' && !\(await confirmAction\(/);
     expect(card).toMatch(/askAgent\(bus, prompt, \{/);
     // No chat on screen can take it: a new chat starts with it, shown.
     expect(card).toMatch(/requestDelegateAgent\(bus, \{ title: ts\('store\.publish\.tab'[\s\S]*?reveal: true \}\)\) onClose\(\)/);
@@ -69,8 +70,11 @@ describe('the Share button', () => {
     expect(pushFn).toMatch(/sendError\(res, 403, 'owner_page_only'/);
     // Going public needs the owner's own public click; the grant is spent once the push went out.
     expect(pushFn).toMatch(/held\.visibility !== requested\) \{\s*held\.done\(false\);\s*sendError\(res, 403, 'grant_scope'/);
-    expect(pushFn).toContain('onPushed: () => done?.(true)');
-    expect(read('src/lib/apps/share/publish.ts')).toMatch(/refs\/heads\/main:refs\/heads\/main'\][^\n]*\n\s*opts\.onPushed\?\.\(\);/);
+    expect(pushFn).toContain('onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); }');
+    // A failure after the push still answers that it went out.
+    expect(pushFn).toMatch(/if \(pushedTo\) \{[^\n]*pushed: true/);
+    expect(pushFn).toContain("sendError(res, 409, 'grant_used'");
+    expect(read('src/lib/apps/share/publish.ts')).toMatch(/refs\/heads\/main:refs\/heads\/main'\][^\n]*\n\s*opts\.onPushed\?\.\(fullName\);/);
   });
 });
 

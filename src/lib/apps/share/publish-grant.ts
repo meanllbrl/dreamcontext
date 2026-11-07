@@ -21,6 +21,8 @@ export type GrantVisibility = 'private' | 'public';
 interface Grant { id: string; expiresAt: number; visibility: GrantVisibility; busy?: boolean }
 
 const grants = new Map<string, Grant>();
+/** Spent grants, kept for their hour: a retry of a publish that went out is told so, never sent for a new click. */
+const spent = new Map<string, { id: string; until: number; fullName: string | null; at: string }>();
 
 const keyOf = (projectRoot: string, slug: string) => `${projectRoot}\0${slug}`;
 
@@ -47,18 +49,22 @@ export function checkPublishGrant(projectRoot: string, slug: string, id: unknown
   return g.expiresAt > now;
 }
 
-export type GrantRefusal = 'unknown' | 'expired' | 'running';
+export type GrantRefusal = 'unknown' | 'expired' | 'running' | 'used';
 
 /**
- * Hold this app's live grant for one publish. Refused: `unknown` (not this app's grant: made up,
- * used, replaced by a newer click, or the app restarted), `expired`, `running` (a publish on it is
+ * Hold this app's live grant for one publish. Refused: `used` (it already published: never ask for
+ * a new one), `unknown` (made up, replaced by a newer click, or the app restarted), `expired`, `running` (a publish on it is
  * still going: two pushes never ride one click). `done(true)` spends it, called the moment the push
  * went out; `done(false)` (the gate stopped it, the push failed) frees it for a retry within the hour.
  */
 export function takePublishGrant(projectRoot: string, slug: string, id: unknown, now = Date.now()):
-  { ok: true; visibility: GrantVisibility; done: (sent: boolean) => void } | { ok: false; why: GrantRefusal } {
+  { ok: true; visibility: GrantVisibility; done: (sent: boolean, fullName?: string | null) => void } | { ok: false; why: GrantRefusal; fullName?: string | null; at?: string } {
   const k = keyOf(projectRoot, slug);
   const g = grants.get(k);
+  if (typeof id === 'string' && id && (!g || !sameId(id, g.id))) {
+    const s = spent.get(k);
+    if (s && s.until > now && sameId(id, s.id)) return { ok: false, why: 'used', fullName: s.fullName, at: s.at };
+  }
   if (typeof id !== 'string' || !id || !g || !sameId(id, g.id)) return { ok: false, why: 'unknown' };
   if (g.busy) return { ok: false, why: 'running' };
   if (g.expiresAt <= now) { grants.delete(k); return { ok: false, why: 'expired' }; }
@@ -66,12 +72,12 @@ export function takePublishGrant(projectRoot: string, slug: string, id: unknown,
   return {
     ok: true,
     visibility: g.visibility,
-    done: (sent: boolean) => {
+    done: (sent: boolean, fullName: string | null = null) => {
       if (grants.get(k) !== g) return;
-      if (sent) grants.delete(k); else g.busy = false;
+      if (sent) { grants.delete(k); spent.set(k, { id: g.id, until: g.expiresAt + PUBLISH_GRANT_TTL_MS, fullName, at: new Date(now).toISOString() }); } else g.busy = false;
     },
   };
 }
 
 /** Tests only. */
-export function resetPublishGrants(): void { grants.clear(); }
+export function resetPublishGrants(): void { grants.clear(); spent.clear(); }
