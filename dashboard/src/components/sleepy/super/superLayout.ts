@@ -1628,7 +1628,25 @@ function planWith(
   // band left of the Others stack, else in the bottom-left corner, else in Others as before.
   const floatIds = new Set(floating.map((c) => c.id));
   // A group stays in Others (its panel opens from there); the pill holds cards.
-  const liveOver = others.filter((id) => liveIds.has(id) && floatIds.has(id) && !isGroupId(id));
+  const overflowing = () => others.filter((id) => liveIds.has(id) && floatIds.has(id) && !isGroupId(id));
+  // A live job never waits while a tile is free (end review 2026-11-07: the side rows pack in
+  // record order, so a sized block can leave a tile empty beside them): it takes the free tile
+  // nearest where the solve wanted it, clear of the chat, every card and the bottom corners.
+  {
+    const tile = sizePx('small');
+    const corners = [f.othersRect, ...(opts.agendaPill && !inHead.agenda ? [f.agendaPill] : [])];
+    const taken = () => [centre, ...corners, ...Object.values(cards).filter((c) => c.where === 'float').map((c) => c.rect)];
+    for (const id of overflowing()) {
+      const at = sol.rects.get(id);
+      const want = { x: at?.x ?? f.free.x, y: at?.y ?? f.free.y, width: tile.width, height: tile.height };
+      const rect = findFree(want, f.free, taken());
+      if (!rect) continue;
+      others.splice(others.indexOf(id), 1);
+      cards[id] = { id, rect, where: 'float', shape: drawnShape(rect), size: 'small', owner: false, z: z.get(id) ?? 0 };
+    }
+    if (!others.length) inHead.others = false;
+  }
+  const liveOver = overflowing();
   if (liveOver.length) {
     const rest = others.length - liveOver.length;
     const { GAP, OTHERS_MIN_W, OTHERS_W, AGENDA_PILL_W, MARGIN } = STAGE;
@@ -1641,6 +1659,11 @@ function planWith(
       const w = Math.min(OTHERS_W, rightRoom - f.othersRect.width - GAP);
       rect = { x: f.othersRect.x - GAP - w, y: f.othersRect.y, width: w, height: f.othersRect.height };
     } else if (pillFits && !opts.agendaPill) rect = { x: MARGIN, y: f.othersRect.y, width: Math.min(AGENDA_PILL_W, leftRoom), height: f.othersRect.height };
+    else if (opts.agendaPill && !inHead.agenda && leftRoom - f.agendaPill.width - GAP >= OTHERS_MIN_W - 1e-9) {
+      // The minimised agenda's pill holds the corner: the more pill stands right after it.
+      const x = f.agendaPill.x + f.agendaPill.width + GAP;
+      rect = { x, y: f.othersRect.y, width: Math.min(OTHERS_W, leftRoom - f.agendaPill.width - GAP), height: f.othersRect.height };
+    }
     if (rect) {
       more = { rect, ids: liveOver };
       for (const id of liveOver) {

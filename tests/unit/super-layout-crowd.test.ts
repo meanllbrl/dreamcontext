@@ -8,7 +8,7 @@
  * Invariants across real window sizes, not pixels.
  */
 import { describe, it, expect } from 'vitest';
-import { STAGE, planStage, preferredCentre, stageItems, type Rect, type StagePlan } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { STAGE, findFree, planStage, preferredCentre, stageItems, type Rect, type StagePlan } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { SuperContainer, SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const FLOAT: SuperView = { mode: 'float' };
@@ -282,6 +282,49 @@ describe('the chat\'s width comes from the stage alone (owner 2026-11-06)', () =
               }
             }
           }
+        }
+      }
+    }
+  });
+});
+
+describe('end review of 32c18385: a live job never lands in Others nor waits while a tile is free', () => {
+  const S = { width: 1384, height: 814 };
+  const sizedWeb = web({ pos: { x: 0, y: 0 }, size: 'large', sizeBy: 'owner' });
+
+  it('agenda minimised, finished cards in Others, his web card top-left, six jobs: the extra job waits in a pill after the agenda pill, never in Others', () => {
+    const cs = [agenda({ min: true } as Partial<SuperContainer>), sizedWeb, ...Array.from({ length: 6 }, (_, i) => job(i)), done(1), done(2), done(3)];
+    const p = planStage(items(cs), FLOAT, S, { agendaPill: 'agenda-1' });
+    for (let i = 0; i < 6; i++) {
+      const id = `chat-j${i}`;
+      expect(p.others, id).not.toContain(id);
+      expect(p.cards[id]?.where === 'float' || !!p.more?.ids.includes(id), id).toBe(true);
+    }
+    expect(p.more?.ids.length ?? 0).toBeGreaterThan(0);
+    expect(overlaps(p.more!.rect, p.othersRect), 'pill over Others').toBe(false);
+    expect(overlaps(p.more!.rect, p.agendaPill), 'pill over the agenda pill').toBe(false);
+    expect(overlaps(p.more!.rect, p.centre), 'pill under the chat').toBe(false);
+    for (const c of floats(p)) expect(overlaps(c.rect, p.more!.rect), `${c.id} over the pill`).toBe(false);
+    sound(p);
+  });
+
+  it('a sized block cutting a row of small cards: the job takes the free tile, the pill stays empty', () => {
+    const cs = [agenda(), job(0), job(1), sizedWeb, job(2), job(3)];
+    const p = planStage(items(cs), FLOAT, S);
+    expect(p.more?.ids ?? []).toEqual([]);
+    for (let i = 0; i < 4; i++) expect(p.cards[`chat-j${i}`]?.where, `chat-j${i}`).toBe('float');
+    sound(p);
+  });
+
+  it('whenever a job waits in the pill, no tile is free on the stage', () => {
+    for (const s of [S, { width: 1500, height: 870 }, { width: 1744, height: 990 }]) {
+      for (const at of [0, 2, 4]) {
+        for (let n = 4; n <= 12; n++) {
+          const jobs = Array.from({ length: n }, (_, i) => job(i));
+          const p = planStage(items([agenda(), ...jobs.slice(0, at), sizedWeb, ...jobs.slice(at)]), FLOAT, s);
+          if (!p.more?.ids.length) continue;
+          const blocks = [p.centre, p.more.rect, p.othersRect, ...floats(p).map((c) => c.rect)];
+          expect(findFree({ x: 0, y: 0, width: STAGE.TILE, height: STAGE.TILE }, p.free, blocks), `${s.width}x${s.height} at=${at} ${n} jobs`).toBeNull();
         }
       }
     }
