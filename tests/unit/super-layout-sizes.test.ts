@@ -129,7 +129,9 @@ describe('sized cards: each side as wide as it needs, the centre narrows for it'
     const p = plan(rec, 1220);
     expect(p.cards.c0.size).toBe('large');
     expect(p.cards.c1.size).toBe('small');
-    expect(fitsNow(stageItems(rec, [], FLOAT), FLOAT, { width: 1220, height: 1000 }, 'c1', 'medium')).toBe(false);
+    // Asked as his act (owner 2026-11-06: what he sizes is kept before the stage's own size): the
+    // stage's large card gives way and his medium is offered.
+    expect(fitsNow(stageItems(rec, [], FLOAT), FLOAT, { width: 1220, height: 1000 }, 'c1', 'medium')).toBe(true);
     invariants(p, '1220 large+medium');
   });
 
@@ -141,12 +143,12 @@ describe('sized cards: each side as wide as it needs, the centre narrows for it'
   });
 
   it('owner 2026-10-22: a card grows on one side, the chat stays in the middle while it can', () => {
-    // Stage 1384 (a 1440 window): large on the left, small on the right. Centred, the chat keeps
-    // 1384 − 48 − 2 × 368 = 600 ≥ 560, so it narrows evenly instead of sliding right.
+    // Stage 1384 (a 1440 window): large on the left, small on the right. The chat keeps the
+    // stage's width (owner 2026-11-06: 775) and steps right only as far as the large card needs.
     const p = plan(record(['large', 'small', 'small', 'small']), 1384);
     expect(p.cards.c0).toMatchObject({ where: 'float', size: 'large' });
-    expect(p.centre.width).toBeCloseTo(600, 6);
-    expect(p.centre.x + p.centre.width / 2).toBeCloseTo(1384 / 2, 6);
+    expect(p.centre.width).toBeCloseTo(preferredCentre(1384), 6);
+    expect(p.centre.x).toBeCloseTo(STAGE.MARGIN + 344 + STAGE.GAP, 6);
     invariants(p, '1384 large centred');
     // Stage 1744 (the owner's window): 16 px narrower than preferred, still in the middle.
     const q = plan(record(['large', 'small', 'small', 'small']), 1744);

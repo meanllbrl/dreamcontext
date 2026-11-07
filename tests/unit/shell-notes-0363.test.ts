@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren, busyChildren } from '../../dashboard/src/components/sleepy/super/sessionHome';
 import { adoptionBody, needsOwner } from '../../dashboard/src/components/sleepy/super/superHandover';
-import { planStage, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
+import { planStage, preferredCentre, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { buildDrawerRows } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import { drawerTogglePanel, PAGES_WITH_PANEL } from '../../dashboard/src/lib/uxMode';
 import { rosterSummary } from '../../src/server/routes/agent-sessions';
@@ -141,30 +141,15 @@ describe('note 7: the stage leans right beside the drawer', () => {
   const card = (id: string, o = {}) => ({ id, kind: 'chat', ref: id, shape: 'portrait', place: 'float', by: 'super', ...o });
   const plan = (cs: unknown[], w: number, leanRight: boolean) => planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: w, height: 900 }, { leanRight });
 
-  it('with the drawer open the chat widens and moves right, the right card reaches the margin', () => {
-    const cs = [agenda, card('a')];
-    const off = plan(cs, 1160, false);
-    const on = plan(cs, 1160, true);
-    expect(on.centre.width).toBeGreaterThan(off.centre.width);
-    expect(on.centre.x + on.centre.width).toBeGreaterThan(off.centre.x + off.centre.width);
-    const right = on.cards.a.rect ?? on.cards.ag.rect;
-    expect(on.cards.ag.size).toBe(off.cards.ag.size);
-    for (const c of Object.values(on.cards)) {
-      if (c.where !== 'float') continue;
-      const clear = c.rect.x + c.rect.width <= on.centre.x || c.rect.x >= on.centre.x + on.centre.width;
-      expect(clear).toBe(true);
-      expect(c.rect.x + c.rect.width).toBeLessThanOrEqual(1160 - STAGE.MARGIN + 1e-6);
+  it('the drawer open or closed, the chat keeps the width the stage gives it (owner 2026-11-06)', () => {
+    for (const cs of [[agenda, card('a')], [agenda, card('a'), card('b')]]) {
+      for (const w of [1160, 1400]) {
+        const off = plan(cs, w, false);
+        const on = plan(cs, w, true);
+        expect(on.centre.width, String(w)).toBeCloseTo(preferredCentre(w), 6);
+        expect(JSON.stringify(on), String(w)).toBe(JSON.stringify(off));
+      }
     }
-    expect(right).toBeTruthy();
-  });
-
-  it('closed, the plan is the centred one, or the wider chat beside an agenda-only side (0.40.5)', () => {
-    const cs = [agenda, card('a'), card('b')];
-    const a = plan(cs, 1400, false);
-    const centred = planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: 1400, height: 900 }, { agendaCentred: true } as never);
-    expect(centred.centre.x + centred.centre.width / 2).toBeCloseTo(700, 6);
-    expect(a.centre.width).toBeGreaterThanOrEqual(centred.centre.width - 1e-6);
-    expect(JSON.stringify(planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: 1400, height: 900 }, {}))).toBe(JSON.stringify(a));
   });
 
   it("a card the owner dropped keeps the stage as he arranged it", () => {

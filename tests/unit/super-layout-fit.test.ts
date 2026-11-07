@@ -182,7 +182,7 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
-  it('the lean never costs a card its place: the centred plan stands at the same agenda width (review r1, 2026-11-03)', () => {
+  it('his cards keep their places and the agenda its size beside the chat at the stage\'s width (review r1, 2026-11-03; owner 2026-11-06)', () => {
     const cs = [
       agenda('wide', { pos: { x: 0.238, y: 0.777 } }),
       card('c0', { size: 'large' }),
@@ -191,8 +191,11 @@ describe('the agenda sizes itself (problem 2)', () => {
       card('c3', { pos: { x: 0.661, y: 0.353 } }),
     ];
     const p = plan(cs, { width: 1839, height: 900 });
-    expect(p.others).toEqual([]);
+    expect(p.centre.width).toBeCloseTo(preferredCentre(1839), 6);
+    // His two cards keep the right column: the stage's own large card waits in Others for room.
+    expect(p.others).toEqual(['c0']);
     expect(p.cards.ag.size).toBe('wide');
+    for (const id of ['c2', 'c3']) expect(p.cards[id].where, id).toBe('float');
     expectSound(p, cs, 'review r1');
   });
 
@@ -299,11 +302,10 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
-  it('another card the owner sized keeps the old rule: the centre narrows for it, down to its floor', () => {
+  it('another card the owner sized keeps its size beside the chat, which keeps the stage\'s width (owner 2026-11-06)', () => {
     const p = plan([card('pic', { kind: 'image', size: 'medium', sizeBy: 'owner' }), card('a')], WINDOWS.owner);
     expect(p.cards.pic.size).toBe('medium');
-    expect(p.centre.width).toBeLessThan(preferredCentre(WINDOWS.owner.width));
-    expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN - EPS);
+    expect(p.centre.width).toBeCloseTo(preferredCentre(WINDOWS.owner.width), 6);
   });
 
   it('a side another card already widened lends the agenda its width for free', () => {

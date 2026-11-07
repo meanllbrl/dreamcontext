@@ -55,9 +55,9 @@ describe('a card more never narrows the chat (owner 2026-11-06)', () => {
       const base = planStage(items(record(8)), FLOAT, s);
       for (let n = 8; n <= 12; n++) {
         const p = planStage(items(record(n)), FLOAT, s);
-        expect(p.centre.width, `${n} live jobs`).toBeCloseTo(base.centre.width, 6);
-        // In the middle.
-        expect(Math.abs(p.centre.x - (p.width - p.centre.x - p.centre.width))).toBeLessThanOrEqual(1);
+        // The stage's width (owner 2026-11-06), and where it stood: no job moves it.
+        expect(p.centre.width, `${n} live jobs`).toBeCloseTo(preferredCentre(s.width), 6);
+        expect(p.centre.x, `${n} live jobs`).toBeCloseTo(base.centre.x, 6);
         // Every live job stays in sight: on the stage (cards squeeze or cross sides first), else
         // in the "more" pill beside Others, never lost in the Others stack.
         for (let i = 0; i < n; i++) {
@@ -134,12 +134,14 @@ describe('the agenda\'s width never pays for jobs (the real app at 1800 x 1080, 
   }
 });
 
+const isLive = (c: SuperContainer) => c.kind === 'chat' && c.place === 'float';
+/** The record with the web card at index `webAt` among the jobs. */
+const at = (live: number, webAt: number) => {
+  const jobs = Array.from({ length: live }, (_, i) => job(i));
+  return [agenda(), ...jobs.slice(0, webAt), web(), ...jobs.slice(webAt), done(1), done(2), done(3)];
+};
+
 describe('the end review\'s cases (r1)', () => {
-  const isLive = (c: SuperContainer) => c.kind === 'chat' && c.place === 'float';
-  const at = (live: number, webAt: number) => {
-    const jobs = Array.from({ length: live }, (_, i) => job(i));
-    return [agenda(), ...jobs.slice(0, webAt), web(), ...jobs.slice(webAt), done(1), done(2), done(3)];
-  };
   for (const s of [{ width: 1713, height: 990 }, { width: 1744, height: 994 }, { width: 1384, height: 814 }]) {
     for (const webAt of [3, 4]) {
       for (const leanRight of [false, true]) {
@@ -215,4 +217,73 @@ describe('the owner\'s order (2026-11-06): the chat stays, his size is kept, ext
       });
     }
   }
+});
+
+describe('re-check r4', () => {
+  it('a job opening while the owner holds a card never sends the held card to Others', () => {
+    const job0 = { pos: { x: 0.05, y: 0.5 }, size: 'medium', sizeBy: 'owner' } as Partial<SuperContainer>;
+    for (const s of [...STAGES, { width: 1713, height: 990 }]) {
+      for (const leanRight of [false, true]) {
+        for (let n = 6; n <= 11; n++) {
+          const before = planStage(items(record(n, { job0 })), FLOAT, s, { leanRight });
+          for (const pick of Object.keys(before.cards).filter((id) => before.cards[id].where === 'float')) {
+            const rect = before.cards[pick].rect;
+            const held = planStage(items(record(n + 1, { job0 })), FLOAT, s, { leanRight, dragging: { id: pick, rect } });
+            const label = `${s.width} lean=${leanRight} ${n}->${n + 1} jobs, ${pick} held`;
+            expect(held.cards[pick]?.where, label).toBe('float');
+            expect(held.cards[pick]?.rect, label).toEqual(rect);
+            expect(held.others, label).not.toContain(pick);
+            // The chat is the plan the stage draws without the hold.
+            expect(held.centre, label).toEqual(planStage(items(record(n + 1, { job0 })), FLOAT, s, { leanRight }).centre);
+          }
+        }
+      }
+    }
+  });
+
+  it('the agenda drawn a size smaller keeps the chat flat at 8 -> 12 jobs (1712-1780 x 814, web card on its side)', () => {
+    for (let w = 1712; w <= 1780; w += 4) {
+      const s = { width: w, height: 814 };
+      const base = planStage(stageItems(at(8, 3), [], FLOAT, isLive), FLOAT, s).centre.width;
+      for (let n = 9; n <= 12; n++) {
+        expect(planStage(stageItems(at(n, 3), [], FLOAT, isLive), FLOAT, s).centre.width, `${w} ${n} jobs`).toBeCloseTo(base, 6);
+      }
+    }
+  });
+});
+
+describe('the chat\'s width comes from the stage alone (owner 2026-11-06)', () => {
+  it('two columns a side on his 1800 window, its share with three columns on a 1440 one', () => {
+    expect(preferredCentre(1744)).toBeCloseTo(960, 6);
+    expect(preferredCentre(1700)).toBeCloseTo(916, 6);
+    expect(preferredCentre(1384)).toBeCloseTo(0.56 * 1384, 6);
+    // Never narrower on a wider stage, past the four-column step.
+    for (let w = 1700; w <= 2400; w += 10) expect(preferredCentre(w + 10)).toBeGreaterThanOrEqual(preferredCentre(w));
+  });
+
+  it('jobs opening, his agenda size, a dropped job, the web card and the drawer never change it, nor where it stands', () => {
+    for (const w of [1384, 1440, 1600, 1700, 1744, 1800]) {
+      for (const h of [814, 990]) {
+        for (const ag of [{}, { sizeBy: 'owner' as const }, { size: 'medium' as const, sizeBy: 'owner' as const }]) {
+          for (const drop of [false, true]) {
+            for (const lean of [false, true]) {
+              let x: number | null = null;
+              for (let n = 4; n <= 14; n++) {
+                const jobs = Array.from({ length: n }, (_, i) => job(i, i === 0 && drop ? { pos: { x: 0.95, y: 0.5 } } : {}));
+                const cs = [agenda(ag), ...jobs.slice(0, 3), web(), ...jobs.slice(3), done(1)];
+                const p = planStage(items(cs), FLOAT, { width: w, height: h }, { leanRight: lean });
+                const label = `${w}x${h} ${JSON.stringify(ag)} drop=${drop} lean=${lean} ${n} jobs`;
+                expect(p.centre.width, label).toBeCloseTo(preferredCentre(w), 6);
+                if (x !== null) expect(p.centre.x, label).toBeCloseTo(x, 6);
+                x = p.centre.x;
+                if (ag.sizeBy) expect(p.cards['agenda-1'].size, label).toBe(ag.size ?? 'large');
+                for (let i = 0; i < n; i++) expect(p.others, label).not.toContain(`chat-j${i}`);
+                sound(p);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
 });

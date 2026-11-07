@@ -56,13 +56,12 @@ describe('a bare stage: the chat, Others and the agenda pill', () => {
     expect(p.othersRect.x).toBeGreaterThanOrEqual(p.centre.x + p.centre.width + STAGE.GAP);
   });
 
-  it('a chat leaning right keeps its height: Others goes to the head, the drop corner stays beside it', () => {
-    const p = planStage([card('tile'), away('a')], FLOAT, { width: 1074, height: 826 }, { agendaPill: 'ag', leanRight: true });
+  it('beside the drawer the chat keeps its height and the stage plans as with the drawer closed (owner 2026-11-06)', () => {
+    const s = { width: 1074, height: 826 };
+    const p = planStage([card('tile'), away('a')], FLOAT, s, { agendaPill: 'ag', leanRight: true });
     expect(p.height - p.centre.y - p.centre.height).toBe(M);
-    expect(p.centre.x).toBeGreaterThan(p.width - p.centre.x - p.centre.width);
-    expect(p.othersInHead).toBe(true);
+    expect(JSON.stringify(p)).toBe(JSON.stringify(planStage([card('tile'), away('a')], FLOAT, s, { agendaPill: 'ag' })));
     expect(p.othersZone.width).toBeGreaterThan(0);
-    expect(p.othersZone.x).toBeGreaterThanOrEqual(p.centre.x + p.centre.width);
   });
 });
 
