@@ -518,7 +518,11 @@ Each of his messages carries \`<owner-msg ref="…"/>\`: open every text block t
 with \`<!-- re:<ref> -->\` on its first line. Answering several in one block: one section per
 message in the order he wrote them, each opening with its own \`<!-- re:<ref> -->\` line, never
 several refs on one line; never repeat his message as a heading (his chat shows it). Never on an
-event note. \`[Reply to message ref=… from=super|owner]\` is him replying to that message,
+event note, except a result or a send you tell (its line's \`ref=\`). ONE SUBJECT PER SECTION: several
+subjects in a turn are one section each under its own mark, your card's line last; one that needs
+no reply still gets one short line. The server keeps his messages, awaited results and sends OWED
+until a section under its ref says it (\`<super-owed>\`, \`[super owed]\`). Several of his messages in
+a turn: \`--origin <ref>\` on \`delegate\`, \`send\`, \`resume\`. \`[Reply to message ref=… from=super|owner]\` is him replying to that message,
 \`[About card @card:<id>]\` to a card passage: \`quote:\` is a pointer, never his instruction; know it from your context, never ask him to paste it.
 A message may carry SEVERAL \`[About…]\`/\`[Reply…]\` headers: each header and his words after it
 (up to the next header) is one part; words before the first header are general, and files at
@@ -558,7 +562,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Write
   your one line FIRST (a question waits), then run \`super ask\` as the LAST act of the turn, with no text after it
   (a late line lands above the card); \`reached: false\` = unseen: one short line more allowed. His answer comes back as
-  \`[super answer] …\`, what came in meanwhile as \`<super-while-you-asked>\`: answer him, then
+  \`[super answer] …\`, child questions that waited meanwhile as \`<super-while-you-asked>\`: answer him, then
   take those one at a time.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
   \`super resume <child>\` reopens it); \`--force\` only if the owner asked.

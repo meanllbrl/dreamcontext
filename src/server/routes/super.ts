@@ -13,7 +13,7 @@ import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
@@ -41,7 +41,7 @@ import {
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { pinnedMemberCard } from '../../lib/super/inbox.js';
-import { freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
@@ -941,9 +941,11 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
 
 /** His word reached the child (`send`, `resume` in his turn): its next result is his again, and
  *  answers the message he wrote in this turn. */
-async function markOwnersJob(c: SuperCaller, child: string): Promise<void> {
-  if (!ownersTurn(c)) return;
-  const origin = c.state.session ? superOwnerMsgRef(c.state.session) : undefined;
+async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, unknown> = {}): Promise<void> {
+  // `--origin <ref>` names his message even outside his turn (work sent from an event turn).
+  const named = b.origin !== undefined ? jobOrigin(c, b).ref : undefined;
+  if (!named && !ownersTurn(c)) return;
+  const origin = named ?? (c.state.session ? superOwnerMsgRef(c.state.session) : undefined);
   // Set inside the write, never from the caller's snapshot: a `gone` settled since may have cleared it.
   await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
     const x = s.children[child];
@@ -1969,6 +1971,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
+    const originArg = jobOrigin(c, b);
+    if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     if (phoneHeld(child)) { refusePhoneHeld(res); return; }
     // A parked child has no process: one command wakes it (`resume`), then the message goes in.
     // The Super Agent never resumes by hand (field 2026-10-21: send, resume, sleep, send again).
@@ -2010,7 +2014,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The message already went in: a stamp that could not be written must not refuse (and resend) it.
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
-    await markOwnersJob(c, child);
+    await markOwnersJob(c, child, b);
     ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}), ...(notOpened ?? {}) });
   },
 
@@ -2409,6 +2413,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireMemberReady(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    const originArg = jobOrigin(c, b);
+    if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     const root = c.who.contextRoot;
     const ch = c.state.children[child];
     // The owner's own chat, like `end`, `update` and `adopt`: reopened (or made a child again
@@ -2431,7 +2437,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (wasEnded) { delete x.endedAt; x.adopted = true; }
         container = ensureChatContainer(s, child, x.brief, wasEnded);
       });
-      await markOwnersJob(c, child);
+      await markOwnersJob(c, child, b);
       ok(res, { child, resumed: false, running: true, ...cardOutcome(container, child, after) });
       return;
     }
@@ -2477,7 +2483,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         container = ensureChatContainer(s, child, x.brief, true);
       });
       if (startError) void pumpSuper(root, c.superId); else if (!isLiveChat(child)) expectChild(root, child);
-      await markOwnersJob(c, child);
+      await markOwnersJob(c, child, b);
       const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
       const ignored = (['mode', 'model', 'effort'] as const).filter((k) => asked[k] && asked[k] !== used[k]);
       ok(res, {
@@ -3409,7 +3415,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open' | 'member';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open' | 'member' | 'owed';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>, superId: SuperId) => Promise<void>;
 
 /** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
@@ -3417,6 +3423,14 @@ const OWNER_OPEN_KINDS: readonly string[] = ['web', 'knowledge', 'task', 'insigh
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
 export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
+  // His "Gerek yok" on an unanswered line (owed.ts): the owner's door only; the Super has no verb
+  // that closes a debt.
+  owed: async (_req, res, contextRoot, body, superId) => {
+    const id = typeof body.id === 'string' && OWED_ID_RE.test(body.id) ? body.id : null;
+    if (!id) { sendError(res, 400, 'invalid_args', 'id is an unanswered line\'s id (o<n>)'); return; }
+    if (!(await dropOwed(contextRoot, superId, id))) { sendError(res, 404, 'not_found', 'no such unanswered line is open'); return; }
+    sendJson(res, 200, { dropped: id });
+  },
   member: async (_req, res, contextRoot, body, superId) => {
     // The owner opens a member and sends (plan-r10 1): its Super's record is born now (or read),
     // so the window spawns the chat with THIS session id and the upgrade gate accepts it. An
@@ -3664,3 +3678,4 @@ export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
+export const handleSuperOwedDrop = ownerRoute('owed');

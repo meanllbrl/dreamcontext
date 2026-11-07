@@ -6,6 +6,7 @@ import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, OWED_ID_RE, SENT_RE, type SuperOwed,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -334,6 +335,8 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
       if (v !== undefined && v >= 0) child[k] = k === 'finishedAt' ? v : Math.min(v, Date.now());
     }
     if (child.seenAt === undefined) delete child.seenMarkedAt;
+    const sent = cleanSent(c.sent);
+    if (sent.length) child.sent = sent;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
@@ -398,6 +401,12 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const acceptedAt = isRequest ? finite(q.acceptedAt) : undefined;
     const workOrigin = parseWorkOrigin(q.workOrigin);
     const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
+    // A result debt's stamp (owed.ts), and an `owed` item's debts; an `owed` item names at least one.
+    const owedAt = finite(q.owedAt);
+    const owedIds = q.kind === 'owed' && Array.isArray(q.owed)
+      ? [...new Set(q.owed.filter((x): x is string => typeof x === 'string' && OWED_ID_RE.test(x)))].slice(0, MAX_OWED_OPEN)
+      : [];
+    if (q.kind === 'owed' && !owedIds.length) continue;
     // An ask's report cards, while it is open (nothing points at them after his answer).
     const read = isAsk && q.state !== 'done' && Array.isArray(q.read)
       ? [...new Set(q.read.filter((r): r is string => typeof r === 'string' && CONTAINER_ID_RE.test(r)))].slice(0, MAX_ASK_READS)
@@ -436,6 +445,8 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(acceptedAt !== undefined && acceptedAt >= 0 ? { acceptedAt } : {}),
       ...(answers ? { answers } : {}),
       ...(workOrigin ? { workOrigin } : {}),
+      ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
+      ...(owedIds.length ? { owed: owedIds } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
@@ -672,6 +683,55 @@ function sanitizeMainBatches(raw: unknown): string[] {
   return out.slice(-MAX_MAIN_BATCHES);
 }
 
+/** A child's or a debt's outward actions: labels of the fixed shape, unique, at most MAX_SENT. */
+function cleanSent(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) if (typeof x === 'string' && SENT_RE.test(x) && !out.includes(x)) out.push(x);
+  return out.slice(-MAX_SENT);
+}
+
+/** The owed ledger (owed.ts): every well-formed open debt (up to MAX_OWED_OPEN, newest), the
+ *  newest MAX_OWED_CLOSED closed ones; ids unique; refs, gists and stamps to their shapes. */
+function sanitizeOwed(raw: unknown): SuperOwed[] {
+  if (!Array.isArray(raw)) return [];
+  const all: SuperOwed[] = [];
+  const ids = new Set<string>();
+  for (const d of raw) {
+    if (!isRecord(d) || typeof d.id !== 'string' || !OWED_ID_RE.test(d.id) || ids.has(d.id)) continue;
+    if (d.kind !== 'msg' && d.kind !== 'result') continue;
+    if (typeof d.ref !== 'string' || !MSG_REF_RE.test(d.ref)) continue;
+    const seq = finite(d.seq);
+    const at = finite(d.at);
+    if (seq === undefined || seq < 1 || !Number.isInteger(seq) || at === undefined) continue;
+    const gist = typeof d.gist === 'string' ? d.gist.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, MAX_OWED_MSG_GIST) : '';
+    const nudges = typeof d.nudges === 'number' && Number.isInteger(d.nudges) && d.nudges > 0 ? Math.min(d.nudges, 9) : 0;
+    const out: SuperOwed = { id: d.id, kind: d.kind, ref: d.ref, seq, at, gist, nudges };
+    if (Array.isArray(d.parts)) {
+      const parts = d.parts.filter((p): p is string => typeof p === 'string' && MSG_REF_RE.test(p)).slice(0, 100);
+      if (parts.length) out.parts = parts;
+    }
+    if (typeof d.item === 'string' && QUEUE_ID_RE.test(d.item)) out.item = d.item;
+    if (typeof d.child === 'string' && okSessionId(d.child)) out.child = d.child;
+    if (typeof d.team === 'string' && TEAM_JOB_ID_RE.test(d.team)) out.team = d.team;
+    const sent = cleanSent(d.sent);
+    if (sent.length) out.sent = sent;
+    if (isRecord(d.closed)) {
+      const cat = finite(d.closed.at);
+      const by = d.closed.by;
+      if (cat !== undefined && (by === 'mark' || by === 'owner' || by === 'takeback')) out.closed = { at: cat, by };
+    }
+    const parkedAt = finite(d.parkedAt);
+    if (!out.closed && (d.parked === 'stop' || d.parked === 'limit') && parkedAt !== undefined) { out.parked = d.parked; out.parkedAt = parkedAt; }
+    ids.add(d.id);
+    all.push(out);
+  }
+  const open = all.filter((d) => !d.closed).sort((a, b) => a.seq - b.seq).slice(-MAX_OWED_OPEN);
+  const closed = all.filter((d) => d.closed).sort((a, b) => (b.closed?.at ?? 0) - (a.closed?.at ?? 0)).slice(0, MAX_OWED_CLOSED);
+  const keep = new Set([...open, ...closed].map((d) => d.id));
+  return all.filter((d) => keep.has(d.id));
+}
+
 /** The held ledger: well-formed entries of items still on the queue, unique, newest MAX_HELD. */
 function sanitizeHeld(raw: unknown, queue: readonly SuperQueueItem[]): SuperHeldEvent[] {
   if (!Array.isArray(raw)) return [];
@@ -725,6 +785,11 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const events = finite(away.events);
   const mainBatches = sanitizeMainBatches(raw.mainBatches);
   const member = typeof raw.member === 'string' && okMember(raw.member) ? raw.member : undefined;
+  const owed = sanitizeOwed(raw.owed);
+  const rawOwedSeq = finite(raw.owedSeq);
+  // Never below a debt it holds: a later debt can never take an id in use.
+  const owedSeq = Math.max(rawOwedSeq !== undefined && rawOwedSeq > 0 && rawOwedSeq < 1e9 ? Math.floor(rawOwedSeq) : 0, ...owed.map((d) => d.seq));
+  const owedSince = finite(raw.owedSince);
   return {
     v: SUPER_STATE_VERSION,
     session,
@@ -749,6 +814,9 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(askShows.length ? { askShows } : {}),
     ...(member ? { member } : {}),
     ...(mainBatches.length ? { mainBatches } : {}),
+    ...(owed.length ? { owed } : {}),
+    ...(owedSeq ? { owedSeq } : {}),
+    ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
   };
 }
 

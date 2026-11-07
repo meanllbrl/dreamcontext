@@ -11,7 +11,7 @@ export function AgendaAboutStrip({ about, superSid }: { about: AgendaAbout; supe
   const ctx = useSuperEventContext(about.kind === 'item' ? superSid : null);
   const strip = agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
   });
   return (
     <div className="chat-msg-about" data-testid="chat-msg-about" data-kind={about.kind}>
@@ -90,7 +90,7 @@ export function ReplySectionHead({ head, superSid, onReplyTarget }: {
   const strip = about
     ? agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
       about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-      superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+      superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
     })
     : null;
   const label = strip?.label ?? (head.count > 1 ? t('super.reply.nMessages').replace('{n}', String(head.count)) : t('super.reply.yourMessage'));
@@ -134,7 +134,7 @@ export function useRefChipLabel(about: MessageAbout, superSid: string | null): s
   if (about.kind === 'note') return about.line ?? '';
   return agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
   }).text;
 }
 

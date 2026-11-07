@@ -364,7 +364,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  `checklist`): his from birth, closed when his answer reaches the child. */
 /** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
  *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -606,6 +606,66 @@ export interface SuperState {
   member?: string;
   /** A member Super's main-origin turns (the owner's unread skips them). Absent = none. */
   mainBatches?: string[];
+  /** What the Super still owes the owner (server owed.ts): open debts and the newest closed. */
+  owed?: SuperOwed[];
+}
+
+/** One thing the Super owes the owner. MIRRORS `SuperOwed` in src/lib/super/types.ts
+ *  (super-types-mirror.test.ts): the agenda's "Cevaplanmadı" rows read it. */
+export interface SuperOwed {
+  id: string;
+  kind: 'msg' | 'result';
+  ref: string;
+  parts?: string[];
+  seq: number;
+  at: number;
+  item?: string;
+  child?: string;
+  team?: string;
+  gist: string;
+  sent?: string[];
+  nudges: number;
+  parked?: 'stop' | 'limit';
+  parkedAt?: number;
+  closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+}
+/** Mirrors OWED_NUDGES and OWED_PARK_MS (server types.ts). */
+export const OWED_NUDGES = 2;
+export const OWED_PARK_MS = 10 * 60_000;
+/** Shown on his agenda: nudged OWED_NUDGES times, or parked by his Stop or a limit for
+ *  OWED_PARK_MS. MIRRORS `owedVisible` in src/lib/super/owed.ts. */
+export function owedVisible(d: Pick<SuperOwed, 'nudges' | 'parked' | 'parkedAt' | 'closed'>, now = Date.now()): boolean {
+  if (d.closed !== undefined) return false;
+  if (d.nudges >= OWED_NUDGES) return true;
+  return !!d.parked && d.parkedAt !== undefined && now - d.parkedAt >= OWED_PARK_MS;
+}
+/** The earliest moment a parked debt becomes visible, after `now`. MIRRORS owed.ts. */
+export function nextOwedReveal(owed: readonly Pick<SuperOwed, 'nudges' | 'parked' | 'parkedAt' | 'closed'>[] | undefined, now = Date.now()): number | null {
+  let at: number | null = null;
+  for (const d of owed ?? []) {
+    if (d.closed !== undefined || d.nudges >= OWED_NUDGES || !d.parked || d.parkedAt === undefined) continue;
+    const t = d.parkedAt + OWED_PARK_MS;
+    if (t > now && (at === null || t < at)) at = t;
+  }
+  return at;
+}
+/** A debt as the window reads it from a push or a digest: checked, the rest dropped. */
+export function readOwed(raw: unknown, max = 200): SuperOwed[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperOwed[] = [];
+  for (const d of raw) {
+    if (out.length >= max) break;
+    if (!isRecord(d) || typeof d.id !== 'string' || (d.kind !== 'msg' && d.kind !== 'result') || typeof d.ref !== 'string') continue;
+    if (typeof d.seq !== 'number' || typeof d.at !== 'number' || typeof d.gist !== 'string' || typeof d.nudges !== 'number') continue;
+    const o: SuperOwed = { id: d.id, kind: d.kind, ref: d.ref, seq: d.seq, at: d.at, gist: d.gist, nudges: d.nudges };
+    if (d.parked === 'stop' || d.parked === 'limit') { o.parked = d.parked; if (typeof d.parkedAt === 'number') o.parkedAt = d.parkedAt; }
+    if (Array.isArray(d.sent)) o.sent = d.sent.filter((x): x is string => typeof x === 'string');
+    if (isRecord(d.closed) && typeof d.closed.at === 'number' && (d.closed.by === 'mark' || d.closed.by === 'owner' || d.closed.by === 'takeback')) o.closed = { at: d.closed.at, by: d.closed.by };
+    if (typeof d.item === 'string') o.item = d.item;
+    if (typeof d.child === 'string') o.child = d.child;
+    out.push(o);
+  }
+  return out;
 }
 
 /** The agenda notepad (owner 2026-10-22 19:15): lines the super agent writes itself, in three
@@ -625,7 +685,7 @@ export const MAX_PAD = 40;
 export const MAX_PAD_TEXT = 160;
 /** The owner wrote about one agenda line: the header his message opens with (MIRRORED from the
  *  server, `src/lib/super/types.ts`, pinned by super-types-mirror.test.ts). */
-export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item|owed)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done|unanswered)\]/;
 export const MAX_ABOUT_LINE = 200;
 /** A message's reference: six base-36 characters derived from its words (MIRRORED from the
  *  server, which hashes what a turn received; the window hashes what it sent). */
@@ -661,7 +721,7 @@ export const MAX_SELECTION_QUOTE = 1000;
 export const MAX_MESSAGE_REFS = 100;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'owed' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
@@ -684,10 +744,10 @@ export function aboutHeads(text: string): AboutHead[] {
     const t = a || c ? null : ABOUT_TASK_RE.exec(s);
     const r = a || c || t ? null : REPLY_TO_RE.exec(s);
     if (!a && !c && !t && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : t ? 'task' : 'reply';
+    const kind = a ? (a[1] as 'note' | 'item' | 'owed') : c ? 'card' : t ? 'task' : 'reply';
     let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item' || kind === 'task') {
+    if (kind === 'item' || kind === 'owed' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -766,7 +826,7 @@ export interface SuperStateView extends SuperState {
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
 
 export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch', 'fresh'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
@@ -980,6 +1040,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(typeof v.member === 'string' && v.member ? { member: v.member } : {}),
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
+    ...(Array.isArray(v.owed) && readOwed(v.owed).length ? { owed: readOwed(v.owed) } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),
@@ -991,7 +1052,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
 // ─── The phone's agenda digest (src/lib/super/phone-mirror.ts `superDigest`) ───────────
 
 /** Mirrors `SUPER_DIGEST_FIELDS` in src/lib/super/phone-mirror.ts (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'owed', 'key'] as const;
 
 /** What a phone mirror is told of the Super Agent's agenda (a `super_digest` frame): enough to
  *  draw the desktop's `SuperAgenda` and fold the event turns, never the record. */
@@ -1006,6 +1067,8 @@ export interface SuperDigestWire {
   mainBatches?: string[];
   /** Child session id → the Mac's job card title. */
   names: Record<string, string>;
+  /** The open debts (server owed.ts), read only. Absent in a digest from an older server. */
+  owed?: SuperOwed[];
   key: string;
 }
 
@@ -1031,6 +1094,9 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     })),
     waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
-    ownerBatches, mainBatches, names, key: v.key,
+    ownerBatches, mainBatches, names,
+    // Checked and capped; only open ones travel (the phone draws and never drops them).
+    ...(Array.isArray(v.owed) ? { owed: readOwed(v.owed, 40).filter((d) => d.closed === undefined) } : {}),
+    key: v.key,
   };
 }

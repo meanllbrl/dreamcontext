@@ -165,7 +165,7 @@ import {
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, postSuperPad, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, postSuperOwedDrop, postSuperPad, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4553,6 +4553,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }).finally(() => { endingRef.current.delete(child); });
   }, [closeSessionById, scopedApi, setSuperRecordFor, superIdOfChildHere]);
   // The owner moved an agenda note by hand: the answer is the state after the write.
+  /** His "Gerek yok" on an unanswered line: the record's push redraws the agenda. */
+  const dropOwedLine = useCallback((id: string) => {
+    void postSuperOwedDrop(forSuper(scopedApi, activeSuperIdRef.current), id)
+      .catch((err: unknown) => { console.warn('[super] the unanswered line was not dropped:', err); });
+  }, [scopedApi]);
   const moveAgendaNote = useCallback((id: string, section: 'now' | 'done') => {
     const sid = activeSuperIdRef.current;
     void postSuperPad(forSuper(scopedApi, sid), id, section).then((st) => {
@@ -4704,7 +4709,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const convId = cs.scratchId || cs.claudeId;
     const text = agendaAboutBlock(row);
     if (!convId || !text) return;
-    const words = { about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'), superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion') };
+    const words = { about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'), superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered') };
     insertRef(convId, { id: nextAttachmentId(), kind: 'about', name: agendaRefName(row, words), text });
     requestAnimationFrame(() => cs.focus());
   }, [t]);
@@ -7012,6 +7017,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
             onMoveNote={isMacPhoneSurface() ? undefined : moveAgendaNote}
+            onDropOwed={isMacPhoneSurface() ? undefined : dropOwedLine}
             onOpenCard={isMacPhoneSurface() ? undefined : openCardOnStage}
             endPending={endPending}
             endFailed={endFailed}

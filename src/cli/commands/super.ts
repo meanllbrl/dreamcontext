@@ -294,8 +294,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
     .option('--force', 'ONLY when the owner asked: reopen his own (adopted) chat')
-    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) =>
-      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true }));
+    .option('--origin <ref>', ORIGIN_HELP)
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean; origin?: string }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
   s.command('update <child>')
     .description('Change a RUNNING child\'s mode, model or effort (the window\'s own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`')
@@ -317,7 +318,8 @@ export function registerSuperCommand(program: Command): void {
 
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: "delivered" says how it arrived')
-    .action((child: string, text: string) => run('send', { child, text }));
+    .option('--origin <ref>', ORIGIN_HELP)
+    .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
   team.command('ask <member> <job>')

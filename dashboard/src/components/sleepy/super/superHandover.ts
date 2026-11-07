@@ -16,7 +16,7 @@
  * mention's words, cardMention.ts).
  */
 import {
-  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
 
@@ -545,9 +545,11 @@ export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
 /** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
 export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou';
+/** A row's section: one of the notepad's three, or the unanswered lines above them (owed.ts). */
+export type AgendaRowSection = AgendaSection | 'unanswered';
 export interface AgendaRow {
   key: string;
-  section: AgendaSection;
+  section: AgendaRowSection;
   /** The line: a pad note's own words; for an open question, who asks. */
   text: string;
   /** An open question's own words (its second line). */
@@ -564,7 +566,21 @@ export interface AgendaRow {
   stale?: boolean;
   /** A child's own question (`directChildQuestion`): pressing it opens that child's chat. */
   direct?: boolean;
+  /** An unanswered line: the debt the Super still owes him (`SuperOwed.id`), and what it is. */
+  owed?: string;
+  owedKind?: 'msg' | 'result';
   at: number;
+}
+
+/**
+ * What the Super left unanswered (owed.ts): a debt nudged twice, or one his Stop or a limit left
+ * open for ten minutes. One row each, oldest first; the agenda draws them above Waiting on you as
+ * "Cevaplanmadı". `now` decides the parked ones (the card arms one timer for the next).
+ */
+export function superUnanswered(state: Pick<SuperState, 'owed'>, now = Date.now()): AgendaRow[] {
+  return (state.owed ?? []).filter((d) => owedVisible(d, now)).sort((a, b) => a.seq - b.seq).map((d) => ({
+    key: `o:${d.id}`, section: 'unanswered' as const, text: d.gist, owed: d.id, owedKind: d.kind, at: d.at,
+  }));
 }
 export interface JobLook {
   /** The child's live status kind in this window, or null when it has no session here. */
@@ -643,11 +659,18 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   return out;
 }
 
+/** What waits on the owner everywhere a count is drawn (the tile, the phone chip, the Agenda
+ *  button and pill): Waiting on you plus what the Super left unanswered. One rule, so no surface
+ *  reads "nothing" while a line is unanswered. */
+export function agendaWaitingCount(state: Pick<SuperState, 'queue' | 'pad' | 'owed'>, look: JobLook, now = Date.now()): number {
+  return superNotepad(state, look, now).waiting.length + superUnanswered(state, now).length;
+}
+
 // ─── Writing about one agenda line (owner 2026-10-23) ────────────────────────────
 
 /** What a message written about an agenda line names: a pad note (with the line as he saw it)
  *  or an open question's queue item (no words: they are a child's). */
-export interface AgendaAbout { kind: 'note' | 'item'; id: string; section: AgendaSection; line?: string }
+export interface AgendaAbout { kind: 'note' | 'item' | 'owed'; id: string; section: AgendaRowSection; line?: string }
 
 const ABOUT_ID = /^[A-Za-z0-9_-]{1,40}$/;
 
@@ -664,7 +687,9 @@ function aboutLine(text: string): string {
  * section: its words are a child's, and the super reads them fenced from `super state`.
  * '' for a row that names neither.
  */
-export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text'>): string {
+export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text' | 'owed'>): string {
+  // An unanswered line names its debt: the Super answers under that debt's ref.
+  if (row.owed && ABOUT_ID.test(row.owed)) return `[About agenda line owed=${row.owed} section=unanswered]`;
   if (row.note && ABOUT_ID.test(row.note)) {
     return `[About agenda line note=${row.note} section=${row.section}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
   }
@@ -682,6 +707,8 @@ export interface AboutWords {
   superQuestion: string;
   /** "a question": a question no longer open (whose it was is not known any more). */
   aQuestion: string;
+  /** "an unanswered line" (owed.ts). Absent: `aQuestion`. */
+  unanswered?: string;
 }
 export const ABOUT_WORDS_EN: AboutWords = { about: 'About', question: "{name}'s question", superQuestion: "Super's question", aQuestion: 'a question' };
 
@@ -690,8 +717,8 @@ const clip = (s: string, n: number) => { const a = Array.from(s); return a.lengt
 
 /** The About chip's name: "About: <the note>" (clipped), or for a question "About: <child>'s
  *  question" / "About: Super's question". The window's words only; never sent. */
-export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
-  if (row.note) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
+export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note || row.owed) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
   const who = row.sid ? words.question.replace('{name}', () => clip(aboutLine(row.text), 40)) : words.superQuestion;
   return `${words.about}: ${who}`;
 }
@@ -699,8 +726,8 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
 /** What an inline chip reads for an agenda row (owner 2026-10-24): the line's own words, or for
  *  a question "<child>'s question" / "Super's question". No "About:": the chip's ● says it, and
  *  the composer clips the name to its own width (composerRefs `refLabel`). */
-export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
-  if (row.note) return aboutLine(row.text);
+export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note || row.owed) return aboutLine(row.text);
   return row.sid ? words.question.replace('{name}', () => aboutLine(row.text)) : words.superQuestion;
 }
 
@@ -716,6 +743,7 @@ export function agendaAboutStrip(
   words: AboutWords = ABOUT_WORDS_EN,
 ): { label: string; text: string } {
   if (about.kind === 'note') return { label: words.about, text: about.line ?? '' };
+  if (about.kind === 'owed') return { label: words.about, text: words.unanswered ?? words.aQuestion };
   const q = open.find((x) => x.id === about.id && x.state !== 'done');
   if (!q) return { label: words.about, text: words.aQuestion };
   if (q.kind === 'ask' || q.kind === 'approval') return { label: words.about, text: words.superQuestion };
@@ -734,7 +762,7 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
   if (typeof text !== 'string') return { about: null, text: '' };
   const m = ABOUT_AGENDA_RE.exec(text);
   if (!m) return none;
-  const kind = m[1] as 'note' | 'item';
+  const kind = m[1] as 'note' | 'item' | 'owed';
   let rest = text.slice(m[0].length);
   if (rest !== '' && !rest.startsWith('\n')) return none;
   let line: string | undefined;
@@ -752,7 +780,7 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
     return none;
   }
   return {
-    about: { kind, id: m[2], section: m[3] as AgendaSection, ...(line !== undefined ? { line } : {}) },
+    about: { kind, id: m[2], section: m[3] as AgendaRowSection, ...(line !== undefined ? { line } : {}) },
     text: rest.replace(/^\n+/, ''),
   };
 }

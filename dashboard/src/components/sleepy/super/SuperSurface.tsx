@@ -113,6 +113,8 @@ export interface SuperSurfaceProps {
   onKeepChild: (child: string) => void;
   /** The owner moved an agenda note by hand (Done / Put back). */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
+  onDropOwed?: (id: string) => void;
   /** The owner opens a card himself (POST /api/super/open): the state is applied before it
    *  resolves, a refusal throws. Absent where no window of his can open one (a remote screen). */
   onOpenCard?: (body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>;
@@ -1032,6 +1034,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onMoveNote={props.onMoveNote}
+      onDropOwed={props.onDropOwed}
       extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
   );

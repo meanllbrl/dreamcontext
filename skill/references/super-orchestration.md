@@ -49,13 +49,22 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    feature's commits out). Never push; never merge into the default branch: tell the owner the
    topic branch is ready.
 
+## 1b. Nothing goes unsaid (the owed ledger)
+The server keeps OWED each of his messages, each awaited result and each outward action a child
+completed (a push, publish, PR, deploy or message: `sent="…"`, told even when he was not waiting).
+Each closes only by a section of yours under its ref (`<!-- re:<ref> -->` at a line start; told items
+print `ref=`), one section per subject. Open ones ride his next message (`<super-owed>`); ending a turn
+with one open brings `[super owed]`; after two, his agenda shows it ("Cevaplanmadı"). No command
+closes one. Several of his messages in a turn: `--origin <ref>` on `delegate`, `send`, `resume`.
+
 ## 2. When to ask
 Ask the way any agent asks: `dreamcontext super ask --json '<AskUserQuestion input>'` (title,
 questions with header, description, options with a description or preview, multiSelect,
 metadata.source) or `super ask "<q>" --title … --description … --option "label::what it does"`. His
 chat draws the very card a normal agent's question gets; his answer comes back as one `[super
-answer]` message, whatever came in meanwhile as `<super-while-you-asked>`: answer him, then tell or
-ask each of those one at a time. ONE open at a time, the rest keeps running. A choice he must make
+answer]` message, the child questions that waited meanwhile as `<super-while-you-asked>`: answer him, then
+ask or answer each of those one at a time. Finished jobs never wait behind your card: they come as
+events at once. ONE open at a time, the rest keeps running. A choice he must make
 lives in the card, never only as a question at the end of your text (it slips by unseen). Write the
 one line (a question waits) FIRST, then run `super ask` as the LAST act of the turn, with no text after
 it: the card opens the moment the command runs, so a line written after it lands above the card and

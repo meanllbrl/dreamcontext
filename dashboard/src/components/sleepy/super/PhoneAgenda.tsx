@@ -3,7 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import type { SuperDigestWire, SuperQueueItem, SuperState } from '../../../lib/superTypes';
 import { PhoneSheet, PhoneSheetClose } from './PhoneSheet';
 import { SuperAgenda } from './SuperAgenda';
-import { superNotepad, type AgendaRow, type JobLook } from './superHandover';
+import { agendaWaitingCount, superNotepad, type AgendaRow, type JobLook } from './superHandover';
 import type { SuperEventContext } from './superJobsStore';
 import './PhoneAgenda.css';
 
@@ -22,13 +22,14 @@ import './PhoneAgenda.css';
 
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
  *  the Mac's job card title (the short session id when the digest names none). */
-export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad'>; look: JobLook } {
+export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad' | 'owed'>; look: JobLook } {
   const queue: SuperQueueItem[] = d.waiting.map((w) => ({
     id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
     ...(w.text ? { ownerText: w.text } : {}),
   }));
   return {
-    state: { queue, pad: d.pad },
+    // What the Super left unanswered: drawn, never dropped here (the drop door is the Mac's only).
+    state: { queue, pad: d.pad, ...(d.owed?.length ? { owed: d.owed } : {}) },
     look: {
       live: () => null,
       titleFor: (c) => d.names[c] ?? c.slice(0, 8),
@@ -70,7 +71,8 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
   const counts = useMemo(() => {
     if (!input) return { waiting: 0, now: 0, done: 0 };
     const s = superNotepad(input.state, input.look);
-    return { waiting: s.waiting.length, now: s.now.length, done: s.done.length };
+    // What the Super left unanswered waits on him too: the chip never reads "nothing noted" then.
+    return { waiting: agendaWaitingCount(input.state, input.look), now: s.now.length, done: s.done.length };
   }, [input]);
 
   useEffect(() => { if (!onScreen) setOpen(false); }, [onScreen]);

@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import type { SuperState } from '../../../lib/superTypes';
+import { nextOwedReveal, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
-import { AGENDA_SECTIONS, superNotepad, type AgendaRow, type JobLook } from './superHandover';
+import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
 import { superApprovalSentence, type SuperApproval } from './superApprovals';
 import './SuperAgenda.css';
 
@@ -29,10 +29,15 @@ import './SuperAgenda.css';
  * job moves to Done by itself when that job finishes, marked "closed by itself"; a Now line with
  * no job behind it that has not changed for two hours is marked "unchanged". The owner moves a
  * note by hand with its own small button (Done / Put back): the server never moves it again.
+ *
+ * Above them, only when there is one, "Cevaplanmadı" (task super-hicbir-konuyu-kacirmaz): what the
+ * Super left unanswered after two reminders, or what his Stop left open for ten minutes. Each row
+ * has the same "Write about this" (it asks the Super again through the composer) and, where the
+ * owner's own window is (`onDropOwed`), "Gerek yok". The phone only reads them.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
-  /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these two read. */
-  state: Pick<SuperState, 'queue' | 'pad'>;
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
+  /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
+  state: Pick<SuperState, 'queue' | 'pad' | 'owed'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
   variant?: 'tile' | 'full';
   /** A medium (2x1) tile: the counts in one row. */
@@ -56,11 +61,25 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onShowApproval?: (key: string) => void;
   /** The owner moves a note by hand (`POST /api/super/pad`); absent = the notes are only read. */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** His "Gerek yok" on an unanswered line (`POST /api/super/owed/drop`); absent = read only (the phone). */
+  onDropOwed?: (id: string) => void;
   /** Drawn after the sections in the full notepad: a member's "Görevleri" (plan-r10 1c). */
   extra?: ReactNode;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
+  // A parked line shows ten minutes after his Stop: one timer for the earliest, nothing polls.
+  const [clock, setClock] = useState(() => Date.now());
+  const reveal = nextOwedReveal(state.owed, clock);
+  useEffect(() => {
+    if (reveal === null) return undefined;
+    const id = window.setTimeout(() => setClock(Date.now()), Math.max(0, reveal - Date.now()) + 50);
+    return () => window.clearTimeout(id);
+  }, [reveal]);
+  const unanswered = superUnanswered(state, Math.max(clock, Date.now()));
+  // The tile has no room for a fourth count: an unanswered line counts as waiting on him there
+  // (it needs his eye), so a small agenda never reads "0 waiting" while one is open.
+  const tileCountOf = (sec: string) => countOf(sec) + (sec === 'waiting' ? unanswered.length : 0);
   // A folded Now line no longer counts as running; a Waiting one still waits on him, so it does.
   const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + approvals.length : 0);
 
@@ -68,8 +87,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
     return (
       <div className="super-agenda super-agenda--tile" data-testid="super-agenda" data-variant="tile" data-wide={wide ? 'true' : undefined}>
         {AGENDA_SECTIONS.map((sec) => (
-          <div key={sec} className="super-agenda-tile-n" data-section={sec} data-on={countOf(sec) > 0 ? 'true' : undefined} data-testid={`super-agenda-tile-${sec}`}>
-            <span className="super-agenda-tile-v">{countOf(sec)}</span>
+          <div key={sec} className="super-agenda-tile-n" data-section={sec} data-on={tileCountOf(sec) > 0 ? 'true' : undefined} data-testid={`super-agenda-tile-${sec}`}>
+            <span className="super-agenda-tile-v">{tileCountOf(sec)}</span>
             <span className="super-agenda-tile-l">{t(`super.agenda.tile.${sec}`)}</span>
           </div>
         ))}
@@ -149,8 +168,55 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
       );
   };
 
+  const aboutButton = (r: AgendaRow) => onWriteAbout && (
+    <button
+      type="button"
+      className="super-agenda-about"
+      data-testid="super-agenda-about"
+      aria-label={t('super.agenda.writeAbout')}
+      title={t('super.agenda.writeAbout')}
+      onClick={() => onWriteAbout(r)}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <path d="M6.5 4 2.5 8l4 4M3 8h6.5a4 4 0 0 1 4 4v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+
   return (
     <div className="super-agenda" data-testid="super-agenda" data-variant="full" role="region" aria-label={t('super.agenda.label')}>
+      {unanswered.length > 0 && (
+        <section className="super-agenda-sec super-agenda-sec--unanswered" data-section="unanswered" data-testid="super-agenda-section-unanswered">
+          <h3 className="super-agenda-sec-h">
+            <span>{tr(t, 'super.agenda.section.unanswered', 'Unanswered')}</span>
+            <span className="super-agenda-n" data-testid="super-agenda-count-unanswered">{unanswered.length}</span>
+          </h3>
+          {unanswered.map((r) => (
+            <div key={r.key} className="super-agenda-row" data-row={r.key} data-testid="super-agenda-row" data-state="unanswered" data-kind="owed" data-about={onWriteAbout ? 'true' : undefined}>
+              <div className="super-agenda-row-btn">
+                <span className="super-agenda-dot" aria-hidden />
+                <span className="super-agenda-name" title={r.text}>{r.text}</span>
+                <span className="super-agenda-meta">
+                  <span className="super-agenda-chip" data-kind="owed">{tr(t, r.owedKind === 'result' ? 'super.agenda.owed.result' : 'super.agenda.owed.msg', r.owedKind === 'result' ? 'Result' : 'Your message')}</span>
+                  {onDropOwed && (
+                    <button
+                      type="button"
+                      className="super-agenda-move"
+                      data-testid="super-agenda-owed-drop"
+                      title={tr(t, 'super.agenda.owed.dropTitle', 'Not needed: take it off the list')}
+                      aria-label={tr(t, 'super.agenda.owed.dropTitle', 'Not needed: take it off the list')}
+                      onClick={() => onDropOwed(r.owed as string)}
+                    >
+                      {tr(t, 'super.agenda.owed.drop', 'Not needed')}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {aboutButton(r)}
+            </div>
+          ))}
+        </section>
+      )}
       {AGENDA_SECTIONS.map((sec) => {
         const rows = sections[sec];
         return (

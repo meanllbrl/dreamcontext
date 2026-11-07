@@ -226,13 +226,16 @@ describe('a job the owner waits on', { timeout: 60_000 }, () => {
     await drain();
     s = await readSuperState(root);
     expect(s.children.waited.awaited).toBe(true);
+    // It ended without a section for that result: the server keeps it owed (one `[super owed]` turn).
+    expect(delivered.some((d) => d.text.startsWith('[super owed]'))).toBe(true);
+    const events = () => delivered.filter((d) => !d.text.startsWith('[super owed]'));
     hs[0].userSent('one more thing');
     hs[0].observe({ type: 'result' });
     await advance(DONE_SETTLE_MS + 5_000);
-    expect(delivered).toHaveLength(2);
-    expect(delivered[1].text).toMatch(/child=waited event=done awaited=owner/);
-    expect(delivered[1].text).toContain(AWAITED_LINE);
-    expect((await readSuperState(root)).ownerBatches).toContain(delivered[1].event.batch);
+    expect(events()).toHaveLength(2);
+    expect(events()[1].text).toMatch(/child=waited event=done awaited=owner/);
+    expect(events()[1].text).toContain(AWAITED_LINE);
+    expect((await readSuperState(root)).ownerBatches).toContain(events()[1].event.batch);
   });
 
   it('a stale stuck is not his result: the mark stays for the real done', async () => {

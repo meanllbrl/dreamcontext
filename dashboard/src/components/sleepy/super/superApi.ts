@@ -102,6 +102,12 @@ export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 
   return readSuperStateView(r?.state);
 }
 
+/** `POST /api/super/owed/drop` — his "Gerek yok" on an unanswered line (owed.ts). The record's push redraws it. */
+export async function postSuperOwedDrop(api: ApiClient, id: string, superId: SuperId = 'main'): Promise<void> {
+  api = forSuper(api, superId);
+  await api.post('/super/owed/drop', { id });
+}
+
 /** What the owner may open himself: a kind and a ref, or a project file by its path. */
 export type SuperOpenBody = { kind: 'web' | 'knowledge' | 'task' | 'insight' | 'whiteboard'; ref: string } | { path: string };
 

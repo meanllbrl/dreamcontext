@@ -259,18 +259,19 @@ describe('the team item in a [super events] batch', () => {
     expect(nextBatch(s)).toMatchObject({ items: [], drop: [s.queue[0].id] });
   });
 
-  it('while the owner has a question open it is held, and told with his answer as the team line', () => {
+  it('while the owner has a question open it is NOT held (D1): it goes to the Super at once, ref= named', () => {
     const ask = entry(1, { runId: RUN, kind: 'user', text: 'go', via: 'super' });
     entry(2, { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner' });
     const s = state(job({ entryId: ask.id, awaited: true }));
     s.queue.push({ id: 'q-ask', sessionId: SUPER, kind: 'ask', state: 'escalated', createdAt: 1, ownerText: 'Which plan?' });
     noteTeamJobEnd(root, s, 'team-abc', null);
-    expect(noteHeld(s)).toBe(true);
+    expect(noteHeld(s)).toBe(false);
+    expect(s.held).toBeUndefined();
     const item = s.queue.find((q) => q.team)!;
-    expect(s.held).toEqual([{ item: item.id, child: SUPER, kind: 'done', at: item.createdAt }]);
-    expect(heldBlock(root, s)?.text).toContain(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner`);
-    s.team = [];
-    expect(heldBlock(root, s)?.text).toContain(`- item=${item.id} team=team-abc event=done moved-on`);
+    const { items } = nextBatch(s);
+    expect(items.map((q) => q.id)).toEqual([item.id]);
+    expect(superBatchText(root, s, items, 'b-2')).toMatch(new RegExp(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner status=\\S+ ref=[0-9a-z]{6}`));
+    expect(heldBlock(root, s)).toBeNull();
   });
 
   it('no super session: nothing queued', () => {
