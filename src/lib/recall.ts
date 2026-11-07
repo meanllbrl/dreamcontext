@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
+import { homedir } from 'node:os';
+import { projectAppTools } from './apps/tools.js';
 import { relPosix } from './paths.js';
 import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
@@ -22,7 +24,7 @@ import { resolveWhiteboardPath, whiteboardsDir } from './whiteboards/store.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults so they never pollute the recall corpus.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'agent' | 'whiteboard' | 'core';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'agent' | 'whiteboard' | 'core' | 'app';
 
 /**
  * Every corpus type `buildCorpus` can produce, in snapshot/report order. The
@@ -35,7 +37,7 @@ export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelo
  */
 export const CORPUS_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog',
-  'objective', 'insight', 'thesis', 'automation', 'agent', 'whiteboard', 'core',
+  'objective', 'insight', 'thesis', 'automation', 'agent', 'whiteboard', 'core', 'app',
 ];
 
 /**
@@ -1036,6 +1038,33 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
   return out;
 }
 
+/** One doc per installed app tool (`app:<slug>/<id>`), one per catalog app not installed here. */
+function loadAppDocs(contextRoot: string): CorpusDoc[] {
+  try {
+    const list = projectAppTools(homedir(), dirname(contextRoot), contextRoot);
+    const out: CorpusDoc[] = [];
+    const push = (id: string, title: string, description: string, tags: string[], body: string) => {
+      const f = buildFields({ slug: id, title, description, tags, body });
+      out.push({
+        type: 'app', path: `app:${id}`, relPath: `app:${id}`, slug: id, title, description, tags, body,
+        tokens: f.tokens, tokenSet: new Set(f.tokens), termFreq: f.termFreq, fieldFreq: f.fieldFreq, fieldLen: f.fieldLen,
+        links: f.links, identityTokens: f.identityTokens, cloudOptOut: true,
+      });
+    };
+    for (const a of list.installed) {
+      for (const t of a.tools) {
+        push(`${a.slug}/${t.id}`, `${a.name} › ${t.title}`, t.does ?? '', [...(t.topics ?? []), a.slug], `${t.effect === 'read' ? 'Reads' : 'Changes'}: dreamcontext apps do ${a.slug} ${t.id}${t.effect === 'change' ? ' --confirm (after the owner says yes)' : ''}. ${t.output ?? ''}`);
+      }
+    }
+    for (const a of list.notInstalled) {
+      push(a.slug, `${a.name} (not installed on this Mac)`, a.does, [a.slug], a.tools.map((t) => t.title).join('. '));
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export interface BuildCorpusOptions {
   types?: CorpusType[];
   /**
@@ -1159,6 +1188,11 @@ export function buildCorpusWith(
   }
   if (types.has('whiteboard')) {
     docs.push(...loadWhiteboardDocs(contextRoot));
+  }
+  if (types.has('app')) {
+    // The tools of the apps installed on THIS Mac, and the project's apps not installed here
+    // (app-araclari §3c). LOCAL ONLY: not in the cloud allow-list, and a peer never reads them.
+    docs.push(...loadAppDocs(contextRoot));
   }
   if (types.has('core')) {
     // The rest of core — soul, style guide, tech stack, system flow, any 3-9 —

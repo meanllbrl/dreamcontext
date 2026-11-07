@@ -524,6 +524,12 @@ export interface AutomationManifest {
    * IS approval-hashed, OMITTED when absent and LAST. Only a scheduled job carries it.
    */
   app?: string;
+  /**
+   * App tools this job may run while nobody watches (`app_tools:`, app-araclari plan r3 §4.2), as
+   * `<app>/<tool>`. A changing tool in an unattended run passes only when it is listed here and
+   * this exact manifest is approved on this Mac. Approval-hashed, OMITTED when absent and LAST.
+   */
+  appTools?: string[];
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -575,6 +581,8 @@ export interface AutomationJob {
   flow: FlowGraph | null;
   /** The app it belongs to (`app:`), absent otherwise. Hashed, see `AutomationManifest.app`. */
   app?: string;
+  /** `app_tools:`, absent otherwise. Hashed, see `AutomationManifest.appTools`. */
+  appTools?: string[];
   /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
   owner: string | null;
   /** When its owner last wrote it (`updated:`), unhashed. */
@@ -1111,6 +1119,8 @@ export interface ApprovalPayloadFields {
   /** Hashed because it limits a home-board agent to its board (frontmatter `scope: board`).
    *  Always present (false when unset), so a reviewer sees a limit appear or go. */
   boardOnly: boolean;
+  /** Hashed because it lets an unattended run change things through an app. '' when none. */
+  appTools: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1240,6 +1250,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'tool',
   'app',
   'boardOnly',
+  'appTools',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

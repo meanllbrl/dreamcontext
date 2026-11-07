@@ -266,7 +266,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // The agent inherits this: the hook knows it is one of ours, and keeps the heavy-step limit.
   if (isInstanceTool(args.tool)) deps.env.DREAMCONTEXT_CONTEXT_BY = 'bridge';
   const brainServer = isInstanceTool(args.tool) && deps.brain
-    ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
+    ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION, marks: deps.env })
     : null;
   const storePlan = args.storeMcp && args.tool === 'codex' && !args.strictMcp
     ? codexStorePlan({ home, projectRoot: args.cwd, node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: listMcp() })
@@ -320,7 +320,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       codexKit ? codexRoleArgs(codexKit.roles) : '',
       strictArgs,
       // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
-      deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
+      deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION, marks: deps.env }) : '',
       args.mcpConfig ? codexLeanMcpArgs(args.mcpConfig, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '' }) : '',
       storePlan ? planLaunchArgs(storePlan) : '',
     ].filter(Boolean).join(' ');

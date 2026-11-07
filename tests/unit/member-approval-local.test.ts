@@ -381,12 +381,12 @@ describe('review round 1 (plan-r10 1e)', () => {
 });
 
 describe('the hash is untouched', () => {
-  it('17 reviewed fields; a stamp\'s field hashes live beside the hash, never in it', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(17);
+  it('18 reviewed fields (appTools last); a stamp\'s field hashes live beside the hash, never in it', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(18);
     member();
     const entry = getApproval(projectRoot, 'gantt', undefined, 'agent')!;
     expect(entry.manifestSha256).toBe(manifestHash(target('gantt')));
     expect(Object.keys(entry.fieldHashes ?? {})).toEqual(expect.arrayContaining([...APPROVAL_DIFF_FIELDS, 'mode']));
-    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(17);
+    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(18);
   });
 });

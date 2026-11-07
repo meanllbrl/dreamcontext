@@ -5,6 +5,7 @@
 import http from 'node:http';
 if (process.env.EXIT_EARLY) process.exit(3);
 const secret = process.env.DC_GATEWAY_SECRET;
+let hits = 0;
 const guard = (req) => process.env.UNGUARDED || req.headers['x-dc-gateway-secret'] === secret;
 const server = http.createServer((req, res) => {
   if (!guard(req)) { res.writeHead(401); res.end('no'); return; }
@@ -22,6 +23,10 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/slow') { setTimeout(() => { res.writeHead(200); res.end('slow done'); }, Number(url.searchParams.get('ms') || 100)); return; }
+  // app-araclari: a big answer, and a counter that proves a refused change never reached the app.
+  if (url.pathname === '/big') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('x'.repeat(Number(url.searchParams.get('n') || 20000))); return; }
+  if (url.pathname === '/hit') { hits += 1; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ hits })); return; }
+  if (url.pathname === '/hits') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ hits })); return; }
   if (url.pathname === '/env') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(process.env)); return; }
   res.writeHead(200, { 'content-type': 'text/html' });
   res.end('<!doctype html><title>echo</title><h1>echo app</h1>');

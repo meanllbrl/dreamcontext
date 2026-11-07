@@ -6,6 +6,9 @@
  */
 
 import { homedir } from 'node:os';
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import { listApps } from '../registry.js';
 import { parseManifest } from '../manifest.js';
 import { parseStoreReadme } from '../store-readme.js';
@@ -74,8 +77,52 @@ export async function listShared(host: AppHost, opts: { force?: boolean; project
       value.problem = e instanceof HostError ? e.message : 'GitHub did not answer';
     }
     cache.set(key, { at: Date.now(), value });
+    if (!value.problem) {
+      try { writeSharedSnapshot(opts.home ?? homedir(), { currentLogin: login, at: value.at, repos: [...value.shared, ...value.mine].map((r) => r.fullName) }); } catch { /* the hook says "unknown" */ }
+    }
   }
   if (!opts.projectRoot) return value;
   const installed = new Map(listApps(opts.home ?? homedir(), opts.projectRoot).filter((a) => a.origin === 'installed').map((a) => [a.source?.fullName ?? a.provenance?.fullName ?? '', a.slug]));
   return { ...value, shared: value.shared.map((s) => (installed.has(s.fullName) ? { ...s, installed: installed.get(s.fullName) } : s)) };
+}
+
+// ─── The hook's offline copy (app-araclari plan r3 §3b) ─────────────────────────────
+
+/** What the prompt hook may read with no network: which repos this account can install. */
+export interface SharedSnapshot { currentLogin: string; at: string; repos: string[] }
+export const SHARED_SNAPSHOT_FILE = 'shared-snapshot.json';
+export const SHARED_SNAPSHOT_TTL_MS = 15 * 60_000;
+
+function snapshotPath(home: string): string {
+  return join(home, '.dreamcontext', 'apps', SHARED_SNAPSHOT_FILE);
+}
+
+/** Written after every clean list (signed in, no problem): 0600, a random temp name, then rename. */
+export function writeSharedSnapshot(home: string, snap: SharedSnapshot): void {
+  const dir = join(home, '.dreamcontext', 'apps');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = join(dir, `.${SHARED_SNAPSHOT_FILE}.${randomBytes(4).toString('hex')}.tmp`);
+  const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try { writeSync(fd, JSON.stringify(snap) + '\n'); } finally { closeSync(fd); }
+  try { renameSync(tmp, snapshotPath(home)); } catch (e) { try { unlinkSync(tmp); } catch { /* gone */ } throw e; }
+}
+
+/**
+ * Is `repo` shared with (or published by) this account? true / false from a fresh snapshot;
+ * null when there is none, it is a symlink, broken, or older than 15 minutes (the usual case:
+ * the hook then says neither).
+ */
+export function sharedWithMe(home: string, repo: string, now = Date.now()): boolean | null {
+  const p = snapshotPath(home);
+  try {
+    const st = lstatSync(p);
+    if (st.isSymbolicLink() || !st.isFile()) return null;
+    const v = JSON.parse(readFileSync(p, 'utf-8')) as Partial<SharedSnapshot>;
+    const at = typeof v.at === 'string' ? Date.parse(v.at) : NaN;
+    if (!Number.isFinite(at) || now - at > SHARED_SNAPSHOT_TTL_MS || now < at - 60_000) return null;
+    if (!Array.isArray(v.repos)) return null;
+    return v.repos.some((r) => typeof r === 'string' && r.toLowerCase() === repo.toLowerCase());
+  } catch {
+    return null;
+  }
 }

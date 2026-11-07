@@ -70,7 +70,7 @@ const REGISTRY_TS = readFileSync(join(ROOT, 'src', 'lib', 'automations', 'regist
 
 const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
-  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, sixteen: 16,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
 };
 
 /** The Entity Router table's body rows, extracted between the section heading and
@@ -317,7 +317,7 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
 });
 
 describe('approval surface — seventeen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the seventeen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app and boardOnly', () => {
+  it('APPROVAL_DIFF_FIELDS is the eighteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app, boardOnly and appTools', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -354,6 +354,8 @@ describe('approval surface — seventeen hashed fields, everywhere it is claimed
       'app',
       // A board agent limited to its board (`scope: board`). LAST, omitted at the default.
       'boardOnly',
+      // The app tools a run may use to CHANGE something unattended. LAST, omitted when none.
+      'appTools',
     ]);
   });
 

@@ -22,7 +22,7 @@ import { prepareAgentChat } from '../whiteboards/card-chat.js';
 import { knownMcpServers, removeLeanMcpConfig, writeLeanMcpConfig } from '../super/lean-mcp.js';
 import { LISTED_VERBS, type BashGateContext } from './bash-gate.js';
 import { gateFilePath, type AppChatRecord } from './chat-store.js';
-import { MANIFEST_FILE, ROLE_FILE, cleanText, readManifest, roleFileProblem, type AppManifest } from './manifest.js';
+import { MANIFEST_FILE, ROLE_FILE, cleanText, effectOf, readManifest, roleFileProblem, type AppManifest } from './manifest.js';
 import { appChatsDir, appsHome, getApp, real, registryPath } from './registry.js';
 import { AppDataError, appsDataRoot, contextRootOf, ensureAppDataDir } from './data-dir.js';
 import { FILE_GATE_MATCHER } from './write-gate.js';
@@ -50,12 +50,12 @@ export function resolveAppAgent(
 
 /** What runs with no card. Everything else that needs a permission raises one. */
 export function appAllowedTools(input: {
-  slug: string; dataDir: string; actions: readonly { id: string; danger?: boolean }[]; readTools: readonly string[];
+  slug: string; dataDir: string; actions: readonly { id: string; method: string; danger?: boolean }[]; readTools: readonly string[];
 }): string[] {
   const verbs = LISTED_VERBS.filter((v) => !v.action).map((v) => (
     `Bash(dreamcontext ${v.words.join(' ')}${v.ownSlug ? ` ${input.slug}` : ''}:*)`
   ));
-  const doVerbs = input.actions.filter((a) => !a.danger).map((a) => `Bash(dreamcontext apps do ${input.slug} ${a.id}:*)`);
+  const doVerbs = input.actions.filter((a) => effectOf(a) === 'read').map((a) => `Bash(dreamcontext apps do ${input.slug} ${a.id}:*)`);
   return [
     'Read', 'Skill', 'ToolSearch', 'TodoWrite',
     `Edit(/${rulePath(input.dataDir)}/**)`, `Write(/${rulePath(input.dataDir)}/**)`,
@@ -247,7 +247,7 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   const cli = (opts.cli ?? ownCliCommand()).map((c) => (process.platform === 'win32' ? c.replace(/\\/g, '/') : c));
   if (!cli.every(Boolean)) return refuse('the dreamcontext install path is unknown');
   if (cli.some(unsafeRule)) return refuse('the dreamcontext install path is not shell-safe');
-  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, projectRoot, home, actions: m.manifest.actions.filter((a) => !a.danger).map((a) => a.id) };
+  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, projectRoot, home, actions: m.manifest.actions.filter((a) => effectOf(a) === 'read').map((a) => a.id) };
   const gateFile = gateFilePath(record.id, home);
   const hookGateFile = process.platform === 'win32' ? gateFile.replace(/\\/g, '/') : gateFile;
   try {
@@ -269,7 +269,8 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
     const level = target.autonomy ?? DEFAULT_AGENT_AUTONOMY;
     const args = levelPermissionArgs(level === 'free' ? 'balanced' : level, 'chat');
     const permissionMode = args[args.indexOf('--permission-mode') + 1] ?? 'auto';
-    const dangerDenies = m.manifest.actions.filter((a) => a.danger).map((a) => `Bash(dreamcontext apps do ${rec.slug} ${a.id}:*)`);
+    // No Bash gate in a member's chat to turn --confirm into a card: every changing tool is denied here (plan r3 §4.2).
+    const dangerDenies = m.manifest.actions.filter((a) => effectOf(a) === 'change').map((a) => `Bash(dreamcontext apps do ${rec.slug} ${a.id}:*)`);
     const all = [...denied, 'Bash(dreamcontext apps call:*)', ...dangerDenies];
     if (all.some(unsafeRule)) { prep.dispose(); return refuse('its folders contain a character the shell would expand'); }
     return {

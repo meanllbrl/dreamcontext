@@ -716,7 +716,7 @@ export function ChatPane({
    *  link, which needs a Shell-level listener outside this task's file ownership. Omitted
    *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
    *  the button on `reference.appNav` existing at all). */
-  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
+  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => void;
   /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
    *  (this engine is headless; it answers `/login` with "isn't available in this environment").
    *  Fires from the SignInBanner and from typing `/login` into the composer. A conversation on
@@ -1952,7 +1952,7 @@ export function ChatPane({
       requestAnimationFrame(() => session.focus());
     },
   };
-  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
+  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
   }, [onOpenAppPage]);
@@ -1989,6 +1989,11 @@ export function ChatPane({
         // THIS pane owns — it closes this pane and opens another — so it is the surface's
         // call, not ours; we only forward the slug the plan agent named.
         onHandoffToDevelop(action.id!);
+        break;
+      case 'app-install':
+        // The Apps page, on this repo: its install sheet when the repo is shared with this
+        // account, a plain "ask the publisher" note when not. Installing is the owner's click there.
+        handleNavApp('apps', `install:${action.repo!}`);
         break;
     }
   }, [handleNavApp, handleOpenFile, session, api, onHandoffToDevelop]);

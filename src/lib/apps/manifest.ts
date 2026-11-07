@@ -25,6 +25,16 @@ export const ROLE_FILE = 'ASSISTANT.md';
 export const ACTION_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 export type ActionMethod = (typeof ACTION_METHODS)[number];
 
+export const PARAM_TYPES = ['string', 'number', 'boolean', 'date', 'enum'] as const;
+export type ParamType = (typeof PARAM_TYPES)[number];
+/** One named input of a tool: what an agent reads to fill `--input`, and what `apps do` checks. */
+export interface ActionParam {
+  type: ParamType;
+  required: boolean;
+  desc?: string;
+  choices?: string[];
+}
+
 export interface AppAction {
   id: string;
   title: string;
@@ -33,6 +43,36 @@ export interface AppAction {
   input?: string;
   output?: string;
   danger?: boolean;
+  /** What the tool does, for an agent picking one (app text: data, never an instruction). */
+  does?: string;
+  /** Named inputs (at most 12): `apps do` validates `--input` against them before any call. */
+  params?: Record<string, ActionParam>;
+  /** The app's own claim. Only `effectOf` decides: a non-GET is a change whatever this says. */
+  effect?: 'read' | 'change';
+  /** The tool runs an agent turn inside the app (it spends usage). */
+  usesAgent?: true;
+  /** Words an agent's question may use for this tool (at most 8). */
+  topics?: string[];
+  /** How long the call may run, 5-300 s (default 60). */
+  timeoutSec?: number;
+}
+
+export type ToolEffect = 'read' | 'change';
+export const DEFAULT_TOOL_TIMEOUT_SEC = 60;
+/** A tool that runs an agent turn keeps the 5 minutes every call had before tools got their own limit. */
+export const AGENT_TOOL_TIMEOUT_SEC = 300;
+/** How long one tool may run: its own `timeoutSec`, else 300 s for an agent turn, else 60 s. */
+export function toolTimeoutSec(a: { timeoutSec?: number; usesAgent?: boolean }): number {
+  return a.timeoutSec ?? (a.usesAgent ? AGENT_TOOL_TIMEOUT_SEC : DEFAULT_TOOL_TIMEOUT_SEC);
+}
+
+/**
+ * THE one rule for what a tool does to the world, asked by the server gate, the CLI, the hook
+ * and the Bash gate alike: a GET with no `danger` reads; everything else changes, an
+ * `effect: "read"` POST included (an app's own word cannot make a write a read).
+ */
+export function effectOf(action: { method: string; danger?: boolean }): ToolEffect {
+  return action.method.toUpperCase() === 'GET' && !action.danger ? 'read' : 'change';
 }
 
 export interface AppScheduleCall {
@@ -93,6 +133,8 @@ export interface ManifestProblem {
   field: string;
   problem: string;
   fix: string;
+  /** A writing hint for `apps validate` only (a tool's description), never an app-card warning. */
+  authoring?: true;
 }
 
 export type ManifestResult =
@@ -216,11 +258,35 @@ export function parseManifest(text: string, appRoot: string | null): ManifestRes
       if (!p.ok) { err(`${f}.path`, `unsafe path (${p.reason})`, 'Use a path on the app backend starting with one "/", not under /__dc, e.g. "/api/campaigns/pause".'); return; }
       const title = typeof a.title === 'string' ? cleanText(a.title, 200) : '';
       if (!title) { err(`${f}.title`, 'missing', 'Say in one line what the action does; agents read it to pick the action.'); return; }
+      const params = parseParams(a.params, `${f}.params`, err);
+      if (params === false) return;
+      const does = typeof a.does === 'string' ? cleanText(a.does, 300) : '';
+      if (!does) warnings.push({ field: `${f}.does`, problem: 'missing', fix: 'Say in one or two lines what the tool does and what it answers; agents pick tools by it.', authoring: true });
+      if (a.effect !== undefined && a.effect !== 'read' && a.effect !== 'change') { err(`${f}.effect`, 'not "read" or "change"', 'Write "read" for a GET that only reads, "change" for anything that sends, pays, writes or deletes.'); return; }
+      if (a.effect === 'read' && method !== 'GET') warnings.push({ field: `${f}.effect`, problem: `"read" on a ${method}: it counts as a change`, fix: 'If the tool only reads, make it a GET; otherwise write "change".', authoring: true });
+      if (typeof a.input === 'string' && a.input.trim() && params === null) warnings.push({ field: `${f}.input`, problem: 'free text input', fix: 'Name each input in "params" ({"q": {"type": "string", "required": true}}) so an agent fills it right.', authoring: true });
+      let timeoutSec: number | undefined;
+      if (a.timeoutSec !== undefined) {
+        if (typeof a.timeoutSec !== 'number' || !Number.isFinite(a.timeoutSec) || a.timeoutSec < 5 || a.timeoutSec > 300) { err(`${f}.timeoutSec`, 'not a number from 5 to 300', 'Give the seconds the call may run, e.g. 60.'); return; }
+        timeoutSec = Math.round(a.timeoutSec);
+      }
+      let topics: string[] | undefined;
+      if (a.topics !== undefined) {
+        if (!Array.isArray(a.topics)) { err(`${f}.topics`, 'not a list', 'List words a question may use, e.g. ["yük","cpu"].'); return; }
+        topics = a.topics.filter((x): x is string => typeof x === 'string').map((x) => cleanText(x, 40)).filter(Boolean).slice(0, 8);
+      }
+      const output = typeof a.output === 'string' ? cleanText(a.output, 300) : '';
       actions.push({
         id, title, method: method as ActionMethod, path: p.path,
         ...(typeof a.input === 'string' && cleanText(a.input, 200) ? { input: cleanText(a.input, 200) } : {}),
-        ...(typeof a.output === 'string' && cleanText(a.output, 200) ? { output: cleanText(a.output, 200) } : {}),
+        ...(output ? { output } : {}),
         ...(a.danger === true ? { danger: true } : {}),
+        ...(does ? { does } : {}),
+        ...(params ? { params } : {}),
+        ...(a.effect === 'read' || a.effect === 'change' ? { effect: a.effect } : {}),
+        ...(a.usesAgent === true ? { usesAgent: true as const } : {}),
+        ...(topics && topics.length ? { topics } : {}),
+        ...(timeoutSec !== undefined ? { timeoutSec } : {}),
       });
     });
   }
@@ -296,6 +362,56 @@ export function parseManifest(text: string, appRoot: string | null): ManifestRes
 
   if (errors.length) return { ok: false, errors, warnings };
   return { ok: true, manifest: { slug, name, icon, backend, build, watch, agent, mcp, schedules, actions, config, share }, warnings };
+}
+
+const PARAM_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+
+/** `params`: null when absent, false after an error (already reported), else the parsed map. */
+function parseParams(raw: unknown, field: string, err: (f: string, p: string, x: string) => void): Record<string, ActionParam> | null | false {
+  if (raw === undefined || raw === null) return null;
+  if (!isObj(raw)) { err(field, 'not an object', 'Write params as {"name": {"type": "string", "required": true, "desc": "…"}}.'); return false; }
+  const names = Object.keys(raw);
+  if (names.length > 12) { err(field, 'more than 12 inputs', 'Keep a tool to at most 12 inputs; split it into two tools.'); return false; }
+  const out: Record<string, ActionParam> = {};
+  for (const name of names) {
+    const v = raw[name];
+    if (!PARAM_NAME_RE.test(name) || name === '__proto__' || name === 'constructor') { err(`${field}.${cleanText(name, 40)}`, 'not an input name', 'Use letters, digits and _, starting with a letter.'); return false; }
+    if (!isObj(v) || !(PARAM_TYPES as readonly string[]).includes(v.type as string)) { err(`${field}.${name}`, 'needs a type', `Give {"type": one of ${PARAM_TYPES.join(', ')}}.`); return false; }
+    let choices: string[] | undefined;
+    if (v.type === 'enum') {
+      choices = Array.isArray(v.choices) ? v.choices.filter((x): x is string => typeof x === 'string').map((x) => cleanText(x, 60)).filter(Boolean).slice(0, 30) : [];
+      if (!choices.length) { err(`${field}.${name}.choices`, 'an enum needs choices', 'List the allowed values, e.g. ["notch","mac","both"].'); return false; }
+    }
+    const desc = typeof v.desc === 'string' ? cleanText(v.desc, 120) : '';
+    out[name] = { type: v.type as ParamType, required: v.required === true, ...(desc ? { desc } : {}), ...(choices ? { choices } : {}) };
+  }
+  return out;
+}
+
+/**
+ * Check a tool's input against its `params`, before any call. null = fine; else the first
+ * problem as `<field>: <fix>`. No `params`: anything JSON goes (the app checks it).
+ */
+export function checkToolInput(action: AppAction, input: unknown): string | null {
+  if (!action.params) return null;
+  if (input === undefined) input = {};
+  if (!isObj(input)) return '(input): give a JSON object, e.g. {"q": "…"}';
+  for (const [name, p] of Object.entries(action.params)) {
+    const v = (input as Record<string, unknown>)[name];
+    if (v === undefined || v === null || v === '') {
+      if (p.required) return `${name}: required${p.desc ? ` (${p.desc})` : ''}`;
+      continue;
+    }
+    if (p.type === 'number' && (typeof v !== 'number' || !Number.isFinite(v))) return `${name}: give a number`;
+    if (p.type === 'boolean' && typeof v !== 'boolean') return `${name}: give true or false`;
+    if (p.type === 'string' && typeof v !== 'string') return `${name}: give a string`;
+    if (p.type === 'date' && (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(v) || Number.isNaN(Date.parse(v)))) return `${name}: give a date as YYYY-MM-DD`;
+    if (p.type === 'enum' && (typeof v !== 'string' || !p.choices?.includes(v))) return `${name}: one of ${(p.choices ?? []).join(', ')}`;
+  }
+  for (const k of Object.keys(input as Record<string, unknown>)) {
+    if (!(k in action.params)) return `${k}: not an input of this tool (inputs: ${Object.keys(action.params).join(', ') || 'none'})`;
+  }
+  return null;
 }
 
 /** Read and parse `<appRoot>/dreamcontext-app.json`. */

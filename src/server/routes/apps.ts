@@ -40,7 +40,11 @@ import { closeGateway, existingGateway, gatewayFor, runningWindowCount } from '.
 import { readLauncherTheme } from './launcher.js';
 import { getApp, listApps, real, unregisterApp, updateApp, type AppRecord } from '../../lib/apps/registry.js';
 import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SECRET_HEADER } from '../../lib/apps/supervisor.js';
-import { readManifest, ACTION_METHODS } from '../../lib/apps/manifest.js';
+import { readManifest, ACTION_METHODS, effectOf, toolTimeoutSec, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
+import { decodeClaim, RUN_HEADER, type CallClaim } from '../../lib/apps/call-claim.js';
+import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/super/store.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { jobStartedByOwner } from '../automation-job.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
@@ -66,14 +70,13 @@ import { listVaults } from '../../lib/vaults.js';
 import { sayFromApp } from './automations.js';
 import { inspectDispatcher } from '../../lib/automations/launchd.js';
 import { inspectNotifier } from '../../lib/automations/notifier.js';
-import { scheduleViews, setScheduleEnabled } from '../../lib/apps/schedule.js';
+import { readScheduleState, scheduleViews, setScheduleEnabled } from '../../lib/apps/schedule.js';
 import { closeMcpClients, resolveMcpDefinition, readPins, writePin, removePins } from '../../lib/apps/mcp-bridge.js';
 import { reviewMcpDefinition, describeChange, mcpHash } from '../../lib/apps/mcp-review.js';
 import { createProposal } from '../../lib/assistant/proposals.js';
 
 type Params = Record<string, string>;
 const CALL_MAX_BYTES = 256 * 1024;
-const CALL_TIMEOUT_MS = 5 * 60_000;
 const LAUNCH_WAIT_MS = 20_000;
 
 let home = homedir();
@@ -341,7 +344,10 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     // Still the letter `apps new` drew: the page draws its one monogram fallback instead.
     iconPlaceholder: m.ok ? isDefaultIconCached(m.manifest.icon, m.manifest.slug, m.manifest.name) : false,
     iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
-    actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
+    actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, effect: effectOf(a), ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
+    // The card's "N tools · M change" and its drift mark (app-araclari §5). `unknown` until the
+    // backend answered health once in this server.
+    tools: m.ok ? { count: m.manifest.actions.length, change: m.manifest.actions.filter((a) => effectOf(a) === 'change').length, audit: st?.tools?.state ?? 'unknown', missing: st?.tools?.missing ?? [] } : null,
     schedules: m.ok ? scheduleViews(home, rec) : [],
     mcp: m.ok ? mcpStates(rec, m.manifest.mcp) : [],
     ...shareStatus(rec),
@@ -403,7 +409,7 @@ export function resolveAppAction(projectRoot: string, slug: string, id: string):
 }
 
 /** Run one action with its input: query for GET, JSON body otherwise, as `apps do` does. */
-export async function runAppAction(projectRoot: string, slug: string, action: { method: string; path: string }, input: unknown): Promise<BackendCall> {
+export async function runAppAction(projectRoot: string, slug: string, action: { method: string; path: string; id?: string }, input: unknown): Promise<BackendCall> {
   const rec = getApp(home, projectRoot, slug);
   if (!rec) return { ok: false, http: 404, code: 'app_not_found', message: 'app_not_found' };
   if (rec.stoppedByOwner) return { ok: false, http: 409, code: 'app_stopped', message: 'app_stopped' };
@@ -415,7 +421,12 @@ export async function runAppAction(projectRoot: string, slug: string, action: { 
   } else if (input !== undefined) body = input;
   const safe = safeAppPath(path);
   if (!safe.ok) return { ok: false, http: 400, code: 'bad_path', message: 'bad_path' };
-  return callBackend(rec, action.method, safe.path, body);
+  // Reached only through the Assistant's `gated(...)`: an approved proposal or the owner's own
+  // autonomy setting, so it is the owner's confirm (plan §4.1). The gate still runs: one door.
+  const m = readManifest(rec.root);
+  const verdict = gateAppCall(join(projectRoot, '_dream_context'), rec, m.ok ? m.manifest.actions : [], { method: action.method, path: safe.path, confirm: true, claim: { class: 'owner' }, ...(action.id ? { tool: action.id } : {}) }, { home });
+  if (!verdict.ok) return { ok: false, http: verdict.http, code: verdict.code, message: verdict.message };
+  return callBackend(rec, action.method, safe.path, body, verdict.timeoutMs);
 }
 
 /** A window's own picture. Never opens anything: no window, no picture. */
@@ -644,6 +655,161 @@ export async function handleAppSnapshot(req: IncomingMessage, res: ServerRespons
   sendJson(res, 200, { ok: true, id: r.id, file: r.file });
 }
 
+// ─── The one gate every app tool call passes (app-araclari plan r3 §4.1, §4.2) ─────
+
+/** An unlisted path or a schedule: the 5 minutes every call had before tools got their own timeout. */
+const UNLISTED_TIMEOUT_SEC = 300;
+
+export interface GateCall {
+  method: string;
+  /** The backend path as it will be sent (a query allowed: it is matched without it). */
+  path: string;
+  /** The caller said the owner agreed to this change (`--confirm`, MCP `confirm`, an Assistant proposal). */
+  confirm: boolean;
+  claim: CallClaim;
+  /** The caller's conversation ids (tab session, Claude session): a Super child is told by them. */
+  sessions?: readonly string[];
+  /** One of the app's own enabled schedules, the call matching it (the automations tick): the owner agreed when he left it on. */
+  schedule?: boolean;
+  /** The tool id the caller means (`apps do`): decides between tools sharing one route. */
+  tool?: string;
+}
+
+export type GateVerdict =
+  | { ok: true; effect: ToolEffect; action: AppAction | null; timeoutMs: number }
+  | { ok: false; http: number; code: 'needs_confirm' | 'needs_owner'; message: string; tool?: { id: string; title: string; does?: string; input?: string } };
+
+/** The manifest action at (method, path), the query left out. */
+export function matchAction(actions: readonly AppAction[], method: string, path: string, tool?: string): AppAction | null {
+  return resolveAction(actions, method, path, tool).action;
+}
+
+/** The action, and whether the caller's tool name held for this call. */
+function resolveAction(actions: readonly AppAction[], method: string, path: string, tool?: string): { action: AppAction | null; named: boolean; shared: boolean; loose: boolean } {
+  const same = sameRoute(actions, method, path);
+  if (!same.length) {
+    // A spelling many servers route to a listed tool (`/API/RUN`, `/api/run/`): the strictest of those
+    // tools, never by name, and an automation's app_tools cannot vouch for it.
+    const loose = looseRoute(actions, method, path);
+    if (loose.length) return { action: strictest(loose), named: false, shared: true, loose: true };
+    return { action: null, named: false, shared: false, loose: false };
+  }
+  // The caller named the tool (`apps do`, the Assistant). The name never lowers authority: it holds
+  // only when the call's raw query IS that tool's query, plus that tool's own declared params in
+  // plain spelling. Anything else (`%6Cive`, `mode[]=live`, a key twice) names nothing.
+  const named = tool ? namedAction(same, path, tool) : undefined;
+  if (named) return { action: named, named: true, shared: same.length > 1, loose: false };
+  // Two tools on one base path (`?mode=dry` / `?mode=live`): a changing one wins, so a query never makes a change look like a read.
+  return { action: strictest(same), named: false, shared: same.length > 1, loose: false };
+}
+
+const strictest = (list: readonly AppAction[]): AppAction | null => list.find((a) => effectOf(a) === 'change') ?? list[0] ?? null;
+const rawQuery = (p: string): string => { const i = p.indexOf('?'); return i < 0 ? '' : p.slice(i + 1); };
+const queryKeys = (q: string): string[] => q.split('&').filter(Boolean).map((seg) => seg.split('=')[0]);
+/** One extra pair as `URLSearchParams` writes it: a plain key, a value with no separator or bracket. */
+const PLAIN_PAIR = /^([A-Za-z0-9_-]+)=([A-Za-z0-9._~%*+-]*)$/;
+
+function namedAction(same: readonly AppAction[], path: string, tool: string): AppAction | undefined {
+  const a = same.find((x) => x.id === tool);
+  if (!a) return undefined;
+  const own = rawQuery(a.path);
+  if (same.some((o) => o !== a && rawQuery(o.path) === own)) return undefined;
+  const call = rawQuery(path);
+  if (call === own) return a;
+  let rest: string;
+  if (own === '') rest = call;
+  else if (call.startsWith(own + '&')) rest = call.slice(own.length + 1);
+  else return undefined;
+  const declared = new Set(Object.keys(a.params ?? {}));
+  const taken = new Set([...queryKeys(own), ...same.filter((o) => o !== a).flatMap((o) => queryKeys(rawQuery(o.path)))]);
+  const seen = new Set<string>();
+  for (const seg of rest.split('&')) {
+    const m = PLAIN_PAIR.exec(seg);
+    if (!m) return undefined;
+    const key = m[1];
+    if (!declared.has(key) || taken.has(key) || seen.has(key)) return undefined;
+    seen.add(key);
+  }
+  return a;
+}
+
+function sameRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {
+  const bare = path.split('?')[0];
+  return actions.filter((a) => a.method === method && a.path.split('?')[0] === bare);
+}
+
+const looseBase = (p: string): string => {
+  const b = p.split('?')[0].toLowerCase().replace(/\/{2,}/g, '/');
+  return b.length > 1 ? b.replace(/\/+$/, '') || '/' : b;
+};
+
+function looseRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {
+  const bare = looseBase(path);
+  return actions.filter((a) => a.method === method && looseBase(a.path) === bare);
+}
+
+/** Is any of these conversations the Super Agent or one of its children right now? */
+function superSession(sessions: readonly string[] | undefined): boolean {
+  for (const id of sessions ?? []) {
+    if (!id) continue;
+    try {
+      if (isSuperSessionId(id) || isSuperChild(id) || handedOverChildRoot(id)) return true;
+    } catch { return true; /* cannot tell: closed */ }
+  }
+  return false;
+}
+
+/**
+ * THE gate, called by `handleAppCall` (CLI, MCP, a raw loopback POST) and `runAppAction` (the
+ * Assistant). A read passes. A change needs `confirm`, and then who is asking decides:
+ * `spawned` and `crew` (and any Super conversation, whatever it claims) never; an unattended
+ * `run` only with this tool in its approved job's `app_tools`, or in a turn the owner started
+ * from the dashboard; the owner's chats and terminal pass. A header can only take rights away.
+ */
+export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readonly AppAction[], call: GateCall, deps: { home?: string } = {}): GateVerdict {
+  const method = call.method.toUpperCase();
+  const resolved = resolveAction(actions, method, call.path, call.tool);
+  const action = resolved.action;
+  // Several tools on this route and no name that held: no job's app_tools can vouch for which one runs.
+  const ambiguous = resolved.shared && !resolved.named;
+  // An unlisted GET reads; an unlisted anything else changes.
+  // A loose spelling is the stricter of the listed tool and an unlisted call.
+  const effect: ToolEffect = !action ? effectOf({ method })
+    : resolved.loose && effectOf({ method }) === 'change' ? 'change' : effectOf(action);
+  // A listed tool gets its own timeout (60 s by default); an unlisted path or a schedule keeps the old 5 minutes.
+  const timeoutMs = (action && !call.schedule ? toolTimeoutSec(action) : action?.timeoutSec ?? UNLISTED_TIMEOUT_SEC) * 1000;
+  if (effect === 'read') return { ok: true, effect, action, timeoutMs };
+  const tool = action ? { id: action.id, title: action.title, ...(action.does ? { does: action.does } : {}), ...(action.input ? { input: action.input } : {}) } : undefined;
+  if (!call.confirm && !call.schedule) {
+    return { ok: false, http: 409, code: 'needs_confirm', message: `${action ? `"${action.title}"` : `${method} ${call.path.split('?')[0]}`} changes something. Say in one line what it will do, and run it with --confirm only after the owner says yes in this chat.`, ...(tool ? { tool } : {}) };
+  }
+  const refuse = (why: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} The owner can run it in a normal chat or in the app's window.`, ...(tool ? { tool } : {}) });
+  let cls = call.claim.class;
+  if (superSession(call.sessions)) cls = 'crew';
+  if (cls === 'spawned') return refuse('A changing app tool does not run from a session no owner is typing in.');
+  if (cls === 'crew') return refuse('The Super Agent and its chats never run a changing app tool.');
+  if (cls === 'run') {
+    const slug = call.claim.automation ?? '';
+    if (action && slug && !ambiguous) {
+      const m = getAutomation(contextRoot, slug, deps.home);
+      const ref = `${rec.slug}/${action.id}`;
+      if (m && m.appTools?.includes(ref) && checkApproval(projectRootOf(contextRoot), m, deps.home).approved) return { ok: true, effect, action, timeoutMs };
+    }
+    if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return { ok: true, effect, action, timeoutMs };
+    return refuse(`An unattended run changes things only with a tool its approved job names (app_tools: ${rec.slug}/${action?.id ?? '<tool>'}).`);
+  }
+  return { ok: true, effect, action, timeoutMs };
+}
+
+/** Session ids a caller sent in the `x-dc-run` header (`sessions`), at most 4, uuid-shaped. */
+function sessionsOf(raw: string | string[] | undefined): string[] {
+  if (raw === undefined) return [];
+  try {
+    const o = JSON.parse(String(Array.isArray(raw) ? raw[0] : raw)) as { sessions?: unknown };
+    return Array.isArray(o.sessions) ? o.sessions.filter((x): x is string => typeof x === 'string' && /^[0-9a-fA-F-]{8,64}$/.test(x)).slice(0, 4) : [];
+  } catch { return []; }
+}
+
 /** One request to the app backend, as the gateway would send it (call lease, sink, 256 KB). */
 export async function handleAppCall(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
@@ -656,18 +822,32 @@ export async function handleAppCall(req: IncomingMessage, res: ServerResponse, p
   if (!(ACTION_METHODS as readonly string[]).includes(method)) { sendError(res, 400, 'bad_method', 'method must be GET, POST, PUT, PATCH or DELETE'); return; }
   const p = safeAppPath(body.path);
   if (!p.ok) { sendError(res, 400, 'bad_path', p.reason); return; }
-  const out = await callBackend(rec, method, p.path, body.body);
+  const m = readManifest(rec.root);
+  const header = req.headers[RUN_HEADER];
+  // `schedule: <id>` counts only when that enabled schedule of the manifest makes exactly this call.
+  const sid = typeof body.schedule === 'string' ? body.schedule : '';
+  const sched = sid && m.ok ? m.manifest.schedules.find((x) => x.id === sid) : undefined;
+  const schedPath = sched ? safeAppPath(sched.call.path) : undefined;
+  const schedule = !!sched && sched.call.method.toUpperCase() === method && !!schedPath?.ok && schedPath.path === p.path
+    && readScheduleState(home, rec.hash)[sid]?.enabled !== false;
+  const verdict = gateAppCall(contextRoot, rec, m.ok ? m.manifest.actions : [], {
+    method, path: p.path, confirm: body.confirm === true, claim: decodeClaim(header), sessions: sessionsOf(header), schedule,
+    ...(typeof body.tool === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(body.tool) ? { tool: body.tool } : {}),
+  }, { home });
+  if (!verdict.ok) { sendJson(res, verdict.http, { error: verdict.code, message: verdict.message, ...(verdict.tool ? { tool: verdict.tool } : {}) }); return; }
+  const out = await callBackend(rec, method, p.path, body.body, verdict.timeoutMs);
   if (!out.ok) { sendError(res, out.http, out.code, out.message); return; }
-  sendJson(res, 200, { status: out.status, contentType: out.type, body: out.text });
+  sendJson(res, 200, { status: out.status, contentType: out.type, body: out.text, effect: verdict.effect, ms: out.ms });
 }
 
 type BackendCall =
-  | { ok: true; status: number; type: string; text: string }
+  | { ok: true; status: number; type: string; text: string; ms: number }
   | { ok: false; http: number; code: string; message: string };
 
 /** One request to an app's backend under a call lease: `apps call`, `apps do`, the Assistant's `app-do`. */
-async function callBackend(rec: AppRecord, method: string, path: string, value: unknown): Promise<BackendCall> {
+async function callBackend(rec: AppRecord, method: string, path: string, value: unknown, timeoutMs: number): Promise<BackendCall> {
   const p = { path };
+  const t0 = Date.now();
   const rt = runtime(rec);
   await gatewayFor(rt);
   const release = rt.acquireCall();
@@ -681,7 +861,7 @@ async function callBackend(rec: AppRecord, method: string, path: string, value: 
     const payload = method === 'GET' || method === 'DELETE' || value === undefined ? null : Buffer.from(JSON.stringify(value), 'utf-8');
     const result = await new Promise<{ status: number; text: string; type: string } | { error: string }>((resolve) => {
       const up = http.request({
-        host: '127.0.0.1', port: b.port, method, path: p.path, agent: false, timeout: CALL_TIMEOUT_MS,
+        host: '127.0.0.1', port: b.port, method, path: p.path, agent: false, timeout: timeoutMs,
         headers: {
           host: `127.0.0.1:${b.port}`,
           [GATEWAY_SECRET_HEADER]: rt.gatewaySecret,
@@ -705,8 +885,8 @@ async function callBackend(rec: AppRecord, method: string, path: string, value: 
       up.on('error', () => resolve({ error: 'backend_error' }));
       if (payload) up.end(payload); else up.end();
     });
-    if ('error' in result) return { ok: false, http: result.error === 'call_timeout' ? 504 : 502, code: result.error, message: result.error === 'call_timeout' ? 'The action ran longer than 5 minutes.' : 'The backend did not answer.' };
-    return { ok: true, status: result.status, type: result.type, text: rt.scrub(result.text) };
+    if ('error' in result) return { ok: false, http: result.error === 'call_timeout' ? 504 : 502, code: result.error, message: result.error === 'call_timeout' ? `The tool ran longer than ${Math.round(timeoutMs / 1000)} s.` : 'The backend did not answer.' };
+    return { ok: true, status: result.status, type: result.type, text: rt.scrub(result.text), ms: Date.now() - t0 };
   } finally {
     release();
   }

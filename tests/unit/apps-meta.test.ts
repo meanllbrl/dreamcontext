@@ -103,10 +103,12 @@ describe('the Meta Ads example app (fictional Graph API)', () => {
   }, 30_000);
 
   it('pauses and resumes a campaign, the same action an agent runs with `apps do`', async () => {
-    expect(JSON.parse((await call('meta-ads', { method: 'POST', path: '/api/campaigns/pause', body: { id: '1202' } })).json.body)).toMatchObject({ ok: true, status: 'PAUSED' });
+    // A POST changes something: refused without confirm (app-araclari §4.1), then the owner's yes.
+    expect((await call('meta-ads', { method: 'POST', path: '/api/campaigns/pause', body: { id: '1202' } })).status).toBe(409);
+    expect(JSON.parse((await call('meta-ads', { method: 'POST', path: '/api/campaigns/pause', body: { id: '1202' }, confirm: true })).json.body)).toMatchObject({ ok: true, status: 'PAUSED' });
     let list = JSON.parse((await call('meta-ads', { method: 'GET', path: '/api/campaigns' })).json.body).campaigns;
     expect(list.find((c: { id: string }) => c.id === '1202').status).toBe('PAUSED');
-    await call('meta-ads', { method: 'POST', path: '/api/campaigns/resume', body: { id: '1202' } });
+    await call('meta-ads', { method: 'POST', path: '/api/campaigns/resume', body: { id: '1202' }, confirm: true });
     list = JSON.parse((await call('meta-ads', { method: 'GET', path: '/api/campaigns' })).json.body).campaigns;
     expect(list.find((c: { id: string }) => c.id === '1202').status).toBe('ACTIVE');
   }, 30_000);

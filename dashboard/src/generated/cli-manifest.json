@@ -185,13 +185,6 @@
       "group": true
     },
     {
-      "path": "apps actions",
-      "desc": "The app's own actions an agent can run with `apps do` (read this before writing new logic)",
-      "args": [
-        "<slug>"
-      ]
-    },
-    {
       "path": "apps assign",
       "desc": "Assign an AI Team agent to the app, or `--own` to give it its own assistant (written to its manifest)",
       "args": [
@@ -208,7 +201,7 @@
     },
     {
       "path": "apps call",
-      "desc": "One raw request to the app backend (prefer `apps do`)",
+      "desc": "One raw request to the app backend (prefer `apps do`); anything but a GET is a change and needs --confirm",
       "args": [
         "<slug>",
         "<method>",
@@ -216,6 +209,19 @@
       ],
       "valueFlags": [
         "--body"
+      ]
+    },
+    {
+      "path": "apps catalog",
+      "desc": "The brain's list of this project's apps (a publish writes it)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "apps catalog remove",
+      "desc": "Take an app off the brain's list (the owner's verb; its next publish writes it back)",
+      "args": [
+        "<slug>"
       ]
     },
     {
@@ -237,7 +243,7 @@
     },
     {
       "path": "apps do",
-      "desc": "Run one of the app's own actions (no Claude turn, no usage limit)",
+      "desc": "Run one of an installed app's tools and take its own answer (no Claude turn, no usage limit)",
       "args": [
         "<slug>",
         "<action>"
@@ -394,6 +400,16 @@
       "desc": "Stop the backend (stays stopped until opened again by the owner)",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "apps tools",
+      "desc": "The app tools of this project on THIS Mac: what each installed app can do (`apps do`), and the project's apps not installed here",
+      "args": [
+        "[slug]"
+      ],
+      "aliases": [
+        "actions"
       ]
     },
     {
@@ -686,6 +702,7 @@
         "--review",
         "--whiteboard",
         "--app",
+        "--app-tools",
         "--agent",
         "--job",
         "--answer"

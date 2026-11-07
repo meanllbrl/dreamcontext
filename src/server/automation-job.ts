@@ -11,7 +11,7 @@ import {
 import {
   resumeWithAnswer, resumeWithMessage, type TalkOutcome, type VerdictOptions,
 } from '../lib/automations/verdict.js';
-import type { BoardTurnInput, RunKind, RunStatus, SpawnModelOverride } from '../lib/automations/types.js';
+import type { BoardTurnInput, RunKind, RunStatus, SpawnModelOverride, ThreadEntry } from '../lib/automations/types.js';
 import type { TaskRef } from '../lib/automations/runner.js';
 import type { AppRunBrief } from '../lib/apps/brief.js';
 import { getAgent } from '../lib/agents/store.js';
@@ -826,4 +826,51 @@ async function doReconcileReplyThreads(
       }
     }
   }
+}
+
+// ─── Who started the turn in flight (app-araclari plan r3 §4.2 (b), security re-review) ──────
+
+/** Only the owner's own page writes these: an app's or the Super Agent's words never count. */
+const OWNER_VIA: readonly ThreadEntry['via'][] = ['dashboard'];
+
+/**
+ * Did the OWNER start the turn of `slug`'s run `runId` that is in flight right now? The one
+ * reply job of that run that is `running` AND `delivering` (exactly one; any other count is
+ * false), its own entry; with none delivering, the run's own job while it is `running`, its
+ * opening user entry. That entry must be `kind: 'user'` and `via` in {@link OWNER_VIA}.
+ * A settled job (its phase stays `delivering`), an earlier turn, the run's first entry under a
+ * later Super `team ask` turn, and a scheduled fire with no job here: all false.
+ */
+export function jobStartedByOwner(contextRoot: string, slug: string, runId: string): boolean {
+  if (!slug || !runId) return false;
+  const delivering = [...replyJobs.values()].filter((j) => j.slug === slug && j.runId === runId && j.status === 'running' && j.phase === 'delivering');
+  let entryId: string | null = null;
+  if (delivering.length > 1) return false;
+  if (delivering.length === 1) entryId = delivering[0].entryId;
+  else {
+    const live = [...(jobs.get(contextRoot)?.values() ?? [])].filter((j) => j.slug === slug && j.runId === runId && j.status === 'running');
+    if (live.length !== 1) return false;
+    // A reply waiting behind this turn does not make it its own: the opening entry decides.
+    const opening = readThread(contextRoot, slug, { runId }).find((e) => e.runId === runId && e.kind === 'user');
+    if (!opening) return false;
+    return OWNER_VIA.includes(opening.via) && !opening.app;
+  }
+  const entry = readThread(contextRoot, slug, { runId }).find((e) => e.id === entryId);
+  return !!entry && entry.runId === runId && entry.kind === 'user' && OWNER_VIA.includes(entry.via) && !entry.app;
+}
+
+/** Tests stand in for jobs this process would have started: a reply job, or a run's own job. */
+export function __seedJobForTest(contextRoot: string, j: { reply?: ReplyJobState; run?: AutomationJobState }): void {
+  if (j.reply) replyJobs.set(j.reply.id, j.reply);
+  if (j.run) {
+    const bySlug = jobs.get(contextRoot) ?? new Map<string, AutomationJobState>();
+    bySlug.set(j.run.id, j.run);
+    jobs.set(contextRoot, bySlug);
+  }
+}
+
+/** Tests: forget every seeded job. */
+export function __clearJobsForTest(): void {
+  replyJobs.clear();
+  jobs.clear();
 }

@@ -450,7 +450,8 @@ describe('automations CLI (integration)', () => {
     // 13 → 14 with `readTools`: the MCP tools a light job may call; omitted when none.
     // 14 → 15 with `tool`: which vendor reads the prompt; omitted on Claude (Track T W4).
     // 15 → 16 with `app` (dreamcontext Apps): the app a schedule runs for; omitted when none.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(16);
+    // 16 → 17 with `appTools`: the app tools a run may change things with unattended; omitted when none.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(17);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

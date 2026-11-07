@@ -30,6 +30,8 @@ export interface AppRow {
   /** Still the letter `apps new` drew: drawn as the monogram fallback. */
   iconPlaceholder?: boolean;
   actions?: Array<{ id: string; title: string }>;
+  /** What its tools do and whether the backend serves them (app-araclari §5, `publicStatus`). */
+  tools?: { count: number; change: number; audit: 'ok' | 'drift' | 'unaudited' | 'unknown' | string; missing: string[] } | null;
   schedules?: Array<{ id: string; enabled: boolean; next: string | null; last: { at: string; status: string; code: string | null } | null }>;
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
   /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
@@ -185,7 +187,9 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     : t('store.madeHere');
   const top = s?.whatsNew[0];
   const facts = [
-    { value: String(app.actions?.length ?? 0), label: t((app.actions?.length ?? 0) === 1 ? 'store.fact.action' : 'store.fact.actions') },
+    app.tools && app.tools.count > 0
+      ? { value: String(app.tools.count), label: t(app.tools.count === 1 ? 'apps.tools.count.one' : 'apps.tools.count').replace('{n}', '').trim() }
+      : { value: String(app.actions?.length ?? 0), label: t((app.actions?.length ?? 0) === 1 ? 'store.fact.action' : 'store.fact.actions') },
     { value: String(app.schedules?.length ?? 0), label: t((app.schedules?.length ?? 0) === 1 ? 'store.fact.schedule' : 'store.fact.schedules') },
     { value: app.agent ?? t('apps.noAgent'), label: t('apps.agent') },
     ...(top ? [{ value: `v${top.version}`, label: shortDate(top.date) || t('store.version.label') }] : []),
@@ -244,6 +248,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             )}
           </div>
         ))}
+        {app.tools && app.tools.audit === 'drift' && (
+          <p className="app-card__note app-card__note--warn"><span aria-hidden="true">⚠ </span>{t('apps.tools.drift')}{app.tools.missing.length > 0 && `: ${app.tools.missing.join(', ')}`}</p>
+        )}
+        {app.tools && app.tools.audit === 'unaudited' && <p className="app-card__muted">{t('apps.tools.unaudited')}</p>}
         {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
         {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
         {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}

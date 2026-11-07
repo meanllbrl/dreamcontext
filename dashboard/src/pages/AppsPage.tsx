@@ -5,7 +5,9 @@ import { isDesktop } from '../lib/desktop';
 import { isPhoneSurface } from '../lib/phoneSurface';
 import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
 import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow } from '../components/apps/AppCard';
 import { InstallSheet, SharedApps, TrashList, type SharedList } from '../components/apps/ShareSheets';
 import { askAgent } from '../components/apps/askAgent';
@@ -25,7 +27,7 @@ type AppOther =
 
 type Tab = 'mine' | 'shared';
 
-export function AppsPage() {
+export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const api = useApi();
   const { vault, bus } = useVault();
   const { t } = useI18n();
@@ -50,6 +52,30 @@ export function AppsPage() {
   const [pageSlug, setPageSlug] = useState<string | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: key });
   const appsKey = apps.map((a) => `${a.slug}:${a.origin ?? ''}:${a.source ? 'f' : ''}`).join(',');
+
+  // A chat's `app-install` button (app-araclari §5): `install:<owner/name>`. The install sheet
+  // opens only for a repo "Shared with you" lists; anything else says who to ask. Never installs.
+  // Each outcome says its own truth: only a repo neither shared nor invited is "ask the publisher".
+  const [note, setNote] = useState<{ kind: 'notShared' | 'invited' | 'signIn' | 'macOnly' | 'installed' | 'failed'; repo: string } | null>(null);
+  const asked = useRef('');
+  useFocusTarget(focus, (id) => {
+    const repo = id.startsWith('install:') ? id.slice('install:'.length) : '';
+    if (!APP_REPO_RE.test(repo)) return;
+    asked.current = repo;
+    setNote(null);
+    if (!isDesktop() || isPhoneSurface()) { setNote({ kind: 'macOnly', repo }); return; }
+    const eq = (s: { fullName: string }) => s.fullName.toLowerCase() === repo.toLowerCase();
+    void api.get<{ signedIn?: boolean; shared?: Array<{ fullName: string; installed?: string }>; invitations?: Array<{ fullName: string }> }>('/apps/shared').then(
+      (l) => {
+        if (asked.current !== repo) return;
+        if (!l.signedIn) { setNote({ kind: 'signIn', repo }); return; }
+        const hit = (l.shared ?? []).find(eq);
+        if (hit) { if (hit.installed) setNote({ kind: 'installed', repo }); else setInstallRef(hit.fullName); return; }
+        setNote({ kind: (l.invitations ?? []).some(eq) ? 'invited' : 'notShared', repo });
+      },
+      () => { if (asked.current === repo) setNote({ kind: 'failed', repo }); },
+    );
+  });
 
   // Shared Apps is read once for the tab's count (pending invitations) and the tab itself.
   const sharedKey = ['apps-shared', vault, appsKey];
@@ -100,6 +126,12 @@ export function AppsPage() {
           <button type="button" className="share-link apps-tabs__act" onClick={() => setInstallRef('')}>{t('store.fromLink')}</button>
         </div>
       )}
+      {note && (
+        <p className="app-card__note app-card__note--warn" role="status">
+          {t(`apps.install.${note.kind}`).replace('{repo}', note.repo)}{' '}
+          <button type="button" className="share-link" onClick={() => setNote(null)}>{t('apps.install.dismiss')}</button>
+        </p>
+      )}
       {tab === 'mine' && (
         <>
           {canLaunch && <SetupLine setup={data?.setup} apps={apps} onChanged={refresh} />}
@@ -147,7 +179,7 @@ export function AppsPage() {
         />
       )}
       {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} onClose={() => setPageSlug(null)} onChanged={refresh} />}
-      {installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={(slug) => { setInstallRef(null); refresh(); setTab('mine'); setPageSlug(slug); }} />}
+      {canLaunch && installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={(slug) => { setInstallRef(null); refresh(); setTab('mine'); setPageSlug(slug); }} />}
     </div>
   );
 }

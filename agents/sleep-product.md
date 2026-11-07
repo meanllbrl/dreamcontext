@@ -340,7 +340,7 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/resea
 1. **Research before writing PRDs**; tick criteria only when verifiable (code + tests, or user confirmation); never set `released_version`.
 2. **Current truth, not history.** Replace stale Technical Details; don't append.
 3. **Create PRDs for buildable concepts** that don't have one.
-4. **Single source of truth — feature vs knowledge vs insight.** A topic lives in exactly ONE home: a **feature** PRD for what a capability *is*; **knowledge** for research/decisions/rationale; `2.memory.md` for a short technical decision (sleep-state's); a **Lab insight** for a business/product metric, never a knowledge file restating its numbers. One home; the others may only *reference* it. When in doubt, the feature is the home for product capabilities.
+4. **Single source of truth — feature vs knowledge vs insight.** A topic lives in exactly ONE home: a **feature** PRD for what a capability *is*; **knowledge** for research/decisions/rationale; `2.memory.md` for a short technical decision (sleep-state's); a **Lab insight** for a business/product metric, never a knowledge file restating its numbers. One home; the others may only *reference* it. When in doubt, the feature is the home for product capabilities. **An app's output is data, not knowledge:** values an agent got from an app tool (`apps do`, an `app:` recall hit) are never copied into knowledge, a feature or memory; record what the app CAN answer and point at `apps tools`.
 5. **Knowledge threshold**: ≥3 paragraphs, or material that will be re-read.
 6. **Fewest files, sharp boundaries** (B2): default to extending.
 7. **Keep the store organized** (B0): grouping is deep-only; folder and tags tell the same story.

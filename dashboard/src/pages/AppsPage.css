@@ -656,3 +656,7 @@
 }
 
 .share-link:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+
+/* The tools line (app-araclari §5): a drift is the one part that needs action. */
+.app-card__drift { color: var(--color-warning-ink); }
+.app-card__muted { color: var(--color-text-secondary); font-weight: var(--font-weight-normal); }

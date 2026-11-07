@@ -319,6 +319,9 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- Which tool and model: `## Tools on this Mac` (a later `<super-tools>` replaces it) lists what is ready.',
       '  `--tool codex|antigravity --model <id>`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he',
       '  names to that list, never refuse it; a tool not ready: tell him the one step.',
+      // 2026-11-07 (app-araclari): an app on this Mac may already answer; a changing tool is never the Super's.
+      '- An app on this Mac may already answer: `dreamcontext apps tools`, then `apps do <app> <tool>` for one that',
+      '  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.',
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
@@ -350,6 +353,6 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       expect.stringContaining('<super-brief rev=31>'),
     ]);
-    expect(after.length).toBe(before.length + 33); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 35); // +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

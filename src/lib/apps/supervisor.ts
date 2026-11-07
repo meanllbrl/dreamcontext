@@ -100,6 +100,60 @@ function freePort(): Promise<number> {
   });
 }
 
+/** The health answer's status and the first 4 KB of its body (where `dc.health()` lists actions). */
+function httpGetBody(port: number, path: string, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number | null; body: string }> {
+  return new Promise((resolve) => {
+    let status: number | null = null;
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const finish = (s: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hard);
+      resolve({ status: s, body: Buffer.concat(chunks).toString('utf-8') });
+    };
+    const req = http.request({ host: '127.0.0.1', port, path, method: 'GET', headers, timeout: timeoutMs, agent: false }, (res) => {
+      status = res.statusCode ?? null;
+      let n = 0;
+      res.on('data', (c: Buffer) => {
+        if (n >= HEALTH_BODY_MAX) return;
+        chunks.push(c.subarray(0, HEALTH_BODY_MAX - n));
+        n += c.length;
+        if (n >= HEALTH_BODY_MAX) res.destroy();
+      });
+      res.on('end', () => finish(status));
+      res.on('close', () => finish(status));
+      res.on('error', () => finish(status));
+    });
+    // One wall-clock limit for the whole probe: a trickling body cannot hold it, and a status that
+    // arrived counts even when the body never ends (a health route that writes and never ends).
+    const hard = setTimeout(() => { req.destroy(); finish(status); }, timeoutMs);
+    req.on('error', () => finish(status));
+    req.on('timeout', () => { req.destroy(); finish(status); });
+    req.end();
+  });
+}
+
+const HEALTH_BODY_MAX = 4096;
+
+/** What a backend says it serves (`dc.health()`'s `dcActions`) against its manifest's tools. */
+export interface ToolsAudit {
+  /** `ok`: every tool is served; `drift`: some are not; `unaudited`: the backend does not say (no SDK). */
+  state: 'ok' | 'drift' | 'unaudited';
+  /** Manifest tools the backend does not list. */
+  missing: string[];
+}
+
+/** Compare a health body with the manifest's action ids. Pure, for tests. */
+export function auditTools(healthBody: string, actionIds: readonly string[]): ToolsAudit {
+  let served: unknown;
+  try { served = (JSON.parse(healthBody) as { dcActions?: unknown }).dcActions; } catch { served = undefined; }
+  if (!Array.isArray(served)) return { state: 'unaudited', missing: [] };
+  const set = new Set(served.filter((x): x is string => typeof x === 'string'));
+  const missing = actionIds.filter((id) => !set.has(id));
+  return { state: missing.length ? 'drift' : 'ok', missing };
+}
+
 function httpGet(port: number, path: string, headers: Record<string, string>, timeoutMs: number): Promise<number | null> {
   return new Promise((resolve) => {
     const req = http.request({ host: '127.0.0.1', port, path, method: 'GET', headers, timeout: timeoutMs, agent: false }, (res) => {
@@ -245,6 +299,8 @@ export interface AppStatus {
   stoppedByOwner: boolean;
   gwPort: number | null;
   portFallback: boolean;
+  /** Null until a backend answered health (and for a backend-less app). */
+  tools: ToolsAudit | null;
 }
 
 export class AppRuntime {
@@ -255,6 +311,8 @@ export class AppRuntime {
   rev = 1;
   lastError: string | null = null;
   warnings: string[] = [];
+  /** The last health answer's tool audit (app-araclari §2). */
+  toolsAudit: ToolsAudit | null = null;
   readonly log: LineLog;
   /** The backend's Bearer for the gateway's /__dc/* (minted per runtime). */
   readonly dcToken = randomBytes(32).toString('base64url');
@@ -370,6 +428,7 @@ export class AppRuntime {
       stoppedByOwner: !!this.rec.stoppedByOwner,
       gwPort: this.gwPort,
       portFallback: this.portFallback,
+      tools: this.toolsAudit,
     };
   }
 
@@ -418,7 +477,7 @@ export class AppRuntime {
       return;
     }
     this.manifest = m.manifest;
-    for (const w of m.warnings) this.warnings.push(`${w.field}: ${w.problem}`);
+    for (const w of m.warnings) if (!w.authoring) this.warnings.push(`${w.field}: ${w.problem}`);
     this.refreshSecrets();
     // A required setting left empty: nothing starts until the owner fills it (plan r2 K2).
     const missing = missingRequired(m.manifest.config, readAppConfig(this.home, this.rec.configId), this.rec.root);
@@ -573,8 +632,17 @@ export class AppRuntime {
     const deadline = this.now() + HEALTH_TIMEOUT_MS;
     let ok = false;
     while (this.now() < deadline && exited === undefined) {
-      const st = await httpGet(port, be.health, { [GATEWAY_SECRET_HEADER]: this.gatewaySecret, host: `127.0.0.1:${port}` }, 1500);
-      if (st === 200) { ok = true; break; }
+      const h = await httpGetBody(port, be.health, { [GATEWAY_SECRET_HEADER]: this.gatewaySecret, host: `127.0.0.1:${port}` }, 1500);
+      if (h.status === 200) {
+        ok = true;
+        const audit = auditTools(h.body, this.manifest?.actions.map((a) => a.id) ?? []);
+        this.toolsAudit = audit;
+        if (audit.state === 'drift') {
+          const w = `actions_drift: the backend does not serve ${audit.missing.join(', ')} (listed in the manifest)`;
+          if (!this.warnings.includes(w)) this.warnings.push(w);
+        }
+        break;
+      }
       await new Promise((r) => setTimeout(r, 200));
     }
     if (!ok) {

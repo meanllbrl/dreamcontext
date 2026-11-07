@@ -10,6 +10,8 @@
  * Deliberately NOT here (never wider than a Claude chat's own reach, and nothing that drives the
  * app or the machine): `window`, `super`, `automations`, `dashboard`, `brain`, `link`, `peer`,
  * `connect`, `upgrade`, `install-*`, `hook`, `sleep` (the sleep flow is the owner's, on Claude).
+ * `apps tools` is here and only reads; the one way to drive an installed app is the separate
+ * `app` tool (server.ts), and its gate is the dashboard server's (`gateAppCall`).
  */
 import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -35,6 +37,7 @@ export const BRAIN_VERBS: readonly (readonly string[])[] = [
   ['bookmark', 'add'],
   ['bookmark', 'list'],
   ['knowledge', 'index'],
+  ['apps', 'tools'],
 ];
 
 /** Options that would move the CLI off this vault. Refused in any spelling (`--x`, `--x=…`). */

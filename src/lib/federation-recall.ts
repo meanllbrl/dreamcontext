@@ -138,7 +138,8 @@ export function crossVaultRecall(
       // connected, so an unconditional filter would have made `--types automation`
       // return nothing on exactly the machines that have automations.
       // Agents are prompts too (`agents/<slug>.md`): the same exclusion.
-      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent'));
+      // App tools (`app:<slug>/<id>`) are THIS Mac's installed apps: never read across a vault.
+      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent' && doc.type !== 'app'));
 
     const label = target.label ?? target.name;
     const vaultHits = bm25Search(query, corpus, topK, { now });

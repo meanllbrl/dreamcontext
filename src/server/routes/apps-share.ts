@@ -23,6 +23,8 @@ import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
 import { mintPublishGrant, takePublishGrant } from '../../lib/apps/share/publish-grant.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
+import { catalogEntryFor, removeCatalogEntry, upsertCatalogEntry } from '../../lib/apps/catalog.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
 
@@ -142,7 +144,22 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
     });
     done?.(true);
     clearSharedCache();
-    sendJson(res, 200, { ok: true, ...out });
+    // The brain's list of this project's apps (app-araclari §2): after the push, never before.
+    // `catalog: false` keeps a private app off it. A failure here never undoes the publish.
+    let catalogged = false;
+    if (b.catalog !== false) {
+      try {
+        const m = readManifest(rec.root);
+        if (m.ok) {
+          const brief = m.manifest.agent?.brief ?? '';
+          upsertCatalogEntry(contextRoot, catalogEntryFor(m.manifest, { repo: out.fullName, visibility: b.visibility === 'public' ? 'public' : 'private', publishedBy: resolveActivePerson(contextRoot).slug, does: brief.split(/(?<=[.!?])\s/)[0] ?? '' }));
+          catalogged = true;
+        }
+      } catch { /* the publish stands; the list is written on the next one */ }
+    }
+    // Unticked now: an entry from an earlier publish leaves the list too.
+    else { try { removeCatalogEntry(contextRoot, rec.slug); } catch { /* the publish stands */ } }
+    sendJson(res, 200, { ok: true, ...out, catalogged });
   } catch (e) {
     done?.(false);
     // The push went out and a later step (topics, visibility, an invite) failed: it IS published.

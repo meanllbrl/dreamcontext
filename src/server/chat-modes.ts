@@ -539,6 +539,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - Which tool and model: \`## Tools on this Mac\` (a later \`<super-tools>\` replaces it) lists what is ready.
   \`--tool codex|antigravity --model <id>\`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he
   names to that list, never refuse it; a tool not ready: tell him the one step.
+- An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
+  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
   data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
   or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,

@@ -207,7 +207,7 @@ describe('notch rows and the snapshot line', () => {
     const { proj } = project(home, 'meta-ads', {});
     const line = appsSnapshotLine(join(proj, '_dream_context'), home);
     expect(line).toContain('meta-ads (App)');
-    expect(line).toContain('dreamcontext apps actions <slug>');
+    expect(line).toContain('dreamcontext apps tools');
     expect(line!.length).toBeLessThanOrEqual(220);
     writeFileSync(join(home, '.dreamcontext', 'apps', 'registry.json'), '{not json');
     expect(appsSnapshotLine(join(proj, '_dream_context'), home)).toBeNull();

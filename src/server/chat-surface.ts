@@ -214,6 +214,7 @@ const BRIEFING_REST = `## The rest of the surface
   \`file\`/\`board\` take a \`path\`; \`reveal\` hands a \`path\` to the OS; \`ask\` loads \`text\` into
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
+  \`app-install\` takes a \`repo\` (\`owner/name\`): the Apps page's install sheet, when the hook offers it.
 
 ## \`dream-view\` — the ten things HTML must NOT be
 
@@ -378,7 +379,7 @@ The app lives at \`${a.appRoot}\`, its data at \`${a.dataDir}\`.
 
 This window does not draw: secret, run, checklist or mcp cards; the \`develop\`, \`task\` and \`knowledge\` buttons; terminal panes, voice, or a file or folder picker; \`dreamcontext window\`. Never offer them here. Anything that needs one belongs in main Chat, and you say so in one line.
 ${a.own ? `
-Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps actions ${a.slug}\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\`. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
+Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps tools\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\` for a tool that reads. A tool that changes something (sends, pays, writes, deletes) runs as \`dreamcontext apps do ${a.slug} <id> --confirm\`: say in one line what it will do first; the card the owner answers is his yes. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
 ` : ''}
 Sleep is not offered here: never suggest one.
 `;

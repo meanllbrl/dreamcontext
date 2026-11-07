@@ -295,6 +295,8 @@ export interface AutomationManifestDetail {
   autonomy?: 'ask' | 'balanced' | 'free';
   /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
   readTools?: string[];
+  /** Hashed when named, LAST: the app tools (`<app>/<tool>`) a run may CHANGE things with unattended. */
+  appTools?: string[];
   tool?: 'claude' | 'codex' | 'antigravity';
   /** Hashed when true, LAST: `scope: board`, the agent is limited to its home board.
    *  Absent on an older backend, which means not limited. */

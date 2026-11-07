@@ -489,6 +489,8 @@ export async function handleAutomationsShow(
         app: manifest.app ?? '',
         // Hashed when true, LAST: `scope: board`, limited to its home board.
         boardOnly: manifest.boardOnly === true,
+        // Hashed when named, LAST: the app tools a run may change things with while nobody watches.
+        appTools: manifest.appTools ?? [],
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:

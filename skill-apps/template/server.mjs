@@ -39,7 +39,9 @@ async function readBody(req) {
 }
 
 const routes = {
-  'GET /health': async (_req, res) => { res.writeHead(200); res.end('ok'); },
+  // dc.health() tells dreamcontext which actions this backend serves (dc.actions below):
+  // a tool in the manifest with no route here shows as drift on the app card.
+  'GET /health': async (_req, res) => json(res, 200, dc.health()),
   'GET /api/hello': async (_req, res) => {
     await mkdir(DATA, { recursive: true });
     const file = join(DATA, 'visits.json');
@@ -54,6 +56,9 @@ const routes = {
     json(res, 200, { ok: true });
   },
 };
+
+// Every manifest action this backend serves, by id. Add the id when you add the route.
+dc.actions(['hello']);
 
 const server = http.createServer(async (req, res) => {
   if (!dcGuard(req)) { res.writeHead(401); res.end('unauthorized'); return; }

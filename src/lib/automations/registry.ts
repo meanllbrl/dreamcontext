@@ -485,6 +485,10 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // re-blocks. Present, it decides the agent's whole envelope (limited to its board vs its
     // autonomy level), so adding or removing it must block until someone here re-approves.
     ...(m.boardOnly === true ? { scope: 'board' } : {}),
+    // OMITTED when absent or empty, and LAST (app-araclari §4.2; pattern: a new field in a consent
+    // hash must not re-block everyone): no automation names one today, so every hash stays what
+    // it was. Present, it lets an unattended run change things through an app.
+    ...(m.appTools?.length ? { appTools: [...m.appTools].sort() } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -554,6 +558,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // Always present (false when absent): the reviewer sees whether a home-board agent is
     // limited to its board, or runs under its autonomy level.
     boardOnly: m.boardOnly === true,
+    // Always present (as '' when absent): the reviewer reads which app tools may change things unattended.
+    appTools: (m.appTools ?? []).join(', '),
   };
 }
 

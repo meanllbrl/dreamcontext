@@ -18,9 +18,9 @@ key-based MCP servers directly.
 ## Before writing anything
 
 1. `dreamcontext apps list` — does an app for this already exist? Change it instead of making a new one.
-2. If one exists: `dreamcontext apps actions <slug>`. If an action already does what is asked,
-   RUN it (`dreamcontext apps do <slug> <action> --input '<json>'`). Never re-implement an app's
-   logic in a script or a curl: the owner and you use the same action.
+2. If one exists: `dreamcontext apps tools <slug>`. If a tool already does what is asked,
+   RUN it (`dreamcontext apps do <slug> <tool> --input '<json>'`). Never re-implement an app's
+   logic in a script or a curl: the owner and you use the same tool.
 3. Ask the owner only what you cannot decide: what the app is for, which account/API, which agent
    should own it. Everything else has a default below.
 
@@ -149,8 +149,11 @@ chat (the permission is read at session start).
   "agent": { "member": "ua-manager", "brief": "Owns this account's campaigns." },
   "mcp": ["meta-ads"],
   "actions": [
-    { "id": "list-campaigns", "title": "List campaigns with status and spend", "method": "GET", "path": "/api/campaigns" },
-    { "id": "pause-campaign", "title": "Pause one campaign", "method": "POST", "path": "/api/campaigns/pause", "input": "{id}", "danger": true }
+    { "id": "list-campaigns", "title": "List campaigns with status and spend", "method": "GET", "path": "/api/campaigns",
+      "does": "Every campaign of the account with its status and yesterday's spend.", "output": "[{id, name, status, spend}]",
+      "params": { "status": { "type": "enum", "choices": ["active", "paused"], "desc": "only this status" } }, "topics": ["campaign", "spend"] },
+    { "id": "pause-campaign", "title": "Pause one campaign", "method": "POST", "path": "/api/campaigns/pause",
+      "does": "Pauses one campaign on Meta.", "params": { "id": { "type": "string", "required": true } }, "danger": true }
   ],
   "schedules": [
     { "id": "morning-sync", "schedule": { "days": "daily", "at": "08:30" }, "call": { "method": "POST", "path": "/api/sync" }, "notify": "failure" }
@@ -158,8 +161,21 @@ chat (the permission is read at session start).
 }
 ```
 
-- `actions` are the app's deterministic verbs, for the owner's buttons AND for agents. Every
-  path goes through one safety door (fixed-point decoded, no `//`, nothing under `/__dc`).
+- `actions` are the app's TOOLS: its deterministic verbs, for the owner's buttons AND for every
+  agent of the project on a Mac where the app is installed (they learn them from the prompt hook and
+  `apps tools`, and take the app's answer instead of computing it). Every path goes through one
+  safety door (fixed-point decoded, no `//`, nothing under `/__dc`).
+- **A tool that only reads is a GET.** A GET with no `danger` reads; everything else CHANGES
+  (sends, pays, writes, deletes), `"effect": "read"` on a POST included. A change runs only with
+  `--confirm` after the owner's yes; unattended only when an approved job lists it (`--app-tools`).
+- **A tool is not done without** `does` (what it does and answers, one or two lines), `params`
+  (each input with its `type`: string, number, boolean, date, enum with `choices`; `required`;
+  `desc`), and `topics` (words a question may use). Optional: `output`, `usesAgent: true` (it runs
+  an agent turn, so it spends usage), `timeoutSec` (5-300, default 60). Finish with
+  `dreamcontext apps validate`: it warns on each tool missing these.
+- The backend says which tools it serves: `dc.actions([...ids])` and `dc.health()` on the health
+  route (the template does both). A tool listed in the manifest but not served shows as drift on
+  the app card; an app without the SDK shows "not audited".
 - `schedules` run WITHOUT an agent (no Claude, no usage limit). Shape = the automations schedule
   (`{days, at}` or `{slots: [...]}`). An owner-stopped app skips its runs.
 - Actions and schedules need a `backend`.
@@ -193,8 +209,9 @@ nothing, so a role never promises actions there, and the backend puts the facts 
 | want | do |
 |---|---|
 | what apps exist | `dreamcontext apps list` |
-| what an app can do | `dreamcontext apps actions <slug>` |
-| run one | `dreamcontext apps do <slug> <id> [--input '<json>']` (works with no window open) |
+| what the apps can do | `dreamcontext apps tools [<slug>] [--json]` (installed here, and the project's apps not installed here) |
+| run one | `dreamcontext apps do <slug> <id> [--input '<json>'] [--json]` (works with no window open; over 16 KB the answer goes to a file) |
+| run one that changes | say in one line what it will do, wait for the owner's yes, then add `--confirm` |
 | see the window | `dreamcontext apps screenshot <slug>` → a PNG path; only when the window is OPEN (else `app_not_open`: say so, offer `apps open`) |
 | open it | `dreamcontext apps open <slug>` |
 | logs / state | `dreamcontext apps logs <slug>`, `dreamcontext apps status <slug>` |

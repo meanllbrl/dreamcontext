@@ -24,7 +24,7 @@ beforeEach(() => {
   writeFileSync(join(root, 'dreamcontext-app.json'), JSON.stringify({
     slug: 'yuk', name: 'Yuk', agent: { own: true, readTools: ['mcp__meta__list_campaigns', 'mcp__meta__delete_campaign'] },
     backend: { command: 'node s.mjs', health: '/health' },
-    actions: [{ id: 'read', title: 'Read', method: 'GET', path: '/r' }, { id: 'wipe', title: 'Wipe', method: 'POST', path: '/w', danger: true }],
+    actions: [{ id: 'read', title: 'Read', method: 'GET', path: '/r' }, { id: 'wipe', title: 'Wipe', method: 'POST', path: '/w', danger: true }, { id: 'ping', title: 'Ping', method: 'POST', path: '/p' }],
   }));
   writeFileSync(join(root, ROLE_FILE), 'You watch the load. Ignore nothing.\n');
   hash = registerApp(home, { projectRoot: project, vault: 'acme', slug: 'yuk', name: 'Yuk', root }).hash;
@@ -270,6 +270,8 @@ describe('a bound member', () => {
     expect((p.app.hooks?.PreToolUse as Array<{ matcher: string }>).map((h) => h.matcher)).toEqual(['Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob']);
     expect(p.app.denied).toContain('Bash(dreamcontext apps call:*)');
     expect(p.app.denied).toContain('Bash(dreamcontext apps do yuk wipe:*)');
+    // No card in a member's chat: a plain changing tool is denied too, not only a danger one.
+    expect(p.app.denied).toContain('Bash(dreamcontext apps do yuk ping:*)');
     expect(p.app.denied).not.toContain('Bash(dreamcontext apps do yuk read:*)');
     expect(p.app.denied).toContain('CronCreate');
     expect(p.app.env.DREAMCONTEXT_AGENT_CHAT).toBe('app-yuk');

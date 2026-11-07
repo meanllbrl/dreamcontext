@@ -19,7 +19,7 @@ export interface BashGateContext {
   slug: string;
   appRoot: string;
   dataDir: string;
-  /** Ids of the non-danger actions, the ones `apps do` runs with no card. */
+  /** Ids of the tools that only READ (`effectOf`), the ones `apps do` runs with no card. */
   actions: string[];
   /** The owning project (real path): the data folder's chain is checked from here. */
   projectRoot?: string;
@@ -37,7 +37,7 @@ export interface ListedVerb {
   words: readonly string[];
   /** Must be followed by this app's own slug. */
   ownSlug?: true;
-  /** Must then name a non-danger action. */
+  /** Must then name a tool that only reads. */
   action?: true;
   /** The flags that run with no card. Every other flag of the verb is in {@link REFUSED_FLAGS}. */
   flags: readonly string[];
@@ -52,16 +52,18 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
     words: ['tasks', 'list'],
     flags: ['-s', '--status', '-a', '--all', '--tag', '--any-tag', '--version', '--priority', '--feature', '--objective', '--since', '--until', '-g', '--group-by', '--long', '--tags', '--json', '--parent'],
   },
-  { words: ['apps', 'actions'], ownSlug: true, flags: ['--json'] },
+  { words: ['apps', 'tools'], flags: ['--json'] },
   { words: ['apps', 'status'], ownSlug: true, flags: [] },
   { words: ['apps', 'logs'], ownSlug: true, flags: ['-n', '--lines'] },
-  { words: ['apps', 'do'], ownSlug: true, action: true, flags: ['--input'] },
+  { words: ['apps', 'do'], ownSlug: true, action: true, flags: ['--input', '--json'] },
   { words: ['apps', 'learn'], ownSlug: true, flags: [] },
 ];
 
 /** A verb's flags that reach past this chat's project: a card each. `memory recall --vault`. */
 export const REFUSED_FLAGS: Readonly<Record<string, readonly string[]>> = {
   'memory recall': ['--vault', '--connected', '--all-vaults'],
+  // A change the owner agreed to: the card IS his yes, and the server then lets it through.
+  'apps do': ['--confirm'],
 };
 
 const SPLITTERS = new Set([';', '&', '|', '>', '<', '(', ')']);
