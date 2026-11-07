@@ -35,9 +35,17 @@ own `.gitignore` must exclude the machine-local brain runtime + secrets (prefixe
 | `overrides/**` | tracked | tracked |
 | `state/*.md` (tasks) | tracked (source of truth) | gitignored (local mirror; issues/ClickUp are source of truth) |
 | `state/.config.json`, `.active-version.json`, `.migrations.json` | tracked | tracked |
-| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json` (and `.agent-sessions.*`), `.super-agent.json` (and `.super-agent.json.*`), `.super/`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
+| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json` (and `.agent-sessions.*`), `.super-agent.json` (and `.super-agent.json.*`), `.super/`, `.session-digests/`, `.sleep-runs.jsonl`, `.handoff-log.jsonl`, `.session-titles.json`, `.agent-session-map/`, `.active-task`, `.tool-handoff/`, `.run-sessions/`, `.peer-mail/`, `.sleepy-chat.json`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
 | `lab/**` (insights + cache) | tracked | tracked |
 | `lab/credentials.json` / `lab/credentials.*` (except the tracked `credentials.example.json`) | gitignored | gitignored |
+
+A gitignore line never untracks a file an older install already committed, so the Super and
+session files (the Super record and `.super/`, the session rosters, and `SESSION_LOCAL_PATHSPECS`
+in `src/lib/super/pull-guard.ts`: sleep state, sleep history, digests, titles, the handoff log,
+peer mail) also leave the INDEX: in every sync's stage pass and on `dreamcontext update`
+(migration 0.40.2, every run; the file stays on disk). A pull whose update carries one stops
+with a note. `state/.sleep.json` keeps each session's last reply and the bookmarks caught from
+it, so a committed one carried the owner's Super agenda to a teammate (2026-11-07).
 
 The `_dream_context/.gitignore` is built by `buildBrainGitignore(taskBackend)` and the project-root
 excludes by `ensureFullRepoGitignore(projectRoot, taskBackend)` (both `src/lib/git-sync/brain-repo.ts`),

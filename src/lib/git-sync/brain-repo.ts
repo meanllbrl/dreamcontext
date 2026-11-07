@@ -210,6 +210,10 @@ export const BRAIN_LOCAL_GITIGNORE_ENTRIES: readonly string[] = [
     'state/.auto-upgrade.json',
     'state/.brain-local.json',
     'state/.tool-handoff/',
+    // Letters between THIS Mac's projects (peer mail) and the retired Sleepy chat's messages: what
+    // a session here said, never the team's (2026-11-07, `super/pull-guard.ts`).
+    'state/.peer-mail/',
+    'state/.sleepy-chat.json',
     'state/.lab-prefs.json',
     'state/.whiteboard-prefs.json',
     // The Super Agent's hand-over state: this machine's live sessions, layout and queue.
@@ -312,6 +316,8 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.conflicts/',
   '_dream_context/state/.version-check.json',
   '_dream_context/state/.auto-upgrade.json',
+  '_dream_context/state/.peer-mail/',
+  '_dream_context/state/.sleepy-chat.json',
   '_dream_context/state/.lab-prefs.json',
   '_dream_context/state/.whiteboard-prefs.json',
   '_dream_context/state/.super-agent.json',

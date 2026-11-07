@@ -217,6 +217,15 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), incomingSuperRecords: () => null });
       expect(r2.note).toContain('could not check');
     });
+    it('a pull carrying another Mac\'s session files (sleep state, peer mail) stops before the merge, and so does a guard that cannot answer', async () => {
+      const state = makeState({ aheadCount: 1 });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(state), incomingSessionFiles: () => ['_dream_context/state/.sleep.json'] });
+      expect(r.action).toBe('noop');
+      expect(r.note).toContain('session files');
+      expect(state.commitCalls).toHaveLength(0);
+      const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), incomingSessionFiles: () => null });
+      expect(r2.note).toContain('could not check');
+    });
   });
 
   // ── basic auto flow ────────────────────────────────────────────────────

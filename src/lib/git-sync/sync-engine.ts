@@ -2,7 +2,7 @@ import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
 import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
-import { SUPER_RECORD_PULL_NOTE, incomingSuperRecords, superStagePass } from '../super/pull-guard.js';
+import { SESSION_FILES_PULL_NOTE, SUPER_RECORD_PULL_NOTE, incomingSessionFiles, incomingSuperRecords, superStagePass } from '../super/pull-guard.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -183,6 +183,8 @@ export interface SyncEngineDeps {
   incomingAppData: typeof incomingAppData;
   /** The pull gate for Super Agent records (they never sync). */
   incomingSuperRecords: typeof incomingSuperRecords;
+  /** The pull gate for another Mac's sleep, session and peer-mail files (they never sync either). */
+  incomingSessionFiles: typeof incomingSessionFiles;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -204,6 +206,7 @@ const defaultDeps: SyncEngineDeps = {
   appDataInPushRange,
   incomingAppData,
   incomingSuperRecords,
+  incomingSessionFiles,
 };
 
 /** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
@@ -225,8 +228,9 @@ function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
   ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
   // App data never enters git, a `git add -f` included (plan-veri K2): out of the index again.
   appDataStagePass(ctx.gitCwd, ctx.contextRoot);
-  // The Super Agent's record and session rosters never enter a sync commit, whatever a pulled
-  // `.gitignore` says (2026-11-03 leak): out of the index again.
+  // The Super Agent's record and session rosters, and every session file (sleep state, digests,
+  // peer mail), never enter a sync commit, whatever a pulled `.gitignore` says or an old install
+  // committed (2026-11-03 and 2026-11-07 leaks): out of the index again.
   superStagePass(ctx.gitCwd, ctx.contextRoot);
 }
 
@@ -591,6 +595,12 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   const incomingSuper = d.incomingSuperRecords(gitCwd, contextRoot, ctx.remoteRef);
   if (incomingSuper === null || incomingSuper.length > 0) {
     return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingSuper === null ? 'Skipped the pull: could not check whether the team\'s update carries a Super Agent record. It is retried at the next sync.' : SUPER_RECORD_PULL_NOTE }, needsTaskSync: false };
+  }
+  // Nor another Mac's session files (2026-11-07): its sleep state holds that owner's Super lines,
+  // and a pulled one would overwrite (or collide with) this Mac's own untracked file.
+  const incomingSessions = d.incomingSessionFiles(gitCwd, contextRoot, ctx.remoteRef);
+  if (incomingSessions === null || incomingSessions.length > 0) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingSessions === null ? 'Skipped the pull: could not check whether the team\'s update carries another Mac\'s session files. It is retried at the next sync.' : SESSION_FILES_PULL_NOTE }, needsTaskSync: false };
   }
   const guard = d.guardPullCollisions(gitCwd, contextRoot, ctx.remoteRef);
   if (!guard.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: guard.note }, needsTaskSync: false };

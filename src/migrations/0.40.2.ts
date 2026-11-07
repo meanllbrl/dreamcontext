@@ -21,7 +21,10 @@ import type { Migration, MigrationStepResult } from './types.js';
  *      project root `.gitignore` its brain lines); when git still does not ignore the record (a
  *      later `!` negation, a teammate's), the Super lines go to the end again, where they win;
  *   2. a Super file git still tracks (main's record and its temp files, `state/.super/`, the
- *      session rosters) leaves the INDEX only (`git rm --cached`): the file stays on disk, and
+ *      session rosters), and since 2026-11-07 every session file (`SESSION_LOCAL_PATHSPECS`:
+ *      sleep state, session history, digests, peer mail; the owner's Super agenda reached a teammate
+ *      through a committed `state/.sleep.json`) leaves the INDEX only
+ *      (`git rm --cached`): the file stays on disk, and
  *      the owner's next commit carries the removal. A tracked record that is not this Mac's
  *      (`record-binding.ts`) is first set aside as `<file>.foreign-<time>` so it is never read.
  *
@@ -52,7 +55,7 @@ function reassertSuperIgnore(root: string): string[] {
 
 export function untrackSuperRecords(root: string): MigrationStepResult {
   const step = 'untrack-super-records';
-  const none: MigrationStepResult = { step, filesTouched: [], summary: 'No Super Agent file is tracked by git', detected: true };
+  const none: MigrationStepResult = { step, filesTouched: [], summary: 'No Super Agent or session file is tracked by git', detected: true };
   if (!existsSync(join(root, 'state'))) return none;
   let at: ReturnType<typeof superPathspecs>;
   try { at = superPathspecs(root, root); } catch { at = null; }
@@ -61,20 +64,22 @@ export function untrackSuperRecords(root: string): MigrationStepResult {
   const prefix = brainPrefix(root, root) ?? '';
   let tracked: string[];
   try { tracked = git.indexPaths(top, specs); } catch {
-    return { step, filesTouched: [], summary: 'Could not ask git which Super Agent files it tracks; retried on the next update', detected: false, failedCount: 1 };
+    return { step, filesTouched: [], summary: 'Could not ask git which Super Agent and session files it tracks; retried on the next update', detected: false, failedCount: 1 };
   }
   if (tracked.length === 0) return none;
   const moved = setAsideForeignRecords(root);
   // `-f`: a live record staged a moment before it changed again is dropped too (index only).
   try { git.removeFromIndexForce(top, specs); } catch {
-    return { step, filesTouched: moved, summary: `Git tracks ${tracked.length} Super Agent file(s) but would not drop them from its index (an index.lock held by another git?); retried on the next update`, detected: false, failedCount: 1 };
+    return { step, filesTouched: moved, summary: `Git tracks ${tracked.length} Super Agent or session file(s) but would not drop them from its index (an index.lock held by another git?); retried on the next update`, detected: false, failedCount: 1 };
   }
-  const names = tracked.map((p) => relative(prefix || '.', p) || p).join(', ');
+  // A brain that committed its peer mail lists dozens of letters: name a few, count the rest.
+  const rel = tracked.map((p) => relative(prefix || '.', p) || p);
+  const names = rel.length > 6 ? `${rel.slice(0, 6).join(', ')} and ${rel.length - 6} more` : rel.join(', ');
   return {
     step,
     filesTouched: [...tracked.map((p) => join(top, p)), ...moved],
     detected: false,
-    summary: `Took ${tracked.length} Super Agent file(s) out of git's index, kept on disk (${names}); commit that removal${moved.length ? `. Set aside ${moved.length} record(s) from another Mac or folder` : ''}`,
+    summary: `Took ${tracked.length} Super Agent or session file(s) out of git's index, kept on disk (${names}); commit that removal${moved.length ? `. Set aside ${moved.length} record(s) from another Mac or folder` : ''}`,
   };
 }
 
