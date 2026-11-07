@@ -186,6 +186,19 @@ export function directHeavy(command: string): HeavyKind | null {
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
+/**
+ * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
+ * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
+ * it becomes `--tail N` on the check alone.
+ */
+export function heavySuggestion(command: string): string {
+  const tailed = /^([\s\S]*?)\s*\|\s*tail\s+(?:-n\s*)?-?(\d+)\s*$/.exec(command.trim());
+  if (tailed && !/[|;\n]|&&|\|\|/.test(tailed[1].replace(/\s+2>&1$/, '').replace(/^cd\s+\S+\s+&&\s+/, ''))) {
+    return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
+  }
+  return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+}
+
 /** This repo's package.json scripts; none when it cannot be read. */
 export function packageScripts(cwd: string): Record<string, string> {
   try {

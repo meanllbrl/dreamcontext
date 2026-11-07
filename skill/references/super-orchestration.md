@@ -239,7 +239,8 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 - Gates are never skipped for speed: Develop's end review, `tasks ready`, verify.
 - Heavy steps need no line in a brief: a hook sends tsc, builds, tests and browser scripts through
   `dreamcontext builder heavy`, and that command holds the repeat limit (exit 77 = past it, nothing
-  ran; `--because "<why>"` stays on record in `builder budget`). A child that starts a dev server
+  ran; `--because "<why>"` stays on record in `builder budget`). A check green on the same code
+  prints its receipt instead (`--fresh` re-runs). A child that starts a dev server
   pins it and stops it before reporting done.
 - A note from the owner on a running job: before its first reviewer starts, into that child; after,
   a new small job (a late note restarts the whole proof loop: measured 2026-10-31).

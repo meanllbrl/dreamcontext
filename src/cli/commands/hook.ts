@@ -1,6 +1,6 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
 import { logHandoff } from '../../lib/usage-records.js';
-import { directHeavy, shellQuote } from '../../lib/run-budget.js';
+import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { GATE_BEAT_ENV, antigravityCallAsClaude, antigravitySkillsCwd, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
@@ -3043,6 +3043,7 @@ export function registerHookCommand(program: Command): void {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
         const kind = directHeavy(command);
         if (!kind) process.exit(0); // allow
+        const suggested = heavySuggestion(command);
         // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
         // builds are not ours to hold. Our children and a project that opted in keep the limit.
         if (hookTool() === 'codex' && !process.env.DREAMCONTEXT_CONTEXT_BY && !codexProjectOptedIn(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd())) process.exit(0); // allow
@@ -3052,7 +3053,8 @@ export function registerHookCommand(program: Command): void {
             permissionDecision: 'deny',
             permissionDecisionReason: [
               `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
-              `Run it as: dreamcontext builder heavy -- ${shellQuote(command)}`,
+              `Run it as: ${suggested}`,
+              'A check that already passed on the same code prints its receipt instead of running (--fresh runs it anyway).',
               'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
             ].join(' '),
           },
