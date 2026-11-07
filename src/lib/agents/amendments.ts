@@ -8,7 +8,7 @@ import { assertOwned } from './owner.js';
 import { agentUsage, getAgent, previewCallTarget, restampTargets, widenViewOf, withRestamp } from './store.js';
 import { normalizeSoul } from './soul-templates.js';
 import type { AgentIdentityPatch, AgentManifest } from './types.js';
-import { widensAuthority, type InstructionField, type MemberActor } from './instruction-fields.js';
+import { localWriteStamps, widensAuthority, type InstructionField, type MemberActor } from './instruction-fields.js';
 
 /**
  * AMENDMENTS: the Super Agent corrects a member's instructions, the member stays approved, and the
@@ -227,8 +227,8 @@ export interface AmendInput {
   session?: string | null;
   /** Who writes it. Default `super` (the `team amend` door). */
   by?: AmendBy;
-  /** The member a member run belongs to (`DREAMCONTEXT_AGENT_SELF` / `DREAMCONTEXT_MEMBER_CREW`):
-   *  from inside it only that member stamps; any other waits for the card. */
+  /** The member a member run belongs to (`DREAMCONTEXT_AGENT_SELF` / `DREAMCONTEXT_MEMBER_CREW`).
+   *  Informational since 2026-11-07: a member's run editing another member is made on this Mac too. */
   self?: string | null;
   /** Other identity fields written in the same change (a session's or an agent's `agents edit`):
    *  judged by `widensAuthority`, never by the text checks. */
@@ -323,13 +323,11 @@ function runsUnattended(contextRoot: string, member: string): boolean {
  * identity fields) through ONE door with `team amend`'s protections (plan-r10 1e): the section,
  * size and daily ceilings, the revert hold, the risk filter and a trace the owner reads and undoes.
  *
- * Who decides the stamp (the owner's answer of 2026-11-02):
- *  - the Super Agent and an in-app session: applied and stamped (the owner talks to both), even
- *    when the risk filter flags it; the trace row names what it flagged. Only a WIDENING change
- *    waits for the one card;
- *  - a process that never talks to him (`by: 'agent'`): stamped only when it is clean, does not
- *    widen, is not a global member, and (from inside a member run) is that member itself;
- *    otherwise written and left for the one card.
+ * Who decides the stamp (`localWriteStamps`, the owner's rule of 2026-11-07): a change made on this
+ * Mac is approved as written, by the Super Agent, an in-app session or a member's own run alike,
+ * widening or not; the trace row names what it widened and what the risk filter flagged. Only a
+ * process that never talks to him (`by: 'agent'`) writing text the risk filter flags is written and
+ * left for the one card.
  * The trace is written FIRST, so a change that lands always has its record; a write that fails
  * takes the record back. Throws {@link AmendmentRefused} for every refusal, with nothing written.
  */
@@ -391,8 +389,9 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   const widened = preview
     ? widensAuthority(widenViewOf(preview.before), widenViewOf(preview.after), by)
     : global && by === 'agent' ? ['global'] : [];
-  const otherMember = by === 'agent' && !!input.self && input.self !== member;
-  const stamp = widened.length === 0 && (by !== 'agent' || (risks.length === 0 && !global && !otherMember));
+  // Made on this Mac, so approved as written (`localWriteStamps`): only a background process's risky
+  // text waits for the card. `widened` stays on the trace row, for the owner to read.
+  const stamp = localWriteStamps(by, risks);
   // `withRestamp` stamps only what was approved as it stood: a member never approved here waits too.
   const approvedBefore = approvedTargets(contextRoot, member, home).length > 0;
 
@@ -457,7 +456,7 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
  */
 export function traceMemberCreate(
   projectRoot: string,
-  input: { member: string; by: AmendBy; risks: string[]; widened: string[]; waits: boolean; session?: string | null },
+  input: { member: string; by: AmendBy; risks: string[]; widened: string[]; waits: boolean; session?: string | null; routine?: string },
   opts: AmendOptions = {},
 ): Amendment {
   const now = opts.now ?? new Date();
@@ -467,7 +466,7 @@ export function traceMemberCreate(
     member: input.member,
     by: input.by,
     session: input.session ?? null,
-    why: 'created this member',
+    why: input.routine ? `created the routine "${input.routine}"` : 'created this member',
     changes: [],
     created: true,
     ...(input.risks.length ? { risks: input.risks } : {}),

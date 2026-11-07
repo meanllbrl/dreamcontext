@@ -18,7 +18,7 @@ import {
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
 import { AmendmentRefused, amendMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
-import { memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
+import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
 import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
@@ -89,7 +89,7 @@ export function inSession(env: NodeJS.ProcessEnv = process.env): boolean {
  *  more: the edit goes through `team amend`'s checks (risk filter, size caps, trace, `agents revert`)
  *  and stamps when it is clean and narrows nothing; otherwise it waits for the owner's one card. */
 export const SESSION_EDIT_REFUSAL =
-  'Saved through the AI Team\'s amendment door: it is traced (`dreamcontext agents amendments <slug>`) and the owner can take it back. A change that widens what the member may reach, or a risky one from a background run, waits for his one approval card.';
+  'Saved through the AI Team\'s amendment door: it is traced (`dreamcontext agents amendments <slug>`) and the owner can take it back. Made on this Mac, so it stays approved; only risky text from a background run (a new address, a command, a secret path, a hidden character) waits for his one approval card.';
 
 /** True when `patch` changes something the approval hash covers. */
 function touchesHash(patch: AgentIdentityPatch): boolean {
@@ -282,14 +282,11 @@ export function registerAgentsCommand(program: Command): void {
         fail(new Error(`--scope is project or global, not "${opts.scope}".`));
         return;
       }
-      // Who creates it decides its stamp (plan-r10 1e): the owner's own create is approved; an
-      // in-app session's or an agent's goes through the risk filter over its prompt and soul and
-      // is judged against the default baseline. A clean, non-widening one is approved and traced;
-      // a widening one (a global member, the widest change there is), or a risky one from a run
-      // that never talks to the owner, waits for his one approval card.
-      // Who made it is decided exactly as before this change (`createNeedsOwner`): a plain
-      // Claude shell is the owner's and stamps like his terminal. Only an agent run, a member's
-      // conversation or the Super Agent's crew is judged, and only to stamp MORE than before.
+      // Made on this Mac, so approved as it is written (`localWriteStamps`, owner 2026-11-07), a
+      // global member included. The one exception: a risky prompt or soul from a process that never
+      // talks to the owner (an agent run, the Super Agent's crew) waits for his one approval card.
+      // Who made it is decided as before (`createNeedsOwner`): a plain Claude shell is the owner's.
+      // Anyone else's create is traced, with what it widened and what the risk filter flagged.
       const actor = !createNeedsOwner() ? 'owner' as const : memberActorFromEnv().actor === 'agent' ? 'agent' as const : 'session' as const;
       let soulText = '';
       try { soulText = resolveSoulOption(opts) ?? ''; } catch { soulText = ''; }
@@ -298,9 +295,9 @@ export function registerAgentsCommand(program: Command): void {
         prompt: opts.prompt, soul: soulText, model: opts.model ?? null, whiteboard: opts.whiteboard ?? null,
         learning: opts.learning, scope: opts.scope === 'global' ? 'global' : 'project',
       }, actor);
-      const selfRun = actor !== 'owner' && (widened.length > 0 || (actor === 'agent' && risks.length > 0));
+      const selfRun = actor !== 'owner' && !localWriteStamps(actor, risks);
       const approve = selfRun ? {} : { approve: { now: new Date() } };
-      const unapproved = selfRun ? ' It waits for the owner\'s one approval card on the AI Team page.' : '';
+      const unapproved = selfRun ? ` Its text has ${risks.join(', ')}, so it waits for the owner's one approval card on the AI Team page.` : '';
       const trace = (projectRoot: string) => {
         if (actor === 'owner') return;
         traceMemberCreate(projectRoot, { member: slug, by: actor, risks, widened, waits: selfRun });
@@ -388,6 +385,15 @@ export function registerAgentsCommand(program: Command): void {
           return;
         }
         const { actor, self } = memberActorFromEnv();
+        // A home board is a member's whole reach. Widening no longer waits for a card (a change made
+        // on this Mac stamps), so a background run taking a member off its board, or moving it to
+        // another, is refused outright, as its autonomy is. Adding a board narrows: allowed.
+        if (patch.whiteboard !== undefined && actor === 'agent') {
+          const board = getAgent(root, slug)?.whiteboard ?? null;
+          if (board && patch.whiteboard !== board) {
+            throw new AutomationError('A background run cannot take a member off its home board or move it to another board: that widens what it reaches. Ask the owner to do it on the AI Team page.');
+          }
+        }
         const viaDoor = touchesHash(patch) && actor !== 'owner';
         // The placement first: it is checked against the team (a loop, an unknown manager) and
         // refused before any identity change lands.

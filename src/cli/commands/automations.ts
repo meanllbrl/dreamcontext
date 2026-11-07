@@ -41,6 +41,7 @@ import {
   listRunSidecars,
   readRunSidecar,
   createAutomation,
+  approveMadeHere,
   getRunTarget,
   setAutomationEnabled,
   setAutomationShared,
@@ -73,7 +74,7 @@ import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
 import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js';
 import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
-import { memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
+import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
   adoptGlobalTelegramConfig,
   forgetTelegramConfigForSlug,
@@ -245,21 +246,17 @@ function refuseMemberSlotForAgent(root: string, slug: string, what: string): boo
 
 /**
  * An automation an agent run, a member's conversation or the Super Agent's crew created
- * (`createNeedsOwner`), judged on the manifest as written, like `agents create` (plan-r10 1e):
- *  - the risk filter over its prompt, job and soul (`createRisks`);
- *  - widening against the default baseline (`widensAuthority(null, …)`): a schedule, an output
- *    folder or instructions, an app, a tool, read tools, review off from on...; `shared` widens
- *    who sees it. The derived `## Flow` is left out: the CLI never authors one at create, it is
- *    drawn from the fields judged here;
- *  - a trace row (`agents amendments`), whether it stamps or waits.
- * True only for a clean, non-widening create (a background run's text must also be clean).
- * `--mode call` alone grants nothing.
+ * (`createNeedsOwner`), judged on the manifest as written, like `agents create`. It was made on this
+ * Mac, so it stamps (`localWriteStamps`, owner 2026-11-07) unless a process that never talks to the
+ * owner wrote text the risk filter flags (`createRisks` over its prompt, job and soul). What it
+ * widens against the default baseline (`widensAuthority(null, …)`; `shared` widens who sees it) no
+ * longer holds it: it goes on the trace row (`agents amendments`) for the owner to read.
  */
 /** MIRROR of the store's `OUTPUT_INSTRUCTIONS_PLACEHOLDER` (not exported there): the body every new
  *  manifest's `## Output instructions` starts with. A drift only makes an agent's create wait. */
 const OUTPUT_PLACEHOLDER = '(Optional — extra guidance for how the output should be formatted or where else it should go.)';
 
-export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env: NodeJS.ProcessEnv = process.env): boolean {
+export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env: NodeJS.ProcessEnv = process.env): { ok: boolean; risks: string[] } {
   const actor = memberActorFromEnv(env).actor === 'agent' ? 'agent' as const : 'session' as const;
   const risks = createRisks(m.prompt, [typeof m.soul === 'string' ? m.soul : '', typeof m.job === 'string' ? m.job : ''].join('\n'));
   // A `## ` line in the prompt file opens another section of the manifest (output instructions, a
@@ -270,9 +267,16 @@ export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env
   if (typeof view.outputInstructions === 'string' && view.outputInstructions.trim() === OUTPUT_PLACEHOLDER) view.outputInstructions = '';
   const widened = widensAuthority(null, view, actor);
   if (m.shared) widened.push('shared');
-  const ok = widened.length === 0 && (actor !== 'agent' || risks.length === 0);
+  const ok = localWriteStamps(actor, risks);
   traceMemberCreate(projectRoot, { member: m.slug, by: actor, risks, widened, waits: !ok });
-  return ok;
+  return { ok, risks };
+}
+
+/** The risk filter over a routine's `## Job` an agent wrote at create: everything in it is new. */
+function jobRisks(job: string): string[] {
+  const risks = createRisks(job, '');
+  if (/^\s*##(?:\s|$)/m.test(job)) risks.push('a section heading in the job');
+  return risks;
 }
 
 /**
@@ -282,8 +286,9 @@ export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env
  * rest from the manifest, so the owner approves what the file says, not a summary of it. Never a
  * command: this output is read by the very session that may not approve.
  */
-function printOwnerApprovalCard(slug: string): void {
-  warn('Not approved yet: nothing runs until the owner approves it. You cannot approve it yourself.');
+function printOwnerApprovalCard(slug: string, risks: readonly string[] = []): void {
+  const why = risks.length > 0 ? ` Its text has ${risks.join(', ')}, which this Mac never approves unseen.` : '';
+  warn(`Not approved yet: nothing runs until the owner approves it. You cannot approve it yourself.${why}`);
   console.log('  Put this card in your reply to the owner, as it is. He approves or rejects it there with one tap,');
   console.log('  and you get an event with its state and next run time. (The AI Team page works too.)');
   console.log('');
@@ -323,6 +328,11 @@ function createBoundFromFlags(
     if (slotSpecs.length === 0 && (!opts.days || !opts.at)) {
       throw new AutomationError('An automation needs --slot (repeatable) or --days and --at.');
     }
+    // Made on this Mac, so approved as written (`localWriteStamps`, owner 2026-11-07): only a risky
+    // job from a process that never talks to the owner (an agent run, the Super Agent's crew) waits.
+    const risks = stamp ? [] : jobRisks(opts.job ?? '');
+    const actor = memberActorFromEnv().actor === 'agent' ? 'agent' as const : 'session' as const;
+    const approveNow = stamp || localWriteStamps(actor, risks);
     registerProject(projectRoot);
     const manifest = createAutomation(root, {
       slug,
@@ -340,9 +350,16 @@ function createBoundFromFlags(
       notify: opts.notify,
       review: opts.review as ReviewMode | undefined,
       ...appOption(root, opts.app),
-    }, stamp ? { approve: { now: new Date() } } : {});
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : ''}.`);
-    if (!stamp) printOwnerApprovalCard(manifest.slug);
+    }, approveNow ? { approve: { now: new Date() } } : {});
+    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${approveNow ? ' (approved on this machine)' : ''}.`);
+    // Made by an agent, the crew or a session: traced like `agents create`, whether it stamped or
+    // waits, with what it widened (it runs on a schedule), so the owner reads it on the member's page.
+    if (!stamp) {
+      traceMemberCreate(projectRoot, {
+        member: agentSlug, routine: manifest.slug, by: actor, risks, widened: opts.shared ? ['mode', 'shared'] : ['mode'], waits: !approveNow,
+      });
+    }
+    if (!approveNow) printOwnerApprovalCard(manifest.slug, risks);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
     return manifest;
   } catch (err) {
@@ -894,7 +911,7 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('create')
     .argument('<slug>', 'Kebab-case automation slug (e.g. eod-digest)')
-    .description('Scaffold a new automation manifest. Approved on the spot when you create it yourself; one an agent run or the Super Agent creates waits for the owner\'s yes (a card in the chat, or the AI Team page)')
+    .description('Scaffold a new automation manifest. Approved on the spot: made on this Mac, by you, your Super Agent or a member. Only risky text an agent run wrote waits for the owner\'s yes (a card in the chat, or the AI Team page)')
     .requiredOption('--title <title>', 'Automation title')
     // Deliberately NOT `requiredOption` any more: an on-call agent has no
     // schedule, and demanding a placeholder one would write a lie into the
@@ -947,9 +964,9 @@ export function registerAutomationsCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      // An agent's run or the Super Agent's crew gets no approval by creating: only the owner's own
-      // chat or terminal, or his yes on a `propose --routine`, grants one.
-      // An agent-made standalone automation is judged below (`judgeAgentCreate`), on what was written.
+      // The owner's own chat or terminal, or his yes on a `propose --routine`, stamps outright. What an
+      // agent run or the Super Agent's crew creates is judged on what was written (`judgeAgentCreate`,
+      // `jobRisks`): made on this Mac, so it stamps unless a background process wrote risky text.
       const stamp = !createNeedsOwner() || gate.question !== null;
       if (opts.agent !== undefined) {
         const created = createBoundFromFlags(root, slug, stamp, opts);
@@ -1037,14 +1054,14 @@ export function registerAutomationsCommand(program: Command): void {
 
         const projectRoot = projectRootFor(root);
         registerProject(projectRoot);
-        // An agent's create goes through the same door as `agents create` (plan-r10 1e): the risk
-        // filter over its text, widening against the default baseline, a trace row. Only a clean,
-        // non-widening one stamps; anything else waits for the owner's one card.
-        const stamped = stamp || (createNeedsOwner() && judgeAgentCreate(projectRoot, manifest));
-        if (stamped) approveAutomation(projectRoot, manifest, new Date());
+        // An agent's create goes through the same door as `agents create`: made on this Mac, so it
+        // stamps, unless a background process wrote risky text (`judgeAgentCreate`).
+        const judged = stamp || !createNeedsOwner() ? null : judgeAgentCreate(projectRoot, manifest);
+        const stamped = stamp || (judged?.ok ?? false);
+        if (stamped) approveMadeHere(root, manifest, new Date());
 
         success(`Automation created: automations/${manifest.slug}.md${stamped ? ' (approved on this machine)' : ''}.`);
-        if (!stamped) printOwnerApprovalCard(manifest.slug);
+        if (!stamped) printOwnerApprovalCard(manifest.slug, judged?.risks ?? []);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -1056,9 +1073,9 @@ export function registerAutomationsCommand(program: Command): void {
           warn('The launchd dispatcher is not installed — run `dreamcontext automations install` so this can fire on schedule.');
         }
         // `run --force` never bypasses approval: offered only when it would actually run.
-        console.log(chalk.dim(stamp
+        console.log(chalk.dim(stamped
           ? `  Edit its ## Prompt / ## Output instructions, then \`dreamcontext automations run ${manifest.slug} --force\` to test it live.`
-          : '  Once the owner approves it, `run --force` tests it live. An edit after his yes needs his yes again.'));
+          : '  Once the owner approves it, `run --force` tests it live.'));
 
         if (opts.shared) {
           const result = shareWithAgent(root, manifest.slug, manifest.agent);

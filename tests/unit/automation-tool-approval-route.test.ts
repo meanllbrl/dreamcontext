@@ -46,18 +46,19 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true });
 });
 
-// plan-r10 1e: another tool is a WIDENING change. The owner's own save says so first (409 with the
-// fields, nothing written), and his save with `confirmWiden` IS the approval: no card for him.
+// Owner 2026-11-07: nothing made on this Mac asks. Another tool is a widening change, and the
+// owner's own save of it IS the approval: no inline confirm, no card.
 describe('saving an automation whose tool changed', () => {
-  it('without confirmWiden: 409 with the fields, nothing written, still approved', async () => {
+  it('his save of a new tool writes it and stamps it at once: no 409, no confirm', async () => {
     const r = await save({ tool: 'codex' });
-    expect(r).toMatchObject({ error: 'widen_unconfirmed', fields: ['tool'] });
-    expect(getAutomation(contextRoot, 'digest')?.tool ?? null).toBeNull();
+    expect(r.error).toBeUndefined();
+    expect(r.needsApproval).toBeUndefined();
+    expect(getAutomation(contextRoot, 'digest')?.tool).toBe('codex');
     expect(approved()).toBe(true);
   });
 
-  it('with confirmWiden the owner\'s save stamps the new tool; later saves keep it approved', async () => {
-    expect((await save({ tool: 'codex', confirmWiden: ['tool'] })).needsApproval).toBeUndefined();
+  it('the owner\'s save stamps the new tool; later saves keep it approved', async () => {
+    expect((await save({ tool: 'codex' })).needsApproval).toBeUndefined();
     expect(approved()).toBe(true);
     expect(getApproval(projectRoot, 'digest')?.tool).toBe('codex');
     // The dialog resends the same tool with any later edit: no widening, no confirm.
@@ -65,10 +66,11 @@ describe('saving an automation whose tool changed', () => {
     expect(approved()).toBe(true);
   });
 
-  it('going back to Claude is a tool change too: confirmed, then stamped', async () => {
-    await save({ tool: 'codex', confirmWiden: ['tool'] });
-    expect((await save({ tool: 'claude' })).error).toBe('widen_unconfirmed');
-    expect((await save({ tool: 'claude', confirmWiden: ['tool'] })).needsApproval).toBeUndefined();
+  it('going back to Claude is a tool change too: stamped the same way', async () => {
+    await save({ tool: 'codex' });
+    const back = await save({ tool: 'claude' });
+    expect(back.error).toBeUndefined();
+    expect(back.needsApproval).toBeUndefined();
     expect(approved()).toBe(true);
   });
 

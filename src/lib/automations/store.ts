@@ -1648,9 +1648,24 @@ export function createAutomation(
     const projectRoot = dirname(contextRoot);
     const agentTarget = created.agent === slug && i.agent !== undefined ? getRunTarget(contextRoot, slug, 'agent') : null;
     if (agentTarget) approvePair(projectRoot, created, agentTarget, opts.approve.now, opts.approve.home);
-    else approveAutomation(projectRoot, created, opts.approve.now, opts.approve.home);
+    else approveMadeHere(contextRoot, created, opts.approve.now, opts.approve.home);
   }
   return created;
+}
+
+/**
+ * Approve an automation this Mac just wrote, AND the agent its own file is (an unsplit manifest is
+ * both a job and an agent's call target, read from the same file). Without the second stamp the
+ * owner's own new routine asked "boards and tasks can't run it until you approve it" (owner
+ * 2026-11-07: nothing made here asks). The agent goes first: its approval may drop the legacy
+ * record, which the automation's own approval then writes back. A same-slug pair (a separate agent
+ * file) is `approvePair`'s; any other agent is untouched.
+ */
+export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string): void {
+  const projectRoot = dirname(contextRoot);
+  const call = m.runKind === 'agent' ? null : getRunTarget(contextRoot, m.slug, 'agent');
+  if (call && call.path === m.path) approveAutomation(projectRoot, call, now, home);
+  approveAutomation(projectRoot, m, now, home);
 }
 
 /** The body every new manifest's `## Output instructions` starts with. */

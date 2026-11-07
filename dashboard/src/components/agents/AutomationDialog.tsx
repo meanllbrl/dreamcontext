@@ -10,7 +10,6 @@ import {
 import { findAgent, useAgents } from '../../hooks/useAgents';
 import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { RequestError } from '../../api/client';
-import { widenFieldsOf } from './AgentIdentityDialog';
 import { requestOpenAgents } from '../../lib/openAgents';
 import { useI18n } from '../../context/I18nContext';
 import { PHOTO_PRESETS, renderPreset } from '../../lib/agentPhotoPresets';
@@ -371,8 +370,6 @@ export function AutomationDialog({
 
   const [armedDelete, setArmedDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** A widening save's fields (409 `widen_unconfirmed`, plan-r10 1e): shown inline; Save again = consent. */
-  const [widen, setWiden] = useState<string[] | null>(null);
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -575,15 +572,10 @@ export function AutomationDialog({
     };
 
     if (editing && agent) {
-      // The fields the inline line named: the server stamps only this exact list (`confirmWiden`).
-      const body = (widen ? { ...draft, confirmWiden: widen } : draft) as typeof draft;
-      updateAgent.mutate({ slug: agent.slug, draft: body }, {
+      // His save is his approval (nothing made on this Mac asks): no confirm step.
+      updateAgent.mutate({ slug: agent.slug, draft }, {
         onSuccess: afterSave,
-        onError: (err) => {
-          const fields = widenFieldsOf(err);
-          if (fields) { setWiden(fields); return; }
-          setError((err as Error).message);
-        },
+        onError: (err) => setError((err as Error).message),
       });
     } else {
       createAgent.mutate(draft, {
@@ -898,7 +890,6 @@ export function AutomationDialog({
 
         <p className="agent-summary">{summary}</p>
 
-        {widen && <p className="agent-error" role="status" data-widen-confirm>{t('agents.approval.widenConfirm').replace('{fields}', widen.join(', '))}</p>}
         {error && <p className="agent-error">{error}</p>}
 
         <div className="agent-modal-foot">

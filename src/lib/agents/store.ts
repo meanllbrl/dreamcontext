@@ -901,9 +901,9 @@ export function withRestamp(
   const next = applyIdentityPatch(agent, patch);
   // The change waits for the one approval card (plan-r10 1e): written, never stamped.
   if (opts.stamp === false) return updateAgent(contextRoot, agentSlug, patch);
-  // Another tool means another vendor reads the prompt: that needs the owner's approval of the
-  // new hash, never a quiet re-stamp of the old one (Track T W4). His own confirmed save on the
-  // dashboard IS that approval (`consent`, set only by an owner-page route after `confirmWiden`).
+  // Another tool means another vendor reads the prompt: only the owner's own save stamps it
+  // (Track T W4). His save on the dashboard IS that approval (`consent`, set only by an owner-page
+  // route); no other caller changes a tool, and one that did would wait for the card.
   if ((next.tool ?? '') !== (agent.tool ?? '') && !opts.consent) return updateAgent(contextRoot, agentSlug, patch);
 
   const plan = restampTargets(contextRoot, agentSlug).map(({ kind, target }) => {
@@ -925,11 +925,11 @@ export function withRestamp(
 /** How `withRestamp` stamps. Both absent = today's rule (re-stamp what was directly approved
  *  before and is exactly what the edit produced; never across a tool change). */
 export interface RestampOptions {
-  /** false: write only. The change waits for the one approval card (an agent's risky, widening,
-   *  global or cross-member change; plan-r10 1e). */
+  /** false: write only. The change waits for the one approval card (a background process's risky
+   *  text, `localWriteStamps`). */
   stamp?: boolean;
-  /** The owner confirmed this widening in his own save (`confirmWiden`): a tool change stamps too.
-   *  Set ONLY by an owner-page route. The "approved as it stood before" precondition still holds. */
+  /** The owner's own save on an owner-page route: a tool change stamps too. Set ONLY by such a
+   *  route. The "approved as it stood before" precondition still holds. */
   consent?: boolean;
 }
 

@@ -22,14 +22,11 @@ import {
   listGlobalAgents,
   listAgents,
   listAgentTargets,
-  previewCallTarget,
   removeAgent,
   setAgentCallEnabled,
   setAgentPlacement,
   updateAgent,
-  widenViewOf,
 } from '../../lib/agents/store.js';
-import { widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
   DEFAULT_CALL_SETTINGS,
   type AgentIdentityPatch,
@@ -583,33 +580,16 @@ export async function handleAgentsUpdate(
     const autonomy = readAutonomy(body.autonomy);
     if (autonomy !== undefined) patch.autonomy = autonomy;
     if (Object.keys(patch).length > 0) {
-      // His save is his consent, but a WIDENING one says so first (plan-r10 1e): the dashboard
-      // sends `confirmWiden` with exactly the fields `widensAuthority` names, after its inline
-      // line; anything else is 409 with the list, and nothing is written.
-      const preview = previewCallTarget(contextRoot, params.slug, patch);
-      const widened = preview ? widensAuthority(widenViewOf(preview.before), widenViewOf(preview.after), 'owner') : [];
-      if (widened.length > 0 && !sameFields(body.confirmWiden, widened)) {
-        sendJson(res, 409, {
-          error: 'widen_unconfirmed',
-          message: `This change gives the member new reach: ${widened.join(', ')}. Save again with confirmWiden to confirm it.`,
-          fields: widened,
-        });
-        return;
-      }
-      // Stamped (his confirmed save is his consent) and traced, so he can take it back.
-      ownerEdit(contextRoot, params.slug, patch, { consent: widened.length > 0, why: 'edited on the AI Team page' });
+      // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
+      // another tool included: stamped (`consent`) and traced, so he can take it back. Only what
+      // was approved as it stood before the save is stamped (`withRestamp`): a teammate's change
+      // waiting for its card stays waiting.
+      ownerEdit(contextRoot, params.slug, patch, { consent: true, why: 'edited on the AI Team page' });
     }
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
   }
-}
-
-/** `confirmWiden` names exactly the widened fields (order free). */
-function sameFields(raw: unknown, want: readonly string[]): boolean {
-  if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) return false;
-  const got = [...new Set(raw as string[])].sort();
-  return got.length === want.length && got.every((x, i) => x === [...want].sort()[i]);
 }
 
 /**
