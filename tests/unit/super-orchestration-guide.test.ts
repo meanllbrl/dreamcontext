@@ -108,7 +108,8 @@ describe('super-orchestration guide: shape', () => {
   // only the report around it; steps in order are a dc-graph, never chips (measured 24,661).
   it('is at most 24,700 bytes', () => {
     // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger, measured 25,394).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(25_450);
+    // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(25_500);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {

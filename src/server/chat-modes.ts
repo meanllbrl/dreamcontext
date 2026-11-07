@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.4', develop: '1.5', train: '0.1',
+  basic: '1.0', plan: '1.4', develop: '1.6', train: '0.1',
 };
 
 /**
@@ -255,7 +255,8 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
 - **\`builder heavy\` limits repeats** of browser runs, builds and full suites. Exit 77 = nothing
   ran: use the proof you have, or \`--because "<why>"\`, once per script. Exit 75 = your place in
   line is kept; do other work, then the same command. Browser last, \`scripts/verify/look.mjs\`
-  if the repo has it, no build. SAME script red 3 times → STOP.
+  if the repo has it, no build. SAME script red 3 times → STOP. A check already green on the same
+  code prints its receipt instead of running (\`--fresh\` re-runs); no \`| tail\`, use \`--tail N\`.
 - **\`builder lane\` picks the process**; light = one \`reviewer\`, who reads the security too, browser only for a visible
   change, no own script.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge

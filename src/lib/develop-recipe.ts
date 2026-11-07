@@ -33,7 +33,11 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
 const REPEAT_LIMIT = `\`builder heavy\` counts browser runs, builds and full test suites per branch, phase and command,
 and a red earns one more. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
 the proof you have, or, when the run is truly needed, \`builder heavy --because "<why>" -- <cmd>\`,
-recorded in \`builder budget\`. That works once per run and command; past it you stop and ask the owner.`;
+recorded in \`builder budget\`. That works once per run and command; past it you stop and ask the owner.
+A check that already passed on the same code does not run again: \`builder heavy\` and \`builder test\`
+print its receipt (when, the command, its log) and exit 0 at once, and a type check also reuses one across
+Markdown and version-only changes. \`--fresh\` runs it anyway. Give \`builder heavy\` the check alone: a
+pipe (\`| tail\`) or \`;\` hides its exit code, so it keeps no receipt; \`--tail N\` shows the last lines.`;
 
 /**
  * Light work gets a light process (2026-10-31): under the threshold in lib/run-lane.ts and on no

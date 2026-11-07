@@ -165,6 +165,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // +450 (plan-r10 Wave 2: every member is a Super) and +500 (the Bypass permission rule), merged in the 0.40.2 cut.
     // +425 (2026-11-03, rapor-kurali: a product mockup in its real look, a sequence as a dc-graph; measured 24,661).
     // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger; measured 25,394).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(25_450);
+    // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(25_500);
   });
 });
