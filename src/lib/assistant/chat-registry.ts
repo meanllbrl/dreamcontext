@@ -211,6 +211,11 @@ const entries = new Map<string, ChatEntry>();
 let resultSeq = 0;
 const waiters = new Map<string, Set<Waiter>>();
 const deathTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Entries a newer registration of the same id displaced while their process still ran: a
+ *  second process for one pin (a respawn, a phone or reload open). When the newer one exits, the
+ *  newest of these that is still running is the chat again, never a `gone` id whose process
+ *  still answers the owner (field 2026-11-07: the Super's own pane went missing for nine hours). */
+const displaced = new Map<string, ChatEntry[]>();
 
 /** One change to a chat: a new status, or a new question replacing the pending one while
  *  the status stays `asking` (then `from` is `asking` too). */
@@ -515,6 +520,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
     ...(init.bypass === true ? { bypass: true as const } : {}),
   };
+  const before = entries.get(init.sessionId);
+  if (before && before.status !== 'gone') displaced.set(init.sessionId, [...(displaced.get(init.sessionId) ?? []).filter((x) => x !== before), before]);
   entries.set(init.sessionId, e);
   unheard.delete(init.sessionId);
   let dead = false;
@@ -717,6 +724,17 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       e.pendingQuestion = null;
       delete e.earlierPending;
       setStatus(e, 'gone');
+      const rest = (displaced.get(init.sessionId) ?? []).filter((x) => x !== e && x.status !== 'gone');
+      if (rest.length) displaced.set(init.sessionId, rest); else displaced.delete(init.sessionId);
+      // A process this one displaced still runs under the same id: it is the chat again.
+      if (entries.get(init.sessionId) === e && rest.length) {
+        const back = rest[rest.length - 1];
+        displaced.set(init.sessionId, rest.slice(0, -1));
+        if (!displaced.get(init.sessionId)?.length) displaced.delete(init.sessionId);
+        entries.set(init.sessionId, back);
+        emit(back, 'gone');
+        return;
+      }
       const t = setTimeout(() => {
         deathTimers.delete(init.sessionId);
         if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); }
@@ -786,6 +804,7 @@ export function _resetChatRegistry(): void {
   for (const t of deathTimers.values()) clearTimeout(t);
   for (const set of waiters.values()) for (const w of set) clearTimeout(w.timer);
   entries.clear();
+  displaced.clear();
   waiters.clear();
   deathTimers.clear();
   listeners.clear();

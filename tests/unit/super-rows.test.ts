@@ -435,7 +435,7 @@ describe('a single question (AC5, D1)', { timeout: 30_000 }, () => {
       children: { c1: child('c1', 'done') },
       queue: [
         { id: 'q-ask', sessionId: SUPER, kind: 'ask', state: 'escalated', ownerText: 'Ship it?', createdAt: 1 },
-        { id: 'q-rec', sessionId: SUPER, kind: 'recap', state: 'pending', createdAt: 2 },
+        { id: 'q-rec', sessionId: SUPER, kind: 'recap', state: 'pending', createdAt: Date.now() },
         { id: 'q-d', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 3 },
       ],
     });

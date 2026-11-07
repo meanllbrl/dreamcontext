@@ -127,10 +127,47 @@ export function superView(contextRoot: string, state: SuperState): SuperStateVie
   const teamLive = teamLiveRows(rootOf(contextRoot), state);
   const bannered = serverBannered(state.queue);
   const rotating = isRotating(state.session);
+  const blocked = blockedView(contextRoot);
   return {
     ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}), ...(bannered.length ? { bannered } : {}),
     ...(rotating ? { rotating: true } : {}),
+    ...(blocked ? { blocked } : {}),
   };
+}
+
+// ─── A delivery that stays blocked (field 2026-11-07) ──────────────────────────
+
+/** How long events may wait behind one blocker before the view says why (`blocked`). */
+export const SUPER_BLOCKED_VISIBLE_MS = 3 * 60_000;
+/** While events wait behind a blocker the pump looks again this often: a blocker can lift with
+ *  no edge that pumps, and an event must never wait for the owner's next message. */
+export const SUPER_BLOCKED_RETRY_MS = 60_000;
+/** Per super: since when events have been waiting undelivered, and the latest reason. Memory. */
+const blockedSince = new Map<string, { reason: string; since: number }>();
+const ORDINARY_WAITS = new Set(['busy', 'owner_typing', 'owner_question', 'starting']);
+
+/** Does this super hold an event a turn would carry (a batched kind, or a solo turn)? */
+function hasWaiting(key: string): boolean {
+  const s = lastStates.get(key);
+  return !!s && s.queue.some((q) => q.state === 'pending'
+    && (SOLO[q.kind] !== undefined || (BATCHED.has(q.kind) && !(q.kind === 'permission' && !q.toSuper))));
+}
+
+/** Record the pump's verdict: a blocker with events waiting keeps (or starts) the clock and
+ *  looks again in SUPER_BLOCKED_RETRY_MS; anything else clears it. `off` is no failure. */
+function noteBlocked(key: string, reason: string | null, now: number): void {
+  if (!reason || reason === 'off' || !hasWaiting(key)) { blockedSince.delete(key); return; }
+  scheduleRetry(key, now + SUPER_BLOCKED_RETRY_MS);
+  // A long turn of its own, his typing or a resume's grace is ordinary waiting, never a fault to show.
+  if (ORDINARY_WAITS.has(reason)) { blockedSince.delete(key); return; }
+  const cur = blockedSince.get(key);
+  blockedSince.set(key, { reason, since: cur?.since ?? now });
+}
+
+/** What the state view says about a delivery blocked past SUPER_BLOCKED_VISIBLE_MS, or null. */
+function blockedView(contextRoot: string, now = Date.now()): { reason: string; since: number } | null {
+  const b = blockedSince.get(contextRoot.includes('\u0000') ? contextRoot : keyOf(contextRoot));
+  return b && now - b.since >= SUPER_BLOCKED_VISIBLE_MS ? { reason: b.reason, since: b.since } : null;
 }
 
 export function newQueueId(): string {
@@ -586,14 +623,28 @@ export interface SuperInbox {
   deliver(text: string, event: SuperEventFrame, cancelled?: () => boolean): Promise<boolean>;
 }
 
-const inboxes = new Map<string, SuperInbox>();
+/** Every bridge attached under a super pin, oldest first. Usually one; two while a second
+ *  process for the same pin runs beside the first (a respawn, a phone or reload open). */
+const inboxes = new Map<string, SuperInbox[]>();
 
-/** The super chat came up (or a respawn of it): attach, push the state, pump. Last wins. */
+/** The inbox that delivers for a pin: the newest one with a socket bound, else the newest. A
+ *  bridge that closes takes only itself out, so a second one coming and going never leaves the
+ *  first, still serving the owner, without an inbox (field 2026-11-07: nine hours of no events). */
+function inboxOf(sessionId: string): SuperInbox | undefined {
+  const list = inboxes.get(sessionId);
+  if (!list?.length) return undefined;
+  for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].attached()) return list[i];
+  return list[list.length - 1];
+}
+
+/** The super chat came up (or a respawn of it): attach, push the state, pump. The newest wins
+ *  while it lives; when it goes, the one before it delivers again. */
 export function attachSuperInbox(inbox: SuperInbox): () => void {
-  inboxes.set(inbox.sessionId, inbox);
+  inboxes.set(inbox.sessionId, [...(inboxes.get(inbox.sessionId) ?? []).filter((i) => i.id !== inbox.id), inbox]);
   superSocketAttached(inbox.sessionId);
   return () => {
-    if (inboxes.get(inbox.sessionId)?.id === inbox.id) inboxes.delete(inbox.sessionId);
+    const rest = (inboxes.get(inbox.sessionId) ?? []).filter((i) => i.id !== inbox.id);
+    if (rest.length) inboxes.set(inbox.sessionId, rest); else inboxes.delete(inbox.sessionId);
     // The process is gone: no turn-end will ever come for what it carried. Its exit IS the end
     // of that turn, and an exit puts what it carried back for the successor (plan r4 D10).
     // A "New session" turn it carried never rotates now (fresh-session.ts).
@@ -656,8 +707,10 @@ onRotatingChanged((session) => {
  * bridge as busy and stops; this is the edge that lets the next batch go. Not a poll: one call
  * per closed turn.
  */
-export function superTurnEnded(sessionId: string, opts: { stopped?: boolean } = {}): void {
-  endTurn(sessionId, inboxes.get(sessionId)?.id ?? null, false, opts.stopped === true);
+export function superTurnEnded(sessionId: string, opts: { stopped?: boolean; inboxId?: string } = {}): void {
+  // The bridge whose turn ended names its own inbox: with two under one pin the current one may
+  // be the other, and its end must settle what THIS one carried.
+  endTurn(sessionId, opts.inboxId ?? inboxOf(sessionId)?.id ?? null, false, opts.stopped === true);
 }
 
 /** Every turn end gets the next number: a carried item is settled only by an end numbered after
@@ -986,7 +1039,7 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
   // His message answers HIS question; a member's question to main Super stays open (plan-r10 1).
   const ownerAsk = (q: SuperQueueItem) => q.kind === 'ask' && !isMainWork(q.workOrigin);
   if (!cur.queue.some((q) => ownerAsk(q) && q.state !== 'done') && !told.length) return;
-  const inbox = inboxes.get(sessionId);
+  const inbox = inboxOf(sessionId);
   // Agenda note ids told in the same message (`superAnswerDigest`): stamped, never carried.
   const padIds = told.filter((id) => PAD_ID_RE.test(id));
   const ids = new Set(told.filter((id) => !PAD_ID_RE.test(id)));
@@ -1513,6 +1566,8 @@ function scheduleRetry(key: string, at: number): void {
   retry.set(key, { at, t });
 }
 
+/** A recap older than this is dropped, never delivered (`nextBatch`). */
+export const RECAP_MAX_AGE_MS = 30 * 60_000;
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 2, recap: 3, request: 4, reply: 5 };
 const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission']);
 
@@ -1631,11 +1686,14 @@ async function onOwnerWaits(root: string, sid: string): Promise<void> {
  * that are no longer true are dropped, never delivered: a question no longer asked, a `done` or
  * `stuck` whose row moved on (the child started working again), a `gone` whose child is live.
  */
-export function nextBatch(state: SuperState, root?: string): { items: SuperQueueItem[]; drop: string[] } {
+export function nextBatch(state: SuperState, root?: string, now = Date.now()): { items: SuperQueueItem[]; drop: string[] } {
   const pending = state.queue.filter((q) => q.state === 'pending').sort((a, b) => a.createdAt - b.createdAt);
   const drop: string[] = [];
-  // An `owed` turn none of whose debts is open any more is dropped, never delivered.
-  const solo = pending.filter((q) => SOLO[q.kind] !== undefined && !(q.kind === 'owed' && staleItem(state, q) && drop.push(q.id)))
+  // An `owed` turn none of whose debts is open any more is dropped, never delivered; so is a
+  // recap past RECAP_MAX_AGE_MS: "he is back" is long over, and a solo turn goes first and alone,
+  // so one that never goes would hold every event behind it.
+  const stale = (q: SuperQueueItem) => (q.kind === 'owed' && staleItem(state, q)) || (q.kind === 'recap' && now - q.createdAt > RECAP_MAX_AGE_MS);
+  const solo = pending.filter((q) => SOLO[q.kind] !== undefined && !(stale(q) && drop.push(q.id)))
     .sort((a, b) => (SOLO[a.kind] ?? 2) - (SOLO[b.kind] ?? 2) || a.createdAt - b.createdAt);
   if (solo.length) return { items: [solo[0]], drop };
   const items: SuperQueueItem[] = [];
@@ -1665,11 +1723,13 @@ export function deliveryBlocker(contextRoot: string, now = Date.now(), state?: P
   // Between `/clear` and the fresh session's first finished turn nothing is delivered: a child
   // event must reach a session that has read its handoff (fresh-session.ts).
   if (isRotating(idx.session)) return 'rotating';
-  const inbox = inboxes.get(idx.session);
+  const inbox = inboxOf(idx.session);
   if (!inbox || !inbox.attached()) return 'no_socket';
   const chat = getChat(idx.session);
   if (!chat) return 'no_chat';
   const act = activityOf(chat, now);
+  // A pin the registry holds as gone has no process to deliver to: say so, never `busy`.
+  if (act === 'gone') return 'no_chat';
   if (act === 'starting') return 'starting';
   if (act !== 'idle' || !inbox.idle()) return 'busy';
   if (leaseActive(key, now)) return 'owner_typing';
@@ -1785,6 +1845,7 @@ async function pumpOnce(key: string): Promise<void> {
   const now = Date.now();
   const blocker = deliveryBlocker(key, now);
   const idx = superEntry(key);
+  noteBlocked(key, blocker, now);
   if (blocker === 'starting') {
     const chat = idx.session ? getChat(idx.session) : null;
     if (chat) scheduleRetry(key, Date.parse(chat.lastFrameAt) + STARTING_GRACE_MS + 50);
@@ -1804,7 +1865,7 @@ async function pumpOnce(key: string): Promise<void> {
     return;
   }
   const session = idx.session as string;
-  const inbox = inboxes.get(session) as SuperInbox;
+  const inbox = inboxOf(session) as SuperInbox;
   let state: SuperState;
   try { state = await readSuperState(key, superSanitizeOpts()); } catch { return; }
   // A turn end recorded while the read waited (closeTurn defers it a tick): settle first, then
@@ -1877,8 +1938,11 @@ async function pumpOnce(key: string): Promise<void> {
     if (!ok) {
       const undo = opened as ReturnType<typeof openResultDebts> | null;
       if (undo && undo.debts.length) await writeSuper(key, (s) => { undoResultDebts(s, undo); }).catch(() => { /* the next pump retries */ });
+      // Not written: the clock runs on and the pump looks again, never waiting for a new edge.
+      noteBlocked(key, 'not_written', Date.now());
       return;
     }
+    blockedSince.delete(key);
     // Taken in the same tick the write was confirmed: every end numbered after this one is this
     // turn's (or a later one's), every end before it belongs to an earlier turn.
     const seq = endSeq;
@@ -2140,7 +2204,7 @@ export function retireMemberSuper(contextRoot: string, slug: string, opts: { kee
   const key = superKey(contextRoot, superIdOfMember(slug));
   // Turned OFF (not gone): its index entry and last record stay, as `enabled: false`, so a respawn
   // of one of its children is still its crew and main's card still reads its requests.
-  const maps = (opts.keepIndex ? [carried, turnsEnded, leases, spokeTurns, lastTurnEnd] : [heads, lastStates, carried, turnsEnded, leases, spokeTurns, lastTurnEnd]) as Array<Map<string, unknown>>;
+  const maps = (opts.keepIndex ? [carried, turnsEnded, leases, spokeTurns, lastTurnEnd, blockedSince] : [heads, lastStates, carried, turnsEnded, leases, spokeTurns, lastTurnEnd, blockedSince]) as Array<Map<string, unknown>>;
   for (const m of maps) m.delete(key);
   pumping.delete(key);
   again.delete(key);
@@ -2880,7 +2944,7 @@ async function startMemberSupers(root: string): Promise<void> {
 
 /** Tests only: the inbox the bridge attached for a super session. */
 export function _superInboxFor(sessionId: string): SuperInbox | null {
-  return inboxes.get(sessionId) ?? null;
+  return inboxOf(sessionId) ?? null;
 }
 
 /** Tests only: resolves once nothing the inbox started is still running (work that starts more
@@ -2902,6 +2966,7 @@ export function _resetSuperInbox(): void {
   eventTurns.clear();
   escalatedTurns.clear();
   leases.clear();
+  blockedSince.clear();
   spokeTurns.clear();
   heads.clear();
   lastStates.clear();

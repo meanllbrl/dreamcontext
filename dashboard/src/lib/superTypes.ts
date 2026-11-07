@@ -821,6 +821,8 @@ export interface SuperStateView extends SuperState {
   bannered?: string[];
   /** The super's pane is rotating into a fresh session ("New session"). Absent: false. */
   rotating?: boolean;
+  /** Events have waited undelivered for a few minutes: why, and since when (ms). Absent: no. */
+  blocked?: { reason: string; since: number };
 }
 
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
@@ -1046,6 +1048,9 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),
     // The pane is rotating into a fresh session ("New session"): absent or not `true` = false.
     ...(v.rotating === true ? { rotating: true } : {}),
+    // Events waiting undelivered for minutes: why and since when. Any other shape = absent.
+    ...(isRecord(v.blocked) && typeof v.blocked.reason === 'string' && typeof v.blocked.since === 'number'
+      ? { blocked: { reason: v.blocked.reason, since: v.blocked.since } } : {}),
   };
 }
 

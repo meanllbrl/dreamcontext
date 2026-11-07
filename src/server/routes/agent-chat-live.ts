@@ -126,22 +126,50 @@ const liveChats = new Map<string, LiveChatEntry>();
 const drainingChats = new Set<LiveChatEntry>();
 const drainingSince = new WeakMap<LiveChatEntry, number>();
 
+/** Entries a newer registration of the same id displaced while they still ran (not draining):
+ *  when the newer one leaves, the newest of these is the live chat again. Without it a second
+ *  process for one pin that came and went left the first, still answering the owner, unlisted
+ *  and unadoptable (field 2026-11-07, the Super's own pane). */
+const displacedChats = new Map<string, LiveChatEntry[]>();
+
+function dropDisplaced(entry: LiveChatEntry): void {
+  const rest = (displacedChats.get(entry.conversationId) ?? []).filter((e) => e !== entry);
+  if (rest.length) displacedChats.set(entry.conversationId, rest); else displacedChats.delete(entry.conversationId);
+}
+
 export function registerLiveChat(entry: LiveChatEntry): void {
   if (!entry.conversationId) return;
+  const before = liveChats.get(entry.conversationId);
+  if (before && before !== entry) {
+    dropDisplaced(before);
+    displacedChats.set(entry.conversationId, [...(displacedChats.get(entry.conversationId) ?? []), before]);
+  }
   liveChats.set(entry.conversationId, entry);
+}
+
+/** Take `entry` out of the live map, and put back the newest entry it displaced, if any. */
+function leaveLive(entry: LiveChatEntry): void {
+  dropDisplaced(entry);
+  if (liveChats.get(entry.conversationId) !== entry) return;
+  const rest = displacedChats.get(entry.conversationId) ?? [];
+  const back = rest[rest.length - 1];
+  if (back) {
+    liveChats.set(entry.conversationId, back);
+    dropDisplaced(back);
+  } else liveChats.delete(entry.conversationId);
 }
 
 /** Remove `entry` — only if it is still the one registered under its id, so a late cleanup of
  *  an old child can never unregister its successor. */
 export function unregisterLiveChat(entry: LiveChatEntry): void {
-  if (liveChats.get(entry.conversationId) === entry) liveChats.delete(entry.conversationId);
+  leaveLive(entry);
   drainingChats.delete(entry);
 }
 
 /** The child stops being adoptable but stays listed (busy) until it exits: then the caller
  *  unregisters it (D22). */
 export function markLiveChatDraining(entry: LiveChatEntry, now = Date.now()): void {
-  if (liveChats.get(entry.conversationId) === entry) liveChats.delete(entry.conversationId);
+  leaveLive(entry);
   drainingChats.add(entry);
   if (!drainingSince.has(entry)) drainingSince.set(entry, now);
 }
@@ -160,7 +188,10 @@ export const STOP_CHAT_MS = CUT_KILL_GRACE_MS + 5000;
  * `graceMs` lets one that was just told to leave (stdin EOF) go by itself before the cut.
  */
 export async function stopLiveChat(conversationId: string, opts: { graceMs?: number; timeoutMs?: number } = {}): Promise<boolean> {
-  const running = (): LiveChatEntry[] => [...liveChats.values(), ...drainingChats].filter((e) => e.conversationId === conversationId);
+  // A process a newer one displaced still runs this conversation: it is stopped too, or it
+  // would be the live chat again the moment the newer one leaves.
+  const running = (): LiveChatEntry[] => [...liveChats.values(), ...drainingChats, ...(displacedChats.get(conversationId) ?? [])]
+    .filter((e) => e.conversationId === conversationId);
   const mine = running();
   const gone = (): boolean => !running().some((e) => mine.includes(e));
   if (mine.length === 0) return true;

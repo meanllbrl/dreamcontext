@@ -252,7 +252,7 @@ describe('the super chat\'s event turns (plan r4 D4, D8, D10)', () => {
       queue: [
         { id: 'q-a', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 },
         { id: 'q-b', sessionId: 'c2', kind: 'done', state: 'pending', createdAt: 2 },
-        { id: 'q-r', sessionId: SUPER, kind: 'recap', state: 'pending', createdAt: 3 },
+        { id: 'q-r', sessionId: SUPER, kind: 'recap', state: 'pending', createdAt: Date.now() },
       ],
     });
     const { child: proc } = start({ sessionId: SUPER, mode: 'super' });
