@@ -310,6 +310,22 @@ function factTag(entryId: string, fact: ShelfFact, index: number): ShelfTag {
   return tag;
 }
 
+/** The id prefix of a SERVER-derived tag (the checkout chip). It OPENS with `#`, which a pin id
+ *  cannot hold (`validatePin`), so no agent tag (`<entryId>#<n>`) can ever start with it. */
+const SERVER_TAG_PREFIX = '#server#';
+
+/**
+ * The tag line split in two: the server's checkout chip, which the composer draws in its own
+ * bottom row right after the `+` (owner 2026-11-07, "put main next to the +"), and everything
+ * the agent pinned, which stays on the shelf. Order is kept within each half.
+ */
+export function splitCheckoutTags(tags: ShelfTag[]): { checkout: ShelfTag[]; rest: ShelfTag[] } {
+  const checkout: ShelfTag[] = [];
+  const rest: ShelfTag[] = [];
+  for (const t of tags) (t.id.startsWith(SERVER_TAG_PREFIX) ? checkout : rest).push(t);
+  return { checkout, rest };
+}
+
 /**
  * Everything the shelf shows this frame.
  *
@@ -332,7 +348,7 @@ export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLay
   const demotedIds = demoted.map((e) => e.id);
 
   const serverTags: ShelfTag[] = facts.map((f, i) => {
-    const tag: ShelfTag = { id: `fact#${i}`, label: f.label, dismissable: false };
+    const tag: ShelfTag = { id: `${SERVER_TAG_PREFIX}${i}`, label: f.label, dismissable: false };
     if (f.url) tag.url = f.url;
     if (f.marker) tag.marker = true;
     if (f.warn) tag.warn = true;

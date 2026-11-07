@@ -462,7 +462,7 @@ export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
-  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false,
+  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false, checkoutChip,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable, sendVia,
   showModel = true,
@@ -580,6 +580,9 @@ export function Composer({
   /** The pinned shelf has an open row docked to this card's top edge, so the card squares its
    *  top corners and the two read as one object. Off until the shelf exists. */
   shelved?: boolean;
+  /** The pane's checkout chip (`CheckoutChips`), drawn in the bottom row right after the `+`.
+   *  Absent where the pane has no shelf (a peer panel, a bare surface). */
+  checkoutChip?: ReactNode;
   /**
    * WHO the `@` menu offers, supplied by the caller instead of fetched.
    *
@@ -1625,7 +1628,8 @@ export function Composer({
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
-   *  `queue` — the ⇡ button: hold for the NEXT turn whatever is happening now. */
+   *  `queue` — hold for the NEXT turn whatever is happening now. No button draws it since the
+   *  ⇡ disc left the toolbar (owner 2026-11-07); kept as a delivery for a caller. */
   type SubmitMode = 'auto' | 'queue';
 
   // ── Assistant mode: push-to-talk ──────────────────────────────────────────────────
@@ -2072,9 +2076,9 @@ export function Composer({
     //                 surface was missing — ⏎ used to park the message until the whole turn
     //                 settled, which on a long turn is the difference between a ten-second
     //                 correction and a five-minute one.
-    //   any,   ⇡     → QUEUE: held as an editable row above (QueuedMessages.tsx) and sent when
-    //                 this turn settles. The other intent, kept as its own button precisely
-    //                 because it is no longer what ⏎ does.
+    //   any,   queue → held as an editable row above (QueuedMessages.tsx) and sent when this
+    //                 turn settles. No toolbar disc offers it any more (owner 2026-11-07); a
+    //                 refused steer still lands here.
     //
     // The steer can refuse (a card is open, the process is gone, the socket shut) and then the
     // message falls back into the queue — the one thing that must never happen is ⏎ eating the
@@ -2671,6 +2675,9 @@ export function Composer({
           ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
           : <AttachButton onPick={stablePick} />
         )}
+        {/* The checkout chip (`main`, a worktree), right after the `+` (owner 2026-11-07): the
+            shelf row it stood on alone above the composer is gone. Supplied by the pane. */}
+        {checkoutChip}
         {pageChip && <PageChip page={pageChip} convId={convId} />}
 
         <div className="chat-cmp-spacer" />
@@ -2859,20 +2866,9 @@ export function Composer({
             <span aria-hidden>■</span>
           </button>
         )}
-        {busy && hasSendableContent && (
-          <button
-            type="button"
-            className="chat-cmp-send is-queue"
-            disabled={!canCompose || awaitingUpload}
-            onClick={() => submit('queue')}
-            title="Queue for the next turn — held above, editable until it goes"
-            aria-label="Queue for the next turn"
-          >
-            {/* A DASHED up arrow for the queue: the same gesture as Send, deferred — and
-                monochrome, like every other glyph on this surface. */}
-            <span aria-hidden>⇡</span>
-          </button>
-        )}
+        {/* Two discs while a turn runs, Stop and Send: the hollow queue disc between them left
+            (owner 2026-11-07, "on a phone it does not fit"). ⏎ and ↑ steer into the turn and
+            fall back to the queue when the steer is refused, so nothing typed is lost. */}
         {(!busy || hasSendableContent) && (
           <button
             type="button"

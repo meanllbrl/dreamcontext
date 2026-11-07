@@ -309,3 +309,30 @@
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   color: var(--color-warning);
 }
+
+/* ── The checkout chip inside the composer's bottom row ─────────────────────────────
+   Owner 2026-11-07: "put main next to the +". Same chip, new place: it sits right after the
+   attach `+` (Composer.tsx, `CheckoutChips`), so the shelf row it used to stand on alone is
+   gone. It carries the shelf's type ladder itself (the `.pin-shelf` ancestor is not there),
+   and it is the one thing on that row allowed to shrink: a long branch name ellipsizes before
+   the model picker or Send is ever squeezed. */
+.pin-inline {
+  --pin-text-sm: calc(12.5px * var(--zoom, 1));
+  --pin-num: calc(12px * var(--zoom, 1));
+  --pin-marker: calc(11px * var(--zoom, 1));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 4px;
+  font-family: var(--font-family-text);
+}
+.pin-inline .pin-chip { flex: 0 1 auto; min-width: 0; }
+.pin-inline .pin-chip-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A narrow composer: the worktree marker drops to its glyph, as it did on a narrow shelf. */
+@container chatcmp (max-width: 470px) {
+  .pin-inline .pin-chip-glyph { display: inline-flex; }
+  .pin-inline .pin-chip-word { display: none; }
+  .pin-inline .pin-chip.is-marker { padding: 0 5px; }
+}
