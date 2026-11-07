@@ -12,6 +12,8 @@ import {
   isDashboardLooking,
   ledgerProgram,
   escapedGroups,
+  leaderBlocks,
+  isJobWorktreeDashboard,
   takeSnapshot,
   classifyOrphanGroups,
   type ProcRow,
@@ -287,13 +289,23 @@ describe('classifyOrphanGroups', () => {
     expect(pgids((await classify(rows)).candidates)).toEqual([]);
   });
 
-  it('a group whose leader is alive is kept', async () => {
+  it('a group whose leader is alive under a live parent is kept (an emulator java while firebase runs)', async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 15700, ppid: 1, pgid: 15700, args: 'node /Users/dev/.nvm/versions/node/v20.19.0/bin/firebase emulators:start --only firestore', env: 'PATH=/usr/bin' },
+      { pid: 15765, ppid: 15700, pgid: 15765, args: '/usr/bin/java -jar /Users/dev/.cache/firebase/emulators/firestore.jar', env: marked(id(304)) },
+      { pid: 15766, ppid: 15765, pgid: 15765, args: 'node x.js', env: marked(id(304)) },
+    ];
+    expect(pgids((await classify(rows)).candidates)).toEqual([]);
+  });
+
+  it('a group whose live leader was handed to launchd (ppid 1) is a candidate (the java after firebase died)', async () => {
     const rows: Fx[] = [
       ...BASE,
       { pid: 15765, ppid: 1, pgid: 15765, args: '/usr/bin/java -jar /Users/dev/.cache/firebase/emulators/firestore.jar', env: marked(id(304)) },
       { pid: 15766, ppid: 15765, pgid: 15765, args: 'node x.js', env: marked(id(304)) },
     ];
-    expect(pgids((await classify(rows)).candidates)).toEqual([]);
+    expect(pgids((await classify(rows)).candidates)).toEqual([15765]);
   });
 
   it('a looseClaude member or ancestor with an EMPTY env keeps the group and does not abort', async () => {
@@ -478,6 +490,209 @@ describe('classifyOrphanGroups', () => {
 
 // ─── Fail closed ──────────────────────────────────────────────────────────────
 
+// ─── 2026-11-07: a job's leftovers whose leader lives, and a job's own verify dashboard ───────
+
+const WT = '/Users/dev/.claude-worktrees';
+const ENDED_TAB = id(400);
+
+async function classifyWt(rows: Fx[], worktreeRoot: string | null = WT) {
+  const { result } = await snap(rows);
+  if ('aborted' in result) throw new Error(`unexpected abort: ${result.aborted}`);
+  return classifyOrphanGroups(result, SELF, {}, worktreeRoot === null ? {} : { worktreeRoot });
+}
+
+describe('job leftovers measured 2026-11-07', () => {
+  // A Super child's test left a mock agent running as its own group leader for 5 days: its
+  // claude is gone, its server (DEAD_SERVER) is gone, launchd holds it.
+  const mockAgent: Fx[] = [
+    { pid: 86326, ppid: 1, pgid: 86326, lstart: 'Mon Nov  2 05:34:00 2026', args: `/Users/dev/.nvm/versions/node/v22.16.0/bin/node --import ${WT}/acme-super-tour/scripts/register.mjs ${WT}/acme-super-tour/src/vendor/t3/apps/server/scripts/acp-mock-agent.ts`, env: marked(id(401)) },
+    { pid: 86327, ppid: 86326, pgid: 86326, lstart: 'Mon Nov  2 05:34:01 2026', args: `${WT}/acme-super-release/node_modules/@esbuild/darwin-arm64/bin/esbuild --service=0.27.3 --ping`, env: marked(id(401)) },
+  ];
+  // A Claude Code Bash shell (a group leader, SIP: empty env) waiting on a dev server.
+  const bashShell = (ppid: number): Fx[] => [
+    { pid: 51630, ppid, pgid: 51630, args: "/bin/zsh -c source /Users/dev/.dreamcontext/claude-accounts/dev/shell-snapshots/snapshot-zsh-1.sh && setopt NO_EXTENDED_GLOB 2>/dev/null || true && eval 'npm exec next dev -p 3011' < /dev/null" },
+    { pid: 51651, ppid: 51630, pgid: 51630, args: 'npm exec next dev -p 3011     ', env: marked(id(402)) },
+    { pid: 52513, ppid: 51651, pgid: 51630, args: 'next-server (v16.1.1) ' },
+  ];
+  // An ended job's verify dashboard, built in its worktree, started with `&` (leader dead).
+  const verifyDashboard = (args: string, pgid = 18349): Fx[] => [
+    { pid: pgid + 6422, ppid: 1, pgid, args, env: marked(ENDED_TAB, { server: SELF }) },
+  ];
+  const WT_DASH = `/Users/dev/.nvm/versions/node/v20.19.0/bin/node ${WT}/acme-super-photo-chip/dist/index.js dashboard --no-open -p 50045`;
+
+  it('leaderBlocks: only a live leader under a live parent blocks', () => {
+    const rows = new Map<number, ProcRow>([
+      [10, { uid: UID, pid: 10, ppid: 1, pgid: 10, lstart: 'x', args: 'a' }],
+      [20, { uid: UID, pid: 20, ppid: 10, pgid: 20, lstart: 'x', args: 'b' }],
+    ]);
+    expect(leaderBlocks(rows, 10)).toBe(false); // launchd holds it
+    expect(leaderBlocks(rows, 20)).toBe(true); // its parent lives
+    expect(leaderBlocks(rows, 30)).toBe(false); // dead leader
+  });
+
+  it("a test's mock agent leading its own group under launchd is a candidate", async () => {
+    const { candidates } = await classifyWt([...BASE, ...mockAgent]);
+    expect(pgids(candidates)).toEqual([86326]);
+    expect(candidates[0].tabId).toBe(id(401));
+  });
+
+  it("a Bash shell left waiting on a dev server is a candidate once its claude is gone, kept while it lives", async () => {
+    expect(pgids((await classifyWt([...BASE, ...bashShell(1)])).candidates)).toEqual([51630]);
+    const claude: Fx = { pid: 28960, ppid: SELF, pgid: 28960, args: 'claude -p --verbose', env: marked(id(402), { server: SELF }) };
+    expect(pgids((await classifyWt([...BASE, claude, ...bashShell(28960)])).candidates)).toEqual([]);
+  });
+
+  it('a live leader under launchd whose tab a live claude still carries is kept', async () => {
+    const claude: Fx = { pid: 28961, ppid: SELF, pgid: 28961, args: 'claude -p --verbose', env: marked(id(401), { server: SELF }) };
+    expect(pgids((await classifyWt([...BASE, claude, ...mockAgent])).candidates)).toEqual([]);
+  });
+
+  it('a live leader under launchd with no tab id is kept (automations, sleep, the codex daemon)', async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 52887, ppid: 1, pgid: 52887, args: '/Users/dev/.nvm/versions/node/v20.19.0/bin/node /Users/dev/.nvm/versions/node/v20.19.0/bin/dreamcontext sleep auto-run', env: `PATH=/usr/bin DREAMCONTEXT_SERVER_PID=${SELF}` },
+      { pid: 47312, ppid: 1, pgid: 47312, args: '/Users/dev/.codex/packages/app-server-daemon/codex app-server', env: 'PATH=/usr/bin' },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it("an ended job's verify dashboard built in its worktree is a candidate", async () => {
+    const { candidates } = await classifyWt([...BASE, ...verifyDashboard(WT_DASH)]);
+    expect(pgids(candidates)).toEqual([18349]);
+  });
+
+  it('without a worktree root every dashboard-looking member still keeps its group', async () => {
+    expect(pgids((await classifyWt([...BASE, ...verifyDashboard(WT_DASH)], null)).candidates)).toEqual([]);
+  });
+
+  it("the installed CLI's dashboard, a relative one and a `..` escape are kept", async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      ...verifyDashboard('/Users/dev/.nvm/versions/node/v20.19.0/bin/node /Users/dev/.nvm/versions/node/v20.19.0/bin/dreamcontext dashboard --port 4100', 1000),
+      ...verifyDashboard('node dist/index.js dashboard --port 4200', 2000),
+      ...verifyDashboard(`node ${WT}/../projects/dreamcontext/dist/index.js dashboard --port 4300`, 3000),
+      ...verifyDashboard(`/bin/zsh -c node ${WT}/acme-super-x/dist/index.js dashboard && node /Users/dev/projects/dreamcontext/dist/index.js dashboard`, 4000),
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it("a hook-launched dashboard (own leader under launchd) still pins its launcher's tab", async () => {
+    const t = id(403);
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 60000, ppid: 1, pgid: 60000, args: '/Users/dev/.nvm/versions/node/v20.19.0/bin/node /Users/dev/.nvm/versions/node/v20.19.0/bin/dreamcontext dashboard --port 4100', env: marked(t) },
+      { pid: 7001, ppid: 1, pgid: 7000, args: 'node server.js', env: marked(t) },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it('a worktree dashboard that hosts a live claude is kept', async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      ...verifyDashboard(WT_DASH),
+      { pid: 30001, ppid: 18349 + 6422, pgid: 30001, args: 'claude -p --verbose', env: marked(id(404), { server: 18349 + 6422 }) },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  // Review r1 (2026-11-07): a live leader under launchd may be doing work nobody watches.
+  const CLI = '/Users/dev/.nvm/versions/node/v20.19.0/bin/dreamcontext';
+
+  it("a task job's host started from a chat tab, and its detached Codex step, are kept", async () => {
+    const t = id(410);
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 70100, ppid: 1, pgid: 70100, args: `/Users/dev/.nvm/versions/node/v20.19.0/bin/node ${CLI} tasks run-job acme-task --run r1`, env: marked(t, { server: SELF }) },
+      { pid: 70200, ppid: 70100, pgid: 70200, args: '/Users/dev/.nvm/versions/node/v20.19.0/bin/node /Users/dev/.dreamcontext/tools/codex/bin/codex exec --json', env: marked(t, { server: SELF }) },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it('the CLI as a launchd-held leader is kept even with no child (between two steps)', async () => {
+    const rows: Fx[] = [...BASE, { pid: 70100, ppid: 1, pgid: 70100, args: `/Users/dev/.nvm/versions/node/v20.19.0/bin/node ${CLI} tasks run-job acme-task --run r1`, env: marked(id(411), { server: SELF }) }];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it('an npx-started task host is kept too', async () => {
+    const rows: Fx[] = [...BASE, { pid: 70100, ppid: 1, pgid: 70100, args: 'node /Users/dev/.npm/_npx/3f2a1b/node_modules/.bin/dreamcontext tasks run-job acme-task --run r1', env: marked(id(416), { server: SELF }) }];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it("a live task host keeps its tab live: the job's own launchd-held daemon is not reaped", async () => {
+    const t = id(417);
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 70100, ppid: 1, pgid: 70100, args: `/Users/dev/.nvm/versions/node/v20.19.0/bin/node ${CLI} tasks run-job acme-task --run r1`, env: marked(t, { server: SELF }) },
+      { pid: 70300, ppid: 1, pgid: 70300, args: 'node /Users/dev/projects/acme-shop/server.js', env: marked(t, { server: SELF }) },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+    // the same daemon once its host is gone
+    expect(pgids((await classifyWt([...BASE, rows[rows.length - 1]])).candidates)).toEqual([70300]);
+  });
+
+  it('a host whose panes live in other groups is kept (a tmux server, an editor)', async () => {
+    const t = id(412);
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 71000, ppid: 1, pgid: 71000, args: 'tmux new-session -d -s dev', env: marked(t) },
+      // a pane: its own group, the owner's shell attached later; SIP zsh shows no env
+      { pid: 71010, ppid: 71000, pgid: 71010, args: '-zsh' },
+      { pid: 71020, ppid: 71010, pgid: 71020, args: 'vim notes.md', env: 'PATH=/usr/bin HOME=/Users/dev' },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([]);
+  });
+
+  it("a backgrounded firebase whose java (own group) carries the same dead tab is reaped, java with it after", async () => {
+    const t = id(413);
+    const shell: Fx[] = [
+      { pid: 43923, ppid: 1, pgid: 43923, args: "/bin/zsh -c source /Users/dev/.claude/shell-snapshots/snapshot-zsh-1.sh && eval 'firebase emulators:start --only firestore'" },
+      { pid: 43958, ppid: 43923, pgid: 43923, args: 'node /Users/dev/.nvm/versions/node/v20.19.0/bin/firebase emulators:start --only firestore', env: marked(t) },
+    ];
+    const java: Fx = { pid: 44787, ppid: 43958, pgid: 44787, args: '/usr/bin/java -Dgoogle.cloud_firestore.debug_log_level=FINE -jar /Users/dev/.cache/firebase/emulators/cloud-firestore-emulator.jar', env: marked(t) };
+    expect(pgids((await classifyWt([...BASE, ...shell, java])).candidates)).toEqual([43923]);
+    // after firebase is gone launchd holds the java: it goes too
+    expect(pgids((await classifyWt([...BASE, { ...java, ppid: 1 }])).candidates)).toEqual([44787]);
+    // an outside descendant carrying ANOTHER tab, or none readable, keeps the host
+    const other: Fx = { ...java, env: marked(id(414)) };
+    expect(pgids((await classifyWt([...BASE, ...shell, other])).candidates)).toEqual([]);
+    const blind: Fx = { ...java, env: undefined };
+    expect(pgids((await classifyWt([...BASE, ...shell, blind])).candidates)).toEqual([]);
+  });
+
+  it("the outside descendant's env is requested", async () => {
+    const t = id(415);
+    const { calls } = await snap([
+      ...BASE,
+      { pid: 43923, ppid: 1, pgid: 43923, args: '/bin/zsh -c firebase emulators:start' },
+      { pid: 43958, ppid: 43923, pgid: 43923, args: 'node /x/firebase emulators:start', env: marked(t) },
+      { pid: 44787, ppid: 43958, pgid: 44787, args: '/usr/bin/java -jar x.jar', env: marked(t) },
+    ]);
+    expect(envList(calls)).toContain(44787);
+  });
+
+  it("a worktree verify dashboard under a live launchd-held shell no longer pins its tab", async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 18000, ppid: 1, pgid: 18000, args: `/bin/zsh -c node ${WT}/acme-super-photo-chip/dist/index.js dashboard --no-open -p 50045` },
+      { pid: 18001, ppid: 18000, pgid: 18000, args: WT_DASH, env: marked(ENDED_TAB, { server: SELF }) },
+      { pid: 18101, ppid: 1, pgid: 18100, args: 'node /Users/dev/projects/acme-shop/node_modules/.bin/next dev -p 3020', env: marked(ENDED_TAB, { server: SELF }) },
+    ];
+    expect(pgids((await classifyWt(rows)).candidates)).toEqual([18000, 18100]);
+  });
+
+  it('isJobWorktreeDashboard names only absolute scripts strictly under the root', () => {
+    const r = (args: string): ProcRow => ({ uid: UID, pid: 1, ppid: 1, pgid: 1, lstart: 'x', args });
+    expect(isJobWorktreeDashboard(r(WT_DASH), WT)).toBe(true);
+    expect(isJobWorktreeDashboard(r(WT_DASH), `${WT}/`)).toBe(true);
+    expect(isJobWorktreeDashboard(r(`/bin/zsh -c 'node ${WT}/a/dist/index.js dashboard'`), WT)).toBe(true);
+    expect(isJobWorktreeDashboard(r(`node ${WT}/a/node_modules/.bin/dreamcontext dashboard`), WT)).toBe(true);
+    expect(isJobWorktreeDashboard(r(`node ${WT}-evil/a/dist/index.js dashboard`), WT)).toBe(false);
+    expect(isJobWorktreeDashboard(r('node dist/index.js dashboard'), WT)).toBe(false);
+    expect(isJobWorktreeDashboard(r(WT_DASH), '')).toBe(false);
+    expect(isJobWorktreeDashboard(r(WT_DASH), 'relative/root')).toBe(false);
+  });
+});
+
 describe('takeSnapshot fails closed', () => {
   it('an ownerClaude with an empty env aborts', async () => {
     const rows: Fx[] = [...BASE, { pid: 46000, ppid: SELF, pgid: SELF, args: 'claude -p go' }];
@@ -524,13 +739,21 @@ describe('takeSnapshot fails closed', () => {
   });
 
   it('the env -p list always holds this server and only what matters', async () => {
-    const { calls } = await snap([...BASE, ...reapableGroups(), { pid: 5555, ppid: 1, pgid: 5555, args: '/usr/sbin/cfprefsd agent' }]);
+    const { calls } = await snap([
+      ...BASE,
+      ...reapableGroups(),
+      { uid: 0, pid: 5555, ppid: 1, pgid: 5555, args: '/usr/sbin/cfprefsd daemon' },
+      { pid: 5600, ppid: 1, pgid: 5600, args: 'node /Users/dev/.claude-worktrees/acme-super-x/scripts/mock-agent.ts' },
+    ]);
     const list = envList(calls);
     expect(list).toContain(SELF);
     expect(list).toContain(37610);
     expect(list).toContain(40412); // the retitled next-server member of an escaped group
-    expect(list).not.toContain(5555);
-    expect(list).not.toContain(APP);
+    expect(list).toContain(5600); // a live leader handed to launchd: escaped, so its env is read
+    expect(list).not.toContain(5555); // another user's process: never escaped
+    // The app shell leads its own group under launchd, so its env is read too; it carries no
+    // tab id and is this server's ancestor, so it is never a candidate (every candidate list
+    // in this file is exact).
   });
 
   it('env exit code 1 with partial stdout is parsed', async () => {

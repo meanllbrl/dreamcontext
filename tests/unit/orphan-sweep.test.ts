@@ -177,18 +177,47 @@ describe('grace and two-phase escalation', () => {
     expect(kills).toEqual([]);
   });
 
-  it('pgid 0/1 groups and a live leader are never signalled', async () => {
+  it('pgid 0/1 groups and a live leader under a live parent are never signalled', async () => {
     const rows: Fx[] = [
       ...BASE,
       { pid: 6001, ppid: 1, pgid: 0, args: 'node a.js', env: marked(id(10)) },
       { pid: 6002, ppid: 1, pgid: 1, args: 'node b.js', env: marked(id(11)) },
-      { pid: 6100, ppid: 1, pgid: 6100, args: 'node leader.js', env: marked(id(12)) },
+      { pid: 6050, ppid: 1, pgid: 6050, args: 'node /Users/dev/.nvm/bin/firebase emulators:start', env: 'PATH=/usr/bin' },
+      { pid: 6100, ppid: 6050, pgid: 6100, args: '/usr/bin/java -jar firestore.jar', env: marked(id(12)) },
       { pid: 6101, ppid: 6100, pgid: 6100, args: 'node child.js', env: marked(id(12)) },
     ];
     const { run } = fakeWorld(rows);
     const sw = sweeper(run);
     await tickAt(sw, ...range(0, 90));
     expect(kills).toEqual([]);
+  });
+
+  it('a live leader handed to launchd (a Bash shell whose claude exited) is TERMed after grace, then KILLed', async () => {
+    const rows: Fx[] = [
+      ...BASE,
+      // Claude Code runs each Bash command as its own group led by the shell; run in the
+      // background, the shell waits on the dev server and outlives its claude (2026-11-07).
+      { pid: 6200, ppid: 1, pgid: 6200, args: '/bin/zsh -c source /Users/dev/.claude/shell-snapshots/snapshot-zsh-1.sh && eval \'npx vite --port 63863\'' },
+      { pid: 6201, ppid: 6200, pgid: 6200, args: 'node /Users/dev/.claude-worktrees/acme-super-stats/dashboard/node_modules/.bin/vite --port 63863', env: marked(id(13)) },
+    ];
+    const { run } = fakeWorld(rows);
+    const sw = sweeper(run);
+    await tickAt(sw, ...range(0, 35));
+    expect(kills.map((k) => [k.pid, k.sig])).toEqual([[-6200, 'SIGTERM'], [-6200, 'SIGKILL']]);
+    expect(kills[0].ledgerLines).toBe(1);
+  });
+
+  it("a job worktree's leftover verify dashboard is reaped; the installed CLI's dashboard is not", async () => {
+    const worktreeRoot = '/Users/dev/.claude-worktrees';
+    const rows: Fx[] = [
+      ...BASE,
+      { pid: 6301, ppid: 1, pgid: 6300, args: `/Users/dev/.nvm/bin/node ${worktreeRoot}/acme-super-photo-chip/dist/index.js dashboard --no-open -p 50045`, env: marked(id(14)) },
+      { pid: 6401, ppid: 1, pgid: 6400, args: '/Users/dev/.nvm/bin/node /Users/dev/.nvm/lib/node_modules/dreamcontext/dist/index.js dashboard --port 4100', env: marked(id(15)) },
+    ];
+    const { run } = fakeWorld(rows);
+    const sw = sweeper(run, { worktreeRoot });
+    await tickAt(sw, ...range(0, 35));
+    expect([...new Set(kills.map((k) => k.pid))]).toEqual([-6300]);
   });
 
   it('a member line with two different DREAMCONTEXT_TAB_SESSION values keeps the group', async () => {
