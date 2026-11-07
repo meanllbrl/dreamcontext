@@ -22,6 +22,14 @@
       ]
     },
     {
+      "path": "agents board-scope",
+      "desc": "Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)",
+      "args": [
+        "<slug>",
+        "<answer>"
+      ]
+    },
+    {
       "path": "agents bring-here",
       "desc": "Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull",
       "args": [

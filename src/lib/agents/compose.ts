@@ -69,6 +69,7 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     learning: m.learning,
     pattern: m.pattern,
     whiteboard: m.whiteboard ?? null,
+    ...(m.boardOnly ? { boardOnly: true } : {}),
     shared: m.shared,
     // A legacy file holds no team placement: it stays a root until it is split.
     reportsTo: null,
@@ -150,6 +151,8 @@ export function composeRun(
     learning: agent.learning,
     pattern: agent.pattern,
     whiteboard: agent.whiteboard,
+    // Only when set, so a composed target stays field for field what it was.
+    ...(agent.whiteboard && agent.boardOnly ? { boardOnly: true } : {}),
     agent: agent.slug,
     agentTitle: agent.title,
     // Only a level other than the default rides the target, so a composed target stays field for

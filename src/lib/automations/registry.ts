@@ -69,7 +69,25 @@ export interface ApprovalEntry {
    *  a synced or waiting change moved (`changedApprovalFields`). Never part of the verdict, so an
    *  entry written before it existed judges exactly as before. */
   fieldHashes?: Record<string, string>;
+  /**
+   * Whether a home-board agent approved here is limited to its board (owner 2026-11-07: a home
+   * board is a presentation surface, never a permission scope, unless the agent opts in with
+   * `scope: board`). Written for every entry of a target that has a home board, OUTSIDE the
+   * hashed payload:
+   *   - `board` — the approved manifest says `scope: board`;
+   *   - `open`  — it does not, and nothing holds it: it runs under its autonomy level;
+   *   - `held`  — it does not, but it was a board agent before this field existed, and the owner
+   *               has not yet said whether it should stay limited (`board-scope.ts`
+   *               `boardScopeQuestion`): it stays limited until he answers.
+   * Absent on an entry written before this field: such an entry of a board agent reads as `held`
+   * (fail closed), so an upgrade widens nobody.
+   */
+  boardScope?: BoardScopeMarker;
 }
+
+/** See {@link ApprovalEntry.boardScope}. */
+export type BoardScopeMarker = 'board' | 'open' | 'held';
+const BOARD_SCOPE_MARKERS: ReadonlySet<string> = new Set(['board', 'open', 'held']);
 
 /** One project's approvals, keyed by automation slug. */
 export interface ProjectRegistryEntry {
@@ -137,6 +155,8 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     // re-approval, failing open could unscope a board agent.
     (e.whiteboard === undefined || (typeof e.whiteboard === 'string' && e.whiteboard.length > 0)) &&
     (e.tool === undefined || typeof e.tool === 'string') &&
+    // A malformed marker drops the entry (fail closed): a bad value must never read as `open`.
+    (e.boardScope === undefined || (typeof e.boardScope === 'string' && BOARD_SCOPE_MARKERS.has(e.boardScope))) &&
     // Display data only: a malformed map drops the entry like any other bad field (fail closed).
     (e.fieldHashes === undefined || isFieldHashMap(e.fieldHashes))
   );
@@ -460,6 +480,11 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // app today, so nobody re-blocks. Present, it decides which app's brief the run is given, so a
     // synced edit that adds, moves or removes it must block.
     ...(m.app ? { app: m.app } : {}),
+    // OMITTED unless set, and LAST (owner 2026-11-07, `scope: board`): no manifest says it today,
+    // so every hash, a home-board agent's included, stays byte-for-byte what it was and nobody
+    // re-blocks. Present, it decides the agent's whole envelope (limited to its board vs its
+    // autonomy level), so adding or removing it must block until someone here re-approves.
+    ...(m.boardOnly === true ? { scope: 'board' } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -526,6 +551,9 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     tool: m.tool ?? null,
     // Always present (as '' when absent): the reviewer sees which app's brief the run gets.
     app: m.app ?? '',
+    // Always present (false when absent): the reviewer sees whether a home-board agent is
+    // limited to its board, or runs under its autonomy level.
+    boardOnly: m.boardOnly === true,
   };
 }
 
@@ -696,8 +724,30 @@ export function checkApproval(
   return own;
 }
 
+/**
+ * True when `e` holds a home-board agent to its board pending the owner's answer: a `held` mark,
+ * or an entry of a board agent written before marks existed. A `board` mark is NOT a hold: it
+ * follows the manifest's own `scope: board`, so removing that field (an approved edit) opens it.
+ */
+export function boardHoldIn(e: ApprovalEntry | null | undefined): boolean {
+  if (!e) return false;
+  return e.boardScope === 'held' || (e.boardScope === undefined && !!e.whiteboard);
+}
+
+/**
+ * The mark a new approval of `m` carries. `prev` is the entry it replaces, `agentEntry` the agent's
+ * own call-target entry (a routine follows its agent): a hold in either is carried forward, so
+ * re-approving an old board agent for an unrelated edit never widens it behind the owner's back.
+ */
+function boardScopeMarkFor(m: AutomationManifest, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null): BoardScopeMarker | undefined {
+  if (!m.whiteboard) return undefined;
+  if (m.boardOnly === true) return 'board';
+  return boardHoldIn(prev) || boardHoldIn(agentEntry) ? 'held' : 'open';
+}
+
 /** A fresh approval entry for `m` as it stands right now. */
-function approvalEntryFor(m: AutomationManifest, now: Date): ApprovalEntry {
+function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null): ApprovalEntry {
+  const boardScope = boardScopeMarkFor(m, prev, agentEntry);
   return {
     manifestSha256: manifestHash(m),
     approvedAt: now.toISOString(),
@@ -705,7 +755,15 @@ function approvalEntryFor(m: AutomationManifest, now: Date): ApprovalEntry {
     ...(m.whiteboard ? { whiteboard: m.whiteboard } : {}),
     ...(m.tool ? { tool: m.tool } : {}),
     fieldHashes: approvalFieldHashes(m),
+    ...(boardScope ? { boardScope } : {}),
   };
+}
+
+/** The entry that speaks for agent `agent` in `project`: its call target's, else the legacy
+ *  record its unsplit file (or a same-slug pair) keeps under `approvals`. */
+function agentEntryIn(project: ProjectRegistryEntry | undefined, agent: string | undefined): ApprovalEntry | null {
+  if (!project || !agent) return null;
+  return project.agentApprovals?.[agent] ?? project.approvals[agent] ?? null;
 }
 
 /** Each reviewed field's short hash, as `approvalFields` shows it (and `mode`, hashed but not on the
@@ -774,14 +832,16 @@ function mutateProject<T>(projectRoot: string, home: string | undefined, mutate:
 export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string): ApprovalEntry {
   // Someone else's member is read-only here: approving it would be running it by another door.
   assertOwned(m, m.agentTitle || m.title || m.slug);
-  const entry = approvalEntryFor(m, now);
   if (m.agentScope === 'global') {
     return mutateProject(GLOBAL_REGISTRY_KEY, home, (project) => {
+      const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug]);
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       return entry;
     });
   }
   return mutateProject(projectRoot, home, (project) => {
+    const prev = m.runKind === 'agent' ? agentEntryIn(project, m.slug) : project.approvals[m.slug];
+    const entry = approvalEntryFor(m, now, prev, agentEntryIn(project, m.agent || m.slug));
     if (m.runKind === 'agent') {
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       if (AGENT_OWNED_SLOTS.has(classifyAutomationSlot(contextRootOf(projectRoot), m.slug))) {
@@ -822,10 +882,10 @@ export function approvePair(
   ) {
     throw new AutomationError('approvePair needs an automation and the call target of the same-slug agent it runs as');
   }
-  const entry = approvalEntryFor(automation, now);
   const agentHash = manifestHash(agentTarget);
   return mutateProject(projectRoot, home, (project) => {
     const slug = automation.slug;
+    const entry = approvalEntryFor(automation, now, project.approvals[slug], agentEntryIn(project, agentTarget.slug));
     const legacy = project.approvals[slug];
     if (
       !project.agentApprovals?.[slug] &&
@@ -915,6 +975,33 @@ export function getApproval(projectRoot: string, slug: string, home?: string, ki
   const project = projectEntry(readAutomationsRegistry(home), projectRoot);
   if (!project) return null;
   return (kind === 'agent' ? project.agentApprovals?.[slug] : project.approvals[slug]) ?? null;
+}
+
+/** The entry that speaks for agent `agent` here: its call target's, else its legacy record. */
+export function getAgentEntry(projectRoot: string, agent: string, home?: string): ApprovalEntry | null {
+  return agentEntryIn(projectEntry(readAutomationsRegistry(home), projectRoot) ?? undefined, agent);
+}
+
+/**
+ * The owner's answer "let it work by its autonomy" to the board-scope question (`board-scope.ts`):
+ * every held entry among `targets` (the agent's call target, its legacy record, its routines)
+ * becomes `open`, in one registry write. An entry that is not held is left exactly as it is, so a
+ * `board` mark (the manifest's own `scope: board`) is never opened by this. Returns how many moved.
+ */
+export function liftBoardHold(projectRoot: string, targets: readonly { kind: RunKind; slug: string }[], home?: string): number {
+  return mutateProject(projectRoot, home, (project) => {
+    let moved = 0;
+    for (const t of targets) {
+      // An agent's entry is its call target's, else the legacy record an agent split by 0.31.0
+      // (or a same-slug pair) keeps under `approvals`: the same order `agentEntryIn` reads.
+      const map = t.kind === 'agent' && project.agentApprovals?.[t.slug] ? project.agentApprovals : project.approvals;
+      const e = map?.[t.slug];
+      if (!e || !boardHoldIn(e)) continue;
+      map![t.slug] = { ...e, boardScope: 'open' };
+      moved += 1;
+    }
+    return moved;
+  });
 }
 
 // ─── Dispatcher heartbeat (own file — see module doc) ───────────────────────

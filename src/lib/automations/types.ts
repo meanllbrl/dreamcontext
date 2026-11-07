@@ -497,6 +497,14 @@ export interface AutomationManifest {
    */
   readTools?: string[];
   /**
+   * `scope: board` in the agent's frontmatter: limit a home-board agent to its board (the old
+   * `dontAsk` envelope of `board-scope.ts`). Identity, through `composeRun`; absent (false) on
+   * every agent that does not opt in, which then runs under its autonomy level like any member
+   * (owner 2026-11-07: a home board is a presentation surface, never a permission scope).
+   * IS approval-hashed, OMITTED when false and LAST, so every hash that exists keeps its bytes.
+   */
+  boardOnly?: boolean;
+  /**
    * Other tools this automation may fall back to when every account of its own tool is out of
    * limit (plan r5 §4e). A SHAPE only in Track T W2: no manifest parser reads it and nothing moves
    * a run (the fallback policy is `'never'`), so it is never present today. Hashed when present,
@@ -1100,6 +1108,9 @@ export interface ApprovalPayloadFields {
   tool: string | null;
   /** Hashed because it decides which app's brief the run is given. '' when it has none. */
   app: string;
+  /** Hashed because it limits a home-board agent to its board (frontmatter `scope: board`).
+   *  Always present (false when unset), so a reviewer sees a limit appear or go. */
+  boardOnly: boolean;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1228,6 +1239,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'readTools',
   'tool',
   'app',
+  'boardOnly',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

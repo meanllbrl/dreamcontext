@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { checkApproval } from './registry.js';
+import { boardHoldIn, checkApproval, getAgentEntry, type ApprovalEntry } from './registry.js';
 import { ownerLabel } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
 import { outputRootDir } from './store.js';
@@ -16,9 +16,16 @@ import {
 } from './types.js';
 
 /**
- * The permission envelope of a HOME-BOARD agent: one whose manifest names a `whiteboard`.
+ * The permission envelope of a BOARD-ONLY agent: one whose manifest names a `whiteboard` AND says
+ * `scope: board` (or an old board agent the owner has not yet answered about, see
+ * {@link boardLimited}).
  *
- * Every other agent runs under `bypassPermissions`. A home-board agent instead runs under
+ * A home board alone is a presentation surface, never a permission scope (owner 2026-11-07): an
+ * agent with a board and no `scope: board` gets exactly the envelope of a member without one (its
+ * runs `bypassPermissions` with `.env*` closed to Read, its conversations its autonomy level), and
+ * its board only shows its work and hosts its card conversation.
+ *
+ * Every other agent runs under `bypassPermissions`. A board-only agent instead runs under
  * Claude Code's own rules (`dontAsk`, `--setting-sources project`, an exact allowlist), so
  * anything not listed is denied rather than asked about. It may read anything, act on its own
  * board through the `dreamcontext` CLI, post and learn as itself, and write files only into
@@ -59,8 +66,51 @@ export interface ScopePaths {
 }
 
 export type SpawnScopeResult =
-  | { ok: true; scope: BoardScope | null }
+  /** `scope`: the board-only envelope, or null. `homeBoard`: the agent's home board whatever its
+   *  envelope (what its turns show and where its card lives), or null. `held`: board-only only
+   *  because the owner has not answered the old-agent question yet. */
+  | { ok: true; scope: BoardScope | null; homeBoard: string | null; held: boolean }
   | { ok: false; reason: string };
+
+/**
+ * Whether a home-board agent is limited to its board: its manifest says `scope: board`, or an
+ * approval entry here holds it (`boardHoldIn`: an old board agent the owner has not yet answered
+ * about) or marks it `board`. The entry that approved this target and the agent's own entry both
+ * count, so a routine follows its agent. Fails closed: any doubt keeps the limit.
+ */
+export function boardLimited(
+  projectRoot: string,
+  m: Pick<AutomationManifest, 'boardOnly' | 'agent' | 'slug'>,
+  entry: ApprovalEntry | null,
+  home?: string,
+): { limited: boolean; held: boolean } {
+  if (m.boardOnly === true) return { limited: true, held: false };
+  const own = entry ?? null;
+  const agentEntry = getAgentEntry(projectRoot, m.agent || m.slug, home);
+  const held = boardHoldIn(own) || boardHoldIn(agentEntry);
+  const marked = own?.boardScope === 'board' || agentEntry?.boardScope === 'board';
+  return { limited: held || marked, held };
+}
+
+/** The env deny every home-board agent that is NOT board-only carries: it may run scripts that
+ *  load a `.env` themselves, never read one with the Read tool (owner 2026-11-07, item 5). */
+export const OPEN_BOARD_READ_DENIES = ['Read(**/.env*)'] as const;
+
+/** The run and resume envelope of a home-board agent that is not board-only: a board-less
+ *  member's own (`bypassPermissions`), with `.env*` closed to Read. */
+export function openBoardArgs(): string[] {
+  return ['--permission-mode', 'bypassPermissions', '--disallowedTools', ...OPEN_BOARD_READ_DENIES];
+}
+
+/** `args` (a task step's level argv) with `.env*` closed to Read as well: joined into its own
+ *  `--disallowedTools` value when it has one (one flag, never two), else appended. */
+export function withOpenBoardDenies(args: readonly string[]): string[] {
+  const out = [...args];
+  const i = out.indexOf('--disallowedTools');
+  if (i >= 0 && i + 1 < out.length) out[i + 1] = `${out[i + 1]} ${OPEN_BOARD_READ_DENIES.join(' ')}`;
+  else out.push('--disallowedTools', ...OPEN_BOARD_READ_DENIES);
+  return out;
+}
 
 export type ScopePathsResult = { ok: true; paths: ScopePaths } | { ok: false; reason: string };
 
@@ -202,14 +252,18 @@ export function resolveSpawnScope(
   const scoped = use === 'identity' ? identityOnly(m) : m;
   const fromManifest = scoped.whiteboard ?? null;
   const fromEntry = approval.entry.whiteboard ?? null;
+  const board = fromManifest ?? fromEntry;
+  if (!board) return { ok: true, scope: null, homeBoard: null, held: false };
+  const { limited, held } = boardLimited(dirname(root), scoped, approval.entry, home);
+  // A home board that does not limit: the agent runs as any member does, and the board is only
+  // where its work shows. Nothing about the board can refuse the spawn then.
+  if (!limited) return { ok: true, scope: null, homeBoard: board, held: false };
   if (fromManifest && fromEntry && fromManifest !== fromEntry) {
     return {
       ok: false,
       reason: `the manifest names board "${fromManifest}" but board "${fromEntry}" was approved`,
     };
   }
-  const board = fromManifest ?? fromEntry;
-  if (!board) return { ok: true, scope: null };
   if (scoped.outputDir) {
     return { ok: false, reason: 'a board agent cannot also set an output folder' };
   }
@@ -218,7 +272,7 @@ export function resolveSpawnScope(
   } catch {
     return { ok: false, reason: `its board "${board}" does not exist or cannot be read` };
   }
-  return { ok: true, scope: { board, self: m.slug } };
+  return { ok: true, scope: { board, self: m.slug }, homeBoard: board, held };
 }
 
 /** The first symlink found at or below `dir`, dangling ones included, as a reason. */
@@ -400,4 +454,49 @@ export function scopeEnv(s: BoardScope, p: Pick<ScopePaths, 'scratch'>): Record<
 /** The refusal sentence a run records when the scope fails. */
 export function scopeRefusal(title: string, reason: string): string {
   return `Could not limit ${title} to its board: ${reason}`;
+}
+
+/**
+ * The named reason a board-only run or turn records when Claude Code denied it a step (the
+ * `dontAsk` envelope): what is off, and how the owner lifts it. `held` names the old-agent
+ * question instead of the checkbox, since such an agent has no `scope: board` to untick.
+ */
+export function boardLimitReason(title: string, slug: string, held: boolean): string {
+  const lift = held
+    ? `answer "Should ${title} still be limited to its board?" on its AI Team page, or run \`dreamcontext agents board-scope ${slug} lift\``
+    : `untick "Limit to its board" in its Edit dialog, or run \`dreamcontext agents edit ${slug} --no-board-only\``;
+  return `${title} is limited to its board: Bash, node, MCP tools and .env are off, and it writes only to its board and its output folder. To lift it: ${lift}.`;
+}
+
+/** Marks a board-limit reason inside a longer line (a thread entry, a run error). */
+export const BOARD_LIMIT_MARK = 'is limited to its board:';
+
+/** How a target's board decides its envelope, for a surface that shows it (`agents show`, the AI
+ *  Team): its home board, whether it is limited, whether only by the old-agent hold, and whether
+ *  the owner owes the one question about it (approved, held, no `scope: board` of its own). */
+export interface BoardEnvelopeView {
+  board: string | null;
+  limited: boolean;
+  held: boolean;
+  question: boolean;
+}
+
+/** Read-only: never prepares folders, never refuses. `projectRoot` holds the approvals. */
+export function boardEnvelopeView(projectRoot: string, m: AutomationManifest, home?: string): BoardEnvelopeView {
+  const board = m.whiteboard ?? null;
+  if (!board) return { board: null, limited: false, held: false, question: false };
+  const verdict = checkApproval(projectRoot, m, home, 'run');
+  const { limited, held } = boardLimited(projectRoot, m, verdict.approved ? verdict.entry : null, home);
+  return { board, limited, held, question: verdict.approved && held && m.boardOnly !== true };
+}
+
+/** The one `effective:` line `agents show` prints. `chatMode` is the autonomy level's chat mode. */
+export function effectiveEnvelopeLine(view: BoardEnvelopeView, chatMode: string): string {
+  if (view.limited) {
+    return view.held
+      ? 'effective: dontAsk (board-scoped, kept from before boards stopped limiting; the owner is asked once whether it stays)'
+      : 'effective: dontAsk (board-scoped)';
+  }
+  const shows = view.board ? `; its board "${view.board}" shows its work, .env closed to Read` : '';
+  return `effective: chat ${chatMode}, runs bypassPermissions${shows}`;
 }

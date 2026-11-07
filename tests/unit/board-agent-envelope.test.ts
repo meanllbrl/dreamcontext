@@ -128,6 +128,8 @@ function seedBoard(name: string, texts: string[]): string {
   return slug;
 }
 
+// Every agent here is BOARD-ONLY (`scope: board`): since 2026-11-07 a home board alone does not
+// limit (board-presentation-scope.test.ts), and this file pins the envelope it opts into.
 function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: boolean; learning?: boolean } = {}): AutomationManifest {
   const m = createAutomation(contextRoot, {
     slug: opts.slug ?? 'board-pilot',
@@ -136,7 +138,7 @@ function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: 
     prompt: 'Keep the board tidy.',
     review: 'agent',
     learning: opts.learning ?? false,
-    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board }),
+    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board, boardOnly: true }),
   });
   if (opts.approve !== false) approveAutomation(projectRoot, m, NOW, home);
   return m;

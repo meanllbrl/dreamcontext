@@ -42,6 +42,7 @@ export const HASHED_FIELD_SIDE = {
   readTools: 'authority',
   tool: 'authority',
   app: 'authority',
+  boardOnly: 'authority',
   mode: 'authority',
 } as const satisfies Record<keyof ApprovalPayloadFields | 'mode', FieldSide>;
 
@@ -110,7 +111,7 @@ export interface WidenView {
 export const CREATE_BASELINE: Readonly<WidenView> = {
   prompt: '', soul: '', job: '', outputInstructions: '', model: null, effort: null, timeoutMinutes: null,
   outputDir: null, learning: null, review: 'off', flow: null, whiteboard: null, autonomy: 'balanced',
-  readTools: '', tool: null, app: '', mode: 'call', enabled: true, fallbackTools: [],
+  readTools: '', tool: null, app: '', mode: 'call', enabled: true, fallbackTools: [], boardOnly: false,
 };
 
 /** Moving these never widens reach: cost, wording, drawing. */
@@ -152,7 +153,8 @@ function flowWidens(prev: unknown, next: unknown): boolean {
  * against {@link CREATE_BASELINE}, learning exempt).
  *
  *  readTools added; autonomy toward free; tool or fallbackTools changed; outputDir or
- *  outputInstructions to a new destination; whiteboard removed or moved to another board; app
+ *  outputInstructions to a new destination; whiteboard removed or moved to another board; the board
+ *  limit (`boardOnly`) lifted; app
  *  changed; a flow node added or a human gate removed; review turned off; mode call -> sched;
  *  learning turned on; `enabled` off -> on by anyone but the owner; ANY change by a background
  *  process (`agent`) to a GLOBAL member (it runs in every project), a global member created by one.
@@ -177,6 +179,8 @@ export function widensAuthority(prev: WidenView | null, next: WidenView, actor: 
       case 'outputDir': if (b !== null && b !== undefined && b !== '') out.add(k); break;
       case 'outputInstructions': if (textOf(b) && textOf(b) !== textOf(a)) out.add(k); break;
       case 'whiteboard': if (a !== null && a !== undefined && a !== '') out.add(k); break;
+      // Lifting the board limit widens; adding it narrows.
+      case 'boardOnly': if (a === true && b !== true) out.add(k); break;
       case 'app': out.add(k); break;
       case 'flow': if (flowWidens(a, b)) out.add(k); break;
       case 'review': if (b === 'off' && a !== 'off') out.add(k); break;

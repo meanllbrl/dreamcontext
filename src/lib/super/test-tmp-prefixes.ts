@@ -152,6 +152,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-board-envelope-',
   'dc-board-envelope-home-',
   'dc-board-odd-',
+  'dc-board-open-',
+  'dc-board-open-home-',
   'dc-board-refs-',
   'dc-bound-store-',
   'dc-brain-',

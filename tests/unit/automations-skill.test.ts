@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — sixteen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the sixteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool and app', () => {
+describe('approval surface — seventeen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the seventeen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app and boardOnly', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -350,8 +350,10 @@ describe('approval surface — sixteen hashed fields, everywhere it is claimed',
       'readTools',
       // Which vendor reads the prompt and under which envelope it runs (Track T W4).
       'tool',
-      // The app a job belongs to: which app's brief the run gets. LAST, omitted when none.
+      // The app a job belongs to: which app's brief the run gets. Omitted when none.
       'app',
+      // A board agent limited to its board (`scope: board`). LAST, omitted at the default.
+      'boardOnly',
     ]);
   });
 

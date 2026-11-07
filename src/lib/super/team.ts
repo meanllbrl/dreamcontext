@@ -261,6 +261,11 @@ export type LiveSayJob =
 /** A run's terminal events: `ok` ends a fresh run, `replied` a resumed turn. */
 const DONE = new Set(['ok', 'replied']);
 const FAILED = new Set(['failed', 'timeout', 'skipped']);
+/** A run the runner recorded but never ran to an end the thread can hold (no `started`, so no
+ *  terminal entry): over, never running. Read from the run cache. */
+const NEVER_RAN = new Set(['blocked', 'deferred', 'orphaned']);
+/** A board-only run's named denial (`board-scope.ts` `boardLimitReason`): the job's last line. */
+const BOARD_LIMIT_MARK = 'is limited to its board:';
 /** The zero-post mirror is written just after a reply settles: its id can be a moment late. */
 const MIRROR_SLACK_MS = 5_000;
 
@@ -274,7 +279,7 @@ function cachedRunStatus(contextRoot: string, job: SuperTeamJob): TeamJobStatus 
   let status: string | undefined;
   try { status = readAutomationCache(contextRoot, job.member)?.history.find((e) => e.firedAt === job.runId)?.status; } catch { status = undefined; }
   if (!status) return null;
-  return DONE.has(status) ? 'done' : FAILED.has(status) ? 'failed' : null;
+  return DONE.has(status) ? 'done' : FAILED.has(status) || NEVER_RAN.has(status) ? 'failed' : null;
 }
 
 /**
@@ -323,7 +328,9 @@ export function teamJobLive(
     // A reconciliation entry (`~r`) closes a turn whose outcome nobody knows: not a success.
     if (e.id.endsWith('~r')) return { status: 'failed', lastLine: lastLine || firstLine(e.text, 300) };
     if (DONE.has(e.event)) return { status: 'done', lastLine };
-    if (FAILED.has(e.event)) return { status: 'failed', lastLine };
+    // A board-only run that was denied a step names why: that reason is the line the Super and
+    // the member's card read, ahead of whatever the agent said before it stopped.
+    if (FAILED.has(e.event)) return { status: 'failed', lastLine: e.text.includes(BOARD_LIMIT_MARK) ? boardLimitLine(e.text) : lastLine };
   }
   if (live?.kind === 'run') return { status: live.status === 'success' ? 'done' : 'failed', lastLine };
   // A lost terminal write (or a missing ask entry) must not read running for ever: the run cache
@@ -633,7 +640,7 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}${q.kind === 'stuck' && row.lastLine.includes(BOARD_LIMIT_MARK) ? ' reason=board-limit' : ''}`];
   if (job.followUpOf && job.by !== 'super') {
     const asked = jobThread(contextRoot, job).ordered.find((e) => e.id === job.entryId)?.text ?? job.brief;
     lines.push(wrapUntrusted(vault, `The owner wrote to the member: ${asked.slice(0, TEAM_ANSWER_EXCERPT)}`));
@@ -723,6 +730,13 @@ export function closeSettledApprovals(s: SuperState, waiting: (member: string) =
     closed = true;
   }
   return closed;
+}
+
+/** The board-limit sentence out of a failure entry ("Failed after 2m: <reason> | <more>"). */
+function boardLimitLine(text: string): string {
+  const at = text.indexOf(BOARD_LIMIT_MARK);
+  const start = text.lastIndexOf(': ', at) >= 0 && text.lastIndexOf(': ', at) < at ? text.lastIndexOf(': ', at) + 2 : 0;
+  return firstLine(text.slice(start).split(' | ')[0], 400);
 }
 
 function lastAgentLine(entries: ThreadEntry[]): string {

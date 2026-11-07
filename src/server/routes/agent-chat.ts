@@ -115,7 +115,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
-import { levelPermissionArgs } from '../../lib/agents/permission.js';
+import { levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
@@ -2554,7 +2554,10 @@ export function startChatSession(
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
     // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
     // decided above from its manifest; the pane's bypass flag never reaches it.
-    ...(app ? ['--permission-mode', app.permissionMode] : envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : opts.memberCrew ? memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass) : permissionModeFor(bypass)]),
+    // A card that is not board-only runs at the owner's pane mode, never wider than the agent's
+    // autonomy level (owner 2026-11-07); a home board that only presents adds its `.env*` Read deny.
+    ...(app ? ['--permission-mode', app.permissionMode] : envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', card ? narrowerMode(permissionModeFor(bypass), card.levelMode) : assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : opts.memberCrew ? memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass) : permissionModeFor(bypass)]),
+    ...(app ? [] : envelope?.extraArgs ?? []),
     ...(app?.allowed.length ? ['--allowedTools', ...app.allowed] : []),
     ...(app?.settingSources ? ['--setting-sources', app.settingSources] : []),
     ...(app?.addDirs.flatMap((d) => ['--add-dir', d]) ?? []),
@@ -5088,7 +5091,10 @@ export function startChatSession(
     // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     // The Assistant's permission mode is its AUTONOMY setting — a pane switch must not move it.
     // An agent's mode is its autonomy level, so a pane switch must not move it either.
-    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    // A card switches only within its agent's level: never past it (owner 2026-11-07).
+    const cardCapped = !!card && (msg.mode === 'auto' || msg.mode === 'bypass')
+      && narrowerMode(permissionModeFor(msg.mode === 'bypass'), card.levelMode) !== permissionModeFor(msg.mode === 'bypass');
+    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && !cardCapped && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       // Off Bypass: its leftover asks are the owner's again, from this moment and for good
       // (a switch back never re-arms the Super's say: fail closed).

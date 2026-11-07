@@ -33,6 +33,8 @@ export interface IdentityForm {
   account: string;
   effort: '' | AgentEffort;
   whiteboard: string;
+  /** Limit it to its home board (`scope: board`). Only meaningful with a board. */
+  boardOnly: boolean;
   learning: boolean;
   /** How it works, free text. `''` is no soul (the default); a template only fills this. */
   soul: string;
@@ -44,7 +46,7 @@ const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
 
 /** A new agent's form: blank, and learning on (the store's own default for a new agent). */
 export const EMPTY_IDENTITY_FORM: IdentityForm = {
-  title: '', prompt: '', model: '', tool: 'claude', account: '', effort: '', whiteboard: '', learning: true, soul: '', autonomy: 'balanced',
+  title: '', prompt: '', model: '', tool: 'claude', account: '', effort: '', whiteboard: '', boardOnly: false, learning: true, soul: '', autonomy: 'balanced',
 };
 
 /** A new agent's form, with its home board preset when the create was asked for from a board. */
@@ -64,6 +66,7 @@ export function formFromAgent(agent: AgentSummary, prompt: string, learning: boo
     account: agent.account ?? '',
     effort: agent.effort ?? '',
     whiteboard: agent.whiteboard ?? '',
+    boardOnly: !!agent.whiteboard && agent.boardOnly === true,
     learning,
     soul,
     autonomy: agent.autonomy ?? 'balanced',
@@ -105,6 +108,10 @@ export function identityPatch(before: IdentityForm, after: IdentityForm): AgentI
   if (after.account !== before.account) patch.account = after.account || null;
   if (after.effort !== before.effort) patch.effort = after.effort || null;
   if (after.whiteboard !== before.whiteboard) patch.whiteboard = after.whiteboard || null;
+  // No board, no limit: the store drops it with the board, so only a board's own limit is sent.
+  const limitAfter = !!after.whiteboard && after.boardOnly;
+  const limitBefore = !!before.whiteboard && before.boardOnly;
+  if (limitAfter !== limitBefore && after.whiteboard) patch.boardOnly = limitAfter;
   if (after.learning !== before.learning) patch.learning = after.learning;
   if (after.soul.trim() !== before.soul.trim()) patch.soul = after.soul.trim();
   if (after.autonomy !== before.autonomy) patch.autonomy = after.autonomy;
@@ -305,7 +312,7 @@ export function AgentIdentityDialog({
       });
       return;
     }
-    create.mutate({ ...draft, whiteboard: form.whiteboard || null }, { onSuccess: finish, onError: fail });
+    create.mutate({ ...draft, whiteboard: form.whiteboard || null, ...(form.whiteboard && form.boardOnly ? { boardOnly: true } : {}) }, { onSuccess: finish, onError: fail });
   };
 
   const boardList = boards.data ?? [];
@@ -484,6 +491,26 @@ export function AgentIdentityDialog({
             </select>
           </label>}
         </div>
+
+        {!global && form.whiteboard && (
+          <label className="aid-check aid-check--top" data-board-only>
+            <input
+              type="checkbox"
+              checked={form.boardOnly}
+              onChange={(e) => set('boardOnly', e.target.checked)}
+              disabled={!ready}
+            />
+            <span>
+              {t('agents.identity.boardOnly')}
+              <span className="aid-hint"> {t(form.boardOnly
+                ? 'agents.identity.boardOnlyOn'
+                // An old board agent still held limited (its question unanswered): the screen says so.
+                : detail.data?.agent.boardQuestion && form.whiteboard === (detail.data.agent.whiteboard ?? '')
+                  ? 'agents.identity.boardOnlyHeld'
+                  : 'agents.identity.boardOnlyOff')}</span>
+            </span>
+          </label>
+        )}
 
         <label className="aid-check">
           <input

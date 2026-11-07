@@ -11,7 +11,7 @@
  *  - the owner's widening save needs `confirmWiden` (else 409 with the list);
  *  - the switch route flips `call.enabled` and leaves the approval; an agent cannot turn a member
  *    back on or share it;
- *  - a teammate's member never asks; the hash and its 16 fields are untouched.
+ *  - a teammate's member never asks; the hash and its 17 fields are untouched.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -347,12 +347,12 @@ describe('review round 1 (plan-r10 1e)', () => {
 });
 
 describe('the hash is untouched', () => {
-  it('16 reviewed fields; a stamp\'s field hashes live beside the hash, never in it', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(16);
+  it('17 reviewed fields; a stamp\'s field hashes live beside the hash, never in it', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(17);
     member();
     const entry = getApproval(projectRoot, 'gantt', undefined, 'agent')!;
     expect(entry.manifestSha256).toBe(manifestHash(target('gantt')));
     expect(Object.keys(entry.fieldHashes ?? {})).toEqual(expect.arrayContaining([...APPROVAL_DIFF_FIELDS, 'mode']));
-    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(16);
+    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(17);
   });
 });

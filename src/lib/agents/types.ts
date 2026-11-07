@@ -97,6 +97,10 @@ export interface AgentManifest {
   /** The MCP tools its light jobs may call (`read_tools:`, literal names, set by hand in the
    *  file; `light-run.ts`). Absent = none: a light job then has the file readers only. Hashed. */
   readTools?: string[];
+  /** `scope: board`: a home-board agent limited to its board (the `dontAsk` envelope). Absent
+   *  (false) = it runs under its autonomy level like any member; the board only shows its work.
+   *  Hashed only when true. Meaningless without a `whiteboard`, so a write without one drops it. */
+  boardOnly?: boolean;
   /** Runs on this tool when it is not Claude (Track T W4). Hashed through the composed target. */
   tool?: 'codex' | 'antigravity';
   /** The account it is pinned to, unhashed. Absent = chosen per run. */
@@ -133,6 +137,8 @@ export interface AgentInput {
   effort?: EffortLevel | null;
   learning?: boolean;
   whiteboard?: string | null;
+  /** `scope: board` (see `AgentManifest.boardOnly`). */
+  boardOnly?: boolean;
   photo?: string | null;
   shared?: boolean;
   autonomy?: AgentAutonomy;
@@ -143,7 +149,7 @@ export interface AgentInput {
  * settings: no verb edits those in this build, and `withRestamp` re-approves
  * only what this patch can express.
  */
-export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>> & {
+export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'boardOnly' | 'photo' | 'autonomy'>> & {
   /** null = back to Claude. Changing it leaves the agent awaiting the owner's approval. */
   tool?: 'codex' | 'antigravity' | null;
   account?: string | null;

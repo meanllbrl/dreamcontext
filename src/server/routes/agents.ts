@@ -73,6 +73,7 @@ import {
   type AutomationManifest,
   type EffortLevel,
 } from '../../lib/automations/types.js';
+import { agentBoardView, answerBoardScope } from '../../lib/agents/board-question.js';
 import {
   isPreviewTruncation,
   receivePhoto,
@@ -112,6 +113,13 @@ export interface AgentSummary {
   tool: 'claude' | 'codex' | 'antigravity';
   account: string | null;
   whiteboard: string | null;
+  /** `scope: board`: limited to its home board by its own file. */
+  boardOnly: boolean;
+  /** Limited to its board right now (its `scope: board`, or held from before boards stopped
+   *  limiting until the owner answers `boardQuestion`). */
+  boardLimited: boolean;
+  /** The one question this older board agent owes the owner: should it still be limited? */
+  boardQuestion: boolean;
   shared: boolean;
   /** `reports_to` as written (the dashboard's tree applies the read rules). Unhashed. */
   reportsTo: string | null;
@@ -210,6 +218,8 @@ export function summarizeAgent(
     tool: target.tool ?? 'claude',
     account: target.account ?? null,
     whiteboard: target.whiteboard ?? null,
+    boardOnly: target.boardOnly === true,
+    ...boardFacts(contextRoot, target, readOnly, home),
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
@@ -430,6 +440,7 @@ export async function handleAgentsCreate(
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
       whiteboard: readWhiteboard(body.whiteboard) ?? null,
+      ...(body.boardOnly === true ? { boardOnly: true } : {}),
       ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
     };
     if (body.scope === 'global') {
@@ -575,6 +586,7 @@ export async function handleAgentsUpdate(
     }
     const whiteboard = readWhiteboard(body.whiteboard);
     if (whiteboard !== undefined) patch.whiteboard = whiteboard;
+    if (typeof body.boardOnly === 'boolean') patch.boardOnly = body.boardOnly;
     if (typeof body.learning === 'boolean') patch.learning = body.learning;
     // No preview-truncation guard: the dialog always loads the full soul from
     // GET detail, and the summary's excerpt is never a form source. '' clears.
@@ -800,6 +812,39 @@ export async function handleAgentsApprove(
   } catch (err) {
     sendWriteError(res, err, 'approve_failed', 'Failed to approve the agent.');
   }
+}
+
+/**
+ * POST /api/agents/:slug/board-scope {keep: boolean} — the owner's answer to "Should <title> still
+ * be limited to its board?" (`agents/board-question.ts`). Owner page only, like approve: keep writes
+ * `scope: board` by his own edit, lift opens its held approvals on this Mac.
+ */
+export async function handleAgentsBoardScope(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'answers whether an agent stays on its board')) return;
+  try {
+    const body = (await parseJsonBody(req)) ?? {};
+    if (typeof body.keep !== 'boolean') {
+      sendError(res, 400, 'bad_board_scope', 'Body must be { keep: true | false }.');
+      return;
+    }
+    answerBoardScope(contextRoot, params.slug, body.keep);
+    settleApprovalQuestions(contextRoot, params.slug);
+    sendSummary(res, contextRoot, params.slug);
+  } catch (err) {
+    sendWriteError(res, err, 'board_scope_failed', 'Failed to record the answer.');
+  }
+}
+
+/** The board facts of one member for the AI Team: limited now, and the question it owes. A
+ *  teammate's read-only member owes this Mac nothing. */
+function boardFacts(contextRoot: string, target: AutomationManifest, readOnly: boolean, home?: string): { boardLimited: boolean; boardQuestion: boolean } {
+  const view = agentBoardView(contextRoot, target.slug, target, home);
+  return { boardLimited: view.limited, boardQuestion: !readOnly && view.question };
 }
 
 /** GET /api/agents/:slug/amendments — what the Super Agent changed in this member, newest first,

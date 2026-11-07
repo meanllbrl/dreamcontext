@@ -91,7 +91,9 @@ import {
 } from './runner.js';
 import { LIGHT_JOB_BLOCK, lightRunArgs } from './light-run.js';
 import {
+  boardLimitReason,
   boardScopeArgs,
+  openBoardArgs,
   prepareScopePaths,
   resolveSpawnScope,
   scopeEnv,
@@ -514,10 +516,17 @@ function boardParts(turn: TurnBoardContext): string[] {
   return [turn.board, turn.refs].filter(Boolean).flatMap((block) => ['', block]);
 }
 
-/** A resume's permission envelope: null for an ordinary agent. */
+/** A resume's board-only envelope: null for any other agent. `held`: limited only until the
+ *  owner answers the old-agent question (`board-scope.ts` `boardLimited`). */
 interface ResumeScope {
   scope: BoardScope;
   paths: ScopePaths;
+  held: boolean;
+}
+
+/** A board-only resume that Claude Code denied a step: the named reason, else null. */
+function boardDenial(m: AutomationManifest, resume: ResumeScope | null, denials: number): string | null {
+  return resume && denials > 0 ? boardLimitReason(m.agentTitle || m.title, m.agent || m.slug, resume.held) : null;
 }
 
 /**
@@ -552,17 +561,19 @@ function resolveResumeScope(
   opts: VerdictOptions,
   /** The target the asking run recorded (`AutomationQuestion.target`). */
   recorded?: 'agent',
-): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null } | { ok: false; reason: string } {
+): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null; home: BoardScope | null } | { ok: false; reason: string } {
   const manifest = resumeTarget(contextRoot, slug, recorded);
   if (!manifest) return { ok: false, reason: `no such automation: ${slug}` };
   // Strict 'run' use: a resume EXECUTES the target (an agent's call target included),
   // so a binding's identity-only approval never lets it resume.
   const scoped = resolveSpawnScope(contextRoot, manifest, opts.home, 'run');
   if (!scoped.ok) return { ok: false, reason: scoped.reason };
-  if (!scoped.scope) return { ok: true, manifest, resume: null };
+  // The home board as a presentation surface: what the turn shows, whatever the envelope.
+  const home = scoped.homeBoard ? { board: scoped.homeBoard, self: manifest.slug } : null;
+  if (!scoped.scope) return { ok: true, manifest, resume: null, home };
   const prepared = prepareScopePaths(contextRoot, scoped.scope);
   if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
-  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths } };
+  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths, held: scoped.held }, home };
 }
 
 // ─── Questions ───────────────────────────────────────────────────────────────
@@ -779,7 +790,7 @@ export async function resumeWithAnswer(
     resume = envelope.resume;
     // References expand fresh for the prompt; the ANSWER on record is the display text, so
     // no surface ever shows a raw `dcref:` token.
-    const { turn: boardTurn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    const { turn: boardTurn, display } = buildBoardTurn(contextRoot, resume?.scope ?? envelope.home, opts.board, text);
     const answerText = display ?? text;
 
     const claim = claimQuestion(contextRoot, question, answerText, via, nowFn().toISOString());
@@ -819,7 +830,7 @@ export async function resumeWithAnswer(
       : { ...opts, env: { DREAMCONTEXT_AUTOMATION_SLUG: question.slug, DREAMCONTEXT_AUTOMATION_RUN: question.runFiredAt } };
     const execution = await spawnSessionResume(
       contextRoot, envelope.manifest, question.runFiredAt, sessionId,
-      buildAnswerPreamble(question, answerText, boardTurn), spawnOpts, resume, turn.slot,
+      buildAnswerPreamble(question, answerText, boardTurn), spawnOpts, resume, turn.slot, !resume && !!envelope.home,
     );
 
     if (!execution.spawned) {
@@ -859,6 +870,10 @@ export async function resumeWithAnswer(
       };
     }
 
+    const denied = boardDenial(envelope.manifest, resume, parsed.permissionDenials);
+    if (denied) {
+      return { question: noteQuestionResolution(contextRoot, claimed, { error: denied }), status: 'failed', error: denied, result: null };
+    }
     const note = (parsed.result ?? '').trim();
     return {
       question: noteQuestionResolution(contextRoot, claimed, { note: note.slice(0, REVIEW_BODY_MAX_CHARS) || null, error: null }),
@@ -913,6 +928,9 @@ function spawnSessionResume(
   resume: ResumeScope | null = null,
   /** The conversation's slot: its sidecar is this turn's own. */
   slot?: string,
+  /** A home-board agent that is NOT board-only: a board-less member's envelope, `.env*` closed
+   *  to Read (`openBoardArgs`). */
+  openHome = false,
 ): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
   // Never a task step's session, whoever asks (C1-14): only its host resumes it.
@@ -939,7 +957,7 @@ function spawnSessionResume(
   // AFTER the hint filter, and built from the scope (manifest + approval entry), never from
   // the caller: nothing in `opts.env` can name a board, a self or a scratch folder.
   const scopeVars = resume ? scopeEnv(resume.scope, resume.paths) : {};
-  const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
+  const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : openHome ? openBoardArgs() : null;
   // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
   // it leaves the accounts they keep for themself alone; the threshold does not gate it.
   if (m.tool === 'codex' || m.tool === 'antigravity') return spawnCodexResume(m.tool);
@@ -1008,7 +1026,8 @@ function spawnSessionResume(
       // dashboard process happened to be started under. The hints spread after it cannot
       // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
       env: { ...accountEnvFor(account.configDir, opts.home), ...hints, ...scopeVars },
-      sharedMcpHome: scopeArgs && !opts.override?.light ? undefined : opts.home ?? homedir(),
+      // Only a board-only envelope goes without MCP: a home board that does not limit keeps it.
+      sharedMcpHome: resume && !opts.override?.light ? undefined : opts.home ?? homedir(),
       spawnImpl: opts.spawnImpl,
       killImpl: opts.killImpl,
       log: opts.log,
@@ -1224,7 +1243,7 @@ export async function resumeWithMessage(
     const thread = (opts.surface ?? 'telegram') === 'thread';
     // A thread reply always gets a nonce (its fence follows the agent's own notes); a
     // Telegram message only in a board turn, so an ordinary one stays exactly as it was.
-    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? envelope.home, opts.board, text);
     const messageText = display ?? text;
     const execution = await spawnSessionResume(
       contextRoot,
@@ -1242,6 +1261,7 @@ export async function resumeWithMessage(
       opts,
       resume,
       held.slot,
+      !resume && !!envelope.home,
     );
     if (!execution.spawned) {
       return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null, costUsd: null };
@@ -1263,6 +1283,8 @@ export async function resumeWithMessage(
       // unparseable one has none to give.
       return { status: 'failed', error: detail, result: null, costUsd: parsed?.costUsd ?? null };
     }
+    const denied = boardDenial(envelope.manifest, resume, parsed.permissionDenials);
+    if (denied) return { status: 'failed', error: denied, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
     return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
   } finally {
     resume?.paths.dispose();

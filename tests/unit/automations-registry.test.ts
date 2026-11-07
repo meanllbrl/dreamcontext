@@ -344,6 +344,7 @@ describe('approvalFields', () => {
       readTools: '',
       tool: null,
       app: '',
+      boardOnly: false,
     });
   });
 
@@ -360,12 +361,12 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul/autonomy/readTools/tool, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul/autonomy/readTools/tool/app/boardOnly, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
-      'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app',
+      'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(16);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(17);
   });
 
   it('keeps `flow`, `whiteboard`, `job`, `soul`, `autonomy`, `readTools` then `tool` LAST — the position is what preserves every legacy hash', () => {
@@ -373,7 +374,7 @@ describe('APPROVAL_DIFF_FIELDS', () => {
     // the end of its literal, and JSON.stringify emits keys in insertion order.
     // Any other position would shift the serialization of the fields around it
     // and re-block every already-approved automation on upgrade.
-    expect(APPROVAL_DIFF_FIELDS.slice(-8)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app']);
+    expect(APPROVAL_DIFF_FIELDS.slice(-9)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly']);
   });
 });
 

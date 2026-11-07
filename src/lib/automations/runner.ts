@@ -53,6 +53,9 @@ import {
   resolveSpawnScope,
   scopeEnv,
   scopeRefusal,
+  boardLimitReason,
+  openBoardArgs,
+  withOpenBoardDenies,
   type BoardScope,
   type ScopePaths,
 } from './board-scope.js';
@@ -243,8 +246,10 @@ export function buildPreamble(
    *  machine. Optional so the many callers (and tests) written before the
    *  channel line existed keep working unchanged. */
   telegramChatId?: string | null,
-  /** Set for a home-board agent: adds the one scope line and pins the attachment folder. */
+  /** Set for a board-only agent: adds the one scope line and pins the attachment folder. */
   scope?: BoardScope | null,
+  /** Set for a home-board agent that is NOT board-only: one line naming where its work shows. */
+  home?: BoardScope | null,
 ): string {
   return (
     `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
@@ -252,7 +257,7 @@ export function buildPreamble(
     `Fire time ${fireAt.toISOString()}. ` +
     buildFireSlotLine(m, fireAt) +
     'Brain lives in `_dream_context/`; use the dreamcontext CLI as needed. ' +
-    (scope ? buildScopeLine(scope) : '') +
+    (scope ? buildScopeLine(scope) : home ? buildHomeBoardLine(home) : '') +
     `OUTPUT CONTRACT: your final message is saved verbatim to ${outputPath} — ` +
     'write one complete, self-contained markdown document, with no meta-commentary. ' +
     // The desktop notification is, for most runs, the ONLY thing the user
@@ -332,6 +337,20 @@ export function buildScopeLine(scope: BoardScope): string {
     `then \`dreamcontext whiteboard draw ${scope.board} --spec <that file> --tag <tag>\` and render it to look. ` +
     'A note is a caption of a few lines; a number is a live widget (insight, lab-card, task, todo), never drawn. ' +
     'Each Bash call is ONE `dreamcontext` command: no `;`, `&&`, pipes or `cat` (read files with Read), or it is refused. '
+  );
+}
+
+/**
+ * The one line a home-board agent that is NOT board-only gets: where its work shows. The board is
+ * a presentation surface (owner 2026-11-07): this line names no limit, since there is none beyond
+ * its autonomy level.
+ */
+export function buildHomeBoardLine(home: BoardScope): string {
+  return (
+    `YOUR BOARD: your work shows on your whiteboard "${home.board}"; put what the owner should see there ` +
+    `(\`dreamcontext whiteboard add|update|draw ${home.board} …\`, \`dreamcontext whiteboard kit\` for the drawing types). ` +
+    'It is where you show your work, not a limit on it: you work under your autonomy level like any member. ' +
+    'Never read a `.env` file with the Read tool; a script you run may load it itself. '
   );
 }
 
@@ -601,7 +620,7 @@ export function composePrompt(
   ask?: string | null,
   /** A board turn's material (see {@link buildBoardTurn}), with the home-board scope when
    *  the agent has one. Absent ⇒ the prompt is exactly what it was before boards existed. */
-  board?: (TurnBoardContext & { scope?: BoardScope | null }) | null,
+  board?: (TurnBoardContext & { scope?: BoardScope | null; home?: BoardScope | null }) | null,
   /** A task assigned to this agent (see {@link buildTaskAssignmentBlock}). Absent ⇒
    *  the prompt is exactly what it was before task assignment existed. */
   task?: TaskRef | null,
@@ -616,7 +635,7 @@ export function composePrompt(
   app?: AppRunBrief | null,
 ): string {
   const parts = [
-    buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null), '', m.prompt.trim(),
+    buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null, board?.scope ? null : board?.home ?? null), '', m.prompt.trim(),
   ];
   // Who you are, then how you work, then this job.
   const soul = buildSoulBlock(m);
@@ -2535,6 +2554,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // its board does not run at all: the refusal is the record, with the reason named.
     const scoped = resolveSpawnScope(contextRoot, manifest, home);
     let scope: BoardScope | null = null;
+    // The home board as a presentation surface: what every turn shows, whatever the envelope.
+    const homeView: BoardScope | null = scoped.ok && scoped.homeBoard ? { board: scoped.homeBoard, self: manifest.slug } : null;
+    const scopeHeld = scoped.ok && scoped.held;
     let scopeFailure: string | null = scoped.ok ? null : scoped.reason;
     if (scoped.ok && scoped.scope) {
       scope = scoped.scope;
@@ -2590,13 +2612,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       });
     }
     const scopeArgs = scope && scopePaths ? boardScopeArgs(scope, scopePaths) : null;
+    // A home board that does not limit: a board-less member's envelope, `.env*` closed to Read.
+    // A task step keeps its level's own envelope (M4), with `.env*` closed to Read as well.
+    const homeArgs = !scope && homeView && !taskStep ? openBoardArgs() : null;
     const scopeVars = scope && scopePaths ? scopeEnv(scope, scopePaths) : {};
-    const { turn, display: askText } = buildBoardTurn(contextRoot, scope, opts.board, opts.ask ?? null);
+    const { turn, display: askText } = buildBoardTurn(contextRoot, scope ?? homeView, opts.board, opts.ask ?? null);
     const prompt = composePrompt(
       manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null, askText,
       // A home agent's turn is never null: its board block is always there, even as the one
       // sentence that says the board could not be read.
-      turn ? { ...turn, scope } : null,
+      turn ? { ...turn, scope, home: scope ? null : homeView } : null,
       opts.task ?? null,
       // What the agent and the owner said lately, private agents only. This fire's own
       // entries (the ask that started it) are already in the prompt.
@@ -2615,7 +2640,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // A task step has no timeout of its own (its host stops a silent run); its budget is the host's.
     const timeoutMs = taskStep ? taskStep.timeoutMs : manifest.timeoutMinutes * 60_000;
     // A task step runs under its level's envelope (M4) unless a home board narrows it further.
-    const permissionArgs = scopeArgs ?? (taskStep ? [...taskStep.permissionArgs] : null);
+    const permissionArgs = scopeArgs ?? (taskStep
+      ? (!scope && homeView ? withOpenBoardDenies(taskStep.permissionArgs) : [...taskStep.permissionArgs])
+      : homeArgs);
     const runSurface = opts.override?.light ? 'light' : opts.target === 'agent' ? 'agent' : 'automation';
     const codexArgs = (accountId: string, resume: string | null, text: string): string[] => {
       const { model, effort } = spawnModel(manifest, opts.override);
@@ -2630,7 +2657,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       ? taskStep.resume
         ? ['--resume', assertNotAppChat(taskStep.sessionId), ...buildClaudeArgs(manifest, sanitizeAutomationPrompt(taskStep.resumePrompt ?? prompt), permissionArgs, opts.override)]
         : [...buildClaudeArgs(manifest, prompt, permissionArgs, opts.override), '--session-id', taskStep.sessionId]
-      : buildClaudeArgs(manifest, prompt, scopeArgs, opts.override);
+      : buildClaudeArgs(manifest, prompt, scopeArgs ?? homeArgs, opts.override);
     // Per-automation account PINNING stays out of scope by owner decision (no manifest field,
     // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
     // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
@@ -3085,6 +3112,15 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     if (flow.warnings.length > 0) {
       const note = flow.warnings.join(' | ');
       error = error ? `${note} | ${error}` : note;
+    }
+
+    // A BOARD-ONLY run that Claude Code denied a step ended on that denial: it is a failure with
+    // a named reason (what is off, how to lift it), never a quiet success the owner and the Super
+    // Agent read as done. A run that stopped to ask keeps its question.
+    if (scope && status === 'ok' && !reviewCardId && (claudeResult?.permissionDenials ?? 0) > 0) {
+      status = 'failed';
+      const named = boardLimitReason(manifest.agentTitle || manifest.title, manifest.agent || slug, scopeHeld);
+      error = error ? `${named} | ${error}` : named;
     }
 
     return await finalize({

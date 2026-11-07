@@ -500,6 +500,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/enabled': allow('the owner turns this project\'s member on or off (the Ekip list switch), as on the laptop; it never re-approves'),
   'POST /api/agents/:slug/delete': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/approve': allow('the owner approves this project\'s agent, as on the laptop'),
+  'POST /api/agents/:slug/board-scope': allow('the owner answers whether an old board agent stays limited to its board, as on the laptop; a session cannot call it'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
   'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
   'GET /api/agents/:slug/history': allow('read: one page of an agent\'s runs and talks (the stage pane); side-effect free beyond pruning its own machine-local index of glances'),

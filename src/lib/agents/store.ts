@@ -162,6 +162,9 @@ export function readAgentFile(filePath: string, scope: AgentScope = 'project'): 
     learning: data.learning === true,
     pattern: extractSection(content, PATTERN_HEADING),
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
+    // `scope: board` only, and only beside a home board: anything else reads as unset. It is hashed,
+    // so a hand edit that drops or mangles it blocks the agent until it is approved again.
+    ...(isBoardScopeValue(data.scope) && typeof data.whiteboard === 'string' && data.whiteboard.trim() ? { boardOnly: true } : {}),
     shared: data.shared === true,
     reportsTo: typeof data.reports_to === 'string' && isSafeAutomationSlug(data.reports_to.trim()) ? data.reports_to.trim() : null,
     team: readTeamLabel(data.team),
@@ -363,14 +366,19 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   }
 }
 
-const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy', 'tool', 'account']);
+const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'boardOnly', 'photo', 'autonomy', 'tool', 'account']);
+
+/** The frontmatter value that limits a home-board agent to its board: `scope: board`. */
+export function isBoardScopeValue(v: unknown): boolean {
+  return typeof v === 'string' && v.trim().toLowerCase() === 'board';
+}
 
 /** An identity patch at runtime too: a caller passing call settings (or anything
  *  else) through an untyped surface is refused, never silently dropped. */
 function assertIdentityPatch(patch: AgentIdentityPatch): void {
   for (const key of Object.keys(patch)) {
     if (!IDENTITY_PATCH_KEYS.has(key)) {
-      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo, autonomy, tool and account.`);
+      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, board limit, photo, autonomy, tool and account.`);
     }
   }
 }
@@ -379,9 +387,13 @@ function assertIdentityPatch(patch: AgentIdentityPatch): void {
 function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): AgentManifest {
   const tool = patch.tool === undefined ? agent.tool : patch.tool ?? undefined;
   const account = patch.account === undefined ? agent.account : patch.account ?? undefined;
-  const { tool: _t, account: _a, ...rest } = agent;
+  const { tool: _t, account: _a, boardOnly: _b, ...rest } = agent;
+  const whiteboard = patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard;
+  // Limited to a board only while it has one: removing the board removes the limit with it.
+  const boardOnly = !!whiteboard && (patch.boardOnly === undefined ? agent.boardOnly === true : patch.boardOnly === true);
   return {
     ...rest,
+    ...(boardOnly ? { boardOnly: true } : {}),
     ...(tool ? { tool } : {}),
     ...(tool && account ? { account } : {}),
     title: patch.title === undefined ? agent.title : patch.title.trim(),
@@ -392,7 +404,7 @@ function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): Ag
     model: patch.model === undefined ? agent.model : patch.model,
     effort: patch.effort === undefined ? agent.effort : patch.effort,
     learning: patch.learning === undefined ? agent.learning : patch.learning,
-    whiteboard: patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard,
+    whiteboard,
     photo: patch.photo === undefined ? agent.photo : patch.photo,
     autonomy: patch.autonomy === undefined ? agent.autonomy : parseAutonomy(patch.autonomy),
   };
@@ -432,6 +444,8 @@ function identityFrontmatter(a: AgentManifest): Record<string, unknown> {
     ...(a.effort ? { effort: a.effort } : {}),
     ...(a.learning ? { learning: true } : {}),
     ...(a.whiteboard ? { whiteboard: a.whiteboard } : {}),
+    // Only when set (and only beside a board), so every other agent's file is unchanged.
+    ...(a.whiteboard && a.boardOnly ? { scope: 'board' } : {}),
     // Only a level other than the default is written, so an ordinary agent's file is unchanged.
     ...(a.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: a.autonomy } : {}),
     // Only off Claude, so an ordinary agent's file is unchanged.
@@ -463,10 +477,12 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     // ON for anything created from now on, exactly as a new automation.
     learning: input.learning ?? true,
     whiteboard: input.whiteboard ?? null,
+    ...(input.whiteboard && input.boardOnly ? { boardOnly: true } : {}),
     photo: input.photo ?? null,
     shared: input.shared === true,
     autonomy: parseAutonomy(input.autonomy),
   };
+  if (input.boardOnly && !input.whiteboard) throw new AutomationError('Only an agent with a home board can be limited to it: give it --whiteboard <board> too.');
   validateIdentity(contextRoot, draft);
   const path = agentPath(contextRoot, slug);
   if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your global agents.`);
@@ -562,6 +578,9 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (patch.boardOnly === true && !(patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard)) {
+    throw new AutomationError(`"${slug}" has no home board to be limited to: give it one with --whiteboard <board> first.`);
+  }
   if (agent.scope === 'global' && (patch.photo || patch.whiteboard)) {
     throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
   }
@@ -582,6 +601,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     if (patch.effort !== undefined) fields.effort = next.effort;
     if (patch.learning !== undefined) fields.learning = next.learning;
     if (patch.whiteboard !== undefined) fields.whiteboard = next.whiteboard;
+    if (patch.whiteboard !== undefined || patch.boardOnly !== undefined) fields.scope = next.boardOnly ? 'board' : null;
     if (patch.photo !== undefined) fields.photo = next.photo;
     if (patch.tool !== undefined) fields.tool = next.tool ?? null;
     if (patch.tool !== undefined || patch.account !== undefined) fields.account = next.account ?? null;
@@ -590,7 +610,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     assertRegularFile(agent.path);
     const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
     const nextData: Record<string, unknown> = { ...data, title: next.title };
-    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy', 'tool', 'account']) delete nextData[key];
+    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'scope', 'autonomy', 'tool', 'account']) delete nextData[key];
     rewriteManifestText(agent.path, matter.stringify(content, { ...nextData, ...identityFrontmatter(next) }));
   }
   if (patch.prompt !== undefined) {
@@ -999,8 +1019,11 @@ export function restampTargets(contextRoot: string, agentSlug: string): { kind: 
 /** `target` with the identity fields of `agent` — what it hashes to once the
  *  agent edit lands. Every identity field the hash covers comes from the agent. */
 function withIdentity(target: AutomationManifest, agent: AgentManifest): AutomationManifest {
+  // The board limit is identity too: carried only when set, dropped when the agent no longer has it.
+  const { boardOnly: _limit, ...rest } = target;
   return {
-    ...target,
+    ...rest,
+    ...(agent.whiteboard && agent.boardOnly ? { boardOnly: true } : {}),
     prompt: agent.prompt,
     soul: agent.soul,
     model: agent.model,
