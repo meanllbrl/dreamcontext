@@ -711,7 +711,7 @@ Teammates just `git clone` the project and run the same two steps (token + `brai
 
 - **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`, or the dashboard Settings → Brain toggle.
 - **Modes:** `full-repo` (cloud sync ON — whole project → its own `origin`, on the current branch; needs a GitHub `origin`) · `in-tree` (cloud sync OFF — commit-only, **never** auto-pushes; the safe default). Both run the scrub gate. Full detail + cross-OS setup → [brain-sync.md](brain-sync.md).
-- **Safety rails (always on):** a **scrub gate** blocks secrets / absolute local paths before every commit and push; the project-root `.gitignore` is force-written with the machine-local brain excludes + secrets before every whole-project stage; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed.
+- **Safety rails (always on):** a **scrub gate** blocks secrets / absolute local paths before every commit and push; the project-root `.gitignore` is force-written with the machine-local brain excludes + secrets before every whole-project stage; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed; the Super Agent's record and every session file (sleep state, session history and digests, peer mail) leave the index in every sync even when an older install committed them (any letter case), a push whose commits still carry one waits with a note, and a pull that touches one keeps this Mac's copy and never writes the other Mac's (they hold what this Mac's sessions said, the Super's Waiting on you among it).
 
 ### From the desktop app
 
