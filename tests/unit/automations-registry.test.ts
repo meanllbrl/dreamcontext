@@ -367,7 +367,7 @@ describe('APPROVAL_DIFF_FIELDS', () => {
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
       'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(17);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(18);
   });
 
   it('keeps `flow`, `whiteboard`, `job`, `soul`, `autonomy`, `readTools` then `tool` LAST — the position is what preserves every legacy hash', () => {

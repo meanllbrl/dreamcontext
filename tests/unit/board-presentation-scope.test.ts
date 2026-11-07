@@ -373,12 +373,13 @@ describe('editing the home board and the limit', () => {
     expect(checkApproval(projectRoot, t, home, 'run').approved).toBe(true);
   });
 
-  it('a session lifting the limit waits for the owner\'s card; adding it narrows and stamps', () => {
+  it('a session lifting the limit is a local write: approved as written, the trace names the widening', () => {
     createAgent(contextRoot, { slug: 'turing', title: 'Turing', prompt: 'Funnel QA.', whiteboard: board, boardOnly: true }, { approve: { now: NOW, home } });
     const lift = amendMember(contextRoot, { member: 'turing', by: 'session', why: 'lift', extra: { boardOnly: false } }, { home, now: NOW });
     expect(lift.widened).toContain('boardOnly');
-    expect(lift.waits).toBe(true);
-    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'turing', 'agent')!, home, 'run').approved).toBe(false);
+    // Since onay-yalniz-disaridan (merged in 0.41.5) a change made on this Mac stamps, widening or not.
+    expect(lift.waits).toBeUndefined();
+    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'turing', 'agent')!, home, 'run').approved).toBe(true);
   });
 
   it('refuses a limit without a board', () => {
