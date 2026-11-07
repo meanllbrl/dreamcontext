@@ -15,12 +15,14 @@ import { isPidAlive as defaultIsPidAlive } from '../lib/auto-sleep.js';
 import {
   PsError,
   classifyOrphanGroups,
+  leaderBlocks,
   ledgerProgram,
   runPs as defaultRunPs,
   takeSnapshot,
   type OrphanGroup,
   type RunPs,
 } from '../lib/orphan-processes.js';
+import { superWorktreeRoot } from '../lib/super/store.js';
 
 export const ORPHAN_SWEEP_INTERVAL_MS = 5 * 60_000;
 export const ORPHAN_GRACE_MS = 30 * 60_000;
@@ -43,6 +45,8 @@ export interface OrphanSweepDeps {
   selfEnv?: NodeJS.ProcessEnv;
   uid?: number;
   intervalMs?: number;
+  /** Where job worktrees live: a dashboard running a build from under it is a job's verify server. */
+  worktreeRoot?: string;
 }
 
 interface Entry {
@@ -72,6 +76,7 @@ export function createOrphanSweeper(deps: OrphanSweepDeps = {}): OrphanSweeper {
   const selfEnv = deps.selfEnv ?? process.env;
   const uid = deps.uid ?? process.getuid?.() ?? -1;
   const intervalMs = deps.intervalMs ?? ORPHAN_SWEEP_INTERVAL_MS;
+  const worktreeRoot = deps.worktreeRoot ?? superWorktreeRoot();
 
   let entries = new Map<number, Entry>();
   let lastSuccessAt: number | null = null;
@@ -100,9 +105,9 @@ export function createOrphanSweeper(deps: OrphanSweepDeps = {}): OrphanSweeper {
   }
 
   /** True when a signal was ATTEMPTED (sent, ESRCH, or refused by the kernel) — the phase advances. */
-  function signalGroup(group: OrphanGroup, leaderAlive: boolean, signal: NodeJS.Signals): boolean {
+  function signalGroup(group: OrphanGroup, leaderBlocked: boolean, signal: NodeJS.Signals): boolean {
     const { pgid } = group;
-    if (stopped || !Number.isInteger(pgid) || pgid <= 1 || leaderAlive) return false;
+    if (stopped || !Number.isInteger(pgid) || pgid <= 1 || leaderBlocked) return false;
     if (!appendLedger(group, signal)) return false;
     if (stopped) return false;
     try {
@@ -141,7 +146,7 @@ export function createOrphanSweeper(deps: OrphanSweepDeps = {}): OrphanSweeper {
     }
     lastSuccessAt = t;
 
-    const { candidates, paused } = classifyOrphanGroups(snapshot, selfPid, selfEnv);
+    const { candidates, paused } = classifyOrphanGroups(snapshot, selfPid, selfEnv, { worktreeRoot });
     const next = new Map<number, Entry>();
     for (const group of candidates) {
       const keys = group.members.map(memberKey);
@@ -161,15 +166,16 @@ export function createOrphanSweeper(deps: OrphanSweepDeps = {}): OrphanSweeper {
 
     for (const group of candidates) {
       const entry = entries.get(group.pgid)!;
-      const leaderAlive = snapshot.rows.has(group.pgid);
+      // A live leader is signalled only when launchd holds it (the same rule that made it a candidate).
+      const leaderBlocked = leaderBlocks(snapshot.rows, group.pgid);
       if (entry.backoffUntil !== undefined) {
         if (t < entry.backoffUntil) continue;
         entry.backoffUntil = undefined;
         entry.termAt = undefined;
       }
       if (entry.termAt === undefined) {
-        if (entry.observedMs >= ORPHAN_GRACE_MS && signalGroup(group, leaderAlive, 'SIGTERM')) entry.termAt = t;
-      } else if (signalGroup(group, leaderAlive, 'SIGKILL')) {
+        if (entry.observedMs >= ORPHAN_GRACE_MS && signalGroup(group, leaderBlocked, 'SIGTERM')) entry.termAt = t;
+      } else if (signalGroup(group, leaderBlocked, 'SIGKILL')) {
         entry.backoffUntil = t + ORPHAN_KILL_BACKOFF_MS;
       }
     }
