@@ -1053,7 +1053,7 @@ export function planStage(
     const free = planStage(containers, view, stage, still);
     const v = VARIANT.get(free);
     const seats = SEATS.get(free);
-    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band, seats?.demoted, seats?.compact);
+    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band, seats?.demoted, seats?.compact, seats?.agendaHead);
   }
   // A card the owner placed and sized is drawn at his size wherever it fits (owner 2026-10-29,
   // "alan var mı?": a 2x2 he grew into an empty column was drawn smaller, so refused, for a column
@@ -1150,7 +1150,7 @@ function planStageOnce(
 }
 
 /** The sized cards a float plan drew in Others or at 1x1 after its first pass (planWith). */
-const SEATS = new WeakMap<StagePlan, { demoted: ReadonlySet<string>; compact: ReadonlySet<string> }>();
+const SEATS = new WeakMap<StagePlan, { demoted: ReadonlySet<string>; compact: ReadonlySet<string>; agendaHead: boolean }>();
 /** Which of planStage's candidates a plan is (its internal options and its bottom band), so a
  *  running drag is held inside the plan the stage drew before the pickup. */
 const VARIANT = new WeakMap<StagePlan, { band: boolean; opts: Pick<PlanOptions, 'agendaCap' | 'ownerAside'> }>();
@@ -1167,6 +1167,8 @@ function planWith(
   /** The same for the agenda or a live job, which never give way for their size: planned again
    *  at 1x1 instead. */
   compact: ReadonlySet<string> = new Set(),
+  /** While a card is held: the minimised agenda stood in the head before the pickup (it stays there). */
+  agendaHead = false,
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
@@ -1646,6 +1648,9 @@ function planWith(
     }
     if (!others.length) inHead.others = false;
   }
+  // A pickup never moves the agenda (end review 2026-11-07): picking up the one waiting job kept
+  // the head's Agenda button only if the pass below still found a job to wait.
+  if (drag && agendaHead && opts.agendaPill) inHead.agenda = true;
   const liveOver = overflowing();
   if (liveOver.length) {
     const rest = others.length - liveOver.length;
@@ -1663,7 +1668,7 @@ function planWith(
       // The minimised agenda's pill holds the corner: the more pill stands right after it.
       const x = f.agendaPill.x + f.agendaPill.width + GAP;
       rect = { x, y: f.othersRect.y, width: Math.min(OTHERS_W, leftRoom - f.agendaPill.width - GAP), height: f.othersRect.height };
-    } else if (opts.agendaPill && !inHead.agenda && pillFits) {
+    } else if (opts.agendaPill && pillFits) {
       // No room for both (owner 2026-11-07): the minimised agenda moves to the head's Agenda
       // button, as on a narrow window, and the waiting jobs take its corner.
       inHead.agenda = true;
@@ -1683,7 +1688,7 @@ function planWith(
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
     ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
   const plan = finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
-  SEATS.set(plan, { demoted, compact });
+  SEATS.set(plan, { demoted, compact, agendaHead: plan.agendaInHead });
   if (more && more.rect.x < f.othersRect.x && more.rect.y === plan.dock.y) {
     plan.dock = { ...plan.dock, width: Math.max(0, Math.min(plan.dock.width, more.rect.x - STAGE.GAP - plan.dock.x)) };
   }

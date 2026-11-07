@@ -322,6 +322,20 @@ describe('end review of 32c18385: a live job never lands in Others nor waits whi
     }
   });
 
+  it('picking up the one waiting job keeps the agenda in the head (end review 2026-11-07)', () => {
+    const jobs = Array.from({ length: 7 }, (_, i) => job(i, i === 1 ? { pos: { x: 0.9, y: 0.1 } } : undefined));
+    const cs = [agenda({ min: true } as Partial<SuperContainer>), jobs[0], jobs[1], web({ sizeBy: 'owner' }), ...jobs.slice(2)];
+    const s = { width: 1380, height: 814 };
+    const still = planStage(items(cs), FLOAT, s, { agendaPill: 'agenda-1' });
+    expect(still.agendaInHead).toBe(true);
+    expect(still.more?.ids).toEqual(['chat-j5']);
+    for (const rect of [still.more!.rect, { x: 700, y: 300, width: STAGE.TILE, height: STAGE.TILE }]) {
+      const held = planStage(items(cs), FLOAT, s, { agendaPill: 'agenda-1', dragging: { id: 'chat-j5', rect } });
+      expect(held.agendaInHead).toBe(true);
+      expect(held.centre).toEqual(still.centre);
+    }
+  });
+
   it('a sized block cutting a row of small cards: the job takes the free tile, the pill stays empty', () => {
     const cs = [agenda(), job(0), job(1), sizedWeb, job(2), job(3)];
     const p = planStage(items(cs), FLOAT, S);
