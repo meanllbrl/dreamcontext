@@ -234,7 +234,15 @@ async function sceneMini(browser, w, h) {
   const vp = p.viewportSize();
   const minis = p.locator('[data-testid="super-container"][data-mini="true"]');
   const n = await minis.count();
-  report.mini = { w, count: n };
+  const st = await p.evaluate(async () => { try { return await (await fetch('/api/super/state?vault=acme')).json(); } catch (e) { return String(e); } });
+  const s = st && (st.state ?? st);
+  const diag = {
+    view: s?.view, rows: s?.children ? Object.values(s.children).map((c) => c.row) : null, queue: s?.queue?.length,
+    cards: await p.locator('[data-testid="super-container"]').evaluateAll((els) => els.map((e) => `${e.getAttribute('data-container-id')}:${e.getAttribute('data-where')}:${e.getAttribute('data-mini')}`)),
+    stage: await p.locator('[data-testid="super-centre"]').first().evaluate((e) => e.closest('[class*="super-stage"]')?.getBoundingClientRect().width ?? null).catch(() => null),
+  };
+  console.log(`  diag ${JSON.stringify(diag).slice(0, 900)}`);
+  report.mini = { w, count: n, diag };
   check(`[${w}] the rail draws mini tiles`, n > 0, String(n));
   if (n > 0) {
     const tile = minis.first();
@@ -261,10 +269,11 @@ seed();
 const srv = await server();
 const browser = await chromium.launch();
 try {
-  for (const [w, h, dark] of [[1440, 900, false], [1440, 900, true], [390, 844, false]]) {
+  const miniOnly = process.argv.includes('--mini-only');
+  if (!miniOnly) for (const [w, h, dark] of [[1440, 900, false], [1440, 900, true], [390, 844, false]]) {
     try { await sceneHead(browser, w, h, dark); } catch (e) { check(`scene head ${w} ran to the end`, false, String(e).slice(0, 300)); }
   }
-  try { await sceneCard(browser); } catch (e) { check('scene card ran to the end', false, String(e).slice(0, 300)); }
+  if (!miniOnly) try { await sceneCard(browser); } catch (e) { check('scene card ran to the end', false, String(e).slice(0, 300)); }
   for (const [w, h] of [[1440, 900], [1024, 768]]) {
     try { await sceneMini(browser, w, h); } catch (e) { check(`scene mini ${w} ran to the end`, false, String(e).slice(0, 300)); }
   }
