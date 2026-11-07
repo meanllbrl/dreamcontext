@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { oneRootPerBrain, PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
+import { PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
 import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
@@ -478,44 +478,6 @@ describe('tickAll', () => {
       expect(events.indexOf('start quick-one')).toBeLessThan(events.indexOf('end slow-one'));
     } finally {
       rmSync(projectB, { recursive: true, force: true });
-    }
-  });
-
-  it('a code repo reaching the brain through a symlinked _dream_context is ticked once, at the brain', async () => {
-    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
-    symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
-    try {
-      // The link root registered FIRST: it must still not win.
-      registerProject(codeRepo, home);
-      registerProject(projectRoot, home);
-      makeDue('eod-digest');
-      const roots: string[] = [];
-      const runImpl = vi.fn(async (c: string, slug: string) => {
-        roots.push(c);
-        return fakeOutcome(slug, 'ok');
-      }) as unknown as typeof runAutomation;
-      const lines: string[] = [];
-
-      const result = await tickAll({ now: NOW, home, runImpl, log: (l) => lines.push(l) });
-
-      expect(runImpl).toHaveBeenCalledTimes(1);
-      expect(roots).toEqual([contextRoot]);
-      expect(result.projects.map((p) => p.projectRoot)).toEqual([projectRoot]);
-      expect(lines.some((l) => l.includes(codeRepo) && l.includes('ticked there only'))).toBe(true);
-    } finally {
-      rmSync(codeRepo, { recursive: true, force: true });
-    }
-  });
-
-  it('the root that holds the approvals wins, even when it is the link (approvals are keyed by root)', () => {
-    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
-    symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
-    try {
-      expect(oneRootPerBrain([codeRepo, projectRoot], (r) => (r === codeRepo ? 2 : 0)).roots).toEqual([codeRepo]);
-      expect(oneRootPerBrain([codeRepo, projectRoot], () => 0).roots).toEqual([projectRoot]);
-      expect(oneRootPerBrain([codeRepo, projectRoot], () => 1).roots).toEqual([projectRoot]);
-    } finally {
-      rmSync(codeRepo, { recursive: true, force: true });
     }
   });
 

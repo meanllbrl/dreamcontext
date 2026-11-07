@@ -19,8 +19,7 @@
  *    dispatcher heartbeat (`recordTickStarted`/`recordTickCompleted`) and log
  *    rotation around the whole pass. A project whose `_dream_context/` is
  *    missing (moved/deleted since it registered) is warned about and skipped,
- *    a second root reaching the same brain through a symlink is skipped
- *    (`oneRootPerBrain`), and one project's failure never abandons the rest.
+ *    and one project's failure never abandons the rest.
  *
  * "Ships fully disabled" lives here as much as anywhere: an empty registry
  * (the fresh-machine state) must be a SILENT no-op that reads only the
@@ -49,14 +48,14 @@
  * to enforce that by construction, not by convention.
  */
 
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
-import { listRegisteredProjects, readAutomationsRegistry, recordTickCompleted, recordTickStarted } from './registry.js';
+import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
@@ -376,53 +375,6 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 }
 
 /**
- * One registered root per physical brain. A code repo whose `_dream_context` is a symlink to its
- * brain, registered because a command once ran there, ticked the same manifests a second time:
- * the root without approvals logged a "not approved" row next to every real run. The root that
- * HOLDS the approvals wins (approvals are keyed by the root they were given under, so the other
- * one would only refuse); on a tie, the root whose `_dream_context` is a real folder; then
- * registry order. An unresolvable path keeps its own entry rather than vanishing.
- */
-export function oneRootPerBrain(
-  projectRoots: string[],
-  approvalsOf: (root: string) => number = () => 0,
-): { roots: string[]; linked: Array<[string, string]> } {
-  const byBrain = new Map<string, string[]>();
-  const order: string[] = [];
-  for (const root of projectRoots) {
-    const contextRoot = join(root, CONTEXT_DIR_NAME);
-    let brain = contextRoot;
-    try {
-      brain = realpathSync(contextRoot);
-    } catch {
-      /* unresolvable: its own group */
-    }
-    if (!byBrain.has(brain)) {
-      byBrain.set(brain, []);
-      order.push(brain);
-    }
-    byBrain.get(brain)!.push(root);
-  }
-  const isLink = (root: string): boolean => {
-    try {
-      return lstatSync(join(root, CONTEXT_DIR_NAME)).isSymbolicLink();
-    } catch {
-      return false;
-    }
-  };
-  const roots: string[] = [];
-  const linked: Array<[string, string]> = [];
-  for (const brain of order) {
-    const group = byBrain.get(brain)!;
-    // A stable sort keeps registry order among equals.
-    const owner = [...group].sort((a, b) => approvalsOf(b) - approvalsOf(a) || Number(isLink(a)) - Number(isLink(b)))[0];
-    roots.push(owner);
-    for (const r of group) if (r !== owner) linked.push([r, owner]);
-  }
-  return { roots, linked };
-}
-
-/**
  * Tick every project registered on this machine, concurrently (see the loop below). An empty
  * registry is a SILENT no-op (no log lines beyond what the heartbeat write
  * itself requires, no automations dir ever read) — the "ships fully
@@ -458,11 +410,7 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
     }
     present.push(projectRoot);
   }
-  const registry = readAutomationsRegistry(home);
-  const { roots, linked } = oneRootPerBrain(present, (root) => Object.keys(registry.projects[root]?.approvals ?? {}).length);
-  for (const [link, owner] of linked) {
-    logFn(`[automations] ${link} reaches the brain of ${owner} through a link, so it is ticked there only`);
-  }
+  const roots = present;
 
   // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
   // hold every other project's routines until it ends. Inside a project the runs stay in order.
