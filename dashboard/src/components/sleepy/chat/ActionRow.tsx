@@ -26,6 +26,8 @@ const ACTION_GLYPH: Record<ChatActionKind, string> = {
   // Plan → Develop: a tab stop, because the click hands the work on to a NEW session rather
   // than opening something in this one.
   develop: '⇥',
+  // An app to install: opens the Apps page, which asks before anything is installed.
+  'app-install': '⊕',
 };
 
 /** These open a page of the main app, or hand a task to a new session: links, in an app's frame. */
@@ -51,7 +53,7 @@ export function ActionRow({
           data-action={a.action}
           // The target, verbatim — so a button that turns out to point somewhere wrong is
           // diagnosable by hovering it rather than by reading the transcript's source.
-          title={a.id ?? a.path ?? a.text ?? a.label}
+          title={a.id ?? a.path ?? a.repo ?? a.text ?? a.label}
           onClick={() => onAction(a)}
         >
           <span className="chat-action-glyph" aria-hidden>{ACTION_GLYPH[a.action]}</span>

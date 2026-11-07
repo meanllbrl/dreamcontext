@@ -509,3 +509,7 @@
   .share-sheet__head, .share-sheet__body, .share-sheet__foot { padding-left: var(--space-4); padding-right: var(--space-4); }
   .share-row { flex-direction: column; align-items: stretch; }
 }
+
+/* The tools line (app-araclari §5): a drift is the one part that needs action. */
+.app-card__drift { color: var(--color-warning-ink); }
+.app-card__muted { color: var(--color-text-secondary); font-weight: var(--font-weight-normal); }

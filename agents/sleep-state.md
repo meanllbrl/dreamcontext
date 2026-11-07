@@ -80,7 +80,7 @@ cat _dream_context/state/.sleep.json | jq '.knowledge_access'
 
 #### A1. Group changes into logical entries
 
-One commit ≠ one entry: cluster by **scope and intent** (a feature across 4 commits is **one** `feat`). **Don't skip uncommitted work.** Lab & roadmap signals earn entries too (scope `lab` / `roadmap`): a new insight, a Key-Result binding set or changed, an insight source/tweak change, a new objective. Routine `lab/cache/*.json` and `.sleep.json` churn is not user-facing: skip it. Read the latest 5–10 entries in `CHANGELOG.json` first to match voice/length.
+One commit ≠ one entry: cluster by **scope and intent** (a feature across 4 commits is **one** `feat`). **Don't skip uncommitted work.** Lab & roadmap signals earn entries too (scope `lab` / `roadmap`): a new insight, a Key-Result binding set or changed, an insight source/tweak change, a new objective. Routine `lab/cache/*.json` and `.sleep.json` churn is not user-facing: skip it. **An app's output is data, not knowledge:** values an agent got from an app tool (`apps do`, an `app:` recall hit) are never copied into knowledge, a feature or memory; record what the app CAN answer and point at `apps tools`. Read the latest 5–10 entries in `CHANGELOG.json` first to match voice/length.
 
 #### A2. Add entries via CLI
 

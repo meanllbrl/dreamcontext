@@ -20,6 +20,8 @@ export interface AppRow {
   agentState?: 'ready' | 'needs_approval' | 'missing' | null;
   hasIcon?: boolean;
   actions?: Array<{ id: string; title: string }>;
+  /** What its tools do and whether the backend serves them (app-araclari §5, `publicStatus`). */
+  tools?: { count: number; change: number; audit: 'ok' | 'drift' | 'unaudited' | 'unknown' | string; missing: string[] } | null;
   schedules?: Array<{ id: string; enabled: boolean; next: string | null; last: { at: string; status: string; code: string | null } | null }>;
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
   /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
@@ -113,7 +115,17 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
       </div>
       <dl className="app-card__meta">
         <div><dt>{t('apps.agent')}</dt><dd>{app.agent ?? t('apps.noAgent')}</dd></div>
-        {(app.actions?.length ?? 0) > 0 && <div><dt>{t('apps.actions')}</dt><dd>{app.actions!.length}</dd></div>}
+        {app.tools && app.tools.count > 0 ? (
+          <div>
+            <dt>{t('apps.tools')}</dt>
+            <dd>
+              {t('apps.tools.count').replace('{n}', String(app.tools.count))}
+              {app.tools.change > 0 && ` · ${t('apps.tools.change').replace('{n}', String(app.tools.change))}`}
+              {app.tools.audit === 'drift' && <span className="app-card__drift" title={app.tools.missing.join(', ')}>{` · ⚠ ${t('apps.tools.drift')}`}</span>}
+              {app.tools.audit === 'unaudited' && <span className="app-card__muted">{` · ${t('apps.tools.unaudited')}`}</span>}
+            </dd>
+          </div>
+        ) : (app.actions?.length ?? 0) > 0 && <div><dt>{t('apps.actions')}</dt><dd>{app.actions!.length}</dd></div>}
         {(app.schedules?.length ?? 0) > 0 && <div><dt>{t('apps.schedules')}</dt><dd>{app.schedules!.length}</dd></div>}
       </dl>
       {(following || app.provenance || app.publish) && (

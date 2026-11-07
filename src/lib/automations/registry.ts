@@ -460,6 +460,10 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // app today, so nobody re-blocks. Present, it decides which app's brief the run is given, so a
     // synced edit that adds, moves or removes it must block.
     ...(m.app ? { app: m.app } : {}),
+    // OMITTED when absent or empty, and LAST (app-araclari §4.2; pattern: a new field in a consent
+    // hash must not re-block everyone): no automation names one today, so every hash stays what
+    // it was. Present, it lets an unattended run change things through an app.
+    ...(m.appTools?.length ? { appTools: [...m.appTools].sort() } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -526,6 +530,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     tool: m.tool ?? null,
     // Always present (as '' when absent): the reviewer sees which app's brief the run gets.
     app: m.app ?? '',
+    // Always present (as '' when absent): the reviewer reads which app tools may change things unattended.
+    appTools: (m.appTools ?? []).join(', '),
   };
 }
 

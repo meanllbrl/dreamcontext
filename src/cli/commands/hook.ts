@@ -6,6 +6,7 @@ import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { GATE_BEAT_ENV, antigravityCallAsClaude, antigravitySkillsCwd, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
 import { classifyFileTool } from '../../lib/apps/write-gate.js';
+import { appToolsBlock } from '../../lib/apps/tool-index.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
@@ -3481,6 +3482,20 @@ export function registerHookCommand(program: Command): void {
           } catch (teamErr) {
             if (process.env.DREAMCONTEXT_DEBUG) console.error('[team] error:', (teamErr as Error).message ?? teamErr);
           }
+        }
+      }
+
+      // ── App tools on this Mac (app-araclari plan r3 §3b) ──────────────────
+      // Independent of the recall tier and of the network: the installed apps' tools and the
+      // project catalog, BM25 over that small set, at most two lines. `must`, never dropped: the
+      // line is what stops the agent recomputing what an installed app already answers.
+      if (!isBackgroundAutoSleep()) {
+        try {
+          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
+          const block = appToolsBlock(prompt, root, homedir());
+          if (block) console.log(block);
+        } catch (appErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[app-tools] error:', (appErr as Error).message ?? appErr);
         }
       }
 

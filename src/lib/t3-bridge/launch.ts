@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { toolText } from '../tool-text.js';
 import type { StoreRoute } from '../codex-mcp.js';
+import { claimEnv } from '../apps/call-claim.js';
 
 /** Quote one argument for T3's `tokenizeCliArgs` (POSIX single quotes; `'` as `'\''`). */
 export function quoteLaunchToken(token: string): string {
@@ -75,20 +76,33 @@ export function codexLaunchArgs(o: { briefingFile?: string; note?: string }): st
 }
 
 /**
- * The brain MCP server for this session (`dreamcontext mcp serve`, brain-mcp/server.ts), as Codex
- * `mcp_servers.dreamcontext` overrides on the same `-c` route. Its env carries only the pane's tab
- * id (Codex starts MCP servers with a filtered environment), so `tasks handoff` keys the Eco record
- * by this pane. Nothing when the project has no brain or a path cannot be told.
+ * The brain MCP server's env: the pane's tab id, so `tasks handoff` keys the Eco record by this
+ * pane, and the caller marks `callClaim` reads (`marks`, the bridge's own env), so an `app` tool
+ * call is classed like a shell call from the same session (app-araclari plan r3 §4.2).
  */
-export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; tabSession?: string }): string {
+function brainMcpEnv(o: { tabSession?: string; marks?: NodeJS.ProcessEnv }): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  if (o.tabSession && /^[A-Za-z0-9._:-]{1,128}$/.test(o.tabSession)) out.push(['DREAMCONTEXT_TAB_SESSION', o.tabSession]);
+  for (const [k, v] of Object.entries(claimEnv(o.marks ?? {}))) out.push([k, v]);
+  return out;
+}
+
+/**
+ * The brain MCP server for this session (`dreamcontext mcp serve`, brain-mcp/server.ts), as Codex
+ * `mcp_servers.dreamcontext` overrides on the same `-c` route. Codex starts MCP servers with a
+ * filtered environment, so the env goes explicitly ({@link brainMcpEnv}). Nothing when the
+ * project has no brain or a path cannot be told.
+ */
+export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; tabSession?: string; marks?: NodeJS.ProcessEnv }): string {
   if (!o.node || !o.cli || !o.root || !existsSync(join(o.root, '_dream_context'))) return '';
   const arr = (xs: string[]): string => `[${xs.map(tomlString).join(', ')}]`;
   const args = [
     codexConfigArg('mcp_servers.dreamcontext.command', tomlString(o.node)),
     codexConfigArg('mcp_servers.dreamcontext.args', arr([o.cli, 'mcp', 'serve', '--root', o.root])),
   ];
-  if (o.tabSession && /^[A-Za-z0-9._:-]{1,128}$/.test(o.tabSession)) {
-    args.push(codexConfigArg('mcp_servers.dreamcontext.env', `{ DREAMCONTEXT_TAB_SESSION = ${tomlString(o.tabSession)} }`));
+  const env = brainMcpEnv(o);
+  if (env.length) {
+    args.push(codexConfigArg('mcp_servers.dreamcontext.env', `{ ${env.map(([k, v]) => `${k} = ${tomlString(v)}`).join(', ')} }`));
   }
   return args.join(' ');
 }
@@ -128,9 +142,9 @@ export function acpLeanMcpServers(path: string, o: { node: string; cli: string }
  * profile is one account across every project, and the server is bound to this chat's project and
  * tab. Static text in the agent: client servers merge over its global `mcp_config.json`.
  */
-export function acpBrainMcpServer(o: { node: string; cli: string; root: string; tabSession?: string }): AcpMcpServer | null {
+export function acpBrainMcpServer(o: { node: string; cli: string; root: string; tabSession?: string; marks?: NodeJS.ProcessEnv }): AcpMcpServer | null {
   if (!o.node || !o.cli || !o.root || !existsSync(join(o.root, '_dream_context'))) return null;
-  const env = o.tabSession && /^[A-Za-z0-9._:-]{1,128}$/.test(o.tabSession) ? [{ name: 'DREAMCONTEXT_TAB_SESSION', value: o.tabSession }] : [];
+  const env = brainMcpEnv(o).map(([name, value]) => ({ name, value }));
   return { name: 'dreamcontext', command: o.node, args: [o.cli, 'mcp', 'serve', '--root', o.root], env };
 }
 

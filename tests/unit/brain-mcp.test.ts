@@ -9,7 +9,9 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Command } from 'commander';
 import { BRAIN_VERBS, checkBrainArgs, confinedToVault } from '../../src/lib/brain-mcp/verbs.js';
-import { callBrainTool, defaultRunCli, handleBrainMessage, resolveBrainRoots } from '../../src/lib/brain-mcp/server.js';
+import { callBrainTool, defaultRunCli, handleBrainMessage, resolveBrainRoots, appCallEnv, APP_UNKNOWN, APP_MAX_MS, type RunCli } from '../../src/lib/brain-mcp/server.js';
+import { registerApp } from '../../src/lib/apps/registry.js';
+import { codexBrainMcpArgs, acpBrainMcpServer } from '../../src/lib/t3-bridge/launch.js';
 import { createProgram } from '../../src/cli/program.js';
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'dc-brain-mcp-')));
@@ -104,8 +106,74 @@ describe('the server', () => {
     const run = async () => ({ code: 0, output: 'hit' });
     expect(await handleBrainMessage({ id: 1, method: 'initialize', params: {} }, roots, run)).toMatchObject({ result: { serverInfo: { name: 'dreamcontext' } } });
     const list = await handleBrainMessage({ id: 2, method: 'tools/list' }, roots, run) as { result: { tools: Array<{ name: string }> } };
-    expect(list.result.tools.map((t) => t.name)).toEqual(['recall', 'dreamcontext']);
+    expect(list.result.tools.map((t) => t.name)).toEqual(['recall', 'dreamcontext', 'app']);
     expect(await handleBrainMessage({ id: 3, method: 'tools/call', params: { name: 'recall', arguments: { query: 'checkout' } } }, roots, run)).toMatchObject({ result: { content: [{ text: 'hit' }] } });
+  });
+});
+
+describe('the app tool (app-araclari §3f, criteria 3 and 5)', () => {
+  const roots = { project, vault };
+  const home = join(base, 'home');
+  const appRoot = join(base, 'acme-shop-apps', 'yuk');
+  mkdirSync(appRoot, { recursive: true });
+  writeFileSync(join(appRoot, 'dreamcontext-app.json'), JSON.stringify({
+    slug: 'yuk', name: 'Yük', backend: { command: 'node s.mjs', health: '/health' },
+    actions: [
+      { id: 'snapshot', title: 'Tek ölçüm', method: 'GET', path: '/api/snapshot' },
+      { id: 'notify', title: 'Bildirim', method: 'POST', path: '/api/notify', timeoutSec: 90 },
+    ],
+  }));
+  registerApp(home, { projectRoot: project, vault: 'v', slug: 'yuk', name: 'Yük', root: appRoot });
+  const call = (input: Record<string, unknown>, run: RunCli, env: NodeJS.ProcessEnv = { DREAMCONTEXT_TAB_SESSION: 'tab-1' }) =>
+    callBrainTool('app', input, roots, run, env, home) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>;
+
+  it('runs `apps do <slug> <tool> --json` with the input as JSON, never a path; confirm only when set', async () => {
+    const runs: Array<{ args: readonly string[]; opts?: { timeoutMs?: number; env?: NodeJS.ProcessEnv } }> = [];
+    const run: RunCli = async (args, _cwd, opts) => { runs.push({ args, opts }); return { code: 0, output: '{"ok":true}' }; };
+    expect((await call({ slug: 'yuk', tool: 'snapshot', input: { path: '../../etc/passwd' } }, run)).content[0]!.text).toBe('{"ok":true}');
+    await call({ slug: 'yuk', tool: 'notify', confirm: true }, run);
+    expect(runs[0]!.args).toEqual(['apps', 'do', 'yuk', 'snapshot', '--json', '--input', '{"path":"../../etc/passwd"}']);
+    expect(runs[1]!.args).toEqual(['apps', 'do', 'yuk', 'notify', '--json', '--confirm']);
+    expect(runs[0]!.opts?.timeoutMs).toBe(90_000);
+    expect(runs[1]!.opts?.timeoutMs).toBe(120_000);
+    expect(APP_MAX_MS).toBe(330_000);
+  });
+
+  it('a 90 s changing tool killed by the bound answers unknown and is never retried; a reading one just timed out', async () => {
+    let n = 0;
+    const killed: RunCli = async () => { n++; return { code: 1, output: '', killed: true }; };
+    const r = await call({ slug: 'yuk', tool: 'notify', confirm: true }, killed);
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toBe(APP_UNKNOWN);
+    expect(n).toBe(1);
+    expect((await call({ slug: 'yuk', tool: 'snapshot' }, killed)).content[0]!.text).toMatch(/did not answer in time/);
+  });
+
+  it('an app or tool not installed on this Mac, a bad slug or a non-object input: refused, nothing runs', async () => {
+    let ran = false;
+    const run: RunCli = async () => { ran = true; return { code: 0, output: '' }; };
+    for (const input of [{ slug: 'crm', tool: 'list' }, { slug: 'yuk', tool: 'nope' }, { slug: '../x', tool: 'snapshot' }, { slug: 'yuk', tool: 'snapshot', input: '{"a":1}' }, { slug: 'yuk', tool: 'snapshot', input: [1] }]) {
+      expect((await call(input, run)).isError, JSON.stringify(input)).toBe(true);
+    }
+    expect(ran).toBe(false);
+  });
+
+  it('the class marks pass through; a server nobody can place runs as spawned', () => {
+    expect(appCallEnv({ DREAMCONTEXT_TAB_SESSION: 'tab-1' })).toEqual({});
+    expect(appCallEnv({ DREAMCONTEXT_SUPER_CREW: '1' })).toEqual({});
+    expect(appCallEnv({})).toEqual({ DREAMCONTEXT_SPAWNED: 'brain-mcp' });
+    expect(appCallEnv({ DREAMCONTEXT_SUPER_CREW: '' })).toEqual({ DREAMCONTEXT_SPAWNED: 'brain-mcp' });
+  });
+
+  it('the launcher hands the brain server the pane id and the caller marks, for Codex and ACP alike', () => {
+    const marks = { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_AUTOMATION_RUN: 'r-1', DREAMCONTEXT_AGENT_CHAT: '', HOME: '/x', PATH: '/bin' };
+    const codex = codexBrainMcpArgs({ node: '/n', cli: '/c', root: project, tabSession: 'tab-1', marks });
+    expect(codex).toContain('DREAMCONTEXT_TAB_SESSION = "tab-1"');
+    expect(codex).toContain('DREAMCONTEXT_SUPER_CREW = "1"');
+    expect(codex).toContain('DREAMCONTEXT_AUTOMATION_RUN = "r-1"');
+    expect(codex).not.toMatch(/DREAMCONTEXT_AGENT_CHAT|HOME|PATH/);
+    const acp = acpBrainMcpServer({ node: '/n', cli: '/c', root: project, marks });
+    expect(acp && 'env' in acp ? acp.env : []).toEqual([{ name: 'DREAMCONTEXT_SUPER_CREW', value: '1' }, { name: 'DREAMCONTEXT_AUTOMATION_RUN', value: 'r-1' }]);
   });
 });
 

@@ -26,8 +26,16 @@
   filters them). Use the backend's own `Set-Cookie`.
 - **Paths are decoded to a fixed point** (`/a%2fb` is `/a/b`; a literal `%25` is refused). Design
   routes without encoded slashes.
-- **Actions are the contract.** One action per job, a clear one-line `title`, `input` described,
-  `danger: true` on irreversible ones. Agents call actions; they never re-implement them.
+- **Tools are the contract.** One action (tool) per job, a clear one-line `title`, `does`, typed
+  `params`, `topics`; `danger: true` on irreversible ones. Agents call tools; they never
+  re-implement them. Why: every agent of the project picks a tool by these words, and `apps do`
+  checks `--input` against `params` before any call, so a vague tool is a tool nobody uses right.
+- **A tool that only reads is a GET.** The platform decides what a tool does to the world by its
+  method alone (`effectOf`): a GET with no `danger` reads, anything else changes and needs the
+  owner's yes. Why: an app's own word cannot make a write a read, so `"effect": "read"` on a POST
+  still counts as a change.
+- **Say what the backend serves** with `dc.actions([...])` and answer health with `dc.health()`.
+  Why: the manifest and the backend drift apart silently otherwise; the card shows the drift.
 - **Ask before the irreversible:** `confirm()` works in the window. Recommended, not enforced.
 - **Escape HTML** you build from data (`esc()` in the template) and keep the template's CSP: it refuses inline `<script>`, so page code lives in files like `public/app.js`.
 

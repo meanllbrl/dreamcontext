@@ -693,6 +693,7 @@ export function readManifestParts(filePath: string): ManifestParts {
       job: extractSection(content, JOB_HEADING),
       flow: legacy.flow,
       ...(legacy.app ? { app: legacy.app } : {}),
+      ...(legacy.appTools?.length ? { appTools: legacy.appTools } : {}),
       owner: parseOwner(data.owner),
       updated: typeof data.updated === 'string' && data.updated.trim() ? data.updated.trim() : null,
       path: legacy.path,
@@ -798,6 +799,9 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
     // Only when set, so a file that is no app's reads field for field as before and keeps its hash.
     ...(typeof data.app === 'string' && data.app.trim() ? { app: data.app.trim() } : {}),
+    // Only when set and non-empty, for the same hash reason. Kept as written (a bad entry simply
+    // names no tool the gate will match): dropping one would change what the owner approved.
+    ...(appToolsOf(data.app_tools).length ? { appTools: appToolsOf(data.app_tools) } : {}),
     // Every file read here is an AUTOMATION run target, exactly as before the
     // agent split; a legacy manifest is its own agent and has no `## Job`. Only
     // the store composes an agent's call target (with real bindings and a
@@ -1379,6 +1383,14 @@ export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
 
 // ─── Create / edit ──────────────────────────────────────────────────────────
 
+/** `<app slug>/<tool id>`: what `app_tools:` lists. */
+export const APP_TOOL_REF_RE = /^[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/;
+
+/** `app_tools:` as written: strings only, at most 20, trimmed. */
+export function appToolsOf(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, 20) : [];
+}
+
 export interface CreateAutomationInput {
   slug: string;
   title: string;
@@ -1446,6 +1458,8 @@ export interface CreateAutomationInput {
   whiteboard?: string | null;
   /** The app this scheduled job belongs to (dreamcontext-apps). Set by the gateway or the
    *  owner's `--app`, never by a page. */
+  /** `<app>/<tool>` refs an unattended run may use to change things (app-araclari §4.2). */
+  appTools?: string[];
   app?: string;
 }
 
@@ -1471,6 +1485,10 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   const mode = i.mode ?? 'sched';
   if (!(AUTOMATION_MODES as readonly string[]).includes(mode)) {
     throw new AutomationError(`Invalid mode "${mode}" — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+  }
+  if (i.appTools !== undefined) {
+    for (const t of i.appTools) if (!APP_TOOL_REF_RE.test(t)) throw new AutomationError(`Invalid app tool "${t}": write it as <app>/<tool>, e.g. yuk-izleme/notify-test.`);
+    if (i.appTools.length > 20) throw new AutomationError('At most 20 app tools per automation.');
   }
   if (i.app !== undefined) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(i.app)) throw new AutomationError(`Invalid app "${i.app}": it must be an app slug.`);
@@ -1697,6 +1715,7 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     notify: i.notify ?? true,
     review: i.review ?? 'off',
     ...(i.app ? { app: i.app } : {}),
+    ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
   };
   const job = i.job?.trim();
   const body = [
@@ -1761,6 +1780,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     // `whiteboard` key at all, exactly as before this field existed.
     ...(i.whiteboard ? { whiteboard: i.whiteboard } : {}),
     ...(i.app ? { app: i.app } : {}),
+    ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
   };
 
   const body = [

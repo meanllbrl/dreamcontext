@@ -93,7 +93,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
+      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings' && page !== 'apps') return;
       // A device shell has no Settings (Shell.navigate refuses it too): the agent cannot open them.
       if (page === 'settings' && readDeviceShell()) return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
@@ -528,7 +528,7 @@ const PageRouter = memo(function PageRouter({
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
     case 'apps':
-      return <AppsPage />;
+      return <AppsPage focus={focus} />;
     case 'relations':
       // New shell only: `Shell` never lands a classic window here.
       return <RelationsPage />;

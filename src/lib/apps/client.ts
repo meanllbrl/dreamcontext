@@ -22,6 +22,7 @@ import { resolveContextRoot } from '../context-path.js';
 import { vaultNameForContextRoot } from '../app-link.js';
 import { readDesktopServerFile, shellBundleId } from '../../server/desktop-server-file.js';
 import { appContaining, type AppRecord } from './registry.js';
+import { callClaim, encodeClaim, RUN_HEADER } from './call-claim.js';
 
 export class AppsClientError extends Error {
   constructor(readonly code: string, message: string, readonly status = 0) {
@@ -61,7 +62,7 @@ export interface Answer {
   body: unknown;
 }
 
-function request(port: number, method: string, path: string, vault: string | null, body: unknown, timeoutMs: number): Promise<Answer> {
+function request(port: number, method: string, path: string, vault: string | null, body: unknown, timeoutMs: number, extra: Record<string, string> = {}): Promise<Answer> {
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf-8');
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -70,6 +71,7 @@ function request(port: number, method: string, path: string, vault: string | nul
         host: `127.0.0.1:${port}`,
         accept: 'application/json',
         ...(vault ? { 'x-dreamcontext-vault': vault } : {}),
+        ...extra,
         ...(payload ? { 'content-type': 'application/json', 'content-length': String(payload.length) } : {}),
       },
     }, (res) => {
@@ -128,14 +130,27 @@ export async function appsApi(
   method: string,
   path: string,
   body?: unknown,
-  opts: { timeoutMs?: number; launch?: boolean; home?: string } = {},
+  opts: { timeoutMs?: number; launch?: boolean; home?: string; headers?: Record<string, string> } = {},
 ): Promise<Record<string, unknown>> {
   const home = opts.home ?? homedir();
   const port = await serverPort({ launch: opts.launch ?? true, home });
-  const r = await request(port, method, path, project.vault, body, opts.timeoutMs ?? 30_000);
+  const r = await request(port, method, path, project.vault, body, opts.timeoutMs ?? 30_000, opts.headers);
   const b = (r.body && typeof r.body === 'object' ? r.body : { message: String(r.body) }) as Record<string, unknown>;
   if (r.status >= 400) {
     throw new AppsClientError(String(b.error ?? `http_${r.status}`), String(b.message ?? `HTTP ${r.status}`), r.status);
   }
   return b;
+}
+
+/**
+ * The `x-dc-run` header of an app tool call (app-araclari plan r3 §4.2): the most restricted
+ * class this process's env names, plus its conversation ids so the server can tell a Super
+ * child that kept an older mark. The server only ever narrows rights by it.
+ */
+export function runHeader(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const c = callClaim(env);
+  const sessions = [env.DREAMCONTEXT_TAB_SESSION, env.CLAUDE_CODE_SESSION_ID].map((x) => (x ?? '').trim()).filter((x) => /^[0-9a-fA-F-]{8,64}$/.test(x));
+  const value = JSON.parse(encodeClaim(c)) as Record<string, unknown>;
+  if (sessions.length) value.sessions = sessions;
+  return { [RUN_HEADER]: JSON.stringify(value) };
 }

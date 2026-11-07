@@ -21,6 +21,8 @@ import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { buildPublishTree, publishApp, PublishError } from '../../lib/apps/share/publish.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
+import { catalogEntryFor, upsertCatalogEntry } from '../../lib/apps/catalog.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
 
@@ -74,7 +76,9 @@ export async function handlePublishPreview(req: IncomingMessage, res: ServerResp
   try { login = host.signedIn ? (await host.me()).login : null; } catch { login = null; }
   try {
     const pv = buildPublishTree(appsHomeDir(), rec, { visibility, login: login ?? 'you', repoName: url.searchParams.get('repo') || undefined });
-    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null });
+    // What the brain's app list will say (titles only), unless the owner unticks it.
+    const catalog = { name: pv.manifest.name, tools: pv.manifest.actions.slice(0, 12).map((a) => a.title) };
+    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null, catalog });
   } catch (e) { sendFailure(res, e); }
 }
 
@@ -96,7 +100,20 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       fresh: b.fresh === true,
     });
     clearSharedCache();
-    sendJson(res, 200, { ok: true, ...out });
+    // The brain's list of this project's apps (app-araclari §2): after the push, never before.
+    // `catalog: false` keeps a private app off it. A failure here never undoes the publish.
+    let catalogged = false;
+    if (b.catalog !== false) {
+      try {
+        const m = readManifest(rec.root);
+        if (m.ok) {
+          const brief = m.manifest.agent?.brief ?? '';
+          upsertCatalogEntry(contextRoot, catalogEntryFor(m.manifest, { repo: out.fullName, visibility: b.visibility === 'public' ? 'public' : 'private', publishedBy: resolveActivePerson(contextRoot).slug, does: brief.split(/(?<=[.!?])\s/)[0] ?? '' }));
+          catalogged = true;
+        }
+      } catch { /* the publish stands; the list is written on the next one */ }
+    }
+    sendJson(res, 200, { ok: true, ...out, catalogged });
   } catch (e) { sendFailure(res, e); }
 }
 

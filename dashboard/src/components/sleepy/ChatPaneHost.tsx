@@ -70,7 +70,7 @@ export interface ChatSurfaceActions {
    *  tab. Fired by a `develop` action button the plan agent wrote into its own message. */
   handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
   /** `vault` is set only by the dreamcontext Assistant's detail buttons (see `ChatAction`). */
-  openAppPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
+  openAppPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => void;
   /** Sign THIS conversation's account in again. Resolves once the terminal is open or the
    *  account is signed in and the chat resumed; rejects with the reason it could not. */
   signIn: (cs?: ChatSession) => Promise<void>;
@@ -131,7 +131,7 @@ function ChatPaneHostInner({
     (taskSlug: string) => actions.handoffToDevelop(session, taskSlug), [actions, session],
   );
   const onOpenAppPage = useCallback(
-    (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
+    (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
   );
   const onSignIn = useCallback(() => actions.signIn(session), [actions, session]);
   // A Codex chat reads Codex's own models and efforts; a Claude chat is unchanged.

@@ -40,7 +40,11 @@ import { closeGateway, existingGateway, gatewayFor, runningWindowCount } from '.
 import { readLauncherTheme } from './launcher.js';
 import { getApp, listApps, real, unregisterApp, updateApp, type AppRecord } from '../../lib/apps/registry.js';
 import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SECRET_HEADER } from '../../lib/apps/supervisor.js';
-import { readManifest, ACTION_METHODS } from '../../lib/apps/manifest.js';
+import { readManifest, ACTION_METHODS, effectOf, DEFAULT_TOOL_TIMEOUT_SEC, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
+import { decodeClaim, RUN_HEADER, type CallClaim } from '../../lib/apps/call-claim.js';
+import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/super/store.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { jobStartedByOwner } from '../automation-job.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
@@ -73,7 +77,6 @@ import { createProposal } from '../../lib/assistant/proposals.js';
 
 type Params = Record<string, string>;
 const CALL_MAX_BYTES = 256 * 1024;
-const CALL_TIMEOUT_MS = 5 * 60_000;
 const LAUNCH_WAIT_MS = 20_000;
 
 let home = homedir();
@@ -335,7 +338,10 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     // Only what /icon can serve: a true on an .icns draws a broken image on the card.
     hasIcon: m.ok ? servableIcon(m.manifest.icon) !== null : false,
     iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
-    actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
+    actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, effect: effectOf(a), ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
+    // The card's "N tools · M change" and its drift mark (app-araclari §5). `unknown` until the
+    // backend answered health once in this server.
+    tools: m.ok ? { count: m.manifest.actions.length, change: m.manifest.actions.filter((a) => effectOf(a) === 'change').length, audit: st?.tools?.state ?? 'unknown', missing: st?.tools?.missing ?? [] } : null,
     schedules: m.ok ? scheduleViews(home, rec) : [],
     mcp: m.ok ? mcpStates(rec, m.manifest.mcp) : [],
     ...shareStatus(rec),
@@ -409,7 +415,12 @@ export async function runAppAction(projectRoot: string, slug: string, action: { 
   } else if (input !== undefined) body = input;
   const safe = safeAppPath(path);
   if (!safe.ok) return { ok: false, http: 400, code: 'bad_path', message: 'bad_path' };
-  return callBackend(rec, action.method, safe.path, body);
+  // Reached only through the Assistant's `gated(...)`: an approved proposal or the owner's own
+  // autonomy setting, so it is the owner's confirm (plan §4.1). The gate still runs: one door.
+  const m = readManifest(rec.root);
+  const verdict = gateAppCall(join(projectRoot, '_dream_context'), rec, m.ok ? m.manifest.actions : [], { method: action.method, path: safe.path, confirm: true, claim: { class: 'owner' } }, { home });
+  if (!verdict.ok) return { ok: false, http: verdict.http, code: verdict.code, message: verdict.message };
+  return callBackend(rec, action.method, safe.path, body, verdict.timeoutMs);
 }
 
 /** A window's own picture. Never opens anything: no window, no picture. */
@@ -638,6 +649,85 @@ export async function handleAppSnapshot(req: IncomingMessage, res: ServerRespons
   sendJson(res, 200, { ok: true, id: r.id, file: r.file });
 }
 
+// ─── The one gate every app tool call passes (app-araclari plan r3 §4.1, §4.2) ─────
+
+export interface GateCall {
+  method: string;
+  /** The backend path as it will be sent (a query allowed: it is matched without it). */
+  path: string;
+  /** The caller said the owner agreed to this change (`--confirm`, MCP `confirm`, an Assistant proposal). */
+  confirm: boolean;
+  claim: CallClaim;
+  /** The caller's conversation ids (tab session, Claude session): a Super child is told by them. */
+  sessions?: readonly string[];
+}
+
+export type GateVerdict =
+  | { ok: true; effect: ToolEffect; action: AppAction | null; timeoutMs: number }
+  | { ok: false; http: number; code: 'needs_confirm' | 'needs_owner'; message: string; tool?: { id: string; title: string; does?: string; input?: string } };
+
+/** The manifest action at (method, path), the query left out. */
+export function matchAction(actions: readonly AppAction[], method: string, path: string): AppAction | null {
+  const bare = path.split('?')[0];
+  return actions.find((a) => a.method === method && a.path.split('?')[0] === bare) ?? null;
+}
+
+/** Is any of these conversations the Super Agent or one of its children right now? */
+function superSession(sessions: readonly string[] | undefined): boolean {
+  for (const id of sessions ?? []) {
+    if (!id) continue;
+    try {
+      if (isSuperSessionId(id) || isSuperChild(id) || handedOverChildRoot(id)) return true;
+    } catch { return true; /* cannot tell: closed */ }
+  }
+  return false;
+}
+
+/**
+ * THE gate, called by `handleAppCall` (CLI, MCP, a raw loopback POST) and `runAppAction` (the
+ * Assistant). A read passes. A change needs `confirm`, and then who is asking decides:
+ * `spawned` and `crew` (and any Super conversation, whatever it claims) never; an unattended
+ * `run` only with this tool in its approved job's `app_tools`, or in a turn the owner started
+ * from the dashboard; the owner's chats and terminal pass. A header can only take rights away.
+ */
+export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readonly AppAction[], call: GateCall, deps: { home?: string } = {}): GateVerdict {
+  const method = call.method.toUpperCase();
+  const action = matchAction(actions, method, call.path);
+  // An unlisted GET reads; an unlisted anything else changes.
+  const effect: ToolEffect = action ? effectOf(action) : effectOf({ method });
+  const timeoutMs = (action?.timeoutSec ?? DEFAULT_TOOL_TIMEOUT_SEC) * 1000;
+  if (effect === 'read') return { ok: true, effect, action, timeoutMs };
+  const tool = action ? { id: action.id, title: action.title, ...(action.does ? { does: action.does } : {}), ...(action.input ? { input: action.input } : {}) } : undefined;
+  if (!call.confirm) {
+    return { ok: false, http: 409, code: 'needs_confirm', message: `${action ? `"${action.title}"` : `${method} ${call.path.split('?')[0]}`} changes something. Say in one line what it will do, and run it with --confirm only after the owner says yes in this chat.`, ...(tool ? { tool } : {}) };
+  }
+  const refuse = (why: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} The owner can run it in a normal chat or in the app's window.`, ...(tool ? { tool } : {}) });
+  let cls = call.claim.class;
+  if (superSession(call.sessions)) cls = 'crew';
+  if (cls === 'spawned') return refuse('A changing app tool does not run from a session no owner is typing in.');
+  if (cls === 'crew') return refuse('The Super Agent and its chats never run a changing app tool.');
+  if (cls === 'run') {
+    const slug = call.claim.automation ?? '';
+    if (action && slug) {
+      const m = getAutomation(contextRoot, slug, deps.home);
+      const ref = `${rec.slug}/${action.id}`;
+      if (m && m.appTools?.includes(ref) && checkApproval(projectRootOf(contextRoot), m, deps.home).approved) return { ok: true, effect, action, timeoutMs };
+    }
+    if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return { ok: true, effect, action, timeoutMs };
+    return refuse(`An unattended run changes things only with a tool its approved job names (app_tools: ${rec.slug}/${action?.id ?? '<tool>'}).`);
+  }
+  return { ok: true, effect, action, timeoutMs };
+}
+
+/** Session ids a caller sent in the `x-dc-run` header (`sessions`), at most 4, uuid-shaped. */
+function sessionsOf(raw: string | string[] | undefined): string[] {
+  if (raw === undefined) return [];
+  try {
+    const o = JSON.parse(String(Array.isArray(raw) ? raw[0] : raw)) as { sessions?: unknown };
+    return Array.isArray(o.sessions) ? o.sessions.filter((x): x is string => typeof x === 'string' && /^[0-9a-fA-F-]{8,64}$/.test(x)).slice(0, 4) : [];
+  } catch { return []; }
+}
+
 /** One request to the app backend, as the gateway would send it (call lease, sink, 256 KB). */
 export async function handleAppCall(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
@@ -650,18 +740,25 @@ export async function handleAppCall(req: IncomingMessage, res: ServerResponse, p
   if (!(ACTION_METHODS as readonly string[]).includes(method)) { sendError(res, 400, 'bad_method', 'method must be GET, POST, PUT, PATCH or DELETE'); return; }
   const p = safeAppPath(body.path);
   if (!p.ok) { sendError(res, 400, 'bad_path', p.reason); return; }
-  const out = await callBackend(rec, method, p.path, body.body);
+  const m = readManifest(rec.root);
+  const header = req.headers[RUN_HEADER];
+  const verdict = gateAppCall(contextRoot, rec, m.ok ? m.manifest.actions : [], {
+    method, path: p.path, confirm: body.confirm === true, claim: decodeClaim(header), sessions: sessionsOf(header),
+  }, { home });
+  if (!verdict.ok) { sendJson(res, verdict.http, { error: verdict.code, message: verdict.message, ...(verdict.tool ? { tool: verdict.tool } : {}) }); return; }
+  const out = await callBackend(rec, method, p.path, body.body, verdict.timeoutMs);
   if (!out.ok) { sendError(res, out.http, out.code, out.message); return; }
-  sendJson(res, 200, { status: out.status, contentType: out.type, body: out.text });
+  sendJson(res, 200, { status: out.status, contentType: out.type, body: out.text, effect: verdict.effect, ms: out.ms });
 }
 
 type BackendCall =
-  | { ok: true; status: number; type: string; text: string }
+  | { ok: true; status: number; type: string; text: string; ms: number }
   | { ok: false; http: number; code: string; message: string };
 
 /** One request to an app's backend under a call lease: `apps call`, `apps do`, the Assistant's `app-do`. */
-async function callBackend(rec: AppRecord, method: string, path: string, value: unknown): Promise<BackendCall> {
+async function callBackend(rec: AppRecord, method: string, path: string, value: unknown, timeoutMs: number): Promise<BackendCall> {
   const p = { path };
+  const t0 = Date.now();
   const rt = runtime(rec);
   await gatewayFor(rt);
   const release = rt.acquireCall();
@@ -675,7 +772,7 @@ async function callBackend(rec: AppRecord, method: string, path: string, value: 
     const payload = method === 'GET' || method === 'DELETE' || value === undefined ? null : Buffer.from(JSON.stringify(value), 'utf-8');
     const result = await new Promise<{ status: number; text: string; type: string } | { error: string }>((resolve) => {
       const up = http.request({
-        host: '127.0.0.1', port: b.port, method, path: p.path, agent: false, timeout: CALL_TIMEOUT_MS,
+        host: '127.0.0.1', port: b.port, method, path: p.path, agent: false, timeout: timeoutMs,
         headers: {
           host: `127.0.0.1:${b.port}`,
           [GATEWAY_SECRET_HEADER]: rt.gatewaySecret,
@@ -699,8 +796,8 @@ async function callBackend(rec: AppRecord, method: string, path: string, value: 
       up.on('error', () => resolve({ error: 'backend_error' }));
       if (payload) up.end(payload); else up.end();
     });
-    if ('error' in result) return { ok: false, http: result.error === 'call_timeout' ? 504 : 502, code: result.error, message: result.error === 'call_timeout' ? 'The action ran longer than 5 minutes.' : 'The backend did not answer.' };
-    return { ok: true, status: result.status, type: result.type, text: rt.scrub(result.text) };
+    if ('error' in result) return { ok: false, http: result.error === 'call_timeout' ? 504 : 502, code: result.error, message: result.error === 'call_timeout' ? `The tool ran longer than ${Math.round(timeoutMs / 1000)} s.` : 'The backend did not answer.' };
+    return { ok: true, status: result.status, type: result.type, text: rt.scrub(result.text), ms: Date.now() - t0 };
   } finally {
     release();
   }

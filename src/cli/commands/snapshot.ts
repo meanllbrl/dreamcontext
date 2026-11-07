@@ -4,12 +4,14 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
+import { readManifest } from '../../lib/apps/manifest.js';
+import { readCatalog } from '../../lib/apps/catalog.js';
 import { appDataDir, scanAppData } from '../../lib/apps/data-dir.js';
 import { dataLostWithBackup } from '../../lib/apps/data-backup.js';
 import { countFindings } from '../../lib/apps/learn-queue.js';
 
-/** The `## Apps` line's cap (plan-veri K3). */
-export const APPS_LINE_MAX = 300;
+/** The `## Apps` line's cap (plan-veri K3; 360 since app-araclari §3a names the tools and the apps not installed). */
+export const APPS_LINE_MAX = 360;
 import fg from '../../lib/glob.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
@@ -3018,25 +3020,49 @@ function appFacts(projectRoot: string, slug: string, hash: string, home: string)
   return facts.length ? ` · ${facts.join(' · ')}` : '';
 }
 
-/** `- meta-ads (Meta Ads · 2 data files), crm (CRM) · actions: dreamcontext apps actions <slug>`, or null. */
+/**
+ * `- meta-ads (Meta Ads · 3 tools · 2 data files), crm (CRM · 1 tool) · not installed here: billing
+ * · tools: `dreamcontext apps tools``, or null. The apps installed on THIS Mac with their tool
+ * count, then the project's apps (the brain's catalog) that are not (app-araclari §3a).
+ */
 export function appsSnapshotLine(contextRoot: string, home?: string): string | null {
   try {
     const projectRoot = dirname(contextRoot);
     const h = home ?? homedir();
     const apps = listApps(h, projectRoot);
-    if (!apps.length) return null;
-    const tail = ' · actions: `dreamcontext apps actions <slug>`';
+    const here = new Set(apps.map((a) => a.slug));
+    const missing = readCatalog(contextRoot).filter((e) => !here.has(e.slug)).map((e) => e.slug);
+    if (!apps.length && !missing.length) return null;
+    const tail = ' · tools: `dreamcontext apps tools`';
     let names = '';
     let shown = 0;
     for (const a of apps) {
-      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)}${appFacts(a.projectRoot, a.slug, a.hash, h)})`;
-      // Room kept for the ` +NN more` an overflow adds.
-      if (Buffer.byteLength(names + piece + tail) + 10 > APPS_LINE_MAX) break;
+      const m = readManifest(a.root);
+      const n = m.ok ? m.manifest.actions.length : 0;
+      const tools = n ? ` · ${n} tool${n === 1 ? '' : 's'}` : '';
+      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)}${tools}${appFacts(a.projectRoot, a.slug, a.hash, h)})`;
+      // Room kept for the ` +NN more` an overflow adds, and the not-installed part.
+      if (Buffer.byteLength(names + piece + tail) + 10 + (missing.length ? 40 : 0) > APPS_LINE_MAX) break;
       names += piece;
       shown++;
     }
     const more = apps.length > shown ? ` +${apps.length - shown} more` : '';
-    return `- ${names}${more}${tail}`;
+    let notHere = '';
+    if (missing.length) {
+      const head = `${names || more ? ' · ' : ''}not installed here: `;
+      let listed = 0;
+      for (const slug of missing) {
+        const piece = `${listed ? ', ' : ''}${slug}`;
+        if (Buffer.byteLength(`- ${names}${more}${head}${notHere}${piece}${tail}`) + 10 > APPS_LINE_MAX) break;
+        notHere += piece;
+        listed++;
+      }
+      const rest = missing.length - listed;
+      notHere = listed ? `${head}${notHere}${rest ? ` +${rest} more` : ''}` : `${head.replace(/: $/, '')} ${missing.length}`;
+    }
+    const full = `- ${names}${more}${notHere}${tail}`;
+    // The floor when nothing fits: the counts and the verb.
+    return Buffer.byteLength(full) <= APPS_LINE_MAX ? full : `- ${apps.length} installed, ${missing.length} not installed here${tail}`;
   } catch {
     return null;
   }

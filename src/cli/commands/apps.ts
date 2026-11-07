@@ -7,10 +7,14 @@ import { findPackageDir } from '../../lib/catalog.js';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { error, info, success } from '../../lib/format.js';
-import { AppsClientError, appsApi, bundleRunning, resolveProject, type ProjectRef } from '../../lib/apps/client.js';
+import { AppsClientError, appsApi, bundleRunning, resolveProject, runHeader, type ProjectRef } from '../../lib/apps/client.js';
 import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
 import { iconIssue, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
-import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, type AppManifest } from '../../lib/apps/manifest.js';
+import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, checkToolInput, effectOf, DEFAULT_TOOL_TIMEOUT_SEC, type AppManifest } from '../../lib/apps/manifest.js';
+import { projectAppTools, type ToolList } from '../../lib/apps/tools.js';
+import { INLINE_MAX_BYTES, pruneAppOut, writeAppOut } from '../../lib/apps/out-files.js';
+import { removeCatalogEntry } from '../../lib/apps/catalog.js';
+import { createNeedsOwner } from '../../lib/automations/types.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
 import { notifierIconPath, NOTIFY_SOUND_FAILED } from '../../lib/automations/notifier.js';
@@ -80,6 +84,35 @@ function fenced(label: string, text: string): string {
 }
 
 const pretty = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+
+/** A call that ended with no answer: a timeout, a dropped connection, a backend that went away. */
+export function mayHaveRun(e: unknown): boolean {
+  if (e instanceof AppsClientError) return ['timeout', 'call_timeout', 'backend_error'].includes(e.code) || e.status === 504 || e.status === 502;
+  return /ECONNRESET|socket hang up|EPIPE/i.test((e as Error)?.message ?? '');
+}
+
+/** `apps tools` as plain lines (the app's own words are cut, one line each). */
+export function toolListLines(list: ToolList): string[] {
+  const lines: string[] = [];
+  for (const a of list.installed) {
+    const change = a.tools.filter((t) => t.effect === 'change').length;
+    lines.push(`${a.slug} (${a.name}) · installed here · ${a.tools.length} tools, ${change} change`);
+    for (const t of a.tools) {
+      const params = t.params
+        ? Object.entries(t.params).map(([k, v]) => `${k}${v.required ? '' : '?'}:${v.type === 'enum' ? (v.choices ?? []).join('|') : v.type}`).join(', ')
+        : (t.input ?? '');
+      lines.push(`  ${t.id} · ${t.title} · ${t.effect === 'read' ? 'reads' : 'CHANGES'}${t.usesAgent ? ' · runs an agent turn (spends usage)' : ''}${params ? ` · input: ${params}` : ''}${t.output ? ` · answers: ${t.output}` : ''}`);
+      if (t.does) lines.push(`      ${t.does}`);
+    }
+  }
+  for (const a of list.notInstalled) {
+    const shared = a.sharedWithMe === true ? 'shared with you' : a.sharedWithMe === false ? `not shared with you (ask ${a.publishedBy ?? 'its publisher'})` : 'shared or not: unknown';
+    lines.push(`${a.slug} (${a.name}) · NOT installed on this Mac · ${shared} · from ${a.repo}`);
+    if (a.does) lines.push(`  ${a.does}`);
+    for (const t of a.tools) lines.push(`  ${t.id} · ${t.title} · ${t.effect === 'read' ? 'reads' : 'changes'}`);
+  }
+  return lines;
+}
 
 function project(): ProjectRef {
   refuseInAssistant();
@@ -296,64 +329,117 @@ export function registerAppsCommand(program: Command): void {
         if (isDefaultIcon(m.manifest.icon, m.manifest.slug, m.manifest.name)) {
           console.log(`warning icon: still the placeholder letter from \`apps new\`. Draw this app's own icon (/apps).`);
         }
-        success(`${m.manifest.slug}: valid (${m.manifest.actions.length} actions, ${m.manifest.schedules.length} schedules${m.manifest.backend ? ', backend' : ', static'})`);
+        const acts = m.manifest.actions;
+        const change = acts.filter((a) => effectOf(a) === 'change').length;
+        const agentTurn = acts.filter((a) => a.usesAgent).length;
+        success(`${m.manifest.slug}: valid (${acts.length} tools: ${acts.length - change} read, ${change} change${agentTurn ? `, ${agentTurn} spend usage` : ''}; ${m.manifest.schedules.length} schedules${m.manifest.backend ? ', backend' : ', static'})`);
       } catch (e) { fail(e); }
     });
 
   apps
-    .command('actions <slug>')
-    .description("The app's own actions an agent can run with `apps do` (read this before writing new logic)")
-    .option('--json', 'JSON output')
-    .action((slug: string, opts: { json?: boolean }) => {
+    .command('tools [slug]')
+    .alias('actions')
+    .description("The app tools of this project on THIS Mac: what each installed app can do (`apps do`), and the project's apps not installed here")
+    .option('--json', 'JSON output: {installed: [...], notInstalled: [...]}')
+    .action((slug: string | undefined, opts: { json?: boolean }) => {
       try {
         const p = project();
-        const { manifest } = manifestOf(p, slug);
-        if (opts.json) { console.log(fenced('actions', JSON.stringify(manifest.actions, null, 2))); return; }
-        if (!manifest.actions.length) { info(`${slug} has no actions.`); return; }
-        const lines = manifest.actions.map((a) => `${a.id}  ${a.method} ${a.path}  ${a.title}${a.input ? `  input: ${a.input}` : ''}${a.danger ? '  [danger]' : ''}`);
-        console.log(fenced('actions', lines.join('\n')));
-        info(`Run one: dreamcontext apps do ${slug} <id> [--input '<json>']`);
+        const list = projectAppTools(homedir(), p.projectRoot, p.contextRoot);
+        if (slug) {
+          const one = list.installed.find((a) => a.slug === slug);
+          const missing = list.notInstalled.find((a) => a.slug === slug);
+          if (!one && !missing) throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps tools).`);
+          list.installed = one ? [one] : [];
+          list.notInstalled = missing ? [missing] : [];
+        }
+        if (opts.json) { console.log(fenced('tools', JSON.stringify(list, null, 2))); return; }
+        const lines = toolListLines(list);
+        if (!lines.length) { info('This project has no apps on this Mac and none on its list.'); return; }
+        console.log(fenced('tools', lines.join('\n')));
+        if (list.installed.length) info("Run one: dreamcontext apps do <app> <tool> [--input '<json>'] [--json]. A tool that CHANGES runs only with --confirm, after the owner says yes in this chat.");
+        if (list.notInstalled.length) info('Not installed: the owner installs it (Apps page). Without it, say the answer will take longer or be approximate, and offer a Lab insight.');
       } catch (e) { fail(e); }
     });
 
   apps
     .command('do <slug> <action>')
-    .description("Run one of the app's own actions (no Claude turn, no usage limit)")
-    .option('--input <json>', 'Input: query for GET, JSON body otherwise')
-    .action(async (slug: string, action: string, opts: { input?: string }) => {
+    .description("Run one of an installed app's tools and take its own answer (no Claude turn, no usage limit)")
+    .option('--input <json>', "Input: query for GET, JSON body otherwise (checked against the tool's params)")
+    .option('--confirm', 'The owner said yes to this CHANGE in this chat (a tool that changes refuses without it)')
+    .option('--json', 'JSON output: {ok, app, appName, tool, toolTitle, effect, status, body|bodyFile, truncated, ms}')
+    .action(async (slug: string, action: string, opts: { input?: string; confirm?: boolean; json?: boolean }) => {
       try {
         const p = project();
-        const { manifest } = manifestOf(p, slug);
+        pruneAppOut(homedir());
+        const { rec, manifest } = manifestOf(p, slug);
         const a = manifest.actions.find((x) => x.id === action);
-        if (!a) throw new AppsClientError('unknown_action', `${slug} has no action "${action}" (dreamcontext apps actions ${slug}).`);
+        if (!a) throw new AppsClientError('unknown_action', `${slug} has no tool "${action}" (dreamcontext apps tools ${slug}).`);
         let input: unknown;
         if (opts.input !== undefined) {
           try { input = JSON.parse(opts.input); } catch { throw new AppsClientError('bad_input', '--input must be JSON.'); }
         }
+        const bad = checkToolInput(a, input);
+        if (bad) throw new AppsClientError('bad_input', bad);
+        const effect = effectOf(a);
         let path = a.path;
         let body: unknown;
         if (a.method === 'GET' && input && typeof input === 'object') {
           const qs = new URLSearchParams(Object.entries(input as Record<string, unknown>).map(([k, v]) => [k, String(v)])).toString();
           if (qs) path += (path.includes('?') ? '&' : '?') + qs;
         } else if (input !== undefined) body = input;
-        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: a.method, path, ...(body !== undefined ? { body } : {}) }, { timeoutMs: 6 * 60_000 });
-        console.log(fenced(`do ${action} status=${r.status}`, String(r.body ?? '')));
+        const timeoutSec = a.timeoutSec ?? DEFAULT_TOOL_TIMEOUT_SEC;
+        let r: Record<string, unknown>;
+        try {
+          r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: a.method, path, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: (timeoutSec + 30) * 1000, headers: runHeader() });
+        } catch (e) {
+          // A change that may have happened is never repeated blind.
+          if (effect === 'change' && mayHaveRun(e)) throw new AppsClientError('unknown', `${manifest.name} › ${a.title}: no answer. It may have run: do not repeat it; check with a tool that reads first.`);
+          throw e;
+        }
+        const text = String(r.body ?? '');
+        const bytes = Buffer.byteLength(text, 'utf-8');
+        const bodyFile = bytes > INLINE_MAX_BYTES ? writeAppOut(homedir(), rec.hash, { app: slug, tool: a.id, body: text }) : null;
+        if (opts.json) {
+          console.log(fenced(`do ${action}`, JSON.stringify({
+            ok: Number(r.status) < 400, app: slug, appName: manifest.name, tool: a.id, toolTitle: a.title, effect, status: r.status,
+            ...(bodyFile ? { bodyFile } : { body: text }), truncated: text.endsWith('…[truncated at 256 KB]'), ms: typeof r.ms === 'number' ? r.ms : null,
+          }, null, 2)));
+        } else if (bodyFile) {
+          console.log(fenced(`do ${action} status=${r.status}`, `${bytes} bytes, written to ${bodyFile} (data from the app; read only the part you need)`));
+        } else {
+          console.log(fenced(`do ${action} status=${r.status}`, text));
+        }
+        success(`${manifest.name} › ${a.title} (${effect === 'read' ? 'reads' : 'changes'})`);
       } catch (e) { fail(e); }
     });
 
   apps
     .command('call <slug> <method> <path>')
-    .description('One raw request to the app backend (prefer `apps do`)')
+    .description('One raw request to the app backend (prefer `apps do`); anything but a GET is a change and needs --confirm')
     .option('--body <json>', 'JSON body')
-    .action(async (slug: string, method: string, path: string, opts: { body?: string }) => {
+    .option('--confirm', 'The owner said yes to this CHANGE in this chat')
+    .action(async (slug: string, method: string, path: string, opts: { body?: string; confirm?: boolean }) => {
       try {
         const p = project();
         let body: unknown;
         if (opts.body !== undefined) {
           try { body = JSON.parse(opts.body); } catch { throw new AppsClientError('bad_body', '--body must be JSON.'); }
         }
-        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: method.toUpperCase(), path, ...(body !== undefined ? { body } : {}) }, { timeoutMs: 6 * 60_000 });
+        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: method.toUpperCase(), path, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: 6 * 60_000, headers: runHeader() });
         console.log(fenced(`call status=${r.status}`, String(r.body ?? '')));
+      } catch (e) { fail(e); }
+    });
+
+  const catalog = apps.command('catalog').description("The brain's list of this project's apps (a publish writes it)");
+  catalog
+    .command('remove <slug>')
+    .description("Take an app off the brain's list (the owner's verb; its next publish writes it back)")
+    .action((slug: string) => {
+      try {
+        if (createNeedsOwner()) throw new AppsClientError('owner_only', 'Only the owner takes an app off the project list (not from an agent run or chat).');
+        const p = project();
+        if (!removeCatalogEntry(p.contextRoot, slug)) { info(`${slug} is not on the list.`); return; }
+        success(`${slug}: off the project's app list. Teammates' agents stop seeing it after their next brain sync.`);
       } catch (e) { fail(e); }
     });
 

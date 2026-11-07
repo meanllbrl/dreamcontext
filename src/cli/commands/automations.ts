@@ -303,7 +303,7 @@ function createBoundFromFlags(
   /** The owner consented to this write: his terminal, or his yes on a `propose --routine`. */
   stamp: boolean,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
-    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string },
+    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string; appTools?: string },
 ): AutomationManifest | null {
   try {
     const agentSlug = (opts.agent ?? '').trim();
@@ -340,6 +340,7 @@ function createBoundFromFlags(
       notify: opts.notify,
       review: opts.review as ReviewMode | undefined,
       ...appOption(root, opts.app),
+      ...appToolsOption(opts.appTools),
     }, stamp ? { approve: { now: new Date() } } : {});
     success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : ''}.`);
     if (!stamp) printOwnerApprovalCard(manifest.slug);
@@ -352,6 +353,13 @@ function createBoundFromFlags(
 }
 
 /** `--app`: only an app registered to THIS project, so a job cannot name a brief that is not there. */
+/** `--app-tools a/b,c/d`: checked in the store's write path (`<app>/<tool>`). */
+function appToolsOption(raw: string | undefined): { appTools?: string[] } {
+  if (raw === undefined) return {};
+  const list = raw.split(',').map((x) => x.trim()).filter(Boolean);
+  return list.length ? { appTools: list } : {};
+}
+
 function appOption(root: string, slug: string | undefined): { app?: string } {
   if (slug === undefined) return {};
   const app = slug.trim();
@@ -926,6 +934,7 @@ export function registerAutomationsCommand(program: Command): void {
     )
     .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
     .option('--app <slug>', 'This job belongs to an app of this project: its run carries the app\'s brief')
+    .option('--app-tools <refs>', 'App tools this job may run to CHANGE something while nobody watches, comma-separated <app>/<tool> (approved with the job)')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
     .option(
@@ -936,7 +945,7 @@ export function registerAutomationsCommand(program: Command): void {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string; app?: string;
+      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string; app?: string; appTools?: string;
     }) => {
       const root = ensureContextRoot();
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
@@ -1021,6 +1030,7 @@ export function registerAutomationsCommand(program: Command): void {
           review: opts.review as ReviewMode | undefined,
           whiteboard,
           ...appOption(root, opts.app),
+          ...appToolsOption(opts.appTools),
         });
 
         // Every fresh automation gets a `## Flow` block that actually

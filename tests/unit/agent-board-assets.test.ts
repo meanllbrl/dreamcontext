@@ -400,9 +400,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * 2026-11-06: -> 15300, a RAISE for +184, a "## Scripts" section (owner 2026-11-05: a Bypass
    * chat still asked him for a heredoc script, Claude Code's own parse check, and hands-free he
    * could not answer). Written to a file, the same script asks nothing. Actual 15,277.
+   * 2026-11-07: -> 15400, +102 for the `app-install` button (app-araclari §5: an app the project
+   * has and this Mac does not, shared with this account). Actual 15,379.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15300);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15400);
   });
 
   /**
@@ -413,7 +415,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15277)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15379)).toBeLessThanOrEqual(20);
   });
 
   /**

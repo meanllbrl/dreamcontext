@@ -5,6 +5,7 @@
   "backend": { "command": "node server.mjs", "health": "/health" },
   "agent": { "own": true },
   "actions": [
-    { "id": "hello", "title": "Say hello and count visits", "method": "GET", "path": "/api/hello" }
+    { "id": "hello", "title": "Say hello and count visits", "method": "GET", "path": "/api/hello",
+      "does": "Answers a greeting and how many times the app was visited.", "output": "{hello, visits}", "topics": ["hello", "visits"] }
   ]
 }

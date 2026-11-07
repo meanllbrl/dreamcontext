@@ -8,6 +8,8 @@ import { COMPOSER_PREFILL_EVENT } from '../components/sleepy/chat/Composer';
 import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
 import { useState } from 'react';
+import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
 import { AppCard, type AppRow } from '../components/apps/AppCard';
 import { InstallSheet, SharedWithYou, TrashList } from '../components/apps/ShareSheets';
 import { revealPath } from '../lib/reveal';
@@ -23,7 +25,7 @@ type AppOther =
   | { kind: 'team-note'; slug: string; title: string; note: string; knowledgeId: string }
   | { kind: 'orphan-data'; slug: string; dataPath: string };
 
-export function AppsPage() {
+export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const api = useApi();
   const { vault, bus } = useVault();
   const { t } = useI18n();
@@ -44,6 +46,22 @@ export function AppsPage() {
   const [installRef, setInstallRef] = useState<string | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: key });
   const appsKey = apps.map((a) => `${a.slug}:${a.origin ?? ''}:${a.source ? 'f' : ''}`).join(',');
+
+  // A chat's `app-install` button (app-araclari §5): `install:<owner/name>`. The install sheet
+  // opens only for a repo "Shared with you" lists; anything else says who to ask. Never installs.
+  const [notShared, setNotShared] = useState<string | null>(null);
+  useFocusTarget(focus, (id) => {
+    const repo = id.startsWith('install:') ? id.slice('install:'.length) : '';
+    if (!APP_REPO_RE.test(repo)) return;
+    setNotShared(null);
+    void api.get<{ shared?: Array<{ fullName: string }> }>('/apps/shared').then(
+      (l) => {
+        const hit = (l.shared ?? []).find((s) => s.fullName.toLowerCase() === repo.toLowerCase());
+        if (hit) setInstallRef(hit.fullName); else setNotShared(repo);
+      },
+      () => setNotShared(repo),
+    );
+  });
 
   const askAgent = () => {
     openAgentSurface(bus);
@@ -73,6 +91,7 @@ export function AppsPage() {
           <button type="button" className="app-card__stop" onClick={() => setInstallRef('')}>{t('share.install.public')}</button>
         </div>
       )}
+      {notShared && <p className="app-card__note app-card__note--warn" role="status">{t('apps.install.notShared').replace('{repo}', notShared)}</p>}
       {isLoading && <p className="apps-page__muted">{t('apps.loading')}</p>}
       {error && <p className="error-state">{(error as Error).message}</p>}
       {!isLoading && !error && apps.length === 0 && (

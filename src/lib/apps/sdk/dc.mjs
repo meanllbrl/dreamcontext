@@ -95,9 +95,45 @@ function luminance(hex) {
   return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
 }
 
+// The action ids this backend says it serves (`dc.actions`), echoed by `dc.health()` so
+// dreamcontext can compare them with the manifest (a tool listed but not served is drift).
+let declaredActions = null;
+
+/** Read the app's own manifest next to the backend (its cwd); null when it cannot. */
+async function manifestActionIds() {
+  if (isBrowser) return null;
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const m = JSON.parse(await readFile('dreamcontext-app.json', 'utf-8'));
+    return Array.isArray(m.actions) ? m.actions.map((a) => a && a.id).filter((x) => typeof x === 'string') : [];
+  } catch { return null; }
+}
+
 export const dc = {
   /** True in the page, false in the backend. */
   isBrowser,
+  /**
+   * Say which manifest actions this backend serves: `dc.actions(['snapshot', 'ask'])`, or an
+   * object keyed by action id (`{snapshot: handler}`; only the keys are read). Backend only.
+   * An action in the manifest this list lacks is written to stderr at start, and dreamcontext
+   * shows it on the app card. Returns what it was given.
+   */
+  actions: (served) => {
+    if (isBrowser) throw new DcError('backend_only', 'dc.actions works only in the app backend.', 403);
+    const ids = Array.isArray(served) ? served : Object.keys(served || {});
+    declaredActions = ids.filter((x) => typeof x === 'string').slice(0, 200);
+    void manifestActionIds().then((listed) => {
+      if (!listed) return;
+      const missing = listed.filter((id) => !declaredActions.includes(id));
+      if (missing.length) console.error(`[dreamcontext] manifest actions with no handler here: ${missing.join(', ')}`);
+    });
+    return served;
+  },
+  /**
+   * The health answer: `res.end(JSON.stringify(dc.health()))` on the manifest's health route.
+   * `{ok: true, dcActions: [...]}` plus whatever `extra` holds. Backend only.
+   */
+  health: (extra = {}) => ({ ...extra, ok: true, ...(declaredActions ? { dcActions: declaredActions } : {}) }),
   /** Any dashboard API route (the page: only the allowed subset). */
   api,
   insights: {

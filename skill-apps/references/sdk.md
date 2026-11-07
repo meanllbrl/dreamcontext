@@ -74,3 +74,13 @@ for permission, and until the owner allows it banners stay silent and off screen
 the answer says `banner: true`. The notch row needs no permission.
 
 A backend-less app (only `public/`) can use every ✓-page call; anything backend-only needs a backend.
+
+### dc.actions and dc.health (backend only)
+
+`dc.actions(['snapshot', 'ask'])` says which manifest tools this backend serves (an object keyed by
+tool id works too; only its keys are read). A tool in the manifest that the list lacks is written to
+stderr at start. Answer the manifest's health route with `json(res, 200, dc.health())`: the body is
+`{"ok": true, "dcActions": [...]}` plus whatever you pass (`dc.health({db: 'up'})`). dreamcontext
+reads the first 4 KB of that answer on every start and shows "N tools · M change" on the app card,
+with a warning when a listed tool is not served (`actions_drift`). An app whose health answers no
+`dcActions` shows "not audited".

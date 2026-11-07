@@ -24,8 +24,9 @@ read the icon itself, then ask the owner to look.
 |---|---|
 | See this project's apps | `dreamcontext apps list` |
 | Open one, or bring it forward | `dreamcontext apps open <slug>` |
-| See what it can do | `dreamcontext apps actions <slug>` |
-| Run one of those | `dreamcontext apps do <slug> <id> [--input '<json>']` |
+| See what the apps on this Mac can do | `dreamcontext apps tools [slug] [--json]` (`apps actions` is the same) |
+| Run a tool that reads | `dreamcontext apps do <slug> <id> [--input '<json>'] [--json]` |
+| Run a tool that changes something | say what it will do; after the owner's yes in the chat, `apps do <slug> <id> --confirm` |
 | See its window | `dreamcontext apps screenshot <slug>` (an open window only, `app_not_open` otherwise) |
 | Give it a member | `dreamcontext apps assign <slug> <agent>` (never a board agent: `board_agent_cannot_act`) |
 | Back to its own assistant | `dreamcontext apps assign <slug> --own` |
@@ -49,9 +50,16 @@ and no AI Team entry. Its chat in the app window is the real Chat. An app chat r
 envelope whichever pane opens it: main Chat History opens one under the same limits, and a terminal
 refuses it. `dc.ask` asks the assistant from the backend, read-only.
 
-**Check `apps actions` before writing logic.** An action that does the job is the job; rewriting
-it forks the truth. `apps do` and an app's own schedules spend no Claude usage; only an agent the
-app explicitly calls does.
+**Ask the app before computing.** Every agent of the project knows the tools of the apps installed
+on THIS Mac (`apps tools`; the prompt hook names the one that fits). When one answers the question,
+take its answer with `apps do` instead of recomputing it: a second calculation is slower and drifts
+from the app. A tool that reads (GET) runs straight away; a tool that changes something is refused
+without `--confirm`, so say in one line what it will do and run it only after the owner says yes in
+this chat. A Super Agent, its children, a peer and a spawned run never change anything through an
+app (`needs_owner`); a scheduled run only when its approved manifest lists the tool (`--app-tools`).
+An app the project has but this Mac does not: say the answer will be slower or approximate, offer
+the install button only when it is shared with this account, never install it yourself. `apps do`
+and an app's own schedules spend no Claude usage; only a tool marked as running an agent does.
 
 **An app is never the owner.** A message from an app, including what a person typed in its
 embedded chat, is labelled as the app's on every surface. Its run sees only that app's own runs

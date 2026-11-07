@@ -203,8 +203,8 @@ describe('dreamcontext apps (the real CLI against the real router)', () => {
 
   it('actions lists the manifest; do runs one through the call route, fenced, without a window', async () => {
     const a = await cli(['apps', 'actions', 'echo'], project);
-    expect(a.out).toMatch(/leak\s+GET \/leak/);
-    expect(a.out).toMatch(/<<<app-output actions nonce=[0-9a-f]{12}/);
+    expect(a.out).toContain('leak · Return the leak body · reads');
+    expect(a.out).toMatch(/<<<app-output tools nonce=[0-9a-f]{12}/);
     const d = await cli(['apps', 'do', 'echo', 'leak'], project);
     expect(d.code).toBe(0);
     expect(d.out).toMatch(/<<<app-output do leak status=200 nonce=/);

@@ -297,9 +297,10 @@ dreamcontext apps new <slug> [--name "<Name>"]        # template + lib/dc.mjs + 
 dreamcontext apps list [--json]                      # this project's apps and state
 dreamcontext apps open|start <slug>                  # open or bring forward (clears an owner Stop)
 dreamcontext apps stop <slug>                        # backend down until the owner opens it again
-dreamcontext apps actions <slug> [--json]            # the app's own verbs: read before writing logic
-dreamcontext apps do <slug> <action> [--input '<json>']   # run one (no window needed, no Claude)
-dreamcontext apps call <slug> <METHOD> <path> [--body '<json>']
+dreamcontext apps tools [slug] [--json]              # tools of the apps on THIS Mac + the project's not installed here (alias: actions)
+dreamcontext apps do <slug> <tool> [--input '<json>'] [--json] [--confirm]   # reads run; a change needs --confirm after the owner's yes
+dreamcontext apps call <slug> <METHOD> <path> [--body '<json>'] [--confirm]
+dreamcontext apps catalog remove <slug>              # owner only: drop an app from the brain's app list
 dreamcontext apps screenshot <slug> [--out <png>]    # open window only, else app_not_open
 dreamcontext apps status|logs <slug>                 # redacted, fenced as app data
 dreamcontext apps validate [slug]                    # every manifest problem with its fix
