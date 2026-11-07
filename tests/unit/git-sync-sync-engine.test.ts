@@ -217,14 +217,38 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), incomingSuperRecords: () => null });
       expect(r2.note).toContain('could not check');
     });
-    it('a pull carrying another Mac\'s session files (sleep state, peer mail) stops before the merge, and so does a guard that cannot answer', async () => {
-      const state = makeState({ aheadCount: 1 });
-      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(state), incomingSessionFiles: () => ['_dream_context/state/.sleep.json'] });
+    it('a pull touching session files is NOT stopped: this Mac\'s copies are parked, the merge is settled around them, and they go back', async () => {
+      const calls: string[] = [];
+      const change = [{ path: '_dream_context/state/.sleep.json', deleted: false }];
+      const parks = [{ from: '/x/.sleep.json', backup: '/park/1', at: 'now' }];
+      const deps: Partial<SyncEngineDeps> = {
+        ...baseDeps(makeState({ aheadCount: 1 })),
+        sessionChanges: () => change,
+        parkSessionFiles: (_c, _r, ch) => { calls.push(`park:${ch.length}`); return parks; },
+        settleSessionMerge: () => { calls.push('settle'); return new Set(['_dream_context/state/.sleep.json']); },
+        restoreSessionPark: (_r, p) => { calls.push(`restore:${p?.length}`); },
+        restoreLeftoverSessionPark: () => { calls.push('leftover'); },
+      };
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
+      expect(r.note ?? '').not.toContain('session files');
+      expect(calls).toEqual(['leftover', 'park:1', 'settle', 'restore:1']);
+    });
+    it('a session guard that cannot answer stops the pull; a park that fails stops it too, with nothing merged', async () => {
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), sessionChanges: () => null });
       expect(r.action).toBe('noop');
-      expect(r.note).toContain('session files');
+      expect(r.note).toContain('could not check');
+      const state = makeState({ aheadCount: 1 });
+      const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(state), sessionChanges: () => [{ path: '_dream_context/state/.sleep.json', deleted: false }], parkSessionFiles: () => null });
+      expect(r2.action).toBe('noop');
+      expect(r2.note).toContain('session files could not be set aside');
       expect(state.commitCalls).toHaveLength(0);
-      const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), incomingSessionFiles: () => null });
-      expect(r2.note).toContain('could not check');
+    });
+    it('a commit to push carrying a session file holds the push (session-files-held), nothing pushed', async () => {
+      const state = makeState({ dirty: ['knowledge/x.md'] });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(state), appDataInPushRange: () => null, incomingAppData: () => [], machineLocalInPushRange: () => 'abc123' });
+      expect(r.action).toBe('session-files-held');
+      expect(r.note).toContain('session files');
+      expect(state.pushCalls).toBe(0);
     });
   });
 

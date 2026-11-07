@@ -43,9 +43,15 @@ A gitignore line never untracks a file an older install already committed, so th
 session files (the Super record and `.super/`, the session rosters, and `SESSION_LOCAL_PATHSPECS`
 in `src/lib/super/pull-guard.ts`: sleep state, sleep history, digests, titles, the handoff log,
 peer mail) also leave the INDEX: in every sync's stage pass and on `dreamcontext update`
-(migration 0.40.2, every run; the file stays on disk). A pull whose update carries one stops
-with a note. `state/.sleep.json` keeps each session's last reply and the bookmarks caught from
-it, so a committed one carried the owner's Super agenda to a teammate (2026-11-07).
+(migration 0.40.2, every run, which also re-asserts their ignore lines below a teammate's `!`
+line; the file stays on disk), matched in any letter case. A push whose commits still carry one
+waits (`session-files-held`). A pull never stops for them, since an old install rewrites its
+tracked copy on every sync: the merge parks this Mac's copies, takes every session path out of
+the index (a modify/delete conflict on one included) and the other Mac's copy off the disk, then
+puts this Mac's back (`src/lib/git-sync/session-merge.ts`). `state/.sleep.json` keeps each
+session's last reply and the bookmarks caught from it, so a committed one carried the owner's
+Super agenda to a teammate (2026-11-07); when it leaves the index, sessions whose transcript is
+not on this Mac (and their bookmarks) move to `state/.sleep.json.foreign-<time>`.
 
 The `_dream_context/.gitignore` is built by `buildBrainGitignore(taskBackend)` and the project-root
 excludes by `ensureFullRepoGitignore(projectRoot, taskBackend)` (both `src/lib/git-sync/brain-repo.ts`),

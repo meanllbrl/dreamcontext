@@ -152,7 +152,7 @@ export function registerBrainCommand(program: Command): void {
         // server route is no longer the only path that keeps the flag honest).
         reconcileBrainSyncSuccess(result.action);
         renderBrainSyncResult(result);
-        if (result.action === 'invalid-flag' || result.action === 'blocked-scrub' || result.action === 'app-data-held') process.exitCode = 1;
+        if (result.action === 'invalid-flag' || result.action === 'blocked-scrub' || result.action === 'app-data-held' || result.action === 'session-files-held') process.exitCode = 1;
       } catch (err) {
         const projectRoot = dirname(contextRoot);
         reconcileBrainSyncFailure((err as Error).message, projectRoot);
@@ -213,6 +213,9 @@ export function renderBrainSyncResult(result: SyncResult): void {
       break;
     case 'app-data-held':
       error(result.note ?? 'Brain sync: the push waits, a commit holds app data.');
+      break;
+    case 'session-files-held':
+      error(result.note ?? 'Brain sync: the push waits, a commit carries this Mac\'s session files.');
       break;
     default:
       info(`Brain sync: ${result.action}.`);

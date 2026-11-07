@@ -5,7 +5,8 @@ import { currentTaskBackend, ensureBrainGitignore, ensureFullRepoGitignore } fro
 import * as git from '../lib/git-sync/git.js';
 import { readSetupConfig } from '../lib/setup-config.js';
 import { setAsideForeignRecords } from '../lib/super/record-binding.js';
-import { SUPER_LOCAL_PATHSPECS, superPathspecs } from '../lib/super/pull-guard.js';
+import { SUPER_LOCAL_PATHSPECS, isSleepStatePath, superPathspecs } from '../lib/super/pull-guard.js';
+import { setAsideForeignSleepLines } from '../lib/super/sleep-foreign.js';
 import type { Migration, MigrationStepResult } from './types.js';
 
 /**
@@ -37,20 +38,38 @@ export { SUPER_LOCAL_PATHSPECS };
 /** The Super lines of the brain `.gitignore`, re-asserted last when a negation beats them. */
 const SUPER_GITIGNORE_LINES = ['state/.super-agent.json', 'state/.super-agent.json.*', 'state/.super/', 'state/.agent-sessions.*'];
 
-/** Does git ignore the record? Re-append the Super lines at the end when it does not. */
+/** The session lines (`SESSION_LOCAL_PATHSPECS`, folders with their slash), re-asserted the same way
+ *  (security review, 2026-11-07: a teammate's `!state/.sleep.json` was never countered). */
+const SESSION_GITIGNORE_LINES = [
+  'state/.sleep.json', 'state/.sleep.json.*', 'state/.sleep-history.json', 'state/.sleep-runs.jsonl',
+  'state/.handoff-log.jsonl', 'state/.session-titles.json', 'state/.session-digests/', 'state/.agent-session-map/',
+  'state/.active-task', 'state/.tool-handoff/', 'state/.run-sessions/', 'state/.peer-mail/', 'state/.sleepy-chat.json',
+];
+
+/** One probe per group: the group's lines go to the end when git does not ignore its probe. */
+const REASSERT_GROUPS: { probes: string[]; lines: string[]; comment: string }[] = [
+  { probes: ['state/.super-agent.json'], lines: SUPER_GITIGNORE_LINES, comment: "the Super Agent's files stay on this Mac" },
+  { probes: ['state/.sleep.json', 'state/.peer-mail/x.json', 'state/.session-digests/x.md'], lines: SESSION_GITIGNORE_LINES, comment: "this Mac's session files (sleep state, history, peer mail) stay on this Mac" },
+];
+
+/** Does git ignore the record and the session files? Re-append a group's lines at the end when not. */
 function reassertSuperIgnore(root: string): string[] {
   let top: string | null;
   try { top = git.topLevel(root); } catch { top = null; }
   const prefix = top ? brainPrefix(root, root) : null;
   if (!top || prefix === null) return [];
-  if (git.isIgnored(top, `${prefix}state/.super-agent.json`) !== false) return [];
   const path = join(root, '.gitignore');
-  try {
-    if (!lstatSync(path).isFile()) return [];
-    const current = readFileSync(path, 'utf-8');
-    appendFileSync(path, `${current.endsWith('\n') ? '' : '\n'}# dreamcontext: the Super Agent's files stay on this Mac (last, so no negation above wins)\n${SUPER_GITIGNORE_LINES.join('\n')}\n`);
-  } catch { return []; }
-  return SUPER_GITIGNORE_LINES;
+  const added: string[] = [];
+  for (const g of REASSERT_GROUPS) {
+    if (g.probes.every((rel) => git.isIgnored(top as string, `${prefix}${rel}`) !== false)) continue;
+    try {
+      if (!lstatSync(path).isFile()) return added;
+      const current = readFileSync(path, 'utf-8');
+      appendFileSync(path, `${current.endsWith('\n') ? '' : '\n'}# dreamcontext: ${g.comment} (last, so no negation above wins)\n${g.lines.join('\n')}\n`);
+    } catch { return added; }
+    added.push(...g.lines);
+  }
+  return added;
 }
 
 export function untrackSuperRecords(root: string): MigrationStepResult {
@@ -68,6 +87,9 @@ export function untrackSuperRecords(root: string): MigrationStepResult {
   }
   if (tracked.length === 0) return none;
   const moved = setAsideForeignRecords(root);
+  // A tracked sleep state holds every Mac's lines that synced into it: this Mac keeps its own.
+  const asideSleep = tracked.some(isSleepStatePath) ? setAsideForeignSleepLines(root) : null;
+  if (asideSleep) moved.push(asideSleep);
   // `-f`: a live record staged a moment before it changed again is dropped too (index only).
   try { git.removeFromIndexForce(top, specs); } catch {
     return { step, filesTouched: moved, summary: `Git tracks ${tracked.length} Super Agent or session file(s) but would not drop them from its index (an index.lock held by another git?); retried on the next update`, detected: false, failedCount: 1 };
@@ -79,7 +101,7 @@ export function untrackSuperRecords(root: string): MigrationStepResult {
     step,
     filesTouched: [...tracked.map((p) => join(top, p)), ...moved],
     detected: false,
-    summary: `Took ${tracked.length} Super Agent or session file(s) out of git's index, kept on disk (${names}); commit that removal${moved.length ? `. Set aside ${moved.length} record(s) from another Mac or folder` : ''}`,
+    summary: `Took ${tracked.length} Super Agent or session file(s) out of git's index, kept on disk (${names}); commit that removal${moved.length ? `. Set aside ${moved.length} record(s) from another Mac or folder${asideSleep ? ' (other Macs\' sessions out of the sleep state)' : ''}` : ''}`,
   };
 }
 

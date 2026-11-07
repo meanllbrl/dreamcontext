@@ -195,6 +195,8 @@ export const BRAIN_LOCAL_GITIGNORE_ENTRIES: readonly string[] = [
     // file a teammate's bookmarks against whatever task someone else had open.
     'state/.active-task',
     'state/.sleep.json',
+    // Another Mac's lines set aside from it (`super/sleep-foreign.ts`), and its temp files.
+    'state/.sleep.json.*',
     'state/.sleep-history.json',
     'state/.sleep-runs.jsonl',
     'state/.handoff-log.jsonl',
@@ -305,6 +307,7 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   // implicit `--task`, so a synced one would misfile a teammate's bookmarks.
   '_dream_context/state/.active-task',
   '_dream_context/state/.sleep.json',
+  '_dream_context/state/.sleep.json.*',
   '_dream_context/state/.sleep-history.json',
   '_dream_context/state/.sleep-runs.jsonl',
   '_dream_context/state/.handoff-log.jsonl',

@@ -786,6 +786,24 @@ export function rawEntries(cwd: string, range: string, pathspecs: string[] = [])
 }
 
 /**
+ * The changed paths of ONE commit against its first parent (a root commit against nothing), with
+ * both modes, renames split. Run from the repo's top folder. THROWS when git cannot answer.
+ */
+export function commitEntries(cwd: string, commit: string, pathspecs: string[] = []): RawEntry[] {
+  const args = ['diff-tree', '-r', '-z', '--raw', '--no-abbrev', '--no-renames', '--no-commit-id', '--root', '-m', '--first-parent', commit];
+  const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
+  const out: RawEntry[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const m = parts[i].match(/^:(\d{6}) (\d{6}) /);
+    if (!m) continue;
+    const path = parts[i + 1];
+    if (path) out.push({ path, oldMode: m[1], newMode: m[2] });
+    i++;
+  }
+  return out;
+}
+
+/**
  * The entries directly inside folder `dir` (repo-relative, '' = the top) of `rev`: their names and
  * modes (`040000` for a folder, `120000` for a symlink). Run from the repo's top folder. THROWS
  * when git cannot answer.

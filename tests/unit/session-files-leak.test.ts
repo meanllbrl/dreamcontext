@@ -13,8 +13,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BRAIN_LOCAL_GITIGNORE_ENTRIES, FULL_REPO_LOCAL_GITIGNORE_ENTRIES, ensureBrainGitignore } from '../../src/lib/git-sync/brain-repo.js';
-import { untrackSuperRecords } from '../../src/migrations/0.40.2.js';
-import { SESSION_LOCAL_PATHSPECS, incomingSessionFiles, incomingSuperRecords, superStagePass } from '../../src/lib/super/pull-guard.js';
+import { migration0402, untrackSuperRecords } from '../../src/migrations/0.40.2.js';
+import { SESSION_LOCAL_PATHSPECS, incomingSessionFiles, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../../src/lib/super/pull-guard.js';
+import { parkSessionFiles, restoreSessionPark, settleSessionMerge } from '../../src/lib/git-sync/session-merge.js';
+import { setAsideForeignSleepLines } from '../../src/lib/super/sleep-foreign.js';
 import { resetSuperIndex } from '../../src/lib/super/store.js';
 import { resetBindingCache } from '../../src/lib/super/record-binding.js';
 
@@ -33,11 +35,18 @@ const OLD_GITIGNORE = ['state/.secrets.json', 'tmp/', ''].join('\n');
 
 /** What a Super turn leaves in the sleep state: its last reply and the bookmark caught from it. */
 const OWNER_LINE = 'Plan hazir, kararini soran bir kart seni bekliyor';
-const sleepState = (line: string) => JSON.stringify({
+/** The owner's session: its transcript is on this Mac (the test process plays the owner's Mac). */
+const OWNER_SID = '0b6f2c1e-7d4a-4c1b-9a2e-3f5d6c7b8a90';
+const sleepState = (line: string, sid: string = OWNER_SID) => JSON.stringify({
   debt: 3,
-  sessions: [{ session_id: 's-owner-1', last_assistant_message: line }],
-  bookmarks: [{ id: 'bm-1', message: `Decision: ${line}`, capture: true, session_id: 's-owner-1' }],
+  sessions: [{ session_id: sid, last_assistant_message: line }],
+  bookmarks: [{ id: 'bm-1', message: `Decision: ${line}`, capture: true, session_id: sid }],
 });
+/** A Claude transcript for `sid` under HOME: the session ran on this Mac. */
+const transcriptHere = (sid: string) => {
+  mkdirSync(join(home, '.claude', 'projects', '-p'), { recursive: true });
+  writeFileSync(join(home, '.claude', 'projects', '-p', `${sid}.jsonl`), '{}\n');
+};
 
 function brain(dir: string): string {
   const ctx = join(dir, '_dream_context');
@@ -98,6 +107,7 @@ beforeEach(() => {
   mkdirSync(home, { recursive: true });
   prevHome = process.env.HOME;
   process.env.HOME = home;
+  transcriptHere(OWNER_SID);
 });
 afterEach(() => {
   process.env.HOME = prevHome;
@@ -209,5 +219,146 @@ describe('a pull that carries another Mac\'s session files stops', () => {
     git(mate, 'add', '-A'); git(mate, 'commit', '-q', '-m', 'note'); git(mate, 'push', '-q', 'origin', 'main');
     git(owner, 'fetch', '-q', 'origin');
     expect(incomingSessionFiles(owner, ctx, 'origin/main')).toEqual([]);
+  });
+});
+
+// ── review round 1 (multi-review 2026-11-07): what the first fix left open ──────────────────────
+
+const MATE_SID = '7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
+const MATE_LINE = 'the teammate wrote this in its own session';
+
+/** The sync's defused pull, as `mergeAndMaybeDefer` runs it: park, merge, settle, put back. */
+function defusedPull(repo: string, ctx: string): { rest: string[] } {
+  git(repo, 'fetch', '-q', 'origin');
+  const changes = sessionChanges(repo, ctx, 'origin/main');
+  expect(changes).not.toBeNull();
+  const parks = parkSessionFiles(repo, ctx, changes ?? [], home);
+  expect(parks).not.toBeNull();
+  let conflicts: string[] = [];
+  try { git(repo, 'merge', '--no-commit', '--no-edit', 'origin/main'); } catch {
+    conflicts = git(repo, 'diff', '--name-only', '--diff-filter=U').split('\n').filter(Boolean);
+  }
+  const settled = settleSessionMerge(repo, ctx, changes ?? []);
+  restoreSessionPark(ctx, parks, home);
+  return { rest: conflicts.filter((c) => !settled.has(c.toLowerCase())) };
+}
+const commitPull = (repo: string) => git(repo, 'commit', '-q', '--allow-empty', '-m', 'pull');
+
+describe('S1: a case twin is the same file on a Mac, and leaves the index too', () => {
+  it('a tracked `.Sleep.json` never rides a sync commit', () => {
+    const { owner, ctx } = team();
+    // The twin replaces the old name (on a Mac's disk both names are one file).
+    git(owner, 'rm', '-q', '--cached', '--', '_dream_context/state/.sleep.json');
+    rmSync(join(ctx, 'state', '.sleep.json'));
+    writeFileSync(join(ctx, 'state', '.Sleep.json'), sleepState(OWNER_LINE));
+    git(owner, 'add', '-f', '--', '_dream_context/state/.Sleep.json');
+    git(owner, 'commit', '-q', '-m', 'twin');
+    writeFileSync(join(ctx, 'state', '.Sleep.json'), sleepState('a newer waiting-on-you line'));
+    git(owner, 'add', '-A');
+    superStagePass(owner, ctx);
+    git(owner, 'commit', '-q', '-m', 'sync');
+    const tree = git(owner, 'ls-tree', '-r', '--name-only', 'HEAD', '--', '_dream_context/state/').toLowerCase();
+    expect(tree).not.toContain('.sleep.json');
+  });
+});
+
+describe('S2: a negated session line is countered, and a commit made outside the sync holds the push', () => {
+  it('update puts the session lines after a teammate\'s `!state/.sleep.json`', () => {
+    const { owner, ctx } = team();
+    ensureBrainGitignore(ctx);
+    writeFileSync(join(ctx, '.gitignore'), `${readFileSync(join(ctx, '.gitignore'), 'utf-8')}!state/.sleep.json\n`);
+    const ignored = (rel: string) => { try { git(owner, 'check-ignore', '-q', '--no-index', rel); return true; } catch { return false; } };
+    expect(ignored('_dream_context/state/.sleep.json')).toBe(false);
+    migration0402.steps[0](ctx);
+    expect(ignored('_dream_context/state/.sleep.json')).toBe(true);
+    expect(ignored('_dream_context/state/.peer-mail/x.json')).toBe(true);
+    expect(migration0402.steps[0](ctx).detected).toBe(true);
+  });
+
+  it('a commit that adds or changes a session file is named by the push gate; a removal passes', () => {
+    const { owner, ctx } = team();
+    // The removal (a sync commit) passes.
+    git(owner, 'add', '-A'); superStagePass(owner, ctx); git(owner, 'commit', '-q', '-m', 'sync');
+    git(owner, 'fetch', '-q', 'origin');
+    expect(machineLocalInPushRange(owner, ctx, 'origin/main')).toBeNull();
+    git(owner, 'push', '-q', 'origin', 'main');
+    // A hand commit that force-adds it back is held.
+    writeFileSync(join(ctx, 'state', '.sleep.json'), sleepState('a hand commit'));
+    git(owner, 'add', '-f', '--', '_dream_context/state/.sleep.json');
+    git(owner, 'commit', '-q', '-m', 'by hand');
+    const sha = git(owner, 'rev-parse', 'HEAD').trim();
+    git(owner, 'fetch', '-q', 'origin');
+    expect(machineLocalInPushRange(owner, ctx, 'origin/main')).toBe(sha);
+  });
+});
+
+describe('E1: an old teammate\'s ordinary sync never locks an updated one out', () => {
+  it('the old copy\'s change merges in settled: no conflict left, this Mac\'s sleep state kept, the remote converges', () => {
+    const { owner, ctx, mate, mateCtx, bare } = team();
+    // The old install changes its tracked copy and pushes, as every ordinary sync of it does.
+    writeFileSync(join(mateCtx, 'state', '.sleep.json'), sleepState(MATE_LINE, MATE_SID));
+    writeFileSync(join(mateCtx, 'state', '.peer-mail', '8-m.json'), '{"kind":"note"}');
+    git(mate, 'add', '-A'); git(mate, 'commit', '-q', '-m', 'old sync'); git(mate, 'push', '-q', 'origin', 'main');
+    // The updated owner's sync commit drops the files; its pull meets the old copy's change.
+    const NEW_LINE = 'the owner, after the update';
+    writeFileSync(join(ctx, 'state', '.sleep.json'), sleepState(NEW_LINE));
+    git(owner, 'add', '-A'); superStagePass(owner, ctx); git(owner, 'commit', '-q', '-m', 'sync');
+    git(owner, 'fetch', '-q', 'origin');
+    expect(incomingSessionFiles(owner, ctx, 'origin/main')?.length).toBeGreaterThan(0);
+    const { rest } = defusedPull(owner, ctx);
+    expect(rest).toEqual([]);
+    commitPull(owner);
+    const mine = readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8');
+    expect(mine).toContain(NEW_LINE);
+    expect(mine).not.toContain(MATE_LINE);
+    // The other Mac's letter never lands here.
+    expect(existsSync(join(ctx, 'state', '.peer-mail', '8-m.json'))).toBe(false);
+    git(owner, 'push', '-q', 'origin', 'main');
+    for (const rel of ['.sleep.json', '.peer-mail/8-m.json']) expect(remoteState(bare), rel).not.toContain(`_dream_context/state/${rel}`);
+  });
+});
+
+describe('E2: a teammate who updated first keeps none of the owner\'s lines', () => {
+  it('when the tracked sleep state leaves the index, sessions not on this Mac and their bookmarks are set aside', () => {
+    const { mate, mateCtx } = team();
+    // Updated first: its install wrote today's ignore list (the tracked copy still stages).
+    ensureBrainGitignore(mateCtx);
+    // The teammate's Mac: its own session ran here, the owner's did not.
+    rmSync(join(home, '.claude', 'projects', '-p', `${OWNER_SID}.jsonl`));
+    transcriptHere(MATE_SID);
+    const both = JSON.parse(sleepState(OWNER_LINE));
+    both.sessions.push({ session_id: MATE_SID, last_assistant_message: MATE_LINE });
+    both.bookmarks.push({ id: 'bm-2', message: `Decision: ${MATE_LINE}`, session_id: MATE_SID }, { id: 'bm-3', message: 'typed by hand' });
+    writeFileSync(join(mateCtx, 'state', '.sleep.json'), JSON.stringify(both));
+    git(mate, 'add', '-A');
+    superStagePass(mate, mateCtx);
+    const kept = readFileSync(join(mateCtx, 'state', '.sleep.json'), 'utf-8');
+    expect(kept).not.toContain(OWNER_LINE);
+    expect(kept).toContain(MATE_LINE);
+    expect(kept).toContain('typed by hand');
+    const parsed = JSON.parse(kept);
+    expect(parsed.debt).toBe(3);
+    // Set aside, never deleted, and never synced.
+    const aside = git(mate, 'ls-files', '--others', '--ignored', '--exclude-standard', '--', '_dream_context/state/').split('\n').filter((p) => p.includes('.sleep.json.foreign-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(mate, aside[0]), 'utf-8')).toContain(OWNER_LINE);
+    expect(setAsideForeignSleepLines(mateCtx, home)).toBeNull();
+  });
+});
+
+describe('E3: a teammate\'s own sleep state survives the owner\'s removal', () => {
+  it('a clean tracked copy (no sync commit of its own yet) is parked and put back when the removal arrives', () => {
+    const { owner, ctx, mate, mateCtx } = team();
+    transcriptHere(MATE_SID);
+    writeFileSync(join(mateCtx, 'state', '.sleep.json'), sleepState(MATE_LINE, MATE_SID));
+    git(mate, 'add', '-A'); git(mate, 'commit', '-q', '-m', 'mine'); git(mate, 'push', '-q', 'origin', 'main');
+    git(owner, 'pull', '-q', '--no-rebase', 'origin', 'main');
+    ownerSync(owner, ctx, 'sync');
+    // The teammate's tree is clean: its copy is still tracked, exactly HEAD's bytes.
+    const { rest } = defusedPull(mate, mateCtx);
+    expect(rest).toEqual([]);
+    commitPull(mate);
+    expect(readFileSync(join(mateCtx, 'state', '.sleep.json'), 'utf-8')).toContain(MATE_LINE);
+    expect(tracked(mate, '_dream_context/state/.sleep.json')).toBe(false);
   });
 });
