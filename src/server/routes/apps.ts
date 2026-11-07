@@ -681,16 +681,30 @@ export function matchAction(actions: readonly AppAction[], method: string, path:
 /** The action, and whether the caller's tool name held for this call. */
 function resolveAction(actions: readonly AppAction[], method: string, path: string, tool?: string): { action: AppAction | null; named: boolean; shared: boolean } {
   const same = sameRoute(actions, method, path);
-  // The caller named the tool (`apps do`, the Assistant): that one, if its own path leads the call and
-  // no more specific tool's query is in it (naming the approved tool while sending another's
-  // `?mode=live` names nothing).
-  const query = new Set((path.split('?')[1] ?? '').split('&').filter(Boolean));
-  const ownQuery = (a: AppAction) => (a.path.split('?')[1] ?? '').split('&').filter(Boolean);
-  const named = tool ? same.find((a) => a.id === tool && path.startsWith(a.path)
-    && !same.some((o) => o !== a && ownQuery(o).length > ownQuery(a).length && ownQuery(o).every((q) => query.has(q)))) : undefined;
+  // The caller named the tool (`apps do`, the Assistant). The name never lowers authority: it holds
+  // only when the call, its query DECODED, matches that tool and no sibling, with no key twice
+  // (`?mode=%6Cive` or `?mode=dry&mode=live` behind a read tool's name names nothing).
+  const named = tool ? namedAction(same, path, tool) : undefined;
   if (named) return { action: named, named: true, shared: same.length > 1 };
   // Two tools on one base path (`?mode=dry` / `?mode=live`): a changing one wins, so a query never makes a change look like a read.
   return { action: same.find((a) => effectOf(a) === 'change') ?? same[0] ?? null, named: false, shared: same.length > 1 };
+}
+
+function namedAction(same: readonly AppAction[], path: string, tool: string): AppAction | undefined {
+  const a = same.find((x) => x.id === tool);
+  if (!a) return undefined;
+  let call: URLSearchParams;
+  try { call = new URLSearchParams(path.split('?').slice(1).join('?')); } catch { return undefined; }
+  const keys = [...call.keys()];
+  if (new Set(keys).size !== keys.length) return undefined;
+  const fits = (x: AppAction): boolean => {
+    let own: URLSearchParams;
+    try { own = new URLSearchParams(x.path.split('?').slice(1).join('?')); } catch { return true; }
+    for (const [k, v] of own) if (call.get(k) !== v) return false;
+    return true;
+  };
+  if (!fits(a)) return undefined;
+  return same.some((o) => o !== a && fits(o)) ? undefined : a;
 }
 
 function sameRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {

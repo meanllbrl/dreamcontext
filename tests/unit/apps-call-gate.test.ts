@@ -110,6 +110,20 @@ describe('gateAppCall', () => {
     expect(call('POST', '/api/notify-test', 'owner', { confirm: true })).toMatchObject({ ok: true, timeoutMs: 60_000 });
   });
 
+  it('a name never lowers authority: an encoded or repeated query behind a read tool still changes', () => {
+    const two: AppAction[] = [
+      { id: 'status', title: 'Status', method: 'GET', path: '/api/run' },
+      { id: 'live', title: 'Live', method: 'GET', path: '/api/run?mode=live', danger: true },
+      { id: 'dry', title: 'Dry', method: 'GET', path: '/api/run?mode=dry', danger: true },
+    ];
+    const g = (path: string, tool: string) => gate(ctx, rec, two, { method: 'GET', path, confirm: false, claim: { class: 'crew' }, tool }, { home });
+    expect(g('/api/run?mode=%6Cive', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('/api/run?mode=dry&mode=live', 'dry')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('/api/run?mode=live', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    // A plain read on that route is still a read when it names the read tool and fits no sibling.
+    expect(g('/api/run?x=1', 'status')).toMatchObject({ ok: true, effect: 'read' });
+  });
+
   it('two tools on one base path: the changing one decides, a query cannot make it a read', async () => {
     const { matchAction } = await import('../../src/server/routes/apps.js');
     const two: AppAction[] = [
