@@ -133,7 +133,7 @@ function setup() {
 const freePort = () => new Promise((done, fail) => { const s = createServer(); s.once('error', fail); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => done(port)); }); });
 
 async function startServer(port) {
-  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...ENV, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_AUTO_DASHBOARD: '0' }, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...ENV, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_PARENT_PID: String(process.pid), DREAMCONTEXT_AUTO_DASHBOARD: '0' }, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
   let err = '';
   srv.stderr.on('data', (c) => { err += c.toString('utf-8'); });
   const end = Date.now() + 40_000;
