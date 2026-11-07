@@ -151,12 +151,21 @@ describe('anything else is refused exactly as before', () => {
 
 describe('the windows that draw the Apps page hold the key', () => {
   const tauri = join(__dirname, '..', '..', 'desktop', 'src-tauri');
-  const capability = JSON.parse(readFileSync(join(tauri, 'capabilities', 'default.json'), 'utf-8')) as { windows: string[]; permissions: string[] };
+  const caps = ['default', 'assistant', 'checklist', 'viewer', 'node-setup', 'splash'].map((c) => readFileSync(join(tauri, 'capabilities', `${c}.json`), 'utf-8'));
   const ownerKeyRs = readFileSync(join(tauri, 'src', 'owner_key.rs'), 'utf-8');
+  const libRs = readFileSync(join(tauri, 'src', 'lib.rs'), 'utf-8');
 
-  it('the Launcher and project windows may call the shell\'s owner_key command', () => {
-    expect(capability.windows).toEqual(expect.arrayContaining(['main', 'vault-*']));
-    expect(capability.permissions).toContain('allow-owner-key');
+  it('no static capability grants the key: theirs allow every loopback port, a web card\'s too', () => {
+    for (const c of caps) expect(c).not.toMatch(/"allow-owner-key"/);
+  });
+
+  it('the shell grants it at runtime to the notch, the Launcher and the project windows, on the app\'s own port only', () => {
+    expect(ownerKeyRs).toMatch(/const OWNER_WINDOWS: \[&str; 3\] = \["assistant", "main", "vault-\*"\];/);
+    expect(ownerKeyRs).toMatch(/\[format!\("http:\/\/127\.0\.0\.1:\{port\}"\), format!\("http:\/\/localhost:\{port\}"\)\]/);
+    expect(ownerKeyRs).toMatch(/\.local\(false\)/);
+    expect(ownerKeyRs).toMatch(/\.permission\("allow-owner-key"\)/);
+    // Granted right where the shell learns the port.
+    expect(libRs).toMatch(/app\.manage\(DashboardPort\(port\)\);[\s\S]{0,200}owner_key::grant\(&app, port\)/);
   });
 
   it('the command answers the notch, the Launcher and the project windows, and only them', () => {

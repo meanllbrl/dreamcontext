@@ -887,6 +887,13 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         return Err(format!("{e}\n\nNode: {node}"));
     }
     app.manage(DashboardPort(port));
+    // The owner key is asked for only from frames on this very port (src/owner_key.rs).
+    // No static capability holds the key, so an Err here leaves owner decisions refused. Tauri
+    // unwraps a permission it cannot resolve (an abort, not an Err); the inputs are fixed and the
+    // scope test in owner_key.rs pins them.
+    if let Err(e) = owner_key::grant(&app, port) {
+        eprintln!("[owner-key] {e}");
+    }
 
     // Window and AppKit work belongs on the main thread; this one runs there and hands
     // its result back so a failure still reaches the error window.
