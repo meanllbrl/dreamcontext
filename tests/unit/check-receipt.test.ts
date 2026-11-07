@@ -100,16 +100,71 @@ describe('check receipts', () => {
     expect(hitOf(tests())).toBeNull();
   });
 
-  it('a version-only bump reuses a type check but NOT a test run (tests can read the version)', () => {
+  const bump = (f: string, from = '1.0.0', to = '1.0.1') => writeFileSync(join(repo, f), readFileSync(join(repo, f), 'utf-8').split(from).join(to));
+  /** A dist the way the build writes it: the version baked in. */
+  const build = (version: string, extra = '') => {
+    mkdirSync(join(repo, 'dist'), { recursive: true });
+    writeFileSync(join(repo, 'dist/index.js'), `const VERSION = "${version}";\nexport function run() { return 1; }${extra}\n`);
+  };
+
+  // Super decision 2026-11-07: a version-only bump reuses the suite too, once the dist is rebuilt.
+  it('a version-only bump reuses a type check, and a test run once the dist is rebuilt for it', () => {
+    build('1.0.0');
     green(tests());
     green(tsc());
-    const bump = (f: string) => writeFileSync(join(repo, f), readFileSync(join(repo, f), 'utf-8').split('1.0.0').join('1.0.1'));
     bump('package.json');
     bump('package-lock.json');
     const hit = hitOf(tsc());
     expect(hit?.via).toBe('harmless');
     expect(hit?.paths.sort()).toEqual(['package-lock.json', 'package.json']);
+    // Not rebuilt: the built CLI still says 1.0.0 and its version test would be red. It runs.
     expect(hitOf(tests())).toBeNull();
+    build('1.0.1');
+    const t = hitOf(tests());
+    expect(t?.via).toBe('harmless');
+    expect(t?.paths.sort()).toEqual(['package-lock.json', 'package.json']);
+  });
+
+  // Review 2026-11-07: tests compare the version with the brain's RELEASES.json (announcements
+  // gate), which git ignores, so a checkout with a brain never reuses a test run across a bump.
+  it('with a brain in the checkout a version bump runs the tests, and its releases are in the key', () => {
+    writeFileSync(join(repo, '.gitignore'), `${readFileSync(join(repo, '.gitignore'), 'utf-8')}/_dream_context\n`);
+    commit(repo, 'ignore the brain');
+    mkdirSync(join(repo, '_dream_context/core'), { recursive: true });
+    writeFileSync(join(repo, '_dream_context/core/RELEASES.json'), '[{"version":"1.0.1","status":"planning"}]');
+    build('1.0.0');
+    green(tests());
+    writeFileSync(join(repo, '_dream_context/core/RELEASES.json'), '[{"version":"1.0.1","status":"released"}]');
+    expect(hitOf(tests())).toBeNull(); // same code, other releases
+    green(tests());
+    bump('package.json');
+    build('1.0.1');
+    expect(hitOf(tests())).toBeNull();
+    expect(hitOf(tsc())).toBeNull(); // never recorded here; the tsc rule is unchanged
+  });
+
+  it('a version bump with any other change, in the source or in what the build wrote, runs the tests', () => {
+    build('1.0.0');
+    green(tests());
+    bump('package.json');
+    build('1.0.1', '\nexport const extra = 2;'); // the build differs by more than the version
+    expect(hitOf(tests())).toBeNull();
+    build('1.0.1');
+    expect(hitOf(tests())?.via).toBe('harmless');
+    writeFileSync(join(repo, 'src/a.ts'), 'export const a = 2;\n'); // a real source change
+    expect(hitOf(tests())).toBeNull();
+  });
+
+  it('for a test run only the ROOT package files are harmless, and only their version', () => {
+    mkdirSync(join(repo, 'desktop'), { recursive: true });
+    writeFileSync(join(repo, 'desktop/package.json'), JSON.stringify({ name: 'desk', version: '1.0.0' }));
+    commit(repo, 'desktop');
+    green(tests());
+    bump('desktop/package.json');
+    expect(hitOf(tests())).toBeNull(); // a lockstep test may compare the two versions
+    expect(harmlessFor('tests', 'desktop/package.json', () => true)).toBe(false);
+    expect(harmlessFor('tests', 'package.json', () => true)).toBe(true);
+    expect(harmlessFor('tests', 'package.json', () => false)).toBe(false);
   });
 
   it('Markdown reuses a type check, never a test run; a package.json change past the version reuses nothing', () => {
@@ -305,7 +360,8 @@ describe('check receipts', () => {
     expect(harmlessFor('tsc', 'src/a.ts', yes)).toBe(false);
     expect(harmlessFor('tsc', 'CHANGELOG.json', yes)).toBe(false);
     expect(harmlessFor('tests', 'README.md', yes)).toBe(false);
-    expect(harmlessFor('tests', 'package.json', yes)).toBe(false);
+    expect(harmlessFor('tests', 'package.json', yes)).toBe(true);
+    expect(harmlessFor('tests', 'package.json', () => false)).toBe(false);
     expect(harmlessFor('tests', '_dream_context/core/CHANGELOG.json', yes)).toBe(true);
     expect(harmlessFor('build', 'skills/x.md', yes)).toBe(false);
     expect(sameButVersion('{"version":"1","a":1}', '{"version":"2","a":1}')).toBe(true);

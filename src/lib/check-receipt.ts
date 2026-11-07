@@ -28,9 +28,10 @@ import { heavyStep, shellSegments } from './run-budget.js';
  *
  * Reuse across a DIFFERENT tree is narrow and per kind ({@link harmlessFor}): a type check
  * cannot read Markdown or a version string, so a tree that differs from a green one only there
- * reuses it; a test run reuses only across brain files (`_dream_context/`). A version bump is NOT
- * harmless for tests: tests/unit/hook-golden.test.ts compares the built CLI's output, which
- * carries the version, against a fixture. A merge makes a tree nobody tested, so it runs.
+ * reuses it. A test run reuses across root brain files, and across a version-only change of the
+ * root package.json / package-lock.json when the dist was rebuilt for the new version and differs
+ * from the tested one only by that string (Super decision 2026-11-07; hook-golden compares with
+ * the version written out). A merge makes a tree nobody tested, so it runs.
  *
  * `--fresh` always runs, and records. tests/unit/check-receipt.test.ts pins it.
  */
@@ -63,12 +64,17 @@ export interface Receipt {
   fresh?: boolean;
   /** Build outputs fingerprint after the run (builds only). */
   outputs?: string;
+  /** Test runs: the built dist as it was, and with the root package.json version written out. */
+  dist?: string;
+  distNorm?: string;
+  version?: string;
   /** The stored log / report, absolute paths inside the receipts folder. */
   log?: string;
   report?: string;
 }
 
-export interface ReceiptState { tree: string; family: string; key: string }
+/** `dist`: the built output's fingerprint, test runs only (in the key, outside the family). */
+export interface ReceiptState { tree: string; family: string; key: string; dist?: string }
 
 export interface ReceiptHit { receipt: Receipt; via: 'same' | 'harmless'; paths: string[] }
 
@@ -272,23 +278,31 @@ function depsFingerprint(toplevel: string, cwdRel: string): string | null {
  * The built output (`dist/` at the root and one level down): path + bytes of every file.
  * '' when there is none; null when it is too big to read cheaply (no receipt).
  */
-export function distFingerprint(toplevel: string): string | null {
+export function distFingerprint(toplevel: string, version?: string): string | null {
   const roots = ['dist'];
   try { for (const e of readdirSync(toplevel, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'dist') roots.push(`${e.name}/dist`); } catch { return null; }
-  return filesFingerprint(toplevel, roots);
+  return filesFingerprint(toplevel, roots, new Set(), version);
 }
 
 /**
  * Ignored files a test run reads besides dist: the installed Claude mirror (`.claude/`, whose
- * skills and agents drift tests compare; its `worktrees/` left out) and the root `.env*` files.
+ * skills and agents drift tests compare; its `worktrees/` left out), the root `.env*` files, and
+ * the root brain's `core/` (tests/unit/announcements.test.ts reads core/RELEASES.json; the brain
+ * is gitignored, often a symlink to its own repo).
  */
 export function testInputsFingerprint(toplevel: string): string | null {
-  const roots = ['.claude'];
+  const roots = ['.claude', '_dream_context/core', '_agent_context/core'];
   try { for (const e of readdirSync(toplevel)) if (/^\.env(?:\..*)?$/.test(e)) roots.push(e); } catch { return null; }
   return filesFingerprint(toplevel, roots, new Set(['.claude/worktrees']));
 }
 
-function filesFingerprint(toplevel: string, roots: string[], skip: Set<string> = new Set()): string | null {
+/**
+ * `version`: every occurrence of that string is written as a placeholder before hashing, so a
+ * dist rebuilt for a new version hashes like the old one, and a dist still carrying the OLD
+ * version (not rebuilt after a bump) does not.
+ */
+function filesFingerprint(toplevel: string, roots: string[], skip: Set<string> = new Set(), version?: string): string | null {
+  const bytesOf = (p: string): Buffer | string => (version ? readFileSync(p, 'latin1').split(version).join('\u0000<pkg-version>\u0000') : readFileSync(p));
   const h = createHash('sha256');
   let files = 0;
   let bytes = 0;
@@ -307,14 +321,14 @@ function filesFingerprint(toplevel: string, roots: string[], skip: Set<string> =
       bytes += st.size;
       if (files > DIST_MAX_FILES || bytes > DIST_MAX_BYTES) return false;
       h.update(`F ${r} ${st.mode & 0o111 ? 'x' : '-'}\n`);
-      h.update(readFileSync(join(toplevel, r)));
+      h.update(bytesOf(join(toplevel, r)));
     }
     return true;
   };
   for (const r of roots) {
     let st;
     try { st = lstatSync(join(toplevel, r)); } catch { continue; }
-    if (st.isFile()) { files += 1; h.update(`F ${r}\n`); h.update(readFileSync(join(toplevel, r))); continue; }
+    if (st.isFile()) { files += 1; h.update(`F ${r}\n`); h.update(bytesOf(join(toplevel, r))); continue; }
     if (!st.isDirectory()) continue;
     if (!walk(r)) return null;
   }
@@ -332,20 +346,24 @@ export function receiptState(plan: ReceiptPlan, env: NodeJS.ProcessEnv = process
   try {
     const tree = contentTree(plan.toplevel);
     if (!tree) return null;
-    let dist = '';
+    // A test run reads the built dist: it is in the key, but outside the family, so a dist
+    // rebuilt for a version bump can still be matched against the receipt (findReceipt).
+    let dist: string | undefined;
+    let inputs = '';
     if (plan.kind === 'tests') {
       const d = distFingerprint(plan.toplevel);
       const t = testInputsFingerprint(plan.toplevel);
       if (d === null || t === null) return null;
-      dist = `${d} ${t}`;
+      dist = d;
+      inputs = t;
     }
     const deps = depsFingerprint(plan.toplevel, plan.cwdRel);
     if (deps === null) return null;
     const family = sha(JSON.stringify({
-      v: 1, kind: plan.kind, cwd: plan.cwdRel, command: plan.command, node: process.version,
-      platform: process.platform, arch: process.arch, env: envFingerprint(env), deps, dist,
+      v: 2, kind: plan.kind, cwd: plan.cwdRel, command: plan.command, node: process.version,
+      platform: process.platform, arch: process.arch, env: envFingerprint(env), deps, inputs,
     }));
-    return { tree, family, key: sha(`${family}\n${tree}`) };
+    return { tree, family, key: sha(`${family}\n${tree}\n${dist ?? ''}`), ...(dist !== undefined ? { dist } : {}) };
   } catch {
     return null;
   }
@@ -380,11 +398,15 @@ function readReceipt(dir: string, key: string): Receipt | null {
 /**
  * Paths that cannot change this kind of check's result. Anything not listed means the check runs.
  *   every kind: the brain at the repo root (`_dream_context/`, `_agent_context/`).
- *   tsc: also Markdown, and package.json / package-lock.json whose only change is the version.
+ *   tests: also the ROOT package.json / package-lock.json whose only change is the version, and
+ *          only with a dist rebuilt for it (findReceipt): the built CLI reports its version
+ *          (tests/integration/bundled-cli-version.test.ts), so a stale dist is a real red.
+ *   tsc: also Markdown, and any package.json / package-lock.json whose only change is the version.
  */
 export function harmlessFor(kind: ReceiptKind, path: string, versionOnly: (path: string) => boolean): boolean {
   // The root brain only: a nested `_dream_context/` is a test fixture (tests/fixtures/*/vault).
   if (/^_(?:dream|agent)_context\//.test(path)) return true;
+  if (kind === 'tests') return /^package(?:-lock)?\.json$/.test(path) && versionOnly(path);
   if (kind !== 'tsc') return false;
   if (/\.md$/i.test(path)) return true;
   if (/(?:^|\/)package(?:-lock)?\.json$/.test(path)) return versionOnly(path);
@@ -444,12 +466,39 @@ export function findReceipt(plan: ReceiptPlan, state: ReceiptState): ReceiptHit 
         const b = blob(plan.toplevel, state.tree, p);
         return a !== null && b !== null && sameButVersion(a, b);
       };
-      if (paths.every((p) => harmlessFor(plan.kind, p, versionOnly))) return { receipt: r, via: 'harmless', paths };
+      if (!paths.every((p) => harmlessFor(plan.kind, p, versionOnly))) continue;
+      if (plan.kind === 'tests' && !sameBuild(plan, r, state, paths)) continue;
+      return { receipt: r, via: 'harmless', paths };
     }
     return null;
   } catch {
     return null;
   }
+}
+
+/** The root package.json version in a tree, or null. */
+function versionIn(toplevel: string, tree: string): string | null {
+  const text = blob(toplevel, tree, 'package.json');
+  if (text === null) return null;
+  try { const v = (JSON.parse(text) as { version?: unknown }).version; return typeof v === 'string' && v.length >= 3 ? v : null; } catch { return null; }
+}
+
+/**
+ * A test run's dist matches the receipt's. The same bytes, unless the root version moved: then
+ * the dist must be rebuilt for the NEW version and differ from the receipt's only by that string
+ * (a dist still carrying the old version is stale, and the built CLI's version test would be red).
+ */
+function sameBuild(plan: ReceiptPlan, r: Receipt, state: ReceiptState, paths: string[]): boolean {
+  if (typeof r.dist !== 'string' || state.dist === undefined) return false;
+  if (!paths.includes('package.json')) return r.dist === state.dist;
+  // A checkout with a brain: tests compare the version with the brain's releases (announcements
+  // gate), so a version move can turn them red while dist and the code say nothing. Release
+  // worktrees carry no brain; the main checkout does, and runs.
+  if (['_dream_context', '_agent_context'].some((b) => existsSync(join(plan.toplevel, b)))) return false;
+  const from = versionIn(plan.toplevel, r.tree);
+  const to = versionIn(plan.toplevel, state.tree);
+  if (!from || !to || from === to || r.version !== from || typeof r.distNorm !== 'string') return false;
+  return distFingerprint(plan.toplevel, to) === r.distNorm;
 }
 
 /** A build's receipt holds only while what it built is still there, byte for byte. */
@@ -472,6 +521,12 @@ export function writeReceipt(plan: ReceiptPlan, before: ReceiptState, o: { exit:
     if (!dir) return null;
     mkdirSync(dir, { recursive: true });
     let outputs: string | undefined;
+    let tested: Pick<Receipt, 'dist' | 'distNorm' | 'version'> = {};
+    if (plan.kind === 'tests' && before.dist !== undefined) {
+      const version = versionIn(plan.toplevel, before.tree);
+      const distNorm = version ? distFingerprint(plan.toplevel, version) : null;
+      tested = { dist: before.dist, ...(version && distNorm !== null ? { version, distNorm } : {}) };
+    }
     if (plan.kind === 'build') {
       const d = distFingerprint(plan.toplevel);
       if (!d) return null; // nothing built that a later run could find again
@@ -486,7 +541,7 @@ export function writeReceipt(plan: ReceiptPlan, before: ReceiptState, o: { exit:
     };
     const r: Receipt = {
       v: 1, key: before.key, family: before.family, tree: before.tree, kind: plan.kind, command: plan.command, cwdRel: plan.cwdRel,
-      exit: 0, at: new Date().toISOString(), ms: Math.round(o.ms), ...(o.fresh ? { fresh: true } : {}), ...(outputs ? { outputs } : {}),
+      exit: 0, at: new Date().toISOString(), ms: Math.round(o.ms), ...(o.fresh ? { fresh: true } : {}), ...(outputs ? { outputs } : {}), ...tested,
       log: keep(o.log, 'log'), report: keep(o.report, 'report.json'),
     };
     atomicWrite(join(dir, `${before.key}.json`), `${JSON.stringify(r, null, 1)}\n`);
@@ -551,7 +606,7 @@ export function describeHit(hit: ReceiptHit, nowMs: number = Date.now()): string
   const when = `${r.at.slice(0, 16).replace('T', ' ')} UTC (${ago(nowMs - Date.parse(r.at))} ago)`;
   const why = hit.via === 'same'
     ? 'on this exact code'
-    : `on code that differs from this only in ${hit.paths.length <= 3 ? hit.paths.join(', ') : `${hit.paths.slice(0, 3).join(', ')} and ${hit.paths.length - 3} more`}, which a ${r.kind === 'tsc' ? 'type check' : 'test run'} cannot read`;
+    : `on code that differs from this only in ${hit.paths.length <= 3 ? hit.paths.join(', ') : `${hit.paths.slice(0, 3).join(', ')} and ${hit.paths.length - 3} more`}, ${r.kind === 'tests' && hit.paths.includes('package.json') ? 'a version bump, with dist rebuilt for the new version' : `which a ${r.kind === 'tsc' ? 'type check' : 'test run'} cannot read`}`;
   return `RECEIPT, not re-run: "${r.command}" passed ${why}, ${when}, took ${took(r.ms)}${r.fresh ? ' (a --fresh run)' : ''}${r.log ? `; log ${r.log}` : ''}. Same code, same result; --fresh runs it again.`;
 }
 
