@@ -70,6 +70,17 @@ describe('the catalog', () => {
     expect(got[1].publishedBy).toBeNull();
   });
 
+  it('a write never treats an unreadable file as empty: it refuses, and keeps entries it cannot read', () => {
+    writeFileSync(join(ctx, CATALOG_FILE), '<<<<<<< ours\n{"apps":[]}\n=======\n');
+    const entry = catalogEntryFor(manifest(), { repo: 'acme/crm', visibility: 'private', publishedBy: null });
+    expect(() => upsertCatalogEntry(ctx, entry)).toThrow();
+    expect(readFileSync(join(ctx, CATALOG_FILE), 'utf-8')).toContain('<<<<<<< ours');
+    writeFileSync(join(ctx, CATALOG_FILE), JSON.stringify({ apps: [{ slug: 'future', name: 'F', repo: 'acme/f', shape: 'v2' }] }));
+    upsertCatalogEntry(ctx, entry);
+    const raw = JSON.parse(readFileSync(join(ctx, CATALOG_FILE), 'utf-8')).apps as Array<{ slug: string }>;
+    expect(raw.map((e) => e.slug)).toEqual(['crm', 'future']);
+  });
+
   it('removed only by the verb; an app missing elsewhere never deletes its entry', () => {
     upsertCatalogEntry(ctx, catalogEntryFor(manifest(), { repo: 'acme/crm', visibility: 'private', publishedBy: null }));
     // Not installed here, not anywhere: still listed.

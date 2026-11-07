@@ -21,7 +21,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { buildPublishTree, publishApp, PublishError } from '../../lib/apps/share/publish.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
-import { catalogEntryFor, upsertCatalogEntry } from '../../lib/apps/catalog.js';
+import { catalogEntryFor, removeCatalogEntry, upsertCatalogEntry } from '../../lib/apps/catalog.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
@@ -113,6 +113,8 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
         }
       } catch { /* the publish stands; the list is written on the next one */ }
     }
+    // Unticked now: an entry from an earlier publish leaves the list too.
+    else { try { removeCatalogEntry(contextRoot, rec.slug); } catch { /* the publish stands */ } }
     sendJson(res, 200, { ok: true, ...out, catalogged });
   } catch (e) { sendFailure(res, e); }
 }

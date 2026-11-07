@@ -14,7 +14,7 @@
  *   UI    a chat turn (a scripted stand-in for claude) runs `apps do` and answers with two
  *         app-install buttons: the row says "<App> › <tool> (reads)"; the shared repo's button
  *         opens the install sheet; the unshared one says who to ask. The app card reads
- *         "2 tools · 1 change things". Screenshots at 390 and 1440, no console errors.
+ *         "2 tools · 1 changes things". Screenshots at 390 and 1440, no console errors.
  *
  *   npm run build && dreamcontext builder heavy -- node scripts/verify/app-tools.mjs [--out <dir>]
  */
@@ -210,7 +210,7 @@ async function ui(port) {
     const card = page.locator('.app-card').filter({ hasText: 'Ziyaret Sayacı' }).first();
     const ok = await until(async () => (await card.innerText()).includes('2 tools'), 20_000, page);
     const text = ok ? (await card.innerText()).replace(/\s+/g, ' ') : '';
-    check(ok && text.includes('1 change things'), `@${w} the app card reads "2 tools · 1 change things"`, text);
+    check(ok && text.includes('1 changes things'), `@${w} the app card reads "2 tools · 1 changes things"`, text);
     await shot(page, `apps-card-${w}`);
     await ctx.close();
   }

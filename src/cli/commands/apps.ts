@@ -10,7 +10,7 @@ import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, bundleRunning, resolveProject, runHeader, type ProjectRef } from '../../lib/apps/client.js';
 import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
 import { iconIssue, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
-import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, checkToolInput, effectOf, DEFAULT_TOOL_TIMEOUT_SEC, type AppManifest } from '../../lib/apps/manifest.js';
+import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, checkToolInput, effectOf, toolTimeoutSec, type AppManifest } from '../../lib/apps/manifest.js';
 import { projectAppTools, type ToolList } from '../../lib/apps/tools.js';
 import { INLINE_MAX_BYTES, pruneAppOut, writeAppOut } from '../../lib/apps/out-files.js';
 import { removeCatalogEntry } from '../../lib/apps/catalog.js';
@@ -387,10 +387,10 @@ export function registerAppsCommand(program: Command): void {
           const qs = new URLSearchParams(Object.entries(input as Record<string, unknown>).map(([k, v]) => [k, String(v)])).toString();
           if (qs) path += (path.includes('?') ? '&' : '?') + qs;
         } else if (input !== undefined) body = input;
-        const timeoutSec = a.timeoutSec ?? DEFAULT_TOOL_TIMEOUT_SEC;
+        const timeoutSec = toolTimeoutSec(a);
         let r: Record<string, unknown>;
         try {
-          r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: a.method, path, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: (timeoutSec + 30) * 1000, headers: runHeader() });
+          r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: a.method, path, tool: a.id, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: (timeoutSec + 30) * 1000, headers: runHeader() });
         } catch (e) {
           // A change that may have happened is never repeated blind.
           if (effect === 'change' && mayHaveRun(e)) throw new AppsClientError('unknown', `${manifest.name} › ${a.title}: no answer. It may have run: do not repeat it; check with a tool that reads first.`);
@@ -398,16 +398,22 @@ export function registerAppsCommand(program: Command): void {
         }
         const text = String(r.body ?? '');
         const bytes = Buffer.byteLength(text, 'utf-8');
-        const bodyFile = bytes > INLINE_MAX_BYTES ? writeAppOut(homedir(), rec.hash, { app: slug, tool: a.id, body: text }) : null;
+        // The app already answered: a failed file write never turns a done change into a failure.
+        let bodyFile: string | null = null;
+        let shown = text;
+        if (bytes > INLINE_MAX_BYTES) {
+          try { bodyFile = writeAppOut(homedir(), rec.hash, { app: slug, tool: a.id, body: text }); }
+          catch (e) { shown = `${Buffer.from(text, 'utf-8').subarray(0, INLINE_MAX_BYTES).toString('utf-8')}\n…[cut at 16 KB: the file could not be written (${(e as Error).message.slice(0, 120)})]`; }
+        }
         if (opts.json) {
           console.log(fenced(`do ${action}`, JSON.stringify({
             ok: Number(r.status) < 400, app: slug, appName: manifest.name, tool: a.id, toolTitle: a.title, effect, status: r.status,
-            ...(bodyFile ? { bodyFile } : { body: text }), truncated: text.endsWith('…[truncated at 256 KB]'), ms: typeof r.ms === 'number' ? r.ms : null,
+            ...(bodyFile ? { bodyFile } : { body: shown }), truncated: text.endsWith('…[truncated at 256 KB]'), ms: typeof r.ms === 'number' ? r.ms : null,
           }, null, 2)));
         } else if (bodyFile) {
           console.log(fenced(`do ${action} status=${r.status}`, `${bytes} bytes, written to ${bodyFile} (data from the app; read only the part you need)`));
         } else {
-          console.log(fenced(`do ${action} status=${r.status}`, text));
+          console.log(fenced(`do ${action} status=${r.status}`, shown));
         }
         success(`${manifest.name} › ${a.title} (${effect === 'read' ? 'reads' : 'changes'})`);
       } catch (e) { fail(e); }
@@ -425,7 +431,15 @@ export function registerAppsCommand(program: Command): void {
         if (opts.body !== undefined) {
           try { body = JSON.parse(opts.body); } catch { throw new AppsClientError('bad_body', '--body must be JSON.'); }
         }
-        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: method.toUpperCase(), path, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: 6 * 60_000, headers: runHeader() });
+        const m = method.toUpperCase();
+        let r: Record<string, unknown>;
+        try {
+          r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: m, path, ...(body !== undefined ? { body } : {}), ...(opts.confirm ? { confirm: true } : {}) }, { timeoutMs: 6 * 60_000, headers: runHeader() });
+        } catch (e) {
+          // Anything but a GET may have changed something: never report it as plainly failed.
+          if (m !== 'GET' && mayHaveRun(e)) throw new AppsClientError('unknown', `${m} ${path}: no answer. It may have run: do not repeat it; check with a tool that reads first.`);
+          throw e;
+        }
         console.log(fenced(`call status=${r.status}`, String(r.body ?? '')));
       } catch (e) { fail(e); }
     });
@@ -539,7 +553,7 @@ export function registerAppsCommand(program: Command): void {
         await notifyFromApp({ title: m.manifest.name, body: text, rec, sound: ok ? undefined : NOTIFY_SOUND_FAILED });
       };
       try {
-        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: sched.call.method, path: sched.call.path, ...(sched.call.body !== undefined ? { body: sched.call.body } : {}) }, { timeoutMs: 6 * 60_000, launch: true });
+        const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: sched.call.method, path: sched.call.path, schedule: sched.id, ...(sched.call.body !== undefined ? { body: sched.call.body } : {}) }, { timeoutMs: 6 * 60_000, launch: true });
         const status = Number(r.status);
         const ok = status >= 200 && status < 300;
         row(ok ? 'ok' : 'failed', ok ? null : `http_${status}`, String(r.body ?? ''));

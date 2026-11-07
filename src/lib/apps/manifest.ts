@@ -59,6 +59,12 @@ export interface AppAction {
 
 export type ToolEffect = 'read' | 'change';
 export const DEFAULT_TOOL_TIMEOUT_SEC = 60;
+/** A tool that runs an agent turn keeps the 5 minutes every call had before tools got their own limit. */
+export const AGENT_TOOL_TIMEOUT_SEC = 300;
+/** How long one tool may run: its own `timeoutSec`, else 300 s for an agent turn, else 60 s. */
+export function toolTimeoutSec(a: { timeoutSec?: number; usesAgent?: boolean }): number {
+  return a.timeoutSec ?? (a.usesAgent ? AGENT_TOOL_TIMEOUT_SEC : DEFAULT_TOOL_TIMEOUT_SEC);
+}
 
 /**
  * THE one rule for what a tool does to the world, asked by the server gate, the CLI, the hook

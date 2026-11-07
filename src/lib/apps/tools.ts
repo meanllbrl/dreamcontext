@@ -6,7 +6,7 @@
  */
 
 import { listApps } from './registry.js';
-import { readManifest, effectOf, DEFAULT_TOOL_TIMEOUT_SEC, type ActionParam, type ToolEffect } from './manifest.js';
+import { readManifest, effectOf, toolTimeoutSec, type ActionParam, type ToolEffect } from './manifest.js';
 import { readCatalog, type CatalogTool } from './catalog.js';
 import { sharedWithMe } from './share/shared.js';
 
@@ -61,7 +61,7 @@ export function projectAppTools(home: string, projectRoot: string, contextRoot: 
         ...(a.input ? { input: a.input } : {}),
         ...(a.params ? { params: a.params } : {}),
         ...(a.topics ? { topics: a.topics } : {}),
-        timeoutSec: a.timeoutSec ?? DEFAULT_TOOL_TIMEOUT_SEC,
+        timeoutSec: toolTimeoutSec(a),
       })),
     });
   }

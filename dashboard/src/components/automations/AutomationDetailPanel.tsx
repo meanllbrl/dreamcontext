@@ -677,6 +677,12 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           <span>{automation.readTools.join(', ')}</span>
                         </div>
                       )}
+                      {!!automation.appTools?.length && (
+                        <div className="adp-review-row" data-review-app-tools>
+                          <span className="adp-review-label">app tools that change things</span>
+                          <span>{automation.appTools.join(', ')}</span>
+                        </div>
+                      )}
                       {automation.soul && (
                         <div className="adp-review-row adp-review-row--block" data-review-soul>
                           <span className="adp-review-label">soul</span>

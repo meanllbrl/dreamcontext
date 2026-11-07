@@ -66,6 +66,14 @@ describe('the app tools block', () => {
     expect(b).toContain('· CHANGES: say in one line what it will do; run dreamcontext apps do yuk-izleme notify-test --confirm only after the owner says yes in this chat.');
   });
 
+  it('a prompt that only names the app gets its reading tool', () => {
+    loadApp();
+    const b = block('yük izleme makinelerin durumu ne')!;
+    expect(b).toContain('yuk-izleme › snapshot');
+    expect(b).toContain('· reads.');
+    expect(block('izleme listesini düzelt')).toBeNull();
+  });
+
   it('a tool that runs an agent says it spends usage', () => {
     loadApp();
     expect(block('why is the machine so slow?')).toContain('runs an agent turn (spends usage)');

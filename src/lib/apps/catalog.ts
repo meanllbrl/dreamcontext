@@ -10,7 +10,7 @@
  * skips the entry, every text is one clean line.
  */
 
-import { closeSync, constants, lstatSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
 import { APP_SLUG_RE } from './bundle.js';
@@ -77,12 +77,15 @@ function parseEntry(v: unknown): CatalogEntry | null {
   };
 }
 
+const CATALOG_MAX_BYTES = 512 * 1024;
+
 /** Every well-formed entry, by slug (the last one written for a slug wins). Never throws. */
 export function readCatalog(contextRoot: string): CatalogEntry[] {
   const file = catalogPath(contextRoot);
   if (!file) return [];
   let raw: unknown;
-  try { raw = JSON.parse(readFileSync(file, 'utf-8')); } catch { return []; }
+  // Read on every prompt: a teammate's oversized file is ignored, never parsed.
+  try { if (statSync(file).size > CATALOG_MAX_BYTES) return []; raw = JSON.parse(readFileSync(file, 'utf-8')); } catch { return []; }
   const list = raw && typeof raw === 'object' && Array.isArray((raw as { apps?: unknown }).apps) ? (raw as { apps: unknown[] }).apps : [];
   const bySlug = new Map<string, CatalogEntry>();
   for (const v of list.slice(0, 200)) {
@@ -113,7 +116,26 @@ export function catalogEntryFor(manifest: AppManifest, opts: { repo: string; vis
   };
 }
 
-function writeCatalog(contextRoot: string, entries: CatalogEntry[]): void {
+/**
+ * The list as written, for a write: every raw entry kept, even one this version cannot read. A file
+ * that is there but unreadable (a sync conflict, oversized, not a list) THROWS: an empty read must
+ * never become a write that drops the team's entries (a delete is never inferred from absence).
+ */
+function readCatalogForWrite(contextRoot: string): unknown[] {
+  const file = join(contextRoot, CATALOG_FILE);
+  try { lstatSync(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
+  const real = catalogPath(contextRoot);
+  if (!real) throw new Error(`${CATALOG_FILE} is not a plain file in the brain`);
+  if (statSync(real).size > CATALOG_MAX_BYTES) throw new Error(`${CATALOG_FILE} is over ${CATALOG_MAX_BYTES / 1024} KB: fix it by hand first`);
+  const raw = JSON.parse(readFileSync(real, 'utf-8')) as unknown;
+  const list = raw && typeof raw === 'object' ? (raw as { apps?: unknown }).apps : undefined;
+  if (!Array.isArray(list)) throw new Error(`${CATALOG_FILE} has no "apps" list: fix it by hand first`);
+  return list;
+}
+
+const slugOf = (v: unknown): string => (v && typeof v === 'object' && typeof (v as { slug?: unknown }).slug === 'string' ? (v as { slug: string }).slug : '');
+
+function writeCatalog(contextRoot: string, entries: unknown[]): void {
   const file = join(contextRoot, CATALOG_FILE);
   // A symlink or a folder at the name is never written through.
   try {
@@ -125,7 +147,7 @@ function writeCatalog(contextRoot: string, entries: CatalogEntry[]): void {
   const tmp = join(contextRoot, `.${CATALOG_FILE}.${randomBytes(4).toString('hex')}.tmp`);
   const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
   try {
-    writeSync(fd, JSON.stringify({ apps: [...entries].sort((a, b) => a.slug.localeCompare(b.slug)) }, null, 2) + '\n');
+    writeSync(fd, JSON.stringify({ apps: [...entries].sort((a, b) => slugOf(a).localeCompare(slugOf(b))) }, null, 2) + '\n');
   } finally {
     closeSync(fd);
   }
@@ -134,14 +156,14 @@ function writeCatalog(contextRoot: string, entries: CatalogEntry[]): void {
 
 /** Add or replace one app's entry (a publish). */
 export function upsertCatalogEntry(contextRoot: string, entry: CatalogEntry): void {
-  const rest = readCatalog(contextRoot).filter((e) => e.slug !== entry.slug);
+  const rest = readCatalogForWrite(contextRoot).filter((e) => slugOf(e) !== entry.slug);
   writeCatalog(contextRoot, [...rest, entry]);
 }
 
 /** Remove one app's entry (the owner's verb). False when there was none. */
 export function removeCatalogEntry(contextRoot: string, slug: string): boolean {
-  const all = readCatalog(contextRoot);
-  if (!all.some((e) => e.slug === slug)) return false;
-  writeCatalog(contextRoot, all.filter((e) => e.slug !== slug));
+  const all = readCatalogForWrite(contextRoot);
+  if (!all.some((e) => slugOf(e) === slug)) return false;
+  writeCatalog(contextRoot, all.filter((e) => slugOf(e) !== slug));
   return true;
 }

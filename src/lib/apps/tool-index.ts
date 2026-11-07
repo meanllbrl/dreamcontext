@@ -11,7 +11,7 @@
  */
 
 import { dirname } from 'node:path';
-import { buildFields, bm25Search, type CorpusDoc } from '../recall.js';
+import { buildFields, bm25Search, tokenize, type CorpusDoc } from '../recall.js';
 import { cleanText } from './manifest.js';
 import { projectAppTools, type InstalledApp, type InstalledTool, type NotInstalledApp } from './tools.js';
 
@@ -74,12 +74,31 @@ export function appToolsBlock(prompt: string, contextRoot: string, home: string)
     const docs = appToolDocs(home, contextRoot);
     if (!docs.length) return null;
     const byKey = new Map(docs.map((d) => [d.doc.relPath, d.ref]));
-    const hits = bm25Search(prompt, docs.map((d) => d.doc), APP_TOOLS_MAX_LINES).filter((h) => h.score >= APP_TOOLS_MIN_SCORE);
-    if (!hits.length) return null;
+    const scored = bm25Search(prompt, docs.map((d) => d.doc), docs.length);
+    const chosen = scored.filter((h) => h.score >= APP_TOOLS_MIN_SCORE).slice(0, APP_TOOLS_MAX_LINES).map((h) => h.doc.relPath);
+    // A prompt that names an app ("yük izleme ...") gets that app even when no tool word matched:
+    // with one app installed, its name is in every document and BM25 gives it no weight.
+    const trTokens = (t: string) => tokenize(t.toLocaleLowerCase('tr'));
+    const promptTokens = new Set(trTokens(prompt));
+    const appKey = (r: Ref) => r.app.slug;
+    const scoreOf = new Map(scored.map((h) => [h.doc.relPath, h.score]));
+    const named = new Set<string>();
+    for (const d of docs) {
+      const nameTokens = trTokens(d.ref.app.name);
+      if (nameTokens.length && nameTokens.every((t) => promptTokens.has(t))) named.add(appKey(d.ref));
+    }
+    for (const slug of named) {
+      if (chosen.some((k) => { const r = byKey.get(k); return r && appKey(r) === slug; })) continue;
+      const own = docs.filter((d) => appKey(d.ref) === slug);
+      const rank = (d: (typeof own)[number]) => (d.ref.kind === 'tool' && d.ref.tool.effect === 'read' ? 1000 : 0) + (scoreOf.get(d.doc.relPath) ?? 0);
+      const best = own.sort((a, b) => rank(b) - rank(a))[0];
+      if (best) chosen.push(best.doc.relPath);
+    }
+    if (!chosen.length) return null;
     const lines: string[] = [];
     let used = 0;
-    for (const h of hits) {
-      const ref = byKey.get(h.doc.relPath);
+    for (const key of chosen.slice(0, APP_TOOLS_MAX_LINES)) {
+      const ref = byKey.get(key);
       if (!ref) continue;
       const line = ref.kind === 'tool' ? toolLine(ref.app, ref.tool) : appLine(ref.app);
       if (used + line.length > APP_TOOLS_MAX_CHARS) break;

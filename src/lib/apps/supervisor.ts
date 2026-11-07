@@ -103,8 +103,17 @@ function freePort(): Promise<number> {
 /** The health answer's status and the first 4 KB of its body (where `dc.health()` lists actions). */
 function httpGetBody(port: number, path: string, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number | null; body: string }> {
   return new Promise((resolve) => {
+    let status: number | null = null;
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const finish = (s: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hard);
+      resolve({ status: s, body: Buffer.concat(chunks).toString('utf-8') });
+    };
     const req = http.request({ host: '127.0.0.1', port, path, method: 'GET', headers, timeout: timeoutMs, agent: false }, (res) => {
-      const chunks: Buffer[] = [];
+      status = res.statusCode ?? null;
       let n = 0;
       res.on('data', (c: Buffer) => {
         if (n >= HEALTH_BODY_MAX) return;
@@ -112,13 +121,15 @@ function httpGetBody(port: number, path: string, headers: Record<string, string>
         n += c.length;
         if (n >= HEALTH_BODY_MAX) res.destroy();
       });
-      const done = () => resolve({ status: res.statusCode ?? null, body: Buffer.concat(chunks).toString('utf-8') });
-      res.on('end', done);
-      res.on('close', done);
-      res.on('error', done);
+      res.on('end', () => finish(status));
+      res.on('close', () => finish(status));
+      res.on('error', () => finish(status));
     });
-    req.on('error', () => resolve({ status: null, body: '' }));
-    req.on('timeout', () => { req.destroy(); resolve({ status: null, body: '' }); });
+    // One wall-clock limit for the whole probe: a trickling body cannot hold it, and a status that
+    // arrived counts even when the body never ends (a health route that writes and never ends).
+    const hard = setTimeout(() => { req.destroy(); finish(status); }, timeoutMs);
+    req.on('error', () => finish(status));
+    req.on('timeout', () => { req.destroy(); finish(status); });
     req.end();
   });
 }

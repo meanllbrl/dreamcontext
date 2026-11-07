@@ -111,7 +111,7 @@ export interface WidenView {
 export const CREATE_BASELINE: Readonly<WidenView> = {
   prompt: '', soul: '', job: '', outputInstructions: '', model: null, effort: null, timeoutMinutes: null,
   outputDir: null, learning: null, review: 'off', flow: null, whiteboard: null, autonomy: 'balanced',
-  readTools: '', tool: null, app: '', mode: 'call', enabled: true, fallbackTools: [],
+  readTools: '', tool: null, app: '', appTools: '', mode: 'call', enabled: true, fallbackTools: [],
 };
 
 /** Moving these never widens reach: cost, wording, drawing. */
@@ -171,7 +171,8 @@ export function widensAuthority(prev: WidenView | null, next: WidenView, actor: 
     const b = next[k];
     if (same(a, b)) continue;
     switch (k) {
-      case 'readTools': { const had = new Set(listOf(a)); if (listOf(b).some((x) => !had.has(x))) out.add(k); break; }
+      case 'readTools':
+      case 'appTools': { const had = new Set(listOf(a)); if (listOf(b).some((x) => !had.has(x))) out.add(k); break; }
       case 'fallbackTools': if (!same(listOf(a), listOf(b))) out.add(k); break;
       case 'autonomy': if (AUTONOMY_ORDER.indexOf(String(b ?? 'balanced')) > AUTONOMY_ORDER.indexOf(String(a ?? 'balanced'))) out.add(k); break;
       case 'tool': if ((a ?? null) !== (b ?? null)) out.add(k); break;

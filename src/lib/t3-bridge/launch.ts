@@ -99,6 +99,9 @@ export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; 
   const args = [
     codexConfigArg('mcp_servers.dreamcontext.command', tomlString(o.node)),
     codexConfigArg('mcp_servers.dreamcontext.args', arr([o.cli, 'mcp', 'serve', '--root', o.root])),
+    // Past the brain's own app bound (330 s): Codex must never cut an app call first, or a change
+    // that may have run reads as a plain failure and gets retried.
+    codexConfigArg('mcp_servers.dreamcontext.tool_timeout_sec', '360'),
   ];
   const env = brainMcpEnv(o);
   if (env.length) {

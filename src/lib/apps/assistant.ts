@@ -269,7 +269,8 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
     const level = target.autonomy ?? DEFAULT_AGENT_AUTONOMY;
     const args = levelPermissionArgs(level === 'free' ? 'balanced' : level, 'chat');
     const permissionMode = args[args.indexOf('--permission-mode') + 1] ?? 'auto';
-    const dangerDenies = m.manifest.actions.filter((a) => a.danger).map((a) => `Bash(dreamcontext apps do ${rec.slug} ${a.id}:*)`);
+    // No Bash gate in a member's chat to turn --confirm into a card: every changing tool is denied here (plan r3 §4.2).
+    const dangerDenies = m.manifest.actions.filter((a) => effectOf(a) === 'change').map((a) => `Bash(dreamcontext apps do ${rec.slug} ${a.id}:*)`);
     const all = [...denied, 'Bash(dreamcontext apps call:*)', ...dangerDenies];
     if (all.some(unsafeRule)) { prep.dispose(); return refuse('its folders contain a character the shell would expand'); }
     return {

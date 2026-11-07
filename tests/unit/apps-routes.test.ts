@@ -182,6 +182,17 @@ describe('/api/apps', () => {
     expect((await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'TRACE', path: '/x' } })).json.error).toBe('bad_method');
   }, 40_000);
 
+  it('an app schedule (the tick) reaches the backend; the same POST without it asks for confirm', async () => {
+    const before = (await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'GET', path: '/hits' } })).json;
+    const n = JSON.parse(String(before.body)).hits as number;
+    const tick = await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'POST', path: '/hit', schedule: 'tick' } });
+    expect(tick.status).toBe(200);
+    expect(JSON.parse(String(tick.json.body)).hits).toBe(n + 1);
+    // A schedule id that does not make this call grants nothing.
+    expect((await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'POST', path: '/other', schedule: 'tick' } })).json.error).toBe('needs_confirm');
+    expect((await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'POST', path: '/hit' } })).json.error).toBe('needs_confirm');
+  }, 40_000);
+
   it('owner stop sticks: call answers app_stopped and does not revive the backend', async () => {
     expect((await req({ method: 'POST', path: '/api/apps/echo/stop', body: {} })).status).toBe(200);
     const r = await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'GET', path: '/health' } });

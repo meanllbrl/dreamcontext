@@ -40,7 +40,7 @@ import { closeGateway, existingGateway, gatewayFor, runningWindowCount } from '.
 import { readLauncherTheme } from './launcher.js';
 import { getApp, listApps, real, unregisterApp, updateApp, type AppRecord } from '../../lib/apps/registry.js';
 import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SECRET_HEADER } from '../../lib/apps/supervisor.js';
-import { readManifest, ACTION_METHODS, effectOf, DEFAULT_TOOL_TIMEOUT_SEC, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
+import { readManifest, ACTION_METHODS, effectOf, toolTimeoutSec, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
 import { decodeClaim, RUN_HEADER, type CallClaim } from '../../lib/apps/call-claim.js';
 import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/super/store.js';
 import { getAutomation } from '../../lib/automations/store.js';
@@ -70,7 +70,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { sayFromApp } from './automations.js';
 import { inspectDispatcher } from '../../lib/automations/launchd.js';
 import { inspectNotifier } from '../../lib/automations/notifier.js';
-import { scheduleViews, setScheduleEnabled } from '../../lib/apps/schedule.js';
+import { readScheduleState, scheduleViews, setScheduleEnabled } from '../../lib/apps/schedule.js';
 import { closeMcpClients, resolveMcpDefinition, readPins, writePin, removePins } from '../../lib/apps/mcp-bridge.js';
 import { reviewMcpDefinition, describeChange, mcpHash } from '../../lib/apps/mcp-review.js';
 import { createProposal } from '../../lib/assistant/proposals.js';
@@ -403,7 +403,7 @@ export function resolveAppAction(projectRoot: string, slug: string, id: string):
 }
 
 /** Run one action with its input: query for GET, JSON body otherwise, as `apps do` does. */
-export async function runAppAction(projectRoot: string, slug: string, action: { method: string; path: string }, input: unknown): Promise<BackendCall> {
+export async function runAppAction(projectRoot: string, slug: string, action: { method: string; path: string; id?: string }, input: unknown): Promise<BackendCall> {
   const rec = getApp(home, projectRoot, slug);
   if (!rec) return { ok: false, http: 404, code: 'app_not_found', message: 'app_not_found' };
   if (rec.stoppedByOwner) return { ok: false, http: 409, code: 'app_stopped', message: 'app_stopped' };
@@ -418,7 +418,7 @@ export async function runAppAction(projectRoot: string, slug: string, action: { 
   // Reached only through the Assistant's `gated(...)`: an approved proposal or the owner's own
   // autonomy setting, so it is the owner's confirm (plan §4.1). The gate still runs: one door.
   const m = readManifest(rec.root);
-  const verdict = gateAppCall(join(projectRoot, '_dream_context'), rec, m.ok ? m.manifest.actions : [], { method: action.method, path: safe.path, confirm: true, claim: { class: 'owner' } }, { home });
+  const verdict = gateAppCall(join(projectRoot, '_dream_context'), rec, m.ok ? m.manifest.actions : [], { method: action.method, path: safe.path, confirm: true, claim: { class: 'owner' }, ...(action.id ? { tool: action.id } : {}) }, { home });
   if (!verdict.ok) return { ok: false, http: verdict.http, code: verdict.code, message: verdict.message };
   return callBackend(rec, action.method, safe.path, body, verdict.timeoutMs);
 }
@@ -651,6 +651,9 @@ export async function handleAppSnapshot(req: IncomingMessage, res: ServerRespons
 
 // ─── The one gate every app tool call passes (app-araclari plan r3 §4.1, §4.2) ─────
 
+/** An unlisted path or a schedule: the 5 minutes every call had before tools got their own timeout. */
+const UNLISTED_TIMEOUT_SEC = 300;
+
 export interface GateCall {
   method: string;
   /** The backend path as it will be sent (a query allowed: it is matched without it). */
@@ -660,6 +663,10 @@ export interface GateCall {
   claim: CallClaim;
   /** The caller's conversation ids (tab session, Claude session): a Super child is told by them. */
   sessions?: readonly string[];
+  /** One of the app's own enabled schedules, the call matching it (the automations tick): the owner agreed when he left it on. */
+  schedule?: boolean;
+  /** The tool id the caller means (`apps do`): decides between tools sharing one route. */
+  tool?: string;
 }
 
 export type GateVerdict =
@@ -667,9 +674,28 @@ export type GateVerdict =
   | { ok: false; http: number; code: 'needs_confirm' | 'needs_owner'; message: string; tool?: { id: string; title: string; does?: string; input?: string } };
 
 /** The manifest action at (method, path), the query left out. */
-export function matchAction(actions: readonly AppAction[], method: string, path: string): AppAction | null {
+export function matchAction(actions: readonly AppAction[], method: string, path: string, tool?: string): AppAction | null {
+  return resolveAction(actions, method, path, tool).action;
+}
+
+/** The action, and whether the caller's tool name held for this call. */
+function resolveAction(actions: readonly AppAction[], method: string, path: string, tool?: string): { action: AppAction | null; named: boolean; shared: boolean } {
+  const same = sameRoute(actions, method, path);
+  // The caller named the tool (`apps do`, the Assistant): that one, if its own path leads the call and
+  // no more specific tool's query is in it (naming the approved tool while sending another's
+  // `?mode=live` names nothing).
+  const query = new Set((path.split('?')[1] ?? '').split('&').filter(Boolean));
+  const ownQuery = (a: AppAction) => (a.path.split('?')[1] ?? '').split('&').filter(Boolean);
+  const named = tool ? same.find((a) => a.id === tool && path.startsWith(a.path)
+    && !same.some((o) => o !== a && ownQuery(o).length > ownQuery(a).length && ownQuery(o).every((q) => query.has(q)))) : undefined;
+  if (named) return { action: named, named: true, shared: same.length > 1 };
+  // Two tools on one base path (`?mode=dry` / `?mode=live`): a changing one wins, so a query never makes a change look like a read.
+  return { action: same.find((a) => effectOf(a) === 'change') ?? same[0] ?? null, named: false, shared: same.length > 1 };
+}
+
+function sameRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {
   const bare = path.split('?')[0];
-  return actions.find((a) => a.method === method && a.path.split('?')[0] === bare) ?? null;
+  return actions.filter((a) => a.method === method && a.path.split('?')[0] === bare);
 }
 
 /** Is any of these conversations the Super Agent or one of its children right now? */
@@ -692,13 +718,17 @@ function superSession(sessions: readonly string[] | undefined): boolean {
  */
 export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readonly AppAction[], call: GateCall, deps: { home?: string } = {}): GateVerdict {
   const method = call.method.toUpperCase();
-  const action = matchAction(actions, method, call.path);
+  const resolved = resolveAction(actions, method, call.path, call.tool);
+  const action = resolved.action;
+  // Several tools on this route and no name that held: no job's app_tools can vouch for which one runs.
+  const ambiguous = resolved.shared && !resolved.named;
   // An unlisted GET reads; an unlisted anything else changes.
   const effect: ToolEffect = action ? effectOf(action) : effectOf({ method });
-  const timeoutMs = (action?.timeoutSec ?? DEFAULT_TOOL_TIMEOUT_SEC) * 1000;
+  // A listed tool gets its own timeout (60 s by default); an unlisted path or a schedule keeps the old 5 minutes.
+  const timeoutMs = (action && !call.schedule ? toolTimeoutSec(action) : action?.timeoutSec ?? UNLISTED_TIMEOUT_SEC) * 1000;
   if (effect === 'read') return { ok: true, effect, action, timeoutMs };
   const tool = action ? { id: action.id, title: action.title, ...(action.does ? { does: action.does } : {}), ...(action.input ? { input: action.input } : {}) } : undefined;
-  if (!call.confirm) {
+  if (!call.confirm && !call.schedule) {
     return { ok: false, http: 409, code: 'needs_confirm', message: `${action ? `"${action.title}"` : `${method} ${call.path.split('?')[0]}`} changes something. Say in one line what it will do, and run it with --confirm only after the owner says yes in this chat.`, ...(tool ? { tool } : {}) };
   }
   const refuse = (why: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} The owner can run it in a normal chat or in the app's window.`, ...(tool ? { tool } : {}) });
@@ -708,7 +738,7 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
   if (cls === 'crew') return refuse('The Super Agent and its chats never run a changing app tool.');
   if (cls === 'run') {
     const slug = call.claim.automation ?? '';
-    if (action && slug) {
+    if (action && slug && !ambiguous) {
       const m = getAutomation(contextRoot, slug, deps.home);
       const ref = `${rec.slug}/${action.id}`;
       if (m && m.appTools?.includes(ref) && checkApproval(projectRootOf(contextRoot), m, deps.home).approved) return { ok: true, effect, action, timeoutMs };
@@ -742,8 +772,15 @@ export async function handleAppCall(req: IncomingMessage, res: ServerResponse, p
   if (!p.ok) { sendError(res, 400, 'bad_path', p.reason); return; }
   const m = readManifest(rec.root);
   const header = req.headers[RUN_HEADER];
+  // `schedule: <id>` counts only when that enabled schedule of the manifest makes exactly this call.
+  const sid = typeof body.schedule === 'string' ? body.schedule : '';
+  const sched = sid && m.ok ? m.manifest.schedules.find((x) => x.id === sid) : undefined;
+  const schedPath = sched ? safeAppPath(sched.call.path) : undefined;
+  const schedule = !!sched && sched.call.method.toUpperCase() === method && !!schedPath?.ok && schedPath.path === p.path
+    && readScheduleState(home, rec.hash)[sid]?.enabled !== false;
   const verdict = gateAppCall(contextRoot, rec, m.ok ? m.manifest.actions : [], {
-    method, path: p.path, confirm: body.confirm === true, claim: decodeClaim(header), sessions: sessionsOf(header),
+    method, path: p.path, confirm: body.confirm === true, claim: decodeClaim(header), sessions: sessionsOf(header), schedule,
+    ...(typeof body.tool === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(body.tool) ? { tool: body.tool } : {}),
   }, { home });
   if (!verdict.ok) { sendJson(res, verdict.http, { error: verdict.code, message: verdict.message, ...(verdict.tool ? { tool: verdict.tool } : {}) }); return; }
   const out = await callBackend(rec, method, p.path, body.body, verdict.timeoutMs);

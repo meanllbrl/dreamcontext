@@ -197,7 +197,7 @@ describe('the app prompt block', () => {
   it('a scheduled app job gets the same facts, fenced', () => {
     const n = newTurnNonce();
     const out = buildAppContextBlock(app, n);
-    expect(out).toContain('apps actions');
+    expect(out).toContain('apps tools');
     expect(out).toContain('- pause: Pause');
     expect(out.match(new RegExp(n, 'g'))).toHaveLength(2);
   });

@@ -1,2 +1,3 @@
 { "slug": "echo", "name": "Echo App", "backend": { "command": "node server.mjs", "health": "/health" },
-  "actions": [ { "id": "leak", "title": "Return the leak body", "method": "GET", "path": "/leak" } ] }
+  "actions": [ { "id": "leak", "title": "Return the leak body", "method": "GET", "path": "/leak" } ],
+  "schedules": [ { "id": "tick", "schedule": { "slots": [ { "cron": "0 3 * * *" } ] }, "call": { "method": "POST", "path": "/hit" }, "notify": "never" } ] }

@@ -119,9 +119,13 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
           <div>
             <dt>{t('apps.tools')}</dt>
             <dd>
-              {t('apps.tools.count').replace('{n}', String(app.tools.count))}
-              {app.tools.change > 0 && ` · ${t('apps.tools.change').replace('{n}', String(app.tools.change))}`}
-              {app.tools.audit === 'drift' && <span className="app-card__drift" title={app.tools.missing.join(', ')}>{` · ⚠ ${t('apps.tools.drift')}`}</span>}
+              {t(app.tools.count === 1 ? 'apps.tools.count.one' : 'apps.tools.count').replace('{n}', String(app.tools.count))}
+              {app.tools.change > 0 && ` · ${t(app.tools.change === 1 ? 'apps.tools.change.one' : 'apps.tools.change').replace('{n}', String(app.tools.change))}`}
+              {app.tools.audit === 'drift' && (
+                <span className="app-card__drift">
+                  {' · '}<span aria-hidden="true">⚠ </span>{t('apps.tools.drift')}{app.tools.missing.length > 0 && `: ${app.tools.missing.join(', ')}`}
+                </span>
+              )}
               {app.tools.audit === 'unaudited' && <span className="app-card__muted">{` · ${t('apps.tools.unaudited')}`}</span>}
             </dd>
           </div>

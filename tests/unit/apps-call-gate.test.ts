@@ -101,6 +101,24 @@ describe('gateAppCall', () => {
     expect(call('GET', '/not-listed', 'owner')).toMatchObject({ ok: true, effect: 'read' });
   });
 
+  it('an enabled schedule of the app passes without confirm and keeps 5 minutes; spawned still never', () => {
+    expect(call('POST', '/api/sync', 'owner', { schedule: true })).toMatchObject({ ok: true, effect: 'change', timeoutMs: 300_000 });
+    expect(call('POST', '/api/notify-test', 'owner', { schedule: true })).toMatchObject({ ok: true, timeoutMs: 300_000 });
+    expect(call('POST', '/api/sync', 'spawned', { schedule: true })).toMatchObject({ ok: false, code: 'needs_owner' });
+    // An unlisted path keeps the old 5 minutes; a listed tool its own 60 s.
+    expect(call('POST', '/api/sync', 'owner', { confirm: true })).toMatchObject({ ok: true, timeoutMs: 300_000 });
+    expect(call('POST', '/api/notify-test', 'owner', { confirm: true })).toMatchObject({ ok: true, timeoutMs: 60_000 });
+  });
+
+  it('two tools on one base path: the changing one decides, a query cannot make it a read', async () => {
+    const { matchAction } = await import('../../src/server/routes/apps.js');
+    const two: AppAction[] = [
+      { id: 'dry', title: 'Dry', method: 'GET', path: '/api/run?mode=dry' },
+      { id: 'live', title: 'Live', method: 'GET', path: '/api/run?mode=live', danger: true },
+    ];
+    expect(matchAction(two, 'GET', '/api/run?mode=dry')?.id).toBe('live');
+  });
+
   it('no confirm: 409 needs_confirm with what the tool would do, for every class', () => {
     for (const cls of ['spawned', 'crew', 'chat', 'run', 'owner'] as const) {
       const v = call('POST', '/api/notify-test', cls);
@@ -146,6 +164,13 @@ describe('gateAppCall', () => {
       // Another tool of the same app is not named.
       const other = gate(ctx, rec, [...actions, { id: 'send', title: 'Send', method: 'POST', path: '/api/send' }], { method: 'POST', path: '/api/send', confirm: true, claim: { class: 'run', automation: 'tooljob' } }, { home });
       expect(other).toMatchObject({ ok: false, code: 'needs_owner' });
+      // Two changing tools on one route: the named one decides; unnamed, no job vouches for either.
+      const twin = [...actions, { id: 'live-send', title: 'Live', method: 'POST' as const, path: '/api/notify-test?mode=live' }];
+      const named = (tool?: string) => gate(ctx, rec, twin, { method: 'POST', path: '/api/notify-test?mode=live', confirm: true, claim: { class: 'run', automation: 'tooljob' }, ...(tool ? { tool } : {}) }, { home });
+      expect(named('live-send')).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(named()).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(named('notify-test')).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(gate(ctx, rec, twin, { method: 'POST', path: '/api/notify-test', confirm: true, claim: { class: 'run', automation: 'tooljob' }, tool: 'notify-test' }, { home })).toMatchObject({ ok: true });
       // The file changes mid-run: the hash no longer matches what was approved.
       const { writeFileSync, readFileSync } = await import('node:fs');
       const path = getAutomation(ctx, 'tooljob', home)!.path;
