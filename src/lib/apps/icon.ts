@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
+import { cornersTransparent, decodePng, pngSize } from './png.js';
 
 /**
  * An app's icon: the default every new app is born with, and the check that an icon can do its
@@ -256,12 +257,74 @@ export function iconIssue(icon: string | null | undefined, logoPath: string | nu
   return null;
 }
 
+/** The same check on bytes already read (a repo blob before install). */
+/** The default letter of each slug and name, drawn once per process (a 1024 render costs ~0.4 s). */
+const defaultRenders = new Map<string, Buffer>();
+function defaultRender(slug: string, name: string): Buffer {
+  const key = `${slug}\0${name}`;
+  let hit = defaultRenders.get(key);
+  if (!hit) {
+    hit = renderDefaultIcon(slug, name);
+    if (defaultRenders.size > 100) defaultRenders.clear();
+    defaultRenders.set(key, hit);
+  }
+  return hit;
+}
+
+/** The same check on bytes already read (a repo blob before install). */
+export function isDefaultIconBytes(data: Buffer | null | undefined, slug: string, name: string): boolean {
+  if (!data || data.length < 100) return false;
+  // An icon that is not a PNG of the default's kind is never drawn to compare.
+  if (data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return false;
+  try { return data.equals(defaultRender(slug, name)); } catch { return false; }
+}
+
 /** Has nobody replaced the letter `apps new` drew? */
 export function isDefaultIcon(icon: string | null | undefined, slug: string, name: string): boolean {
   if (!icon) return false;
   try {
-    return readFileSync(icon).equals(renderDefaultIcon(slug, name));
+    const known = defaultRenders.get(`${slug}\0${name}`);
+    // Size first: a different size is a different picture, no read and no render.
+    if (known && statSync(icon).size !== known.length) return false;
+    return isDefaultIconBytes(readFileSync(icon), slug, name);
   } catch {
     return false;
   }
+}
+
+const defaultIconSeen = new Map<string, boolean>();
+
+/**
+ * `isDefaultIcon`, remembered per file state: the Apps page polls every few seconds and drawing
+ * the letter to compare costs a 1024 render. A changed file (size or time) is checked again.
+ */
+export function isDefaultIconCached(icon: string | null | undefined, slug: string, name: string): boolean {
+  if (!icon) return false;
+  let key: string;
+  try { const st = statSync(icon); key = `${icon}\0${st.size}\0${st.mtimeMs}\0${slug}\0${name}`; } catch { return false; }
+  const hit = defaultIconSeen.get(key);
+  if (hit !== undefined) return hit;
+  const v = isDefaultIcon(icon, slug, name);
+  if (defaultIconSeen.size > 200) defaultIconSeen.clear();
+  defaultIconSeen.set(key, v);
+  return v;
+}
+
+/**
+ * What `apps validate` says about an icon's shape (warnings only): smaller than 1024, not square,
+ * or a picture that draws its own rounded tile (transparent corners) when dreamcontext now draws
+ * the one mask everywhere.
+ */
+export function iconShapeWarnings(icon: string | null | undefined): string[] {
+  if (!icon || !/\.png$/i.test(icon)) return [];
+  let buf: Buffer;
+  try { buf = readFileSync(icon); } catch { return []; }
+  const size = pngSize(buf);
+  if (!size) return [];
+  const out: string[] = [];
+  if (size.width !== size.height) out.push(`${size.width}x${size.height} is not square. Draw a 1024x1024 square`);
+  else if (size.width < 1024) out.push(`${size.width}x${size.height} is smaller than 1024x1024. Draw it at 1024`);
+  const img = decodePng(buf);
+  if (img && cornersTransparent(img)) out.push('its corners are transparent: it draws its own tile. Fill the whole square to its edges; dreamcontext rounds the corners everywhere (card, store, Dock)');
+  return out;
 }

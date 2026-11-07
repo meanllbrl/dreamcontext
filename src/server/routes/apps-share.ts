@@ -14,12 +14,14 @@ import { fromOwnerPage } from './assistant.js';
 import { holdOpen } from '../hold-open.js';
 import { appsHomeDir, findAppFor, projectRootOf, retireAppRuntime, refreshAppRuntime } from './apps.js';
 import { readManifest } from '../../lib/apps/manifest.js';
+import { readAppFile, storePage } from '../../lib/apps/store-facts.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
 import { writeEnvSecrets, SecretWriteError } from '../../lib/env-secrets.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
-import { buildPublishTree, publishApp, PublishError } from '../../lib/apps/share/publish.js';
+import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
+import { mintPublishGrant, takePublishGrant } from '../../lib/apps/share/publish-grant.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
@@ -62,29 +64,67 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
 
 // ─── Publish ────────────────────────────────────────────────────────────────────────
 
-export async function handlePublishPreview(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+/** GET /api/apps/:slug/store: an app's own store page (README words, screenshots, what it can do). */
+export async function handleAppStore(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
-  holdOpen(req);
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
-  const url = new URL(req.url ?? '/', 'http://x');
-  const visibility = url.searchParams.get('visibility') === 'public' ? 'public' : 'private';
-  const host = resolveAppHost(appsHomeDir());
-  let login: string | null = null;
-  try { login = host.signedIn ? (await host.me()).login : null; } catch { login = null; }
-  try {
-    const pv = buildPublishTree(appsHomeDir(), rec, { visibility, login: login ?? 'you', repoName: url.searchParams.get('repo') || undefined });
-    sendJson(res, 200, { host: host.kind, signedIn: !!login, login, repoName: pv.repoName, fullName: pv.fullName ?? (login ? `${login}/${pv.repoName}` : null), license: pv.license, visibility, report: pv.report, name: pv.manifest.name, published: rec.publish ?? null });
-  } catch (e) { sendFailure(res, e); }
+  const m = readManifest(rec.root);
+  if (!m.ok) { sendError(res, 409, 'manifest_invalid', m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')); return; }
+  const readme = readAppFile(rec.root, 'README.md', 256 * 1024)?.toString('utf-8') ?? '';
+  const page = storePage(readme, m.manifest, (p) => readAppFile(rec.root, p, 2 * 1024 * 1024));
+  sendJson(res, 200, { tagline: page.readme.tagline, category: page.readme.category, about: page.readme.about, whatsNew: page.readme.whatsNew.slice(0, 1), shots: page.shots, can: page.can, readiness: page.readiness });
 }
 
-export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+/**
+ * POST /api/apps/:slug/publish/grant: the owner pressed Publish on the app's own page (owner
+ * 2026-11-06). That click is his decision to publish, and Claude does the work: one grant for this
+ * app, one hour, spent by the push (`dreamcontext apps publish <slug> --go --grant <id>`).
+ */
+export async function handlePublishGrant(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!ownerOnly(req, res)) return;
-  holdOpen(req);
+  const b = (await parseJsonBody(req)) ?? {};
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
+  if (rec.origin === 'installed' && (rec.source || !rec.provenance)) { sendError(res, 409, 'not_yours', 'This app was installed from someone else. Make it your own copy first.'); return; }
+  // The visibility is the owner's click: Share is private, "Share publicly" public. An app that
+  // is already public stays public (a new version).
+  const visibility = b.visibility === 'public' || rec.publish?.public ? 'public' : 'private';
+  const g = mintPublishGrant(rec.projectRoot, rec.slug, visibility);
+  if (!g) { sendError(res, 409, 'publish_running', 'A publish of this app is still running. Wait for it to finish.'); return; }
+  sendJson(res, 200, { grant: g.id, visibility: g.visibility, expiresAt: new Date(g.expiresAt).toISOString() });
+}
+
+/**
+ * POST /api/apps/:slug/publish: the push. The owner's page, or Claude holding the grant his
+ * Publish click opened for THIS app (`grant` in the body). Anything else: 403 owner_page_only.
+ * The gate runs inside `publishApp` either way; a grant passes nothing it stops.
+ */
+export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  holdOpen(req);
+  const owner = fromOwnerPage(req);
   const b = (await parseJsonBody(req)) ?? {};
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const held = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
+  if (held && !held.ok) {
+    if (held.why === 'used') { sendError(res, 409, 'grant_used', `This grant already published the app${held.fullName ? ` as ${held.fullName}` : ''}. It went out: do not publish again, and never ask for a new grant for it.`); return; }
+    if (held.why === 'running') { sendError(res, 409, 'publish_running', 'A publish on this grant is still running. Wait, then run `dreamcontext apps list` to see whether it went out; do not publish again.'); return; }
+    if (held.why === 'expired') { sendError(res, 403, 'grant_expired', 'The grant ran out (one hour). The work you did stays: ask the owner to press Share on the app\'s page again, then publish with the new grant.'); return; }
+    sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Share click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is not it (made up, used, replaced by a newer click, for another app, or the app restarted): ask him to press Share again.');
+    return;
+  }
+  const done = held?.ok ? held.done : null;
+  const requested = b.visibility === 'public' ? 'public' : 'private';
+  // Going public is for good: only the owner's own "Share publicly" click opens it.
+  if (held?.ok && held.visibility !== requested) {
+    held.done(false);
+    sendError(res, 403, 'grant_scope', held.visibility === 'private' ? 'The owner opened a private publish (Share). Going public needs his own "Share publicly" click on the app\'s page.' : 'The owner opened a public publish: publish with --public.');
+    return;
+  }
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
+  let pushedTo: string | null = null;
   try {
     const out = await publishApp(rec, {
       home: appsHomeDir(), host: resolveAppHost(appsHomeDir()),
@@ -92,15 +132,26 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       repoName: typeof b.repoName === 'string' && b.repoName.trim() ? b.repoName.trim() : undefined,
       invite: strings(b.invite), approvals: strings(b.approvals),
       note: typeof b.note === 'string' ? b.note : undefined,
-      confirmName: typeof b.confirmName === 'string' ? b.confirmName : undefined,
+      tagline: typeof b.tagline === 'string' ? b.tagline : undefined,
+      // A public grant IS the owner's confirmation (his "Share publicly" click).
+      confirmName: held?.ok && held.visibility === 'public' ? undefined : typeof b.confirmName === 'string' ? b.confirmName : undefined,
+      confirmed: held?.ok && held.visibility === 'public',
       fresh: b.fresh === true,
+      // Spent the moment the push went out: a failure after it never frees it for a second push.
+      onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); },
     });
+    done?.(true);
     clearSharedCache();
     sendJson(res, 200, { ok: true, ...out });
-  } catch (e) { sendFailure(res, e); }
+  } catch (e) {
+    done?.(false);
+    // The push went out and a later step (topics, visibility, an invite) failed: it IS published.
+    if (pushedTo) { clearSharedCache(); sendJson(res, 200, { ok: true, pushed: true, fullName: pushedTo, warning: (e as Error).message }); return; }
+    sendFailure(res, e);
+  }
 }
 
-// ─── Shared with you, install ───────────────────────────────────────────────────────
+// ─── Shared Apps, install ───────────────────────────────────────────────────────
 
 export async function handleSharedList(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;

@@ -1,3 +1,5 @@
+import { decodePng, cornersTransparent, encodePng } from '../../src/lib/apps/png.js';
+import { renderDefaultIcon } from '../../src/lib/apps/icon.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync, mkdirSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -115,12 +117,43 @@ describe('ensureAppBundle', () => {
     expect(ensureAppBundle(withIcon, { exec, platform: 'darwin' })).toMatchObject({ ok: true, built: true });
   });
 
+  it('masks a full-bleed icon into the rounded tile before the iconset, and keeps a self-tiled one as it is', () => {
+    const { project, input } = setup();
+    const fed: string[] = [];
+    let tileSeen: Buffer | null = null;
+    const exec = (cmd: string, args: string[]) => {
+      if (cmd.endsWith('iconutil')) { writeFileSync(args[args.indexOf('-o') + 1], 'icns'); return; }
+      if (!cmd.endsWith('sips')) return;
+      const src = args[args.length - 3];
+      const out = args[args.length - 1];
+      // sips at 1024 stands in: copies the PNG it is given (both test icons are 1024 already).
+      if (out.endsWith('full.png')) { writeFileSync(out, readFileSync(src)); return; }
+      fed.push(src);
+      if (src.endsWith('tile.png') && !tileSeen) tileSeen = readFileSync(src);
+    };
+    const full = join(project, 'full.png');
+    writeFileSync(full, encodePng({ width: 1024, height: 1024, data: Buffer.alloc(1024 * 1024 * 4, 220) }));
+    ensureAppBundle({ ...input, iconPath: full }, { exec, platform: 'darwin' });
+    expect(fed.length).toBe(10);
+    expect(fed.every((f) => f.endsWith('tile.png'))).toBe(true);
+    const tile = decodePng(tileSeen!)!;
+    expect(tile.width).toBe(1024);
+    expect(cornersTransparent(tile)).toBe(true);
+
+    fed.length = 0;
+    const own = join(project, 'own.png');
+    writeFileSync(own, renderDefaultIcon('meta-ads', 'Meta Ads'));
+    ensureAppBundle({ ...input, slug: 'meta-ads-2', iconPath: own }, { exec, platform: 'darwin' });
+    expect(fed.every((f) => f === own)).toBe(true);
+  });
+
   it('turns a PNG icon into an icns through sips + iconutil, and copies an icns as is', () => {
     const { project, calls, exec, input } = setup();
     const png = join(project, 'logo.png');
     writeFileSync(png, 'png');
     ensureAppBundle({ ...input, iconPath: png }, { exec, platform: 'darwin' });
-    expect(calls.filter(([c]) => c.endsWith('sips'))).toHaveLength(10);
+    // One to read the icon at 1024 (the tile mask), then the ten iconset sizes.
+    expect(calls.filter(([c]) => c.endsWith('sips'))).toHaveLength(11);
     expect(calls.some(([c]) => c.endsWith('iconutil'))).toBe(true);
 
     const icns = join(project, 'logo.icns');

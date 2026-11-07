@@ -9,7 +9,8 @@ import { join, resolve } from 'node:path';
 import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, bundleRunning, resolveProject, type ProjectRef } from '../../lib/apps/client.js';
 import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
-import { iconIssue, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
+import { iconIssue, iconShapeWarnings, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
+import { readmeSkeleton, storeWarnings } from '../../lib/apps/store-readme.js';
 import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, type AppManifest } from '../../lib/apps/manifest.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
@@ -171,6 +172,8 @@ export function registerAppsCommand(program: Command): void {
         // The SDK for the backend, byte for byte the page's /__dc/sdk.js (drift-tested).
         try { mkdirSync(join(root, 'lib'), { recursive: true }); writeFileSync(join(root, 'lib', 'dc.mjs'), sdkSource()); } catch { /* the page SDK still works */ }
         writeDefaultIcon(root, slug, name);
+        // The store page's skeleton: /apps fills the tagline and What it does; validate says what is missing.
+        if (!existsSync(join(root, 'README.md'))) writeFileSync(join(root, 'README.md'), readmeSkeleton(name, new Date().toISOString().slice(0, 10)));
         try { execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' }); } catch { /* git missing: still an app */ }
         const rec = registerApp(homedir(), { projectRoot: p.projectRoot, vault: p.vault, slug, name, root });
         try { allowAppDir(p.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
@@ -295,7 +298,14 @@ export function registerAppsCommand(program: Command): void {
         }
         if (isDefaultIcon(m.manifest.icon, m.manifest.slug, m.manifest.name)) {
           console.log(`warning icon: still the placeholder letter from \`apps new\`. Draw this app's own icon (/apps).`);
+        } else {
+          for (const w of iconShapeWarnings(m.manifest.icon)) console.log(`warning icon: ${w}`);
         }
+        // The store page reads the README (app-paylasim-magaza r2): warnings, never a red check.
+        const readme = join(root, 'README.md');
+        let readmeText: string | null = null;
+        try { if (lstatSync(readme).isFile()) readmeText = readFileSync(readme, 'utf-8'); } catch { /* missing */ }
+        for (const w of storeWarnings(readmeText)) console.log(`warning ${w}`);
         success(`${m.manifest.slug}: valid (${m.manifest.actions.length} actions, ${m.manifest.schedules.length} schedules${m.manifest.backend ? ', backend' : ', static'})`);
       } catch (e) { fail(e); }
     });

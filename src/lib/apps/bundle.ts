@@ -36,6 +36,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { writeDefaultIcon } from './icon.js';
+import { decodePng, maskToTile } from './png.js';
 
 export const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
@@ -163,6 +164,15 @@ function makeIcns(src: string, dest: string, exec: (cmd: string, args: string[])
   try {
     const set = join(work, 'AppIcon.iconset');
     mkdirSync(set);
+    // One mask everywhere (app-paylasim-magaza r2): a full-bleed square icon gets the same rounded
+    // tile the Apps page draws; an icon that draws its own tile (transparent corners) stays as it is.
+    try {
+      const full = join(work, 'full.png');
+      exec('/usr/bin/sips', ['-s', 'format', 'png', '-z', '1024', '1024', src, '--out', full]);
+      const img = existsSync(full) ? decodePng(readFileSync(full)) : null;
+      const tile = img ? maskToTile(img) : null;
+      if (tile) { src = join(work, 'tile.png'); writeFileSync(src, tile); }
+    } catch { /* the icon goes as it is */ }
     for (const size of [16, 32, 128, 256, 512]) {
       exec('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), src, '--out', join(set, `icon_${size}x${size}.png`)]);
       exec('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size * 2), String(size * 2), src, '--out', join(set, `icon_${size}x${size}@2x.png`)]);
@@ -205,7 +215,8 @@ function bundleParts(input: BundleInput): { name: string; plist: string; infoJso
     .update('\0')
     .update(infoJson)
     .update('\0')
-    .update(iconSrc ? sha256File(iconSrc) : DEFAULT_ICON_STAMP)
+    // `tile-1`: the Dock icon is masked into the rounded tile; bump it when that drawing changes.
+    .update(iconSrc ? `tile-1:${sha256File(iconSrc)}` : DEFAULT_ICON_STAMP)
     .digest('hex');
   return { name, plist, infoJson, iconSrc, stamp };
 }

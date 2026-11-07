@@ -305,12 +305,18 @@
     },
     {
       "path": "apps publish",
-      "desc": "Show what a publish would send and what stops it (the push itself is the owner's click: Apps page → Share)",
+      "desc": "Check what a publish would send and what stops it; with --go and the grant the owner's Publish click gave you, publish it",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
-        "--repo"
+        "--repo",
+        "--grant",
+        "--invite",
+        "--approve",
+        "--note",
+        "--tagline",
+        "--confirm-name"
       ]
     },
     {
@@ -358,7 +364,7 @@
     },
     {
       "path": "apps shared",
-      "desc": "Apps shared with you (and invitations waiting), from the signed-in GitHub account",
+      "desc": "Shared Apps: apps shared with you (and invitations waiting), from the signed-in GitHub account",
       "args": []
     },
     {

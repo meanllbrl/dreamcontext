@@ -1,7 +1,15 @@
 import { useState } from 'react';
-import { useApi } from '../../context/VaultContext';
+import { useQuery } from '@tanstack/react-query';
+import { useApi, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
-import { ConfigSheet, ConfirmSheet, PublishSheet, UpdateSheet, useShareT } from './ShareSheets';
+import { ConfigSheet, ConfirmSheet, Sheet, UpdateSheet, useShareT } from './ShareSheets';
+import { AppIcon } from './AppIcon';
+import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
+import { askAgent } from './askAgent';
+import { publishPrompt } from './publishPrompt';
+import { preparePrompt } from '../../lib/agentPrompt';
+import { requestDelegateAgent } from '../../lib/delegateAgent';
+import { confirmAction } from '../../lib/desktop';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
 export interface AppRow {
@@ -19,6 +27,8 @@ export interface AppRow {
   agent?: string | null;
   agentState?: 'ready' | 'needs_approval' | 'missing' | null;
   hasIcon?: boolean;
+  /** Still the letter `apps new` drew: drawn as the monogram fallback. */
+  iconPlaceholder?: boolean;
   actions?: Array<{ id: string; title: string }>;
   schedules?: Array<{ id: string; enabled: boolean; next: string | null; last: { at: string; status: string; code: string | null } | null }>;
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
@@ -31,7 +41,7 @@ export interface AppRow {
   configMissing?: string[];
 }
 
-type ShareOpen = 'publish' | 'config' | 'update' | 'detach' | 'uninstall' | null;
+type ShareOpen = 'config' | 'update' | 'detach' | 'uninstall' | null;
 
 function when(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -43,183 +53,277 @@ const STATE_TONE: Record<string, string> = {
   running: 'good', starting: 'busy', updating: 'busy', error: 'bad', stopped: 'idle',
 };
 
-/**
- * The app card (dreamcontext-apps plan r19, "İlk 30 saniye" 2): logo, name, state, assigned
- * agent, Launch. On a phone or outside the Mac app it says the app opens in the Mac app and
- * has no Launch.
- */
-export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppRow; vault: string; canLaunch: boolean; setup?: { scheduler: boolean; notifications: boolean }; onChanged: () => void }) {
+/** The icon URL the page may draw: a raster the app really has, never the placeholder letter. */
+export function appIconSrc(app: Pick<AppRow, 'slug' | 'hasIcon' | 'iconPlaceholder'>, vault: string, canLaunch: boolean): string | null {
+  return app.hasIcon && !app.iconPlaceholder && canLaunch ? `/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}` : null;
+}
+
+function stateOf(app: AppRow): string {
+  return app.stoppedByOwner ? 'stopped' : app.state;
+}
+
+/** One small badge per tile, the most useful first: settings missing, an update, my own copy. */
+function tileBadge(app: AppRow): { key: string; tone: 'warn' | 'accent' | 'plain' } | null {
+  if ((app.configMissing?.length ?? 0) > 0) return { key: 'store.badge.settings', tone: 'warn' };
+  if (app.state === 'error') return { key: 'store.badge.problem', tone: 'warn' };
+  if (app.origin === 'installed' && app.source?.available) return { key: 'store.badge.update', tone: 'accent' };
+  if (app.origin === 'installed' && !app.source && app.provenance) return { key: 'store.badge.ownCopy', tone: 'plain' };
+  if (app.publish) return { key: app.publish.public ? 'store.badge.public' : 'store.badge.shared', tone: 'plain' };
+  return null;
+}
+
+/** Launch or stop: the tile's Open and the page's Open/Stop share it. */
+function useRun(slug: string, onChanged: () => void) {
   const api = useApi();
-  const { t } = useI18n();
   const [busy, setBusy] = useState<'launch' | 'stop' | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string[]>([]);
-  const [iconFailed, setIconFailed] = useState(false);
-  const [sheet, setSheet] = useState<ShareOpen>(null);
+  const run = async (kind: 'launch' | 'stop') => {
+    setBusy(kind); setErr(null);
+    try { await api.post(`/apps/${encodeURIComponent(slug)}/${kind}`, kind === 'launch' ? { owner: true } : {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  };
+  return { busy, err, setErr, run };
+}
+
+/**
+ * A tile on the Apps shelf (app-paylasim-magaza r2 section 2): the icon carries it, then the name,
+ * one line (its state, or who it came from), at most one badge, and Open. The tile opens the app's
+ * own page, where everything else lives.
+ */
+export function AppTile({ app, vault, canLaunch, onOpen, onChanged }: { app: AppRow; vault: string; canLaunch: boolean; onOpen: () => void; onChanged: () => void }) {
+  const { t } = useI18n();
   const ts = useShareT();
+  const state = stateOf(app);
+  const live = (app.windows ?? 0) > 0;
+  const { busy, err, run } = useRun(app.slug, onChanged);
+  const badge = tileBadge(app);
+  const sub = app.origin === 'installed' && app.source ? ts('store.by', { who: app.source.owner }) : `${t(`apps.state.${state}`)}${live ? ` · ${t('apps.windowOpen')}` : ''}`;
+  return (
+    <article className="app-tile" data-state={state}>
+      <button type="button" className="app-tile__open" onClick={onOpen} aria-label={ts('store.openPage', { name: app.name })}>
+        <AppIcon src={appIconSrc(app, vault, canLaunch)} name={app.name} slug={app.slug} size={64} running={state === 'running'} />
+        <span className="app-tile__text">
+          <span className="app-tile__name">{app.name}</span>
+          <span className={`app-tile__sub app-card__state--${STATE_TONE[state] ?? 'idle'}`}>{sub}</span>
+        </span>
+      </button>
+      <div className="app-tile__foot">
+        {badge ? <span className={`app-chip app-chip--${badge.tone}`}>{t(badge.key)}</span> : <span />}
+        {canLaunch ? (
+          <button type="button" className={state === 'running' || live ? 'app-tile__btn app-tile__btn--primary' : 'app-tile__btn'} disabled={busy !== null} onClick={() => void run('launch')}>
+            {busy === 'launch' ? t('apps.opening') : live ? t('apps.focus') : t('store.open')}
+          </button>
+        ) : <span className="app-card__mac-only">{t('apps.macOnly')}</span>}
+      </div>
+      {err && <p className="app-card__note app-card__note--bad">{err}</p>}
+    </article>
+  );
+}
+
+interface OwnStore { tagline: string | null; category: string | null; about: string | null; whatsNew: StoreEntry[]; shots: Array<{ alt: string; src: string }>; can: CanLine[] }
+
+/**
+ * An app's own page: the same store page an installer sees, with Open and the rare actions
+ * (share, settings, updates, my own copy, uninstall) and every note the old card carried.
+ */
+export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: AppRow; vault: string; canLaunch: boolean; onClose: () => void; onChanged: () => void }) {
+  const api = useApi();
+  const { bus } = useVault();
+  const { t } = useI18n();
+  const ts = useShareT();
+  const [sheet, setSheet] = useState<ShareOpen>(null);
   const installed = app.origin === 'installed';
   const following = installed && !!app.source;
+  const state = stateOf(app);
+  const live = (app.windows ?? 0) > 0;
+  const { busy, err, setErr, run } = useRun(app.slug, onChanged);
   const [undoing, setUndoing] = useState(false);
+  const store = useQuery({ queryKey: ['app-store', vault, app.slug], queryFn: () => api.get<OwnStore>(`/apps/${encodeURIComponent(app.slug)}/store`), staleTime: 10_000, enabled: canLaunch });
+  const s = store.data;
+
   const undoUpdate = async () => {
     if (undoing) return;
     setErr(null); setUndoing(true);
     try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setUndoing(false); }
   };
+  // Its error stands under Manage, beside the switch the owner just used.
+  const [manageErr, setManageErr] = useState<string | null>(null);
+  /**
+   * Share (Publish) hands the publish to Claude (owner 2026-11-06): no form. The click opens the
+   * one-hour grant for this app, then Chat (the Super when it is the chat on screen) gets the
+   * prompt that has Claude clean, write the store page, run the gate and publish with the CLI.
+   */
+  const [handing, setHanding] = useState(false);
+  const handToClaude = async (visibility: 'private' | 'public') => {
+    if (handing) return;
+    // Public is for good: the owner's own yes, one line, before anything is handed over.
+    if (visibility === 'public' && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
+    setManageErr(null); setHanding(true);
+    try {
+      const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
+      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null });
+      askAgent(bus, prompt, {
+        taken: () => { setHanding(false); onClose(); },
+        // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
+        // with the prompt, shown, the way a delegated task does.
+        missed: () => {
+          void preparePrompt(vault, prompt).then((pp) => {
+            setHanding(false);
+            if (requestDelegateAgent(bus, { title: ts('store.publish.tab', { name: app.name }), prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true })) onClose();
+            else setManageErr(t('store.publish.missed'));
+          }, (e) => { setHanding(false); setManageErr((e as Error).message); });
+        },
+      });
+    } catch (e) { setHanding(false); setManageErr((e as Error).message); }
+  };
   const toggleAuto = async (on: boolean) => {
-    setErr(null);
-    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setErr((e as Error).message); }
-  };
-  const live = (app.windows ?? 0) > 0;
-  const state = app.stoppedByOwner ? 'stopped' : app.state;
-  const tone = STATE_TONE[state] ?? 'idle';
-
-  const installSetup = async () => {
-    setErr(null);
-    setNotes([]);
-    try {
-      const r = await api.post<{ warnings?: string[] }>('/automations/dispatcher/install', {});
-      setNotes(r.warnings ?? []);
-      onChanged();
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+    setManageErr(null);
+    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/auto-update`, { enabled: on }); onChanged(); } catch (e) { setManageErr((e as Error).message); }
   };
 
-  const run = async (kind: 'launch' | 'stop') => {
-    setBusy(kind);
-    setErr(null);
-    try {
-      await api.post(`/apps/${encodeURIComponent(app.slug)}/${kind}`, kind === 'launch' ? { owner: true } : {});
-      onChanged();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
+  const by = following ? ts('store.by', { who: app.source!.owner })
+    : app.provenance ? ts('share.card.ownCopy', { repo: app.provenance.fullName })
+    : t('store.madeHere');
+  const top = s?.whatsNew[0];
+  const facts = [
+    { value: String(app.actions?.length ?? 0), label: t((app.actions?.length ?? 0) === 1 ? 'store.fact.action' : 'store.fact.actions') },
+    { value: String(app.schedules?.length ?? 0), label: t((app.schedules?.length ?? 0) === 1 ? 'store.fact.schedule' : 'store.fact.schedules') },
+    { value: app.agent ?? t('apps.noAgent'), label: t('apps.agent') },
+    ...(top ? [{ value: `v${top.version}`, label: shortDate(top.date) || t('store.version.label') }] : []),
+  ];
 
   return (
-    <article className="app-card" data-state={state}>
-      <div className="app-card__head">
-        {app.hasIcon && canLaunch && !iconFailed ? (
-          <img className="app-card__logo" src={`/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}`} alt="" onError={() => setIconFailed(true)} />
-        ) : (
-          <div className="app-card__logo app-card__logo--blank" aria-hidden>{app.name.slice(0, 1).toUpperCase()}</div>
+    <Sheet page title={app.name} onClose={onClose}>
+      <ProductTop
+        icon={appIconSrc(app, vault, canLaunch)}
+        name={app.name}
+        slug={app.slug}
+        running={state === 'running'}
+        by={<>{by} · <span className={`app-card__state--${STATE_TONE[state] ?? 'idle'}`}>{t(`apps.state.${state}`)}{live ? ` · ${t('apps.windowOpen')}` : ''}</span></>}
+        tagline={s?.tagline}
+        actions={canLaunch ? (
+          <>
+            <button type="button" className="app-card__launch pp-btn-lg" disabled={busy !== null} onClick={() => void run('launch')}>{busy === 'launch' ? t('apps.opening') : live ? t('apps.focus') : t('store.open')}</button>
+            {app.hasBackend && state !== 'stopped' && <button type="button" className="app-card__stop" disabled={busy !== null} onClick={() => void run('stop')}>{t('apps.stop')}</button>}
+            {app.publish && <span className="app-chip">{ts(app.publish.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish.fullName })}</span>}
+            {s?.category && <span className="app-chip">{s.category}</span>}
+          </>
+        ) : <span className="app-card__mac-only">{t('apps.macOnly')}</span>}
+      />
+      <FactStrip facts={facts} />
+      <div className="pp-notes-block">
+        {following && app.source!.available && (
+          <div className="app-card__note app-card__note--accent app-card__mcp">
+            <span>{t('share.card.updateReady')}</span>
+            {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('update')}>{t('share.card.update')}</button>}
+          </div>
         )}
-        <div className="app-card__title">
-          <h3>{app.name}</h3>
-          <span className={`app-card__state app-card__state--${tone}`}>{t(`apps.state.${state}`)}{live ? ` · ${t('apps.windowOpen')}` : ''}</span>
-        </div>
+        {following && app.source!.lastUpdate && (
+          <div className={`app-card__mcp ${app.source!.lastUpdate.depsFailed ? 'app-card__note app-card__note--bad' : 'app-card__origin'}`}>
+            <span>
+              {ts(app.source!.lastUpdate.auto ? 'share.card.updatedAuto' : 'share.card.updated', { when: when(app.source!.lastUpdate.at) })}
+              {app.source!.lastUpdate.depsFailed ? ` ${ts('share.card.depsFailed', { why: app.source!.lastUpdate.depsFailed })}` : ''}
+            </span>
+            {canLaunch && <button type="button" className="share-link" disabled={undoing} onClick={() => void undoUpdate()}>{t('share.update.undo')}</button>}
+          </div>
+        )}
+        {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
+        {(app.configMissing?.length ?? 0) > 0 && (
+          <div className="app-card__note app-card__note--warn app-card__mcp">
+            <span>{ts('share.card.settingsNeeded', { keys: app.configMissing!.join(', ') })}</span>
+            {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
+          </div>
+        )}
+        {(app.mcp ?? []).filter((m) => m.state !== 'ok').map((m) => (
+          <div key={m.name} className="app-card__note app-card__note--warn app-card__mcp">
+            <span>MCP <strong>{m.name}</strong>: {t(`apps.mcp.${m.state}`)}{m.message ? ` (${m.message})` : ''}</span>
+            {(m.state === 'needs_owner_ok' || m.state === 'changed') && canLaunch && (
+              <button type="button" className="app-card__stop" onClick={async () => {
+                try { await api.post(`/apps/${encodeURIComponent(app.slug)}/mcp-request`, { server: m.name }); onChanged(); }
+                catch (e) { setErr((e as Error).message); }
+              }}>{t('apps.mcp.ask')}</button>
+            )}
+          </div>
+        ))}
+        {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
+        {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
+        {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}
+        {!installed && app.iconPlaceholder && (
+          <div className="app-card__note app-card__note--warn app-card__mcp">
+            <span>{t('store.icon.placeholder')}</span>
+            <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.icon', { slug: app.slug })); }}>{t('store.ask')}</button>
+          </div>
+        )}
+        {app.unguarded && <p className="app-card__note app-card__note--warn">{t('apps.unguarded')}</p>}
+        {app.portFallback && <p className="app-card__note app-card__note--warn">{t('apps.portFallback')}</p>}
+        {state === 'error' && app.lastError && <p className="app-card__note app-card__note--bad">{app.lastError}</p>}
+        {err && <p className="app-card__note app-card__note--bad">{err}</p>}
       </div>
-      <dl className="app-card__meta">
-        <div><dt>{t('apps.agent')}</dt><dd>{app.agent ?? t('apps.noAgent')}</dd></div>
-        {(app.actions?.length ?? 0) > 0 && <div><dt>{t('apps.actions')}</dt><dd>{app.actions!.length}</dd></div>}
-        {(app.schedules?.length ?? 0) > 0 && <div><dt>{t('apps.schedules')}</dt><dd>{app.schedules!.length}</dd></div>}
-      </dl>
-      {(following || app.provenance || app.publish) && (
-        <p className="app-card__origin">
-          {following ? ts('share.card.from', { who: app.source!.owner })
-            : app.provenance ? ts('share.card.ownCopy', { repo: app.provenance.fullName })
-            : ts(app.publish!.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish!.fullName })}
-        </p>
-      )}
-      {following && app.source!.available && (
-        <div className="app-card__note app-card__note--accent app-card__mcp">
-          <span>{t('share.card.updateReady')}</span>
-          {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('update')}>{t('share.card.update')}</button>}
-        </div>
-      )}
-      {following && app.source!.lastUpdate && (
-        <div className={`app-card__mcp ${app.source!.lastUpdate.depsFailed ? 'app-card__note app-card__note--bad' : 'app-card__origin'}`}>
-          <span>
-            {ts(app.source!.lastUpdate.auto ? 'share.card.updatedAuto' : 'share.card.updated', { when: new Date(app.source!.lastUpdate.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })}
-            {app.source!.lastUpdate.depsFailed ? ` ${ts('share.card.depsFailed', { why: app.source!.lastUpdate.depsFailed })}` : ''}
-          </span>
-          {canLaunch && <button type="button" className="share-link" disabled={undoing} onClick={() => void undoUpdate()}>{t('share.update.undo')}</button>}
-        </div>
-      )}
-      {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
-      {(app.configMissing?.length ?? 0) > 0 && (
-        <div className="app-card__note app-card__note--warn app-card__mcp">
-          <span>{ts('share.card.settingsNeeded', { keys: app.configMissing!.join(', ') })}</span>
-          {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
-        </div>
-      )}
-      {(app.schedules?.length ?? 0) > 0 && (
-        <ul className="app-card__list">
-          {app.schedules!.map((s) => (
-            <li key={s.id}>
-              <span className="app-card__list-name">{s.id}</span>
+      <Shots shots={s?.shots ?? []} />
+      <About text={s?.about} />
+      <CanList lines={s?.can ?? []} extra={(app.schedules?.length ?? 0) > 0 ? (
+        <ul className="app-card__list pp-runs">
+          {app.schedules!.map((sc) => (
+            <li key={sc.id}>
+              <span className="app-card__list-name">{sc.id}</span>
               <span className="app-card__list-meta">
-                {!s.enabled ? t('apps.schedule.off') : `${t('apps.schedule.next')} ${when(s.next)}`}
+                {!sc.enabled ? t('apps.schedule.off') : `${t('apps.schedule.next')} ${when(sc.next)}`}
                 {' · '}
-                {s.last ? `${t('apps.schedule.last')} ${when(s.last.at)} (${s.last.code === 'app_stopped' ? t('apps.schedule.skippedStopped') : s.last.status})` : t('apps.schedule.never')}
+                {sc.last ? `${t('apps.schedule.last')} ${when(sc.last.at)} (${sc.last.code === 'app_stopped' ? t('apps.schedule.skippedStopped') : sc.last.status})` : t('apps.schedule.never')}
               </span>
             </li>
           ))}
         </ul>
-      )}
-      {(app.mcp ?? []).filter((m) => m.state !== 'ok').map((m) => (
-        <div key={m.name} className="app-card__note app-card__note--warn app-card__mcp">
-          <span>MCP <strong>{m.name}</strong>: {t(`apps.mcp.${m.state}`)}{m.message ? ` (${m.message})` : ''}</span>
-          {(m.state === 'needs_owner_ok' || m.state === 'changed') && canLaunch && (
-            <button type="button" className="app-card__stop" onClick={async () => {
-              try { await api.post(`/apps/${encodeURIComponent(app.slug)}/mcp-request`, { server: m.name }); onChanged(); }
-              catch (e) { setErr((e as Error).message); }
-            }}>{t('apps.mcp.ask')}</button>
-          )}
-        </div>
-      ))}
-      {canLaunch && setup && !setup.scheduler && (app.schedules?.length ?? 0) > 0 && (
-        <div className="app-card__note app-card__note--warn app-card__mcp">
-          <span>{t('apps.setup.scheduler')}</span>
-          <button type="button" className="app-card__stop" onClick={() => void installSetup()}>{t('apps.setup.install')}</button>
-        </div>
-      )}
-      {canLaunch && setup && !setup.notifications && (
-        <div className="app-card__note app-card__note--warn app-card__mcp">
-          <span>{t('apps.setup.notifications')}</span>
-          <button type="button" className="app-card__stop" onClick={() => void installSetup()}>{t('apps.setup.turnOn')}</button>
-        </div>
-      )}
-      {notes.map((n) => <p key={n} className="app-card__note app-card__note--warn">{n}</p>)}
-      {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
-      {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
-      {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}
-      {app.unguarded && <p className="app-card__note app-card__note--warn">{t('apps.unguarded')}</p>}
-      {app.portFallback && <p className="app-card__note app-card__note--warn">{t('apps.portFallback')}</p>}
-      {state === 'error' && app.lastError && <p className="app-card__note app-card__note--bad">{app.lastError}</p>}
-      {err && <p className="app-card__note app-card__note--bad">{err}</p>}
-      <div className="app-card__foot">
-        {canLaunch ? (
-          <>
-            <button type="button" className="app-card__launch" disabled={busy !== null} onClick={() => void run('launch')}>
-              {busy === 'launch' ? t('apps.opening') : live ? t('apps.focus') : t('apps.launch')}
-            </button>
-            {app.hasBackend && state !== 'stopped' && (
-              <button type="button" className="app-card__stop" disabled={busy !== null} onClick={() => void run('stop')}>{t('apps.stop')}</button>
-            )}
-          </>
-        ) : (
-          <span className="app-card__mac-only">{t('apps.macOnly')}</span>
-        )}
-      </div>
+      ) : undefined} />
+      <WhatsNew entry={top} />
       {canLaunch && (
-        <div className="app-card__share">
-          {(!installed || !following) && <button type="button" className="share-link" onClick={() => setSheet('publish')}>{t('share.card.share')}</button>}
-          {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
-          {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
+        <section className="pp-sec" aria-label={t('store.manage')}>
+          <h3>{t('store.manage')}</h3>
           {following && !app.source!.public && (
             <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
           )}
-          {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
-          {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
+          <div className="app-card__share">
+            {(!installed || !following) && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('private')}>{t('share.card.share')}</button>}
+            {(!installed || !following) && !app.publish?.public && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('public')}>{t('share.card.sharePublic')}</button>}
+            {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
+            {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
+            {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
+            {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
+          </div>
+          {manageErr && <p className="app-card__note app-card__note--bad" role="alert">{manageErr}</p>}
+        </section>
+      )}
+      {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
+      {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} onDetach={() => setSheet('detach')} />}
+      {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={() => { onChanged(); if (sheet === 'uninstall') onClose(); }} />}
+    </Sheet>
+  );
+}
+
+/** Mac setup a schedule or a banner needs: one line on top of the page, never on every tile. */
+export function SetupLine({ setup, apps, onChanged }: { setup?: { scheduler: boolean; notifications: boolean }; apps: AppRow[]; onChanged: () => void }) {
+  const api = useApi();
+  const { t } = useI18n();
+  const [notes, setNotes] = useState<string[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!setup || !apps.length) return null;
+  const needScheduler = !setup.scheduler && apps.some((a) => (a.schedules?.length ?? 0) > 0);
+  const needNotify = !setup.notifications;
+  if (!needScheduler && !needNotify && !notes.length && !err) return null;
+  const install = async () => {
+    setBusy(true); setErr(null); setNotes([]);
+    try { const r = await api.post<{ warnings?: string[] }>('/automations/dispatcher/install', {}); setNotes(r.warnings ?? []); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="apps-setup" role="note">
+      {(needScheduler || needNotify) && (
+        <div className="apps-setup__row">
+          <span>{needScheduler && needNotify ? t('store.setup.both') : needScheduler ? t('apps.setup.scheduler') : t('apps.setup.notifications')}</span>
+          <button type="button" className="app-card__stop" disabled={busy} onClick={() => void install()}>{needScheduler ? t('apps.setup.install') : t('apps.setup.turnOn')}</button>
         </div>
       )}
-      {sheet === 'publish' && <PublishSheet slug={app.slug} name={app.name} publishedPublic={app.publish?.public} onClose={() => setSheet(null)} onDone={onChanged} />}
-      {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
-      {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={onChanged} onDetach={() => setSheet('detach')} />}
-      {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
-    </article>
+      {notes.map((n) => <p key={n} className="app-card__note app-card__note--warn">{n}</p>)}
+      {err && <p className="app-card__note app-card__note--bad">{err}</p>}
+    </div>
   );
 }

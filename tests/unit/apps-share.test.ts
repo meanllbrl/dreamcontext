@@ -179,6 +179,12 @@ describe('publish', () => {
     writeFileSync(join(appRoot, 'public', 'app.js'), 'const who = "Ayşe Yılmaz";\n');
     git(appRoot, 'commit', '-qam', 'name');
     await expect(publishFirst(rec)).rejects.toMatchObject({ code: 'gate_blocked' });
+    // Claude publishes now (yayinla-claude), and may pass approvals: a hard finding's own id among
+    // them still passes nothing.
+    const blocked = buildPublishTree(home, rec, { visibility: 'private', login: 'yayinci' }).report;
+    expect(blocked.blocks.length).toBeGreaterThan(0);
+    const everyId = [...blocked.blocks, ...blocked.approvable].map((f) => f.id);
+    await expect(publishFirst(rec, { approvals: everyId })).rejects.toMatchObject({ code: 'gate_blocked' });
     writeFileSync(join(appRoot, 'public', 'app.js'), 'export const x = 2;\n');
     git(appRoot, 'commit', '-qam', 'clean');
     await publishFirst(rec);

@@ -701,6 +701,8 @@ export function Composer({
   // seeds `/apps `). Only an EMPTY, visible composer takes it: never over a half-typed draft.
   useInstanceEvent<{ text?: unknown; accepted?: boolean }>(COMPOSER_PREFILL_EVENT, (detail) => {
     if (shelved || !detail || typeof detail.text !== 'string' || detail.accepted || draft.trim()) return;
+    // Visible means on screen: a composer of a tab that is not showing would swallow the ask.
+    if (!taRef.current || taRef.current.getClientRects().length === 0) return;
     detail.accepted = true;
     setDraft(detail.text);
     session.syncDraft(detail.text);
