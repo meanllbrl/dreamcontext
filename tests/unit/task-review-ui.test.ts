@@ -189,7 +189,7 @@ describe('Wave 1 strings, Turkish and English, same params', () => {
     ['superStage.team.jobs', '{n} jobs', '{n} iş'],
     ['superStage.team.queued', 'queued', 'sırada'],
     ['superStage.team.previous', 'previous conversation', 'önceki konuşma'],
-    ['agents.approval.widenConfirm', 'This change gives the member new authority: {fields}. Save = approve.', 'Bu değişiklik üyeye yeni yetki veriyor: {fields}. Kaydet = onay.'],
+    ['agents.approval.rule', 'What you, your Super Agent or your members make on this Mac needs no approval. A card asks once for what comes new or changed from a teammate, or for text a background run wrote with a risky sign (a new address, a command, a secret path).', "Bu Mac\\'te senin, Super Agent\\'ının ya da üyelerinin yaptığı şeyler onay istemez. Kart bir kez sorar: bir takım arkadaşından yeni ya da değişmiş gelen şey için, ya da arka planda çalışan bir işin riskli iz taşıyan metni için (yeni bir adres, bir komut, gizli bir yol)."],
     ['agents.approval.synced', 'Change from the team: {fields}', 'Takımdan gelen değişiklik: {fields}'],
     ['agents.approval.waitsCard', 'Its approval card waits on the AI Team page.', 'Onay kartı AI Team sayfasında bekliyor.'],
     ['tasks.assignWaitsCard', '{name} waits for its approval card on the AI Team page. Open it there, then assign again.', '{name} AI Team sayfasındaki onay kartını bekliyor. Orada aç, sonra yeniden ata.'],
@@ -201,7 +201,7 @@ describe('Wave 1 strings, Turkish and English, same params', () => {
   });
 
   it('no em dash in any Wave 1 string', () => {
-    const keys = ['tasks.job.wait.', 'tasks.reviewOwnerSentBack', 'tasks.reviewFailed', 'tasks.reviewStuck', 'tasks.assignToolUnsupported', 'tasks.assignWaitsApproval', 'tasks.assignSyncedBy', 'superStage.team.', 'agents.approval.widenConfirm', 'agents.approval.synced'];
+    const keys = ['tasks.job.wait.', 'tasks.reviewOwnerSentBack', 'tasks.reviewFailed', 'tasks.reviewStuck', 'tasks.assignToolUnsupported', 'tasks.assignWaitsApproval', 'tasks.assignSyncedBy', 'superStage.team.', 'agents.approval.rule', 'agents.approval.synced'];
     for (const line of src.split('\n').filter((l) => keys.some((k) => l.includes(`'${k}`)))) expect(line).not.toContain('—');
   });
 });

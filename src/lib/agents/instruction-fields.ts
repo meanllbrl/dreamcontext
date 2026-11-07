@@ -76,7 +76,7 @@ export function isInstructionField(field: string): field is InstructionField {
  *  - `super`: the Super Agent through its token (`super team amend`), which already talks to him;
  *  - `session`: an in-app chat session (a Claude session, a member's conversation): someone he talks to;
  *  - `agent`: a process that never talks to him (a member's own run, a routine, a Super or member
- *    child): its risky, widening, global or cross-member change waits for the one card.
+ *    child): its risky text waits for the one card (`localWriteStamps`).
  */
 export type MemberActor = 'owner' | 'super' | 'session' | 'agent';
 
@@ -95,6 +95,22 @@ export function memberActorFromEnv(env: NodeJS.ProcessEnv = process.env): { acto
   }
   if (env.CLAUDECODE !== undefined || env.DREAMCONTEXT_AGENT_CHAT !== undefined) return { actor: 'session', self: null };
   return { actor: 'owner', self: null };
+}
+
+/**
+ * THE stamp rule for a write this Mac makes (owner 2026-11-07: only what arrives from outside asks).
+ * Whoever writes it here, the owner, his Super Agent, an in-app session, a member's own run or a
+ * global agent, the result is approved as it is written: no card. A file that came by git (a
+ * teammate's new or changed member, routine or instruction) still asks once, because no local write
+ * stamped what it says.
+ *
+ * The one exception is the injection guard: text a process that never talks to the owner (`agent`:
+ * a run, a routine, the Super Agent's crew, a member's crew) wrote with one of the signs
+ * `amendmentRisks` names (a new address, a command, a secret path, a hidden character...) waits for
+ * his one card. That text was read somewhere, not given by him. Widening no longer holds a local write.
+ */
+export function localWriteStamps(actor: MemberActor, risks: readonly string[]): boolean {
+  return actor !== 'agent' || risks.length === 0;
 }
 
 /** The shape `widensAuthority` reads: the review fields of a target (`approvalFields`), plus the
@@ -147,9 +163,9 @@ function flowWidens(prev: unknown, next: unknown): boolean {
 
 /**
  * Which hashed or authority fields this change WIDENS, sorted; [] when it only narrows, keeps or
- * rewords. One predicate for the owner's save (his inline confirm, `confirmWiden`), for an
- * agent's, Super's or a session's write (the one card) and for a create (`prev` null: judged
- * against {@link CREATE_BASELINE}, learning exempt).
+ * rewords. Since 2026-11-07 it no longer decides a stamp (`localWriteStamps` does): it names what a
+ * change made on this Mac widened on the trace row the owner reads (`agents amendments`). A create
+ * (`prev` null) is judged against {@link CREATE_BASELINE}, learning exempt.
  *
  *  readTools added; autonomy toward free; tool or fallbackTools changed; outputDir or
  *  outputInstructions to a new destination; whiteboard removed or moved to another board; app

@@ -7,11 +7,12 @@ import type { PendingApproval } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 
 /**
- * WHAT WAITS FOR YOUR APPROVAL, at the top of the conversation: the member's ONE approval card
- * (plan-r10 1e). A member changed on this Mac stamps itself; this card is only for a change that
- * came by team sync, or one an agent made that widens the member's reach or that a background run
- * made risky, global or across members. Each row names the fields that moved (`changedFields`,
- * from the machine-local field hashes of the last stamp) when this Mac knows them.
+ * WHAT WAITS FOR YOUR APPROVAL, at the top of the conversation: the member's ONE approval card.
+ * Whatever is made on this Mac stamps itself (owner 2026-11-07, `localWriteStamps`); this card is
+ * only for what came new or changed by team sync, or text a background run wrote with an injection
+ * sign (a new address, a command, a secret path, a hidden character). Each row names the fields
+ * that moved (`changedFields`, from the machine-local field hashes of the last stamp) when this Mac
+ * knows them. The card says the rule in one line under its rows.
  *
  * The rule is unchanged: nothing runs on this Mac until the owner approved exactly what it is
  * (a machine-local SHA-256 of every hashed field). Only where it is said moved: one line per
@@ -43,6 +44,7 @@ export function TeamApproval({
           onToast={onToast}
         />
       ))}
+      <p className="aiteam-approval-lead" data-approval-rule>{t('agents.approval.rule')}</p>
     </div>
   );
 }

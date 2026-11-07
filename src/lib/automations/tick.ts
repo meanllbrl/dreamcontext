@@ -54,6 +54,7 @@ import { getAutomation, listAutomations, readAutomationCache } from './store.js'
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
@@ -187,6 +188,9 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const runImpl = opts.runImpl ?? runAutomation;
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
 
+  // Once per project: what this Mac made that waited under the old rule is approved before the
+  // sweep below closes its questions (adopt-local.ts). Never throws.
+  adoptLocalPending(contextRoot, { home: opts.home, now });
   const manifests = listAutomations(contextRoot);
   // A question the page's approve left open would hold this slug's fires forever: see `settleApprovalQuestions`.
   // Housekeeping: a failure here is logged and never stops this project's fires or the next one's.

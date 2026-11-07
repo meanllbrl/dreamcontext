@@ -34,10 +34,9 @@ import {
   automationPath,
   getRunTarget,
   pathOccupied,
-  readManifestParts, runAccountIdOk } from '../../lib/automations/store.js';
-import { getAgent, removeAgent, widenViewOf } from '../../lib/agents/store.js';
+  readManifestParts, runAccountIdOk, approveMadeHere } from '../../lib/automations/store.js';
+import { getAgent, removeAgent } from '../../lib/agents/store.js';
 import { ownerEdit } from '../../lib/agents/amendments.js';
-import { widensAuthority } from '../../lib/agents/instruction-fields.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
@@ -1243,7 +1242,8 @@ function slugifyTitle(title: string): string {
 function approveHere(contextRoot: string, manifest: AutomationManifest): void {
   const projectRoot = dirname(contextRoot);
   registerProject(projectRoot);
-  approveAutomation(projectRoot, manifest, new Date());
+  // The agent an unsplit file also is gets the same stamp: one file, one approval (`approveMadeHere`).
+  approveMadeHere(contextRoot, manifest, new Date());
 }
 
 /**
@@ -1255,12 +1255,11 @@ function approveHere(contextRoot: string, manifest: AutomationManifest): void {
  * for ANY field a sync moved: only a target approved before the write is stamped.
  * Returns whether it stamped.
  */
-function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest | null, after: AutomationManifest, _consent = false): boolean {
+function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest | null, after: AutomationManifest): boolean {
   // Only what was approved as it stood before this save is stamped again (plan-r10 1e): a target
-  // that was NOT approved (a teammate's synced change, of any field, or one waiting on its tool or
-  // on the owner's card) is never stamped by a later local save, soul or not. The owner settles it
-  // on the one card, which names the fields that moved. His confirmed tool change (`consent`) on an
-  // approved target stamps through this same rule.
+  // that was NOT approved (a teammate's synced change, of any field, or one waiting on the owner's
+  // card) is never stamped by a later local save, soul or not. The owner settles it on the one
+  // card, which names the fields that moved. Everything else this save wrote is his: it stamps.
   const wasApproved = before !== null && checkApproval(dirname(contextRoot), before, undefined, 'run').approved;
   if (!wasApproved) return false;
   approveHere(contextRoot, after);
@@ -1476,26 +1475,9 @@ export async function handleAutomationsUpdate(
     const job = body.job === undefined ? undefined : str(body.job) ?? null;
     // Refused before the identity half is written and re-stamped (`updateSplitTarget`).
     checkReviewPatch(str(body.review));
-    // His save is his consent, but a WIDENING one says so first (plan-r10 1e), as on the identity
-    // route: a routine that starts running by itself, a review turned off, another tool. The
-    // dialog sends `confirmWiden` with exactly these fields after its inline line; else 409.
-    const prevView = widenViewOf(current);
-    const nextMode = readMode(body.mode);
-    const nextReview = str(body.review);
-    const widened = widensAuthority(prevView, {
-      ...prevView,
-      ...(nextMode !== undefined ? { mode: nextMode } : {}),
-      ...(nextReview !== undefined ? { review: nextReview } : {}),
-      ...(tool !== undefined ? { tool } : {}),
-    }, 'owner');
-    if (widened.length > 0 && !sameFieldList(body.confirmWiden, widened)) {
-      sendJson(res, 409, {
-        error: 'widen_unconfirmed',
-        message: `This change gives the member new reach: ${widened.join(', ')}. Save again with confirmWiden to confirm it.`,
-        fields: widened,
-      });
-      return;
-    }
+    // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
+    // another tool included. Only a target approved as it stood before the save is stamped
+    // (`approveUnlessUnseenSoul`): a teammate's change waiting for its card stays waiting.
     // Read BEFORE any write: whether the target was approved decides whether this
     // save may approve a soul the dialog never showed (see approveUnlessUnseenSoul).
     const before = getRunTarget(contextRoot, params.slug, 'automation');
@@ -1524,10 +1506,7 @@ export async function handleAutomationsUpdate(
       prompt: str(body.prompt),
       job,
     });
-    // Another tool means another vendor reads the prompt: the owner approves it, no quiet stamp.
-    const toolMoved = tool !== undefined && (tool ?? '') !== (current.tool ?? '');
-    const consent = toolConsent(body);
-    const stamped = (!toolMoved || consent) && approveUnlessUnseenSoul(contextRoot, before, manifest, consent);
+    const stamped = approveUnlessUnseenSoul(contextRoot, before, manifest);
     sendJson(res, 200, {
       automation: summarize(dirname(contextRoot), contextRoot, manifest),
       ...(stamped ? {} : { needsApproval: true }),
@@ -1579,18 +1558,15 @@ function updateSplitTarget(
   if (identityIn.effort !== undefined) identity.effort = identityIn.effort;
   if (identityIn.tool !== undefined) identity.tool = identityIn.tool;
   if (identityIn.account !== undefined) identity.account = identityIn.account;
-  // Another tool waits for the owner's approval of the new hash, on this path too (`withRestamp`).
-  const toolMoved = identityIn.tool !== undefined && (identityIn.tool ?? '') !== (current.tool ?? '');
-  // The owner's own confirmed save of a new tool is his approval of it (`confirmWiden`, plan-r10 1e).
-  const consent = toolConsent(body);
   if (current.runKind === 'agent' && str(body.title) !== undefined) identity.title = str(body.title);
   // The owner's own edit: stamped as before and traced (`agents amendments`), so he can take it back.
-  if (Object.keys(identity).length > 0) ownerEdit(contextRoot, agentSlug, identity, { consent, why: 'edited in the automation dialog' });
+  // His save is his consent, a new tool included (`consent`): this is an owner-page route.
+  if (Object.keys(identity).length > 0) ownerEdit(contextRoot, agentSlug, identity, { consent: true, why: 'edited in the automation dialog' });
 
   if (current.runKind === 'agent') {
     const target = getRunTarget(contextRoot, current.slug, 'agent');
     if (!target) throw new AutomationError(`Agent not found: ${current.slug}`);
-    return { manifest: target, stamped: (!toolMoved || consent) && checkApproval(projectRoot, target, undefined, 'run').approved };
+    return { manifest: target, stamped: checkApproval(projectRoot, target, undefined, 'run').approved };
   }
   const manifest = updateAutomation(contextRoot, current.slug, {
     title: str(body.title),
@@ -1603,21 +1579,7 @@ function updateSplitTarget(
     review: str(body.review) as UpdateAutomationInput['review'],
     job: identityIn.job,
   });
-  return { manifest, stamped: (!toolMoved || consent) && approveUnlessUnseenSoul(contextRoot, before, manifest, consent) };
-}
-
-/** `confirmWiden` names exactly the widened fields (order free). */
-function sameFieldList(raw: unknown, want: readonly string[]): boolean {
-  if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) return false;
-  const got = [...new Set(raw as string[])].sort();
-  const exp = [...want].sort();
-  return got.length === exp.length && got.every((x, i) => x === exp[i]);
-}
-
-/** The owner confirmed a new tool in his own save (an owner-page route): `confirmWiden` names it. */
-function toolConsent(body: Record<string, unknown> | null | undefined): boolean {
-  const list = body?.confirmWiden;
-  return Array.isArray(list) && list.includes('tool');
+  return { manifest, stamped: approveUnlessUnseenSoul(contextRoot, before, manifest) };
 }
 
 /**

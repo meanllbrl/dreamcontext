@@ -186,14 +186,10 @@ describe('AC-A1-1 autonomy', () => {
     // The agent-run refusal is the CLI verb's (the server cannot see a caller's environment; a run
     // that reaches the local API directly is plan-r9's named residual).
     makeAgent();
-    // Toward free widens the member (plan-r10 1e): the owner's save says so first, and nothing is written.
-    const unconfirmed = fakeRes();
-    await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), unconfirmed, { slug: 'scout' }, contextRoot);
-    expect(unconfirmed.status).toBe(409);
-    expect(unconfirmed.json()).toMatchObject({ error: 'widen_unconfirmed', fields: ['autonomy'] });
-    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('balanced');
+    // Toward free widens the member, and his own save of it is his approval (owner 2026-11-07):
+    // written and stamped at once, no inline confirm.
     const res = fakeRes();
-    await handleAgentsUpdate(fakeReq({ autonomy: 'free', confirmWiden: ['autonomy'] }), res, { slug: 'scout' }, contextRoot);
+    await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), res, { slug: 'scout' }, contextRoot);
     expect(res.status).toBe(200);
     expect((res.json().agent as { autonomy: string }).autonomy).toBe('free');
     const bad = fakeRes();

@@ -26,6 +26,7 @@ import {
 } from '../../lib/manifest.js';
 import { designFileIsUnchanged, isDesignSkillPath } from '../../lib/core-design-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
+import { adoptLocalPending } from '../../lib/automations/adopt-local.js';
 import { pruneRetiredPacks } from '../../lib/retired-packs.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
@@ -386,6 +387,13 @@ export function registerUpdateCommand(program: Command): void {
         let newSetupVersion: string | null = null;
         if (!opts.packsOnly) {
           newSetupVersion = migrateThenStampSetupVersion(projectRoot).stamped;
+          // Once per project: members and routines this Mac made that waited under the old rule are
+          // approved; anything that came by git keeps its one card (adopt-local.ts).
+          const contextRoot = join(projectRoot, '_dream_context');
+          if (existsSync(contextRoot)) {
+            const { adopted } = adoptLocalPending(contextRoot);
+            if (adopted.length > 0) info(`Approved on this Mac (made here, it waited under the old rule): ${adopted.join(', ')}.`);
+          }
         }
 
         // Print relay-able summary always (covers packs-only too).
