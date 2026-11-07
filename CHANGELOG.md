@@ -6,9 +6,10 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [0.41.4] - 2026-11-07
 
-Patch on 0.41.3: the Super keeps every topic, and Apps becomes a store. Local build; not published.
+Patch on 0.41.3: the Super keeps every topic, the Super chat stops jumping, and Apps becomes a store. Local build; not published.
 
 - **The Super does not drop a topic.** While you still have a question open, its answers are not held back, and a topic it missed twice shows up on the agenda as "Cevaplanmadı" with a "Gerek yok" button.
+- **No separate "Working" line in the Super chat.** The chat no longer jumps a row between steps; the elapsed time now sits at the end of the quiet steps line.
 - **Apps looks like a store.** "My apps" and "Shared Apps" tabs, shelves led by icons, and a product page that reads the app's README.
 - **Share hands the work to Claude.** No form: one click opens a one-time permission, Claude cleans the files, writes the README and publishes. An app goes public only when you click "Herkese açık paylaş", and that asks once.
 
