@@ -679,37 +679,67 @@ export function matchAction(actions: readonly AppAction[], method: string, path:
 }
 
 /** The action, and whether the caller's tool name held for this call. */
-function resolveAction(actions: readonly AppAction[], method: string, path: string, tool?: string): { action: AppAction | null; named: boolean; shared: boolean } {
+function resolveAction(actions: readonly AppAction[], method: string, path: string, tool?: string): { action: AppAction | null; named: boolean; shared: boolean; loose: boolean } {
   const same = sameRoute(actions, method, path);
+  if (!same.length) {
+    // A spelling many servers route to a listed tool (`/API/RUN`, `/api/run/`): the strictest of those
+    // tools, never by name, and an automation's app_tools cannot vouch for it.
+    const loose = looseRoute(actions, method, path);
+    if (loose.length) return { action: strictest(loose), named: false, shared: true, loose: true };
+    return { action: null, named: false, shared: false, loose: false };
+  }
   // The caller named the tool (`apps do`, the Assistant). The name never lowers authority: it holds
-  // only when the call, its query DECODED, matches that tool and no sibling, with no key twice
-  // (`?mode=%6Cive` or `?mode=dry&mode=live` behind a read tool's name names nothing).
+  // only when the call's raw query IS that tool's query, plus that tool's own declared params in
+  // plain spelling. Anything else (`%6Cive`, `mode[]=live`, a key twice) names nothing.
   const named = tool ? namedAction(same, path, tool) : undefined;
-  if (named) return { action: named, named: true, shared: same.length > 1 };
+  if (named) return { action: named, named: true, shared: same.length > 1, loose: false };
   // Two tools on one base path (`?mode=dry` / `?mode=live`): a changing one wins, so a query never makes a change look like a read.
-  return { action: same.find((a) => effectOf(a) === 'change') ?? same[0] ?? null, named: false, shared: same.length > 1 };
+  return { action: strictest(same), named: false, shared: same.length > 1, loose: false };
 }
+
+const strictest = (list: readonly AppAction[]): AppAction | null => list.find((a) => effectOf(a) === 'change') ?? list[0] ?? null;
+const rawQuery = (p: string): string => { const i = p.indexOf('?'); return i < 0 ? '' : p.slice(i + 1); };
+const queryKeys = (q: string): string[] => q.split('&').filter(Boolean).map((seg) => seg.split('=')[0]);
+/** One extra pair as `URLSearchParams` writes it: a plain key, a value with no separator or bracket. */
+const PLAIN_PAIR = /^([A-Za-z0-9_-]+)=([A-Za-z0-9._~%*+-]*)$/;
 
 function namedAction(same: readonly AppAction[], path: string, tool: string): AppAction | undefined {
   const a = same.find((x) => x.id === tool);
   if (!a) return undefined;
-  let call: URLSearchParams;
-  try { call = new URLSearchParams(path.split('?').slice(1).join('?')); } catch { return undefined; }
-  const keys = [...call.keys()];
-  if (new Set(keys).size !== keys.length) return undefined;
-  const fits = (x: AppAction): boolean => {
-    let own: URLSearchParams;
-    try { own = new URLSearchParams(x.path.split('?').slice(1).join('?')); } catch { return true; }
-    for (const [k, v] of own) if (call.get(k) !== v) return false;
-    return true;
-  };
-  if (!fits(a)) return undefined;
-  return same.some((o) => o !== a && fits(o)) ? undefined : a;
+  const own = rawQuery(a.path);
+  if (same.some((o) => o !== a && rawQuery(o.path) === own)) return undefined;
+  const call = rawQuery(path);
+  if (call === own) return a;
+  let rest: string;
+  if (own === '') rest = call;
+  else if (call.startsWith(own + '&')) rest = call.slice(own.length + 1);
+  else return undefined;
+  const declared = new Set(Object.keys(a.params ?? {}));
+  const taken = new Set([...queryKeys(own), ...same.filter((o) => o !== a).flatMap((o) => queryKeys(rawQuery(o.path)))]);
+  const seen = new Set<string>();
+  for (const seg of rest.split('&')) {
+    const m = PLAIN_PAIR.exec(seg);
+    if (!m) return undefined;
+    const key = m[1];
+    if (!declared.has(key) || taken.has(key) || seen.has(key)) return undefined;
+    seen.add(key);
+  }
+  return a;
 }
 
 function sameRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {
   const bare = path.split('?')[0];
   return actions.filter((a) => a.method === method && a.path.split('?')[0] === bare);
+}
+
+const looseBase = (p: string): string => {
+  const b = p.split('?')[0].toLowerCase().replace(/\/{2,}/g, '/');
+  return b.length > 1 ? b.replace(/\/+$/, '') || '/' : b;
+};
+
+function looseRoute(actions: readonly AppAction[], method: string, path: string): AppAction[] {
+  const bare = looseBase(path);
+  return actions.filter((a) => a.method === method && looseBase(a.path) === bare);
 }
 
 /** Is any of these conversations the Super Agent or one of its children right now? */
@@ -737,7 +767,9 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
   // Several tools on this route and no name that held: no job's app_tools can vouch for which one runs.
   const ambiguous = resolved.shared && !resolved.named;
   // An unlisted GET reads; an unlisted anything else changes.
-  const effect: ToolEffect = action ? effectOf(action) : effectOf({ method });
+  // A loose spelling is the stricter of the listed tool and an unlisted call.
+  const effect: ToolEffect = !action ? effectOf({ method })
+    : resolved.loose && effectOf({ method }) === 'change' ? 'change' : effectOf(action);
   // A listed tool gets its own timeout (60 s by default); an unlisted path or a schedule keeps the old 5 minutes.
   const timeoutMs = (action && !call.schedule ? toolTimeoutSec(action) : action?.timeoutSec ?? UNLISTED_TIMEOUT_SEC) * 1000;
   if (effect === 'read') return { ok: true, effect, action, timeoutMs };

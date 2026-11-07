@@ -112,7 +112,7 @@ describe('gateAppCall', () => {
 
   it('a name never lowers authority: an encoded or repeated query behind a read tool still changes', () => {
     const two: AppAction[] = [
-      { id: 'status', title: 'Status', method: 'GET', path: '/api/run' },
+      { id: 'status', title: 'Status', method: 'GET', path: '/api/run', params: { day: { type: 'string', required: false } } },
       { id: 'live', title: 'Live', method: 'GET', path: '/api/run?mode=live', danger: true },
       { id: 'dry', title: 'Dry', method: 'GET', path: '/api/run?mode=dry', danger: true },
     ];
@@ -120,8 +120,41 @@ describe('gateAppCall', () => {
     expect(g('/api/run?mode=%6Cive', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
     expect(g('/api/run?mode=dry&mode=live', 'dry')).toMatchObject({ ok: false, code: 'needs_confirm' });
     expect(g('/api/run?mode=live', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
-    // A plain read on that route is still a read when it names the read tool and fits no sibling.
-    expect(g('/api/run?x=1', 'status')).toMatchObject({ ok: true, effect: 'read' });
+    // Express 4 reads `mode[]=live` as mode=live: a bracket key names nothing.
+    expect(g('/api/run?mode[]=live', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('/api/run?mode%5B%5D=live', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('/api/run?day=1;mode=live', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    // An undeclared key, or a declared one twice, names nothing either.
+    expect(g('/api/run?x=1', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('/api/run?day=1&day=2', 'status')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    // The read tool's own declared param in plain spelling is still a read.
+    expect(g('/api/run?day=2026-11-07', 'status')).toMatchObject({ ok: true, effect: 'read' });
+    expect(g('/api/run', 'status')).toMatchObject({ ok: true, effect: 'read' });
+  });
+
+  it('a query tool next to a query-less one holds by name on its exact query', async () => {
+    const { matchAction } = await import('../../src/server/routes/apps.js');
+    const two: AppAction[] = [
+      { id: 'status', title: 'Status', method: 'GET', path: '/api/run' },
+      { id: 'live', title: 'Live', method: 'GET', path: '/api/run?mode=live', danger: true },
+    ];
+    expect(matchAction(two, 'GET', '/api/run?mode=live', 'live')?.id).toBe('live');
+    expect(matchAction(two, 'GET', '/api/run?mode=live&x=1', 'live')?.id).toBe('live');
+    expect(matchAction(two, 'GET', '/api/run?mode=live', 'status')?.id).toBe('live');
+  });
+
+  it('a spelling a server routes to a listed tool (case, trailing slash) is that tool, never lower', () => {
+    const acts: AppAction[] = [
+      { id: 'wipe', title: 'Wipe', method: 'GET', path: '/api/wipe', danger: true },
+      { id: 'peek', title: 'Peek', method: 'GET', path: '/api/peek' },
+      { id: 'save', title: 'Save', method: 'POST', path: '/api/save' },
+    ];
+    const g = (method: string, path: string, tool?: string) => gate(ctx, rec, acts, { method, path, confirm: false, claim: { class: 'crew' }, ...(tool ? { tool } : {}) }, { home });
+    for (const p of ['/API/WIPE', '/api/wipe/', '/Api/Wipe//']) expect(g('GET', p)).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('GET', '/API/WIPE', 'peek')).toMatchObject({ ok: false, code: 'needs_confirm' });
+    expect(g('GET', '/API/PEEK')).toMatchObject({ ok: true, effect: 'read' });
+    // A loose POST stays a change.
+    expect(g('POST', '/API/SAVE')).toMatchObject({ ok: false, code: 'needs_confirm' });
   });
 
   it('two tools on one base path: the changing one decides, a query cannot make it a read', async () => {
