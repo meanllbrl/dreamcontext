@@ -5,19 +5,22 @@
  * must stay cheap when nothing is due, because a long-running tick eats the
  * NEXT `StartInterval` firing (macOS `man launchd.plist`: a job still running
  * at the next scheduled interval simply misses it — there is no queueing).
- * That is also why due automations run SEQUENTIALLY within a project: it
- * serializes everything, and correctness under a missed/coalesced interval is
- * entirely the watermark + `catchup_hours` model's job, not this file's.
+ * Due automations run SEQUENTIALLY within a project, and projects run
+ * CONCURRENTLY: one project's slow run must never hold another project's
+ * routines until its timeout ends. Correctness under a missed/coalesced
+ * interval is entirely the watermark + `catchup_hours` model's job, not this
+ * file's.
  *
  * Two layers, deliberately split:
  *  - `tickProject` — ONE project's manifests → dueness → sequential runs.
  *    No registry, no heartbeat, no log rotation — a narrow, directly testable
  *    unit that only touches the project's own `_dream_context/automations/`.
- *  - `tickAll` — iterates every machine-registered project, wrapping the
+ *  - `tickAll` — ticks every machine-registered project at once, wrapping the
  *    dispatcher heartbeat (`recordTickStarted`/`recordTickCompleted`) and log
  *    rotation around the whole pass. A project whose `_dream_context/` is
- *    missing (moved/deleted since it registered) is warned about and skipped
- *    — never abandons the rest of the loop.
+ *    missing (moved/deleted since it registered) is warned about and skipped,
+ *    a second root reaching the same brain through a symlink is skipped
+ *    (`oneRootPerBrain`), and one project's failure never abandons the rest.
  *
  * "Ships fully disabled" lives here as much as anywhere: an empty registry
  * (the fresh-machine state) must be a SILENT no-op that reads only the
@@ -46,7 +49,7 @@
  * to enforce that by construction, not by convention.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
@@ -94,6 +97,9 @@ export interface TickOptions {
   pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
   /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
   taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
+  /** The clock each RUN reads: starts at `now` and moves with the wall clock, so a run's start,
+   *  end and duration are real. Defaults to that; `tickAll` passes one shared clock. */
+  clock?: () => Date;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -186,6 +192,10 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const logFn = opts.log ?? (() => {});
   const runImpl = opts.runImpl ?? runAutomation;
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
+  // Before this, a run read the fixed `now` as its clock: every run looked 0s long and a timeout
+  // read "Timed out after 0s" in the owner's thread.
+  const wallStart = Date.now();
+  const clock = opts.clock ?? ((): Date => new Date(now.getTime() + (Date.now() - wallStart)));
 
   const manifests = listAutomations(contextRoot);
   // A question the page's approve left open would hold this slug's fires forever: see `settleApprovalQuestions`.
@@ -270,7 +280,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${fire.slug} draining a queued fire (fired ${fire.firedAt}) — running`);
     const outcome = await runImpl(contextRoot, fire.slug, {
-      now: () => now,
+      now: clock,
       fireAt: new Date(firedAtMs),
       home: opts.home,
       log: logFn,
@@ -322,7 +332,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
-      now: () => now,
+      now: clock,
       fireAt: due.fireAt ?? now,
       home: opts.home,
       log: logFn,
@@ -363,7 +373,49 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 }
 
 /**
- * Tick every project registered on this machine, sequentially. An empty
+ * One registered root per physical brain. A code repo whose `_dream_context` is a symlink to its
+ * brain, registered because a command once ran there, would tick the same manifests a second
+ * time under a root with no approvals: every fire logged a "not approved" row next to the real
+ * run. The root whose `_dream_context` is a real folder wins; with none (or two), the first in
+ * registry order. An unresolvable path keeps its own entry rather than vanishing.
+ */
+export function oneRootPerBrain(projectRoots: string[]): { roots: string[]; linked: Array<[string, string]> } {
+  const byBrain = new Map<string, string[]>();
+  const order: string[] = [];
+  for (const root of projectRoots) {
+    const contextRoot = join(root, CONTEXT_DIR_NAME);
+    let brain = contextRoot;
+    try {
+      brain = realpathSync(contextRoot);
+    } catch {
+      /* unresolvable: its own group */
+    }
+    if (!byBrain.has(brain)) {
+      byBrain.set(brain, []);
+      order.push(brain);
+    }
+    byBrain.get(brain)!.push(root);
+  }
+  const isLink = (root: string): boolean => {
+    try {
+      return lstatSync(join(root, CONTEXT_DIR_NAME)).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  const roots: string[] = [];
+  const linked: Array<[string, string]> = [];
+  for (const brain of order) {
+    const group = byBrain.get(brain)!;
+    const owner = group.find((r) => !isLink(r)) ?? group[0];
+    roots.push(owner);
+    for (const r of group) if (r !== owner) linked.push([r, owner]);
+  }
+  return { roots, linked };
+}
+
+/**
+ * Tick every project registered on this machine, concurrently (see the loop below). An empty
  * registry is a SILENT no-op (no log lines beyond what the heartbeat write
  * itself requires, no automations dir ever read) — the "ships fully
  * disabled" guarantee for a fresh machine. Heartbeat timestamps are written
@@ -380,7 +432,7 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   rotateLogIfLarge(home);
 
   // dreamcontext Apps' own schedules go FIRST and never wait (src/lib/apps/schedule.ts): the
-  // agent runs below are sequential and slow, and an app's schedule spawns no Claude.
+  // agent runs below are slow, and an app's schedule spawns no Claude.
   try {
     for (const r of tickApps({ home, now })) logFn(`[apps] ${r.slug}/${r.id}: ${r.action}`);
   } catch (err) {
@@ -389,18 +441,31 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
 
   const projectRoots = listRegisteredProjects(home);
   const missing: string[] = [];
-  const projects: TickProjectResult[] = [];
-
+  const present: string[] = [];
   for (const projectRoot of projectRoots) {
-    const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
-    if (!existsSync(contextRoot)) {
+    if (!existsSync(join(projectRoot, CONTEXT_DIR_NAME))) {
       missing.push(projectRoot);
       logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
       continue;
     }
-    const result = await tickProject(projectRoot, { ...opts, now });
-    projects.push(result);
+    present.push(projectRoot);
   }
+  const { roots, linked } = oneRootPerBrain(present);
+  for (const [link, owner] of linked) {
+    logFn(`[automations] ${link} reaches the brain of ${owner} through a link, so it is ticked there only`);
+  }
+
+  // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
+  // hold every other project's routines until it ends. Inside a project the runs stay in order.
+  // A runner's clock advances from the tick's `now`, so a run's start, end and duration are real
+  // even though every dueness question in this pass is asked at the same fixed `now`.
+  const clock = (): Date => new Date(now.getTime() + (Date.now() - wallStart));
+  const settled = await Promise.allSettled(roots.map((projectRoot) => tickProject(projectRoot, { ...opts, now, clock })));
+  const projects: TickProjectResult[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') projects.push(r.value);
+    else logFn(`[automations] tick failed for ${roots[i]}: ${(r.reason as Error)?.message ?? String(r.reason)}`);
+  });
 
   const durationMs = Date.now() - wallStart;
   // The completion moment, not the start: `now` is when the tick BEGAN, so

@@ -136,6 +136,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-automations-store-',
   'dc-automations-tick-',
   'dc-automations-tick-b-',
+  'dc-automations-tick-code-',
   'dc-automations-tick-home-',
   'dc-autoupd-',
   'dc-b1-owner-',

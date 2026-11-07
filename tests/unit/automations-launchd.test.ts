@@ -20,6 +20,7 @@ import {
   dispatcherWrapperPath,
   inspectDispatcher,
   installDispatcher,
+  refreshStaleDispatcher,
   renderDispatcherPlist,
   renderDispatcherWrapper,
   resolveDispatcherTarget,
@@ -215,7 +216,9 @@ describe('renderDispatcherPlist', () => {
     expect(a).toContain('<string>/h/.dreamcontext/bin/automations-dispatch.sh</string>');
     expect(a).toContain('<integer>300</integer>');
     expect(a).toContain('<true/>');
-    expect(a).toContain('<string>Background</string>');
+    // Never Background: that type throttles the tick and every run it starts (CPU, disk, network).
+    expect(a).not.toContain('<string>Background</string>');
+    expect(a).toContain('<key>ProcessType</key>\n  <string>Standard</string>');
     expect(a).toContain('<string>/h/.dreamcontext/logs/automations.log</string>');
   });
 
@@ -564,5 +567,117 @@ describe('rotateLogIfLarge', () => {
     expect(rotateLogIfLarge(home, 1024)).toBe(true);
     expect(existsSyncSafe(logPath)).toBe(false);
     expect(existsSyncSafe(`${logPath}.1`)).toBe(true);
+  });
+});
+
+// ─── refreshStaleDispatcher (an older release's plist ran routines throttled) ──
+
+describe('refreshStaleDispatcher', () => {
+  const STALE = renderDispatcherPlist('/x/automations-dispatch.sh', '/x/automations.log').replace('Standard', 'Background');
+
+  /** launchctl print reports the job (pid when a tick runs); pgrep answers for the tick's children. */
+  function runnerWith(opts: { bin: string; tickPid?: number; tickHasChild?: boolean }): { runner: ExecRunner; calls: string[] } {
+    const calls: string[] = [];
+    const runner: ExecRunner = async (file, args) => {
+      calls.push([file, ...args].join(' '));
+      if (file === 'launchctl' && args[0] === 'print') {
+        return { ok: true, stdout: opts.tickPid ? `\tstate = running\n\tpid = ${opts.tickPid}\n` : '\tstate = not running\n', stderr: '', code: 0 };
+      }
+      if (file === 'pgrep') return opts.tickHasChild ? { ok: true, stdout: '4242\n', stderr: '', code: 0 } : { ok: false, stdout: '', stderr: '', code: 1 };
+      if (args[0] === '-ilc') return { ok: true, stdout: `${opts.bin}\n/usr/bin:/bin`, stderr: '', code: 0 };
+      return { ok: true, stdout: '', stderr: '', code: 0 };
+    };
+    return { runner, calls };
+  }
+
+  function homeWithPlist(content: string | null): string {
+    const home = tmpHome();
+    if (content !== null) {
+      mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+      writeFileSync(dispatcherPlistPath(home), content);
+    }
+    return home;
+  }
+
+  const installSpy = () => {
+    const seen: unknown[] = [];
+    const install = (async (o: unknown) => {
+      seen.push(o);
+      return { check: {} as never, wroteWrapper: true, wrotePlist: true, bootstrapped: true, method: 'bootstrap' as const, warnings: [] };
+    }) as unknown as typeof installDispatcher;
+    return { install, seen };
+  };
+
+  it('re-installs a live scheduler whose plist an older release wrote (the Background one)', async () => {
+    const bin = runningCliBin()!;
+    const home = homeWithPlist(STALE);
+    const { runner } = runnerWith({ bin });
+    const { install, seen } = installSpy();
+    const r = await refreshStaleDispatcher({ home, runner, uid: 501, env: {}, platform: 'darwin', install });
+    expect(r.action).toBe('refreshed');
+    expect(seen).toHaveLength(1);
+  });
+
+  it('refreshes while a tick only reads manifests (no child): ending it costs nothing', async () => {
+    const home = homeWithPlist(STALE);
+    const { runner } = runnerWith({ bin: runningCliBin()!, tickPid: 777, tickHasChild: false });
+    const { install, seen } = installSpy();
+    const r = await refreshStaleDispatcher({ home, runner, uid: 501, env: {}, platform: 'darwin', install });
+    expect(r.action).toBe('refreshed');
+    expect(seen).toHaveLength(1);
+  });
+
+  it('never boots the job out while the tick has a run in flight', async () => {
+    const home = homeWithPlist(STALE);
+    const { runner, calls } = runnerWith({ bin: runningCliBin()!, tickPid: 777, tickHasChild: true });
+    const { install, seen } = installSpy();
+    const r = await refreshStaleDispatcher({ home, runner, uid: 501, env: {}, platform: 'darwin', install });
+    expect(r).toEqual({ action: 'skipped', reason: 'tick-running' });
+    expect(seen).toHaveLength(0);
+    expect(calls).toContain('pgrep -P 777');
+  });
+
+  it('never runs from inside a scheduler run (the bootout would kill the run asking)', async () => {
+    const home = homeWithPlist(STALE);
+    const { runner, calls } = runnerWith({ bin: runningCliBin()! });
+    const { install, seen } = installSpy();
+    const r = await refreshStaleDispatcher({ home, runner, env: { XPC_SERVICE_NAME: 'com.dreamcontext.automations' }, platform: 'darwin', install });
+    expect(r).toEqual({ action: 'skipped', reason: 'inside-scheduler' });
+    expect(seen).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a current plist costs no spawn at all', async () => {
+    const home = homeWithPlist(null);
+    mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+    writeFileSync(dispatcherPlistPath(home), renderDispatcherPlist(dispatcherWrapperPath(home), automationsLogPath(home)));
+    const { runner, calls } = runnerWith({ bin: runningCliBin()! });
+    const { install, seen } = installSpy();
+    expect(await refreshStaleDispatcher({ home, runner, env: {}, platform: 'darwin', install })).toEqual({ action: 'skipped', reason: 'current' });
+    expect(calls).toHaveLength(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('never installs a scheduler the owner did not install', async () => {
+    const { runner, calls } = runnerWith({ bin: runningCliBin()! });
+    const { install, seen } = installSpy();
+    expect(await refreshStaleDispatcher({ home: homeWithPlist(null), runner, env: {}, platform: 'darwin', install })).toEqual({ action: 'skipped', reason: 'not-installed' });
+    expect(calls).toHaveLength(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('never bakes a different CLI than the one running, and never revives a booted-out job', async () => {
+    const home = homeWithPlist(STALE);
+    const { runner } = runnerWith({ bin: '/somewhere/else/dreamcontext' });
+    const { install, seen } = installSpy();
+    expect((await refreshStaleDispatcher({ home, runner, uid: 501, env: {}, platform: 'darwin', install })).action).toBe('skipped');
+    const booted: ExecRunner = async (file, args) =>
+      file === 'launchctl' && args[0] === 'print' ? { ok: false, stdout: '', stderr: 'not found', code: 113 } : runnerWith({ bin: runningCliBin()! }).runner(file, args);
+    expect(await refreshStaleDispatcher({ home, runner: booted, uid: 501, env: {}, platform: 'darwin', install })).toEqual({ action: 'skipped', reason: 'not-installed' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('is a no-op off macOS', async () => {
+    expect(await refreshStaleDispatcher({ home: homeWithPlist(STALE), env: {}, platform: 'linux' })).toEqual({ action: 'skipped', reason: 'not-macos' });
   });
 });

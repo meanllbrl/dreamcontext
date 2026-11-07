@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
@@ -450,6 +450,79 @@ describe('tickAll', () => {
     } finally {
       rmSync(projectB, { recursive: true, force: true });
     }
+  });
+
+  it('one project\'s long run does not hold another project\'s routine (projects tick concurrently)', async () => {
+    const projectB = mkdtempSync(join(tmpdir(), 'dc-automations-tick-b-'));
+    mkdirSync(join(projectB, '_dream_context'), { recursive: true });
+    try {
+      registerProject(projectRoot, home);
+      registerProject(projectB, home);
+      makeDue('slow-one');
+      createAutomation(join(projectB, '_dream_context'), { slug: 'quick-one', title: 'Quick', days: 'daily', at: '18:00', prompt: 'Say hi.' });
+      const events: string[] = [];
+      let quickStarted: () => void = () => {};
+      const quickHasStarted = new Promise<void>((r) => { quickStarted = r; });
+      const runImpl = vi.fn(async (_c: string, slug: string) => {
+        events.push(`start ${slug}`);
+        if (slug === 'quick-one') quickStarted();
+        // The slow run only ends once the other project's run has begun, or after 400ms when
+        // the tick (wrongly) waits for it first.
+        if (slug === 'slow-one') await Promise.race([quickHasStarted, new Promise((r) => setTimeout(r, 400))]);
+        events.push(`end ${slug}`);
+        return fakeOutcome(slug, 'ok');
+      }) as unknown as typeof runAutomation;
+
+      await tickAll({ now: NOW, home, runImpl });
+
+      expect(events.indexOf('start quick-one')).toBeLessThan(events.indexOf('end slow-one'));
+    } finally {
+      rmSync(projectB, { recursive: true, force: true });
+    }
+  });
+
+  it('a code repo reaching the brain through a symlinked _dream_context is ticked once, at the brain', async () => {
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+    try {
+      // The link root registered FIRST: it must still not win.
+      registerProject(codeRepo, home);
+      registerProject(projectRoot, home);
+      makeDue('eod-digest');
+      const roots: string[] = [];
+      const runImpl = vi.fn(async (c: string, slug: string) => {
+        roots.push(c);
+        return fakeOutcome(slug, 'ok');
+      }) as unknown as typeof runAutomation;
+      const lines: string[] = [];
+
+      const result = await tickAll({ now: NOW, home, runImpl, log: (l) => lines.push(l) });
+
+      expect(runImpl).toHaveBeenCalledTimes(1);
+      expect(roots).toEqual([contextRoot]);
+      expect(result.projects.map((p) => p.projectRoot)).toEqual([projectRoot]);
+      expect(lines.some((l) => l.includes(codeRepo) && l.includes('ticked there only'))).toBe(true);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('a run reads a clock that moves, so its duration is real (no more "Timed out after 0s")', async () => {
+    registerProject(projectRoot, home);
+    makeDue('eod-digest');
+    let seen: [number, number] | null = null;
+    const runImpl = vi.fn(async (_c: string, slug: string, o: { now?: () => Date }) => {
+      const a = o.now!().getTime();
+      await new Promise((r) => setTimeout(r, 40));
+      seen = [a, o.now!().getTime()];
+      return fakeOutcome(slug, 'ok');
+    }) as unknown as typeof runAutomation;
+
+    await tickAll({ now: NOW, home, runImpl });
+
+    expect(seen).not.toBeNull();
+    expect(seen![0]).toBeGreaterThanOrEqual(NOW.getTime());
+    expect(seen![1] - seen![0]).toBeGreaterThanOrEqual(30);
   });
 
   it('rotates the dispatcher log once it exceeds LOG_ROTATE_BYTES', async () => {

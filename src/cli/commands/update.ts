@@ -28,6 +28,7 @@ import { designFileIsUnchanged, isDesignSkillPath } from '../../lib/core-design-
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { pruneRetiredPacks } from '../../lib/retired-packs.js';
 import { ensureCodex } from '../ensure-codex.js';
+import { refreshStaleDispatcher, type RefreshDispatcherResult } from '../../lib/automations/launchd.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
@@ -226,6 +227,22 @@ export async function pruneStaleFiles(
   return { removed, keep: candidates.filter((c) => !removed.includes(c)) };
 }
 
+/** One line, only when there is something to say: a current or absent scheduler is silent. */
+function reportDispatcherRefresh(r: RefreshDispatcherResult): void {
+  if (r.action === 'refreshed') {
+    info('Routine scheduler refreshed: it now runs at normal priority.');
+    for (const w of r.warnings) warn(w);
+    return;
+  }
+  if (r.reason === 'tick-running') {
+    info(chalk.dim('Routine scheduler is out of date but busy right now; run `dreamcontext automations install` once it is idle.'));
+  } else if (r.reason === 'mismatch') {
+    warn(`Routine scheduler is out of date and runs a different dreamcontext (${r.detail ?? 'unknown'}); run \`dreamcontext automations install\` from the one you want it to use.`);
+  } else if (r.reason === 'failed') {
+    warn(`Routine scheduler could not be refreshed${r.detail ? `: ${r.detail}` : ''}. Run \`dreamcontext automations install\`.`);
+  }
+}
+
 export function registerUpdateCommand(program: Command): void {
   program
     .command('update')
@@ -401,6 +418,9 @@ export function registerUpdateCommand(program: Command): void {
         console.log(miniBox(summary.split('\n'), { color: 'green' }));
         console.log();
         if (!opts.packsOnly) await ensureCodex();
+        // The scheduler is machine-wide and its plist only changes on a re-bootstrap: an older
+        // release's plist keeps every routine under macOS background throttling until refreshed.
+        if (!opts.packsOnly) reportDispatcherRefresh(await refreshStaleDispatcher());
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();
