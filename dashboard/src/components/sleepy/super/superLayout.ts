@@ -1259,6 +1259,14 @@ function planWith(
     return { ...f.content, x: f.content.x + T + GAP, width: f.content.width - T - GAP };
   };
 
+  /** A single PORTRAIT picture's shape (owner 2026-11-07: a phone screenshot gets a card as narrow
+   *  as it needs, the chat the width it frees). Landscape, several pictures and a card the owner
+   *  sized keep today's box. */
+  const pictureAspect = (id: string): number | undefined => {
+    const it = list.find((x) => x.id === id);
+    return it?.kind === 'image' && it.sizeBy !== 'owner' && it.aspect !== undefined && it.aspect < 1 ? it.aspect : undefined;
+  };
+
   /** The card a measured page needs, chrome included; absent = it takes what it is given. */
   const pageWidth = (id: string): number | undefined => {
     const fit = list.find((x) => x.id === id)?.fit;
@@ -1282,12 +1290,17 @@ function planWith(
       // PRESENT_MIN. No device: the two halves, as before.
       const item = list.find((x) => x.id === half)!;
       const C = STAGE.CARD_CHROME;
+      // A picture only ever gives width: never wider than its half, narrower when its shape is.
+      const pic = pictureAspect(half);
       const w = item.kind === 'web' && item.aspect
         ? Math.max(Math.min(STAGE.FIT_MIN.w, content.width / 2), Math.min(content.width - STAGE.GAP - STAGE.PRESENT_MIN, (content.height - C.h) * item.aspect + C.w))
-        : Math.min((content.width - STAGE.GAP) / 2, pageWidth(half) ?? Infinity);
+        : pic
+          ? Math.min((content.width - STAGE.GAP) / 2, Math.max(Math.min(STAGE.FIT_MIN.w, content.width / 2), (content.height - C.h) * pic + C.w))
+          : Math.min((content.width - STAGE.GAP) / 2, pageWidth(half) ?? Infinity);
       centre = { x: content.x, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       region = { x: content.x + content.width - w, y: content.y, width: w, height: content.height };
       if (item.kind === 'web' && item.aspect) region = fitCard(region, item.aspect);
+      else if (pic) region = fitCard(region, pic);
     }
     place(half, region, narrow ? 'sheet' : 'half');
     for (const c of list) if (!cards[c.id]) toOthers(c);
@@ -1412,14 +1425,18 @@ function planWith(
     // the card sits in the middle of what it leaves.
     const pageItem = list.find((x) => x.id === page);
     const device = layout !== 'filmstrip' && pageItem?.kind === 'web' ? pageItem.aspect : undefined;
-    const deviceW = device && chat === 'mini'
-      ? Math.min(c.width - STAGE.GAP - STAGE.MINI_MIN_W, Math.max(
+    // One portrait picture in the spotlight (owner 2026-11-07) hugs its shape the same way, but only
+    // ever GIVES width: the chat never drops under its own width.
+    const pic = layout === 'spotlight' && !device ? pictureAspect(page) : undefined;
+    const shape = device ?? pic;
+    const deviceW = shape && chat === 'mini'
+      ? Math.min(c.width - STAGE.GAP - (device ? STAGE.MINI_MIN_W : roomyMiniW), Math.max(
         Math.min(STAGE.FIT_MIN.w, c.width / 2),
         rowFloor,
-        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * device + STAGE.CARD_CHROME.w,
+        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * shape + STAGE.CARD_CHROME.w,
       ))
       : undefined;
-    const pageRect = (r: Rect): Rect => (device ? fitCard(r, device) : r);
+    const pageRect = (r: Rect): Rect => (shape ? fitCard(r, shape) : r);
     const miniW = deviceW !== undefined ? c.width - STAGE.GAP - deviceW : fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
     const miniH = c.height;
