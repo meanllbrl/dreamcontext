@@ -21,12 +21,16 @@ describe('super model map: briefing and §3 agree', () => {
   it('the sonnet and haiku rows name the same work in both', () => {
     expect(brief).toMatch(/small clear fix \(1-3 files[^)]*\), merge, build,\s+install, chores `sonnet` `medium`/);
     expect(section3).toMatch(/merge, build, install, brain chores, a small clear fix \(1-3 files\)[\s\S]*`sonnet` \/ `medium`/);
-    expect(section3).toContain('a mechanical edit with an exact spec → `haiku` / `low`');
-    expect(brief).toMatch(/exact spec `haiku` `low`/);
+    expect(section3).toContain('research that changes nothing');
+    expect(section3).toMatch(/haiku` \/ `low`;\s+haiku never writes or edits anything/);
+    expect(section3).toMatch(/anything that writes or edits, even a mechanical edit with an exact spec, a rename or formatting/);
+    expect(section3).not.toMatch(/mechanical edit with an exact spec[^\n]*`haiku`/);
+    expect(brief).toMatch(/haiku `low` ONLY for research that changes nothing/);
+    expect(brief).toMatch(/any job that writes or edits,\s+even a mechanical edit with an exact spec/);
   });
 
   it('other tools get the same rows in their own small/mid/large model', () => {
-    expect(brief).toContain("that tool's small, mid, large model");
+    expect(brief).toContain("that tool's small, mid, large model (small: read-only research only)");
   });
 
   it('the handoff never records a fixed model per job kind', () => {

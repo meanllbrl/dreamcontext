@@ -149,8 +149,11 @@ Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`)
 Work type → setting (the owner: `xhigh` only where edge cases are the risk, else what fits). Decide it
 for every job before delegating, the cheapest that fits; a habit or a handoff line never sets it. The
 always-on briefing carries this map in short; `tests/unit/super-model-map.test.ts` keeps the two agreeing:
-- lookup, status, summary, rename, formatting, a mechanical edit with an exact spec → `haiku` / `low`
-- merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
+- research that changes nothing (lookup, status, reading, searching, summarising) → `haiku` / `low`;
+  haiku never writes or edits anything. On Codex / Antigravity the tool's smallest model is likewise
+  read-only research only
+- anything that writes or edits, even a mechanical edit with an exact spec, a rename or formatting:
+  merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
   whiteboard → `sonnet` / `medium`
 - support, analysis, content, research → `opus` / `medium` (`high` for a deep comparison)
 - Develop of a reviewed plan, multi-file refactor, a bug with a repro, tests → `opus` / `medium`;
@@ -292,7 +295,7 @@ Ayla on WhatsApp 'standup moved to 10'."
 | U5 status rename | 6 | `basic`, brain only | sonnet / medium | 1 |
 | U6 PR review | 7 | `basic` running `/multi-review` | opus / high | 1 |
 | U7 weekly summary | 8 | `basic`, no worktree | haiku / low | 1 |
-| U8 message to Ayla | 10 | `basic`, `--mcp whatsapp` | haiku / low | 1 (the owner named text and recipient) |
+| U8 message to Ayla | 10 | `basic`, `--mcp whatsapp` | sonnet / medium | 1 (the owner named text and recipient) |
 | (ask) release 1.4 | 9 | not started | | `super ask`: the npm publish is outward |
 
 U1 and U3 both edit `orbit-app` but not the same file; each has its own worktree and the topic branch

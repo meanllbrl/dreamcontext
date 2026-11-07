@@ -547,9 +547,10 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
   reads. One that changes is refused for you and your children: he does it in a normal chat or the app.
 - Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
-  it): mechanical edit with an exact spec \`haiku\` \`low\`; small clear fix (1-3 files, UI/CSS/copy), merge, build,
+  it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
+  even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,
   install, chores \`sonnet\` \`medium\`; multi-file develop, a bug with a repro, analysis \`opus\` \`medium\`; security,
-  money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model.
+  money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model (small: read-only research only).
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
   data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
   or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,

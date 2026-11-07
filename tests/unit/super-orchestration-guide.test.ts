@@ -110,7 +110,8 @@ describe('super-orchestration guide: shape', () => {
     // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger, measured 25,394).
     // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
     // +300 (2026-11-08, super-model-secimi: decide the model per job, the briefing carries the map; measured 25,785).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(25_800);
+    // +250 (2026-11-08, owner correction: haiku only for read-only research; measured 26,015).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(26_050);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
