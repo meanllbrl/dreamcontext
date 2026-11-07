@@ -228,10 +228,11 @@ describe('git-sync/sync-engine — runBrainSync', () => {
         settleSessionMerge: () => { calls.push('settle'); return new Set(['_dream_context/state/.sleep.json']); },
         restoreSessionPark: (_r, p) => { calls.push(`restore:${p?.length}`); },
         restoreLeftoverSessionPark: () => { calls.push('leftover'); },
+        underSleepStateLock: (_r, fn) => { calls.push('lock'); const out = fn(); calls.push('unlock'); return out; },
       };
       const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
       expect(r.note ?? '').not.toContain('session files');
-      expect(calls).toEqual(['leftover', 'park:1', 'settle', 'restore:1']);
+      expect(calls).toEqual(['leftover', 'lock', 'park:1', 'settle', 'restore:1', 'unlock']);
     });
     it('a session guard that cannot answer stops the pull; a park that fails stops it too, with nothing merged', async () => {
       const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), sessionChanges: () => null });
@@ -243,12 +244,21 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       expect(r2.note).toContain('session files could not be set aside');
       expect(state.commitCalls).toHaveLength(0);
     });
-    it('a commit to push carrying a session file holds the push (session-files-held), nothing pushed', async () => {
+    it('a commit to push carrying a session file that cannot be taken out holds the push (session-files-held), nothing pushed', async () => {
       const state = makeState({ dirty: ['knowledge/x.md'] });
-      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(state), appDataInPushRange: () => null, incomingAppData: () => [], machineLocalInPushRange: () => 'abc123' });
+      let tried = 0;
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(state), appDataInPushRange: () => null, incomingAppData: () => [], machineLocalInPushRange: () => 'abc123', dropMachineLocalFromPushRange: () => { tried++; return false; } });
       expect(r.action).toBe('session-files-held');
       expect(r.note).toContain('session files');
+      expect(tried).toBeGreaterThan(0);
       expect(state.pushCalls).toBe(0);
+    });
+    it('a commit the repair takes out (the brain own commits only) lets the push go on', async () => {
+      const state = makeState({ dirty: ['knowledge/x.md'] });
+      let fixed = false;
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(state), appDataInPushRange: () => null, incomingAppData: () => [], machineLocalInPushRange: () => (fixed ? null : 'abc123'), dropMachineLocalFromPushRange: () => { fixed = true; return true; } });
+      expect(r.action).toBe('pushed');
+      expect(state.pushCalls).toBe(1);
     });
   });
 

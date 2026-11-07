@@ -726,6 +726,8 @@ export interface RawEntry {
   /** Git file modes as printed (`100644`, `120000`, `160000`; `000000` = absent on that side). */
   oldMode: string;
   newMode: string;
+  /** The object id on the new side (all zeros when absent there); set by {@link rawEntries}. */
+  newSha?: string;
 }
 
 // ─── App data helpers (plan-veri K2: app data never enters git) ────────────────────────────
@@ -776,13 +778,44 @@ export function rawEntries(cwd: string, range: string, pathspecs: string[] = [])
   const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
   const out: RawEntry[] = [];
   for (let i = 0; i < parts.length - 1; i++) {
-    const m = parts[i].match(/^:(\d{6}) (\d{6}) /);
+    const m = parts[i].match(/^:(\d{6}) (\d{6}) [0-9a-f]+ ([0-9a-f]+) /);
     if (!m) continue;
     const path = parts[i + 1];
-    if (path) out.push({ path, oldMode: m[1], newMode: m[2] });
+    if (path) out.push({ path, oldMode: m[1], newMode: m[2], newSha: m[3] });
     i++;
   }
   return out;
+}
+
+/** Is `a` an ancestor of (or the same commit as) `b`? False on any failure. */
+export function isAncestor(cwd: string, a: string, b: string): boolean {
+  try {
+    run(cwd, ['merge-base', '--is-ancestor', a, b]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Move HEAD to `ref`, the index and the work tree untouched (`reset --soft`). THROWS. */
+export function softReset(cwd: string, ref: string): void {
+  run(cwd, ['reset', '--soft', '-q', ref]);
+}
+
+/** Every path of `rev`'s tree under the pathspecs (pathspec magic allowed, unlike `ls-tree`).
+ *  Run from the repo's top folder. THROWS when git cannot answer. */
+export function treePathsMatching(cwd: string, rev: string, pathspecs: string[]): string[] {
+  const empty = run(cwd, ['hash-object', '-t', 'tree', process.platform === 'win32' ? 'NUL' : '/dev/null']).trim();
+  return run(cwd, ['diff', '--name-only', '-z', '--no-renames', empty, rev, '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+/** The blob id git would give the file at `absPath` (its filters applied), or null. */
+export function hashFile(cwd: string, absPath: string): string | null {
+  try {
+    return run(cwd, ['hash-object', '--', absPath]).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

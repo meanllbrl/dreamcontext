@@ -44,7 +44,9 @@ export function incomingSuperRecords(gitCwd: string, contextRoot: string, remote
 }
 
 /** One session path the team's update changes: `deleted` when the update removes it. */
-export interface SessionChange { path: string; deleted: boolean }
+/** One session path the team's update changes: `deleted` when the update removes it, `incoming`
+ *  the blob it writes there otherwise (the put-back tells the team's version from a newer write). */
+export interface SessionChange { path: string; deleted: boolean; incoming?: string | null }
 
 /**
  * Every session path ({@link SESSION_LOCAL_PATHSPECS}) that `HEAD...remoteRef` changes, deletions
@@ -60,7 +62,7 @@ export function sessionChanges(gitCwd: string, contextRoot: string, remoteRef: s
   try {
     const top = git.topLevel(gitCwd);
     if (!top) return null;
-    return git.rawEntries(top, `HEAD...${remoteRef}`, sessionPathspecs(prefix)).map((e) => ({ path: e.path, deleted: e.newMode === '000000' }));
+    return git.rawEntries(top, `HEAD...${remoteRef}`, sessionPathspecs(prefix)).map((e) => ({ path: e.path, deleted: e.newMode === '000000', incoming: e.newMode === '000000' ? null : (e.newSha ?? null) }));
   } catch {
     return null;
   }
@@ -88,10 +90,39 @@ export function machineLocalInPushRange(gitCwd: string, contextRoot: string, rem
   const at = superPathspecs(gitCwd, contextRoot);
   if (!at) return null;
   const ref = remoteRef && git.revParse(gitCwd, remoteRef) ? remoteRef : null;
+  if (!ref) {
+    // No remote-tracking ref (a first push to an empty remote): every commit ever made would be
+    // "to push", and an old install's history would hold the push for good (edge-case review r2).
+    // That history is the owner's to clean (taking it out rewrites it); the tip sent is checked.
+    return git.treePathsMatching(at.top, 'HEAD', at.specs).length > 0 ? (git.revParse(gitCwd, 'HEAD') ?? 'HEAD') : null;
+  }
   for (const c of git.commitsToPush(gitCwd, ref)) {
     if (git.commitEntries(at.top, c, at.specs).some((e) => e.newMode !== '000000')) return c;
   }
   return null;
+}
+
+/**
+ * Take the Super and session files out of the commits a push would send (edge-case review r2: an
+ * old install's checkpoint commits, never pushed, would otherwise hold every sync). The commits
+ * on top of `remoteRef` become ONE commit with the same tree minus those files; the files stay on
+ * disk. Only when `remoteRef` exists and is an ancestor of HEAD (after the merge, as a push needs
+ * anyway), and only when those commits touch nothing but the brain folder and the top
+ * `.gitignore` (a brain sync's own commits): a project's code commits are never squashed, the push
+ * waits for the owner instead. Returns true when it rewrote. THROWS when git fails midway (HEAD then sits on
+ * `remoteRef` with every change staged, and the next sync commits them through the stage pass).
+ */
+export function dropMachineLocalFromPushRange(gitCwd: string, contextRoot: string, remoteRef: string | null, author?: { name: string; email: string }): boolean {
+  const at = superPathspecs(gitCwd, contextRoot);
+  if (!at || !remoteRef || !git.revParse(gitCwd, remoteRef)) return false;
+  if (!git.isAncestor(at.top, remoteRef, 'HEAD') || git.hasMergeHead(at.top)) return false;
+  const prefix = brainPrefix(gitCwd, contextRoot) ?? '';
+  const touched = git.rawEntries(at.top, `${remoteRef}..HEAD`).map((e) => e.path);
+  if (touched.some((p) => !p.startsWith(prefix) && p !== '.gitignore')) return false;
+  git.softReset(at.top, remoteRef);
+  git.removeFromIndexForce(at.top, at.specs);
+  git.commit(at.top, "chore(brain): sync (this Mac's session files taken out)", author);
+  return true;
 }
 
 export const SESSION_FILES_HELD_NOTE = "Brain sync: the push waits. A commit not yet pushed carries this Mac's Super Agent or session files (sleep state, session history, peer mail), which never sync. Take them out of that commit (for example `git reset --soft @{u}`, then sync again) and the push goes on its own.";

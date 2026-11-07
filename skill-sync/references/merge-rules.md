@@ -45,10 +45,18 @@ in `src/lib/super/pull-guard.ts`: sleep state, sleep history, digests, titles, t
 peer mail) also leave the INDEX: in every sync's stage pass and on `dreamcontext update`
 (migration 0.40.2, every run, which also re-asserts their ignore lines below a teammate's `!`
 line; the file stays on disk), matched in any letter case. A push whose commits still carry one
-waits (`session-files-held`). A pull never stops for them, since an old install rewrites its
-tracked copy on every sync: the merge parks this Mac's copies, takes every session path out of
-the index (a modify/delete conflict on one included) and the other Mac's copy off the disk, then
-puts this Mac's back (`src/lib/git-sync/session-merge.ts`). `state/.sleep.json` keeps each
+is repaired when those commits touch only the brain folder and the top `.gitignore` (an old
+install's checkpoints): they become one commit on top of the remote without the files. A code
+commit is never squashed: the push waits (`session-files-held`). With no remote-tracking ref (a
+first push to an empty remote) only the tip is checked; older history is the owner's to clean. A
+pull never stops for them, since an old install rewrites its tracked copy on every sync: under
+the sleep-state lock, the merge parks this Mac's copies, takes every session path out of the
+index (a modify/delete conflict on one included) and the other Mac's copy off the disk, then
+puts this Mac's back (`src/lib/git-sync/session-merge.ts`). A copy goes back only over nothing,
+the team's version or its own bytes; a newer write of this Mac is kept and the copy stays in the
+park folder. A park a crashed sync left is replayed at the start of every sync. An install still
+on the old version deletes its clean tracked copy when the removal arrives: code cannot reach it,
+so the release note asks every teammate to update before syncing. `state/.sleep.json` keeps each
 session's last reply and the bookmarks caught from it, so a committed one carried the owner's
 Super agenda to a teammate (2026-11-07); when it leaves the index, sessions whose transcript is
 not on this Mac (and their bookmarks) move to `state/.sleep.json.foreign-<time>`.

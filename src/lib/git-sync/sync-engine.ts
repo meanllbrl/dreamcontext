@@ -2,8 +2,8 @@ import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
 import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
-import { SESSION_FILES_HELD_NOTE, SESSION_FILES_PULL_NOTE, SUPER_RECORD_PULL_NOTE, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../super/pull-guard.js';
-import { parkSessionFiles, restoreLeftoverSessionPark, restoreSessionPark, settleSessionMerge } from './session-merge.js';
+import { SESSION_FILES_HELD_NOTE, SESSION_FILES_PULL_NOTE, SUPER_RECORD_PULL_NOTE, dropMachineLocalFromPushRange, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../super/pull-guard.js';
+import { parkSessionFiles, restoreLeftoverSessionPark, restoreSessionPark, settleSessionMerge, underSleepStateLock } from './session-merge.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -195,6 +195,10 @@ export interface SyncEngineDeps {
   restoreLeftoverSessionPark: typeof restoreLeftoverSessionPark;
   /** The push gate for a Super or session file in a commit the push would send. */
   machineLocalInPushRange: typeof machineLocalInPushRange;
+  /** A brain repo's repair for it: the unpushed commits become one without those files. */
+  dropMachineLocalFromPushRange: typeof dropMachineLocalFromPushRange;
+  /** The sleep-state lock held over the park window. */
+  underSleepStateLock: typeof underSleepStateLock;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -222,6 +226,8 @@ const defaultDeps: SyncEngineDeps = {
   restoreSessionPark,
   restoreLeftoverSessionPark,
   machineLocalInPushRange,
+  dropMachineLocalFromPushRange,
+  underSleepStateLock,
 };
 
 /** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
@@ -493,6 +499,9 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
 
   try {
+    // Session files a crashed sync parked go back first, whatever this sync goes on to do (a pull
+    // may not come for days); under the brain lock, so never another sync's live park.
+    d.restoreLeftoverSessionPark(contextRoot);
     let result: SyncResult;
     if (opts.continue) result = await continueMerge(ctx);
     else if (opts.resume) result = await resumeHandoff(ctx);
@@ -615,21 +624,22 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   // its sleep state held the owner's Super lines). The pull does not stop for them, since an old
   // install changes its tracked copy on every sync: the merge is defused around them instead
   // (`session-merge.ts`). A guard that cannot answer stops the pull.
-  d.restoreLeftoverSessionPark(contextRoot);
   const sessions = d.sessionChanges(gitCwd, contextRoot, ctx.remoteRef);
   if (sessions === null) {
     return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: 'Skipped the pull: could not check what the team\'s update does to this Mac\'s session files. It is retried at the next sync.' }, needsTaskSync: false };
   }
-  let parks: ReturnType<typeof parkSessionFiles> = [];
-  if (sessions.length > 0) {
-    parks = d.parkSessionFiles(gitCwd, contextRoot, sessions);
+  if (sessions.length === 0) return mergeParked(ctx, opts, sessions);
+  // Park, merge, settle and put back under the sleep-state lock: a Stop hook waits instead of
+  // writing into the window (edge-case review r2).
+  return d.underSleepStateLock(contextRoot, () => {
+    const parks = d.parkSessionFiles(gitCwd, contextRoot, sessions);
     if (parks === null) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: SESSION_FILES_PULL_NOTE }, needsTaskSync: false };
-  }
-  try {
-    return mergeParked(ctx, opts, sessions);
-  } finally {
-    d.restoreSessionPark(contextRoot, parks);
-  }
+    try {
+      return mergeParked(ctx, opts, sessions);
+    } finally {
+      d.restoreSessionPark(contextRoot, parks);
+    }
+  });
 }
 
 /** {@link mergeAndMaybeDefer} once this Mac's session files are parked. */
@@ -772,9 +782,17 @@ async function pushWithRetry(
     return hit ? { action: 'app-data-held', scrub, note: APP_DATA_HELD_NOTE } : null;
   };
   // The same door for a Super or session file in a commit made outside the sync (2026-11-07).
+  // Repaired once when the unpushed commits are the brain's own: they become one without those
+  // files (an old install's checkpoints would otherwise hold every sync). Code commits are never
+  // squashed: the push waits for the owner.
   const sessionFilesHeld = (): SyncResult | null => {
     let hit: string | null;
     try { hit = d.machineLocalInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef); } catch { hit = 'unknown'; }
+    if (hit && hit !== 'unknown') {
+      try {
+        if (d.dropMachineLocalFromPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef, authorFor(ctx))) hit = d.machineLocalInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef);
+      } catch { hit = 'unknown'; }
+    }
     return hit ? { action: 'session-files-held', scrub, note: SESSION_FILES_HELD_NOTE } : null;
   };
   const held = appDataHeld() ?? sessionFilesHeld();

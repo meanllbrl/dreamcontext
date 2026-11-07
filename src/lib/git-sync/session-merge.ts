@@ -18,14 +18,21 @@
  *
  * The merge commit then carries the removal, so the remote converges in one push. Never follows
  * or moves a symlink: one at a session path is left where it is.
+ *
+ * The whole window runs under the sleep-state lock ({@link underSleepStateLock}), so a Stop hook
+ * waits instead of writing into it. A copy goes back only over nothing, over the team's version or
+ * over our own bytes: anything else at the path was written by this Mac during the window (a
+ * writer that outwaited the lock) and is kept, the parked copy staying in the park folder
+ * (edge-case review r2: never overwrite newer state).
  */
 
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { localDir, readLocalJson, updateLocalJson } from '../local-store.js';
 import { sessionPathspecs, type SessionChange } from '../super/pull-guard.js';
 import { brainPrefix, moveFileAcross } from '../agents/agent-sync.js';
+import { withSleepStateLock } from '../sleep-state-lock.js';
 import * as git from './git.js';
 
 const PARK_FILE = 'session-park.json';
@@ -36,6 +43,24 @@ export interface SessionPark {
   /** Absolute path of the parked copy. */
   backup: string;
   at: string;
+  /** The blob the team's update puts at this path (null: it removes it), so the put-back can
+   *  tell the team's version, which it replaces, from a newer write of this Mac, which it keeps. */
+  incoming?: string | null;
+}
+
+/**
+ * Run `fn` holding the sleep-state lock (the window between park and put-back). The lock waits a
+ * few seconds at most and then lets `fn` run anyway, like every writer of the sleep state; a lock
+ * that cannot even be created (no state folder) runs `fn` unlocked.
+ */
+export function underSleepStateLock<T>(contextRoot: string, fn: () => T): T {
+  let ran = false;
+  try {
+    return withSleepStateLock(contextRoot, () => { ran = true; return fn(); }).value;
+  } catch (err) {
+    if (ran) throw err;
+    return fn();
+  }
 }
 
 interface ParkFile { pending: SessionPark[] }
@@ -56,12 +81,30 @@ function forget(projectRoot: string, backup: string, home?: string): void {
   updateLocalJson<ParkFile>(projectRoot, PARK_FILE, { pending: [] }, (cur) => ({ pending: pendingOf(cur).filter((p) => p.backup !== backup) }), home);
 }
 
-/** Put one parked copy back (over whatever is there now: the parked one is this Mac's state). */
+/** Is the file at `abs` the team's version of the path or the parked bytes themselves? */
+function replaceable(abs: string, p: SessionPark): boolean {
+  if (p.incoming) {
+    const blob = git.hashFile(dirname(abs), abs);
+    if (blob !== null && blob === p.incoming) return true;
+  }
+  try { return readFileSync(abs).equals(readFileSync(p.backup)); } catch { return false; }
+}
+
+/**
+ * Put one parked copy back: over nothing, the team's version or our own bytes. Anything else at
+ * the path (a newer write of this Mac, a link, a folder) stays, and the parked copy stays in the
+ * park folder, out of the pending list. Never deletes either side.
+ */
 function putBack(projectRoot: string, p: SessionPark, home?: string): boolean {
   try {
     if (!existsSync(p.backup)) { forget(projectRoot, p.backup, home); return true; }
     mkdirSync(dirname(p.from), { recursive: true });
-    try { if (lstatSync(p.from).isFile()) unlinkSync(p.from); } catch { /* nothing there */ }
+    let there: ReturnType<typeof lstatSync> | null = null;
+    try { there = lstatSync(p.from); } catch { /* nothing there */ }
+    if (there) {
+      if (!there.isFile() || !replaceable(p.from, p)) { forget(projectRoot, p.backup, home); return true; }
+      unlinkSync(p.from);
+    }
     moveFileAcross(p.backup, p.from);
     forget(projectRoot, p.backup, home);
     return true;
@@ -70,7 +113,7 @@ function putBack(projectRoot: string, p: SessionPark, home?: string): boolean {
   }
 }
 
-/** A park a crashed sync left behind goes back first. Never throws. */
+/** A park a crashed sync left behind goes back first (every sync, under the brain lock). Never throws. */
 export function restoreLeftoverSessionPark(contextRoot: string, home?: string): void {
   const projectRoot = dirname(contextRoot);
   try {
@@ -101,7 +144,7 @@ export function parkSessionFiles(gitCwd: string, contextRoot: string, changes: S
     try { if (!lstatSync(from).isFile()) continue; } catch { continue; } // never a link or a folder
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const rec: SessionPark = { from, backup: join(dir, `${now.getTime()}-${randomBytes(4).toString('hex')}-${basename(from)}`), at: now.toISOString() };
+      const rec: SessionPark = { from, backup: join(dir, `${now.getTime()}-${randomBytes(4).toString('hex')}-${basename(from)}`), at: now.toISOString(), incoming: c.incoming ?? null };
       updateLocalJson<ParkFile>(projectRoot, PARK_FILE, { pending: [] }, (cur) => ({ pending: [...pendingOf(cur), rec] }), home);
       try {
         if (tracked.has(from.toLowerCase())) copyFileSync(from, rec.backup);
@@ -126,9 +169,12 @@ export function settleSessionMerge(gitCwd: string, contextRoot: string, changes:
   const prefix = brainPrefix(gitCwd, contextRoot);
   const top = git.topLevel(gitCwd);
   if (prefix === null || !top) return settled;
-  try { git.removeFromIndexForce(top, sessionPathspecs(prefix)); } catch { /* the stage pass and the push gate still stand */ }
+  // A removal git refused (an index.lock held elsewhere) settles nothing: the conflicts stay the
+  // resolver's (edge-case review r2), and what the merge wrote still comes off the disk.
+  let removed = true;
+  try { git.removeFromIndexForce(top, sessionPathspecs(prefix)); } catch { removed = false; }
   for (const c of changes) {
-    settled.add(c.path.toLowerCase());
+    if (removed) settled.add(c.path.toLowerCase());
     if (c.deleted) continue;
     const abs = onDiskName(join(top, c.path));
     if (!abs) continue;

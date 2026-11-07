@@ -14,8 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BRAIN_LOCAL_GITIGNORE_ENTRIES, FULL_REPO_LOCAL_GITIGNORE_ENTRIES, ensureBrainGitignore } from '../../src/lib/git-sync/brain-repo.js';
 import { migration0402, untrackSuperRecords } from '../../src/migrations/0.40.2.js';
-import { SESSION_LOCAL_PATHSPECS, incomingSessionFiles, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../../src/lib/super/pull-guard.js';
-import { parkSessionFiles, restoreSessionPark, settleSessionMerge } from '../../src/lib/git-sync/session-merge.js';
+import { SESSION_LOCAL_PATHSPECS, dropMachineLocalFromPushRange, incomingSessionFiles, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../../src/lib/super/pull-guard.js';
+import { parkSessionFiles, restoreLeftoverSessionPark, restoreSessionPark, settleSessionMerge } from '../../src/lib/git-sync/session-merge.js';
 import { setAsideForeignSleepLines } from '../../src/lib/super/sleep-foreign.js';
 import { resetSuperIndex } from '../../src/lib/super/store.js';
 import { resetBindingCache } from '../../src/lib/super/record-binding.js';
@@ -360,5 +360,99 @@ describe('E3: a teammate\'s own sleep state survives the owner\'s removal', () =
     commitPull(mate);
     expect(readFileSync(join(mateCtx, 'state', '.sleep.json'), 'utf-8')).toContain(MATE_LINE);
     expect(tracked(mate, '_dream_context/state/.sleep.json')).toBe(false);
+  });
+});
+
+// ── review round 2 (edge-case re-check 2026-11-07): what the round-1 fix itself broke ──────────
+
+describe('M1: the push gate never holds a sync for good on old history', () => {
+  it('an old install\'s unpushed checkpoint is rewritten without the session file; the file stays on disk', () => {
+    const { owner, ctx } = team();
+    // The old install's checkpoint, never pushed: its tracked sleep state changed.
+    writeFileSync(join(ctx, 'state', '.sleep.json'), sleepState('checkpoint line'));
+    writeFileSync(join(ctx, 'knowledge', 'k2.md'), '# k2\n');
+    git(owner, 'add', '-A'); git(owner, 'commit', '-q', '-m', 'checkpoint');
+    git(owner, 'fetch', '-q', 'origin');
+    expect(machineLocalInPushRange(owner, ctx, 'origin/main')).not.toBeNull();
+    expect(dropMachineLocalFromPushRange(owner, ctx, 'origin/main')).toBe(true);
+    expect(machineLocalInPushRange(owner, ctx, 'origin/main')).toBeNull();
+    // The rest of the work rode along, and this Mac's sleep state is untouched on disk.
+    expect(git(owner, 'ls-tree', '-r', '--name-only', 'HEAD')).toContain('_dream_context/knowledge/k2.md');
+    expect(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8')).toContain('checkpoint line');
+  });
+
+  it('a project\'s code commit is never squashed: the push waits', () => {
+    const { owner, ctx } = team();
+    writeFileSync(join(ctx, 'state', '.sleep.json'), sleepState('checkpoint line'));
+    writeFileSync(join(owner, 'app.ts'), 'export {};\n');
+    git(owner, 'add', '-A'); git(owner, 'commit', '-q', '-m', 'code and sleep');
+    git(owner, 'fetch', '-q', 'origin');
+    const before = git(owner, 'rev-parse', 'HEAD').trim();
+    expect(dropMachineLocalFromPushRange(owner, ctx, 'origin/main')).toBe(false);
+    expect(git(owner, 'rev-parse', 'HEAD').trim()).toBe(before);
+    expect(machineLocalInPushRange(owner, ctx, 'origin/main')).toBe(before);
+  });
+
+  it('with no remote ref (a first push to an empty remote) only the tip is checked', () => {
+    const { owner, ctx } = team();
+    // History holds the old leak; the tip, after a sync, does not.
+    git(owner, 'add', '-A'); superStagePass(owner, ctx); git(owner, 'commit', '-q', '-m', 'sync');
+    git(owner, 'remote', 'remove', 'origin');
+    expect(machineLocalInPushRange(owner, ctx, null)).toBeNull();
+    git(owner, 'add', '-f', '--', '_dream_context/state/.sleep.json'); git(owner, 'commit', '-q', '-m', 'by hand');
+    expect(machineLocalInPushRange(owner, ctx, null)).toBe(git(owner, 'rev-parse', 'HEAD').trim());
+  });
+});
+
+describe('M2: the put-back never overwrites a newer write of this Mac', () => {
+  const sleepPath = (ctx: string) => join(ctx, 'state', '.sleep.json');
+  const change = (incoming: string | null) => [{ path: '_dream_context/state/.sleep.json', deleted: incoming === null, incoming }];
+
+  it('a write made during the window is kept, and the parked copy stays in the park folder', () => {
+    const { owner, ctx } = team();
+    const parks = parkSessionFiles(owner, ctx, change(null), home);
+    expect(parks).toHaveLength(1);
+    writeFileSync(sleepPath(ctx), sleepState('a Stop hook wrote this during the merge'));
+    restoreSessionPark(ctx, parks, home);
+    expect(readFileSync(sleepPath(ctx), 'utf-8')).toContain('a Stop hook wrote this');
+    expect(readFileSync(parks![0].backup, 'utf-8')).toContain(OWNER_LINE);
+  });
+
+  it('the team\'s version at the path is replaced by this Mac\'s copy', () => {
+    const { owner, ctx } = team();
+    const theirs = sleepState('the other Mac');
+    const blob = execFileSync('git', ['hash-object', '--stdin'], { cwd: owner, input: theirs, encoding: 'utf-8' }).trim();
+    const parks = parkSessionFiles(owner, ctx, change(blob), home);
+    writeFileSync(sleepPath(ctx), theirs);
+    restoreSessionPark(ctx, parks, home);
+    expect(readFileSync(sleepPath(ctx), 'utf-8')).toContain(OWNER_LINE);
+  });
+
+  it('a park a crashed sync left behind goes back only over nothing', () => {
+    const { owner, ctx } = team();
+    // Crash right after parking an untracked copy: the path is empty.
+    git(owner, 'rm', '-q', '--cached', '--', '_dream_context/state/.sleep.json');
+    git(owner, 'commit', '-q', '-m', 'untrack');
+    const parks = parkSessionFiles(owner, ctx, change(null), home);
+    expect(existsSync(sleepPath(ctx))).toBe(false);
+    restoreLeftoverSessionPark(ctx, home);
+    expect(readFileSync(sleepPath(ctx), 'utf-8')).toContain(OWNER_LINE);
+    // A second crash, and hooks wrote a fresh state before the next sync: it is kept.
+    const again = parkSessionFiles(owner, ctx, change(null), home);
+    writeFileSync(sleepPath(ctx), sleepState('fresh after the crash'));
+    restoreLeftoverSessionPark(ctx, home);
+    expect(readFileSync(sleepPath(ctx), 'utf-8')).toContain('fresh after the crash');
+    expect(existsSync(again![0].backup)).toBe(true);
+    expect(parks).toHaveLength(1);
+  });
+
+  it('a settle whose index removal git refuses settles nothing', () => {
+    const { owner, ctx } = team();
+    writeFileSync(join(owner, '.git', 'index.lock'), '');
+    try {
+      expect(settleSessionMerge(owner, ctx, change('0'.repeat(40))).size).toBe(0);
+    } finally {
+      rmSync(join(owner, '.git', 'index.lock'));
+    }
   });
 });
