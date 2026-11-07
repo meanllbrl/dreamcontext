@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import {
-  SHELF_DETAIL_PANE_FRACTION, SHELF_TAGS_PANE_FRACTION, type ShelfEntry, type ShelfTag,
+  SHELF_DETAIL_PANE_FRACTION, SHELF_TAGS_PANE_FRACTION, splitCheckoutTags, type ShelfEntry, type ShelfTag,
 } from '../../../lib/shelfModel';
 import { entryIdOf, type ShelfHandle } from './useShelf';
 import './pinShelf.css';
@@ -33,14 +33,19 @@ import './pinShelf.css';
  */
 
 export function PinShelf({
-  shelf, onOpenUrl,
+  shelf, onOpenUrl, checkoutInComposer = false,
 }: {
   shelf: ShelfHandle;
   /** `openExternalUrl` (lib/desktop.ts) — passed in rather than imported so the Rust-side
    *  scheme validator stays in the chain and this component keeps no OS reach of its own. */
   onOpenUrl: (url: string) => void;
+  /** The composer below draws the checkout chip in its own bottom row (`CheckoutChips`), so the
+   *  shelf leaves it out, and a shelf holding nothing else draws nothing at all. Off when the
+   *  composer is replaced by a banner: the chip then stays here rather than vanishing. */
+  checkoutInComposer?: boolean;
 }) {
-  const { layout, openId, setOpenId, hasRows, dismiss, promote, evicted } = shelf;
+  const { openId, setOpenId, hasRows, dismiss, promote, evicted } = shelf;
+  const layout = checkoutInComposer ? { ...shelf.layout, tags: splitCheckoutTags(shelf.layout.tags).rest } : shelf.layout;
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // ONE measurement, and it is not about the tag line: the pane's height, written to
@@ -75,7 +80,7 @@ export function PinShelf({
   }, [mounted]);
 
   // M1.7 — an empty shelf is NOT a zero-height strip with a border. It is nothing.
-  if (layout.row === null && layout.tags.length === 0) return null;
+  if (layout.row === null && layout.tags.length === 0 && evicted === 0) return null;
 
   return (
     <div className="pin-shelf" ref={rootRef}>
@@ -94,7 +99,8 @@ export function PinShelf({
             grows downward into the composer's own padding rather than moving anything the
             user was reading. There is no fold and no measurement here by design; see
             shelfModel.ts's header for why the earlier one was deleted. */}
-        <div className="pin-tags">
+        {/* No empty line under an open row once the checkout chip moved to the composer. */}
+        {(layout.tags.length > 0 || evicted > 0) && <div className="pin-tags">
           {layout.tags.map((tag) => (
             <TagChip
               key={tag.id}
@@ -112,9 +118,27 @@ export function PinShelf({
               title={`This conversation pinned more than the shelf keeps — ${evicted} of the oldest were dropped.`}
             >−{evicted} older</span>
           )}
-        </div>
+        </div>}
       </div>
     </div>
+  );
+}
+
+/**
+ * The checkout chip (branch, or the worktree marker) drawn INSIDE the composer's bottom row,
+ * right after the `+` (owner 2026-11-07: "put main next to the +"). The same `TagChip` the
+ * shelf draws, so its glyph, warn tone and hover sentence are unchanged; only its place moved.
+ * Renders nothing when the server reported no checkout.
+ */
+export function CheckoutChips({ shelf, onOpenUrl }: { shelf: ShelfHandle; onOpenUrl: (url: string) => void }) {
+  const { checkout } = splitCheckoutTags(shelf.layout.tags);
+  if (checkout.length === 0) return null;
+  return (
+    <span className="pin-inline" data-testid="composer-checkout">
+      {checkout.map((tag) => (
+        <TagChip key={tag.id} tag={tag} onOpenUrl={onOpenUrl} onDismiss={shelf.dismiss} onPromote={shelf.promote} />
+      ))}
+    </span>
   );
 }
 

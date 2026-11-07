@@ -217,7 +217,7 @@ export interface PendingPlan {
  *  non-empty. */
 export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
 
-/** One message the user DELIBERATELY held back (the composer's ⇡) rather than handing to the
+/** One message the user DELIBERATELY held back (the composer's ⌥⏎, once its ⇡ disc) rather than handing to the
  *  running turn — kept client-side and sent, in order, as each turn settles. Note this is no
  *  longer where ⏎-while-busy lands: that steers into the turn in flight, and the queue is for
  *  the other intent, "not this turn, the next one". Re-exported from chatQueue.ts (which owns
@@ -641,14 +641,14 @@ export interface ChatSession {
   /** Whether {@link steer} would land right now, for callers that must decide BEFORE they
    *  have text to send (labelling ⏎, enabling a row's "Send now"). */
   canSteer: () => boolean;
-  /** Park a message for the NEXT turn — the composer's ⇡ button, deliberately distinct from
+  /** Park a message for the NEXT turn — the composer's ⌥⏎ (once its ⇡ button), deliberately distinct from
    *  ⏎ now that ⏎ steers. Appends to `conv.queued`; `maybeFlushQueue` sends it when the
    *  in-flight turn settles. Whitespace-only text is ignored, exactly as `send` ignores it.
    *
    *  `steerWhenPossible` marks a row that is here only because {@link steer} refused — it
    *  still wants the first opening rather than the end of the turn, and `maybeFlushQueue`
    *  gives it one as soon as there is one. Callers falling back from a refused steer should
-   *  always pass it; the ⇡ button never does. */
+   *  always pass it; ⌥⏎ never does. */
   enqueue: (text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }) => void;
   /** Hold the queue as Stop does (a no-op when it is empty). For a respawn carrying over the
    *  rows of a session whose queue the user had paused: the rows come along, the pause too. */

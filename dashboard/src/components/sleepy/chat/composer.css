@@ -734,23 +734,6 @@
 }
 .chat-cmp-send.is-enabled:hover { filter: brightness(1.15); }
 
-/* Queue (⇡) — its OWN disc beside Send while a turn runs, since ⏎/↑ now steer into that
-   turn and "hold it for the next one" needs somewhere to live (see Composer.tsx's `commit`).
-   Outlined in the accent rather than filled, because the filled solid belongs to "this goes
-   now" — and it sits between the red Stop and the solid Send, so it is also what keeps those
-   two discs from reading as one control with a broken half. */
-.chat-cmp-send.is-queue:not(:disabled) {
-  opacity: 1;
-  background: transparent;
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  cursor: pointer;
-}
-.chat-cmp-send.is-queue:not(:disabled):hover {
-  filter: none;
-  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-}
-
 .chat-cmp-send.is-stop {
   opacity: 1;
   background: var(--color-error);

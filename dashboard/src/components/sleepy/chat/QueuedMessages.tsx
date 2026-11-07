@@ -11,7 +11,7 @@ import { enterSends } from '../../../lib/enterKey';
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
  * docked directly above the composer, each editable and removable until it goes out.
  *
- * What lands here, since 07-29: only what the user CHOSE to hold — the composer's ⇡. ⏎ steers
+ * What lands here, since 07-29: only what the user CHOSE to hold — the composer's ⌥⏎ (once its ⇡ disc). ⏎ steers
  * into the running turn instead (Composer.tsx's `commit`), which is what the terminal's own
  * readline does and what this strip's first cut got wrong: every ⏎ came here and waited out
  * the whole turn, so a correction meant for the next tool call arrived after the last one.

@@ -505,7 +505,7 @@ async function main() {
     await typeIn(page, 'ikinci adım.');
     await aboutRow(page, NOTES[3][1]);
     await typeIn(page, 'kart.');
-    await centre(page).locator('[aria-label="Queue for the next turn"]').click();
+    await centreInput(page).press('Alt+Enter');
     const qrow = centre(page).locator('.chat-queue-row').last();
     ok('the queued row shows the same chips inline (slots 1, 2), no header text', await until(page, async () => (await qrow.locator('.chat-ref-chip').count()) === 2, 5000)
       && !/\[About agenda line/.test(await qrow.innerText()), await qrow.innerText().catch(() => ''));
@@ -522,7 +522,7 @@ async function main() {
       return !!f && aboutHeadCount(f.blocks[0]) === 2 && f.blocks[0].endsWith('kart. ek');
     }, 40000), JSON.stringify(superFrames().slice(qn).map((x) => x.blocks[0])));
     await until(page, async () => (await centre(page).locator('.chat-queue-row').count()) === 0, 40000);
-    await until(page, async () => !(await centre(page).locator('.chat-cmp-stop:visible').count()), 20000);
+    await until(page, async () => !(await centre(page).locator('.chat-cmp-send.is-stop:visible').count()), 20000);
     await page.waitForTimeout(1500);
 
     // 11. Rewind gives the chips back; a file dropped afterwards keeps them.

@@ -161,7 +161,7 @@ export function canSteer(p: SteerProbe): boolean {
  * The row an AUTOMATIC steer should take next, or null.
  *
  * Only ever a `steerWhenPossible` row — one ⏎ tried to steer and could not. Those are owed the
- * first opening that comes along; a deliberately-held row (the ⇡ button) is not, and keeps its
+ * first opening that comes along; a deliberately-held row (⌥⏎, once the ⇡ button) is not, and keeps its
  * place until the turn settles. So a fallback row legitimately overtakes a held one: they were
  * asking for different things, and order within the strip only ranks equals.
  *

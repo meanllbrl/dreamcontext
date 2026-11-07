@@ -44,7 +44,7 @@ import { BrowserHostProvider, lastBrowserToolId } from './chat/browserHost';
 import { PeerSessionHolder } from './chat/PeerSessionCard';
 import { usePeerMentions } from '../../hooks/usePeerMentions';
 import type { PeerMention } from '../../lib/agentComposer';
-import { PinShelf } from './chat/PinShelf';
+import { CheckoutChips, PinShelf } from './chat/PinShelf';
 import { ChatFindBar } from './chat/ChatFindBar';
 import { isFindChord } from './chat/findInChat';
 import { useShelf } from './chat/useShelf';
@@ -2496,6 +2496,10 @@ export function ChatPane({
   // when the CLI exits on a failed-auth turn "Session ended · Resume" would send the user
   // round the same loop forever. The missing credential is the real state to report.
   const needsSignIn = !!conv.authRequired;
+  /** The Composer is what draws under the shelf: the negation of every banner branch below, in
+   *  the same order. The checkout chip rides in its bottom row only then. */
+  const composerDrawn = !needsSignIn && !session.handedOver && !(session.takenOver && !remoteDesktop)
+    && !ended && !hitlPending && !readOnly;
 
   // The turn is in flight but the transcript has nothing to show for it yet — before the
   // CLI's first frame (spawn + SessionStart brain preload), or in a gap between a tool
@@ -3030,7 +3034,9 @@ export function ChatPane({
           at all when it holds nothing (no zero-height strip), and one bare tag line at rest.
           `shelved` is the same question as the shell's own `has-rows`, which is why it comes
           off the shelf handle rather than being computed twice. */}
-      {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />}
+      {/* The checkout chip moves into the composer's bottom row whenever the composer is the
+          one drawn below (owner 2026-11-07); a banner in its place leaves the chip here. */}
+      {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} checkoutInComposer={composerDrawn} />}
       {/* An outdated or failed-to-update Claude Code CLI: one line above the composer, never in
           place of it (older CLIs run older models, which is worth knowing, not worth blocking). */}
       {!bare && <ClaudeUpdateChatNotice />}
@@ -3113,6 +3119,7 @@ export function ChatPane({
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
+          checkoutChip={bare ? undefined : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
           // The Super view: a ↩ drops a reference chip into the text (several per message); a
           // reply chip's "Go to message" lands on the message it names.
           superView={superView}
