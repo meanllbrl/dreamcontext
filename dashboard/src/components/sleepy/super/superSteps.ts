@@ -43,3 +43,18 @@ export function stepsDuration(ms: number, t: (key: string) => string): string {
   const min = t('super.steps.minutes').replace('{n}', String(m));
   return rest ? `${min} ${t('super.steps.seconds').replace('{n}', String(rest))}` : min;
 }
+
+/**
+ * What the live line says (owner 2026-11-07): waiting on the owner, the step in hand, or
+ * "Thinking" in the gap between steps, where the plain Chat used to pop a separate Working pill.
+ */
+export function liveLabel(items: readonly ChatToolItem[], waiting: boolean, t: (key: string) => string): string {
+  if (waiting) return t('super.steps.waiting');
+  if (!items.some((i) => i.status === 'running')) return t('super.steps.thinking');
+  return nowStep(items) || t('super.steps.working');
+}
+
+/** The turn's running clock on the live line: "0 s", "28 s", then minutes as `stepsDuration`. */
+export function turnClock(ms: number, t: (key: string) => string): string {
+  return ms < 1000 ? t('super.steps.seconds').replace('{n}', '0') : stepsDuration(ms, t);
+}

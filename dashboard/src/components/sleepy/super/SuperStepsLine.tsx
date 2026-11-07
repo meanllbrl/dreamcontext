@@ -1,8 +1,8 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { summarizeToolRun } from '../chat/chatEntities';
 import { ToolCard } from '../chat/ToolCard';
 import { BrowserSlot } from '../chat/browserHost';
-import { nowStep, stepFailed, stepPhrase, stepsDuration } from './superSteps';
+import { liveLabel, stepFailed, stepPhrase, stepsDuration, turnClock } from './superSteps';
 import { useI18n } from '../../../context/I18nContext';
 import type { ChatToolItem } from '../chatSession';
 
@@ -21,11 +21,52 @@ import type { ChatToolItem } from '../chatSession';
  *
  * Once the answer is written the line goes away entirely (owner 2026-11-06, second look): only
  * the answer stays, and a faint "steps" link on its hover opens the rows here (`hidden`).
+ *
+ * While it runs the line also carries the turn's elapsed time at its end, and in the gap between
+ * steps it reads "Thinking" (owner 2026-11-07): the separate "Working… 28s" pill that used to pop
+ * in under it, and make the chat jump a row each time, is not drawn in the Super view.
  */
 
+/** Seconds since `startedAt` (or since mount, when the turn was already running on attach). */
+function useTurnClock(startedAt: number | undefined, live: boolean): number {
+  const [base] = useState(() => startedAt ?? Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
+  return Math.max(0, now - (startedAt ?? base));
+}
+
+/**
+ * The live line with no steps under it yet: the start of a turn, or the thinking after an answer
+ * piece. The same 24px shape as a live `SuperStepsLine`, so when the first step arrives the one
+ * line simply changes its words, and the chat does not move.
+ */
+function SuperLiveLineInner({ label, startedAt }: { label?: string; startedAt?: number }) {
+  const { t } = useI18n();
+  const elapsed = useTurnClock(startedAt, true);
+  const text = label ?? t('super.steps.thinking');
+  return (
+    <div className="super-steps" data-testid="super-live-line" data-live role="status" aria-live="polite" aria-label={text}>
+      <span className="super-steps-line super-steps-line--static">
+        <span className="super-steps-ring" aria-hidden />
+        <span className="super-steps-now">{text}</span>
+        <span className="super-steps-time" aria-hidden>· {turnClock(elapsed, t)}</span>
+      </span>
+    </div>
+  );
+}
+
+export const SuperLiveLine = memo(SuperLiveLineInner);
+
 function SuperStepsLineInner({
-  items, stillAccruing, waiting = false, onOpenFile, replyGroup, hidden = false, open: openFromAnswer = false,
+  items, stillAccruing, waiting = false, onOpenFile, replyGroup, hidden = false, open: openFromAnswer = false, startedAt,
 }: {
+  /** When the turn began (`conv.turnStartedAt`): the live line's clock counts from here. */
+  startedAt?: number;
   /** Landed and put away behind its answer's "steps" link (ChatPane decides): nothing of the line
    *  shows, only a failed step's own row; `open` (the link's state) draws the rows here. */
   hidden?: boolean;
@@ -45,11 +86,13 @@ function SuperStepsLineInner({
   const steps = items.filter((i) => !stepPhrase(i).quiet);
   const failed = items.filter(stepFailed);
   const summary = summarizeToolRun(items);
+  // Only the turn's own tail counts: a landed run with an orphaned "running" step never ticks.
+  const elapsed = useTurnClock(startedAt, stillAccruing && !hidden);
 
   const count = t(steps.length === 1 ? 'super.steps.one' : 'super.steps.many').replace('{n}', String(steps.length));
   const parts = [count];
   if (!live && summary.durationMs != null) parts.push(stepsDuration(summary.durationMs, t));
-  const label = live ? (waiting ? t('super.steps.waiting') : nowStep(items) || t('super.steps.working')) : parts.join(' · ');
+  const label = live ? liveLabel(items, waiting, t) : parts.join(' · ');
 
   if (hidden) {
     if (!open && !failed.length) return null;
@@ -90,6 +133,7 @@ function SuperStepsLineInner({
             <span className="super-steps-ring" aria-hidden />
             <span className="super-steps-now">{label}</span>
             <span className="super-steps-count">· {steps.length}</span>
+            {stillAccruing && <span className="super-steps-time" aria-hidden>· {turnClock(elapsed, t)}</span>}
           </>
         ) : (
           <>
