@@ -225,6 +225,16 @@ exec "$DC_SHELL" -ilc 'exec dreamcontext automations tick --all' < /dev/null
 }
 
 /**
+ * launchd's `ProcessType` for the dispatcher. NEVER `Background`: that type puts the tick and
+ * every run it spawns (claude, its hooks, its tools) under macOS's background policy, which
+ * throttles CPU, disk and network for the whole process tree. Measured on a busy Mac
+ * (2026-11-07): `dreamcontext snapshot` took 10s at normal priority and 701s under that policy,
+ * a tick with nothing due ran 30+ minutes, and routines hit their timeout before their first turn.
+ * `Standard` is the same as no ProcessType: the run gets the priority of anything the owner starts.
+ */
+export const DISPATCHER_PROCESS_TYPE = 'Standard';
+
+/**
  * The LaunchAgent plist. PURE — no I/O. `ProgramArguments` points at
  * `/bin/sh <wrapperPath>` rather than baking `dreamcontext` directly, so an
  * npm upgrade or a nvm node bump needs no plist change (the wrapper handles
@@ -250,7 +260,7 @@ export function renderDispatcherPlist(wrapperPath: string, logPath: string): str
   <key>RunAtLoad</key>
   <true/>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>${DISPATCHER_PROCESS_TYPE}</string>
   <key>StandardOutPath</key>
   <string>${log}</string>
   <key>StandardErrorPath</key>
@@ -385,8 +395,11 @@ export interface InstallResult {
  * human's confirmation before silently baking in a different build than the
  * one running the install.
  */
+const BOOTSTRAP_ATTEMPTS = 5;
+const BOOTSTRAP_RETRY_MS = 1_000;
+
 export async function installDispatcher(
-  opts: { home?: string; runner?: ExecRunner; uid?: number; force?: boolean } = {},
+  opts: { home?: string; runner?: ExecRunner; uid?: number; force?: boolean; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<InstallResult> {
   if (process.platform === 'win32') {
     const home = opts.home ?? homedir();
@@ -449,7 +462,16 @@ export async function installDispatcher(
 
   let bootstrapped = false;
   let method: InstallResult['method'] = 'none';
-  const bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  // `bootout` returns before launchd has finished tearing the old job down, and a bootstrap in
+  // that window fails with "5: Input/output error" (seen on this Mac, 2026-11-07). Without a retry
+  // the job is left unloaded and no routine runs at all; `update` now refreshes by itself, so the
+  // window is hit routinely, not only by a human re-running install.
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  for (let attempt = 1; !bootstrapRes.ok && attempt < BOOTSTRAP_ATTEMPTS; attempt++) {
+    await sleep(BOOTSTRAP_RETRY_MS);
+    bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  }
   if (bootstrapRes.ok) {
     bootstrapped = true;
     method = 'bootstrap';
@@ -508,6 +530,74 @@ export async function uninstallDispatcher(
   }
 
   return { bootedOut: bootoutRes.ok, removedPlist, removedWrapper };
+}
+
+export type RefreshDispatcherResult =
+  | { action: 'refreshed'; warnings: string[] }
+  | { action: 'skipped'; reason: 'not-macos' | 'not-installed' | 'current' | 'inside-scheduler' | 'tick-running' | 'mismatch' | 'failed'; detail?: string };
+
+/**
+ * Re-install the scheduler when it IS installed but its files are stale (an older release wrote
+ * them: the `ProcessType` fix above only reaches launchd through a fresh bootstrap). Called by
+ * `dreamcontext update`. Never installs a scheduler the owner did not install, never bakes a
+ * different CLI than the one running (`mismatch`), and never boots the job out from under work:
+ * not from inside a scheduler run (launchd marks its job's tree with `XPC_SERVICE_NAME`), and not
+ * while the running tick has a child (a run, a host): the bootout would kill its runner. A tick
+ * with no child is only reading manifests, and ending it costs nothing: the re-bootstrap starts
+ * a fresh one (RunAtLoad), now at normal priority.
+ */
+export async function refreshStaleDispatcher(
+  opts: {
+    home?: string;
+    runner?: ExecRunner;
+    uid?: number;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    install?: typeof installDispatcher;
+  } = {},
+): Promise<RefreshDispatcherResult> {
+  if ((opts.platform ?? process.platform) !== 'darwin') return { action: 'skipped', reason: 'not-macos' };
+  const env = opts.env ?? process.env;
+  if (env.XPC_SERVICE_NAME === DISPATCHER_LABEL) return { action: 'skipped', reason: 'inside-scheduler' };
+  const home = opts.home ?? homedir();
+  // Cheap first: `update` runs once per project, and the full inspect spawns a login shell.
+  // Only a plist that differs from today's render is worth that.
+  const plistPath = dispatcherPlistPath(home);
+  let onDisk: string;
+  try {
+    onDisk = readFileSync(plistPath, 'utf-8');
+  } catch {
+    return { action: 'skipped', reason: 'not-installed' };
+  }
+  if (onDisk === renderDispatcherPlist(dispatcherWrapperPath(home), automationsLogPath(home))) {
+    return { action: 'skipped', reason: 'current' };
+  }
+  const check = await inspectDispatcher({ home, runner: opts.runner, uid: opts.uid });
+  // Only a LIVE scheduler is refreshed: one the owner booted out stays out.
+  if (!check.plistPresent || !check.bootstrapped) return { action: 'skipped', reason: 'not-installed' };
+  if (check.mismatch) return { action: 'skipped', reason: 'mismatch', detail: check.resolved.bin ?? undefined };
+  if (await tickHasWorkInFlight(opts.runner ?? defaultExecRunner, opts.uid ?? process.getuid?.() ?? 501)) {
+    return { action: 'skipped', reason: 'tick-running' };
+  }
+  try {
+    const result = await (opts.install ?? installDispatcher)({ home, runner: opts.runner, uid: opts.uid });
+    if (!result.bootstrapped) return { action: 'skipped', reason: 'failed', detail: result.warnings.join(' ') };
+    return { action: 'refreshed', warnings: result.warnings };
+  } catch (err) {
+    return { action: 'skipped', reason: 'failed', detail: (err as Error).message };
+  }
+}
+
+/** Asks launchd and the process table, never the heartbeat file: a tick killed mid-pass never
+ *  writes its completion, so the file can say "running" for hours after the tick is gone. */
+async function tickHasWorkInFlight(runner: ExecRunner, uid: number): Promise<boolean> {
+  const printed = await runner('launchctl', ['print', `gui/${uid}/${DISPATCHER_LABEL}`]);
+  const pid = printed.ok ? /^\s*pid = (\d+)\s*$/m.exec(printed.stdout)?.[1] ?? null : null;
+  if (pid === null) return false;
+  // `pgrep -P` exits 1 when the tick has no child and 0 when it has one. Anything else (no
+  // pgrep, a timeout) cannot prove the tick is idle, so it counts as busy.
+  const children = await runner('pgrep', ['-P', pid]);
+  return children.ok || children.code !== 1;
 }
 
 /** Rotate `automations.log` to `.log.1` once it exceeds `maxBytes`. Returns
