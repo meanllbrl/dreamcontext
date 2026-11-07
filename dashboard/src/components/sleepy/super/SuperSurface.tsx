@@ -190,7 +190,9 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
         </>
       )}
       {column && agenda}
-      {(column || onAdd) && (
+      {/* A chat folded to the bar hides its head: the ⋯ unmounts with it, so no menu stays open
+          (and keeps the arrow keys) out of sight. */}
+      {chat !== 'bar' && (column || onAdd) && (
         <SuperHeadMenu
           fresh={!column || noNewSession ? undefined : { pending, onPress: onNewSession }}
           onTurnOff={column ? onTurnOff : undefined}
@@ -730,10 +732,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const addByButton = useRef(false);
   addByButton.current = addMenu?.byButton ?? false;
   const closeAddMenu = useCallback(() => {
-    if (addByButton.current) addBtnRef.current?.focus();
+    // Focus goes back to the ⋯ only while it is on screen (a chat folded to the bar hides it).
+    const back = addBtnRef.current;
+    if (addByButton.current && back?.isConnected && back.offsetParent) back.focus();
     setAddMenu(null);
   }, []);
   useEffect(() => { if (!props.visible || !canAdd) setAddMenu(null); }, [props.visible, canAdd]);
+  // The ⋯ it opened under left with the head: the menu goes too.
+  useEffect(() => { if (plan.chat === 'bar' && addByButton.current) setAddMenu(null); }, [plan.chat]);
   // The head's ⋯ → Add a card: the menu opens under the ⋯, right-aligned to it, and gives focus
   // back to the ⋯ when it closes. The ⋯ itself is no toggle of this menu: a press on it closes
   // this one (an outside press) and opens the ⋯ menu.

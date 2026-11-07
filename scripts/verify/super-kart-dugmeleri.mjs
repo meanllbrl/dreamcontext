@@ -145,6 +145,7 @@ async function sceneHead(browser, w, h, dark) {
   await head.screenshot({ path: shotPath(`1-head-${tag}`) });
   check(`[${tag}] the head has no + Add`, (await p.locator('[data-testid="super-add-btn"]').count()) === 0);
   const more = centre.getByTestId('super-head-more');
+  check(`[${tag}] the head has its ⋯`, (await more.count()) === 1, String(await more.count()));
   if (await more.count()) {
     await more.click();
     await wait(p, 300);
@@ -153,6 +154,7 @@ async function sceneHead(browser, w, h, dark) {
     const hb = await head.boundingBox();
     const vp = p.viewportSize();
     await p.screenshot({ path: shotPath(`2-more-menu-${tag}`), clip: { x: Math.max(0, hb.x + hb.width - 420), y: Math.max(0, hb.y - 8), width: Math.min(420, vp.width), height: 200 } });
+    check(`[${tag}] the ⋯ menu has its Add a card row`, (await p.getByTestId('super-head-add').count()) === 1);
     if (await p.getByTestId('super-head-add').count()) {
       await p.getByTestId('super-head-add').click();
       const menu = p.locator('[data-testid="super-add-menu"]');
