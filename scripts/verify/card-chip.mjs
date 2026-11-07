@@ -353,7 +353,7 @@ async function main() {
     ok('the composer holds two chips and no raw @card words', cardChipsIn(v).length === 2 && !v.includes('@card:'), JSON.stringify(v));
     const hl = await centre(page).locator('.chat-cmp-hl mark.chat-cmp-hl-img').evaluateAll((ms) => ms.map((m) => {
       const th = m.querySelector('.chat-cmp-hl-thumb');
-      return { icon: th?.getAttribute('data-icon') ?? null, img: (th && getComputedStyle(th).backgroundImage) || '', text: m.textContent.replace(/[\u2000-\u206f\u00a0]/g, ' ').trim() };
+      return { icon: th?.getAttribute('data-icon') ?? null, img: th?.querySelector('img.chat-cmp-hl-thumb-img')?.getAttribute('src') || '', text: m.textContent.replace(/[\u2000-\u206f\u00a0]/g, ' ').trim() };
     }));
     ok('page chip: its icon and title', hl[0] && hl[0].icon === '◎' && hl[0].text.includes('Tek ekip'), JSON.stringify(hl));
     ok('picture chip: its picture and title', hl[1] && /agent\/file/.test(hl[1].img) && hl[1].text.includes('Ödeme'), JSON.stringify(hl));

@@ -12,6 +12,7 @@ import { parseChatActions, type ChatAction, type ChatSegment } from './chatActio
 import type { ReplyHead } from './replyLinks';
 import { ActionRow } from './ActionRow';
 import { PictureChip } from './ComposerRefLayer';
+import { chipThumbFor } from './picturePeekBox';
 import { GLYPH_IMAGE, refLabel } from './composerRefs';
 import { cardGlyph } from '../../../lib/cardMention';
 import { useStageCards } from '../super/stageCards';
@@ -236,18 +237,24 @@ function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: 
         ? <span key={i}>{r.text}</span>
         // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
         : r.kind === 'card' ? <SentCardChip key={i} id={r.id} title={r.title} />
-        : (
+        : (() => {
+          // A picture shows itself (and on hover, larger); a clip or another file its icon and name.
+          const thumb = chipThumbFor(r.path);
+          return (
           <PictureChip
             // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
             key={i}
             sent
-            img={agentFileUrl(vault, r.path, { raw: true })}
+            peek={thumb.picture}
+            img={thumb.picture ? agentFileUrl(vault, r.path, { raw: true }) : undefined}
+            icon={thumb.picture ? undefined : thumb.icon}
             lead={GLYPH_IMAGE}
             rest={`\u00A0${r.label}`}
             title={r.path.split('/').pop()}
             onOpen={onOpenFile ? () => onOpenFile(r.path) : undefined}
           />
-        )))}
+          );
+        })()))}
     </span>
   );
 }

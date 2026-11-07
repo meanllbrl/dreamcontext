@@ -276,7 +276,7 @@ const composerState = (page, scope) => page.evaluate((s) => {
     rowAbove: root.querySelectorAll('.chat-cmp-attachments .chat-cmp-attachment, .chat-cmp-quote').length,
     inlineMedia: root.querySelectorAll('.chat-cmp-hl-img').length,
     inlineIcons: [...root.querySelectorAll('.chat-cmp-hl-thumb[data-icon]')].map((e) => e.getAttribute('data-icon')),
-    inlineThumbs: [...root.querySelectorAll('.chat-cmp-hl-thumb')].filter((e) => /url\(/.test(e.style.backgroundImage)).length,
+    inlineThumbs: [...root.querySelectorAll('.chat-cmp-hl-thumb')].filter((e) => e.querySelector('img.chat-cmp-hl-thumb-img')).length,
     inlineRefs: root.querySelectorAll('.chat-cmp-hl-ref:not(.chat-cmp-hl-img)').length,
     // Every chip inside the text field's box: nothing drawn above it.
     allInField: [...root.querySelectorAll('.chat-cmp-hl-ref')].every((m) => { const r = m.getBoundingClientRect(); return field && r.top >= field.top - 2 && r.bottom <= field.bottom + 2; }),
