@@ -3,10 +3,12 @@
  * The Super Agent's tool steps as one quiet line (owner 2026-11-06, draft A), at 1440 dark:
  *   1 while the turn runs: one line, a ring and the step in hand, its height fixed;
  *   2 once it lands: the line is gone, only the answer stays (owner 2026-11-06, second look);
- *   3 hovering the answer shows a faint "steps" link; a click opens the rows, a second closes them;
+ *   3 hovering the answer shows no steps entry at all (the hover "steps" link was removed, owner
+ *     2026-11-08), at 1440 and at a 390 phone width;
  *   4 a failed step still stands on its own row.
  *
  *   npm run build && node scripts/verify/super-adim-sessiz.mjs [outDir]
+ *   VERIFY_CLI=<package>/dist/index.js runs it against another build (a before/after pair).
  *
  * The real dashboard server from dist (scratch HOME) and a scripted stand-in `claude` that plays
  * main Super: it emits real stream-json tool calls (mostly `dreamcontext` ones, as Super does).
@@ -26,7 +28,7 @@ const SCRATCH = join(tmpdir(), `dreamcontext-verify-super-adim-sessiz-${process.
 const HOME = join(SCRATCH, 'home');
 const VAULT = 'acme-storefront';
 const PROJ = join(SCRATCH, VAULT);
-const CLI = join(REPO, 'dist', 'index.js');
+const CLI = process.env.VERIFY_CLI ? resolve(process.env.VERIFY_CLI) : join(REPO, 'dist', 'index.js');
 const OUT = resolve(process.argv[2] || join(REPO, 'tmp', 'verify', 'super-adim-sessiz'));
 
 const env = () => cleanEnv(HOME);
@@ -112,23 +114,27 @@ async function run(base) {
   ok('2 the answer is on screen', await until(page, async () => (await answer.count()) === 1, 30000));
   ok('2 no chip and no line once it landed', await until(page, async () => (await s.locator('[data-testid="super-steps-line"]').count()) === 0, 10000));
   ok('2 nothing of the steps is drawn', (await s.locator('[data-testid="super-steps"]').count()) === 0);
-  const link = answer.locator('[data-testid="super-steps-link"]');
-  ok('2 the steps link is hidden until hover', Number(await link.evaluate((el) => getComputedStyle(el).opacity)) === 0);
   await page.mouse.move(5, 5);
   await page.waitForTimeout(400);
   await page.screenshot({ path: join(OUT, '6-tur-bitti-yeni-1440-dark.png') });
 
-  console.log('── 3 hover, open, close');
+  console.log('── 3 hover: no steps entry');
   await answer.hover();
-  ok('3 hovering the answer shows a faint "steps" link', await until(page, async () => Number(await link.evaluate((el) => getComputedStyle(el).opacity)) > 0.5, 3000));
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
   await page.screenshot({ path: join(OUT, '7-hover-adimlar-1440-dark.png') });
-  await link.click();
-  ok('3 a click opens the seven rows', await until(page, async () => (await s.locator('[data-testid="super-steps-rows"] .chat-toolcard').count()) === 7, 5000));
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(OUT, '7-hover-adimlar-acik-1440-dark.png') });
-  await link.click();
-  ok('3 a second click closes them', await until(page, async () => (await s.locator('[data-testid="super-steps-rows"]').count()) === 0, 5000));
+  const visibleEntry = async () => s.locator('.chat-msg-assistant-row button').evaluateAll((els) => els
+    .filter((el) => /steps|adım/i.test(el.textContent || '') && Number(getComputedStyle(el).opacity) > 0).length);
+  ok('3 hovering the answer shows no steps link', (await visibleEntry()) === 0);
+  ok('3 nothing of the steps is drawn on hover', (await s.locator('[data-testid="super-steps"]').count()) === 0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(800);
+  await answer.scrollIntoViewIfNeeded();
+  await answer.click({ position: { x: 20, y: 10 } });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(OUT, '7-dokunus-adimlar-390-dark.png') });
+  ok('3 the phone width shows no steps link either', (await visibleEntry()) === 0);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(800);
 
   console.log('── 4 a failed step');
   await sayOnStage(page, 'main', 'Checkout görevini taşı (hata)');

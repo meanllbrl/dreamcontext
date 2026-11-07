@@ -65,14 +65,13 @@ function SuperLiveLineInner({ label, startedAt }: { label?: string; startedAt?: 
 export const SuperLiveLine = memo(SuperLiveLineInner);
 
 function SuperStepsLineInner({
-  items, stillAccruing, waiting = false, onOpenFile, replyGroup, hidden = false, open: openFromAnswer = false, startedAt,
+  items, stillAccruing, waiting = false, onOpenFile, replyGroup, hidden = false, startedAt,
 }: {
   /** When the turn began (`conv.turnStartedAt`): the live line's clock counts from here. */
   startedAt?: number;
-  /** Landed and put away behind its answer's "steps" link (ChatPane decides): nothing of the line
-   *  shows, only a failed step's own row; `open` (the link's state) draws the rows here. */
+  /** Landed and put away behind its answer (ChatPane decides): nothing of the line shows, only a
+   *  failed step's own row. There is no way back to the rows (owner 2026-11-08). */
   hidden?: boolean;
-  open?: boolean;
   items: ChatToolItem[];
   /** The tail of a turn that has not spoken yet (see `toolRunPhase`). */
   stillAccruing: boolean;
@@ -82,8 +81,7 @@ function SuperStepsLineInner({
   replyGroup?: string;
 }) {
   const { t } = useI18n();
-  const [ownOpen, setOpen] = useState(false);
-  const open = hidden ? openFromAnswer : ownOpen;
+  const [open, setOpen] = useState(false);
   const live = stillAccruing || items.some((i) => i.status === 'running');
   const steps = items.filter((i) => !stepPhrase(i).quiet);
   const failed = items.filter(stepFailed);
@@ -97,18 +95,12 @@ function SuperStepsLineInner({
   const label = live ? liveLabel(items, waiting, t) : parts.join(' · ');
 
   if (hidden) {
-    if (!open && !failed.length) return null;
+    if (!failed.length) return null;
     return (
-      <div className="super-steps" data-testid="super-steps" data-hidden data-open={open || undefined}>
-        {open ? (
-          <div className="super-steps-rows" data-testid="super-steps-rows">
-            {items.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" stretch="follow" />)}
-          </div>
-        ) : (
-          <div className="super-steps-errors" data-testid="super-steps-errors">
-            {failed.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" />)}
-          </div>
-        )}
+      <div className="super-steps" data-testid="super-steps" data-hidden>
+        <div className="super-steps-errors" data-testid="super-steps-errors">
+          {failed.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" />)}
+        </div>
       </div>
     );
   }

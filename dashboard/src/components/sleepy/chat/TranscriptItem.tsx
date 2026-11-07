@@ -434,14 +434,8 @@ function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefine
 
 function AssistantMessage({
   item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, report, readOnly, replyGroup, replyHeads, onReplyTarget,
-  stepsKey, stepsOpen = false, onToggleSteps,
 }: {
   item: ChatTextItem;
-  /** A Super answer whose turn's steps were put away (owner 2026-11-06): a faint "steps" link
-   *  shows on hover and opens them. The key names the run in ChatPane's open set. */
-  stepsKey?: string;
-  stepsOpen?: boolean;
-  onToggleSteps?: (key: string) => void;
   /** A SECTIONED Super reply's heads (ChatPane's replyHeadsById): present, the answer is parsed
    *  with its section starts and every part opens with the chip of the message it answers. */
   replyHeads?: ReplyHead[];
@@ -476,7 +470,6 @@ function AssistantMessage({
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const { t } = useI18n();
 
   // What the answer asked the view to render (buttons, boards, rendered HTML, insight
   // cards, checklists) versus what it asked it to READ. Re-derived per token while
@@ -550,18 +543,6 @@ function AssistantMessage({
   return (
     <SelectionItemContext.Provider value={item.id}>
     <div className="chat-msg-assistant-row" data-done={item.done} data-item-id={item.id} data-reply-grp={replyGroup} tabIndex={-1}>
-      {stepsKey && onToggleSteps && (
-        <button
-          type="button"
-          className="super-steps-link"
-          data-open={stepsOpen || undefined}
-          aria-expanded={stepsOpen}
-          onClick={() => onToggleSteps(stepsKey)}
-          data-testid="super-steps-link"
-        >
-          {t(stepsOpen ? 'super.steps.hide' : 'super.steps.show')}
-        </button>
-      )}
       {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
           a card sits between the paragraph that introduces it and the one that says what to
           notice — which is how the answer was written and, before 2026-08-27, not how it
@@ -718,12 +699,8 @@ interface StepStretch {
 
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, report, onQuote, readOnly = false,
-  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget, stepsKey, stepsOpen, onToggleSteps,
+  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget,
 }: StepStretch & {
-  /** A Super answer whose turn's steps were put away: see `AssistantMessage`. */
-  stepsKey?: string;
-  stepsOpen?: boolean;
-  onToggleSteps?: (key: string) => void;
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
    *  (SlideOver's `mode:'subagent'`), which has no session of its own to mutate. */
@@ -779,9 +756,6 @@ function ItemViewInner({
           replyGroup={replyGroup}
           replyHeads={replyHeads}
           onReplyTarget={onReplyTarget}
-          stepsKey={stepsKey}
-          stepsOpen={stepsOpen}
-          onToggleSteps={onToggleSteps}
         />
       );
     // Step lines: where they sit in their speaker's stretch is decided by the transcript

@@ -41,15 +41,16 @@ describe('the quiet steps line', () => {
     // The run holding the live browser is never put away.
     expect(pane).toContain('if (browserHostToolId && seg.items.some((it) => it.id === browserHostToolId)) return;');
     expect(pane).toContain('hidden={hostedRuns.has(runKeyOf(seg.items))}');
-    expect(pane).toContain('stepsKey={stepsHost.get(item.id)}');
+    // No way back to a put-away run: the hover "steps" link is gone (owner 2026-11-08).
+    expect(pane).not.toContain('stepsKey');
+    expect(pane).not.toContain('openSteps');
     // A one-piece answer group (the lone answer) draws no reply line.
     expect(pane).toContain('const lines = [...spans.values()].filter((l) => l.n > 1);');
     const row = src('dashboard/src/components/sleepy/chat/TranscriptItem.tsx');
-    expect(row).toContain('className="super-steps-link"');
-    const css = src('dashboard/src/components/sleepy/super/SuperSurface.css');
-    // Absolute and hover-only: showing it never moves the transcript.
-    expect(css).toMatch(/\.super-steps-link \{\s*position: absolute;/);
-    expect(css).toContain('.chat-msg-assistant-row:hover > .super-steps-link');
+    expect(row).not.toContain('super-steps-link');
+    expect(row).not.toContain('onToggleSteps');
+    expect(src('dashboard/src/components/sleepy/super/SuperSurface.css')).not.toContain('.super-steps-link');
+    expect(src('dashboard/src/context/I18nContext.tsx')).not.toMatch(/'super\.steps\.(show|hide)'/);
   });
 
   it('counts a failed step: the tool error, or a dreamcontext call that printed ✗', () => {
@@ -77,7 +78,7 @@ describe('the quiet steps line', () => {
 
   it('has every visible string in EN and TR, without an em dash', () => {
     const i18n = src('dashboard/src/context/I18nContext.tsx');
-    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting', 'show', 'hide', 'thinking', 'starting']) {
+    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting', 'thinking', 'starting']) {
       const lines = i18n.split('\n').filter((l) => l.includes(`'super.steps.${key}':`));
       expect(lines, key).toHaveLength(2);
       for (const l of lines) expect(l).not.toContain('—');
