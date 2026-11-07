@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { nowStep, stepFailed, stepsDuration } from '../../dashboard/src/components/sleepy/super/superSteps.js';
+import { liveLabel, nowStep, stepFailed, stepsDuration, turnClock } from '../../dashboard/src/components/sleepy/super/superSteps.js';
 import { segmentToolRuns } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 const src = (rel: string) => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8');
@@ -77,10 +77,52 @@ describe('the quiet steps line', () => {
 
   it('has every visible string in EN and TR, without an em dash', () => {
     const i18n = src('dashboard/src/context/I18nContext.tsx');
-    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting', 'show', 'hide']) {
+    for (const key of ['one', 'many', 'seconds', 'minutes', 'failedOne', 'failedMany', 'working', 'waiting', 'show', 'hide', 'thinking', 'starting']) {
       const lines = i18n.split('\n').filter((l) => l.includes(`'super.steps.${key}':`));
       expect(lines, key).toHaveLength(2);
       for (const l of lines) expect(l).not.toContain('—');
     }
+  });
+
+  // Owner 2026-11-07: the separate "Working… 28s" pill made the chat jump a row in every thinking
+  // gap. In the Super view the live line carries the turn's clock and says "Thinking" instead.
+  it('says "Thinking" between steps, the step in hand during one, and waiting on the owner', () => {
+    const en: Record<string, string> = { 'super.steps.thinking': 'Thinking', 'super.steps.waiting': 'Waiting for you', 'super.steps.working': 'Working' };
+    const t = (k: string) => en[k] ?? k;
+    const landed = [bash('a', 'dreamcontext tasks list'), bash('b', 'dreamcontext tasks log x "y"')];
+    expect(liveLabel(landed, false, t)).toBe('Thinking');
+    const running = [...landed, bash('c', 'dreamcontext tasks create "Fix it"', 'running')];
+    expect(liveLabel(running, false, t)).toBe(nowStep(running));
+    expect(liveLabel(running, false, t).endsWith('…')).toBe(true);
+    expect(liveLabel(running, true, t)).toBe('Waiting for you');
+  });
+
+  it('reads the turn clock from 0 s, then as the chip does', () => {
+    const tr: Record<string, string> = { 'super.steps.seconds': '{n} sn', 'super.steps.minutes': '{n} dk' };
+    const t = (k: string) => tr[k] ?? k;
+    expect(turnClock(0, t)).toBe('0 sn');
+    expect(turnClock(400, t)).toBe('0 sn');
+    expect(turnClock(28_300, t)).toBe('28 sn');
+    expect(turnClock(125_000, t)).toBe('2 dk 5 sn');
+  });
+
+  it('draws no Working pill in the Super view: the live line carries the clock instead', () => {
+    const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
+    // The plain Chat keeps its pill; the Super view never draws it.
+    expect(pane).toMatch(/\{working && !superView && \(\s*<WorkingIndicator/);
+    expect(pane).not.toMatch(/\{working && \(\s*<WorkingIndicator/);
+    // With a live steps line as the tail, nothing extra; without one, the same quiet line stands in.
+    expect(pane).toContain("const superLineLive = superView && liveTail >= 0 && liveSegments[liveTail].kind === 'run' && accruingAt(liveTail);");
+    expect(pane).toMatch(/\{working && superView && !superLineLive && \(\s*<SuperLiveLine/);
+    expect(pane).toContain('startedAt={conv.turnStartedAt}');
+    const line = src('dashboard/src/components/sleepy/super/SuperStepsLine.tsx');
+    expect(line).toContain('const label = live ? liveLabel(items, waiting, t) : parts.join');
+    expect(line.match(/className="super-steps-time"/g)).toHaveLength(2);
+    // The clock ticks only on the turn's own tail, and the start label is translated.
+    expect(line).toContain('useTurnClock(startedAt, stillAccruing && !hidden)');
+    expect(pane).toContain("t('super.steps.starting').replace('{tool}'");
+    expect(pane).not.toMatch(/<SuperLiveLine[^>]*'Starting /);
+    const css = src('dashboard/src/components/sleepy/super/SuperSurface.css');
+    expect(css).toContain('.super-steps-time {');
   });
 });

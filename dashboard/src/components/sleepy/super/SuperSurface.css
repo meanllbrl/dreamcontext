@@ -1892,6 +1892,11 @@
 .super-steps[data-waiting] .super-steps-ring { animation: none; border-color: var(--color-warning); }
 .super-steps-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
 .super-steps-count { flex: none; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+/* The turn's clock at the end of the live line (owner 2026-11-07): it replaces the Working pill. */
+.super-steps-time { flex: none; font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+/* The live line before any step (SuperLiveLine): same shape, nothing to open. */
+.super-steps-line--static { cursor: default; }
+.super-steps-line--static:hover { border-color: transparent; color: var(--color-text-tertiary); }
 .super-steps-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .super-steps-failed { flex: none; color: var(--color-error-ink); }
 .super-steps-caret { flex: none; font-size: 9px; }

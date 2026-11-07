@@ -85,7 +85,7 @@ import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/super
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
-import { SuperStepsLine } from './super/SuperStepsLine';
+import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
@@ -2207,6 +2207,7 @@ export function ChatPane({
           hidden={hostedRuns.has(runKeyOf(seg.items))}
           open={openSteps.has(runKeyOf(seg.items))}
           waiting={accruing && waitingOnOwner}
+          startedAt={conv.turnStartedAt}
           onOpenFile={handleOpenFile}
           replyGroup={replyMap?.get(seg.items[0].id)?.groupId}
         />
@@ -2382,6 +2383,9 @@ export function ChatPane({
     liveTail -= 1;
   }
   const accruingAt = (i: number) => i === liveTail && session.busy;
+  /** The Super view's live steps line is the turn's tail: it already says the turn is running,
+   *  with its clock, so no separate Working pill is drawn under it (owner 2026-11-07). */
+  const superLineLive = superView && liveTail >= 0 && liveSegments[liveTail].kind === 'run' && accruingAt(liveTail);
   // A LANDED turn's steps in the Super view (owner 2026-11-06): once the answer is written the
   // quiet line goes away and only the answer stays; a faint "steps" link on the answer's hover
   // opens the rows again. Only a run whose next visible thing IS that answer is put away: with
@@ -2936,9 +2940,17 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
-            {working && (
+            {working && !superView && (
               <WorkingIndicator
                 label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'}
+                startedAt={conv.turnStartedAt}
+              />
+            )}
+            {/* The Super view never pops a Working pill (owner 2026-11-07): the live steps line
+                carries the clock, and with no steps line yet the same quiet line stands in. */}
+            {working && superView && !superLineLive && (
+              <SuperLiveLine
+                label={session.opened ? undefined : t('super.steps.starting').replace('{tool}', session.tool === 'codex' ? 'Codex' : session.tool === 'antigravity' ? 'Antigravity' : 'Claude')}
                 startedAt={conv.turnStartedAt}
               />
             )}
