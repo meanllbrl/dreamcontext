@@ -4,6 +4,7 @@ import { ToolCard } from '../chat/ToolCard';
 import { BrowserSlot } from '../chat/browserHost';
 import { liveLabel, stepFailed, stepPhrase, stepsDuration, turnClock } from './superSteps';
 import { useI18n } from '../../../context/I18nContext';
+import { pollMs } from '../../../lib/windowActivity';
 import type { ChatToolItem } from '../chatSession';
 
 /**
@@ -34,7 +35,8 @@ function useTurnClock(startedAt: number | undefined, live: boolean): number {
   useEffect(() => {
     if (!live) return;
     setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const tick = () => setNow(Date.now());
+    const timer = setInterval(tick, pollMs(1000));
     return () => clearInterval(timer);
   }, [live]);
   return Math.max(0, now - (startedAt ?? base));
