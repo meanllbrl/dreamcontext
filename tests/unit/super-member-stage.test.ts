@@ -309,7 +309,7 @@ describe('observed run fixes (super-members.mjs)', () => {
   it('the member head gives way before the buttons: nothing in the head row overlaps', () => {
     const css = src('dashboard/src/components/sleepy/super/TaskStrip.css');
     expect(css).toMatch(/\.super-member-head \{[^}]*flex: 1 1 0;[^}]*overflow: hidden;/);
-    expect(css).toMatch(/\.super-centre-head:has\(\.super-member-head\) \.super-head-more,\s*\.super-centre-head:has\(\.super-member-head\) \.super-add-btn,\s*\.super-centre-head:has\(\.super-member-head\) \.super-agenda-open \{ flex: none; \}/);
+    expect(css).toMatch(/\.super-centre-head:has\(\.super-member-head\) \.super-head-more,\s*\.super-centre-head:has\(\.super-member-head\) \.super-agenda-open \{ flex: none; \}/);
     expect(css).toMatch(/@container super-centre \(max-width: 559px\) \{[^}]*\.super-member-model \{ display: none; \}/);
   });
 

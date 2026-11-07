@@ -34,13 +34,13 @@ describe('the Super centre head never wraps or spills', () => {
 });
 
 /**
- * Less text in the head (owner 2026-11-05): no "you talk only to me" subtitle, "+ Add" the one
- * worded action, New session and Turn off behind a ⋯ menu. The rendered proof is
- * scripts/verify/super-head-menu.mjs.
+ * Less text in the head (owner 2026-11-05, 2026-11-07): no "you talk only to me" subtitle, no
+ * worded button at all; Add a card, New session and Turn off behind a ⋯ menu. The rendered proof
+ * is scripts/verify/super-head-menu.mjs.
  */
 const SRC = (f: string) => readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', ...f.split('/')), 'utf-8');
 
-describe('the Super head keeps New session and Turn off in a ⋯ menu', () => {
+describe('the Super head keeps Add a card, New session and Turn off in a ⋯ menu', () => {
   const surface = SRC('components/sleepy/super/SuperSurface.tsx');
   const head = surface.slice(surface.indexOf('export function SuperCentreHead'), surface.indexOf('/** How long "Added to Others" stays up. */'));
   const menu = SRC('components/sleepy/super/SuperHeadMenu.tsx');
@@ -53,6 +53,14 @@ describe('the Super head keeps New session and Turn off in a ⋯ menu', () => {
     expect(SRC('context/I18nContext.tsx')).not.toContain("'super.centre.sub'");
   });
 
+  it('the head draws no "+ Add" button: Add a card is the ⋯ menu\'s first row', () => {
+    expect(surface).not.toContain('super-add-btn');
+    expect(surface).not.toContain("t('super.add.button')");
+    expect(surface).toMatch(/onAdd=\{canAdd && [^}]*\? openAddMenu : undefined\}/);
+    expect(menu.indexOf('data-testid="super-head-add"')).toBeGreaterThan(-1);
+    expect(menu.indexOf('data-testid="super-head-add"')).toBeLessThan(menu.indexOf('data-testid="super-head-fresh"'));
+  });
+
   it('the menu holds New session, then Turn off under a rule', () => {
     const fresh = menu.indexOf('data-testid="super-head-fresh"');
     const rule = menu.indexOf('role="separator"');
@@ -61,7 +69,7 @@ describe('the Super head keeps New session and Turn off in a ⋯ menu', () => {
     expect(rule).toBeGreaterThan(fresh);
     expect(off).toBeGreaterThan(rule);
     expect(menu).toContain('role="menu"');
-    expect(menu.match(/role="menuitem"/g)?.length).toBe(2);
+    expect(menu.match(/role="menuitem"/g)?.length).toBe(3);
   });
 
   it('it asks nothing through a browser dialog (a silent no-op in the desktop app)', () => {

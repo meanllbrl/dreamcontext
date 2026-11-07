@@ -5,8 +5,9 @@ import { useStageMenu } from './useStageMenu';
 
 /**
  * The Super chat head's ⋯ (owner 2026-11-05: "the head is too wordy"): New session and Turn off
- * live in this small menu instead of two worded buttons; "+ Add" stays the head's one visible
- * action. What each row does is unchanged, only where it sits.
+ * live in this small menu instead of two worded buttons. Add a card is its first row (owner
+ * 2026-11-07: no "+ Add" in the head): it opens the stage's add menu (web, file, knowledge, task,
+ * insight, whiteboard) under the ⋯. What each row does is unchanged, only where it sits.
  *
  * New session (task super-agent-devrini-…, owner 2026-10-22): one press asks the server for a
  * `[super fresh]` turn; the super writes its handoff, its pane rotates into a fresh session, and
@@ -16,11 +17,13 @@ import { useStageMenu } from './useStageMenu';
  *
  * Turn off is the last row, under a rule: it asks first (the stage's own dialog), as before.
  */
-export function SuperHeadMenu({ fresh, onTurnOff }: {
+export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
   /** Absent: this head starts no session (a remote screen). */
   fresh?: { pending: boolean; onPress: () => Promise<boolean> };
   /** Absent: this head cannot turn the Super Agent off (a remote screen, the dock, a member). */
   onTurnOff?: () => void;
+  /** Absent: this head opens no card (a remote screen, the dock). Given the ⋯ to anchor under. */
+  onAdd?: (anchor: HTMLElement) => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -32,7 +35,7 @@ export function SuperHeadMenu({ fresh, onTurnOff }: {
     const timer = setTimeout(() => setError(null), 6_000);
     return () => clearTimeout(timer);
   }, [error]);
-  if (!fresh && !onTurnOff) return null;
+  if (!fresh && !onTurnOff && !onAdd) return null;
 
   const busy = !!fresh && (fresh.pending || posting);
   const toggleEl = () => wrapRef.current?.querySelector<HTMLButtonElement>('[data-testid="super-head-more"]') ?? null;
@@ -50,6 +53,11 @@ export function SuperHeadMenu({ fresh, onTurnOff }: {
       .catch((err: { code?: string }) => setError(err?.code === 'rotating' ? t('super.fresh.busy') : t('super.fresh.failed')))
       .finally(() => setPosting(false));
   };
+  const pressAdd = () => {
+    const el = toggleEl();
+    close(false);
+    if (el) onAdd?.(el);
+  };
   const pressOff = () => {
     close(false);
     onTurnOff?.();
@@ -65,17 +73,19 @@ export function SuperHeadMenu({ fresh, onTurnOff }: {
           onClose={(why) => close(why === 'escape')}
           fresh={fresh ? { busy, onPress: pressFresh } : undefined}
           onTurnOff={onTurnOff ? pressOff : undefined}
+          onAdd={onAdd ? pressAdd : undefined}
         />
       )}
     </div>
   );
 }
 
-function HeadMenu({ toggle, onClose, fresh, onTurnOff }: {
+function HeadMenu({ toggle, onClose, fresh, onTurnOff, onAdd }: {
   toggle: () => Element | null;
   onClose: (why: 'escape' | 'outside') => void;
   fresh?: { busy: boolean; onPress: () => void };
   onTurnOff?: () => void;
+  onAdd?: () => void;
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
@@ -83,6 +93,15 @@ function HeadMenu({ toggle, onClose, fresh, onTurnOff }: {
   return (
     <div ref={ref} className="super-size-menu super-head-menu" role="menu" aria-label={t('super.head.more')} data-testid="super-head-menu"
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      {onAdd && (
+        <button type="button" role="menuitem" className="super-head-menu-item" data-testid="super-head-add"
+          aria-haspopup="menu" onClick={onAdd}>
+          <svg className="super-head-menu-glyph" width={16} height={16} viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <span>{t('super.add.menuItem')}</span>
+        </button>
+      )}
       {fresh && (
         <button type="button" role="menuitem" className="super-head-menu-item" data-testid="super-head-fresh"
           aria-disabled={fresh.busy || undefined} title={t('super.fresh.title')} onClick={fresh.onPress}>

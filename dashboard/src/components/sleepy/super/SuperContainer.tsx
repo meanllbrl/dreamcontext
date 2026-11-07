@@ -12,6 +12,7 @@ import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
 import { BrowserCard } from './BrowserCard';
 import { useStageMenu } from './useStageMenu';
+import { cardPlaceKey } from './cardMenuModel';
 import type { StageCue } from './useStageCues';
 import { targetPath, knowledgePath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
@@ -250,6 +251,15 @@ export function SuperContainer(props: SuperContainerProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [closeAsk]);
+  // The menu belongs to the card where it opened: minimised, resized, sent to Others or off the
+  // stage, it closes instead of floating over whatever the card became (cardMenuModel.ts).
+  const placeKey = cardPlaceKey(plan, props.parked);
+  const openedAt = useRef(placeKey);
+  useEffect(() => {
+    if (openedAt.current === placeKey) return;
+    openedAt.current = placeKey;
+    setCloseAsk(false);
+  }, [placeKey]);
   const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
@@ -344,7 +354,9 @@ export function SuperContainer(props: SuperContainerProps) {
       </div>
       <span className="super-drop-ring" aria-hidden />
       {props.cue && <span className="super-card-glint" aria-hidden />}
-      {!thumb && <div className="super-card-actions">
+      {/* A rail's mini tile (a status dot, owner 2026-11-07) draws no buttons: on hover they
+          covered it. The whole tile is the button; a click opens the card, its name is the tooltip. */}
+      {!thumb && !plan.mini && <div className="super-card-actions">
         {floating ? (
           <>
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
@@ -365,7 +377,7 @@ export function SuperContainer(props: SuperContainerProps) {
           <>
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
-            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
+            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" caption />
             {closeBtn}
           </>
         )}
@@ -386,7 +398,7 @@ export function SuperContainer(props: SuperContainerProps) {
           onClose={() => setMenu(null)}
         />
       )}
-      {floating && props.onPressResize && (
+      {floating && !plan.mini && props.onPressResize && (
         <button
           type="button"
           className="super-card-resize"
@@ -410,6 +422,12 @@ export function SuperContainer(props: SuperContainerProps) {
             onClick={() => { setCloseAsk(false); props.onKeepRunning(c.id); props.onToOthers(c.id); }}>
             {t('super.close.toOthers')}
           </button>
+          {!floating && (
+            <button type="button" className="super-close-choice-btn" data-testid="super-close-minimize"
+              onClick={() => { setCloseAsk(false); props.onMinimize(c.id); }}>
+              {t('super.card.minimize')}
+            </button>
+          )}
         </div>
       )}
       {props.endPending && !closeAsk && (
@@ -457,22 +475,28 @@ const ICONS: Record<IconName, ReactNode> = {
   more: <><circle cx="4" cy="8" r="0.9" /><circle cx="8" cy="8" r="0.9" /><circle cx="12" cy="8" r="0.9" /></>,
 };
 
-export function IconButton({ icon, label, onClick, testId, expanded, menu }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean }) {
+/**
+ * A glyph button of the stage. `caption`: a glyph people do not read on sight (owner 2026-11-07,
+ * the minimise arrows) grows on hover and focus to show its word beside the glyph; the word is
+ * then the button's name, so it carries no second tooltip.
+ */
+export function IconButton({ icon, label, onClick, testId, expanded, menu, caption }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean; caption?: boolean }) {
   return (
     <button
       type="button"
-      className="super-icon-btn"
+      className={caption ? 'super-icon-btn super-icon-btn--caption' : 'super-icon-btn'}
       data-testid={testId}
       aria-haspopup={menu ? 'menu' : undefined}
       aria-expanded={expanded}
       aria-label={label}
-      title={label}
+      title={caption ? undefined : label}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         {ICONS[icon]}
       </svg>
+      {caption && <span className="super-icon-btn-caption" aria-hidden>{label}</span>}
     </button>
   );
 }

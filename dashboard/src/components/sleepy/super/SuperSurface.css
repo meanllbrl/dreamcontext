@@ -164,14 +164,13 @@
    the name never wraps, it is cut with an ellipsis only after the subtitle has given way. */
 .super-centre-name { font-weight: 700; color: var(--color-text); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-centre-head > img { flex: none; }
-/* The head (owner 2026-11-05, less text): the name, then pushed right the ⋯ menu (New session,
-   Turn off) and "+ Add", the one worded action. Nothing in it wraps or gives way but the name. */
+/* The head (owner 2026-11-05 and 2026-11-07, less text): the name, then pushed right the ⋯ menu
+   (Add a card, New session, Turn off). Nothing in it wraps or gives way but the name. */
 .super-centre-clip { container-type: inline-size; container-name: super-centre; }
 .super-head-more { margin-left: auto; position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
 .super-head-more .super-icon-btn { width: 28px; height: 28px; flex: none; }
 .super-head-more .super-icon-btn[aria-expanded='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
-.super-fresh-btn,
-.super-add-btn {
+.super-fresh-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -189,13 +188,8 @@
   transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out;
 }
 .super-fresh-btn:hover:not([aria-disabled='true']) { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg)); border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); color: var(--color-text); }
-.super-add-btn { padding: 0 12px; }
-.super-add-btn[aria-expanded='true'],
-.super-add-btn:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); color: var(--color-text); }
-.super-fresh-btn:active:not([aria-disabled='true']),
-.super-add-btn:active { transform: scale(0.97); }
-.super-fresh-btn:focus-visible,
-.super-add-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-fresh-btn:active:not([aria-disabled='true']) { transform: scale(0.97); }
+.super-fresh-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .super-fresh-glyph { flex: none; }
 /* The Agenda and Others buttons (the head's own when those cards are off the stage) keep only
    their glyph on a narrow centre; the word stays in aria-label and title. */
@@ -469,6 +463,34 @@
 }
 .super-icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-icon-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+/* A glyph people do not read on sight (owner 2026-11-07, the minimise arrows): on hover and on
+   focus the button grows into a pill and its word slides out beside the glyph. */
+.super-icon-btn--caption {
+  width: auto;
+  min-width: 24px;
+  padding: 0 4px;
+  gap: 0;
+  transition: background 120ms ease-out, color 120ms ease-out, gap 160ms ease-out, padding 160ms ease-out;
+}
+.super-icon-btn--caption > svg { flex: none; }
+.super-icon-btn-caption {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 24px;
+  opacity: 0;
+  transition: max-width 160ms ease-out, opacity 120ms ease-out;
+}
+.super-icon-btn--caption:hover,
+.super-icon-btn--caption:focus-visible { gap: 4px; padding: 0 8px 0 4px; background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-icon-btn--caption:hover > .super-icon-btn-caption,
+.super-icon-btn--caption:focus-visible > .super-icon-btn-caption { max-width: 120px; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .super-icon-btn--caption,
+  .super-icon-btn-caption { transition: none; }
+}
 
 /* The agent card: the child at a glance (O10). */
 .super-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; min-width: 0; min-height: 0; flex: 1 1 auto; }
@@ -1819,7 +1841,9 @@
   line-height: 1.4;
 }
 
-/* A tight presentation's rail: one line per live job; a job that asks stays unmistakable. */
+/* A tight presentation's rail: one line per live job; a job that asks stays unmistakable. The
+   tile has no buttons: it is one, and a click opens it. */
+.super-card-frame[data-mini='true'] { cursor: pointer; }
 .super-card-frame[data-mini='true'] .super-mini-job {
   display: flex;
   flex-direction: row;
