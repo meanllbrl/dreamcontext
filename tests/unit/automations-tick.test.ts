@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
+import { oneRootPerBrain, PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
 import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
@@ -504,6 +504,49 @@ describe('tickAll', () => {
       expect(lines.some((l) => l.includes(codeRepo) && l.includes('ticked there only'))).toBe(true);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('the root that holds the approvals wins, even when it is the link (approvals are keyed by root)', () => {
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+    try {
+      expect(oneRootPerBrain([codeRepo, projectRoot], (r) => (r === codeRepo ? 2 : 0)).roots).toEqual([codeRepo]);
+      expect(oneRootPerBrain([codeRepo, projectRoot], () => 0).roots).toEqual([projectRoot]);
+      expect(oneRootPerBrain([codeRepo, projectRoot], () => 1).roots).toEqual([projectRoot]);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it(`never ticks more than ${PROJECT_CONCURRENCY} projects at once`, async () => {
+    const extra: string[] = [];
+    try {
+      registerProject(projectRoot, home);
+      makeDue('p0');
+      for (let i = 1; i <= PROJECT_CONCURRENCY + 2; i++) {
+        const root = mkdtempSync(join(tmpdir(), 'dc-automations-tick-b-'));
+        extra.push(root);
+        mkdirSync(join(root, '_dream_context'), { recursive: true });
+        createAutomation(join(root, '_dream_context'), { slug: `p${i}`, title: `P${i}`, days: 'daily', at: '18:00', prompt: 'Say hi.' });
+        registerProject(root, home);
+      }
+      const concurrency = { current: 0, max: 0 };
+      const runImpl = vi.fn(async (_c: string, slug: string) => {
+        concurrency.current += 1;
+        concurrency.max = Math.max(concurrency.max, concurrency.current);
+        await new Promise((r) => setTimeout(r, 30));
+        concurrency.current -= 1;
+        return fakeOutcome(slug, 'ok');
+      }) as unknown as typeof runAutomation;
+
+      const result = await tickAll({ now: NOW, home, runImpl });
+
+      expect(result.projects).toHaveLength(PROJECT_CONCURRENCY + 3);
+      expect(runImpl).toHaveBeenCalledTimes(PROJECT_CONCURRENCY + 3);
+      expect(concurrency.max).toBe(PROJECT_CONCURRENCY);
+    } finally {
+      for (const r of extra) rmSync(r, { recursive: true, force: true });
     }
   });
 

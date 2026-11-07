@@ -395,8 +395,11 @@ export interface InstallResult {
  * human's confirmation before silently baking in a different build than the
  * one running the install.
  */
+const BOOTSTRAP_ATTEMPTS = 5;
+const BOOTSTRAP_RETRY_MS = 1_000;
+
 export async function installDispatcher(
-  opts: { home?: string; runner?: ExecRunner; uid?: number; force?: boolean } = {},
+  opts: { home?: string; runner?: ExecRunner; uid?: number; force?: boolean; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<InstallResult> {
   if (process.platform === 'win32') {
     const home = opts.home ?? homedir();
@@ -459,7 +462,16 @@ export async function installDispatcher(
 
   let bootstrapped = false;
   let method: InstallResult['method'] = 'none';
-  const bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  // `bootout` returns before launchd has finished tearing the old job down, and a bootstrap in
+  // that window fails with "5: Input/output error" (seen on this Mac, 2026-11-07). Without a retry
+  // the job is left unloaded and no routine runs at all; `update` now refreshes by itself, so the
+  // window is hit routinely, not only by a human re-running install.
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  for (let attempt = 1; !bootstrapRes.ok && attempt < BOOTSTRAP_ATTEMPTS; attempt++) {
+    await sleep(BOOTSTRAP_RETRY_MS);
+    bootstrapRes = await runner('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  }
   if (bootstrapRes.ok) {
     bootstrapped = true;
     method = 'bootstrap';

@@ -56,7 +56,7 @@ import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
-import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { listRegisteredProjects, readAutomationsRegistry, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
@@ -76,6 +76,9 @@ const defaultPollTelegram = (contextRoot: string, home?: string): Promise<PollRe
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
  *  exact registered-root → context-root derivation. */
 const CONTEXT_DIR_NAME = '_dream_context';
+
+/** How many projects tick at once (see `tickAll`). */
+export const PROJECT_CONCURRENCY = 3;
 
 export interface TickOptions {
   /** Business "now" for dueness math and both heartbeat timestamps — a single
@@ -374,12 +377,16 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
 /**
  * One registered root per physical brain. A code repo whose `_dream_context` is a symlink to its
- * brain, registered because a command once ran there, would tick the same manifests a second
- * time under a root with no approvals: every fire logged a "not approved" row next to the real
- * run. The root whose `_dream_context` is a real folder wins; with none (or two), the first in
+ * brain, registered because a command once ran there, ticked the same manifests a second time:
+ * the root without approvals logged a "not approved" row next to every real run. The root that
+ * HOLDS the approvals wins (approvals are keyed by the root they were given under, so the other
+ * one would only refuse); on a tie, the root whose `_dream_context` is a real folder; then
  * registry order. An unresolvable path keeps its own entry rather than vanishing.
  */
-export function oneRootPerBrain(projectRoots: string[]): { roots: string[]; linked: Array<[string, string]> } {
+export function oneRootPerBrain(
+  projectRoots: string[],
+  approvalsOf: (root: string) => number = () => 0,
+): { roots: string[]; linked: Array<[string, string]> } {
   const byBrain = new Map<string, string[]>();
   const order: string[] = [];
   for (const root of projectRoots) {
@@ -407,7 +414,8 @@ export function oneRootPerBrain(projectRoots: string[]): { roots: string[]; link
   const linked: Array<[string, string]> = [];
   for (const brain of order) {
     const group = byBrain.get(brain)!;
-    const owner = group.find((r) => !isLink(r)) ?? group[0];
+    // A stable sort keeps registry order among equals.
+    const owner = [...group].sort((a, b) => approvalsOf(b) - approvalsOf(a) || Number(isLink(a)) - Number(isLink(b)))[0];
     roots.push(owner);
     for (const r of group) if (r !== owner) linked.push([r, owner]);
   }
@@ -450,7 +458,8 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
     }
     present.push(projectRoot);
   }
-  const { roots, linked } = oneRootPerBrain(present);
+  const registry = readAutomationsRegistry(home);
+  const { roots, linked } = oneRootPerBrain(present, (root) => Object.keys(registry.projects[root]?.approvals ?? {}).length);
   for (const [link, owner] of linked) {
     logFn(`[automations] ${link} reaches the brain of ${owner} through a link, so it is ticked there only`);
   }
@@ -459,13 +468,24 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   // hold every other project's routines until it ends. Inside a project the runs stay in order.
   // A runner's clock advances from the tick's `now`, so a run's start, end and duration are real
   // even though every dueness question in this pass is asked at the same fixed `now`.
+  // At most PROJECT_CONCURRENCY at once: every start probes the same accounts before any run has
+  // spent anything, so an unbounded fan-out at a shared fire time overshoots the account
+  // threshold and lands a burst of claude trees on the busy Mac this exists to spare.
   const clock = (): Date => new Date(now.getTime() + (Date.now() - wallStart));
-  const settled = await Promise.allSettled(roots.map((projectRoot) => tickProject(projectRoot, { ...opts, now, clock })));
-  const projects: TickProjectResult[] = [];
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') projects.push(r.value);
-    else logFn(`[automations] tick failed for ${roots[i]}: ${(r.reason as Error)?.message ?? String(r.reason)}`);
-  });
+  const results: Array<TickProjectResult | null> = roots.map(() => null);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < roots.length) {
+      const i = next++;
+      try {
+        results[i] = await tickProject(roots[i], { ...opts, now, clock });
+      } catch (err) {
+        logFn(`[automations] tick failed for ${roots[i]}: ${(err as Error)?.message ?? String(err)}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROJECT_CONCURRENCY, roots.length) }, worker));
+  const projects = results.filter((r): r is TickProjectResult => r !== null);
 
   const durationMs = Date.now() - wallStart;
   // The completion moment, not the start: `now` is when the tick BEGAN, so

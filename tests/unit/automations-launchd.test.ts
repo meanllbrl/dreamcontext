@@ -446,10 +446,29 @@ describe.skipIf(!onDarwin)('installDispatcher', () => {
     expect(statSync(plistPath).isFile()).toBe(true);
   });
 
+  it('retries a bootstrap that loses the race with the bootout before it falls back', async () => {
+    const home = tmpHome();
+    const base = fakeRunnerFor({});
+    let bootstraps = 0;
+    const runner: ExecRunner = async (file, args, o) => {
+      if (file === 'launchctl' && args[0] === 'bootstrap') {
+        bootstraps += 1;
+        if (bootstraps === 1) return { ok: false, stdout: '', stderr: 'Bootstrap failed: 5: Input/output error', code: 5 };
+      }
+      return base.runner(file, args, o);
+    };
+    const waits: number[] = [];
+    const result = await installDispatcher({ home, runner, uid: 501, sleep: async (ms) => { waits.push(ms); } });
+    expect(result.bootstrapped).toBe(true);
+    expect(result.method).toBe('bootstrap');
+    expect(bootstraps).toBe(2);
+    expect(waits).toEqual([1000]);
+  });
+
   it('falls back to legacy `load -w` when bootstrap fails', async () => {
     const home = tmpHome();
     const { runner, calls } = fakeRunnerFor({ bootstrapOk: false, loadOk: true });
-    const result = await installDispatcher({ home, runner, uid: 501 });
+    const result = await installDispatcher({ home, runner, uid: 501, sleep: async () => {} });
     expect(result.method).toBe('load');
     expect(result.bootstrapped).toBe(true);
     expect(calls.some((c) => c[0] === 'launchctl' && c[1] === 'load' && c[2] === '-w')).toBe(true);
@@ -458,7 +477,7 @@ describe.skipIf(!onDarwin)('installDispatcher', () => {
   it('warns (does not throw) when both bootstrap and load fail', async () => {
     const home = tmpHome();
     const { runner } = fakeRunnerFor({ bootstrapOk: false, loadOk: false });
-    const result = await installDispatcher({ home, runner, uid: 501 });
+    const result = await installDispatcher({ home, runner, uid: 501, sleep: async () => {} });
     expect(result.bootstrapped).toBe(false);
     expect(result.method).toBe('none');
     expect(result.warnings.length).toBeGreaterThan(0);

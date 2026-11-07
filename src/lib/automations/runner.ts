@@ -1458,6 +1458,19 @@ export async function cutProcessGroups(leaders: readonly number[], graceMs = CUT
   await waitGone(CUT_KILL_WAIT_MS);
 }
 
+/**
+ * A run's SIGINT/SIGTERM handler: clean up THIS run, then exit once every other listener has run.
+ * The tick runs several projects' routines in one process, and each registers its own handler;
+ * Node calls them in order, so a handler that exited on the spot left every later run's detached
+ * `claude` group alive, with no timeout and its lock held. The exit waits one tick instead.
+ */
+export function signalCleanup(cleanup: () => void, code: number, exit: (code: number) => void = (c) => process.exit(c)): () => void {
+  return () => {
+    cleanup();
+    process.nextTick(() => exit(code));
+  };
+}
+
 // ─── The shared spawn core ──────────────────────────────────────────────────
 
 export type SpawnImpl = typeof import('node:child_process').spawn;
@@ -2705,24 +2718,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         } else {
           if (sigintHandler) process.off('SIGINT', sigintHandler);
           if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
-          sigintHandler = () => {
+          const killThisGroup = (): void => {
             try {
               killFn(-(child.pid as number), 'SIGKILL');
             } catch {
               /* ESRCH */
             }
             releaseFileLock(lockPath);
-            process.exit(130);
           };
-          sigtermHandler = () => {
-            try {
-              killFn(-(child.pid as number), 'SIGKILL');
-            } catch {
-              /* ESRCH */
-            }
-            releaseFileLock(lockPath);
-            process.exit(143);
-          };
+          sigintHandler = signalCleanup(killThisGroup, 130);
+          sigtermHandler = signalCleanup(killThisGroup, 143);
           process.on('SIGINT', sigintHandler);
           process.on('SIGTERM', sigtermHandler);
         }
