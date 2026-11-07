@@ -1446,11 +1446,12 @@ export interface ProgressProbe {
  * has something to disclose), and a suppressed sub-agent-spawning tool still does (the
  * `SubAgentCard` that replaces its card carries its own running progress track).
  */
-export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0): boolean {
+export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0, thinkingShown = true): boolean {
   if (pendingCount > 0) return true;
   return items.some((it) => (
     (it.kind === 'text' && it.done === false)
-    || (it.kind === 'thinking' && it.done === false && !!it.text)
+    // The Super view draws no thinking (ChatPane's `rendersNothing`): there it never covers the turn.
+    || (thinkingShown && it.kind === 'thinking' && it.done === false && !!it.text)
     || (it.kind === 'tool' && it.status === 'running')
   ));
 }
