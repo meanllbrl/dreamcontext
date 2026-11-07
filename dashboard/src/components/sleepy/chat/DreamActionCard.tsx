@@ -93,6 +93,8 @@ export function DreamActionCard({
 
   const subtitle = subtitleFor({
     view, outcome, status: item.status, extra: actions.length - 1, lines: toolResultLineCount(item.result),
+    // `apps do` closes on the app's own words ("Ziyaret Sayacı › Say hello (reads)"): that line, not the slug pair.
+    outcomeFirst: primary.path === 'apps do',
   });
 
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
@@ -192,17 +194,18 @@ function sameAction(actions: DreamAction[]): boolean {
  * description, because a finished `Task created` explaining "Create a new task" spends a line
  * on nothing. A read that returned output says how much.
  */
-function subtitleFor({ view, outcome, status, extra, lines }: {
+function subtitleFor({ view, outcome, status, extra, lines, outcomeFirst = false }: {
   view: ReturnType<typeof describeDreamAction>;
   outcome: ReturnType<typeof dreamOutcome>;
   status: ChatToolItem['status'];
   extra: number;
   lines: number | null;
+  outcomeFirst?: boolean;
 }): React.ReactNode {
   const more = extra > 0 ? `+${extra} more` : null;
   let note: React.ReactNode = null;
 
-  if (outcome && outcome.tone !== 'ok') {
+  if (outcome && (outcome.tone !== 'ok' || outcomeFirst)) {
     note = <span className="chat-dreamcard-note" data-tone={outcome.tone}>{outcome.text}</span>;
   } else if (view.detail) {
     note = `→ ${view.detail}`;

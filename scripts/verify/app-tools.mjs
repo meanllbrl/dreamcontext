@@ -145,6 +145,9 @@ async function startServer(port) {
 }
 
 const hook = (prompt) => dc(['hook', 'user-prompt-submit'], { DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SERVER_PID: String(process.pid) }, JSON.stringify({ session_id: 'verify-hook', prompt })).stdout;
+const DESKTOP_SHELL = `window.__TAURI_INTERNALS__ = { invoke: async () => null, transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
+// `apps tools/do` print app data inside a nonce fence: the JSON is what is between the fence lines.
+const unfence = (out) => { const m = /<<<app-output [^\n]*>>>\n([\s\S]*?)\n<<<end-app-output nonce=/.exec(out); return m ? m[1] : out; };
 const appLines = (out) => out.split('\n').filter((l) => l.startsWith('→ APP TOOL') || l.startsWith('→ The project has the app'));
 
 async function cliAndHook(port) {
@@ -155,7 +158,7 @@ async function cliAndHook(port) {
 
   const tools = dc(['apps', 'tools', '--json']);
   let list = null;
-  try { list = JSON.parse(tools.stdout); } catch { /* checked below */ }
+  try { list = JSON.parse(unfence(tools.stdout)); } catch { /* checked below */ }
   check(!!list && list.installed.length === 1 && list.installed[0].slug === 'demo', 'apps tools: only the app on this Mac is installed', tools.stdout + tools.stderr);
   const demo = list?.installed[0];
   check(!!demo && demo.tools.map((t) => `${t.id}:${t.effect}`).join(',') === 'hello:read,note:change', 'apps tools: hello reads, note changes', JSON.stringify(demo?.tools));
@@ -164,8 +167,8 @@ async function cliAndHook(port) {
 
   const read = dc(['apps', 'do', 'demo', 'hello', '--json']);
   let body = null;
-  try { body = JSON.parse(read.stdout.split('\n').find((l) => l.startsWith('{')) ?? 'null'); } catch { /* checked below */ }
-  check(read.status === 0 && body?.ok === true && typeof body?.body?.visits === 'number', 'apps do reads: the answer is the app\'s own number', read.stdout + read.stderr);
+  try { body = JSON.parse(unfence(read.stdout)); } catch { /* checked below */ }
+  check(read.status === 0 && body?.ok === true && typeof (() => { try { return JSON.parse(body?.body ?? 'null')?.visits; } catch { return null; } })() === 'number', 'apps do reads: the answer is the app\'s own number', read.stdout + read.stderr);
   const plain = dc(['apps', 'do', 'demo', 'hello']);
   check(/✓ Ziyaret Sayacı › Say hello and count visits \(reads\)/.test(plain.stdout), 'apps do ends with "<App> › <tool> (reads)"', plain.stdout);
 
@@ -195,6 +198,8 @@ async function ui(port) {
   const NOISE = /favicon\.ico|\/api\/apps\/[^/]+\/icon|status of 4\d\d/;
   const open = async (width) => {
     const ctx = await browser.newContext({ viewport: { width, height: width > 600 ? 900 : 844 } });
+    // The install sheet opens only in the Mac app: at desktop width this page plays its shell.
+    if (width > 600) await ctx.addInitScript(DESKTOP_SHELL);
     const page = await ctx.newPage();
     page.on('console', (m) => { if (m.type() === 'error' && !NOISE.test(m.text())) errors.push(`@${width} ${m.text().slice(0, 200)}`); });
     page.on('pageerror', (e) => errors.push(`@${width} crash ${String(e.message).slice(0, 200)}`));
