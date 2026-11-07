@@ -1663,6 +1663,11 @@ function planWith(
       // The minimised agenda's pill holds the corner: the more pill stands right after it.
       const x = f.agendaPill.x + f.agendaPill.width + GAP;
       rect = { x, y: f.othersRect.y, width: Math.min(OTHERS_W, leftRoom - f.agendaPill.width - GAP), height: f.othersRect.height };
+    } else if (opts.agendaPill && !inHead.agenda && pillFits) {
+      // No room for both (owner 2026-11-07): the minimised agenda moves to the head's Agenda
+      // button, as on a narrow window, and the waiting jobs take its corner.
+      inHead.agenda = true;
+      rect = { x: MARGIN, y: f.othersRect.y, width: Math.min(AGENDA_PILL_W, leftRoom), height: f.othersRect.height };
     }
     if (rect) {
       more = { rect, ids: liveOver };

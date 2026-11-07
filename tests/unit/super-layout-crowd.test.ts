@@ -308,6 +308,20 @@ describe('end review of 32c18385: a live job never lands in Others nor waits whi
     sound(p);
   });
 
+  it('agenda minimised, chat centred, no room for both pills: the agenda goes to the head and the jobs take its corner (owner 2026-11-07)', () => {
+    for (const w of [1380, 1420, 1500, 1620]) {
+      const jobs = Array.from({ length: 10 }, (_, i) => job(i, i === 1 ? { pos: { x: 0.9, y: 0.1 } } : undefined));
+      const cs = [agenda({ min: true } as Partial<SuperContainer>), jobs[0], jobs[1], web({ sizeBy: 'owner' }), ...jobs.slice(2)];
+      const p = planStage(items(cs), FLOAT, { width: w, height: 814 }, { agendaPill: 'agenda-1' });
+      for (let i = 0; i < 10; i++) expect(p.others, `${w}: chat-j${i}`).not.toContain(`chat-j${i}`);
+      if (p.more) {
+        expect(p.agendaInHead || !overlaps(p.more.rect, p.agendaPill), `${w}: pill over the agenda pill`).toBe(true);
+        if (p.others.length && !p.othersInHead) expect(overlaps(p.more.rect, p.othersRect), `${w}: pill over Others`).toBe(false);
+      }
+      sound(p);
+    }
+  });
+
   it('a sized block cutting a row of small cards: the job takes the free tile, the pill stays empty', () => {
     const cs = [agenda(), job(0), job(1), sizedWeb, job(2), job(3)];
     const p = planStage(items(cs), FLOAT, S);
