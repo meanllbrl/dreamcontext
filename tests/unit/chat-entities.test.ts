@@ -1124,6 +1124,11 @@ describe('turnHasVisibleProgress', () => {
     expect(turnHasVisibleProgress([{ kind: 'thinking', text: 'hm', done: false }])).toBe(true);
   });
 
+  it('never counts thinking where it is not drawn (the Super view), so its Thinking line stays', () => {
+    expect(turnHasVisibleProgress([user, { kind: 'thinking', text: 'hm', done: false }], 0, false)).toBe(false);
+    expect(turnHasVisibleProgress([{ kind: 'text', text: '', done: false }], 0, false)).toBe(true);
+  });
+
   it('sees a running tool card', () => {
     expect(turnHasVisibleProgress([{ kind: 'tool', status: 'running' }])).toBe(true);
     expect(turnHasVisibleProgress([{ kind: 'tool', status: 'error' }])).toBe(false);

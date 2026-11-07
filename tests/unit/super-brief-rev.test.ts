@@ -196,4 +196,13 @@ describe('superBriefState', () => {
       expect(t).toContain('weigh it before you agree or start');
     }
   });
+
+  it('rev 32 (2026-11-07): what he asked for is written in text, never only thought; a gap he reports is never blamed on his screen; a question he did not understand is explained and reworded', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(32);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('He sees your text, never your thinking');
+      expect(t).toContain('never blame his screen.');
+      expect(t).toContain('ask a reworded card with what was missing, never the same card.');
+    }
+  });
 });

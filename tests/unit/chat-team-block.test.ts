@@ -305,6 +305,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // rev 29 (2026-11-03): a product mockup wears the product's real look; steps in order are a graph.
       expect.stringContaining("product's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips."),
       expect.stringContaining('Write nothing between tool calls (but the line before `super ask`), and nothing'),
+      // rev 32 (2026-11-07): he sees text, never thinking; a reported gap is written, never blamed on his screen.
+      'He sees your text, never your thinking: what he asked for (a summary, a list) is written in this',
+      'turn\'s text, never only thought; never point him "above" at what you did not write there. He says it',
+      'is missing: it is, write it now; never blame his screen. He did not understand a question: explain it',
+      "in plain words in this turn's last text, then ask a reworded card with what was missing, never the same card.",
       // rev 26 (2026-11-02): weigh a new idea from the owner before agreeing.
       'A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,',
       'does it break one of his earlier decisions or a project pattern, what does it cost? Sound: say so',
@@ -351,8 +356,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=31>'),
+      expect.stringContaining('<super-brief rev=32>'),
     ]);
-    expect(after.length).toBe(before.length + 35); // +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 39); // +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

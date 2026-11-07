@@ -1230,7 +1230,12 @@ export function ChatPane({
   const rendersNothing = (item: ChatItem): boolean => {
     // A party placed by time after this entry draws its card here, whatever the entry is.
     if (partyByAnchor.has(item.id)) return false;
-    if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
+    // The Super view draws no thinking at all (owner 2026-11-07, "hani nerede?"). What the CLI
+    // streams as thinking is a SUMMARY written by another model: it paraphrases the Super's own
+    // words and can carry the summarizer's note ("Bu üç blok da Claude'un kendi önceki metni…",
+    // Tilki transcript a4d8d7cb line 832). Shown, it read as the Super's answer while the real
+    // one was never written. Only the Super's text reaches the owner; the live line says "Thinking".
+    if (item.kind === 'thinking') return superView || !item.text; // ThinkingBlock's own null branch
     if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
     // A teammate registered on a bookkeeping call (`goal-live actor --session`, the one call
     // that names a detached builder's id) gets its party card THERE: the check above.
@@ -2510,7 +2515,7 @@ export function ChatPane({
   // CLI's first frame (spawn + SessionStart brain preload), or in a gap between a tool
   // result and the next block. Without this the pane looks idle while it is working.
   const working = !ended && session.busy
-    && !turnHasVisibleProgress(conv.items, conv.pending.length);
+    && !turnHasVisibleProgress(conv.items, conv.pending.length, !superView);
   const isEmpty = !working
     && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0
     && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
