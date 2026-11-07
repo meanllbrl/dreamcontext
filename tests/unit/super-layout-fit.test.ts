@@ -424,10 +424,11 @@ describe('side by side, the web card takes its device\'s shape (owner 2026-10-28
     }
   });
 
-  it('a picture shown side by side keeps the two halves (only a page with a device changes)', () => {
+  it('a portrait picture shown side by side hugs its shape and gives the rest to the centre (owner 2026-11-07)', () => {
     const cs = [card('a'), card('pic', { kind: 'image', aspect: 0.5 } as Partial<SuperContainer>)];
     const p = planStage(stageItems(cs, [], { mode: 'half', card: 'pic' }), { mode: 'half', card: 'pic' }, WINDOWS.mid);
-    expect(p.cards.pic.rect.width).toBeCloseTo(p.centre.width, 6);
+    expect(p.cards.pic.rect.width).toBeLessThan(p.centre.width);
+    expect((p.cards.pic.rect.width - STAGE.CARD_CHROME.w) / (p.cards.pic.rect.height - STAGE.CARD_CHROME.h)).toBeCloseTo(0.5, 6);
   });
 });
 
