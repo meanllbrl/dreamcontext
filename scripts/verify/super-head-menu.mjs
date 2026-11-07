@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The Super Agent chat head with less text (owner 2026-11-05): no "you talk only to me" line,
- * "+ Add" the one visible action, New session and Turn off inside a ⋯ menu; and the left
+ * no worded button (owner 2026-11-07), Add a card, New session and Turn off inside a ⋯ menu; and the left
  * drawer's "+ New Chat" reads "+ New window".
  *
  *   npm run build && TAG=after OUT=<dir> node scripts/verify/super-head-menu.mjs
@@ -220,14 +220,16 @@ async function sceneHead(browser, base) {
     console.log('── the ⋯ menu');
     const more = head.getByTestId('super-head-more');
     ok('the head has no subtitle, no New session and no Turn off button', (await head.locator('.super-centre-sub, [data-testid="super-fresh-btn"], [data-testid="super-turn-off-btn"]').count()) === 0);
-    ok('+ Add is the one visible worded action and ⋯ is there', (await head.getByTestId('super-add-btn').isVisible()) && (await more.isVisible()));
+    ok('no + Add in the head and ⋯ is there', (await head.getByTestId('super-add-btn').count()) === 0 && (await more.isVisible()));
     await more.focus();
     await page.keyboard.press('Enter');
     const menu = page.getByTestId('super-head-menu');
     ok('Enter opens the menu', await until(page, async () => menu.isVisible(), 3000));
     const items = await menu.locator('[role="menuitem"]').allTextContents();
-    ok('the menu has New session then Turn off', items.length === 2 && /New session/.test(items[0]) && /Turn off/.test(items[1]), JSON.stringify(items));
-    ok('focus is on the first row', await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'super-head-fresh'));
+    ok('the menu has Add a card, New session, then Turn off', items.length === 3 && /Add a card/.test(items[0]) && /New session/.test(items[1]) && /Turn off/.test(items[2]), JSON.stringify(items));
+    ok('focus is on the first row', await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'super-head-add'));
+    await page.keyboard.press('ArrowDown');
+    ok('ArrowDown moves to New session', await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'super-head-fresh'));
     await page.keyboard.press('ArrowDown');
     ok('ArrowDown moves to Turn off', await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'super-head-off'));
     await page.evaluate(() => document.activeElement && (document.activeElement.blur(), 0));

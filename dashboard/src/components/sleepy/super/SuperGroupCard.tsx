@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperGroup } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
@@ -7,6 +7,7 @@ import { useLiveSessions } from './liveSession';
 import { GroupTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { cardZIndex, type CardPlan } from './superLayout';
 import { openAllHint } from './GroupPanel';
+import { cardPlaceKey } from './cardMenuModel';
 
 /**
  * A group on the stage (owner decision 2026-10-20): ONE tile standing on a deck of sheets, placed
@@ -45,6 +46,14 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [closeAsk]);
+  // Like a card's: the menu closes when the group is resized, sent to Others or leaves the stage.
+  const placeKey = cardPlaceKey(plan, false);
+  const openedAt = useRef(placeKey);
+  useEffect(() => {
+    if (openedAt.current === placeKey) return;
+    openedAt.current = placeKey;
+    setCloseAsk(false);
+  }, [placeKey]);
   // Re-rendered when a member chat's state changes, not on its every token (liveSession.ts).
   useLiveSessions(sessions, () => sessions.map((s) => (s ? chatStatus(s).kind : '')).join('|'));
   // Each member chat's state read NOW from its session, not as the stage last drew it: this card

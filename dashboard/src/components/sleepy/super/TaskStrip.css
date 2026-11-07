@@ -120,7 +120,6 @@
 .super-member-head > .super-member-sub { flex: 1 1 0; }
 .super-member-head > .super-member-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-centre-head:has(.super-member-head) .super-head-more,
-.super-centre-head:has(.super-member-head) .super-add-btn,
 .super-centre-head:has(.super-member-head) .super-agenda-open { flex: none; }
 @container super-centre (max-width: 719px) {
   .super-member-head .super-member-sub,

@@ -38,7 +38,7 @@ import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
-import { pickerOpen } from '../../../lib/desktop';
+import { MENU_WIDTH } from './superAddMenuModel';
 import type { SuperOpenBody } from './superApi';
 import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
@@ -158,12 +158,13 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
 
 /**
  * The Super chat's head: the dreamcontext logo and its name ("Super Agent", owner 2026-10-31), the
- * stage's Agenda button when one is given, the ⋯ menu (New session, Turn off) and the head's own
- * actions ("+ Add" on the stage, the window buttons on the dock). Less text (owner 2026-11-05): no
- * subtitle, and no worded button but "+ Add". The stage centre and the Super dock both draw it;
- * the dock passes no agenda (the agenda is a stage card) and no Turn off.
+ * stage's Agenda button when one is given, the ⋯ menu (Add a card, New session, Turn off) and the
+ * head's own actions (the window buttons on the dock). Less text (owner 2026-11-05, 2026-11-07): no
+ * subtitle and no worded button; "+ Add" became the ⋯ menu's first row. The stage centre and the
+ * Super dock both draw it; the dock passes no agenda (the agenda is a stage card), no Turn off and
+ * no Add. A mini chat (a presentation's) keeps only Add in its ⋯.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, actions, who }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who }: {
   chat: string;
   /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
   who?: ReactNode;
@@ -174,9 +175,12 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
   noNewSession?: boolean;
   /** Only the desktop's stage turns the Super Agent off: a remote screen, and the dock, do not. */
   onTurnOff?: () => void;
+  /** Opens the stage's add menu under the ⋯ (absent: this head opens no card). */
+  onAdd?: (anchor: HTMLElement) => void;
   actions?: ReactNode;
 }) {
   const { t } = useI18n();
+  const column = chat === 'column';
   return (
     <div className="super-centre-head">
       {who ?? (
@@ -185,11 +189,12 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
           <span className="super-centre-name">{t('super.centre.name')}</span>
         </>
       )}
-      {chat === 'column' && agenda}
-      {chat === 'column' && (
+      {column && agenda}
+      {(column || onAdd) && (
         <SuperHeadMenu
-          fresh={noNewSession ? undefined : { pending, onPress: onNewSession }}
-          onTurnOff={onTurnOff}
+          fresh={!column || noNewSession ? undefined : { pending, onPress: onNewSession }}
+          onTurnOff={column ? onTurnOff : undefined}
+          onAdd={onAdd}
         />
       )}
       {actions}
@@ -720,7 +725,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // `plan.phone` is a width, a window beside an open sidebar reaches it too; a real phone has no prop.
   const canAdd = !!props.onOpenCard && !remote;
   const [addMenu, setAddMenu] = useState<{ x: number; y: number; byButton: boolean } | null>(null);
-  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const addBtnRef = useRef<HTMLElement | null>(null);
   const addBusy = useRef(false);
   const addByButton = useRef(false);
   addByButton.current = addMenu?.byButton ?? false;
@@ -729,17 +734,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
     setAddMenu(null);
   }, []);
   useEffect(() => { if (!props.visible || !canAdd) setAddMenu(null); }, [props.visible, canAdd]);
-  const toggleAddMenu = () => {
-    if (addMenu) {
-      // Same hold as the menu's own: an open picker or a request still has its answer to write there.
-      if (!pickerOpen() && !addBusy.current) closeAddMenu();
-      return;
-    }
-    const b = addBtnRef.current?.getBoundingClientRect();
+  // The head's ⋯ → Add a card: the menu opens under the ⋯, right-aligned to it, and gives focus
+  // back to the ⋯ when it closes. The ⋯ itself is no toggle of this menu: a press on it closes
+  // this one (an outside press) and opens the ⋯ menu.
+  const noToggle = useRef<HTMLElement | null>(null);
+  const openAddMenu = useCallback((anchor: HTMLElement) => {
+    const b = anchor.getBoundingClientRect();
     const r = rootRef.current?.getBoundingClientRect();
-    if (!b || !r) return;
-    setAddMenu({ x: b.left - r.left, y: b.bottom - r.top + 4, byButton: true });
-  };
+    if (!r) return;
+    addBtnRef.current = anchor;
+    setAddMenu({ x: b.right - r.left - MENU_WIDTH, y: b.bottom - r.top + 4, byButton: true });
+  }, []);
   // Only the stage's own empty floor: a card, the chat, the agenda, Others and a page keep theirs.
   const onStageContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || !canAdd || drag || full || motion !== 'idle') return;
@@ -1095,12 +1100,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
               onTurnOff={remote ? undefined : props.onTurnOff}
+              // A narrow stage's page or presentation covers the centre: there the side bands' right click opens it.
+              onAdd={canAdd && !(plan.narrow && view.mode !== 'float') ? openAddMenu : undefined}
               actions={(
                 <>
-                  {/* A narrow stage's page or presentation covers the centre: there the side bands' right click opens it. */}
-                  {canAdd && !(plan.narrow && view.mode !== 'float') && (
-                    <button ref={addBtnRef} type="button" className="super-add-btn" data-testid="super-add-btn" aria-haspopup="menu" aria-expanded={!!addMenu} onClick={toggleAddMenu}>{t('super.add.button')}</button>
-                  )}
                   {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
                     <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
                   )}
@@ -1312,7 +1315,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
       {inOthersNote > 0 && <div className="super-add-note" role="status" data-testid="super-add-note" data-note={inOthersNote}>{t('super.add.inOthers')}</div>}
-      {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={addBtnRef} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
+      {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={noToggle} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
       {full && (
         <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
           <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />

@@ -13,7 +13,7 @@
  * WHAT IT PROVES: at 1440 and 1000 px, in the floating, side-by-side and presented views, each of
  * the six items really opens its card, with no place and no owner stamp in the record, a 13th card
  * is refused with the reason in the menu, and a card landing in Others says so; the menu keeps to
- * the stage, Escape closes only the menu, an outside click and a click on a page close it, `+ Add`
+ * the stage, Escape closes only the menu, an outside click and a click on a page close it, the head's ⋯ → Add a card
  * works by keyboard; the right click is the stage's only on its empty floor; the file stage lists
  * files past 60 knowledge pages, every refusal reads in the menu, and a pending picker holds the
  * menu open; a card opens with no state frame on the socket. Screenshots in light and dark:
@@ -192,7 +192,21 @@ const floats = () => record().containers.filter((c) => c.place === 'float' && !c
 
 const stage = (page) => page.locator('[data-testid="super-surface"]:visible').first();
 const menu = (page) => page.locator('[data-testid="super-add-menu"]');
-const addBtn = (page) => page.locator('[data-testid="super-add-btn"]:visible');
+// The head has no "+ Add" since 2026-11-07: Add a card is the first row of its ⋯ menu.
+const moreBtn = (page) => page.locator('[data-testid="super-centre"] [data-testid="super-head-more"]:visible');
+const headAdd = (page) => page.locator('[data-testid="super-head-add"]');
+async function openFromHead(page) {
+  await moreBtn(page).click();
+  await headAdd(page).click();
+}
+/** The centre head offers Add a card (its ⋯ opened, looked at, closed again). */
+async function headCanAdd(page) {
+  if (!(await moreBtn(page).count())) return false;
+  await moreBtn(page).click();
+  const n = await headAdd(page).count();
+  await page.keyboard.press('Escape');
+  return n === 1;
+}
 const isMenu = async (page) => (await menu(page).count()) > 0;
 
 /** A point of the stage whose own floor is on top: where the right click belongs to the stage. */
@@ -216,7 +230,7 @@ async function openByRightClick(page) {
 }
 
 async function openMenu(page) {
-  if (await addBtn(page).count()) await addBtn(page).click();
+  if (await headCanAdd(page)) await openFromHead(page);
   else await openByRightClick(page);
   await until(page, () => isMenu(page), 3000);
 }
@@ -363,11 +377,13 @@ try {
   ok('the menu opens at the press, inside the stage', Math.abs(placed.x + placed.width / 2 - p0.x) < placed.width && placed.y + placed.height <= root0.y + root0.height && placed.x + placed.width <= root0.x + root0.width, JSON.stringify({ placed, p0 }));
   await page.mouse.click(root0.x + 8, root0.y + 8);
   ok('an outside click closes it', await until(page, async () => !(await isMenu(page)), 2000));
-  await addBtn(page).click();
+  ok('the head has no `+ Add` button', (await page.locator('[data-testid="super-add-btn"]').count()) === 0);
+  await openFromHead(page);
   const fromBtn = await page.locator('[data-testid="super-add-menu"] .wb-palette-item').allInnerTexts();
-  ok('`+ Add` opens the same menu', JSON.stringify(fromBtn) === JSON.stringify(labels));
-  await addBtn(page).click();
-  ok('a second press closes it', await until(page, async () => !(await isMenu(page)), 2000));
+  ok('⋯ → Add a card opens the same menu', JSON.stringify(fromBtn) === JSON.stringify(labels));
+  await moreBtn(page).click();
+  ok('a press on ⋯ closes it', await until(page, async () => !(await isMenu(page)), 2000));
+  await page.keyboard.press('Escape');
   await page.evaluate(() => { window.__prevented = []; });
   for (const sel of ['[data-testid="super-centre"]']) {
     const b = await page.locator(sel).first().boundingBox();
@@ -393,13 +409,15 @@ try {
   });
 
   await part('AC7: keys and focus', async () => {
-  await addBtn(page).focus();
+  await moreBtn(page).focus();
   await page.keyboard.press('Enter');
-  ok('`+ Add` opens by keyboard, focus in the menu', await until(page, async () => isMenu(page), 2000) && await page.evaluate(() => !!document.activeElement?.closest('.super-add-menu')));
+  ok('⋯ opens by keyboard on Add a card', await until(page, async () => page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'super-head-add'), 2000));
+  await page.keyboard.press('Enter');
+  ok('Enter opens the add menu, focus in it', await until(page, async () => isMenu(page), 2000) && await page.evaluate(() => !!document.activeElement?.closest('.super-add-menu')));
   await page.keyboard.press('Escape');
-  ok('Escape closes the menu and focus returns to `+ Add`', await until(page, async () => !(await isMenu(page)), 2000) && (await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))) === 'super-add-btn');
+  ok('Escape closes the menu and focus returns to ⋯', await until(page, async () => !(await isMenu(page)), 2000) && (await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))) === 'super-head-more');
   ok('…and the surface stays open', (await page.locator('[data-testid="super-surface"]:visible').count()) > 0);
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-web"]').click();
   await page.locator('.super-add-menu .wb-picker-search').fill('https://half-typed');
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
@@ -415,7 +433,7 @@ try {
 
   await part('the file stage', async () => {
   const root0 = await stage(page).boundingBox();
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-file"]').click();
   await page.locator('.super-add-menu .wb-picker-row').first().waitFor().catch((e) => { throw new Error(`${e.message}\nopen calls:\n${openCalls()}`); });
   const fileRows = await page.locator('.super-add-menu .wb-picker-row').evaluateAll((r) => r.map((e) => e.dataset.pageRef));
@@ -432,7 +450,7 @@ try {
     ['a folder', join(PROJ, 'docs', 'folder'), /not a file/],
     ['a file that is gone', join(PROJ, 'docs', 'gone.pdf'), /could not be found/],
   ];
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-file"]').click();
   const count0 = record().containers.length;
   for (const [what, path, want] of refusals) {
@@ -458,14 +476,15 @@ try {
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await page.waitForTimeout(250);
   ok('a picker that is open holds the menu against a click outside and the window\'s blur', await isMenu(page));
-  await addBtn(page).click();
+  await moreBtn(page).click();
   await page.waitForTimeout(200);
-  ok('…and against a press on `+ Add`', await isMenu(page));
+  ok('…and against a press on ⋯', await isMenu(page));
+  await moreBtn(page).click();
   ok('…and its button is disabled meanwhile', await page.locator('[data-testid="super-add-pick"]').isDisabled());
   await page.evaluate((p) => window.__release([p]), join(PROJ, 'pics', 'first.png'));
   ok('the picked picture opens its card and the menu closes', await until(page, async () => !(await isMenu(page)), 4000) && record().containers.some((c) => c.kind === 'image' && c.ref === 'pics/first.png'));
   await pickNext(page, [join(PROJ, 'clips', 'demo.mp4')]);
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-file"]').click();
   await page.locator('[data-testid="super-add-pick"]').click();
   ok('the picked clip opens its card', await until(page, async () => record().containers.some((c) => c.kind === 'video' && c.ref === 'clips/demo.mp4'), 4000));
@@ -475,14 +494,14 @@ try {
   await part('AC6: a picture joining a group in Others, a card in a group resting there', async () => {
   await setLayout(page, 'half');
   await pickNext(page, [join(PROJ, 'pics', 'first.png')]);
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-file"]').click();
   await page.locator('[data-testid="super-add-pick"]').click();
   await until(page, async () => !(await isMenu(page)), 5000);
   await page.waitForTimeout(500);
   const before = await noteOf(page);
   await pickNext(page, [join(PROJ, 'pics', 'second.png')]);
-  await addBtn(page).click();
+  await openFromHead(page);
   await page.locator('[data-testid="super-add-file"]').click();
   await page.locator('[data-testid="super-add-pick"]').click();
   await until(page, async () => !(await isMenu(page)), 5000);
@@ -535,11 +554,11 @@ try {
     await settle(page);
     if (w === 1000) {
       // Beside the open sidebar a 1000 px window leaves a phone-width stage: the chat alone, its
-      // cards in Others, and `+ Add` in its head.
+      // cards in Others, and Add a card in its head's ⋯.
       await part('a phone-width stage beside the open sidebar', async () => {
         await clearStage(page);
         const wide = (await stage(page).boundingBox()).width;
-        ok(`the stage is phone-width (${wide} px) and \`+ Add\` is there`, wide < 640 && (await addBtn(page).count()) === 1, String(wide));
+        ok(`the stage is phone-width (${wide} px) and Add a card is there`, wide < 640 && (await headCanAdd(page)), String(wide));
         const before = await noteOf(page);
         const r = await addItem(page, 'task');
         await page.waitForTimeout(450);
@@ -558,7 +577,7 @@ try {
       const shown = await stage(page).getAttribute('data-mode');
       ok(`${w} ${layout}: the stage is in that view`, (layout === 'float' ? shown === 'float' : shown === layout), shown);
       if (narrow && layout !== 'float') {
-        ok(`${w} ${layout}: no \`+ Add\` under the page`, (await addBtn(page).count()) === 0);
+        ok(`${w} ${layout}: no Add a card under the page`, !(await headCanAdd(page)));
         await openByRightClick(page);
         ok(`${w} ${layout}: the right click opens it from the side band`, await isMenu(page));
         await page.keyboard.press('Escape');
@@ -624,8 +643,8 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
   ok('Escape closes the menu and the presentation goes on', !(await isMenu(page)) && record().view?.mode === 'present' && (await stage(page).getAttribute('data-mode')) === 'present');
-  if (await addBtn(page).count()) {
-    await addBtn(page).focus();
+  if (await moreBtn(page).count()) {
+    await moreBtn(page).focus();
     await page.keyboard.press('ArrowRight');
     await page.waitForTimeout(500);
     ok('…and with the menu closed the same arrow plays it (the check above can fail)', JSON.stringify(await cardRects(page)) !== strip0);

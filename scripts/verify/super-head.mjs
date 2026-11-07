@@ -194,7 +194,7 @@ function measureHead(head) {
   const lines = (el) => { if (!el) return 0; const range = document.createRange(); range.selectNodeContents(el); return new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size; };
   const name = head.querySelector('.super-centre-name, .super-card-large-title, .super-card-title');
   const sub = head.querySelector('.super-centre-sub');
-  // New session and Turn off live in the ⋯ menu (owner 2026-11-05): the head shows ⋯ and "+ Add".
+  // New session and Turn off live in the ⋯ menu (owner 2026-11-05): the head shows ⋯ (Add a card is in it since 2026-11-07).
   const fresh = head.querySelector('[data-testid="super-head-more"]');
   const label = head.querySelector('[data-testid="super-fresh-btn"]');
   return {
