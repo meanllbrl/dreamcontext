@@ -8,7 +8,7 @@ import { builderTest, DEFAULT_SESSION_DEPS, type SessionDeps } from '../../src/c
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotPaths } from '../../src/lib/builder-tools.js';
 import { contentTree } from '../../src/lib/check-receipt.js';
 import { releaseFileLock } from '../../src/lib/file-lock.js';
-import { HEAVY_OVER_BUDGET_EXIT, markPhase } from '../../src/lib/run-budget.js';
+import { HEAVY_OVER_BUDGET_EXIT, heavyStep, markPhase, suiteInCommand, wholeSuiteArgs } from '../../src/lib/run-budget.js';
 import {
   branchOf, cliSpawnTests, distCheck, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree, readSuiteRecord, suiteRecordId, writeSuiteRecord, type RunSummary,
 } from '../../src/lib/suite-record.js';
@@ -226,7 +226,12 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     scenario('green');
     expect(await builderHeavy(deps(), ['npm', 'test', '--', '--shard=1/2'], {})).toBe(0);
     expect(record()).toBeNull();
-    expect(err.join('\n')).toMatch(/partial suite run \(--shard\)/);
+    expect(err.join('\n')).toMatch(/not provably the whole suite \(--shard=1\/2\)/);
+    // From a subfolder, or through a cd, it is not the repo's whole suite either.
+    mkdirSync(join(repo, 'sub'), { recursive: true });
+    expect(await builderHeavy(deps(join(repo, 'sub')), ['npm', 'test'], {})).toBe(0);
+    expect(await builderHeavy(deps(), ['cd sub && npm test'], {})).toBe(0);
+    expect(record()).toBeNull();
     scenario('red2');
     expect(await builderHeavy(deps(), ['npm', 'test'], {})).toBe(1);
     scenario('green');
@@ -237,7 +242,29 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], {})).toBe(2);
     expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], { detach: true })).toBe(2);
     expect(err.join('\n')).toMatch(/a full test suite inside a chain/);
-    expect(runs()).toBe(2);
+    expect(runs()).toBe(4);
+  });
+
+  it('only allow-listed arguments make a whole suite; deny by default', () => {
+    for (const whole of ['npx vitest run', 'npx vitest run --reporter=json --outputFile out.json --maxWorkers=2', 'npx vitest run -c vitest.t3.config.ts', 'npm test -- --run --no-file-parallelism --testTimeout=30000']) {
+      expect(heavyStep(whole), whole).toMatchObject({ kind: 'suite' });
+      expect(heavyStep(whole)!.partial, whole).toBeUndefined();
+    }
+    for (const [cmd, why] of [['npx vitest run --dir tests/unit', '--dir'], ['npm test -- --dir tests/integration', '--dir'], ['npx vitest run --root packages/api', '--root'], ['npx vitest run --shard 1/4', '--shard'], ['npx vitest run --bail 1', '--bail'], ['npx vitest run --project web', '--project'], ['npx vitest run -c ../other.config.ts', '-c ../other.config.ts'], ['npx vitest run --changed', '--changed']] as const) {
+      expect(heavyStep(cmd), cmd).toMatchObject({ kind: 'suite', partial: why });
+    }
+    expect(wholeSuiteArgs('run --reporter dot')).toBeNull();
+    // A suite chained inside the scripts a script runs is still found.
+    expect(suiteInCommand('npm run ci', { ci: 'npm run build && npm run test:unit', build: 'tsup', 'test:unit': 'vitest run' })).toMatchObject({ kind: 'suite' });
+  });
+
+  it('a run past a red (--because) that dies keeps the red list (one view for every reader)', () => {
+    const top = realpathSync(repo);
+    const tree = contentTree(top)!;
+    writeSuiteRecord({ v: 1, id: suiteRecordId(top, 'main', 'suite'), state: 'running', pid: 2_147_483_000, toplevel: top, branch: 'main', target: 'suite', at: new Date().toISOString(), maxRunMs: 60_000, files: ['tests/a.test.ts'], overRed: { redTree: tree, because: 'the owner asked for one more run' } });
+    expect(record()).toMatchObject({ state: 'red', files: ['tests/a.test.ts'], redTree: tree });
+    writeSuiteRecord({ v: 1, id: suiteRecordId(top, 'main', 'suite'), state: 'running', pid: 2_147_483_000, toplevel: top, branch: 'main', target: 'suite', at: new Date().toISOString(), maxRunMs: 60_000, files: [] });
+    expect(record()).toMatchObject({ state: 'incomplete', files: [] });
   });
 
   it('a run past a red (--because) that proves nothing keeps the red list', async () => {
@@ -292,6 +319,15 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     out = [];
     expect(await builderTest(sessionDeps(repo, () => 'pass'), undefined, { failed: true })).toBe(0);
     expect(out.join('\n')).toMatch(/nothing open since/);
+  });
+
+  it('AC3: a red file not on disk with no delete in git stays required, so the record stays red', async () => {
+    scenario('red2');
+    expect(await builderHeavy(deps(), ['npm', 'test'], {})).toBe(1);
+    rmSync(join(repo, 'tests/b.test.ts'));
+    git(repo, 'update-index', '--assume-unchanged', 'tests/b.test.ts');
+    expect(await builderTest(sessionDeps(repo, (f) => (f === 'tests/b.test.ts' ? 'absent' : 'pass')), undefined, { failed: true })).toBe(1);
+    expect(record()).toMatchObject({ state: 'red', files: ['tests/b.test.ts'] });
   });
 
   it('AC3: partly green rewrites the list; a file that ran no tests stays red', async () => {

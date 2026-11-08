@@ -29,7 +29,7 @@ import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-q
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
   BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
-  recordRed, recordStart, refusal, shellQuote, suiteInCommand, validReason, type BudgetKind, type BudgetScope,
+  recordRed, recordStart, refusal, shellQuote, shellSegments, suiteInCommand, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
@@ -431,7 +431,9 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
         const path = suiteRecordPath(ctx.top, ctx.branch, ctx.target);
         try {
           const raw = path ? JSON.parse(readFileSync(path, 'utf-8')) as SuiteRecord : null;
-          if (raw && raw.state === 'running' && raw.pid === s.pid) writeSuiteRecord({ ...raw, state: 'incomplete', files: [], reason: 'the detached runner died with no result', at: new Date().toISOString() });
+          // The dead runner's record as readSuiteRecord sees it (a red it ran over stays red), written down.
+          const view = raw && raw.state === 'running' && raw.pid === s.pid ? readSuiteRecord(ctx.top, ctx.branch, ctx.target).record : null;
+          if (view && view.state !== 'running') writeSuiteRecord({ ...view, reason: view.state === 'red' ? view.reason : 'the detached runner died with no result', at: new Date().toISOString() });
         } catch { /* no record to settle */ }
       }
       writeCheckState(deps.cwd(), { ...s, state: 'done', exit: HEAVY_DIED_EXIT });
@@ -515,8 +517,13 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   // A partial one (`--shard`, `--changed`, `--bail`, …) is gated too, but proves no whole suite:
   // it never writes or closes a record.
   const suite = step?.kind === 'suite' ? suiteCtxOf(deps.cwd(), step.target) : null;
-  const recordable = suite !== null && !step?.partial;
-  if (suite && step?.partial) deps.printErr(`builder heavy: a partial suite run (${step.partial}): it keeps no suite record, and cannot close one`);
+  // Only a provably whole run keeps a record: the toplevel's own suite, from the toplevel, with
+  // nothing but allow-listed flags (run-budget.ts wholeSuiteArgs). Anything else is partial.
+  const notWhole = !suite ? null : step?.partial
+    ?? (recordToplevel(deps.cwd()) !== suite.top ? `run from ${relative(suite.top, recordToplevel(deps.cwd())) || '.'}, not the repo root` : null)
+    ?? (shellSegments(command).some((seg) => /^(?:cd|pushd)\b/.test(seg.trim())) ? 'a cd in the command' : null);
+  const recordable = suite !== null && !notWhole;
+  if (suite && notWhole) deps.printErr(`builder heavy: not provably the whole suite (${notWhole}): it keeps no suite record, and cannot close one`);
   if (suite) {
     const refused = suiteGate(deps, suite, opts, command);
     if (refused !== null) return refused;
@@ -583,6 +590,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     writeSuiteRecord({
       v: 1, id: suiteRecordId(suite.top, suite.branch, suite.target), state: 'running', pid: process.pid, toplevel: suite.top, branch: suite.branch,
       target: suite.target, ...(suite.config ? { config: suite.config } : {}), at: new Date(ran).toISOString(), maxRunMs, files: red?.files ?? [],
+      ...(red?.state === 'red' && red.redTree ? { overRed: { redTree: red.redTree, because: red.because ?? because } } : {}),
       ...(red?.ceilingStreak ? { ceilingStreak: red.ceilingStreak } : {}), ...(opts.runId ? { checkId: opts.runId } : {}),
     });
   }

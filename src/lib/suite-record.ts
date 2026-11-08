@@ -57,6 +57,8 @@ export interface SuiteRecord {
   because?: string;
   /** The detached check (`builder heavy --detach`) running it, for `--wait <id>`. */
   checkId?: string;
+  /** A `running` record started over a red one (`--because`): what it falls back to if it dies. */
+  overRed?: { redTree: string; because?: string };
 }
 
 /** A record older than this, green or incomplete, is pruned (the tree refs go with it). */
@@ -121,8 +123,12 @@ export function readSuiteRecord(toplevel: string, branch: string | null, target:
       const now = o.now ?? Date.now();
       const alive = (o.alive ?? pidAlive)(r.pid);
       const limit = Date.parse(r.at) + (r.maxRunMs ?? 0) + RUNNING_GRACE_MS;
-      if (!alive) return { record: { ...r, state: 'incomplete', reason: 'the runner died before it ended' } };
-      if (r.maxRunMs && now > limit) return { record: { ...r, state: 'incomplete', reason: 'running past its ceiling (a reused pid)' } };
+      // A run started over a red that never ended proved nothing: the red list stands.
+      const back = (reason: string): SuiteRecord => (r.overRed && TREE.test(r.overRed.redTree) && r.files.length > 0
+        ? { ...r, state: 'red', redTree: r.overRed.redTree, because: r.overRed.because, overRed: undefined, reason: `${reason}; the red record stands` }
+        : { ...r, state: 'incomplete', files: [], reason });
+      if (!alive) return { record: back('the runner died before it ended') };
+      if (r.maxRunMs && now > limit) return { record: back('running past its ceiling (a reused pid)') };
     }
     return { record: r };
   } catch {
@@ -434,7 +440,7 @@ export function buildCommand(toplevel: string): string | null {
  * helper (`runCliWithStdin(CLI, …)`) or a `src` runner, none of which this can see; a file that
  * only writes a fake `dist/index.js` is counted too, which costs a rerun and never hides one.
  */
-const DIST_PATH = /join\([^)]*['"`]dist['"`]\s*,\s*['"`]index\.js['"`]\s*\)|['"`][^'"`\n]*\bdist\/index\.js['"`]/;
+const DIST_PATH = /\b(?:join|resolve)\([^)]*['"`]dist['"`]\s*,\s*['"`]index\.js['"`]\s*\)|['"`][^'"`\n]*\bdist\/index\.js['"`]/;
 
 /** A config's `include` globs, read off its text; vitest's default when none is found. */
 export function includeGlobs(toplevel: string, config?: string): string[] {

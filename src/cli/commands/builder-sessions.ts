@@ -828,8 +828,10 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
     const related = [...new Set([...diff.filter((d) => d.status !== 'D' && codeFile(d.path)).map((d) => d.path), ...extraRelated])].sort();
     const touchesSrc = diff.some((d) => d.path.startsWith('src/'));
     const cli = touchesSrc ? cliSpawnTests(top, r.config) : [];
-    const gone = r.files.filter((f) => deleted.has(f) || !existsSync(join(top, f)));
-    for (const f of gone) deps.print(`${name}: ${f} is ${deleted.has(f) ? 'deleted' : 'gone (renamed?)'} since the red, listed as such`);
+    // Only git's word drops a red file (a delete; a rename is a delete plus an add). A file that
+    // is merely not on disk stays required, so it reads as missing and keeps the record red.
+    const gone = r.files.filter((f) => deleted.has(f));
+    for (const f of gone) deps.print(`${name}: ${f} is deleted since the red, listed as such`);
     const explicit = [...new Set([...r.files.filter((f) => !gone.includes(f)), ...cli, ...extraAlso])].sort();
     // The build is judged on the tree this rerun starts from, and held to its bytes to the end.
     const proof = cli.length > 0 && distGateApplies(top, r.config) ? distProof(top, now) : null;

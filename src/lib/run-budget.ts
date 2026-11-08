@@ -43,9 +43,10 @@ export type HeavyKind = BudgetKind | 'check';
 export interface HeavyStep {
   kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean;
   /**
-   * A suite run that narrows or cuts its scope (`--shard`, `--changed`, `--project`, `--bail`, …):
-   * heavy like a suite, but what it ran is not the whole suite, so it never writes or closes a
-   * suite record (lib/suite-record.ts).
+   * A suite run whose shape is not provably the whole suite: any argument outside
+   * {@link wholeSuiteArgs}' allow-list (`--shard`, `--dir`, `--root`, `--bail`, …, deny by
+   * default). Heavy like a suite and gated like one, but it never writes or closes a suite
+   * record (lib/suite-record.ts).
    */
   partial?: string;
 }
@@ -100,6 +101,37 @@ function namedFiles(args: string): { scoped?: number; related?: string[] } {
   return related ? { scoped: 0, related: named } : { scoped: named.length };
 }
 
+/** Flags that change how a whole suite runs, never which files it runs; the value-taking ones. */
+const WHOLE_SUITE_FLAG = /^--(?:reporter|maxWorkers|minWorkers|testTimeout|hookTimeout|teardownTimeout|outputFile|pool|retry|config|silent|passWithNoTests|no-file-parallelism|fileParallelism|color|no-color|logHeapUsage|clearScreen|no-watch|isolate|no-isolate|run)(?:=\S*)?$/;
+const WHOLE_SUITE_VALUE = /^(?:-c|--(?:reporter|maxWorkers|minWorkers|testTimeout|hookTimeout|teardownTimeout|outputFile|pool|retry|config))$/;
+
+/**
+ * Why a suite's arguments may not be the whole suite (the first one outside the allow-list), or
+ * null when every argument provably keeps it whole. Deny by default: a narrowing flag nobody
+ * listed (`--dir`, `--root`, `--shard`, `--project`, `--bail`) must never close a record green.
+ * A config outside the repo is not this repo's suite either.
+ */
+export function wholeSuiteArgs(args: string): string | null {
+  const words = args.trim().split(/\s+/).filter((w) => w && w !== '&' && w !== '--');
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w === 'run') continue;
+    if (WHOLE_SUITE_VALUE.test(w) && !w.includes('=')) {
+      const v = words[i + 1];
+      if (v === undefined || v.startsWith('-')) return w;
+      if (/^(?:-c|--config)$/.test(w) && (v.startsWith('/') || /(?:^|\/)\.\.(?:\/|$)/.test(v))) return `${w} ${v}`;
+      i += 1;
+      continue;
+    }
+    if (WHOLE_SUITE_FLAG.test(w)) {
+      if (/^--config=/.test(w) && /=(?:\/|.*(?:^|\/)\.\.(?:\/|$))/.test(w)) return w;
+      continue;
+    }
+    return w;
+  }
+  return null;
+}
+
 /** One shell command's kind and identity, or null when it is not a heavy step at all. */
 function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep | null {
   const s = raw.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
@@ -131,7 +163,7 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
     const config = /(?:--config|\s-c)[ =](\S+)/.exec(s)?.[1];
     const args = (testScript ?? runner)![1] ?? '';
     if (namesTests(args)) return { kind: 'check', target: 'tests', ...namedFiles(args) };
-    const partial = /(?:^|\s)(--shard|--changed|--onlyChanged|-o|--lastCommit|--since|--changedSince|--project|--bail|--testNamePattern|-t|--exclude)(?:[\s=]|$)/.exec(args)?.[1];
+    const partial = wholeSuiteArgs(args);
     return { kind: 'suite', target: config ? `suite ${config}` : 'suite', ...(partial ? { partial } : {}) };
   }
   if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc', ...(/\s--noEmit\b/.test(s) ? {} : { emits: true }) };
@@ -206,14 +238,15 @@ export const classifyHeavy = (command: string): HeavyKind | null => heavyStep(co
  * (`"test:all": "npm run build && vitest"`), whatever the line's heaviest step is. A suite in a
  * chain must not slip past its record because a build ranks heavier.
  */
-export function suiteInCommand(command: string, scripts: Record<string, string> = {}): HeavyStep | null {
+export function suiteInCommand(command: string, scripts: Record<string, string> = {}, depth = 0): HeavyStep | null {
   for (const seg of shellSegments(command)) {
     const step = stepOfSegment(seg, scripts);
     if (step?.kind === 'suite') return step;
+    // Into every script a segment names (`npm run test:unit` inside "ci"), a few levels deep.
     const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)/.exec(seg.trim());
-    const script = npm ? scripts[npm[1]] : undefined;
-    if (script && /&&|;|\|/.test(script)) {
-      const inner = suiteInCommand(script, {});
+    const script = npm && depth < 4 ? scripts[npm[1]] : undefined;
+    if (script) {
+      const inner = suiteInCommand(script, scripts, depth + 1);
       if (inner) return inner;
     }
   }
