@@ -184,6 +184,21 @@ describe('marks', () => {
   });
 });
 
+describe('a Telegram message is owed once, under the ref the hub drew', () => {
+  it('the debt carries the Telegram ref, so the section under it closes it (not a second debt under the words hash)', () => {
+    const s = emptySuperState();
+    const d = openMessageDebt(s, 'Ne durumdayiz', 1, 'cja4na');
+    expect(d.ref).toBe('cja4na');
+    expect(d.ref).not.toBe(msgRef('Ne durumdayiz'));
+    expect(closeByMarks(s, ['cja4na'], d.seq, 5)).toBe(1);
+    expect(openDebts(s)).toHaveLength(0);
+    // Without a Telegram ref nothing changes: the words' hash.
+    expect(openMessageDebt(s, 'tamam', 2).ref).toBe(msgRef('tamam'));
+    // A malformed ref is ignored, never forged into the ledger.
+    expect(openMessageDebt(s, 'tamam', 3, '<x>').ref).toBe(msgRef('tamam'));
+  });
+});
+
 describe('the decision at a turn end', () => {
   const ends = (o: Partial<{ ceiling: number; stopped: boolean; exited: boolean; limited: boolean }>) => [{ ceiling: 99, stopped: false, exited: false, limited: false, ...o }];
 

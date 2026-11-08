@@ -3522,7 +3522,7 @@ export function startChatSession(
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
-    const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text) : null;
+    const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
@@ -3535,7 +3535,7 @@ export function startChatSession(
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

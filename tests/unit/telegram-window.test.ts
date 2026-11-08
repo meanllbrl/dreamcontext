@@ -18,7 +18,6 @@ import { historyChatItem, type ChatItem, type PendingItem } from '../../dashboar
 import { ownerRefOf, replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
 import { replyAboutBlock, replySelectionBlock } from '../../dashboard/src/components/sleepy/super/superHandover.js';
-import { lastSentence } from '../../dashboard/src/components/telegram/TelegramTurnCard.js';
 import { WINDOW_VERBS } from '../../src/server/routes/window-control.js';
 
 const S = TG_SENTINEL;
@@ -98,10 +97,6 @@ describe('a Telegram item keeps its ref through history and reply links', () => 
     expect(replySelectionBlock('evet', 'owner', 'evet', 'tg0001')).toContain('ref=tg0001');
   });
 
-  it('the collapsed card reads the last sentence', () => {
-    expect(lastSentence('Raporu gördüm. Şimdi yayınla!')).toBe('Şimdi yayınla!');
-    expect(lastSentence('  tek satır  ')).toBe('tek satır');
-  });
 });
 
 describe('answer_pending: only this chat\'s card, only permission and question', () => {

@@ -191,8 +191,8 @@ function UserMessage({
           ? <div className="chat-msg-user-bubble"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
           : <div className="chat-msg-user-bubble">{text}</div>)}
       </>);
-      // A message from Telegram is a collapsible card (W3); its answer links under it by ref.
-      return item.source === 'telegram' ? <TelegramTurnCard text={text || item.text} ts={item.ts}>{content}</TelegramTurnCard> : content; })()}
+      // A message from Telegram is his normal bubble under a Telegram chip; its answer links under it by ref.
+      return item.source === 'telegram' ? <TelegramTurnCard>{content}</TelegramTurnCard> : content; })()}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
           its next tool boundary — so the tool calls rendered just below it were decided
