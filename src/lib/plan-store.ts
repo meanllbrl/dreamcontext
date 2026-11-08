@@ -21,6 +21,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { acquireFileLockWithin, releaseFileLock } from './file-lock.js';
+import { TASK_SLUG_RE } from './task-slug.js';
 import { ledgerProblem, PLAN_NAME_RE, type Ledger, type LedgerReadResult } from './plan-ledger.js';
 
 export const PLANS_REL = join('tmp', 'plans');
@@ -188,7 +189,7 @@ export async function withLockFile<T>(lock: string, label: string, fn: () => Pro
 // In the CODE repo, beside the run's other files, because a code worktree holds no brain: the
 // review loop must run where the lead builds. The same symlink refusal and lock as a plan.
 
-export const TASK_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,239}$/;
+// One slug rule for every task path (lib/task-slug.ts; tests/unit/task-slug-limit.test.ts holds it single).
 export const LOOP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 export function reviewLoopsDir(root: string, task: string): string {
