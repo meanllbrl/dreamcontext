@@ -93,14 +93,22 @@ describe('the Team row in place', () => {
     expect(html).not.toContain('ns-team-tag');
   });
 
-  it('folded: news pops out (max 3, then +N daha); working alone does not', () => {
-    const html = render([
+  it('folded: no member row under it, whatever the members carry (owner 2026-11-08)', () => {
+    const news = [
       member('a', { unread: 1 }), member('b', { asking: true }), member('c', { approval: true }), member('d', { unread: 2 }),
       member('w', { ownerWorking: 1 }),
-    ]);
-    expect(countOf(html, 'data-testid="team-popout"')).toBe(3);
-    expect(html).toContain('data-testid="team-popout-more"');
-    expect(html).not.toMatch(/team-popout"[^>]*data-slug="w"/);
+    ];
+    for (const html of [render(news), render(news, { openSlug: 'w' }), render(news, { kind: 'global', vault: null })]) {
+      expect(html).toContain('data-open="false"');
+      expect(html).not.toContain('ns-team-mrow');
+      expect(html).not.toContain('team-popout');
+      expect(html).not.toContain('data-slug=');
+    }
+    // The row itself still says a member works or has news.
+    expect(render(news)).toContain('data-testid="team-row-ring"');
+    // Unfolded, the same members are rows again.
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    expect(countOf(render(news), 'data-testid="team-list-member"')).toBe(5);
   });
 
   it('open row: no summed ring or count on the Team row, the member rows carry their own', () => {
@@ -169,10 +177,12 @@ describe('the open member is the selected row (owner 2026-11-04)', () => {
     expect(html).toMatch(/ns-team-mrow is-sel"[^>]*aria-current="page"[^>]*data-testid="team-list-member" data-slug="m2"/);
     expect(html).not.toMatch(/ns-team-row ns-team-sec-row is-sel/);
   });
-  it('folded: the open member still shows under the row, selected, once', () => {
-    const html = render([member('a', { unread: 2 }), member('b')], { openSlug: 'a' });
-    expect(countOf(html, 'ns-team-mrow is-sel')).toBe(1);
-    expect(countOf(html, 'data-slug="a"')).toBe(1);
+  it('folded: no member row; the Team row itself is selected while one of its members is open', () => {
+    const html = render([member('a', { unread: 2 }), member('b')], { openSlug: 'a', className: 'ns-dr-child' });
+    expect(html).not.toContain('ns-team-mrow');
+    expect(html).toMatch(/class="ns-team-row ns-team-sec-row ns-dr-child is-sel"[^>]*aria-current="page"/);
+    // Another group's member is open: this folded row is not the selected one.
+    expect(render([member('a'), member('b')], { openSlug: 'zz' })).not.toContain('is-sel');
   });
   it('no open member: nothing is selected', () => {
     withStore({ [teamOpenKey('project', 'acme')]: '1' });

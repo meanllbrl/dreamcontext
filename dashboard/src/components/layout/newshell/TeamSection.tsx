@@ -2,15 +2,16 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useI18n } from '../../../context/I18nContext';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { ProjectChipBubbles } from '../ProjectTabs';
-import { ekipAsking, ekipCount, ekipPopOuts, ekipWorkingCount, type EkipMember } from '../../aiteam/teamModel';
+import { ekipAsking, ekipCount, ekipWorkingCount, type EkipMember } from '../../aiteam/teamModel';
 import { TeamFaces, photoVaultOf } from './TeamList';
 import './TeamList.css';
 
 /**
  * The Team row that opens IN PLACE (plan r4 D1-D5): a chevron, the faces, the label and ONE end
- * mark; a click expands the member list right under it, no popover. Folded, members with news
- * for the owner (an approval card, a question, unread) pop out under it, at most 3, then "+N
- * daha". Up to 8 members the list is plain; over 8 it is a box 8 rows tall that scrolls inside;
+ * mark; a click expands the member list right under it, no popover. Folded means NO member row
+ * under it, whatever the members carry (owner 2026-11-08: "bu neden kapanmıyor"): the row's own
+ * summed ring or count says a member has news, and while a member's stage is open the folded row
+ * is the selected one. Up to 8 members the list is plain; over 8 it is a box 8 rows tall that scrolls inside;
  * over 12 a search field sits above it. Rows open the member's stage; no switch here (r3 R2: it
  * lives on the member's stage). The open state is remembered per project (and for Global).
  * The phone keeps its bottom sheet (`TeamList sheet`); this is the desktop's row.
@@ -65,10 +66,10 @@ function SuperBadge({ m }: { m: EkipMember }) {
   );
 }
 
-function MemberRow({ m, vault, onOpen, popout = false, current = false }: { m: EkipMember; vault?: string | null; onOpen(m: EkipMember): void; popout?: boolean; current?: boolean }) {
+function MemberRow({ m, vault, onOpen, current = false }: { m: EkipMember; vault?: string | null; onOpen(m: EkipMember): void; current?: boolean }) {
   return (
     <li className="ns-team-mrow-li">
-      <button type="button" className={`ns-team-mrow${popout ? ' is-pop' : ''}${current ? ' is-sel' : ''}`} aria-current={current ? 'page' : undefined} data-testid={popout ? 'team-popout' : 'team-list-member'} data-slug={m.slug}
+      <button type="button" className={`ns-team-mrow${current ? ' is-sel' : ''}`} aria-current={current ? 'page' : undefined} data-testid="team-list-member" data-slug={m.slug}
         data-off={m.enabled ? undefined : 'true'} data-asking={m.enabled && m.asking && !m.superOnly ? 'true' : undefined}
         onClick={() => onOpen(m)}>
         <span className="ns-team-mface">
@@ -111,13 +112,12 @@ export function TeamSection(p: TeamSectionProps) {
   const count = ekipCount(p.members);
   const asking = ekipAsking(p.members);
   const working = ekipWorkingCount(p.members);
-  const pop = useMemo(() => ekipPopOuts(p.members), [p.members]);
   const searchable = p.members.length > TEAM_SEARCH_OVER;
   const boxed = p.members.length > TEAM_BOX_ROWS;
   const shown = useMemo(() => (searchable ? filterMembers(p.members, query, locale ?? 'tr') : [...p.members]), [p.members, query, searchable, locale]);
 
-  /** Folded, the open member still shows under the row: it is how the owner sees where they are. */
-  const foldedCurrent = p.openSlug ? p.members.find((m) => m.slug === p.openSlug) : undefined;
+  /** Folded with a member's stage on screen: the Team row itself is the selected one (where the owner is), never a member row under it. */
+  const holdsOpen = !open && !empty && !!p.openSlug && p.members.some((m) => m.slug === p.openSlug);
 
   const named = [
     asking ? t('drawer.team.asks') : '',
@@ -140,7 +140,8 @@ export function TeamSection(p: TeamSectionProps) {
 
   return (
     <div className={`ns-team-sec${open ? ' is-open' : ''}`} data-testid={`${p.testid}-section`} data-open={open ? 'true' : 'false'}>
-      <button ref={rowRef} type="button" className={`ns-team-row ns-team-sec-row ${p.className ?? ''}`.trim()}
+      <button ref={rowRef} type="button" className={`ns-team-row ns-team-sec-row ${p.className ?? ''}${holdsOpen ? ' is-sel' : ''}`.trim()}
+        aria-current={holdsOpen ? 'page' : undefined}
         data-testid={p.testid} data-vault={p.vault ?? undefined} data-asking={asking ? 'true' : undefined} data-empty={empty ? 'true' : undefined}
         aria-expanded={empty ? undefined : open} aria-haspopup={empty ? 'dialog' : undefined}
         aria-label={empty ? `${p.label} (${t('drawer.team.addFirst')})` : named ? `${p.label} (${named})` : p.label}
@@ -154,20 +155,6 @@ export function TeamSection(p: TeamSectionProps) {
           ? <span data-testid="team-row-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
           : count > 0 && <span className="ns-team-count" data-asking={asking ? 'true' : undefined} data-testid="team-row-count">{count}</span>}
       </button>
-
-      {!open && (pop.shown.length > 0 || foldedCurrent) && (
-        <ul className="ns-team-mlist" data-testid="team-popouts">
-          {foldedCurrent && <MemberRow key={`cur-${foldedCurrent.slug}`} m={foldedCurrent} vault={p.vault} onOpen={p.onOpen} current />}
-          {pop.shown.filter((m) => m.slug !== p.openSlug).map((m) => <MemberRow key={m.slug} m={m} vault={p.vault} onOpen={p.onOpen} popout />)}
-          {pop.more > 0 && (
-            <li className="ns-team-mrow-li">
-              <button type="button" className="ns-team-more" data-testid="team-popout-more" onClick={() => toggle(true)}>
-                {t('drawer.team.more').replace('{n}', String(pop.more))}
-              </button>
-            </li>
-          )}
-        </ul>
-      )}
 
       {open && !empty && (
         <div className="ns-team-open-list" onKeyDown={onListKey}>

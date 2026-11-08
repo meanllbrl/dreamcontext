@@ -10,7 +10,7 @@ import {
   buildDrawerRows, buildGlobalTeam, filterProjectRows, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, teamChildOf,
   teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
-import { buildEkip, ekipFaces, ekipLine, ekipPopOuts, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
+import { buildEkip, ekipFaces, ekipLine, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
 import type { SuperMemberSummary } from '../../dashboard/src/lib/superTypes.js';
 import { fanOutHistory, HISTORY_PARALLEL, HISTORY_PER_VAULT } from '../../dashboard/src/components/layout/newshell/historyFanout.js';
 import { chill, oldestEvictable } from '../../dashboard/src/components/layout/instanceCeiling.js';
@@ -501,15 +501,11 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(slugs.slice(3)).toEqual(['worker', 'mainjob', 'idle', 'off']);
   });
 
-  it('pop-outs: approval, question or unread, enabled and not for the Super, at most 3 then a rest count', () => {
+  it('the folded row\'s ring counts members working for the owner, enabled and not for the Super', () => {
     const list = buildEkip([
       summary('a', { unread: 1 }), summary('b', { asking: true }), summary('c', { approval: true }), summary('d', { unread: 4 }),
       summary('w', { ownerWorking: 2 }), summary('s', { superOnly: true }), summary('o', { enabled: false, unread: 3 }),
     ], []);
-    const pop = ekipPopOuts(list);
-    expect(pop.shown.map((m) => m.slug).sort()).toEqual(['b', 'c', 'a'].sort());
-    expect(pop.more).toBe(1);
-    expect(ekipPopOuts(list, 10).shown.map((m) => m.slug).sort()).toEqual(['a', 'b', 'c', 'd']);
     expect(ekipWorkingCount(list)).toBe(1);
     expect(ekipWorkingCount(buildEkip([summary('o', { enabled: false, ownerWorking: 1 })], []))).toBe(0);
   });
