@@ -16,6 +16,8 @@ import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-date
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import { developHandoffGaps, developHandoffNotes } from '../../lib/handoff-readiness.js';
+import { planGateGaps } from '../../lib/plan-ledger.js';
+import { readPlanLedgers } from '../../lib/plan-store.js';
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
@@ -1124,7 +1126,8 @@ export async function handleTasksFilingApproval(
  *
  * The Plan → Develop button calls this BEFORE it opens the session: the new session
  * inherits nothing but the task file, so a plan that never reached the file is lost.
- * Same check as `dreamcontext tasks ready` (lib/handoff-readiness.ts). Always 200 for a
+ * Same check as `dreamcontext tasks ready` (lib/handoff-readiness.ts + the plan gate in
+ * lib/plan-ledger.ts). Always 200 for a
  * real task — "not ready" is an answer, not an error.
  */
 export async function handleTasksReadiness(
@@ -1142,7 +1145,9 @@ export async function handleTasksReadiness(
     return;
   }
 
-  const gaps = developHandoffGaps(task);
+  // The plan's gate (lib/plan-ledger.ts): an open Critical, an unaccepted open Major or a plan
+  // not done refuses here exactly as it does in `tasks ready` and `plan link`.
+  const gaps = [...developHandoffGaps(task), ...planGateGaps(readPlanLedgers(contextRoot), slug)];
   const children: TaskData[] = [];
   for (const c of childrenOf(await parentLinkTasks(backendFor(contextRoot)), slug)) {
     const full = await backendFor(contextRoot).get(c.slug);
