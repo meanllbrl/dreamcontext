@@ -762,7 +762,13 @@ export class ToWire {
             header: q.header.slice(0, 12),
             multiSelect: q.multiSelect ?? false,
             // T3 fills a missing description with the label (Codex's async options are bare labels): no echo.
-            options: q.options.map((o) => ({ label: o.label, ...(o.description && o.description !== o.label ? { description: o.description } : {}) })),
+            // A preview (a Plan drawing the owner approves) rides through: dropping it asked him
+            // to approve a screen he never saw. Codex's own question tool has none to send.
+            options: q.options.map((o) => ({
+              label: o.label,
+              ...(o.description && o.description !== o.label ? { description: o.description } : {}),
+              ...(typeof o.preview === 'string' && o.preview ? { preview: o.preview } : {}),
+            })),
           })),
         },
       },

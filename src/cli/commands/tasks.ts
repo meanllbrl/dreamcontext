@@ -45,6 +45,7 @@ import {
   renderHandoffEntry,
   developHandoffGaps,
   developHandoffNotes,
+  drawingFileCheck,
   formatGaps,
   type HandoffFields,
 } from '../../lib/handoff-readiness.js';
@@ -2320,14 +2321,15 @@ export function registerTasksCommand(program: Command): void {
   tasks
     .command('ready')
     .argument('<name>')
-    .description('Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan')
+    .description('Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan, and for a UX/UI plan the owner-approved outcome (+ approved drawing)')
     .action(async (name: string) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
       const task = await backend.get(slug);
-      const planGaps = planGateGaps(readPlanLedgers(ensureContextRoot()), slug);
-      const gaps = [...developHandoffGaps(task ?? {}), ...planGaps];
+      const root = ensureContextRoot();
+      const planGaps = planGateGaps(readPlanLedgers(root), slug);
+      const gaps = [...developHandoffGaps(task ?? {}, drawingFileCheck(root)), ...planGaps];
       if (gaps.length > 0) {
         error(`${slug} is not ready to hand to a Develop session:\n${formatGaps(gaps)}`);
         if (gaps.length > planGaps.length) info(`Fill each task gap with \`dreamcontext tasks insert ${slug} <section> "…"\`, then run this again.`);
