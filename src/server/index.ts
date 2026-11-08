@@ -272,7 +272,7 @@ import {
 import { pruneTakes } from '../lib/voice/voiceLog.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut, handleAgentWindowOrderPut } from './routes/agent-sessions.js';
-import { handleContextHandoffDefaultGet, handleContextHandoffDefaultPost } from './routes/agent-handoff-default.js';
+import { handleContextHandoffDefaultGet } from './routes/agent-handoff-default.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
@@ -856,7 +856,6 @@ export function buildRouter(): Router {
   router.put('/api/agent/sessions', handleAgentSessionsPut);
   router.put('/api/agent/sessions/window-order', handleAgentWindowOrderPut);
   router.get('/api/agent/context-handoff-default', handleContextHandoffDefaultGet);
-  router.post('/api/agent/context-handoff-default', handleContextHandoffDefaultPost);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);

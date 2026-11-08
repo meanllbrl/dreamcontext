@@ -1,17 +1,15 @@
 /**
- * Settings → Eco mode's route (task codex-tarzi-yeni-kabuk W2-C, flagged F4):
- * `GET|POST /api/agent/context-handoff-default` reads and writes ONLY this machine's
- * `contextHandoffDefault` for the project (`dirname(contextRoot)`), boolean only, refused on
- * the phone, and the write keeps every other key of `.brain-local.json` (it also holds the
- * auto-sleep consent and `codeRepoPath`) through an atomic temp-and-rename.
+ * Settings → Eco mode's route: `GET /api/agent/context-handoff-default` answers this Mac's
+ * Eco mode switch (agent-ui.json `ecoMode`, ON when never chosen) and the open project's
+ * thresholds. The per-project write is gone (owner 2026-11-08). HOME is pointed at a scratch
+ * dir so the developer's real agent-ui.json never decides a test.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Readable } from 'node:stream';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleContextHandoffDefaultGet, handleContextHandoffDefaultPost } from '../../src/server/routes/agent-handoff-default.js';
+import { handleContextHandoffDefaultGet } from '../../src/server/routes/agent-handoff-default.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 
@@ -27,8 +25,14 @@ beforeEach(() => {
   projectRoot = join(scratch, 'proj');
   contextRoot = join(projectRoot, '_dream_context');
   mkdirSync(contextRoot, { recursive: true });
+  prevHome = process.env.HOME;
+  process.env.HOME = join(scratch, 'home');
 });
-afterEach(() => rmSync(scratch, { recursive: true, force: true }));
+afterEach(() => {
+  if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+  rmSync(scratch, { recursive: true, force: true });
+});
+let prevHome: string | undefined;
 
 function res() {
   let code = 0;
@@ -36,51 +40,34 @@ function res() {
   const r = { writeHead(c: number) { code = c; }, setHeader() {}, end(d: string) { body = JSON.parse(d); } } as unknown as ServerResponse;
   return { r, status: () => code, body: () => body };
 }
-function post(payload: unknown, socket: object = {}): IncomingMessage {
-  const req = Readable.from([Buffer.from(JSON.stringify(payload))]) as unknown as IncomingMessage;
-  Object.assign(req, { method: 'POST', headers: { 'content-type': 'application/json' }, socket });
-  return req;
-}
 
-describe('Eco mode default route', () => {
-  it('reads the team default when this machine never chose, with the thresholds', async () => {
+describe('Eco mode route (thresholds + the machine switch)', () => {
+  it('answers this Mac\'s switch (ON when never chosen) with the project\'s thresholds', async () => {
     const out = res();
     await handleContextHandoffDefaultGet({ socket: {} } as IncomingMessage, out.r, {}, contextRoot);
     expect(out.status()).toBe(200);
-    expect(out.body()).toEqual({ enabled: false, nudgeAt: 300_000, hardAt: 650_000 });
+    expect(out.body()).toEqual({ enabled: true, nudgeAt: 300_000, hardAt: 650_000 });
   });
 
-  it('writes the machine-local default for this project and keeps every other key', async () => {
+  it('ignores an old per-project default', async () => {
     const path = brainLocalPath(projectRoot);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify({ codeRepoPath: '/code/acme', autoSleep: { enabled: true, trigger: 'sleepy', approvedAt: 'x', approvedFingerprint: 'y' } }));
+    writeFileSync(path, JSON.stringify({ contextHandoffDefault: false }));
     const out = res();
-    await handleContextHandoffDefaultPost(post({ enabled: true }), out.r, {}, contextRoot);
-    expect(out.status()).toBe(200);
+    await handleContextHandoffDefaultGet({ socket: {} } as IncomingMessage, out.r, {}, contextRoot);
     expect(out.body()).toMatchObject({ enabled: true });
-    const stored = JSON.parse(readFileSync(path, 'utf-8'));
-    expect(stored).toMatchObject({ contextHandoffDefault: true, codeRepoPath: '/code/acme', autoSleep: { enabled: true } });
-    // No temp file left beside it.
-    expect(readdirSync(dirname(path)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
-  it('takes a boolean only', async () => {
-    for (const payload of [{ enabled: 'yes' }, {}, { enabled: 1 }]) {
-      const out = res();
-      await handleContextHandoffDefaultPost(post(payload), out.r, {}, contextRoot);
-      expect(out.status()).toBe(400);
-    }
-    expect(existsSync(brainLocalPath(projectRoot))).toBe(false);
+  it('has no write any more: the switch is saved through the agent settings', () => {
+    expect(ROUTE_POLICY['POST /api/agent/context-handoff-default']).toBeUndefined();
   });
 
   it('is refused on the phone, by the route itself and by the phone route policy', async () => {
     const socket = {};
     markPhoneSocket(socket);
     const out = res();
-    await handleContextHandoffDefaultPost(post({ enabled: true }, socket), out.r, {}, contextRoot);
+    await handleContextHandoffDefaultGet({ socket } as unknown as IncomingMessage, out.r, {}, contextRoot);
     expect(out.status()).toBe(403);
-    expect(existsSync(brainLocalPath(projectRoot))).toBe(false);
-    expect(ROUTE_POLICY['POST /api/agent/context-handoff-default']?.allow).toBe(false);
     expect(ROUTE_POLICY['GET /api/agent/context-handoff-default']?.allow).toBe(false);
   });
 });

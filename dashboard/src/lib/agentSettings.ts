@@ -122,6 +122,10 @@ export interface AgentSettings {
    *  only an explicit `true` turns it on. Read and written through `lib/voice/readAloud.ts`
    *  and `lib/voice/readAloudPersist.ts`, never directly. */
   readAloud: boolean;
+  /** Settings → Chat "Eco mode": the context hand-off nudge every new chat pane, in every
+   *  project on this Mac, starts with. ON by default: only an explicit `false` turns it off.
+   *  A pane's composer switch wins for that pane only and never writes this. */
+  ecoMode: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -146,6 +150,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   superModel: 'opus',
   superEffort: 'high',
   readAloud: false,
+  ecoMode: true,
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -208,6 +213,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     superEffort: typeof r.superEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.superEffort) ? r.superEffort : DEFAULT_AGENT_SETTINGS.superEffort,
     // Default-FALSE: speech only when the owner turned it on.
     readAloud: r.readAloud === true,
+    // Default-TRUE: only an explicit `false` turns Eco mode off for new chats.
+    ecoMode: r.ecoMode !== false,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

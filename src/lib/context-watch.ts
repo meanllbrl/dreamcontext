@@ -26,6 +26,7 @@
 
 import { existsSync, lstatSync, mkdirSync, openSync, readSync, closeSync, fstatSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { isSafeSessionId } from './transcript-locate.js';
@@ -544,20 +545,55 @@ export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab:
 }
 
 /**
- * What a NEW pane's tab file should be seeded with, at spawn, before the child starts:
- * brain-local (this machine, this vault — the last toggle) > `.config.json` (the team
- * default) > off.
+ * Eco mode's machine-wide default (Settings → Chat → Eco mode, owner 2026-11-08): ONE switch
+ * for this Mac, in `~/.dreamcontext/agent-ui.json` `ecoMode`, the same file every other
+ * machine-wide chat setting lives in. ON unless the file says exactly `false`: a missing file,
+ * key or unreadable JSON all read as ON. The coercers in `server/routes/launcher.ts` and the
+ * dashboard's `lib/agentSettings.ts` apply the same rule to what they store.
  *
- * Deliberately NOT app-global: `agent-ui.json` is ONE machine-wide file, so a default
- * stored there would switch the nudge on in every vault on the machine and override a
- * team that opted out in `.config.json`. A pragmatist review blocked exactly that.
+ * The only reader on the spawn path: every new chat pane (Claude, a bridge tool, the Super
+ * Agent, a member's chat) seeds its tab file from {@link resolveTabSeed} with this value.
+ * The old per-project `.brain-local.json` `contextHandoffDefault` is no longer read.
+ */
+export function ecoModeDefault(home: string = homedir()): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(join(home, '.dreamcontext', 'agent-ui.json'), 'utf-8')) as unknown;
+    return !(raw && typeof raw === 'object' && (raw as Record<string, unknown>).ecoMode === false);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * What a NEW pane's tab file should be seeded with, at spawn, before the child starts: the
+ * switch is this Mac's Eco mode ({@link ecoModeDefault}), the same in every project; the
+ * ladder (thresholds) stays the team's `.config.json`, then the shipped defaults.
+ *
+ * The machine switch decides even where `.config.json` says `enabled: false`: the owner chose
+ * one setting for every chat on this Mac (2026-11-08), replacing the earlier per-project
+ * default. Terminal and CLI sessions have no pane and still follow `.config.json`.
  */
 export function resolveTabSeed(
-  brainLocalDefault: boolean | undefined,
+  machineDefault: boolean,
   configHandoff: { enabled?: boolean; nudgeAt?: number; hardAt?: number; remindEvery?: number } | null | undefined,
 ): ResolvedContextHandoff {
-  const base = resolveContextHandoff(configHandoff);
-  return { ...base, enabled: brainLocalDefault ?? base.enabled };
+  return { ...resolveContextHandoff(configHandoff), enabled: machineDefault };
+}
+
+/**
+ * A pane's own composer switch: writes THAT pane's tab file and nothing else (no project
+ * default, no machine default), then returns what the pane now runs with, re-resolved so the
+ * echo carries the vault's ladder. Null when the tab file could not be written, so the switch
+ * snaps back rather than lies.
+ */
+export function applyPaneHandoffToggle(
+  contextRoot: string,
+  projectRoot: string,
+  tab: string,
+  enabled: boolean,
+): ResolvedContextHandoff | null {
+  const written = writeTabHandoff(contextRoot, tab, { enabled });
+  return written ? resolveHandoffFor(contextRoot, projectRoot, tab) : null;
 }
 
 // ─── The one entry point the hooks call ───────────────────────────────────────

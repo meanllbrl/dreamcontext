@@ -99,7 +99,8 @@ export interface SetupConfig {
    *
    * This is the VAULT default (it rides to teammates) and the only switch for
    * terminal/CLI sessions. A desktop Chat pane overrides it per pane via its tab
-   * file, seeded from the machine-local `BrainLocalState.contextHandoffDefault`.
+   * file, seeded from this Mac's Eco mode (`~/.dreamcontext/agent-ui.json` `ecoMode`,
+   * `ecoModeDefault` in context-watch.ts); only the ladder is taken from here.
    */
   contextHandoff?: ContextHandoffConfig;
   /**
@@ -380,11 +381,10 @@ export interface BrainLocalState {
    * with `consent-stale` rather than running under settings nobody approved.
    */
   /**
-   * Last context-handoff toggle on THIS machine, for THIS vault — seeds every NEW
-   * chat pane's tab file at spawn. Deliberately machine-local and vault-scoped: an
-   * app-global default (agent-ui.json is ONE machine-wide file) would switch the
-   * nudge on in every vault on the machine, overriding a team that opted out in
-   * `.config.json`. Absent ⇒ fall through to `.config.json` contextHandoff, then off.
+   * RETIRED 2026-11-08: the per-project Eco mode default. Eco mode is now one setting for this
+   * Mac (`agent-ui.json` `ecoMode`, ON by default), and nothing reads or writes this field any
+   * more. Still parsed so an older file stays valid and a newer build could read it; never
+   * consulted on the spawn path.
    */
   contextHandoffDefault?: boolean;
   autoSleep?: {

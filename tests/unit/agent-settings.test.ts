@@ -137,6 +137,23 @@ describe('readAloud (the speech switch, persisted so a relaunch keeps it)', () =
   });
 });
 
+describe('ecoMode (Settings → Chat → Eco mode, one switch for this Mac)', () => {
+  it('is ON by default on both sides, and for an old blob without the key', () => {
+    expect(DEFAULT_AGENT_SETTINGS.ecoMode).toBe(true);
+    expect(coerceAgentSettings({}).ecoMode).toBe(true);
+    expect(coerceAgentSettings(null).ecoMode).toBe(true);
+    expect(coerceServerAgentSettings({}).ecoMode).toBe(true);
+  });
+
+  it('runs one input table through BOTH coercers: only an explicit false turns it off', () => {
+    const table: Array<[unknown, boolean]> = [[false, false], [true, true], ['false', true], [0, true], [null, true], [undefined, true]];
+    for (const [input, want] of table) {
+      expect(coerceAgentSettings({ ecoMode: input as never }).ecoMode).toBe(want);
+      expect(coerceServerAgentSettings({ ecoMode: input }).ecoMode).toBe(want);
+    }
+  });
+});
+
 describe('coerceAgentSettings renderer', () => {
   it('defaults to webgl when the key is absent (old persisted blob)', () => {
     expect(coerceAgentSettings({}).renderer).toBe('webgl');

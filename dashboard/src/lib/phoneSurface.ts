@@ -218,7 +218,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/download',
   'PUT /api/agent/sessions/window-order',
   'GET /api/agent/context-handoff-default',
-  'POST /api/agent/context-handoff-default',
   'POST /api/connections',
   'DELETE /api/connections/:vault',
   'POST /api/peer/send',

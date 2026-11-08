@@ -350,7 +350,7 @@ Status: `todo → in_progress → in_review → completed` by default. A project
 
 ---
 
-## Context handoff — ECO mode (opt-in, and it escalates)
+## Context handoff — ECO mode (chats: on, one switch per Mac)
 
 When on, a long session gets a `[context handoff]` note that gets louder: at **300k–650k** it is firm (hand off unless the task is nearly done; "I'm mid-task" is not a reason), at **650k+** severe (finish the turn, then hand off or tell the user why not). A handoff is ONE command, every part required:
 

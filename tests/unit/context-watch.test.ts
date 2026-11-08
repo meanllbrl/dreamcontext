@@ -11,8 +11,9 @@
  *     live at the CLI write boundary — see the module's doc comment)
  *   - the handoff record: write / overwrite / stamp / consume, and the banner
  *     selection matrix INCLUDING the automation-hijack case
- *   - resolveTabSeed precedence: brain-local > .config.json > off
- *   - readBrainLocal validation of contextHandoffDefault
+ *   - Eco mode: one machine-wide default (agent-ui.json `ecoMode`, missing ⇒ ON) seeds
+ *     every new pane in every project; a pane toggle writes no default
+ *   - readBrainLocal validation of the retired contextHandoffDefault
  *   - the tab file survives a /clear while the nudge ladder resets
  *   - pruning: 7 days for ladders/records, 30 for tab files
  */
@@ -35,6 +36,8 @@ import {
   writeTabHandoff,
   resolveHandoffFor,
   resolveTabSeed,
+  ecoModeDefault,
+  applyPaneHandoffToggle,
   writeHandoffRecord,
   readHandoffRecord,
   stampHandoffRecord,
@@ -500,35 +503,79 @@ describe('the tab file and the resolution ladder', () => {
   });
 });
 
-describe('resolveTabSeed', () => {
-  it('prefers brain-local over .config.json over off', () => {
-    expect(resolveTabSeed(true, { enabled: false }).enabled).toBe(true);
-    expect(resolveTabSeed(false, { enabled: true }).enabled).toBe(false);
-    expect(resolveTabSeed(undefined, { enabled: true }).enabled).toBe(true);
-    expect(resolveTabSeed(undefined, undefined).enabled).toBe(false);
+describe('Eco mode: one machine-wide default', () => {
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'dc-ctx-home-')); });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const writeUi = (blob: unknown) => {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), typeof blob === 'string' ? blob : JSON.stringify(blob), 'utf-8');
+  };
+
+  it('is ON when nothing was ever chosen: no file, no key, unreadable JSON', () => {
+    expect(ecoModeDefault(home)).toBe(true);
+    writeUi({ readAloud: true });
+    expect(ecoModeDefault(home)).toBe(true);
+    writeUi('{not json');
+    expect(ecoModeDefault(home)).toBe(true);
+    writeUi({ ecoMode: 'false' });
+    expect(ecoModeDefault(home)).toBe(true);
   });
 
-  it('takes the LADDER from config even when brain-local decides the switch', () => {
-    expect(resolveTabSeed(true, { enabled: false, nudgeAt: 250_000 }))
-      .toEqual({ enabled: true, nudgeAt: 250_000, hardAt: 650_000, remindEvery: 100_000 });
+  it('is OFF only for an explicit false', () => {
+    writeUi({ ecoMode: false });
+    expect(ecoModeDefault(home)).toBe(false);
   });
-});
 
-describe('brain-local contextHandoffDefault', () => {
-  it('round-trips, and is scoped to the project root it was written under', () => {
+  it('seeds every project the same way, ignoring an old per-project default and a team opt-out', () => {
     const otherRoot = mkdtempSync(join(tmpdir(), 'dc-ctx-other-'));
     try {
       mkdirSync(join(otherRoot, '_dream_context', 'state'), { recursive: true });
-      writeBrainLocal(projectRoot, { contextHandoffDefault: true });
-      expect(readBrainLocal(projectRoot).contextHandoffDefault).toBe(true);
-      // Vault A on must leave vault B untouched — the whole reason this is not app-global.
-      expect(readBrainLocal(otherRoot).contextHandoffDefault).toBeUndefined();
-      expect(resolveTabSeed(readBrainLocal(otherRoot).contextHandoffDefault, undefined).enabled).toBe(false);
+      // Project A once stored OFF the old way; project B never chose; B's team opted out.
+      writeBrainLocal(projectRoot, { contextHandoffDefault: false });
+      const seedA = resolveTabSeed(ecoModeDefault(home), readSetupConfig(projectRoot)?.contextHandoff);
+      const seedB = resolveTabSeed(ecoModeDefault(home), { enabled: false });
+      expect(seedA.enabled).toBe(true);
+      expect(seedB.enabled).toBe(true);
+      // One switch off on this Mac: off in both.
+      writeUi({ ecoMode: false });
+      expect(resolveTabSeed(ecoModeDefault(home), undefined).enabled).toBe(false);
+      expect(resolveTabSeed(ecoModeDefault(home), { enabled: true }).enabled).toBe(false);
     } finally {
       rmSync(otherRoot, { recursive: true, force: true });
     }
   });
 
+  it('takes the LADDER from config while the machine decides the switch', () => {
+    expect(resolveTabSeed(true, { enabled: false, nudgeAt: 250_000 }))
+      .toEqual({ enabled: true, nudgeAt: 250_000, hardAt: 650_000, remindEvery: 100_000 });
+  });
+
+  it('a pane toggle changes that pane only: no project default, no machine default, no sibling', () => {
+    // HOME points at the scratch home, so a toggle that wrote the machine default through
+    // homedir() would land in THIS file and change it: the check below can fail.
+    const prevHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      writeUi({ ecoMode: false });
+      const uiPath = join(home, '.dreamcontext', 'agent-ui.json');
+      const before = readFileSync(uiPath, 'utf-8');
+      writeTabHandoff(contextRoot, 'tab-a', { enabled: false });
+      writeTabHandoff(contextRoot, 'tab-b', { enabled: false });
+      const echo = applyPaneHandoffToggle(contextRoot, projectRoot, 'tab-a', true);
+      expect(echo?.enabled).toBe(true);
+      expect(readTabHandoff(contextRoot, 'tab-a')?.enabled).toBe(true);
+      expect(readTabHandoff(contextRoot, 'tab-b')?.enabled).toBe(false);
+      expect(readBrainLocal(projectRoot).contextHandoffDefault).toBeUndefined();
+      expect(readFileSync(uiPath, 'utf-8')).toBe(before);
+      expect(ecoModeDefault()).toBe(false);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    }
+  });
+});
+
+describe('brain-local contextHandoffDefault (retired, still parsed)', () => {
   it('validates the field on read — a non-boolean is dropped, not coerced', () => {
     mkdirSync(join(contextRoot, 'state'), { recursive: true });
     writeFileSync(join(contextRoot, 'state', '.brain-local.json'), JSON.stringify({ contextHandoffDefault: 'yes' }), 'utf-8');

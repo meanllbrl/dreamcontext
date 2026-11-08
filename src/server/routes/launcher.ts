@@ -974,6 +974,11 @@ interface AgentUiSettings {
    *  OFF by default, only an explicit `true` turns it on. Kept here because the app's origin
    *  changes every launch and a localStorage-only switch reset itself on every restart. */
   readAloud: boolean;
+  /** Eco mode (Settings → Chat): the context hand-off nudge every NEW chat pane, in every
+   *  project on this Mac, starts with. ON by default: only an explicit `false` turns it off.
+   *  A pane's own composer switch still wins for that pane and never writes this. Read on the
+   *  spawn path by `ecoModeDefault` (src/lib/context-watch.ts). Mirrors the dashboard. */
+  ecoMode: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -998,6 +1003,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   superModel: SUPER_AGENT_DEFAULT.model,
   superEffort: SUPER_AGENT_DEFAULT.effort,
   readAloud: false,
+  ecoMode: true,
 };
 
 function agentSettingsPath(): string {
@@ -1067,6 +1073,8 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     superEffort: sanitizeEffort(typeof raw.superEffort === 'string' ? raw.superEffort : null) || AGENT_UI_DEFAULTS.superEffort,
     // Default-FALSE: speech only when the owner turned it on.
     readAloud: raw.readAloud === true,
+    // Default-TRUE: only an explicit `false` turns Eco mode off for new chats.
+    ecoMode: raw.ecoMode !== false,
   };
 }
 

@@ -3,8 +3,9 @@ import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { SettingRow, Toggle } from './SettingRow';
 import { SaveMark, useInstantSave } from './useInstantSave';
+import { useAgentCfg } from './window/useAgentCfg';
 
-interface HandoffDefault { enabled: boolean; nudgeAt: number; hardAt: number }
+interface Ladder { nudgeAt: number; hardAt: number }
 
 /** 300000 → "300k", 1000000 → "1M". */
 function tokens(n: number): string {
@@ -13,37 +14,40 @@ function tokens(n: number): string {
 }
 
 /**
- * Settings → Chat → Eco mode (task codex-tarzi-yeni-kabuk W2-C, flagged F4): this machine's
- * default for the context hand-off nudge in THIS project (`.brain-local.json`
- * `contextHandoffDefault`), the switch every new chat pane starts from. A pane's own toggle in
- * the composer still wins for that pane. The row shows what the server stored, and the
- * thresholds it fires at come from the team's `.config.json`.
+ * Settings → Chat → Eco mode (owner 2026-11-08): ONE switch for this Mac, ON by default, the
+ * one every new chat pane in every project starts from. Stored like every other machine-wide
+ * chat setting (`agent-ui.json` `ecoMode`, written through `patchAgentSettings`). A pane's own
+ * composer switch still wins for that pane and never changes this. The thresholds in the hint
+ * come from the open project's `.config.json` (`GET /agent/context-handoff-default`).
  */
 export function EcoModeRow() {
   const { t } = useI18n();
   const api = useApi();
   const save = useInstantSave();
-  const [state, setState] = useState<HandoffDefault | null>(null);
+  const { cfg, update } = useAgentCfg();
+  const [ladder, setLadder] = useState<Ladder | null>(null);
   useEffect(() => {
     let gone = false;
-    api.get<HandoffDefault>('/agent/context-handoff-default').then((s) => { if (!gone) setState(s); }, () => {});
+    api.get<Ladder>('/agent/context-handoff-default').then((s) => { if (!gone) setLadder(s); }, () => {});
     return () => { gone = true; };
   }, [api]);
   const hint = t('shell.settings.eco.hint')
-    .replace('{nudge}', tokens(state?.nudgeAt ?? 300_000))
-    .replace('{hard}', tokens(state?.hardAt ?? 650_000));
+    .replace('{nudge}', tokens(ladder?.nudgeAt ?? 300_000))
+    .replace('{hard}', tokens(ladder?.hardAt ?? 650_000));
   return (
     <SettingRow
+      id="eco"
       title={t('shell.settings.eco')}
       hint={hint}
+      keywords="eco context handoff fresh chat tokens cost"
       status={<SaveMark state={save.state} />}
       control={(
         <Toggle
           label={t('shell.settings.eco')}
-          checked={!!state?.enabled}
-          disabled={!state}
+          checked={cfg?.ecoMode ?? true}
+          disabled={!cfg}
           onChange={(next) => void save.save(async () => {
-            setState(await api.post<HandoffDefault>('/agent/context-handoff-default', { enabled: next }));
+            if (!(await update({ ecoMode: next }))) throw new Error('not saved');
           })}
         />
       )}
