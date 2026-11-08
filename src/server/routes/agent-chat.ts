@@ -72,6 +72,7 @@ import {
 } from '../../lib/claude-accounts.js';
 import { claudeRules, codexRules } from '../../lib/account-rules.js';
 import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-reset.js';
+import { isServerTurnText } from '../../lib/usage-readers.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
@@ -3455,7 +3456,8 @@ export function startChatSession(
     // presence (hub.ts), it only reads.
     const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
       || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
-    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue ? { server: true } : undefined);
+    // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
+    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.

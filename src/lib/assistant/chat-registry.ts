@@ -730,11 +730,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
       if (text.trim() && !text.trimStart().startsWith('/')) messagesOwed += 1;
-      emitUserSent(e.sessionId, text, opts?.source, opts?.server === true);
+      // A send the server noted for an agent (`super send`, an agent's `window send` into the
+      // Super) is never his words: it answers no wait and ends no Telegram presence.
+      const steered = opts?.source !== 'telegram-text' && takeSuperSend(e.sessionId, text);
+      emitUserSent(e.sessionId, text, opts?.source, opts?.server === true || steered);
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
       // Super Agent steering the child (a send the server noted for it) clears nothing. A
       // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
-      if (opts?.source !== 'telegram-text' && !takeSuperSend(e.sessionId, text)) {
+      if (opts?.source !== 'telegram-text' && !steered) {
         if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).

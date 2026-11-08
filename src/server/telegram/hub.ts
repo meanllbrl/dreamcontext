@@ -697,8 +697,11 @@ export class TelegramHub implements TelegramHubApi {
       await this.reply(ab, LINES.notWritten);
       return false;
     }
-    this.presence.set(ab.key, { via: 'telegram', at: this.now() });
-    try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
+    // A run report is the app's, not a message he wrote: it moves no presence.
+    if (!as) {
+      this.presence.set(ab.key, { via: 'telegram', at: this.now() });
+      try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
+    }
     return ref;
   }
 

@@ -4,7 +4,8 @@ import { isLoopback } from './agent-spawn-shared.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
 import { WINDOW_TOKEN_HEADER, channelFor, identityOf, sendWindowCommand } from '../../lib/window-control.js';
 import { superIndex } from '../../lib/super/store.js';
-import { getChat } from '../../lib/assistant/chat-registry.js';
+import { getChat, listChats } from '../../lib/assistant/chat-registry.js';
+import { noteSuperSend } from '../../lib/super/owner-wait.js';
 
 /**
  * `/api/window/:verb` — a project chat's agent drives the chat surface it is drawn in
@@ -186,6 +187,12 @@ export async function handleWindowCommand(req: IncomingMessage, res: ServerRespo
   if (typeof args === 'string') { sendError(res, 400, 'invalid_args', args); return; }
   const refusal = superWindowRefusal(token, verb, args);
   if (refusal) { sendError(res, 403, 'super_refused', refusal); return; }
+  // An agent's send into a Super chat is the agent's, never the owner's words: noted so the
+  // chat's frame ends no Telegram presence and answers no wait (owner-wait.ts).
+  if (verb === 'send' && typeof args.tab === 'string' && typeof args.text === 'string') {
+    const target = getChat(args.tab) ?? listChats().find((c) => c.conversationId === args.tab) ?? null;
+    if (target?.mode === 'super') noteSuperSend(target.sessionId, args.text);
+  }
   const r = await sendWindowCommand(token, verb, args);
   if (r.ok && verb === 'state') {
     const who = identityOf(token);

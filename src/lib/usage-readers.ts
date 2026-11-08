@@ -180,6 +180,12 @@ export type PromptKind = 'owner' | 'super' | 'auto';
 
 /** Server-written turns no marker tells apart, by their fixed opening. They count for nobody. */
 const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped', 'The "Go to development" hand-off'];
+/** A turn the server or the app wrote by itself (a run report, an interrupt note, a hand-off):
+ *  it rides the owner path but nobody typed it. */
+export function isServerTurnText(text: string): boolean {
+  const words = text.trimStart();
+  return SERVER_TURNS.some((p) => words.startsWith(p));
+}
 /** The app's own task brief (dashboard agentPrompt.ts): `isAgentRun`'s role check does not see it. */
 export const APP_BRIEF_OPENINGS = ['You are picking up the task'];
 /** Every `super delegate` brief opens with one of these (routes/super.ts `delegateJob`). */

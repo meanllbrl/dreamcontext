@@ -18,6 +18,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
+import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -199,6 +200,27 @@ describe('the Super target', () => {
       assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
       await quiet();
       expect(tg.texts().length).toBe(n);
+    });
+
+    it('a post nobody typed (a run report, an agent\'s send into the Super) does not end it', async () => {
+      const { h } = await onTelegram();
+      h.userSent('[ran in chat] npm test: exit 0', { server: true });
+      noteSuperSend(SID, 'Durumu özetle.');
+      h.userSent('Durumu özetle.');
+      assistant(h, '<!-- re:abc123 -->\nÖzet hazır.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Özet hazır.'));
+    });
+
+    it('a run report the hub injected moves no presence', async () => {
+      const onPresence = vi.fn();
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence };
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      const ab = [...hub.active.values()][0];
+      expect(await hub.injectText(ab, hub.syntheticUpdateId(), '[ran in chat] ok', SID, { kind: 'run-report', cardRef: 'r1' })).not.toBe(false);
+      expect(onPresence).not.toHaveBeenCalled();
+      expect(hub.onTelegram(ab)).toBe(false);
     });
 
     it('a Mac message in a session the hub has not mapped yet (a fresh Super session) ends it too', async () => {

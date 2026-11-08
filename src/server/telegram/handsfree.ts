@@ -92,6 +92,8 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
   /** Bindings already told the sleep permission is missing (once per process). */
   const noGrantTold = new Set<string>();
   let arming = false;
+  /** He came back to the Mac while the run was still starting: end it once it is on. */
+  let backWhileArming = false;
   let watch: ReturnType<typeof setInterval> | null = null;
   const unwatch = () => { if (watch) clearInterval(watch); watch = null; };
   /** The live run is one the hub started by itself for this binding. */
@@ -101,6 +103,7 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
   };
   const backAtMac = async (scope: string, target: string) => {
     unwatch();
+    if (arming) { backWhileArming = true; return; }
     if (autoRun(scope, target)) await session().stop({ reason: 'back', keyed: true });
   };
   /** While an auto run is on: real input on the Mac after it started ends it. */
@@ -126,8 +129,13 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
       const s = session();
       if (s.isOn() || arming) return;
       arming = true;
+      backWhileArming = false;
       void s.startPowerOnly({ scope: ab.scope, target: ab.target, auto: true })
-        .then(() => watchInput(ab.scope, ab.target))
+        .then(async () => {
+          arming = false;
+          if (backWhileArming) { backWhileArming = false; await backAtMac(ab.scope, ab.target); return; }
+          watchInput(ab.scope, ab.target);
+        })
         .catch(async (err) => {
           const code = (err as { code?: string }).code;
           if ((code === 'mac_not_setup' || code === 'mac_sudo_missing') && !noGrantTold.has(key)) {

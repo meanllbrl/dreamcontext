@@ -201,6 +201,20 @@ describe('the hub adapter', () => {
       expect(replies).toEqual([HF_LINES.back]);
     });
 
+    it('back at the Mac while it is still starting: it ends once on', async () => {
+      const { hub } = fakeHub();
+      let release: () => void = () => {};
+      const s = fakeSession();
+      const real = s.startPowerOnly as (v: unknown) => Promise<unknown>;
+      s.startPowerOnly = vi.fn((v: unknown) => new Promise((r) => { release = () => r(real(v)); })) as never;
+      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => null, hidPollMs: 60_000 });
+      a.onPresence!(hub, KEY, 'telegram');
+      a.onPresence!(hub, KEY, 'mac');
+      release();
+      await vi.waitFor(() => expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true }));
+      expect(s.isOn()).toBe(false);
+    });
+
     it('real input on the Mac after the start (HIDIdleTime drops) disarms it', async () => {
       const { hub, replies } = fakeHub();
       const s = fakeSession();
