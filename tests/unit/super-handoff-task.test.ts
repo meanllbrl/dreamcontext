@@ -5,10 +5,10 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maybeNudge, renderNudge } from '../../src/lib/context-watch.js';
-import { superHandoffContext } from '../../src/lib/super/handoff-task.js';
+import { superChildContext, superHandoffContext } from '../../src/lib/super/handoff-task.js';
 import * as handoffTask from '../../src/lib/super/handoff-task.js';
 import { SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { resolveContextHandoff } from '../../src/lib/setup-config.js';
@@ -57,11 +57,59 @@ describe('the super session\'s handoff nudge', () => {
     expect(text).not.toContain('super-koordinasyon');
   });
 
-  it('a non-super session keeps the newest active task, byte-identical to the plain renderer', () => {
-    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c2' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+  it('a session that is nobody\'s child keeps the newest active task, byte-identical to the plain renderer', () => {
+    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
     expect(text).toContain('dreamcontext tasks handoff super-koordinasyon');
     expect(text).not.toContain('Super Agent');
     expect(text).toBe(renderNudge(3500, resolveContextHandoff({ enabled: true, nudgeAt: 3000, remindEvery: 2000 }), 'super-koordinasyon'));
+  });
+
+  // Field 2026-11-08: a child at 662k was told to hand off into the brain's newest in-progress task,
+  // somebody else's job, while its own task sat on its super record.
+  it('a child names ITS task from the super record, never the brain\'s newest one', () => {
+    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c1' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+    expect(text).toContain('dreamcontext tasks handoff odev-ver-akisi --done');
+    expect(text).not.toContain('super-koordinasyon');
+    expect(text).toContain('You are a Super Agent\'s child');
+    expect(text).toContain('the brief file you were given');
+    expect(text).not.toContain('super handoff');
+  });
+
+  it('a child with no task on its record is told to make one, never handed a stranger\'s', () => {
+    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c2' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+    expect(text).not.toContain('super-koordinasyon');
+    expect(text).not.toContain('odev-ver-akisi');
+    expect(text).toContain('tasks handoff <task-slug>');
+    expect(text).toContain('your job has no task yet');
+  });
+
+  it('a child is found by its conversation too (a terminal child, a pane id missing), and its worktree is named', () => {
+    writeFileSync(join(contextRoot, SUPER_STATE_REL), JSON.stringify({
+      session: SUPER, enabled: true,
+      children: { [SES]: { sessionId: SES, task: 'giris-ekrani-duzeltmesi', worktree: join(homedir(), '.claude-worktrees', 'p-super-giris'), branch: 'super/giris' } },
+    }));
+    const text = nudge({}, SES)!;
+    expect(text).toContain('dreamcontext tasks handoff giris-ekrani-duzeltmesi');
+    expect(text).toContain(`${join(homedir(), '.claude-worktrees', 'p-super-giris')} on branch super/giris`);
+  });
+
+  it('a record task that does not exist, or a worktree that is not a plain path, is not trusted', () => {
+    writeFileSync(join(contextRoot, SUPER_STATE_REL), JSON.stringify({
+      session: SUPER, enabled: true,
+      children: { c1: { sessionId: 'c1', task: 'yok-boyle-bir-gorev', worktree: '/tmp/a"; rm -rf ~; "', branch: 'x y' }, c2: { sessionId: 'c2', worktree: '/etc', branch: 'super/x' } },
+    }));
+    expect(superChildContext(contextRoot, ['c1'])).toEqual({});
+    // Only what the store itself accepts: one folder directly under ~/.claude-worktrees.
+    expect(superChildContext(contextRoot, ['c2'])).toEqual({});
+    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c1' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+    expect(text).toContain('your job has no task yet');
+    expect(text).not.toContain('rm -rf');
+  });
+
+  it('an ended child is no longer one; the super itself is not its own child', () => {
+    expect(superChildContext(contextRoot, ['c3'])).toBeNull();
+    expect(superChildContext(contextRoot, [SUPER])).toBeNull();
+    expect(superChildContext(contextRoot, ['c1'])).toEqual({ task: 'odev-ver-akisi' });
   });
 
   it('a taken-back super is not the Super Agent: its nudge is a plain one', () => {

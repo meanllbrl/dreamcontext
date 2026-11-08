@@ -31,7 +31,7 @@ import { ensureGitignoreEntries } from './gitignore.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
-import { superHandoffCommand, superHandoffContext, superNudgeLine } from './super/handoff-task.js';
+import { childPlaceOf, superChildContext, superHandoffCommand, superHandoffContext, superNudgeLine, type SuperChildContext } from './super/handoff-task.js';
 import { SUPER_HANDOFF_TASK, superHandoffFileOf } from './super/handoff-file.js';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
@@ -360,7 +360,7 @@ export function renderNudge(
   cfg: ResolvedContextHandoff,
   activeSlug: string | null,
   tone: NudgeTone = nudgeTone(contextTokens, cfg),
-  opts: { superAgent?: boolean } = {},
+  opts: { superAgent?: boolean; child?: SuperChildContext } = {},
 ): string {
   const slug = activeSlug || '<task-slug>';
   // The Super Agent hands off into its own FILE, never a task (super/handoff-file.ts).
@@ -375,12 +375,16 @@ export function renderNudge(
       `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
       activeSlug
         ? ''
-        : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
+        : opts.child
+          // A Super child never borrows the brain's newest task: that is somebody else's job.
+          ? '  (your job has no task yet: `dreamcontext tasks create "<your job>"` first, then hand off into it)'
+          : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
     ];
   const written = opts.superAgent
     ? 'It writes all of that into your handoff file as one entry and refuses while any part is missing; a fresh session opens on the same stage and reads that file first.'
     : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
 
+  const childLine = opts.child ? superChildNudgeLine(opts.child) : '';
   const lines = tone === 'severe'
     ? [
       `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
@@ -389,6 +393,7 @@ export function renderNudge(
       ...steps,
       written,
       '',
+      childLine,
       'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
       `(Next reminder at ~${k(next)}.)`,
     ]
@@ -398,11 +403,24 @@ export function renderNudge(
       `Hand off unless you have a reason not to — write your whole state into ${into} in one command:`,
       ...steps,
       written,
+      childLine,
       '',
       `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what --done and --next are for. Past ${k(cfg.hardAt)} this gets blunter.`,
       `(Next reminder at ~${k(next)}.)`,
     ];
   return lines.filter((l) => l !== '').join('\n');
+}
+
+/**
+ * The line a Super child's nudge carries. Its fresh session opens in this same pane (the card and
+ * the row stay, the Super keeps it as the same child) but in the brain's folder and without the
+ * Super's first message, so what that message said has to ride in --next.
+ */
+export function superChildNudgeLine(child: SuperChildContext): string {
+  const where = child.worktree
+    ? ` It is told to work in ${child.worktree}${child.branch ? ` on branch ${child.branch}` : ''}.`
+    : '';
+  return `You are a Super Agent's child: hand off into YOUR job's task, never another one. A fresh session continues in this same pane, and the Super keeps it as the same child.${where} Put in --next the brief file you were given and anything from the Super's first message it still needs.`;
 }
 
 /**
@@ -609,6 +627,9 @@ export function maybeNudge(
     // The Super Agent hands off into its own file, never a task (super/handoff-task.ts).
     const sup = superHandoffContext(contextRoot, [tab, sessionId]);
     if (sup) return `${renderNudge(ctx, cfg, null, tone, { superAgent: true })}\n${superNudgeLine(sup)}`;
+    // A Super child hands off into ITS task (the super record's), never the brain's newest one.
+    const child = superChildContext(contextRoot, [tab, sessionId]);
+    if (child) return renderNudge(ctx, cfg, child.task ?? null, tone, { child });
     return renderNudge(ctx, cfg, activeTaskForNudge(contextRoot)?.slug ?? null, tone);
   } catch {
     return null;
@@ -644,6 +665,10 @@ export interface HandoffRecord {
   /** The fresh session that took the handoff, stamped with `consumedAt`. Stats reads its context
    *  size and later turns from the ledger, so the record never has to carry them. */
   toSession?: string;
+  /** A Super child's worktree and branch (super record), so its fresh session, which opens in the
+   *  brain's folder, goes back to them first. Absent on every other record. */
+  worktree?: string;
+  branch?: string;
 }
 
 /** The record key: the PANE if there is one, else the conversation, else a manual stamp. */
@@ -678,6 +703,10 @@ export function writeHandoffRecord(contextRoot: string, key: string, record: Han
 export function readHandoffRecord(contextRoot: string, key: string): HandoffRecord | null {
   const path = handoffRecordPath(contextRoot, key);
   if (!path || !existsSync(path)) return null;
+  // Vault content is never read through a link: the record reaches a fresh session's first message.
+  try {
+    if (!lstatSync(path).isFile() || lstatSync(handoffDir(contextRoot)).isSymbolicLink() || lstatSync(join(contextRoot, 'state')).isSymbolicLink()) return null;
+  } catch { return null; }
   const parsed = readJson<Partial<HandoffRecord>>(path);
   if (!parsed || typeof parsed.task !== 'string' || !parsed.task || typeof parsed.at !== 'string') return null;
   return {
@@ -691,7 +720,20 @@ export function readHandoffRecord(contextRoot: string, key: string): HandoffReco
     ...(typeof parsed.actedAt === 'string' ? { actedAt: parsed.actedAt } : {}),
     ...(typeof parsed.consumedAt === 'string' ? { consumedAt: parsed.consumedAt } : {}),
     ...(typeof parsed.toSession === 'string' ? { toSession: parsed.toSession } : {}),
+    // Printed into the fresh session's first message: the same shape checks the super record had.
+    ...(childPlace(parsed)),
   };
+}
+
+/** A record's worktree/branch, only when both read as a plain path and a branch name. */
+function childPlace(parsed: Partial<HandoffRecord>): Pick<HandoffRecord, 'worktree' | 'branch'> {
+  return childPlaceOf(parsed.worktree, parsed.branch);
+}
+
+/** The sentence that sends a Super child's fresh session back to its worktree, or ''. */
+function placeSentence(record: Pick<HandoffRecord, 'worktree' | 'branch'>): string {
+  if (!record.worktree) return '';
+  return ` Your work is in the worktree ${record.worktree}${record.branch ? ` (branch ${record.branch})` : ''}: cd there first and commit only there.`;
 }
 
 /** Merge one field into an existing record (the `actedAt` / `consumedAt` stamps). */
@@ -762,7 +804,7 @@ export function superFallbackRecord(pane: string, fromSession: string, contextTo
 const superFileOf = (record: Pick<HandoffRecord, 'task'>): string => superHandoffFileOf(record.task);
 
 /** The user frame that continues a rotated pane: the task's, or the Super Agent's own. */
-export function handoffContinuePrompt(record: Pick<HandoffRecord, 'task' | 'title' | 'kind'>, opts: { fallback?: boolean } = {}): string {
+export function handoffContinuePrompt(record: Pick<HandoffRecord, 'task' | 'title' | 'kind' | 'worktree' | 'branch'>, opts: { fallback?: boolean } = {}): string {
   if (record.kind === 'super') {
     return `Handoff: you are the Super Agent's fresh session, on the same stage with the same children, pool and cards. `
       + `Read ${superFileOf(record)} first (its top entry is the handoff`
@@ -770,7 +812,8 @@ export function handoffContinuePrompt(record: Pick<HandoffRecord, 'task' | 'titl
       + '), run `dreamcontext super state`, then tell the owner in one short sentence that you are back and what runs.';
   }
   return `Handoff: continue task ${record.title} (${record.task}). `
-    + `Read _dream_context/state/${record.task}.md first, then carry on from its latest changelog entry.`;
+    + `Read _dream_context/state/${record.task}.md first, then carry on from its latest changelog entry.`
+    + placeSentence(record);
 }
 
 /** Every readable record, with its key. Used by the tab-less `source=clear` fallback. */
@@ -850,7 +893,7 @@ export function renderHandoffBanner(record: HandoffRecord): string {
   }
   return [
     `>> HANDOFF: continuing task ${record.title} (${record.task}) from a session${size}.`,
-    `Read _dream_context/state/${record.task}.md — its latest changelog entry is the handoff — before anything else.`,
+    `Read _dream_context/state/${record.task}.md — its latest changelog entry is the handoff — before anything else.${placeSentence(record)}`,
   ].join('\n');
 }
 

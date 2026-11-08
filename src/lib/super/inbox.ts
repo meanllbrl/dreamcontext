@@ -23,7 +23,7 @@ import {
 import { pushFrame, tokenOfSession } from '../window-control.js';
 import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
-import { readHandoffRecord } from '../context-watch.js';
+import { readHandoffRecord, type HandoffRecord } from '../context-watch.js';
 import { memberCallState } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
 import {
@@ -1344,7 +1344,20 @@ function lastReplyLines(vault: string, sid: string, last: string): string[] {
   ];
 }
 
-function childLine(vault: string, s: SuperState, sid: string, now: number): string[] {
+/**
+ * The line that tells the Super a child handed off (Eco): its pane rotated into a fresh session,
+ * which is still the same child, card and row. Read from the pane's handoff record, the one the
+ * rotation stamped `actedAt` on; nothing when it never rotated. Exported for tests.
+ */
+export function childHandoffLine(contextRoot: string, sid: string): string | null {
+  let rec: HandoffRecord | null = null;
+  try { rec = readHandoffRecord(contextRoot, sid); } catch { return null; }
+  if (!rec?.actedAt || rec.kind === 'super') return null;
+  const size = rec.contextTokens ? ` at ~${Math.round(rec.contextTokens / 1000)}k tokens` : '';
+  return `It handed off${size} (${rec.actedAt.slice(0, 16).replace('T', ' ')} UTC): a fresh session continues in the same pane as the same child, nothing to do.`;
+}
+
+function childLine(vault: string, s: SuperState, sid: string, now: number, contextRoot?: string): string[] {
   const e = getChat(sid);
   const status = e ? activityOf(e, now) : 'gone';
   const row = s.children[sid]?.row;
@@ -1352,6 +1365,8 @@ function childLine(vault: string, s: SuperState, sid: string, now: number): stri
   const lines = [`- child=${sid} status=${status}${row ? ` row=${row}` : ''}${bg > 0 ? ` background=${bg}` : ''}`];
   const brief = s.children[sid]?.brief || (e ? chatTopic(e) : '');
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
+  const handed = contextRoot ? childHandoffLine(contextRoot, sid) : null;
+  if (handed) lines.push(handed);
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
   if (last) lines.push(...lastReplyLines(vault, sid, last));
   return lines;
@@ -1397,6 +1412,8 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
   if (item.kind === 'owner' && item.ownerText) lines.push(wrapUntrusted(vault, `Waits on the owner for: ${item.ownerText}`));
   if (item.kind === 'stuck' && ch?.startError) lines.push(wrapUntrusted(vault, `It never started: ${ch.startError}`));
+  const handed = childHandoffLine(rootOf(root), sid);
+  if (handed) lines.push(handed);
   if (perm) {
     lines.push(wrapUntrusted(vault, `Wants to run: ${perm.text || perm.toolName}`));
     // The CLI's own reason (it can quote the command's paths, so it is data too).
@@ -1468,7 +1485,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     const ids = Object.keys(state.children);
     return [
       `[super handover] item=${item.id} children=${ids.length}`,
-      ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
+      ...ids.flatMap((sid) => childLine(vault, state, sid, now, rootOf(contextRoot))),
       `The owner handed the Chat screen over to you; every chat above is a card around you and a row in the job list. Write EVERY child's row line now with \`dreamcontext super brief <child> "<doing / next>"\`, arrange the cards if it helps, then tell the owner what is running (${OWNER_VOICE}). End your turn.`,
       // The agenda he is about to read (pad.ts): what moved by itself or went stale, keep or close each.
       ...padNotice(state, now).lines,
@@ -1480,7 +1497,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     const childAsks = state.queue.filter((q) => q.kind === 'question' && q.state === 'escalated');
     return [
       `[super fresh] item=${item.id} children=${ids.length}`,
-      ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
+      ...ids.flatMap((sid) => childLine(vault, state, sid, now, rootOf(contextRoot))),
       ...ownAsk.map((q) => wrapUntrusted(vault, `Your own open question to the owner (it closes now; carry it in --next): ${q.ownerText}`)),
       ...childAsks.map((q) => wrapUntrusted(vault, `A child's question still open with the owner (it stays open; carry it in --next), child ${q.sessionId}: ${q.ownerText ?? childQuestionText(q.sessionId, q.requestId)}`)),
       'The owner pressed New session. Write your handoff now, in ONE command: `dreamcontext super handoff --done "…" --next "…" --decisions "…" --learned "…" --style "…" --files "…"` (each live child above and what it does in --next). Then end your turn with one short sentence; a fresh session opens on the same stage after it and reads that file first.',
@@ -1490,7 +1507,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     const ids = Object.keys(state.children);
     return [
       `[super recap] item=${item.id} children=${ids.length}`,
-      ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
+      ...ids.flatMap((sid) => childLine(vault, state, sid, now, rootOf(contextRoot))),
       `The owner is back. Tell him what finished, what waits on him and what still runs, unless you told him already (${OWNER_VOICE}). End your turn.`,
       ...padNotice(state, now).lines,
     ].join('\n');

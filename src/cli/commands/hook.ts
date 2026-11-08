@@ -2978,6 +2978,21 @@ export function registerHookCommand(program: Command): void {
         toolName = pick.toolName;
         toolInput = pick.toolInput;
       }
+      // An ALLOWED call carries the Eco nudge (context-watch.ts). Edit/Write and a user prompt were
+      // its only triggers, and a Super child runs one long turn of shell calls: measured 2026-11-08,
+      // children past 300k had made 3-14 edits all session, so the first nudge came at 629-709k and
+      // the next never did. This hook already runs before every Bash and Agent call, so the nudge
+      // costs no extra process. Claude only: another tool's transcript is not ours to read.
+      const allow = (): never => {
+        if (!hookTool()) {
+          try {
+            const watchRoot = resolveContextRoot();
+            const nudge = watchRoot ? maybeNudge(watchRoot, input as Record<string, unknown>) : null;
+            if (nudge) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: nudge } }));
+          } catch { /* the nudge is advisory — never let it touch the tool call */ }
+        }
+        process.exit(0);
+      };
       if (agy) {
         toolName = agy.toolName;
         toolInput = agy.toolInput;
@@ -3043,7 +3058,7 @@ export function registerHookCommand(program: Command): void {
       if (toolName === 'Bash') {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
         const kind = directHeavy(command);
-        if (!kind) process.exit(0); // allow
+        if (!kind) allow();
         const suggested = heavySuggestion(command);
         // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
         // builds are not ours to hold. Our children and a project that opted in keep the limit.
@@ -3064,7 +3079,7 @@ export function registerHookCommand(program: Command): void {
       }
 
       // Gate 2: redirect default Explore agent to dreamcontext-explore.
-      if (toolName !== 'Agent') process.exit(0); // allow
+      if (toolName !== 'Agent') allow();
 
       const subagentType = typeof toolInput.subagent_type === 'string'
         ? toolInput.subagent_type : '';
@@ -3072,11 +3087,11 @@ export function registerHookCommand(program: Command): void {
       // Only gate the default Explore agent. Case/whitespace-tolerant so a casing
       // variant ("explore") still hits the gate, while never matching our own
       // redirect target ("dreamcontext-explore", which !== "explore").
-      if (subagentType.trim().toLowerCase() !== 'explore') process.exit(0); // allow
+      if (subagentType.trim().toLowerCase() !== 'explore') allow();
 
       // Only gate when _dream_context/ exists (context-managed projects)
       const root = resolveContextRoot();
-      if (!root) process.exit(0); // allow — no context directory, default Explorer is fine
+      if (!root) allow(); // no context directory, default Explorer is fine
 
       // Block default Explorer and redirect to context-aware version
       console.log(JSON.stringify({
@@ -3275,7 +3290,7 @@ export function registerHookCommand(program: Command): void {
       // and is the older contract; this is about the SESSION's cost. Printed to
       // stdout like every other line in this handler — UserPromptSubmit stdout is
       // injected as context. A user prompt is the second of the feature's two
-      // nudge points (the other is the next Edit/Write); granularity is coarse by
+      // nudge points (the others: Edit/Write, and every Bash/Agent call through PreToolUse); coarse by
       // design, because a hook process costs ~1s and a finer trigger would tax
       // every tool call in the session.
       try {

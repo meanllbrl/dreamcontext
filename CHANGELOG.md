@@ -4,6 +4,8 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **Super's children use Eco on time.** The hand-off note now also arrives before shell and agent calls, so a child working through a long turn hears it at the threshold and again every ~100k, not once at 600k+. A child is told to hand off into its own task, never someone else's; its fresh session goes back to its worktree and branch, and the Super is told in one line.
+
 ## [0.41.5] - 2026-11-08
 
 Patch on 0.41.4: one batch of fixes and small features, built together. Local build; not published.

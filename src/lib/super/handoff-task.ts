@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { MAX_FILE_BYTES, MEMBER_SUPER_DIR, okMember, superRecordPath } from './store.js';
+import { MAX_FILE_BYTES, MEMBER_SUPER_DIR, acceptableWorktree, okMember, superRecordPath } from './store.js';
+import { SUPER_BRANCH_RE } from './types.js';
 import { bindingVerdict } from './record-binding.js';
 import { superHandoffFileOf, superHandoffTask } from './handoff-file.js';
 
@@ -23,7 +24,7 @@ export interface SuperHandoffContext {
 /** One record read synchronously through the store's guards (no link, a file, not oversize). */
 /** The record, or null when absent, not a plain file, oversize, unparsable, or another Mac's or
  *  another folder's (record-binding.ts): that one is not this vault's Super. */
-function readRecord(contextRoot: string, path: string): { session?: unknown; enabled?: unknown; children?: Record<string, { endedAt?: unknown }> } | null {
+function readRecord(contextRoot: string, path: string): { session?: unknown; enabled?: unknown; children?: Record<string, { endedAt?: unknown; task?: unknown; worktree?: unknown; branch?: unknown }> } | null {
   try {
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
@@ -33,13 +34,12 @@ function readRecord(contextRoot: string, path: string): { session?: unknown; ena
   } catch { return null; }
 }
 
-/**
- * Is this the vault's recorded super session, and is it handed over (`enabled`)? Then its
- * handoff context. A taken-back super is not the Super Agent any more: null.
- */
-export function superHandoffContext(contextRoot: string, ids: ReadonlyArray<string | null | undefined>): SuperHandoffContext | null {
-  // Main's record first, then each member Super's (plan-r10 1), through the one accessor.
-  const candidates: Array<{ superId: 'main' | `m:${string}`; path: string }> = [{ superId: 'main', path: superRecordPath(contextRoot, 'main') }];
+type SuperId = 'main' | `m:${string}`;
+type RawRecord = NonNullable<ReturnType<typeof readRecord>>;
+
+/** Every super record of this vault, main's first, then each member Super's (plan-r10 1). */
+function superRecords(contextRoot: string): Array<{ superId: SuperId; raw: RawRecord }> {
+  const candidates: Array<{ superId: SuperId; path: string }> = [{ superId: 'main', path: superRecordPath(contextRoot, 'main') }];
   try {
     const dir = join(contextRoot, MEMBER_SUPER_DIR);
     if (!lstatSync(join(contextRoot, 'state', '.super')).isSymbolicLink() && !lstatSync(dir).isSymbolicLink()) {
@@ -51,17 +51,79 @@ export function superHandoffContext(contextRoot: string, ids: ReadonlyArray<stri
       }
     }
   } catch { /* no members folder */ }
+  const out: Array<{ superId: SuperId; raw: RawRecord }> = [];
   for (const c of candidates) {
     const raw = readRecord(contextRoot, c.path);
-    const session = typeof raw?.session === 'string' ? raw.session : null;
-    if (!raw || !session || raw.enabled !== true || !ids.some((id) => id === session)) continue;
+    if (raw) out.push({ superId: c.superId, raw });
+  }
+  return out;
+}
+
+/**
+ * Is this the vault's recorded super session, and is it handed over (`enabled`)? Then its
+ * handoff context. A taken-back super is not the Super Agent any more: null.
+ */
+export function superHandoffContext(contextRoot: string, ids: ReadonlyArray<string | null | undefined>): SuperHandoffContext | null {
+  for (const { superId, raw } of superRecords(contextRoot)) {
+    const session = typeof raw.session === 'string' ? raw.session : null;
+    if (!session || raw.enabled !== true || !ids.some((id) => id === session)) continue;
     const children: string[] = [];
     for (const [sid, ch] of Object.entries(raw.children ?? {})) {
       if (ch?.endedAt === undefined) children.push(sid);
     }
-    return c.superId === 'main' ? { children } : { children, superId: c.superId };
+    return superId === 'main' ? { children } : { children, superId };
   }
   return null;
+}
+
+/**
+ * A Super child's own job, for its handoff (field 2026-11-08: a child at 662k was told to hand off
+ * into the brain's newest in-progress task, somebody else's). Every field is what the super record
+ * says, checked for shape, since it is printed into a command the child runs.
+ */
+export interface SuperChildContext {
+  /** Its task (`delegate --task`, `super brief --task`), when the record names one that exists. */
+  task?: string;
+  /** Its worktree and branch, when `delegate --worktree` made them. */
+  worktree?: string;
+  branch?: string;
+}
+
+const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,239}$/;
+
+/**
+ * A child's worktree and branch as the store itself would accept them (`acceptableWorktree`: one
+ * folder directly under ~/.claude-worktrees; `SUPER_BRANCH_RE`: super/<slug>), else nothing. The
+ * ONE check for both the super record and the handoff record: both reach a prompt as a cd target.
+ */
+export function childPlaceOf(worktree: unknown, branch: unknown): { worktree?: string; branch?: string } {
+  if (!acceptableWorktree(worktree)) return {};
+  return typeof branch === 'string' && SUPER_BRANCH_RE.test(branch) ? { worktree, branch } : { worktree };
+}
+
+/**
+ * Is one of `ids` (the pane, the conversation) a live child of some super of this vault? Then its
+ * own job. The child's KEY is its pane id (the conversation a /clear rotation leaves behind keeps
+ * the pane), so a fresh session after a handoff is still found. An ended child is not one; a
+ * taken-back super's children are still that super's jobs.
+ */
+export function superChildContext(contextRoot: string, ids: ReadonlyArray<string | null | undefined>): SuperChildContext | null {
+  for (const { raw } of superRecords(contextRoot)) {
+    const children = raw.children ?? {};
+    for (const id of ids) {
+      if (!id || !Object.prototype.hasOwnProperty.call(children, id)) continue;
+      const ch = children[id] as { endedAt?: unknown; task?: unknown; worktree?: unknown; branch?: unknown } | undefined;
+      if (!ch || ch.endedAt !== undefined) continue;
+      const out: SuperChildContext = {};
+      if (typeof ch.task === 'string' && TASK_SLUG.test(ch.task) && taskExists(contextRoot, ch.task)) out.task = ch.task;
+      return { ...out, ...childPlaceOf(ch.worktree, ch.branch) };
+    }
+  }
+  return null;
+}
+
+function taskExists(contextRoot: string, slug: string): boolean {
+  try { return lstatSync(join(contextRoot, 'state', `${slug}.md`)).isFile(); } catch { return false; }
 }
 
 /** The ONE command the super hands off with, every part spelled out. */
