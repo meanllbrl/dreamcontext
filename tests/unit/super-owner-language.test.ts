@@ -28,7 +28,7 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
 import {
-  _resetSuperInbox, _superInboxDrained, attachSuperInbox, startSuperInbox, superOwnerLanguage, superTurnEnded,
+  _resetSuperInbox, _superInboxDrained, attachSuperInbox, startSuperInbox, superKnownLanguage, superOwnerLanguage, superTurnEnded,
   type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { detectOwnerLanguage, ownerLanguageBlock, ownerLanguageLine } from '../../src/lib/super/owner-language.js';
@@ -143,6 +143,19 @@ describe('the owner\'s language is detected from his own words', () => {
     expect(detectOwnerLanguage(english)).toBe('English');
     expect(detectOwnerLanguage('```\nconst şey = 1\n```\nplease fix this and the tests')).toBe('English');
   });
+  it('every word votes: one Turkish letter in an English sentence is no verdict (review 2026-11-08)', () => {
+    expect(detectOwnerLanguage('Please ask Björn to check the façade layer and merge it')).toBe('English');
+    // Plain lowercasing: an English "I" never becomes the Turkish dotless ı.
+    expect(detectOwnerLanguage('I THINK IT IS DONE AND I WANT THE SUMMARY')).toBe('English');
+    expect(detectOwnerLanguage('Tamam, Björn\'a sor ve bitir')).toBe('Turkish');
+    // A Turkish suffix after an apostrophe is no English "i" (re-review 2026-11-08).
+    expect(detectOwnerLanguage("test'i calistir, PR'i merge et")).not.toBe('English');
+    expect(detectOwnerLanguage("test'i yap, PR'i merge et")).toBe('Turkish');
+  });
+  it('an agenda line\'s `line:` is the Super\'s words, never his', () => {
+    const about = '[About agenda line note=n3 section=now]\nline: "Waiting for the plan job to finish the migration and the tests"\n\ntamam devam';
+    expect(detectOwnerLanguage(about)).toBe('Turkish');
+  });
   it('the block names the language; unknown, it points at his message', () => {
     expect(ownerLanguageBlock('Turkish')).toMatch(/^<owner-language> He writes Turkish\. Every word you write to him in this turn is Turkish/);
     expect(ownerLanguageBlock(null)).toMatch(/^<owner-language> Write to him in the language of his message above/);
@@ -166,6 +179,16 @@ describe('the Super is told his language on every turn', { timeout: 30_000 }, ()
     expect(superOwnerLanguage(SUPER, 'please write the summary for the team and send it')).toBe('English');
     await _superInboxDrained();
     expect((await readSuperState(root)).ownerLanguage).toBe('English');
+  });
+
+  it('a server-written text never decides it; an agenda reply goes by his words (review 2026-11-08)', async () => {
+    expect(superOwnerLanguage(SUPER, 'bu taraf daha çok notion formül arayüzü gibi olmalı')).toBe('Turkish');
+    // The continue-at-reset turn is read-only: the server's English never overwrites his Turkish.
+    expect(superKnownLanguage(SUPER)).toBe('Turkish');
+    expect(superOwnerLanguage(SUPER, '[super events] batch=b-1 items=1\nplease tell the owner what the job did and what is next')).toBe('Turkish');
+    expect(superOwnerLanguage(SUPER, '[About agenda line note=n3 section=now]\nline: "Waiting for the plan job to finish the migration and the tests"\n\ntamam devam')).toBe('Turkish');
+    await _superInboxDrained();
+    expect((await readSuperState(root)).ownerLanguage).toBe('Turkish');
   });
 
   it('an event turn ends by naming it; before he ever wrote, nothing is added', async () => {
@@ -203,6 +226,7 @@ describe('a send that waits behind a question says so', { timeout: 30_000 }, () 
     expect(Object.keys(out).at(-1)).toBe('waits');
     expect(SEND_QUEUED_WAITS).toMatch(/^NOT read yet/);
     expect(SEND_QUEUED_WAITS).toMatch(/Never tell the owner the job has it/);
+    expect(SEND_QUEUED_WAITS).toMatch(/super allow/);
     const box = join(process.env.HOME!, '.dreamcontext', 'super-outbox');
     expect(readdirSync(box).map((f) => readFileSync(join(box, f), 'utf8')).join('')).toContain('Notion gibi');
   });

@@ -368,6 +368,17 @@ describe('the rotation at a main result', () => {
     expect(rotate().decision).toBe('none');
   });
 
+  it('the fresh session\'s continue turn names his language: it has no message of his to copy (review 2026-11-08)', async () => {
+    makeVault({ ownerLanguage: 'Turkish' });
+    await startSuperInbox([root]);
+    writeHandoffRecord(root, SUPER, superRecord());
+    const r = rotate();
+    expect(r.texts[1].split('\n').at(-1)).toMatch(/^\[owner language\] The owner writes Turkish/);
+    // A plain chat's rotation names none.
+    writeHandoffRecord(root, 'pane-x', superRecord({ tab: 'pane-x', kind: undefined, task: 'some-task' }));
+    expect(rotate({ isSuper: false, pane: 'pane-x' }).texts[1] ?? '').not.toContain('[owner language]');
+  });
+
   it('no record + the fresh latch + a clean result → the fallback record, then the same rotation', () => {
     markFreshDelivered(SUPER, 'b-1');
     const r = rotate();

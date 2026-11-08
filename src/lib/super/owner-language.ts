@@ -41,8 +41,10 @@ const ENGLISH_WORDS = new Set([
 function ownWords(text: string): string {
   return (text ?? '')
     .split('\n')
-    // `[About …]`, `[Reply to …]`, `[Picture N: …]`, `[On page …]` headers and their `quote:`.
-    .filter((line) => !/^\s*\[(About|Reply to|Picture|On page)\b/.test(line) && !/^\s*quote:\s/.test(line))
+    // `[About …]`, `[Reply to …]`, `[Picture N: …]`, `[On page …]` headers, their `quote:` and an
+    // agenda line's `line:` (the Super's own words, never his). The caller strips the header spans
+    // first (`ownerWords`); this is the second net for a header it did not know.
+    .filter((line) => !/^\s*\[(About|Reply to|Picture|On page)\b/.test(line) && !/^\s*(quote|line):\s/.test(line))
     .join('\n')
     .replace(/```[\s\S]*?(```|$)/g, ' ')
     .replace(/`[^`\n]*`/g, ' ')
@@ -53,13 +55,19 @@ function ownWords(text: string): string {
 /** The language of one owner message, or null when the words do not tell. */
 export function detectOwnerLanguage(text: string): OwnerLanguage | null {
   const words = ownWords(text);
-  if (TURKISH_LETTERS.test(words)) return 'Turkish';
-  const tokens = words.toLowerCase().match(/[a-z']+/g) ?? [];
+  // Every word votes: a word with a Turkish letter is one Turkish vote, never the whole verdict
+  // ("ask Björn about the façade" stays English).
   let tr = 0;
   let en = 0;
-  for (const w of tokens) {
-    if (TURKISH_WORDS.has(w)) tr += 1;
-    if (ENGLISH_WORDS.has(w)) en += 1;
+  for (const piece of words.split(/[\s.,;:!?()"“”]+/)) {
+    // A suffix after an apostrophe is Turkish grammar on a borrowed word (`PR'i`, `test'e`), never
+    // an English "i" or "a": the word votes by what comes before it.
+    const raw = piece.replace(/['’].*$/, '');
+    if (!raw) continue;
+    // Plain lowercasing: the Turkish locale would turn an English "I" into "ı", a Turkish letter.
+    const w = raw.toLowerCase();
+    if (TURKISH_LETTERS.test(raw) || TURKISH_WORDS.has(w)) tr += 1;
+    else if (ENGLISH_WORDS.has(w)) en += 1;
   }
   if (tr > en && tr >= 1) return 'Turkish';
   if (en > tr && en >= 2) return 'English';

@@ -24,7 +24,7 @@ import { pushFrame, tokenOfSession } from '../window-control.js';
 import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord } from '../context-watch.js';
-import { memberCallState } from '../agents/team-roster.js';
+import { memberCallState, ownerWords } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
 import { detectOwnerLanguage, ownerLanguageLine, type OwnerLanguage } from './owner-language.js';
 import {
@@ -854,22 +854,39 @@ export function superOwnerMsgRef(sessionId: string): string | undefined {
  *  message right after the first must not read the old one. */
 const ownerLanguages = new Map<string, OwnerLanguage>();
 /** An owner message to the super session `sessionId`: the language his turn names. Detected from
- *  his words; when they do not tell, the one he wrote in before (memory, then the record). A
- *  change is written to the record, so it outlives a restart and a fresh session. */
+ *  HIS words only (`ownerWords`: no reply quote, agenda line or server-written block); when they
+ *  do not tell, the one he wrote in before. A change is written to the record, so it outlives a
+ *  restart and a fresh session. A server-written text (the continue-at-reset turn) must go to
+ *  `superKnownLanguage` instead: it is never his. */
 export function superOwnerLanguage(sessionId: string, text: string): OwnerLanguage | null {
   const root = superKeyOfSession(sessionId);
-  const detected = detectOwnerLanguage(text);
+  const words = ownerWords(text);
+  const detected = words ? detectOwnerLanguage(words) : null;
   if (!root) return detected;
   const key = keyOf(root);
-  const known = ownerLanguages.get(key) ?? lastStates.get(key)?.ownerLanguage ?? null;
-  if (!detected) return known;
+  if (!detected) return languageOfKey(key);
   ownerLanguages.set(key, detected);
   if (detected !== lastStates.get(key)?.ownerLanguage) void track(writeSuper(key, (s) => { s.ownerLanguage = detected; }));
   return detected;
 }
+/** The language the super session `sessionId` already knows, read only (a server-written turn). */
+export function superKnownLanguage(sessionId: string): OwnerLanguage | null {
+  const root = superKeyOfSession(sessionId);
+  return root ? languageOfKey(keyOf(root)) : null;
+}
+/** A super's own language (memory, then its record); a member Super he never wrote to directly
+ *  takes main's: its text sits on a stage he reads. */
+function languageOfKey(key: string): OwnerLanguage | null {
+  const own = ownerLanguages.get(key) ?? lastStates.get(key)?.ownerLanguage;
+  if (own) return own;
+  const main = keyOf(rootOf(key));
+  return main === key ? null : ownerLanguages.get(main) ?? lastStates.get(main)?.ownerLanguage ?? null;
+}
 /** The language a server-written turn of `key` names: memory first, then its record. */
 function ownerLanguageOf(key: string, state: SuperState): OwnerLanguage | null {
-  return ownerLanguages.get(keyOf(key)) ?? state.ownerLanguage ?? null;
+  // Its own memory, then the record this turn was built from, and only then main's.
+  const k = keyOf(key);
+  return ownerLanguages.get(k) ?? state.ownerLanguage ?? languageOfKey(k);
 }
 
 /** The Super Agent escalated a question to the owner in the turn now running (`super queue

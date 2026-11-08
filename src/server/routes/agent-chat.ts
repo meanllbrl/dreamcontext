@@ -126,7 +126,7 @@ import { ownerLanguageBlock } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -3411,7 +3411,14 @@ export function startChatSession(
     if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerMsgBlock(text) });
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
-    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerLanguageBlock(superOwnerLanguage(chatRegistryId, text)) });
+    // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
+    // the server's text, never his: it owes him nothing and decides no language, it only reads.
+    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
+      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
+    if (isSuper && !text.startsWith('/')) {
+      const lang = serverContinue ? superKnownLanguage(chatRegistryId) : superOwnerLanguage(chatRegistryId, text);
+      content.push({ type: 'text', text: ownerLanguageBlock(lang) });
+    }
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
     // replay drops it and the owner's bubble and `userSent` keep his text. Read from memory
@@ -3474,8 +3481,6 @@ export function startChatSession(
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
-      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
