@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // build_excalidraw.js — generate an Obsidian-compatible .excalidraw.md board from a high-level spec.
 //
-// Format reverse-engineered from the user's own vault (see ../reference/format.md):
+// Format reverse-engineered from the user's own vault (see ../references/format.md):
 //   - frontmatter `excalidraw-plugin: parsed`
 //   - `## Text Elements`  : "<text> ^<id>" per text element
 //   - `## Embedded Files` : "<sha1>: [[image.png]]"  (plugin resolves image from vault by this map)
@@ -710,11 +710,9 @@ function grid(opts) {
   return els;
 }
 
-module.exports = { buildExcalidraw, lane, grid, thumbHeight, SPEC_TYPES, LAYOUT_TYPES };
-
 // ---------- CLI ----------
-if (require.main === module) {
-  const args = process.argv.slice(2);
+/** `node build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]`; exported so a forwarding copy can run it. */
+function main(args) {
   let specPath = null, out = null;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--out') out = args[++i];
@@ -726,3 +724,7 @@ if (require.main === module) {
   const res = buildExcalidraw(spec);
   console.log(`OK  ${res.outPath}\n    elements=${res.elements} images=${res.images} texts=${res.texts} overlaps=${res.overlaps} buriedText=${res.buriedText} longLines=${res.longLines} wallOfText=${res.wallOfText}\n    vaultRoot=${res.vaultRoot}`);
 }
+
+module.exports = { buildExcalidraw, lane, grid, thumbHeight, SPEC_TYPES, LAYOUT_TYPES, main };
+
+if (require.main === module) main(process.argv.slice(2));

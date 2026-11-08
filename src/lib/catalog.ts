@@ -219,9 +219,9 @@ export function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
  */
 export function knownArtifactNames(): KnownArtifacts {
   const agentNames = new Set<string>();
-  // `design` is a core skill now (2026-11-04) but shipped as a pack before: a pre-manifest
+  // `design` (2026-11-04) and `draw` (2026-11-08) are guarded core skills: a pre-manifest
   // project's copy must still be adopted as ours.
-  const skillDirs = new Set<string>(['dreamcontext', 'design']);
+  const skillDirs = new Set<string>(['dreamcontext', 'design', 'draw']);
 
   // Core agents shipped from repo-root agents/ (e.g. dreamcontext-explore.md).
   const agentsDir = findPackageDir('agents');

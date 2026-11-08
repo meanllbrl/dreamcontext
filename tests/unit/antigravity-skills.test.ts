@@ -26,8 +26,11 @@ describe('syncAntigravitySkills', () => {
     mkdirSync(project);
     const r = syncAntigravitySkills('primary', { home, packageDir: repo });
     expect(r).toMatchObject({ ok: true });
-    for (const name of ['dreamcontext', 'curator', 'patterns']) expect(existsSync(join(skills(), name, 'SKILL.md'))).toBe(true);
+    for (const name of ['dreamcontext', 'curator', 'patterns', 'design', 'draw']) expect(existsSync(join(skills(), name, 'SKILL.md'))).toBe(true);
     expect(existsSync(join(skills(), 'dreamcontext', 'references'))).toBe(true);
+    // draw carries its builder and its binary example as they ship.
+    expect(readFileSync(join(skills(), 'draw', 'scripts', 'lib', 'style.js'))).toEqual(readFileSync(join(ROOT, 'skill-draw', 'scripts', 'lib', 'style.js')));
+    expect(readFileSync(join(skills(), 'draw', 'examples', 'sample.png'))).toEqual(readFileSync(join(ROOT, 'skill-draw', 'examples', 'sample.png')));
     expect(readdirSync(project)).toEqual([]);
     expect(existsSync(skills('acct-two'))).toBe(false);
     syncAntigravitySkills('acct-two', { home, packageDir: repo });
@@ -67,7 +70,7 @@ describe('syncAntigravitySkills', () => {
       mkdirSync(join(pkg, sub), { recursive: true });
       writeFileSync(join(pkg, sub, 'SKILL.md'), `---\nname: ${sub === 'skill' ? 'dreamcontext' : sub.replace('skill-', '')}\n---\n${body}`);
     };
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design']) make(s, 'v1');
+    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design', 'skill-draw']) make(s, 'v1');
     const packageDir = (sub: string): string => join(pkg, sub);
     syncAntigravitySkills('primary', { home, packageDir });
     mkdirSync(join(skills(), 'agent-made'));
@@ -85,7 +88,7 @@ describe('syncAntigravitySkills', () => {
 
   it('never follows a symlink out of the package, and reports instead of throwing', () => {
     const pkg = join(home, 'pkg');
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design']) {
+    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design', 'skill-draw']) {
       mkdirSync(join(pkg, s), { recursive: true });
       writeFileSync(join(pkg, s, 'SKILL.md'), `---\nname: ${s.replace('skill-', 'x-')}\n---\n`);
     }

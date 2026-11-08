@@ -39,7 +39,7 @@ function hostEnv() {
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_INDEX = distIndex(REPO);
-const BOARD_BUILDER = join(REPO, 'skill-packs', 'excalidraw', 'scripts', 'build_excalidraw.js');
+const BOARD_BUILDER = join(REPO, 'skill-draw', 'scripts', 'build_excalidraw.js');
 
 const SCRATCH = scratchDir('dc-ui-agent-attachments');
 const HOME = join(SCRATCH, 'home');

@@ -1,8 +1,8 @@
 # Drawing on a dreamcontext whiteboard
 
-This is the excalidraw kit as `dreamcontext whiteboard draw <board> --spec <spec.json>` uses it:
-the same builders, type and build audit as the `excalidraw` skill, straight from a JSON spec, no
-script and no `node`. `dreamcontext whiteboard kit` prints this page.
+This is the `draw` kit as `dreamcontext whiteboard draw <board> --spec <spec.json>` uses it:
+the same builders, type and build audit as the `draw` skill, straight from a JSON spec, no
+script and no `node`. `dreamcontext whiteboard kit` prints this page. Full guide: the `draw` skill.
 
 **Explain or show something: draw it. A number: a live widget. A note: a caption.**
 
@@ -14,6 +14,22 @@ script and no `node`. `dreamcontext whiteboard kit` prints this page.
 - A picture is part of the drawing: `{ "type": "image", "path": "docs/screens/a.png", "width": 300 }`
   in the spec, with its caption under it as a `chip` and two or three `bullets`, never a note
   beside it. `draw` stores the picture with the board (PNG, JPEG, GIF or WebP).
+
+## What goes where on a whiteboard
+
+| On the board | Use |
+|---|---|
+| an explanation, a process, a design, a comparison | a kit drawing: `flow`, `panel`, `timeline`, a comparison (`draw --spec`) |
+| a number (MRR, signups, a trend, a split) | an `insight` widget (`add <board> insight --ref <slug>`); no insight yet: create it first |
+| a card of a Lab board | a `lab-card` widget (`--ref <board>/<card-id>`) |
+| a page | a `knowledge` card, or a `wiki` card for a list of pages |
+| open work | a `todo` (or `task` widgets) |
+| a caption | a `note`, at most 5 lines |
+| a screenshot | an `image` in the spec, a `chip` caption under it |
+| a helper that lives on the board | an agent card (`add <board> agent --ref <agent>`) |
+
+Group related things in a `panel` (or a frame), place with `--below <tag>` / `--right-of <tag>`,
+`render` and look at the PNG, and keep the spec so the drawing can be redrawn in place.
 
 ## The loop
 
@@ -86,7 +102,7 @@ pain, `mint` result, `gray` muted.
 | a box with a label | `card`, `node`, `chip` | `text`, `color`, `w`, `h` |
 | a short list | `bullets` | `items`, `width` |
 | screenshots, each with what it is for | a `row` of `stack`s, each `image`, `chip`, `bullets` | image: `path`, `width` (the height follows) |
-| a screen sketched, not shot | `windowFrame`, `appBar`, `listRow`, `tabBar`, `button`, `input`, `textRows` | see the `excalidraw` skill |
+| a screen sketched, not shot | `windowFrame`, `appBar`, `listRow`, `tabBar`, `button`, `input`, `textRows` | see the `draw` skill (`references/excalidraw.md`) |
 | an arrow you place yourself | `connector` | `from` and `to` as `[x, y]`, `label`, `dashed`, `elbow` `hv`/`vh` |
 
 Every type: `dreamcontext whiteboard kit --json` lists them. In text, `**bold**` draws a rule

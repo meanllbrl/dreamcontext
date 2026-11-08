@@ -40,6 +40,7 @@
       "../../skill-agent-core": "skill-agent-core",
       "../../skill-apps": "skill-apps",
       "../../skill-design": "skill-design",
+      "../../skill-draw": "skill-draw",
       "sleepy": "sleepy"
     },
     "macOS": {

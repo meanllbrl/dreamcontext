@@ -11,11 +11,11 @@ import type { WhiteboardElement } from './widgets.js';
  * A WHITEBOARD DRAWING FROM A SPEC (owner, 2026-10-21: "whiteboard'a yazı yazma ve çizim yapma
  * excalidraw skill'ine göre olsun").
  *
- * The drawing kit is the excalidraw skill pack's own builder (`skill-packs/excalidraw/scripts/
- * build_excalidraw.js`, shipped in this package), so a flow on a whiteboard and a board in
- * Obsidian come out of the same builders, the same type and the same build audit. Going through
- * the CLI is what lets an agent without skills or `node` (a home-board agent) draw: it writes a
- * JSON spec into its scratch folder and `whiteboard draw <board> --spec` builds and places it.
+ * The drawing kit is the `draw` core skill's own builder (`skill-draw/scripts/build_excalidraw.js`,
+ * shipped in this package), so a flow on a whiteboard and a board in Obsidian come out of the same
+ * builders, the same type and the same build audit. Going through the CLI is what lets an agent
+ * without skills or `node` (a home-board agent) draw: it writes a JSON spec into its scratch folder
+ * and `whiteboard draw <board> --spec` builds and places it.
  */
 
 /** The kit's build audit: any non-zero count is a drawing that reads badly (see the skill). */
@@ -33,25 +33,45 @@ interface Builder {
   LAYOUT_TYPES: readonly string[];
 }
 
+const MISSING_KIT = 'the draw kit is missing; run `dreamcontext update`';
+
 /**
- * The excalidraw pack's folder in this package, or null in an install that lost it. Searched
- * NEAREST first, because its builder is code this process runs: the built CLI's own copy
- * (`dist/skill-packs`, copied there at build) or, from source, the repo's `skill-packs/`, never a
- * folder further up that happens to be named the same (a project's root, for a local install).
+ * The draw skill's folder in THIS package, or null in an install that lost it. Its builder is code
+ * this process runs, so it is looked for only inside dreamcontext itself: first the copy beside the
+ * running file (`dist/skill-draw`, copied there at build; also how the desktop app finds it, since
+ * it ships `dist` and has no package.json at its resources root), then `skill-draw/` at the first
+ * folder up whose package.json is named "dreamcontext" (running from source). Never a project folder.
  */
 export function kitDir(from: string = dirname(fileURLToPath(import.meta.url))): string | null {
-  for (const up of ['.', '..', '../..', '../../..']) {
-    const dir = join(from, up, 'skill-packs', 'excalidraw');
-    if (existsSync(join(dir, 'scripts', 'build_excalidraw.js'))) return dir;
+  const has = (dir: string): boolean => existsSync(join(dir, 'scripts', 'build_excalidraw.js'));
+  const beside = join(from, 'skill-draw');
+  if (has(beside)) return beside;
+  let dir = resolve(from);
+  for (;;) {
+    if (isDreamcontextRoot(dir)) {
+      const own = join(dir, 'skill-draw');
+      return has(own) ? own : null;
+    }
+    const up = dirname(dir);
+    if (up === dir) return null;
+    dir = up;
   }
-  return null;
+}
+
+/** Is `dir` the dreamcontext package's own root (its package.json is named "dreamcontext")? */
+function isDreamcontextRoot(dir: string): boolean {
+  try {
+    return (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')) as { name?: unknown }).name === 'dreamcontext';
+  } catch {
+    return false;
+  }
 }
 
 const loaded = new Map<string, Builder>();
 
-/** The pack's builder module, loaded once per folder. */
+/** The draw skill's builder module, loaded once per folder. */
 export function loadBuilder(dir: string | null = kitDir()): Builder {
-  if (!dir) throw new WhiteboardValidationError('the excalidraw drawing kit is missing from this install; reinstall dreamcontext');
+  if (!dir) throw new WhiteboardValidationError(MISSING_KIT);
   const cached = loaded.get(dir);
   if (cached) return cached;
   const builder = createRequire(import.meta.url)(join(dir, 'scripts', 'build_excalidraw.js')) as Builder;
@@ -61,8 +81,8 @@ export function loadBuilder(dir: string | null = kitDir()): Builder {
 
 /** The kit's reference for drawing on a whiteboard, printed by `whiteboard kit`. */
 export function readKitReference(dir: string | null = kitDir()): string {
-  if (!dir) throw new WhiteboardValidationError('the excalidraw drawing kit is missing from this install; reinstall dreamcontext');
-  return readFileSync(join(dir, 'reference', 'whiteboard-kit.md'), 'utf-8');
+  if (!dir) throw new WhiteboardValidationError(MISSING_KIT);
+  return readFileSync(join(dir, 'references', 'whiteboard-kit.md'), 'utf-8');
 }
 
 /**

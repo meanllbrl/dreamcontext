@@ -316,7 +316,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
       account?.launchArgs ?? '',
-      codexLaunchArgs({ ...(args.briefingFile ? { briefingFile: args.briefingFile } : {}), note: toolNote('codex', { roles: codexKit?.roles.map((r) => r.name) ?? [] }) }),
+      codexLaunchArgs({ ...(args.briefingFile ? { briefingFile: args.briefingFile } : {}), note: toolNote('codex', { roles: codexKit?.roles.map((r) => r.name) ?? [], ...(toolSkills?.ok ? { skills: toolSkills.names } : {}) }) }),
       codexKit ? codexRoleArgs(codexKit.roles) : '',
       strictArgs,
       // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
@@ -451,7 +451,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes, and their shell starts outside the project. Begin every task you give one with: "This project's folder is ${args.cwd}: run every shell command with Cwd set to it and read files by their path in it. First run \`dreamcontext snapshot\` there and read what it prints; it is this project's memory."` });
     // The note says where a role's file is, for a project role made with define_subagent.
     const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
-    own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });
+    own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs, ...(toolSkills?.ok ? { skills: toolSkills.names } : {}) }) });
     if (!args.briefingFile) return own;
     try {
       const text = readFileSync(args.briefingFile, 'utf-8').slice(0, MAX_DEVELOPER_INSTRUCTIONS);

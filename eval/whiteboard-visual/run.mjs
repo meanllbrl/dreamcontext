@@ -98,13 +98,13 @@ const dc = (...a) => sh(join(bin, 'dreamcontext'), a, { cwd: proj, env });
 
 // ── The vault ─────────────────────────────────────────────────────────────────────────────
 sh('git', ['-C', proj, 'init', '-q']);
-// The owner's own install path: skills (dreamcontext + the excalidraw pack), agents, hooks, CLAUDE.md.
+// The owner's own install path: skills, agents, hooks, CLAUDE.md (`--packs excalidraw` installs the pack on a before tree; after 2026-11-08 it is the core draw skill and the flag only says so).
 dc('setup', '--defaults', '-y', '--platforms', 'claude', '--packs', 'excalidraw', '--skip-app', '--skip-machine', '--no-start');
 mkdirSync(join(proj, '_dream_context', 'knowledge'), { recursive: true });
 copyFileSync(join(HERE, 'fixture', 'sync-engine.md'), join(proj, '_dream_context', 'knowledge', 'sync-engine.md'));
 if (SCENARIO === 'screens') {
   // The pictures are drawn by the kit and rendered by the CLI, so the fixture holds no binaries.
-  const { buildExcalidraw } = createRequire(import.meta.url)(join(REPO, 'skill-packs', 'excalidraw', 'scripts', 'build_excalidraw.js'));
+  const { buildExcalidraw } = createRequire(import.meta.url)(join(REPO, 'skill-draw', 'scripts', 'build_excalidraw.js'));
   mkdirSync(join(proj, 'docs', 'screens'), { recursive: true });
   for (const name of ['notes-list', 'editor', 'sync-status']) {
     const md = join(root, `${name}.excalidraw.md`);

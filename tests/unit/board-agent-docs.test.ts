@@ -18,7 +18,7 @@ import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, APPROVAL_DIFF_FIELD
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (...p: string[]): string => readFileSync(join(ROOT, ...p), 'utf-8');
 
-const WHITEBOARDS_MD = read('skill', 'references', 'whiteboards.md');
+const WHITEBOARDS_MD = read('skill-draw', 'references', 'whiteboards.md');
 const AUTOMATIONS_MD = read('skill', 'references', 'automations.md');
 const CLI_REFERENCE_MD = read('skill', 'references', 'cli-reference.md');
 const INTEGRATIONS_MD = read('skill', 'references', 'integrations.md');
@@ -26,7 +26,7 @@ const SKILL_MD = read('skill', 'SKILL.md');
 const README_MD = read('README.md');
 const I18N = read('dashboard', 'src', 'context', 'I18nContext.tsx');
 
-describe('skill/references/whiteboards.md: the agent card', () => {
+describe('skill-draw/references/whiteboards.md: the agent card', () => {
   it('lists `agent` as a widget kind with its add command', () => {
     expect(WHITEBOARDS_MD).toContain('## The ten widget kinds');
     expect(WHITEBOARDS_MD).toContain('`add <slug> agent --ref');

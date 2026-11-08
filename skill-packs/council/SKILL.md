@@ -165,7 +165,7 @@ flowchart TD
     CONV -->|rounds done| S[council synthesize, dispatch clean council-synthesizer]
     ESC -->|extra round| RS
     ESC -->|split verdict| S
-    S --> X[Optional: Excalidraw decision board, soft-skip if pack absent]
+    S --> X[Optional: Excalidraw decision board, draw skill]
     X --> F[council complete, show Verdict, promote y/n/later]
     F --> L[council live clear]
 ```
@@ -273,12 +273,11 @@ debated, Minority view & revisit conditions, Open risks, Appendix.
 
 ### Optional: Excalidraw decision board
 
-If the excalidraw skill/pack is available in this session, generate
+When a decision board helps, load the `draw` skill (always installed) and generate
 `_dream_context/council/<debate_id>/decision-board.excalidraw.md` from
 `dreamcontext council timeline <debate_id> --json`: a verdict KPI tile, a
 per-persona conviction line chart across rounds, the decision-card table, and a
-minority panel. **Soft-skip silently when the pack is absent**; the debate is
-complete without it.
+minority panel. It is optional; the debate is complete without it.
 
 ## Phase 5: complete + promote
 

@@ -175,7 +175,7 @@ function setupScratch() {
       { type: 'rectangle', x: 360, y: 0, width: 220, height: 80, strokeColor: '#2f9e44', backgroundColor: '#b2f2bb', fillStyle: 'solid', strokeWidth: 2 },
     ],
   }));
-  const built = spawnSync(process.execPath, [join(REPO, 'skill-packs', 'excalidraw', 'scripts', 'build_excalidraw.js'), spec], { encoding: 'utf-8' });
+  const built = spawnSync(process.execPath, [join(REPO, 'skill-draw', 'scripts', 'build_excalidraw.js'), spec], { encoding: 'utf-8' });
   if (built.status !== 0) throw new Error(`board builder failed: ${built.stderr || built.stdout}`);
   mkdirSync(join(PROJ, 'assets'), { recursive: true });
   writeFileSync(join(PROJ, 'assets', 'logo.svg'), SVG_SOURCE);

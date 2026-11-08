@@ -2,7 +2,7 @@
 // Run:  node scripts/diagrams/licensing.board.cjs
 // Renders to _dream_context/knowledge/diagrams/product/licensing/licensing.excalidraw.md (open in Obsidian Excalidraw).
 const path = require('path');
-const SKILL = path.join(__dirname, '..', '..', '.claude', 'skills', 'excalidraw', 'scripts');
+const SKILL = path.join(__dirname, '..', '..', '.claude', 'skills', 'draw', 'scripts');
 const { buildExcalidraw } = require(path.join(SKILL, 'build_excalidraw.js'));
 const { card, node, sectionTitle, connector } = require(path.join(SKILL, 'lib', 'style.js'));
 const { callout } = require(path.join(SKILL, 'lib', 'charts.js'));

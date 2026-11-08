@@ -11,10 +11,11 @@ import { join } from 'node:path';
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (...p: string[]): string => readFileSync(join(ROOT, ...p), 'utf-8');
 
-const WHITEBOARDS_MD = read('skill', 'references', 'whiteboards.md');
+const WHITEBOARDS_MD = read('skill-draw', 'references', 'whiteboards.md');
 const CLI_REFERENCE_MD = read('skill', 'references', 'cli-reference.md');
 const SKILL_MD = read('skill', 'SKILL.md');
-const EXCALIDRAW_SKILL = read('skill-packs', 'excalidraw', 'SKILL.md');
+const EXCALIDRAW_SKILL = read('skill-draw', 'references', 'excalidraw.md');
+const DRAW_SKILL = read('skill-draw', 'SKILL.md');
 
 describe('the no-browser verification rule', () => {
   it('whiteboards.md states it and names the three checks', () => {
@@ -55,7 +56,7 @@ describe('placement and render are documented', () => {
  * only a live metric is a widget. These pins keep both skills saying so, from both sides.
  */
 describe('an explanation on a whiteboard is drawn with the excalidraw kit', () => {
-  const KIT_MD = read('skill-packs', 'excalidraw', 'reference', 'whiteboard-kit.md');
+  const KIT_MD = read('skill-draw', 'references', 'whiteboard-kit.md');
 
   it('whiteboards.md makes drawing the default and points at the kit', () => {
     expect(WHITEBOARDS_MD).toContain('**Anything you explain or show on a whiteboard is drawn, not written.**');
@@ -69,15 +70,15 @@ describe('an explanation on a whiteboard is drawn with the excalidraw kit', () =
     expect(WHITEBOARDS_MD).toContain('**A number on a whiteboard is a live widget, never a drawing.**');
   });
 
-  it('the excalidraw skill no longer turns itself away from a whiteboard, only from its metrics', () => {
-    const description = EXCALIDRAW_SKILL.slice(0, EXCALIDRAW_SKILL.indexOf('\n---', 4));
+  it('the draw skill routes a whiteboard to the kit and keeps the metric rule', () => {
+    const description = DRAW_SKILL.slice(0, DRAW_SKILL.indexOf('\n---', 4));
     expect(description).not.toContain('NOT for a dreamcontext whiteboard');
-    expect(description).toMatch(/description: >-\n {2}The visual-first drawing kit\. Draws and writes on a dreamcontext whiteboard/);
-    expect(description).toContain('`dreamcontext whiteboard draw <board> --spec`');
-    expect(description).toContain('only a live METRIC there is an insight widget');
-    expect(EXCALIDRAW_SKILL).toContain('> **Drawing on a dreamcontext whiteboard**');
+    expect(description).toContain('`dreamcontext whiteboard');
+    expect(description).toContain('a metric is a live insight widget');
+    expect(DRAW_SKILL).toContain('Run `dreamcontext whiteboard kit`');
+    expect(DRAW_SKILL).toContain('**a number (MRR,\nrevenue, signups, a trend, a split) is a live `insight` widget**');
+    expect(EXCALIDRAW_SKILL).toContain('> **Drawing on a dreamcontext whiteboard?**');
     expect(EXCALIDRAW_SKILL).not.toContain('STOP if the target is a dreamcontext whiteboard');
-    expect(EXCALIDRAW_SKILL).toContain('**A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live');
   });
 
   it('the kit reference is what `whiteboard kit` prints, and the CLI reference names both verbs', () => {
@@ -91,6 +92,6 @@ describe('an explanation on a whiteboard is drawn with the excalidraw kit', () =
 
   it('SKILL.md routes a whiteboard explanation to a drawing', () => {
     expect(SKILL_MD).toContain('Explain = draw (`draw --spec`)');
-    expect(SKILL_MD).toContain('Explaining is a drawing (excalidraw kit), never notes');
+    expect(SKILL_MD).toContain('Explaining is a drawing (`draw` skill), never notes');
   });
 });

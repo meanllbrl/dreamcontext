@@ -12,7 +12,7 @@ import {
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../src/lib/automations/types.js';
 
 /**
- * A whiteboard drawing from a JSON spec, built by the excalidraw pack's own builder
+ * A whiteboard drawing from a JSON spec, built by the draw skill's own builder
  * (`whiteboard draw --spec`), the kit reference (`whiteboard kit`) and the note-length warning.
  * Owner, 2026-10-21: an agent asked to put something on a whiteboard stacked markdown notes
  * instead of drawing with the excalidraw kit; a board agent (no skills, no `node`) could not
@@ -20,7 +20,7 @@ import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../src/li
  */
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const SAMPLE_PNG = join(ROOT, 'skill-packs', 'excalidraw', 'examples', 'sample.png');
+const SAMPLE_PNG = join(ROOT, 'skill-draw', 'examples', 'sample.png');
 const TYPES = loadBuilder().SPEC_TYPES;
 
 let project: string;
@@ -205,17 +205,23 @@ describe('noteWarning and auditWarning', () => {
 describe('the kit reference', () => {
   const REF = readKitReference();
 
-  it('ships with the pack and its worked example draws clean', () => {
-    expect(kitDir()).toBe(join(ROOT, 'skill-packs', 'excalidraw'));
-    // Nearest first: a built CLI's own dist/skill-packs wins over a same-named folder further up.
+  it('ships with the draw skill, is found only inside the package, and its worked example draws clean', () => {
+    expect(kitDir()).toBe(join(ROOT, 'skill-draw'));
     const pkg = mkdtempSync(join(tmpdir(), 'dc-wb-kitdir-'));
     try {
-      for (const d of [join(pkg, 'dist', 'skill-packs', 'excalidraw', 'scripts'), join(pkg, 'skill-packs', 'excalidraw', 'scripts')]) {
+      // The copy beside the running file wins (a built CLI's dist/, the desktop app's dist/).
+      for (const d of [join(pkg, 'dist', 'skill-draw', 'scripts'), join(pkg, 'skill-draw', 'scripts')]) {
         mkdirSync(d, { recursive: true });
         writeFileSync(join(d, 'build_excalidraw.js'), '');
       }
-      expect(kitDir(join(pkg, 'dist'))).toBe(join(pkg, 'dist', 'skill-packs', 'excalidraw'));
+      expect(kitDir(join(pkg, 'dist'))).toBe(join(pkg, 'dist', 'skill-draw'));
+      // Above a running file there is no package.json named dreamcontext: a project's own
+      // skill-draw/ is never taken.
       expect(kitDir(join(pkg, 'nowhere', 'a', 'b', 'c'))).toBeNull();
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'dreamcontext' }));
+      expect(kitDir(join(pkg, 'src', 'lib'))).toBe(join(pkg, 'skill-draw'));
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'my-project' }));
+      expect(kitDir(join(pkg, 'src', 'lib'))).toBeNull();
     } finally {
       rmSync(pkg, { recursive: true, force: true });
     }
