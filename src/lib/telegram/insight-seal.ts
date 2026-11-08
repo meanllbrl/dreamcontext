@@ -101,6 +101,9 @@ export function scanInsightBody(raw: string): ScanResult | null {
     const tag = st[1].toLowerCase();
     if (!ALLOWED.has(tag)) return null;
     if (tag === 'title' && svgDepth === 0) return null;
+    // Inside <svg> only SVG tags: an HTML tag there makes the parser leave SVG while this scan
+    // would still think it is inside (and let a raw-text <title> through).
+    if (svgDepth > 0 && !SVG.has(tag)) return null;
     for (const a of st[2].matchAll(ATTR)) if (!attrOk(tag, a[1], a[2])) return null;
     if (tag === 'svg' && !st[0].endsWith('/>')) svgDepth += 1;
     i = START_TAG.lastIndex;

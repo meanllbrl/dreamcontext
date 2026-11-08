@@ -301,6 +301,39 @@ describe('answers: blocks, late results (M1, M5, N7, S1, T3)', () => {
   });
 });
 
+describe('a rich ask outlives an expired note capture (capture.ts)', () => {
+  it('Not ekle, 6 min later a text → a turn; the ask is still open and Gönder answers it', async () => {
+    const { sent } = chat();
+    const item = { id: 'ask-9', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ask: { questions: [
+      { question: 'Hangi ülkeler?', multiSelect: true, options: [{ label: 'TR' }, { label: 'DE' }] },
+      { question: 'Ne zaman?', options: [{ label: 'Bugün' }, { label: 'Yarın' }] },
+    ] } };
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    await vi.waitFor(() => expect(buttonMsg('Belirsiz, tekrar sor')).toBeTruthy());
+    const q2 = buttonMsg('Belirsiz, tekrar sor');
+    const q2Text = String(q2.params.text).replace(/<[^>]+>/g, '');
+    const press = (label: string) => {
+      const edit = [...tg.calls].reverse().find((c) => c.method === 'editMessageReplyMarkup' && c.params.message_id === q2.result!.message_id);
+      const kb = ((edit ?? q2).params.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat();
+      const btn = kb.find((b) => b.text === label || b.text === `✓ ${label}`)!;
+      tg.push(TOKEN, { callback_query: { id: `cb${Math.random()}`, data: btn.callback_data, from: { id: OWNER }, message: { message_id: q2.result!.message_id, chat: { id: OWNER, type: 'private' }, text: q2Text, ...(edit ? { edit_date: 9 } : {}) } } });
+    };
+    press('Not ekle');
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Notunu yaz'))).toBe(true));
+    // Small steps: a jump past the poller's wake gap reads as the Mac waking from sleep (drained).
+    for (let i = 0; i < 12; i++) { clock += 30_000; await drained(15); }
+    tg.push(TOKEN, textUpdate(OWNER, 'başka bir şey: raporu at'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(parseTelegramPrefix(sent[0]).body).toBe('başka bir şey: raporu at');
+    press('Yarın');
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'editMessageReplyMarkup')).toBe(true));
+    press('Gönder');
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(parseTelegramPrefix(sent[1]).body).toContain('"Ne zaman?"="Yarın"');
+  });
+});
+
 describe('member posts keep their blocks as lines (no hub drawing there)', () => {
   it('a dream-html block in a non-answer send stays a "Mac\'te" line', async () => {
     const ab = [...hub.active.values()][0];

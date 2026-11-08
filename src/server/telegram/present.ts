@@ -47,10 +47,11 @@ export interface PresenterDeps {
 
 interface Pending { key: string; verbs: StageVerbEvent[]; telegram: boolean }
 
-export type PhoneLink = { origin: string } | { why: 'telegram-only' | 'other' } | 'off';
+export type PhoneLink = { origin: string } | { why: 'telegram-only' | 'other' | 'starting' } | 'off';
 export const PHONE_LINES = {
   telegramOnly: "Telefon linki kapalı: hands-free yalnız Telegram modunda. Link için /handsfree kapat, sonra Telegram + telefon linki.",
   other: "Hands-free başka yerden açık; telefon linki Mac'te.",
+  starting: 'Telefon linki hazırlanıyor; adres gelince buraya yazacağım.',
   offer: 'Telefonda açmak için önce telefon linki gerekir.',
 } as const;
 
@@ -90,7 +91,7 @@ export function phoneChatUrl(origin: string, ab: ActiveBinding, sessionId: strin
 /** The Telefonda aç message (hub-written; the only place a system URL button appears, N4). */
 export async function sendPhoneButton(hub: TelegramHub, ab: ActiveBinding, sessionId: string, link: PhoneLink): Promise<void> {
   // A button only where tapping it can do what it says (a link already up, or one a tap starts).
-  if (link !== 'off' && 'why' in link) { await hub.reply(ab, link.why === 'telegram-only' ? PHONE_LINES.telegramOnly : PHONE_LINES.other); return; }
+  if (link !== 'off' && 'why' in link) { await hub.reply(ab, link.why === 'telegram-only' ? PHONE_LINES.telegramOnly : link.why === 'starting' ? PHONE_LINES.starting : PHONE_LINES.other); return; }
   const url = link !== 'off' ? phoneChatUrl(link.origin, ab, sessionId) : null;
   if (link !== 'off' && !url) return;
   if (url) {

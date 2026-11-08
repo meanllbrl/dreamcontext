@@ -28,6 +28,7 @@ import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/w
 import { cardOut } from './cards.js';
 import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
+import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
@@ -50,15 +51,11 @@ interface RichAsk {
   notes: string[];
   /** message id per question, and its HTML text. */
   messages: { messageId: number; html: string }[];
-  noteFor: number | null;
-  /** When "Not ekle" was tapped: the capture dies after NOTE_TTL_MS (as /gundem's Yaz). */
-  noteAt: number;
   done: boolean;
 }
 
 export const MAX_QUESTIONS = 4;
 /** A "Not ekle" capture lives this long. */
-export const NOTE_TTL_MS = 5 * 60 * 1000;
 /** A note as one line of the owner's own words: headers neutralised, sentinels out, no newline. */
 export function noteText(text: string): string {
   return cleanOwnerText(text).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2000);
@@ -70,7 +67,11 @@ export function richAskFits(questions: readonly RichQuestion[]): boolean {
   return questions.length >= 1 && questions.length <= MAX_QUESTIONS && questions.every((q) => q.options.length >= 1 && q.options.length <= MAX_OPTIONS);
 }
 
-export interface RichAsksDeps { snapshot: Snapshotter }
+export interface RichAsksDeps {
+  snapshot: Snapshotter;
+  /** The bot's one next-text capture (shared with /gundem's Yaz, capture.ts). */
+  capture: NextTextCapture;
+}
 
 export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   const asks = new Map<string, RichAsk>();
@@ -125,7 +126,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     if (pictures) await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null).catch(() => {});
     const a: RichAsk = {
       id: randomBytes(6).toString('hex'), key: ab.key, target, questions,
-      picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], noteFor: null, noteAt: 0, done: false,
+      picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], done: false,
     };
     asks.set(a.id, a);
     if (asks.size > 200) asks.delete(asks.keys().next().value as string);
@@ -185,15 +186,14 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
       return `✓ ${cleanTitle(label, 40)}`;
     }
     if (idx === n) {
-      a.noteFor = qi;
-      a.noteAt = hub.now();
+      deps.capture.set(ab.key, { kind: 'note', askId: a.id, qi, at: hub.now() });
       await hub.reply(ab, 'Notunu yaz (5 dk); sonraki mesajın bu sorunun notu olacak.');
       return 'Not ekle';
     }
     const isLast = qi === a.questions.length - 1;
     if (!isLast || (idx !== n + 1 && idx !== n + 2)) return LINES.stale;
     a.done = true;
-    const out = await submit(ab, a, idx === n + 2).catch(() => null);
+    const out = (await submit(ab, a, idx === n + 2).catch(() => null)) ?? 'Gönderilemedi, tekrar dene.';
     // Only a delivered answer (or an ask that no longer exists) ends it: a failed send can be
     // tapped again with the same picks.
     if (out === LINES.stale || (typeof out === 'string' && out.startsWith('✓')) || (typeof out === 'string' && out.startsWith('↺'))) asks.delete(a.id);
@@ -223,18 +223,19 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
    * capture that no longer applies lets the text through as a turn.
    */
   async function takeNote(ab: ActiveBinding, msg: Obj): Promise<boolean> {
+    // Only a NOTE capture is ours; a Yaz capture waits for the turn path.
+    if (deps.capture.peek(ab.key)?.kind !== 'note') return false;
+    const c = deps.capture.take(ab.key);
+    if (!c || c.kind !== 'note') return false;
     const text = typeof msg.text === 'string' ? msg.text : '';
-    for (const a of asks.values()) {
-      if (a.key !== ab.key || a.noteFor === null || a.done) continue;
-      const qi = a.noteFor;
-      a.noteFor = null;
-      if (msg.forward_origin || msg.forward_from || msg.quote || msg.external_reply || !text.trim()) return false;
-      if (hub.now() - a.noteAt > NOTE_TTL_MS || !(await stillOpen(ab, a))) { asks.delete(a.id); return false; }
-      a.notes[qi] = noteText(text);
-      await hub.reply(ab, `✓ Not kaydedildi: «${cleanTitle(a.notes[qi], 80)}». Göndermek için Gönder.`);
-      return true;
-    }
-    return false;
+    if (msg.forward_origin || msg.forward_from || msg.quote || msg.external_reply || !text.trim()) return false;
+    const a = asks.get(c.askId);
+    if (!a || a.done || a.key !== ab.key || !a.questions[c.qi]) return false;
+    // A capture on an ask answered elsewhere: the ask is gone, the text is a turn.
+    if (!(await stillOpen(ab, a))) { asks.delete(a.id); return false; }
+    a.notes[c.qi] = noteText(text);
+    await hub.reply(ab, `✓ Not kaydedildi: «${cleanTitle(a.notes[c.qi], 80)}». Göndermek için Gönder.`);
+    return true;
   }
 
   return { send, onButton, takeNote, _asks: asks };

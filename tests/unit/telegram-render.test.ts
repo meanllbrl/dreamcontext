@@ -21,6 +21,7 @@ import { cardOut } from '../../src/server/telegram/cards.js';
 import { presentedCards } from '../../src/server/telegram/present.js';
 import { richAskFits } from '../../src/server/telegram/rich-asks.js';
 import { statusText } from '../../src/server/telegram/commands.js';
+import { NextTextCapture } from '../../src/server/telegram/capture.js';
 import { emptySuperState, type SuperContainer } from '../../src/lib/super/types.js';
 import { replyAboutBlock as macReply, agendaAboutBlock as macAgenda } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { unclearMessage as macUnclear } from '../../dashboard/src/components/sleepy/chat/surveyAnswers';
@@ -133,6 +134,9 @@ describe('insight seal (S1, S3, T4)', () => {
   it('a <title> outside <svg> (raw text to the parser) is refused; inside <svg> it is fine', () => {
     expect(scanInsightBody('<div><title><b title="</title><img src=x onerror=alert(1)>"></b></title></div>')).toBeNull();
     expect(scanInsightBody('<svg><title>Gelir</title><path d="M0 0"/></svg>')).toBeTruthy();
+  });
+  it('inside <svg> only SVG tags (an HTML tag would leave SVG in the parser)', () => {
+    expect(scanInsightBody('<svg><b></b><title><b title="</title><img src=x onerror=alert(1)>"></b></title></svg>')).toBeNull();
   });
   it('prose that looks like code passes; the scan is on tags, not text', () => {
     expect(scanInsightBody('<div>{ onClose = noop } srcdoc</div>')).toBeTruthy();
@@ -257,6 +261,22 @@ describe('native headers and answers mirror the Mac (N6, P3, P5)', () => {
     expect(t).toContain('⏳ Paywall testi · çalışıyor');
     expect(t).toContain('✋ Hangisi?');
     expect(t).toContain('Sonra: rapor');
+  });
+});
+
+describe('one next-text capture per bot (Not ekle, Yaz)', () => {
+  it('a newer capture replaces the older; expiry only drops it; taking spends it', () => {
+    let t = 0;
+    const c = new NextTextCapture(() => t, 1000);
+    c.set('k', { kind: 'note', askId: 'a', qi: 0, at: t });
+    c.set('k', { kind: 'about', block: 'B', at: t });
+    expect(c.peek('k')).toMatchObject({ kind: 'about' });
+    expect(c.take('k')).toMatchObject({ kind: 'about', block: 'B' });
+    expect(c.take('k')).toBeNull();
+    c.set('k', { kind: 'note', askId: 'a', qi: 1, at: t });
+    t = 2000;
+    expect(c.peek('k')).toBeNull();
+    expect(c.take('k')).toBeNull();
   });
 });
 

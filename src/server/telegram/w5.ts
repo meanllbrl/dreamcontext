@@ -14,6 +14,7 @@ import { snapshotPage, type Snapshotter } from './pictures.js';
 import { wirePresenter, type PhoneLink, type PresenterDeps } from './present.js';
 import { richQuestionsOf, wireRichAsks } from './rich-asks.js';
 import { insightRenderer } from './insight-render.js';
+import { NextTextCapture } from './capture.js';
 
 /** What W5 reads of the live hands-free session (`macSession()`). */
 export interface W5Session {
@@ -47,13 +48,15 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
     if (!s?.isOn()) return 'off';
     const mine = s.startedVia?.scope === ab.scope && s.startedVia?.target === ab.target;
     if (mine && s.channel === 'telegram') return { why: 'telegram-only' };
-    const origin = mine && s.channel === 'full' ? liveUrl()?.origin : null;
-    return origin ? { origin } : { why: 'other' };
+    if (mine && s.channel === 'full') { const origin = liveUrl()?.origin; return origin ? { origin } : { why: 'starting' }; }
+    return { why: 'other' };
   };
 
   const offPresenter = wirePresenter(hub, { snapshot, phoneLink, tunnelHost, settleMs: deps.settleMs, renderInsight: deps.renderInsight ?? insightRenderer(snapshot), isGitIgnored: deps.isGitIgnored });
-  const offCommands = wireCommands(hub, deps.commands);
-  const rich = wireRichAsks(hub, { snapshot });
+  // ONE next-text capture per bot for Yaz and Not ekle (capture.ts).
+  const capture = new NextTextCapture(() => hub.now());
+  const offCommands = wireCommands(hub, { ...deps.commands, capture });
+  const rich = wireRichAsks(hub, { snapshot, capture });
   setRichAsks(rich);
 
   const prevExtras = hub.answerExtras;

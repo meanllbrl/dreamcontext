@@ -27,6 +27,7 @@ import { agendaNoteBlock, replyAboutBlock } from '../../lib/telegram/headers.js'
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { NextTextCapture } from './capture.js';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -43,10 +44,10 @@ export const CMD_LINES = {
   cannotOpen: "Super'i Mac'te açamadım. Mac'te uygulamaya bak.",
 } as const;
 
-/** "Yaz" expires after this. */
-export const ABOUT_TTL_MS = 5 * 60 * 1000;
 
 export interface CommandsDeps {
+  /** The bot's one next-text capture (shared with rich asks' Not ekle, capture.ts). */
+  capture?: NextTextCapture;
   now?: () => number;
   openLink?: (url: string) => void;
   /** How long to wait for a window of the project to mount (Super'i aç). */
@@ -56,8 +57,8 @@ export interface CommandsDeps {
 
 export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => void {
   const now = deps.now ?? hub.now;
-  /** Per binding: the agenda line the owner's next text is about (Yaz). */
-  const about = new Map<string, { block: string; at: number }>();
+  /** The agenda line the owner's next text is about (Yaz): the bot's one capture slot. */
+  const capture = deps.capture ?? new NextTextCapture(now);
 
   const prevCommand = hub.commandHook;
   hub.commandHook = async (ab, u) => {
@@ -77,10 +78,9 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     const parts: string[] = [];
     const pre = prevPrefix ? prevPrefix(ab, msg) : '';
     if (pre) parts.push(pre);
-    const a = about.get(ab.key);
-    if (a) {
-      about.delete(ab.key);
-      if (now() - a.at < ABOUT_TTL_MS) parts.push(a.block);
+    if (capture.peek(ab.key)?.kind === 'about') {
+      const c = capture.take(ab.key);
+      if (c?.kind === 'about') parts.push(c.block);
     }
     const replyTo = Number(obj(msg.reply_to_message)?.message_id);
     const r = Number.isSafeInteger(replyTo) ? hub.replyOf(ab, replyTo) : null;
@@ -159,7 +159,7 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     }
     const block = agendaNoteBlock(row.id, row.section, row.text);
     if (!block) return LINES.stale;
-    about.set(ab.key, { block, at: now() });
+    capture.set(ab.key, { kind: 'about', block, at: now() });
     await hub.reply(ab, CMD_LINES.writeNext(cleanTitle(row.text, 120)));
     return '✎ Yaz';
   }
@@ -193,7 +193,7 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     hub.turnPrefix = prevPrefix;
     hub.extraButton = prevButton;
     hub.superOff = prevOff;
-    about.clear();
+    capture.clear();
   };
 }
 
