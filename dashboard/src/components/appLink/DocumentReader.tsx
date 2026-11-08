@@ -113,6 +113,9 @@ export interface DocumentReaderProps {
    * height, so a document reads in the column with the note right under its last line.
    */
   fill?: boolean;
+  /** Re-read the page as it changes (default: with `fill`, as a live web card does). A still
+   *  preview (an answer's card tile) passes false: it reads the page once. */
+  watch?: boolean;
   /** With `fill`: the page is laid out at the desktop width and scaled into its box (Super's
    *  presentation layouts), as a server page's frame is. */
   desktop?: boolean;
@@ -157,7 +160,7 @@ function useText(): (key: string, fallback: string) => string {
 
 export function DocumentReader({
   path, onOpen, onClose, embedded = false, onWikilink, vaultReads = false, hostFileActions = false,
-  variant = 'default', allowAbsolute = false, zoomBridge = false, fill = false, desktop = false, onPageFit,
+  variant = 'default', allowAbsolute = false, zoomBridge = false, fill = false, watch, desktop = false, onPageFit,
 }: DocumentReaderProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -228,7 +231,7 @@ export function DocumentReader({
       )}
       {media ? <ViewerMedia key={path} path={path} kind={media} vaultReads={vaultReads} />
         : kind === 'html' ? (
-          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} fill={fill} desktop={desktop} onPageFit={onPageFit} />
+          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} fill={fill} watch={watch} desktop={desktop} onPageFit={onPageFit} />
         ) : (
           <ViewerDocument key={path} path={path} onOpen={onOpen} onWikilink={onWikilink ?? resolveWikilink} vaultReads={vaultReads} />
         )}
@@ -548,12 +551,12 @@ function HtmlPage(props: Parameters<typeof HtmlPageLive>[0]) {
  * markup; no network, no parent.
  */
 function HtmlPageLive({
-  path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false, onPageFit,
-}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; desktop?: boolean; onPageFit?: (width: number) => void }) {
+  path, vaultReads, fileActions, zoomBridge = false, fill = false, watch = fill, desktop = false, onPageFit,
+}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; watch?: boolean; desktop?: boolean; onPageFit?: (width: number) => void }) {
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
-  const state = useProjectHtml(path, vaultReads, fill);
+  const state = useProjectHtml(path, vaultReads, watch);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   // The host-side element that takes focus back from the frame when a picture opens (releaseFrameFocus).
   const rootRef = useRef<HTMLDivElement | null>(null);

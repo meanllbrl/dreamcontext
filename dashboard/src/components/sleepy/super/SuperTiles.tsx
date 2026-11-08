@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useTasks } from '../../../hooks/useTasks';
 import { useKnowledgeList } from '../../../hooks/useKnowledge';
@@ -22,10 +22,12 @@ import './superInsight.css';
  * an image shows the picture; a web page or a whiteboard shows its title and opens LIVE only side
  * by side or presented (a live frame or board in a 160 px tile reads as nothing and costs a lot).
  */
-export function KindTile({ container: c, title, viewReady, wide = false }: {
+export function KindTile({ container: c, title, viewReady, wide = false, preview = false }: {
   container: Container; title: string; viewReady: boolean;
   /** A medium (2×1) tile: room for a second line of what it is (owner 2026-10-22, card sizes). */
   wide?: boolean;
+  /** A project page or PDF draws itself under its name, small (an answer's card tile, turnCards.ts). */
+  preview?: boolean;
 }) {
   // A tile's data waits for the hand-over to land, like every card view (motion r9): until then
   // it is its kind and its title, which cost no query and no layout of their own.
@@ -35,8 +37,46 @@ export function KindTile({ container: c, title, viewReady, wide = false }: {
     case 'knowledge': return <NoteTile container={c} title={title} />;
     case 'insight': return <InsightTile container={c} title={title} />;
     case 'image': return <ImageTile container={c} title={title} viewReady={viewReady} />;
-    default: return <PlainTile container={c} title={title} />;
+    default: return preview && pageFileOf(c) ? <PageTile container={c} title={title} /> : <PlainTile container={c} title={title} />;
   }
+}
+
+/** Whether `ref`'s box is within a screen of the viewport (no observer: always). */
+function useNearScreen(ref: RefObject<HTMLElement | null>): boolean {
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { setNear(true); return; }
+    const io = new IntersectionObserver(([e]) => setNear(e.isIntersecting), { rootMargin: '100% 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return near;
+}
+
+/** A card whose thing is a file of the project the reader can draw: a web page or a PDF. */
+function pageFileOf(c: Pick<Container, 'kind' | 'ref'>): boolean {
+  if (c.kind !== 'web' && c.kind !== 'pdf') return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(c.ref)) return false;
+  const lower = c.ref.toLowerCase().split(/[?#]/)[0];
+  return c.kind === 'pdf' ? lower.endsWith('.pdf') : /\.(html?|pdf)$/.test(lower);
+}
+
+/** A page or a PDF as a picture of itself: the reader drawn at a desktop width, scaled into the
+ *  tile, inert; its kind and name over it, as a picture tile carries them. Read once (no watch),
+ *  and mounted only while the tile is near the screen: a long chat keeps no live frames behind. */
+function PageTile({ container: c, title }: { container: Container; title: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const near = useNearScreen(ref);
+  return (
+    <div className="super-tile super-tile--image super-tile--page" data-tile={c.kind} data-view="ready" title={title}>
+      <div ref={ref} className="super-tile-picture super-tile-page" aria-hidden inert>
+        {near && <div className="super-tile-page-frame"><DocumentReader path={c.ref} onOpen={() => { /* read-only */ }} embedded fill watch={false} /></div>}
+      </div>
+      <TileTop kind={c.kind} />
+      <div className="super-tile-caption">{title}</div>
+    </div>
+  );
 }
 
 function HeadTile({ container: c, title }: { container: Container; title: string }) {

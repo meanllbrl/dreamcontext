@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import type { SurveyRead } from '../chat/SurveyCard';
+import type { StageNow } from '../../../lib/turnCards';
 
 /**
  * The one channel between the centre chat's event lines and the stage: a child's name in an
@@ -124,4 +125,49 @@ function subscribeQuestions(fn: () => void): () => void {
 export function useSuperQuestions(sessionId: string | null): SuperQuestionView | null {
   const read = () => (sessionId ? questionViews.get(sessionId) ?? null : null);
   return useSyncExternalStore(subscribeQuestions, read, read);
+}
+
+// ─── The stage as the answers' card tiles read it (turnCards.ts) ──────────────────────────
+
+/**
+ * What a tile under a Super answer needs from the stage (owner 2026-11-08): where each card is now
+ * and the click that brings one back. Published by AgentSurface, which holds the record, for its
+ * super session; null withdraws it (a surface going away, the record taken back), and then a tile
+ * draws from the turn's own record and opens full screen instead.
+ */
+export interface SuperStageView {
+  now: StageNow;
+  /** Bring a card (side by side) or a group (presented) to the front of the stage, from Others too. */
+  bring: (target: { card: string } | { group: string }) => void;
+}
+const stageViews = new Map<string, SuperStageView>();
+const stageKeys = new Map<string, string>();
+const stageListeners = new Set<() => void>();
+
+/** Only a real change notifies (the key: each card's id, place and title, each group's cards). */
+export function publishSuperStage(sessionId: string, view: SuperStageView | null, key = ''): void {
+  if (!view) {
+    if (!stageViews.delete(sessionId)) return;
+    stageKeys.delete(sessionId);
+  } else {
+    if (stageKeys.get(sessionId) === key && stageViews.has(sessionId)) {
+      // Same cards: keep the newest click (it closes over the newest record) without a re-render.
+      stageViews.set(sessionId, view);
+      return;
+    }
+    stageViews.set(sessionId, view);
+    stageKeys.set(sessionId, key);
+  }
+  for (const fn of [...stageListeners]) fn();
+}
+
+function subscribeStage(fn: () => void): () => void {
+  stageListeners.add(fn);
+  return () => { stageListeners.delete(fn); };
+}
+
+/** The stage of `sessionId` as the tiles read it (null: no stage record here). */
+export function useSuperStage(sessionId: string | null | undefined): SuperStageView | null {
+  const read = () => (sessionId ? stageViews.get(sessionId) ?? null : null);
+  return useSyncExternalStore(subscribeStage, read, read);
 }

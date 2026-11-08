@@ -14,7 +14,8 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
+import { publishSuperEventContext, publishSuperQuestions, publishSuperStage } from './super/superJobsStore';
+import { bringPatch } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
@@ -100,7 +101,7 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { groupPresentCards, readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
@@ -4004,6 +4005,30 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
+  }, []);
+  // The card tiles under the Super's answers (turnCards.ts, owner 2026-11-08) read where each card
+  // is now and bring one back with the stage's own moves: a card side by side (as a question's
+  // report card does, above), a group presented whole (the group's "Open all"), from Others too.
+  const superGroups = superState?.groups;
+  const superStageKey = (superContainers ?? []).map((k) => `${k.id}=${k.place}=${k.title ?? ''}`).join('\u0001')
+    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001');
+  const publishedStageSid = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = publishedStageSid.current;
+    if (prev && prev !== superQuestionSid) publishSuperStage(prev, null);
+    publishedStageSid.current = superQuestionSid;
+    if (!superQuestionSid) return;
+    const containers = superContainers ?? [];
+    const groups = superGroups ?? [];
+    const now = { containers, groups };
+    const bring = (target: { card: string } | { group: string }) => {
+      const patch = bringPatch(target, now, (g) => groupPresentCards({ cards: [...g.cards] }, containers));
+      if (patch) editLayoutRef.current(patch);
+    };
+    publishSuperStage(superQuestionSid, { now, bring }, superStageKey);
+  }, [superQuestionSid, superStageKey, superContainers, superGroups]);
+  useEffect(() => () => {
+    if (publishedStageSid.current) publishSuperStage(publishedStageSid.current, null);
   }, []);
   // The alarm for what the owner must answer: chime, Dock bounce, banner and the tab's attention,
   // exactly what any agent's question raises (chatSession.ts), once for EVERY item as it arrives
