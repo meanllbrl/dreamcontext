@@ -147,9 +147,10 @@ describe('the server', () => {
   const chat = read('src/server/routes/agent-chat.ts');
 
   it('every owner message to the super carries its reference block; a slash command does not', () => {
-    expect(chat).toMatch(/if \(isSuper && !text\.startsWith\('\/'\)\) content\.push\(\{ type: 'text', text: ownerMsgBlock\(text\) \}\);/);
-    // Only writeOwnerTurn writes it: the event turns and deliveries never carry one.
-    expect(chat.split('ownerMsgBlock(').length - 1).toBe(1);
+    // A Telegram turn's block carries the hub's ref and `via` (W2, plan B1); every other is unchanged.
+    expect(chat).toMatch(/if \(isSuper && !text\.startsWith\('\/'\)\) content\.push\(\{ type: 'text', text: tgRef \? ownerMsgBlock\(text, \{ ref: tgRef, via: 'telegram' \}\) : ownerMsgBlock\(text\) \}\);/);
+    // Only writeOwnerTurn writes it (one line, two calls): the event turns and deliveries never carry one.
+    expect(chat.split('ownerMsgBlock(').length - 1).toBe(2);
   });
 
   it('a reply is "about" its message: the digest and the owner-spoke bookkeeping keep the open ask', () => {

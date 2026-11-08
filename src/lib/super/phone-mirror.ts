@@ -97,8 +97,9 @@ export function mirrorCarriesLine(line: string): boolean {
 }
 
 /** The `_meta` frame that shows the owner's words on the surfaces that did not type them. */
-export function ownerEchoFrame(text: string): string {
-  return JSON.stringify({ type: '_meta', subtype: 'owner_echo', text });
+export function ownerEchoFrame(text: string, meta?: { ref?: string; source?: 'telegram' }): string {
+  // A Telegram turn's echo names its ref and source (B1, C1); every other echo is unchanged.
+  return JSON.stringify({ type: '_meta', subtype: 'owner_echo', text, ...(meta?.ref ? { ref: meta.ref } : {}), ...(meta?.source ? { source: meta.source } : {}) });
 }
 
 /** At most this many pictures in one `stage_media` frame. */
@@ -180,9 +181,9 @@ export class MirrorSet<D> {
   }
 
   /** The owner's words, to every socket but the one that typed them (the holder included). */
-  echo(text: string, from: MirrorSocket | null): void {
+  echo(text: string, from: MirrorSocket | null, meta?: { ref?: string; source?: 'telegram' }): void {
     if (!this.mirrors.size) return;
-    const frame = ownerEchoFrame(text);
+    const frame = ownerEchoFrame(text, meta);
     const holder = this.opts.holder();
     if (holder && holder !== from) safeSend(holder, frame);
     for (const m of this.mirrors) if (m.ws !== from) safeSend(m.ws, frame);
