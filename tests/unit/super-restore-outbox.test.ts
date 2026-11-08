@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { superRestorePlan } from '../../dashboard/src/components/sleepy/superRestore';
-import { OUTBOX_BOOT, REASK_TEXT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, keepQuestionsAcrossRelaunch, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
+import { OUTBOX_BOOT, REASK_TEXT, RESUME_TEXT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
 import { _resetChatParkForTests, parkChat, parkedSince, registerParkable } from '../../src/server/chat-park.js';
 
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
@@ -248,6 +248,28 @@ describe('the super send outbox', () => {
       const { d, sent } = deps();
       expect((await pumpOutbox(root, undefined, d)).delivered).toHaveLength(1);
       expect(sent).toEqual([['c1', REASK_TEXT]]);
+    });
+
+    it('a child cut off mid-job gets the continue turn once, even with resume\'s own lines in the transcript; never beside a re-ask', async () => {
+      expect(await keepQuestionsAcrossRelaunch(root, asked, 1000)).toBe(1);
+      expect(await keepWorkAcrossRelaunch(root, ['c1', 'c2', 'c2'], 1000)).toBe(1);
+      // A second relaunch before it came back adds none.
+      expect(await keepWorkAcrossRelaunch(root, ['c2'], 1500)).toBe(0);
+      writeFileSync(transcript, line({ message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Exit code 137' }] } })
+        + line({ promptSource: 'system', origin: { kind: 'task-notification' }, message: { content: '<task-notification><status>stopped</status><summary>2 background shell command tasks didn\'t finish before the previous session ended.</summary></task-notification>' } }));
+      const { d, sent } = deps();
+      await pumpOutbox(root, undefined, d);
+      expect(sent.sort()).toEqual([['c1', REASK_TEXT], ['c2', RESUME_TEXT]]);
+      expect(await readOutbox(root)).toEqual([]);
+      expect(RESUME_TEXT).toMatch(/restarted/);
+    });
+
+    it('the continue turn is dropped when the Super or the owner already restarted the child', async () => {
+      await keepWorkAcrossRelaunch(root, ['c2'], 1000);
+      writeFileSync(transcript, line({ promptSource: 'sdk', message: { content: [{ type: 'text', text: 'continue your job' }] } }));
+      const { d, sent } = deps();
+      expect((await pumpOutbox(root, undefined, d)).dropped).toHaveLength(1);
+      expect(sent).toEqual([]);
     });
 
     it('is not asked again when the owner or the super answered the child meanwhile', async () => {

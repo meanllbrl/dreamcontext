@@ -543,10 +543,13 @@ describe('a child that never started', { timeout: 30_000 }, () => {
     const { inbox, delivered } = fakeInbox();
     attachSuperInbox(inbox);
     await noteChildStartFailed(root, 'c1', WHY);
-    await vi.waitFor(() => expect(delivered.length).toBe(1), W);
-    expect(delivered[0].text).toContain('event=stuck reason=no_start');
-    expect(delivered[0].text).toContain(`It never started: ${WHY}`);
-    expect(delivered[0].text).toMatch(/<untrusted-project-output[^>]*>It never started/);
+    // Booted with its row working and no process, it was also cut off by that boot: a
+    // `restarted` line may come first; the start failure is still one event of its own.
+    await vi.waitFor(() => expect(delivered.filter((d) => d.text.includes('event=stuck')).length).toBe(1), W);
+    const stuck = delivered.find((d) => d.text.includes('event=stuck'))!;
+    expect(stuck.text).toContain('event=stuck reason=no_start');
+    expect(stuck.text).toContain(`It never started: ${WHY}`);
+    expect(stuck.text).toMatch(/<untrusted-project-output[^>]*>It never started/);
     const s = await readSuperState(root);
     expect(s.children.c1).toMatchObject({ row: 'stuck', stuckReason: 'no_start', startError: WHY });
   });

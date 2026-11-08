@@ -122,6 +122,40 @@ export async function keepQuestionsAcrossRelaunch(
   return added;
 }
 
+/** What a child that was mid-job when the app went down is sent once it is back and idle: the
+ *  server's own continue turn (field 2026-11-08: eight children came back idle and waited until
+ *  the Super wrote "continue" to each by hand). Tool-neutral: a Codex or Antigravity child gets
+ *  the same words; Claude Code lists the background work it stopped just before it. */
+export const RESUME_TEXT = '[dreamcontext] The app was restarted while you were working, so your running turn was cut off: the command or tool call in progress was stopped, and so was any background work you had started (shells, Monitors, background agents; Claude Code lists them above as task notifications that "didn\'t finish before the previous session ended"). Nobody needs to tell you to go on: continue your job from where it stopped. Check your worktree, your task log and your outputs, rerun only what was lost, then finish and report as your brief says.';
+
+/** The words the server sends after a relaunch: any turn that reached the child since makes one
+ *  moot (its own text, the owner, or the Super answered or restarted it meanwhile). */
+const RELAUNCH_TEXTS = new Set([REASK_TEXT, RESUME_TEXT]);
+
+/**
+ * A relaunch: each of `children` was mid-job when the app went down (the caller decides which:
+ * a `working` row the relaunch brings back, inbox.ts). `--resume` brings its conversation back
+ * idle, and nothing would start its next turn. Each gets ONE relaunch message (`text`: the
+ * {@link RESUME_TEXT} continue turn, or {@link REASK_TEXT} for a child that was asking), sent at
+ * its first idle once it is back; a child already holding one (a re-ask, or one from a relaunch
+ * before) gets none: an asking child is never told to go on without its answer.
+ */
+export async function keepWorkAcrossRelaunch(contextRoot: string, children: readonly string[], now = Date.now(), text: string = RESUME_TEXT): Promise<number> {
+  if (!RELAUNCH_TEXTS.has(text)) throw new Error('a relaunch message is RESUME_TEXT or REASK_TEXT');
+  if (!children.length) return 0;
+  let added = 0;
+  await updateOutbox(contextRoot, (items) => {
+    const next = [...items];
+    for (const child of new Set(children)) {
+      if (next.some((i) => i.child === child && RELAUNCH_TEXTS.has(i.text))) continue;
+      next.push({ id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: RELAUNCH_BOOT });
+      added += 1;
+    }
+    return next;
+  });
+  return added;
+}
+
 /**
  * The owner took a queued message back in the window (deleted or edited its row, or held the
  * queue with Stop or pause): it must not come back after a relaunch either (end review round 2).
@@ -181,12 +215,13 @@ export async function arrivedInTranscript(path: string | null, text: string, at:
   return (await userTextsSince(path, at)).some((t) => t.trim() === text.trim());
 }
 
-/** Is a waiting message moot? Its own text arrived; or, for a {@link REASK_TEXT}, ANY turn
- *  reached the child since it was kept: the owner or the super answered it meanwhile (review). */
+/** Is a waiting message moot? Its own text arrived; or, for a relaunch message ({@link REASK_TEXT},
+ *  {@link RESUME_TEXT}), ANY turn reached the child since it was kept: the owner or the super
+ *  answered or restarted it meanwhile (review). */
 async function mootInTranscript(path: string | null, item: OutboxItem): Promise<boolean> {
   const texts = await userTextsSince(path, item.at);
   // A slash command's echo (`/model` on resume) is no answer either.
-  return item.text === REASK_TEXT
+  return RELAUNCH_TEXTS.has(item.text)
     ? texts.some((t) => !/^\s*<(command-name|local-command-[a-z]+|task-notification)>/.test(t))
     : texts.some((t) => t.trim() === item.text.trim());
 }

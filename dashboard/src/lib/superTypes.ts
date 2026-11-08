@@ -339,6 +339,8 @@ export interface SuperChild {
   rowAt?: number;
   /** The 30 s settle window runs ("bitiyor"). */
   settling?: boolean;
+  /** The app restarted mid-job: the server resumes it with a continue turn; it is not done. */
+  resuming?: number;
   task?: string;
   stuckReason?: StuckReason;
   /** Why this child never started, in the server's words. */
@@ -368,7 +370,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  `checklist`): his from birth, closed when his answer reaches the child. */
 /** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
  *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;

@@ -319,6 +319,9 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     const rowAt = finite(c.rowAt);
     if (rowAt !== undefined) child.rowAt = rowAt;
     if (c.settling === true) child.settling = true;
+    // Only a child that may still run is resuming (an ended one never comes back by itself).
+    const resuming = finite(c.resuming);
+    if (resuming !== undefined && resuming >= 0 && endedAt === undefined) child.resuming = resuming;
     if (typeof c.task === 'string' && TASK_SLUG_RE.test(c.task)) child.task = c.task;
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
