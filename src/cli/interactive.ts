@@ -564,7 +564,7 @@ async function executeCommand(command: MenuCommand): Promise<void> {
   console.log();
 
   try {
-    const { createProgram } = await import('./index.js');
+    const { createProgram } = await import('./program.js');
     const freshProgram = createProgram();
     freshProgram.exitOverride();
     freshProgram.configureOutput({

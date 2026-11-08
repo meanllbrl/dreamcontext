@@ -1,18 +1,17 @@
 import './inspector-guard.js';
 import './hide-windows.js';
 import chalk from 'chalk';
-import { createProgram } from './program.js';
-import { startInteractive } from './interactive.js';
-import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
+import { createProgramFor } from './lazy-program.js';
 
-/** Re-exported so `src/cli/index.js` stays the one import path anything outside this folder
- *  has ever needed. The tree itself now lives in `program.ts` — see its header for why. */
-export { createProgram };
+// The whole command tree (`./program.js`), the interactive menu and the banner are imported only
+// on the starts that need them: a start naming one command loads that command alone (see
+// lazy-program.ts). The tree's import path for everything else is `src/cli/program.js`.
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
-function getBanner(): string {
+async function getBanner(): Promise<string> {
+  const { renderBanner } = await import('../lib/pixel-banner.js');
   const logo = renderBanner();
   // Logo visual center is ~col 19 (4-space pad + 15-char center of content)
   const title = `${chalk.bold.cyan('D R E A M')}${chalk.bold.cyanBright('   C O N T E X T')}`;
@@ -37,11 +36,12 @@ async function main() {
     return;
   }
 
-  const program = createProgram();
+  const program = (await createProgramFor(firstArg)) ?? (await import('./program.js')).createProgram();
 
   // If no arguments, show banner + enter interactive mode
   if (process.argv.length <= 2) {
-    console.log(getBanner());
+    console.log(await getBanner());
+    const { startInteractive } = await import('./interactive.js');
     await startInteractive(program);
   } else {
     await program.parseAsync(process.argv);
