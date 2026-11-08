@@ -16,6 +16,7 @@ import { SuperAgentIcon } from '../../layout/NavIcons';
 import { cssEsc } from './StageMotion';
 import { showMemberApproval } from './superApprovals';
 import './JobBar.css';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
 /**
  * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
@@ -326,14 +327,14 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
           className="super-queue-btn super-queue-btn--allow"
           data-testid="super-queue-allow"
           disabled={locked}
-          onClick={() => answerOnce(() => child.answer(pending.requestId, { behavior: 'allow', updatedInput: pending.input }))}
+          onClick={() => answerOnce(() => { const ok = child.answer(pending.requestId, { behavior: 'allow', updatedInput: pending.input }); if (ok) noteOwnerWrote(); return ok; })}
         >{t('super.queue.allow')}</button>
         <button
           type="button"
           className="super-queue-btn"
           data-testid="super-queue-deny"
           disabled={locked}
-          onClick={() => answerOnce(() => child.answer(pending.requestId, { behavior: 'deny', message: 'Denied by user.' }))}
+          onClick={() => answerOnce(() => { const ok = child.answer(pending.requestId, { behavior: 'deny', message: 'Denied by user.' }); if (ok) noteOwnerWrote(); return ok; })}
         >{t('super.queue.deny')}</button>
       </span>
     </>

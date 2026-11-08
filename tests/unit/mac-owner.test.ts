@@ -194,4 +194,31 @@ describe('every owner input on the Mac passes the one call; nothing released lat
     expect(index).toMatch(/router\.post\('\/api\/mac-owner\/input', handleMacOwnerInput\);/);
     expect(index).toMatch(/'\/api\/mac-owner'\]/);
   });
+
+  // Owner 2026-11-09: Allow / Deny on a permission card on the Mac counts too.
+  it('path 5, a permission card clicked on the Mac: PermissionCard, PlanCard and the Super bar say so once the answer is written', () => {
+    const perm = read('dashboard/src/components/sleepy/chat/PermissionCard.tsx');
+    expect(perm).toMatch(/if \(session\.answer\(item\.requestId, \{ behavior: 'allow', updatedInput: item\.input \}\)\) noteOwnerWrote\(\);/);
+    expect(perm).toMatch(/if \(session\.answer\(item\.requestId, \{ behavior: 'deny', message: 'Denied by user\.' \}\)\) noteOwnerWrote\(\);/);
+    // "Run here" (the owner ran it in a terminal) is not an Allow/Deny click: untouched.
+    expect(perm.match(/noteOwnerWrote\(/g)).toHaveLength(2);
+    const plan = read('dashboard/src/components/sleepy/chat/PlanCard.tsx');
+    expect(plan.match(/noteOwnerWrote\(\); setSent\(true\)/g)).toHaveLength(2);
+    const bar = read('dashboard/src/components/sleepy/super/JobBar.tsx');
+    expect(bar.match(/if \(ok\) noteOwnerWrote\(\)/g)).toHaveLength(2);
+  });
+
+  it('must not count: a decision from the phone, the Super answering a child, or any agent never passes a card', () => {
+    // The phone's Allow/Deny card posts to the server; the Super's superAllow and the window verbs answer through the session.
+    for (const f of ['dashboard/src/components/sleepy/super/SuperPermissionCard.tsx', 'dashboard/src/components/sleepy/super/superAllow.ts',
+      'src/server/routes/super-phone-questions.ts', 'src/lib/t3-bridge/session.ts']) {
+      expect(read(f), f).not.toMatch(/ownerAtMac|noteOwnerWrote|noteMacOwnerInput|noteOwnerAtMac/);
+    }
+  });
+
+  it('server side: the click reaches the one gate; the phone link and a no-Origin client do not count', () => {
+    expect(signals(() => noteMacOwnerInput(req()))).toBe(1);
+    expect(signals(() => noteMacOwnerInput(req({ phone: true })))).toBe(0);
+    expect(signals(() => noteMacOwnerInput(req({ origin: null })))).toBe(0);
+  });
 });

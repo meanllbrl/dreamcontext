@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { CardHeader } from './molecules';
 import type { ChatSession, PendingPlan } from '../chatSession';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
 /**
  * ORGANISM — plan approval (ExitPlanMode). Claude has finished planning and is asking to
@@ -33,7 +34,7 @@ export function PlanCard({ item, session }: { item: PendingPlan; session: ChatSe
     if (sent) return;
     // The ORIGINAL input echoed back, exactly as a permission allow does. Verified against
     // CLI 2.1.220: the file the plan describes is written on the very next tool call.
-    if (session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input })) setSent(true);
+    if (session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input })) { noteOwnerWrote(); setSent(true); }
     else session.reconnectSoon();
   };
 
@@ -46,7 +47,7 @@ export function PlanCard({ item, session }: { item: PendingPlan; session: ChatSe
       behavior: 'deny',
       message: 'The user did not approve this plan. Stay in plan mode and wait for their notes on what to change.',
     });
-    if (written) setSent(true);
+    if (written) { noteOwnerWrote(); setSent(true); }
     else session.reconnectSoon();
   };
 
