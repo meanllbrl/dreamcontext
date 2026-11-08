@@ -12,7 +12,7 @@ import {
   toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  turnHasVisibleProgress, nextStickToBottom, nextComposerFolded, COMPOSER_FOLD_DISTANCE, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
+  turnHasVisibleProgress, workingPillShown, nextStickToBottom, nextComposerFolded, COMPOSER_FOLD_DISTANCE, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, isDispatchedAgent, isBackgroundShell, isHeadlessAgentShell, looksLikeHeadlessClaude,
   bashCommandFor, runDurationMs, formatModelName, runMetaChips,
@@ -1136,6 +1136,36 @@ describe('turnHasVisibleProgress', () => {
 
   it('sees a card awaiting an answer', () => {
     expect(turnHasVisibleProgress([user], 1)).toBe(true);
+  });
+});
+
+// ─── workingPillShown (the plain Chat's "Working… 42s" pill keeps its slot) ─────
+
+describe('workingPillShown', () => {
+  it('stays up through every step of a running turn, so the pinned transcript never jumps', () => {
+    // The user report: a Read lands, a command starts ("Running a command…" row), it lands, the
+    // answer streams. The old rule hid the pill whenever a row was live and showed it in each
+    // gap, so the tail changed height on every step. The pill must read the same at every frame.
+    const frames: ProgressProbe[][] = [
+      [{ kind: 'tool', status: 'done' }],
+      [{ kind: 'tool', status: 'done' }, { kind: 'tool', status: 'running' }],
+      [{ kind: 'tool', status: 'done' }, { kind: 'tool', status: 'done' }],
+      [{ kind: 'tool', status: 'done' }, { kind: 'tool', status: 'done' }, { kind: 'text', text: '', done: false }],
+      [{ kind: 'tool', status: 'done' }, { kind: 'tool', status: 'done' }, { kind: 'thinking', text: 'hm', done: false }],
+    ];
+    // The probe that USED to drive it flips across those frames: that flip was the jump.
+    expect(frames.map((f) => !turnHasVisibleProgress(f))).toEqual([true, false, true, false, false]);
+    // The pill reads nothing from the frames, only that the turn is live and nobody is asked.
+    expect(frames.map(() => workingPillShown(true, 0, false))).toEqual([true, true, true, true, true]);
+  });
+
+  it('goes when the turn ends', () => {
+    expect(workingPillShown(false, 0, false)).toBe(false);
+  });
+
+  it('gives way to a card waiting on the owner, and to the question-on-its-way pill or card', () => {
+    expect(workingPillShown(true, 1, false)).toBe(false);
+    expect(workingPillShown(true, 0, true)).toBe(false);
   });
 });
 

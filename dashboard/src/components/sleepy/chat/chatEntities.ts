@@ -1456,6 +1456,21 @@ export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0,
   ));
 }
 
+/**
+ * Whether the plain Chat draws its "Working… 42s" pill. It holds its slot for the WHOLE turn:
+ * a pill that only filled the gaps {@link turnHasVisibleProgress} finds (gone while a tool row
+ * runs or the answer streams, back the moment it lands) changed the transcript's height on every
+ * step, and a view pinned to the bottom jumped the whole history up and down under the reader
+ * (owner-forwarded user report, 2026-11-08). Only two things take its place: a card that waits
+ * on the owner (the turn is not working, it is waiting) and the question-on-its-way pair: the
+ * "Preparing a question…" pill (the same pill with another label, so swapping them moves
+ * nothing) and, once that is long enough to mean broken, the card that sends the owner to the
+ * Terminal view.
+ */
+export function workingPillShown(turnLive: boolean, pendingCount: number, askCardShown: boolean): boolean {
+  return turnLive && pendingCount === 0 && !askCardShown;
+}
+
 // ─── Prompt history (composer ↑/↓ recall) ─────────────────────────────────────────
 
 /** The subset of a transcript item {@link promptHistory} reads — structural for the same

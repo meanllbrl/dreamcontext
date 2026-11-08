@@ -16,7 +16,7 @@ import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
 import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
-  classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
+  classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress, workingPillShown,
   nextStickToBottom, nextComposerFolded, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
@@ -344,9 +344,9 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
 //
 // An `AskUserQuestion` tool call and the `question` control_request that carries its
 // payload are two separate arrivals, and the gap between them is dead air: the tool row
-// is running, `turnHasVisibleProgress` is therefore true so the working indicator stays
-// down, and nothing on screen says a question is on its way. That gap is what this pair
-// of states fills — `preparing` while it is merely slow, the degraded card only once it
+// is running and the pill only says "Working…", so nothing on screen says a question is
+// on its way. That gap is what this pair of states fills (workingPillShown hands the
+// pill's slot to either) — `preparing` while it is merely slow, the degraded card only once it
 // is long enough to mean broken.
 //
 // The degraded card is not one of the 12 design states — a fallback for a future CLI
@@ -3000,7 +3000,9 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
-            {working && !superView && (
+            {/* The pill keeps its slot for the whole turn (workingPillShown): popping it in
+                every gap between steps made the pinned transcript jump a row each time. */}
+            {!superView && workingPillShown(!ended && session.busy, conv.pending.length, askRouting != null) && (
               <WorkingIndicator
                 label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'}
                 startedAt={conv.turnStartedAt}
