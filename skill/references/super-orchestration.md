@@ -34,8 +34,9 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 8. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
-   A Plan unit's prompt carries what is already decided and the validation method (the owner's,
-   else "unit tests + tsc"), so its "ask first" has little left to ask. Answer every child question
+   A Plan unit's prompt carries the premise question's answer, the Environment (repo, base branch
+   + SHA, sync mode, tools), what is out of scope, the owner's decisions and the validation method
+   (his, else "unit tests + tsc"), so its "ask first" has little left to ask. Answer every child question
    the brief or the brain settles (`super answer`), else leave a `shown=owner` one;
    escalate only per §2.
 9. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
@@ -58,6 +59,9 @@ with one open brings `[super owed]`; after two, his agenda shows it ("Cevaplanma
 closes one. Several of his messages in a turn: `--origin <ref>` on `delegate`, `send`, `resume`.
 
 ## 2. When to ask
+**A plan's stop card is the owner's** (`plan status` prints it: a recurring class, the 8-round
+budget, or churn): never answer it yourself and never turn his "devam" into a standing order;
+it covers that one plan, recorded by the child with `plan decide`.
 Ask the way any agent asks: `dreamcontext super ask --json '<AskUserQuestion input>'` (title,
 questions with header, description, options with a description or preview, multiSelect,
 metadata.source) or `super ask "<q>" --title … --description … --option "label::what it does"`. His

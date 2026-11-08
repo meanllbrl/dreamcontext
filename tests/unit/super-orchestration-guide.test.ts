@@ -109,7 +109,9 @@ describe('super-orchestration guide: shape', () => {
   it('is at most 24,700 bytes', () => {
     // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger, measured 25,394).
     // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(25_500);
+    // +1,360 (2026-11-08, planlama-dongusu: a plan's stop card is the owner's, a Plan unit carries the premise answer,
+    // Environment, out of scope and decisions; measured 25,860, cap = measured + 1,000 per the plan).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(26_860);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -323,5 +325,13 @@ describe('heat and the heavy lock (the heat task, AC5)', () => {
     expect(goal).toContain('`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`, never beside tests');
     const src = readFileSync(join(__dirname, '../../src/lib/develop-recipe.ts'), 'utf8');
     expect(src).toContain('Every browser run goes through \\`builder heavy\\`');
+  });
+});
+
+describe('super-orchestration guide: plans (planlama-dongusu, 2026-11-08)', () => {
+  it('a plan stop card is the owner\'s; a Plan unit prompt carries premise, environment, out of scope and decisions', () => {
+    expect(FLAT).toContain("**A plan's stop card is the owner's**");
+    expect(FLAT).toMatch(/never answer it yourself and never turn his "devam" into a standing order/);
+    expect(FLAT).toMatch(/A Plan unit's prompt carries the premise question's answer, the Environment \(repo, base branch \+ SHA, sync mode, tools\), what is out of scope, the owner's decisions and the validation method/);
   });
 });
