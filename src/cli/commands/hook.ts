@@ -22,7 +22,7 @@ import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative, sep } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import {
-  enterHookProject, fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  enterHookProject, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
 } from '../../lib/hook-delivery.js';
@@ -2986,7 +2986,7 @@ export function registerHookCommand(program: Command): void {
       const allow = (): never => {
         if (!hookTool()) {
           try {
-            const watchRoot = resolveContextRoot();
+            const watchRoot = hookContextRoot();
             const nudge = watchRoot ? maybeNudge(watchRoot, input as Record<string, unknown>) : null;
             if (nudge) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: nudge } }));
           } catch { /* the nudge is advisory — never let it touch the tool call */ }
@@ -3751,7 +3751,7 @@ export function registerHookCommand(program: Command): void {
       // the formatter's behaviour nor this hook's exit code: an editing session must
       // never break because a billing hint failed.
       try {
-        const watchRoot = resolveContextRoot();
+        const watchRoot = hookContextRoot();
         if (watchRoot) {
           const nudge = maybeNudge(watchRoot, input as Record<string, unknown>);
           if (nudge) messages.push(nudge);

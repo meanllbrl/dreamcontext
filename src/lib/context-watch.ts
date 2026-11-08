@@ -623,17 +623,47 @@ export function maybeNudge(
     if (!shouldNudge(state, ctx, cfg)) return null;
 
     const tone = nudgeTone(ctx, cfg);
+    // Parallel Bash/Agent calls run their PreToolUse hooks at once and read the same usage: the
+    // first to claim this rung speaks, the rest stay silent.
+    if (!claimRung(contextRoot, sessionId, state, tone)) return null;
     writeNudgeState(contextRoot, sessionId, ctx, tone);
     // The Super Agent hands off into its own file, never a task (super/handoff-task.ts).
     const sup = superHandoffContext(contextRoot, [tab, sessionId]);
     if (sup) return `${renderNudge(ctx, cfg, null, tone, { superAgent: true })}\n${superNudgeLine(sup)}`;
     // A Super child hands off into ITS task (the super record's), never the brain's newest one.
     const child = superChildContext(contextRoot, [tab, sessionId]);
-    if (child) return renderNudge(ctx, cfg, child.task ?? null, tone, { child });
+    if (child) return renderNudge(ctx, cfg, child.task ?? paneTask(contextRoot, tab), tone, { child });
     return renderNudge(ctx, cfg, activeTaskForNudge(contextRoot)?.slug ?? null, tone);
   } catch {
     return null;
   }
+}
+
+/**
+ * Claim the rung this nudge stands on, exactly once per conversation: an exclusive create of a
+ * file named by the rung the ladder is leaving (the last nudge's size and tone, or `first`). Two
+ * hooks that read the same state claim the same name and only one create succeeds. Fails open (a
+ * dir that cannot be written still nudges, as before); the files go with the 7-day sweep.
+ */
+function claimRung(contextRoot: string, sessionId: string, state: NudgeState | null, tone: NudgeTone): boolean {
+  const dir = ensureWatchDir(contextRoot);
+  if (!dir || !isSafeSessionId(sessionId)) return true;
+  const rung = state ? `${state.lastNudgedAt}-${state.lastTone ?? 'firm'}-${tone}` : `first-${tone}`;
+  try {
+    closeSync(openSync(join(dir, `${sessionId}.rung-${rung}`), 'wx'));
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code !== 'EEXIST';
+  }
+}
+
+/** The task this pane last handed off into, when it still exists: a Super child whose record
+ *  names no task made one at its first handoff, and must not be told to make another. */
+function paneTask(contextRoot: string, tab: string | null): string | null {
+  if (!tab) return null;
+  const rec = readHandoffRecord(contextRoot, tab);
+  if (!rec || rec.kind === 'super' || !/^[a-z0-9][a-z0-9-]{0,239}$/.test(rec.task)) return null;
+  try { return lstatSync(join(contextRoot, 'state', `${rec.task}.md`)).isFile() ? rec.task : null; } catch { return null; }
 }
 
 // ─── The handoff record ───────────────────────────────────────────────────────

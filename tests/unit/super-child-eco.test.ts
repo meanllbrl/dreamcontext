@@ -9,7 +9,7 @@
  *     never to a sub-agent.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,24 +73,35 @@ describe('the Super hears that a child handed off', () => {
   it('one line once the pane rotated (actedAt), none before, none for the Super\'s own record', () => {
     writeHandoffRecord(contextRoot, PANE, base);
     expect(childHandoffLine(contextRoot, PANE)).toBeNull();
+    const now = Date.parse('2026-11-08T15:01:30.000Z') + 5 * 60_000;
     writeHandoffRecord(contextRoot, PANE, { ...base, actedAt: '2026-11-08T15:01:30.000Z' });
-    expect(childHandoffLine(contextRoot, PANE)).toBe('It handed off at ~412k tokens (2026-11-08 15:01 UTC): a fresh session continues in the same pane as the same child, nothing to do.');
+    expect(childHandoffLine(contextRoot, PANE, now)).toBe('It handed off at ~412k tokens (2026-11-08 15:01 UTC): a fresh session continues in the same pane as the same child, nothing to do.');
+    // A record lives a week: hours later the line is no longer news.
+    expect(childHandoffLine(contextRoot, PANE, Date.parse('2026-11-08T15:01:30.000Z') + 31 * 60_000)).toBeNull();
     writeHandoffRecord(contextRoot, PANE, { ...base, kind: 'super', actedAt: '2026-11-08T15:01:30.000Z' });
-    expect(childHandoffLine(contextRoot, PANE)).toBeNull();
-    expect(childHandoffLine(contextRoot, 'no-such-pane')).toBeNull();
+    expect(childHandoffLine(contextRoot, PANE, now)).toBeNull();
+    expect(childHandoffLine(contextRoot, 'no-such-pane', now)).toBeNull();
   });
 });
 
 const CLI = join(__dirname, '../../dist/index.js');
 
 describe('PreToolUse carries the nudge (built CLI)', () => {
-  const run = (payload: Record<string, unknown>) => spawnSync(process.execPath, [CLI, 'hook', 'pre-tool-use'], {
-    cwd: projectRoot,
+  const run = (payload: Record<string, unknown>, o: { cwd?: string; env?: Record<string, string>; hook?: string } = {}) => spawnSync(process.execPath, [CLI, 'hook', o.hook ?? 'pre-tool-use'], {
+    cwd: o.cwd ?? projectRoot,
     input: JSON.stringify(payload),
     encoding: 'utf-8',
-    env: { PATH: process.env.PATH, HOME: projectRoot },
+    env: { PATH: process.env.PATH ?? '', HOME: projectRoot, ...o.env },
     timeout: 30_000,
   });
+  const runAsync = (payload: Record<string, unknown>) => new Promise<string>((done) => {
+    const c = spawn(process.execPath, [CLI, 'hook', 'pre-tool-use'], { cwd: projectRoot, env: { PATH: process.env.PATH ?? '', HOME: projectRoot } });
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.on('close', () => done(out));
+    c.stdin.end(JSON.stringify(payload));
+  });
+  const enable = () => writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1', contextHandoff: { enabled: true, nudgeAt: 3000, hardAt: 9000, remindEvery: 2000 } }));
   const transcript = (tokens: number) => {
     const p = join(projectRoot, 't.jsonl');
     writeFileSync(p, `${JSON.stringify({ message: { usage: { cache_read_input_tokens: tokens } } })}\n`);
@@ -115,6 +126,28 @@ describe('PreToolUse carries the nudge (built CLI)', () => {
     expect(nudgeOf(run(bash(transcript(9000), { agent_id: 'sub-1', agent_type: 'reviewer' })).stdout)).toBeNull();
     // The Agent tool is gated by the same hook: it carries the nudge too.
     expect(nudgeOf(run({ tool_name: 'Agent', tool_input: { subagent_type: 'reviewer' }, session_id: SES, transcript_path: transcript(9500) }).stdout)).toContain('HAND OFF NOW');
+  }, 60_000);
+
+  // Field 2026-11-08: a child works in a code worktree with no brain, and its tool hooks run there.
+  // Every nudge a child ever got came from UserPromptSubmit; PostToolUse never found the brain.
+  it.skipIf(!existsSync(CLI))('a hook running in a brainless worktree finds the brain through the project dir (Pre and Post)', () => {
+    enable();
+    const wt = mkdtempSync(join(tmpdir(), 'dc-child-eco-wt-'));
+    try {
+      const env = { CLAUDE_PROJECT_DIR: projectRoot };
+      expect(nudgeOf(run(bash(transcript(3500)), { cwd: wt, env }).stdout)).toContain('[context handoff]');
+      const post = run({ tool_name: 'Edit', tool_input: { file_path: join(wt, 'a.md') }, session_id: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee', transcript_path: transcript(3600) }, { cwd: wt, env, hook: 'post-tool-use' });
+      expect(post.stdout).toContain('[context handoff]');
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!existsSync(CLI))('parallel calls crossing one rung print ONE nudge, not one each', async () => {
+    enable();
+    const p = transcript(3500);
+    const outs = await Promise.all(Array.from({ length: 5 }, () => runAsync(bash(p))));
+    expect(outs.filter((o) => o.includes('[context handoff]'))).toHaveLength(1);
   }, 60_000);
 
   it.skipIf(!existsSync(CLI))('Eco off: a Bash call prints nothing at all', () => {

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maybeNudge, renderNudge } from '../../src/lib/context-watch.js';
+import { maybeNudge, renderNudge, writeHandoffRecord } from '../../src/lib/context-watch.js';
 import { superChildContext, superHandoffContext } from '../../src/lib/super/handoff-task.js';
 import * as handoffTask from '../../src/lib/super/handoff-task.js';
 import { SUPER_STATE_REL } from '../../src/lib/super/store.js';
@@ -104,6 +104,13 @@ describe('the super session\'s handoff nudge', () => {
     const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c1' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
     expect(text).toContain('your job has no task yet');
     expect(text).not.toContain('rm -rf');
+  });
+
+  it('a child with no task on its record names the task its pane last handed off into, never "create one" again', () => {
+    writeHandoffRecord(contextRoot, 'c2', { task: 'giris-ekrani-duzeltmesi', title: 'Giriş', at: '2026-11-08T10:00:00.000Z', contextTokens: 3100, fromSession: 'x', tab: 'c2' });
+    const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c2' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+    expect(text).toContain('dreamcontext tasks handoff giris-ekrani-duzeltmesi --done');
+    expect(text).not.toContain('your job has no task yet');
   });
 
   it('an ended child is no longer one; the super itself is not its own child', () => {

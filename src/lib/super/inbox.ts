@@ -1349,10 +1349,14 @@ function lastReplyLines(vault: string, sid: string, last: string): string[] {
  * which is still the same child, card and row. Read from the pane's handoff record, the one the
  * rotation stamped `actedAt` on; nothing when it never rotated. Exported for tests.
  */
-export function childHandoffLine(contextRoot: string, sid: string): string | null {
+export const CHILD_HANDOFF_LINE_MS = 30 * 60_000;
+export function childHandoffLine(contextRoot: string, sid: string, now = Date.now()): string | null {
   let rec: HandoffRecord | null = null;
   try { rec = readHandoffRecord(contextRoot, sid); } catch { return null; }
   if (!rec?.actedAt || rec.kind === 'super') return null;
+  // A record lives a week; the line is news only right after the rotation it reports.
+  const at = Date.parse(rec.actedAt);
+  if (!Number.isFinite(at) || now - at < 0 || now - at > CHILD_HANDOFF_LINE_MS) return null;
   const size = rec.contextTokens ? ` at ~${Math.round(rec.contextTokens / 1000)}k tokens` : '';
   return `It handed off${size} (${rec.actedAt.slice(0, 16).replace('T', ' ')} UTC): a fresh session continues in the same pane as the same child, nothing to do.`;
 }
@@ -1365,7 +1369,7 @@ function childLine(vault: string, s: SuperState, sid: string, now: number, conte
   const lines = [`- child=${sid} status=${status}${row ? ` row=${row}` : ''}${bg > 0 ? ` background=${bg}` : ''}`];
   const brief = s.children[sid]?.brief || (e ? chatTopic(e) : '');
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
-  const handed = contextRoot ? childHandoffLine(contextRoot, sid) : null;
+  const handed = contextRoot ? childHandoffLine(contextRoot, sid, now) : null;
   if (handed) lines.push(handed);
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
   if (last) lines.push(...lastReplyLines(vault, sid, last));
@@ -1412,7 +1416,8 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
   if (item.kind === 'owner' && item.ownerText) lines.push(wrapUntrusted(vault, `Waits on the owner for: ${item.ownerText}`));
   if (item.kind === 'stuck' && ch?.startError) lines.push(wrapUntrusted(vault, `It never started: ${ch.startError}`));
-  const handed = childHandoffLine(rootOf(root), sid);
+  // Only beside a `done`: a question, a permission, an owner wait, stuck or gone asks it to act.
+  const handed = item.kind === 'done' ? childHandoffLine(rootOf(root), sid, now) : null;
   if (handed) lines.push(handed);
   if (perm) {
     lines.push(wrapUntrusted(vault, `Wants to run: ${perm.text || perm.toolName}`));
