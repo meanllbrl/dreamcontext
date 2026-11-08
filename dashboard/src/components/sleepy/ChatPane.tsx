@@ -791,14 +791,6 @@ export function ChatPane({
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
   /** A permission card waits on the owner: the Super view's live steps line says so. */
   const waitingOnOwner = conv.pending.some((p) => p.kind === 'permission');
-  /** The Super view's landed runs the owner opened from their answer's "steps" link, by run key
-   *  (the run's last item, which a reveal of older entries never moves). */
-  const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleSteps = useCallback((key: string) => setOpenSteps((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  }), []);
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   /**
@@ -2098,8 +2090,8 @@ export function ChatPane({
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
   /** Filled once the slices are known (below), read when the items are drawn. */
   let doneRepeats = new Set<string>();
-  /** Super view: answer id -> the landed run put away behind its "steps" link (filled below). */
-  const stepsHost = new Map<string, string>();
+  /** Super view: the landed runs put away behind their answer (filled below), by run key (the
+   *  run's last item, which a reveal of older entries never moves). */
   const hostedRuns = new Set<string>();
   const runKeyOf = (items: readonly ChatItem[]) => items[items.length - 1].id;
 
@@ -2186,9 +2178,6 @@ export function ChatPane({
         onReplyJump={superView ? handleReplyJump : undefined}
         replyHeads={replyHeads?.get(item.id)}
         onReplyTarget={superView ? handleReplyTarget : undefined}
-        stepsKey={stepsHost.get(item.id)}
-        stepsOpen={stepsHost.has(item.id) && openSteps.has(stepsHost.get(item.id)!)}
-        onToggleSteps={toggleSteps}
         stageCards={turnCards?.get(item.id)}
       />
     );
@@ -2245,7 +2234,6 @@ export function ChatPane({
           items={seg.items as ChatToolItem[]}
           stillAccruing={accruing}
           hidden={hostedRuns.has(runKeyOf(seg.items))}
-          open={openSteps.has(runKeyOf(seg.items))}
           waiting={accruing && waitingOnOwner}
           startedAt={conv.turnStartedAt}
           onOpenFile={handleOpenFile}
@@ -2427,9 +2415,9 @@ export function ChatPane({
    *  with its clock, so no separate Working pill is drawn under it (owner 2026-11-07). */
   const superLineLive = superView && liveTail >= 0 && liveSegments[liveTail].kind === 'run' && accruingAt(liveTail);
   // A LANDED turn's steps in the Super view (owner 2026-11-06): once the answer is written the
-  // quiet line goes away and only the answer stays; a faint "steps" link on the answer's hover
-  // opens the rows again. Only a run whose next visible thing IS that answer is put away: with
-  // nothing to hang the link on (a turn that ended on a card, or on more steps) the chip stays.
+  // quiet line goes away and only the answer stays, with no way back to the rows (the hover
+  // "steps" link was removed, owner 2026-11-08). Only a run whose next visible thing IS that
+  // answer is put away: a turn that ended on a card, or on more steps, keeps its chip.
   for (const [segs, accruing] of [[historySegments, () => false], [liveSegments, accruingAt]] as const) {
     if (!superView) break;
     segs.forEach((seg, i) => {
@@ -2439,11 +2427,9 @@ export function ChatPane({
       let j = i + 1;
       while (j < segs.length && segs[j].kind === 'single' && rendersNothing((segs[j] as { item: ChatItem }).item)) j += 1;
       const next = segs[j];
-      // An answer that draws nothing (whitespace only) cannot carry the link: the chip stays.
+      // An answer that draws nothing (whitespace only) cannot stand in for the run: the chip stays.
       if (!next || next.kind !== 'single' || next.item.kind !== 'text' || !next.item.text?.trim() || doneRepeats.has(next.item.id)) return;
-      const key = runKeyOf(seg.items);
-      stepsHost.set(next.item.id, key);
-      hostedRuns.add(key);
+      hostedRuns.add(runKeyOf(seg.items));
     });
   }
   // Reply strips (owner 2026-10-23, pick 1A): ONE per answer group, its own transcript row,
