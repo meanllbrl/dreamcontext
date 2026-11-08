@@ -1,0 +1,43 @@
+{
+  "header": [
+    "The audited review history of one long plan (the Telegram Super plan, 30 rounds, critic + security), as finding CLASSES per round and lens.",
+    "Source: the planning-loop task's evidence/class-telegram-A.md (rounds 1-14, class letters A-R) and evidence/class-telegram-B.md (rounds 15-30, classes by name).",
+    "Rounds 15-30 fold the four mechanisms of one leak (live-window snapshot, browser-frame pixels vs URL gate, cross-process subframe, window-held bytes) into the superclass 'local content reaches a picture', as the audit names it.",
+    "An entry is one blocking finding: its class, prefixed '!' when Critical (else Major).",
+    "Conventions of the replay: a round's listed classes are exactly its audit rows (the new model's re-stated list); a round with no review from a lens records that lens SOLID (rounds 9, 14 and 20); the harness closes every own id a round's rows drop and writes each required 'redesign:' Changes line."
+  ],
+  "lenses": ["critic", "security"],
+  "picture": "local content reaches a picture",
+  "rounds": [
+    { "n": 1, "critic": ["G", "H", "I", "A", "G", "E", "J", "B", "K"], "security": ["!B", "B", "L", "N", "M", "D", "O", "M"] },
+    { "n": 2, "critic": ["G", "C", "H", "A", "J"], "security": ["!B", "C", "G"] },
+    { "n": 3, "critic": ["A", "A"], "security": ["B", "C", "A"] },
+    { "n": 4, "critic": ["A", "A"], "security": ["D"] },
+    { "n": 5, "critic": ["A"], "security": ["D"] },
+    { "n": 6, "critic": ["A", "F"], "security": ["D"] },
+    { "n": 7, "critic": ["A", "E"], "security": ["E"] },
+    { "n": 8, "critic": ["E", "F"], "security": [] },
+    { "n": 9, "critic": [], "security": [] },
+    { "n": 10, "critic": ["G", "G", "P", "G", "L", "F", "K", "J"], "security": ["!P", "!L", "L", "M", "M", "R", "Q", "F"] },
+    { "n": 11, "critic": ["P", "N", "J"], "security": ["M", "Q"] },
+    { "n": 12, "critic": ["Q"], "security": ["Q", "N"] },
+    { "n": 13, "critic": ["Q"], "security": [] },
+    { "n": 14, "critic": [], "security": [] },
+    { "n": 15, "critic": ["plan assumes code that does not exist", "card picture unfaithful", "plan assumes code that does not exist", "plan assumes code that does not exist", "turn ref lost on a late path", "wave map"], "security": ["local content reaches a picture", "local content reaches a picture", "agent content poses as system ui", "telegram reverses a laptop-only deny"] },
+    { "n": 16, "critic": ["contract shape not matching code"], "security": ["local content reaches a picture", "local content reaches a picture"] },
+    { "n": 17, "critic": ["positive path untestable"], "security": ["local content reaches a picture"] },
+    { "n": 18, "critic": ["local content reaches a picture"], "security": ["local content reaches a picture", "local content reaches a picture"] },
+    { "n": 19, "critic": ["plan assumes code that does not exist", "stale references after supersede"], "security": ["local content reaches a picture", "secret bypasses the redactor"] },
+    { "n": 20, "critic": ["local content reaches a picture"], "security": [] },
+    { "n": 21, "critic": [], "security": ["local content reaches a picture"] },
+    { "n": 22, "critic": ["safety gate rejects legitimate content", "safety gate rejects legitimate content"], "security": ["local content reaches a picture"] },
+    { "n": 23, "critic": ["safety gate rejects legitimate content"], "security": ["local content reaches a picture", "local content reaches a picture", "safety gate rejects legitimate content"] },
+    { "n": 24, "critic": ["card picture unfaithful", "stale references after supersede", "local content reaches a picture", "card picture unfaithful"], "security": ["local content reaches a picture", "local content reaches a picture", "positive path untestable"] },
+    { "n": 25, "critic": ["card picture unfaithful", "server cannot import dashboard source", "card picture unfaithful"], "security": ["local content reaches a picture"] },
+    { "n": 26, "critic": ["plan assumes code that does not exist", "safety gate rejects legitimate content", "device-permission boundary dropped"], "security": ["device-permission boundary dropped", "local content reaches a picture"] },
+    { "n": 27, "critic": ["safety gate rejects legitimate content", "contract shape not matching code"], "security": ["local content reaches a picture"] },
+    { "n": 28, "critic": ["card picture unfaithful"], "security": ["local content reaches a picture"] },
+    { "n": 29, "critic": ["server cannot import dashboard source"], "security": ["local content reaches a picture"] },
+    { "n": 30, "critic": ["card picture unfaithful"], "security": ["secret bypasses the redactor", "device-permission boundary dropped"] }
+  ]
+}

@@ -6,7 +6,7 @@ import { FAN_OUT_RECIPE, GOAL_LIVE_RECIPES } from '../../src/lib/develop-recipe.
 import { BUILDER_BRIEF, NO_CHECK_BUILDER_RULES } from '../../src/lib/builder-brief.js';
 import { BUILDER_NO_BACKGROUND_ENV } from '../../src/lib/builder-tools.js';
 import { modeBriefing } from '../../src/server/chat-modes.js';
-import { PLANNER_BRIEF, USER_FACING_PLAN_RULES } from '../../src/lib/planner-brief.js';
+import { PLANNER_BRIEF, PLAN_SHAPE_RULES, USER_FACING_PLAN_RULES } from '../../src/lib/planner-brief.js';
 
 /**
  * How a `claude -p` builder runs its checks, how it ends, and who runs the heavy steps.
@@ -363,28 +363,60 @@ describe('goal-skill and its agents: the plan decides, severity bounds the revie
     expect(phase4).toMatch(/\*\*Write the tests, run none of them\*\*/);
   });
 
-  it('only Critical or Major findings block, with no fixed round cap; lenses are critic + security or edge-cases', () => {
-    expect(phase2).toMatch(/\*\*Only a Critical or Major\s+finding blocks\*\*/);
+  // 2026-11-08 (owner, planlama-dongusu): the plan loop converges on classes, computed by the
+  // ledger. "No fixed round cap" and "repeat a finding in the same words" are retired: repeats
+  // are tracked by id and class, 8 rounds per plan never reset, a recurring class stops the plan
+  // with an owner card, and the pragmatist returns for round 1 and after an owner addition.
+  it('Phase 2 runs through the ledger: packet, record, status; classes, 8 per plan never reset, the stop card', () => {
+    expect(phase2).toMatch(/converges on \*\*classes, not rounds\*\*/);
+    for (const verb of ['plan open', 'plan packet', 'plan record', 'plan status', 'plan decide']) expect(phase2, verb).toContain(verb);
+    expect(phase2).toMatch(/the FULL current list of\s+blocking findings \(`id`, `class`, `kind`\)/);
+    expect(phase2).toMatch(/\*\*8 rounds per plan, never reset\*\*/);
+    expect(phase2).toMatch(/`redesign <class>` \(a class in its 2nd counted round\)/);
+    expect(phase2).toMatch(/`stop class` \(3rd counted round\)/);
+    expect(phase2).toMatch(/\*\*Daralt\*\*[\s\S]*\*\*Böl\*\*[\s\S]*\*\*Devam\*\*/);
+    expect(phase2).toMatch(/a Major only when the fix\s+changes a contract, a gate, a criterion, the wave map or the approach/);
     expect(phase2).toMatch(/a Minor never costs a round/);
-    expect(phase2).toMatch(/No fixed round cap: a serious finding is never left open because rounds ran out/);
     expect(phase2).toMatch(/- \*\*critic\*\*/);
-    expect(phase2).toMatch(/- \*\*edge-cases\*\* — L tier otherwise/);
-    expect(phase2).not.toMatch(/\*\*pragmatist\*\*/);
-    expect(section(SKILL, '## Convergence rules')).toMatch(/Only a Critical or Major finding is blocking; a Minor never costs a round/);
+    expect(phase2).toMatch(/- \*\*edge-cases\*\* — otherwise/);
+    expect(phase2).toMatch(/- \*\*pragmatist\*\* — joins round 1 and the round after an owner addition only/);
+    expect(phase2).toMatch(/pass that number\s+to `goal-live --round N`/);
+    expect(phase2).not.toMatch(/No fixed round cap/);
+    expect(phase2).not.toMatch(/same findings repeat/);
+    const convergence = section(SKILL, '## Convergence rules');
+    expect(convergence).toMatch(/The plan loop \(Phase 2\) converges on classes, computed by the ledger/);
+    expect(convergence).toMatch(/\*\*8 rounds per plan, never reset\*\*/);
+    expect(convergence).toMatch(/a Minor never costs a round/);
+    expect(section(SKILL, '### Phase 3')).toMatch(/dreamcontext plan link <plan>/);
+    expect(section(SKILL, '### Phase 3')).not.toMatch(/technical_details "<file-by-file plan/);
   });
 
-  it('the plan reviewer carries the severity ladder and passes a plan whose open issues are small', () => {
+  it('the plan reviewer carries the severity ladder, the full-list format and the class rule; no same-words rule remains', () => {
     expect(PLAN_REVIEWER).toMatch(/## Severity: only Critical and Major block/);
     for (const level of ['**Critical**', '**Major**', '**Minor**', '**Nit**']) expect(PLAN_REVIEWER).toContain(level);
-    expect(PLAN_REVIEWER).toMatch(/`NEEDS_WORK` needs at least one Critical or Major\. With none, the verdict is `SOLID`/);
+    expect(PLAN_REVIEWER).toMatch(/`NEEDS_WORK` needs at least one\s+Critical or Major\. With none, the verdict is `SOLID`/);
     expect(PLAN_REVIEWER).toMatch(/an\s+`EXECUTION:` line that does not fit the work/);
-    expect(PLAN_REVIEWER).toMatch(/repeat a finding that is still open in the same words/);
-    expect(PLAN_REVIEWER).toMatch(/Never upgrade an old Minor to keep the loop going/);
-    // A clean reviewer can only repeat a finding it is shown: from round 2 it gets its own.
-    expect(PLAN_REVIEWER).toMatch(/from round 2, your own previous findings word for word/);
-    expect(section(SKILL, '### Phase 2')).toMatch(/from round 2 its own\s+previous findings word for word/);
-    expect(modeBriefing('plan', { worktreeAllowed: false })).toMatch(/from round 2, plus its own previous findings verbatim/);
+    expect(PLAN_REVIEWER).toMatch(/Never upgrade an old Minor to\s+keep the loop going/);
+    expect(PLAN_REVIEWER).toMatch(/\*\*Major\*\*: only when the fix changes a contract, a gate, a criterion, the wave map or the\s+approach/);
+    expect(PLAN_REVIEWER).toMatch(/the repeat is tracked by id and class, never by wording/);
+    expect(PLAN_REVIEWER).toMatch(/Rounds are counted per plan \(8, never reset/);
+    expect(PLAN_REVIEWER).toMatch(/ONE packet \(`dreamcontext plan packet`/);
+    expect(PLAN_REVIEWER).not.toMatch(/in the same words/);
+    expect(PLAN_REVIEWER).not.toMatch(/your own previous findings word for word/);
+    expect(section(SKILL, '### Phase 2')).toMatch(/the\s+previous round's raw reviews of ALL lenses verbatim/);
+    expect(modeBriefing('plan', { worktreeAllowed: false })).toMatch(/each fed only its packet/);
     expect(PLAN_REVIEWER).toMatch(/\*\*edge-cases\*\* — Empty\/null inputs/);
+  });
+
+  it('the planner writes at contract level and revises by class, in its brief and its agent file alike', () => {
+    expect(PLANNER_BRIEF).toContain(PLAN_SHAPE_RULES);
+    expect(PLANNER).toContain(`<!-- Verbatim copy of PLAN_SHAPE_RULES (src/lib/planner-brief.ts); a drift test holds them equal. -->\n${PLAN_SHAPE_RULES}`);
+    expect(PLAN_SHAPE_RULES).toMatch(/\*\*Premise first\.\*\*/);
+    expect(PLAN_SHAPE_RULES).toMatch(/`## Environment` \(repo, base branch \+ SHA/);
+    expect(PLAN_SHAPE_RULES).toMatch(/go to Build notes: non-blocking/);
+    expect(PLAN_SHAPE_RULES).toMatch(/\*\*Revise by class, not by finding\.\*\*/);
+    expect(PLAN_SHAPE_RULES).toMatch(/\*\*Rewrite the plan whole\*\* each round/);
+    expect(PLANNER).toMatch(/`dreamcontext plan\s+status <plan>`/);
   });
 
   it('describes Develop as it runs now: the lead builds, one end review, validator on request', () => {

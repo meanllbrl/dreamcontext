@@ -167,12 +167,16 @@ another area (the router's `domains`), or an area outside the router's vocabular
 names the team: `review-edge-cases` always, then each specialist the plan names, and the
 `reviewer` when it names none. Two things change there:
 
-- **The author synthesizes, so it cannot lower a verdict.** The lead or orchestrator merges
-  the reports and dedupes, but never drops or downgrades a Critical or Major. Any Critical or
-  Major = FAIL.
-- **The loop.** FAIL → fix exactly the findings → a fresh specialist for each one that raised
-  a blocking finding re-checks its previous findings word for word and the fix; the router
-  does not run again. The same finding twice → stop and put it to the owner.
+- **The author records, so it cannot lower a verdict.** In a Develop run each specialist's raw
+  review is recorded on its own in the run's review loop (`dreamcontext builder review`), never
+  merged: it never drops or downgrades a Critical or Major. Any Critical or Major = FAIL. Each
+  specialist reads its packet (`builder review packet`), whose format replaces the report
+  shape in REVIEWER_SHARED.md: a blocking finding carries `class`, `origin` and a concrete
+  `harm`; a Major with no harm is recorded as Minor.
+- **The loop.** FAIL → fix each finding's class on every sibling path, in one place → a fresh
+  specialist for each one that raised a blocking finding re-checks its previous findings word
+  for word and the fix, from the next packet; the router does not run again. A class in its
+  3rd counted round stops the loop with the owner's card (no round cap).
 
 ## Hard rules
 

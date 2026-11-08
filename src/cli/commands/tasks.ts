@@ -48,6 +48,8 @@ import {
   formatGaps,
   type HandoffFields,
 } from '../../lib/handoff-readiness.js';
+import { planGateGaps } from '../../lib/plan-ledger.js';
+import { readPlanLedgers } from '../../lib/plan-store.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
 import { commitAssignment, prepareAssignment } from '../../lib/agents/task-assignment.js';
@@ -2324,10 +2326,12 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
       const task = await backend.get(slug);
-      const gaps = developHandoffGaps(task ?? {});
+      const planGaps = planGateGaps(readPlanLedgers(ensureContextRoot()), slug);
+      const gaps = [...developHandoffGaps(task ?? {}), ...planGaps];
       if (gaps.length > 0) {
         error(`${slug} is not ready to hand to a Develop session:\n${formatGaps(gaps)}`);
-        info(`Fill each with \`dreamcontext tasks insert ${slug} <section> "…"\`, then run this again.`);
+        if (gaps.length > planGaps.length) info(`Fill each task gap with \`dreamcontext tasks insert ${slug} <section> "…"\`, then run this again.`);
+        if (planGaps.length > 0) info('Each plan gap names its `dreamcontext plan status <plan>`: follow its next action, then run this again.');
         process.exitCode = 1;
         return;
       }

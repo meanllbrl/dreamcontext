@@ -166,6 +166,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // +425 (2026-11-03, rapor-kurali: a product mockup in its real look, a sequence as a dc-graph; measured 24,661).
     // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger; measured 25,394).
     // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(25_500);
+    // +1,360 (2026-11-08, planlama-dongusu: the plan stop card is the owner's, a Plan unit carries premise/env/decisions; measured 25,860; same cap as super-orchestration-guide.test.ts).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(26_860);
   });
 });

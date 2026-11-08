@@ -44,6 +44,34 @@ describe('classifyHeavy', () => {
     ['npx vitest run --runInBand tests/a.test.ts', 'check'],
   ])('%s is %s', (cmd, kind) => expect(classifyHeavy(cmd)).toBe(kind));
 
+  // Measured 2026-11-08: the direct verify runs the strict shape missed after the gate landed.
+  it.each([
+    ['npx tsx scripts/verify/super-owed-replay.mjs ~/x.jsonl', 'scripts/verify/super-owed-replay.mjs'],
+    ['node ../../scripts/verify/_tmp-agy-e2e.mjs ok 2>&1', 'scripts/verify/_tmp-agy-e2e.mjs'],
+    ['timeout 120 node scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['timeout -s KILL 90s node scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['node --import tsx scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['node /Users/x/repo/scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['(cd dashboard && node ../scripts/verify/a.mjs)', 'scripts/verify/a.mjs'],
+    ['bun scripts/verify/a.ts', 'scripts/verify/a.ts'],
+    ['node "scripts/verify/a.mjs"', 'scripts/verify/a.mjs'],
+    // End review 2026-11-08: a valued timeout flag and the other package runners.
+    ['timeout -k 5 120 node scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['pnpm exec tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
+    ['bunx tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
+    ['yarn tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
+  ])('a verify run spelled otherwise is still one: %s', (cmd, target) => {
+    expect(directHeavy(cmd)).toBe('browser');
+    expect(heavyStep(cmd)?.target).toBe(target);
+  });
+
+  it.each(['node --check scripts/verify/a.mjs', 'sed -n 1,80p scripts/verify/a.mjs', 'node -c scripts/verify/a.mjs'])(
+    'reading or parsing a verify script runs nothing: %s', (cmd) => expect(directHeavy(cmd)).toBeNull());
+
+  it('a look.mjs glance stays scoped however it is spelled', () => {
+    expect(heavyStep('timeout 60 node ./scripts/verify/look.mjs /x')).toEqual({ kind: 'browser', target: 'scripts/verify/look.mjs', scoped: 1 });
+  });
+
   it.each(['git status', 'grep "npm run build" README.md', 'git commit -m "npm run build; node scripts/verify/a.mjs"', 'npm run dev', 'ls scripts/verify'])(
     '%s is no heavy step', (cmd) => expect(classifyHeavy(cmd)).toBeNull());
 

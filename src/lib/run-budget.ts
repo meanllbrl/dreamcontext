@@ -49,7 +49,15 @@ export const BUDGET_BUCKET_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const MAX_OVERRUNS = 200;
 
 const ENV_PREFIX = /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/;
-const WRAPPER = /^(?:(?:sudo|time|command|exec|nice|npx\s+--yes)\s+)+/;
+/** `timeout 120 node …` (or `timeout -k 5 120 node …`) is still the node run (measured 2026-11-08: one of the shapes that slipped past). */
+const WRAPPER = /^(?:(?:sudo|time|command|exec|nice|npx\s+--yes|timeout(?:\s+(?:-[ks]\s+\S+|-\S+|[A-Z]+))*\s+\d+(?:\.\d+)?[smhd]?)\s+)+/;
+/**
+ * A verify script run however it is spelled: `npx tsx`, `pnpm exec tsx`, `bunx tsx`, `bun`, a `../../` or absolute path, a
+ * node flag first. Measured over the Develop runs after the hook gate landed (2026-10-31 to
+ * 11-08): every direct run the strict `node scripts/verify/x.mjs` shape missed was one of these.
+ * `node --check` only parses the file, so it runs nothing.
+ */
+const VERIFY_RUN = /^(?:npx\s+(?:--yes\s+)?|(?:pnpm|yarn)\s+(?:exec\s+|dlx\s+)?|bunx\s+)?(?:node|tsx|ts-node|bun)\s+((?:-\S+(?:\s+[^-\s'"/.]\S*)?\s+)*)(\S*?)(scripts\/verify\/\S+?\.(?:m?[jt]s|c[jt]s))(?=$|[\s)'"])/;
 const REDIRECT = /\s+(?:(?:\d|&)?>>?&?\s*\S+|<\s*\S+)/g;
 
 /** `-t foo` is a filter and names tests; these take a value that names none. */
@@ -84,7 +92,7 @@ function namedFiles(args: string): { scoped?: number; related?: string[] } {
 
 /** One shell command's kind and identity, or null when it is not a heavy step at all. */
 function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep | null {
-  const s = raw.trim().replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
+  const s = raw.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
   const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)(.*)$/.exec(s);
   // What the script really runs decides: `verify:sleep-debt` here is vitest, not a browser.
   if (npm && scripts[npm[1]] && !/\bnpm\b|&&/.test(scripts[npm[1]])) {
@@ -96,9 +104,13 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
   // `tsup && vitest run` builds, whatever else it does.
   if (npm && /&&/.test(scripts[npm[1]] ?? '') && scripts[npm[1]].split('&&').some((part) => stepOfSegment(part, {})?.kind === 'build')) return { kind: 'build', target: npm[1] };
   if (npm && /^verify[:-]/.test(npm[1])) return { kind: 'browser', target: npm[1] };
-  const verify = /^node\s+(?:\.\/)?(scripts\/verify\/\S+\.m?js)\b/.exec(s);
-  // `--build` is a whole dashboard build before the glance: that is no glance.
-  if (verify) return { kind: 'browser', target: verify[1], ...(verify[1] === 'scripts/verify/look.mjs' && !/\s--build\b/.test(s) ? { scoped: 1 } : {}) };
+  const verify = VERIFY_RUN.exec(s);
+  // `--build` is a whole dashboard build before the glance: that is no glance. The target is the
+  // repo-relative path, so `../../scripts/verify/a.mjs` and `scripts/verify/a.mjs` are one limit.
+  if (verify && !/(?:^|\s)(?:--check|-c)(?:\s|$)/.test(verify[1])) {
+    const target = verify[3];
+    return { kind: 'browser', target, ...(target === 'scripts/verify/look.mjs' && !/\s--build\b/.test(s) ? { scoped: 1 } : {}) };
+  }
   if (/^(?:npx\s+)?playwright\s+test\b/.test(s)) return { kind: 'browser', target: 'playwright' };
   if (npm && /^build(?::\S+)?$/.test(npm[1])) return { kind: 'build', target: npm[1] };
   const bundler = /^(?:npx\s+)?(tsup|vite\s+build)\b/.exec(s);

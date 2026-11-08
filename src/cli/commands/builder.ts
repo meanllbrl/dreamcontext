@@ -28,6 +28,7 @@ import {
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
+import { registerReviewLoopCommands } from './review-loop.js';
 
 /**
  * `dreamcontext builder …` — what a headless `claude -p` builder and the orchestrator that
@@ -449,4 +450,5 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .action((slug: string | undefined, opts: { close?: boolean }) => { process.exitCode = builderLedger(deps, slug, opts); });
 
   registerBuilderSessionCommands(cmd, sessionDeps);
+  registerReviewLoopCommands(cmd);
 }

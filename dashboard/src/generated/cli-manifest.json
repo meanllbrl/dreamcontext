@@ -1129,6 +1129,94 @@
       ]
     },
     {
+      "path": "builder review",
+      "desc": "A Develop run's code review loop on the plan's engine: packet from the CLI, class stops, harm-backed Majors (open/packet/record/status/decide/merge-class)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "builder review decide",
+      "desc": "Record the owner's decision at a stop card: continue | narrow | split | accept | abandon",
+      "args": [
+        "<task>",
+        "<decision>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo",
+        "--note",
+        "--finding",
+        "--task",
+        "--class"
+      ]
+    },
+    {
+      "path": "builder review merge-class",
+      "desc": "Merge one finding class into another (counts only grow)",
+      "args": [
+        "<task>",
+        "<from>",
+        "<into>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo"
+      ]
+    },
+    {
+      "path": "builder review open",
+      "desc": "Open the review loop of a run (its ledger beside the run, in tmp/develop/<task>/review/)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo",
+        "--lenses",
+        "--start",
+        "--criteria-file"
+      ]
+    },
+    {
+      "path": "builder review packet",
+      "desc": "Write the packet a reviewer reads; opens the next round when nothing stops it",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo",
+        "--lens",
+        "--tree",
+        "--paths"
+      ]
+    },
+    {
+      "path": "builder review record",
+      "desc": "Record a reviewer's raw review (parsed; a malformed one is UNPARSED and re-dispatched)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo",
+        "--lens",
+        "--file",
+        "--note"
+      ]
+    },
+    {
+      "path": "builder review status",
+      "desc": "Round, reviewers, open findings by class, and the ONE next action",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--loop",
+        "--repo"
+      ]
+    },
+    {
       "path": "builder review-pick",
       "desc": "Which end review the run gets: one reviewer, or multi-review for a Full tier, a hot path, or UI plus another area (exit 2 = no plan in the file)",
       "args": [
@@ -3164,6 +3252,83 @@
       "args": [],
       "valueFlags": [
         "--set"
+      ]
+    },
+    {
+      "path": "plan",
+      "desc": "Plan review loop: ledger, packet, stops and the gate into Develop (open/packet/record/status/decide/merge-class/link)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "plan decide",
+      "desc": "Record the owner's decision: continue | narrow | accept | add | abandon | split",
+      "args": [
+        "<plan>",
+        "<decision>"
+      ],
+      "valueFlags": [
+        "--note",
+        "--finding",
+        "--task",
+        "--class"
+      ]
+    },
+    {
+      "path": "plan link",
+      "desc": "Write the reviewed plan (final snapshot) into its task's technical details; refused while the gate has gaps",
+      "args": [
+        "<plan>"
+      ]
+    },
+    {
+      "path": "plan merge-class",
+      "desc": "Merge one finding class into another (counts only grow)",
+      "args": [
+        "<plan>",
+        "<from>",
+        "<into>"
+      ]
+    },
+    {
+      "path": "plan open",
+      "desc": "Open a plan: its folder and ledger under tmp/plans/, bound to a task",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--task",
+        "--goal",
+        "--lenses"
+      ]
+    },
+    {
+      "path": "plan packet",
+      "desc": "Write the review packet a lens reads; opens the next round when nothing stops it",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--lens"
+      ]
+    },
+    {
+      "path": "plan record",
+      "desc": "Record a lens's raw review into the ledger (parsed; a malformed one is UNPARSED and re-dispatched)",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--lens",
+        "--file",
+        "--note"
+      ]
+    },
+    {
+      "path": "plan status",
+      "desc": "Round, budget, verdicts, open findings by class, and the ONE next action",
+      "args": [
+        "<plan>"
       ]
     },
     {

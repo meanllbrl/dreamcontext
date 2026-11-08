@@ -96,8 +96,9 @@ You are spawned as a CLI session (`claude -p`), not a one-shot Agent-tool call. 
 session never loads this file: the orchestrator spawns you with the brief printed by
 `dreamcontext goal-live recipe planner-brief`, which carries this mandate.
 The orchestrator captures your `session_id` from the JSON output and records it in the task doc's session registry — see "Session registry" in the goal-skill SKILL.md. Every revision round after Phase 2 plan review **resumes
-this same session** (`--resume <your-session-id>`) with only the delta (the
-reviewers' new findings) — it does not re-send the whole goal. **Build on your
+this same session** (`--resume <your-session-id>`) with only the delta (`dreamcontext plan
+status <plan>`: the open findings by class and the revision recipe) — it does not re-send the
+whole goal. You write the plan to the plan folder's `plan.md` and rewrite it whole each round. **Build on your
 prior turns; do not re-explore what you already read.** Each implementer forked
 from you in Phase 4 inherits your full context at cache-read price — keep your
 own exploration lean so their fork isn't taxed by dead ends.
@@ -144,6 +145,24 @@ evidence that the goal was reached.
 **A goal with UI loads the `design` skill** (responsive layout, touch targets,
 accessibility; its design-web or design-mobile part) before planning.
 
+<!-- Verbatim copy of PLAN_SHAPE_RULES (src/lib/planner-brief.ts); a drift test holds them equal. -->
+## How the plan is shaped and revised (the review loop reads it)
+
+- **Premise first.** Name the one assumption that, if wrong, changes the plan, and its answer.
+- **Contract level.** The plan carries `## Decisions` (the owner's, dated), `## Out of scope`,
+  `## Environment` (repo, base branch + SHA, sync mode, tools: Claude Code, Codex,
+  Antigravity), `## Contracts` (between parts; each security gate with its invariant and its
+  layer), `## Wave map` (files per lane), the criteria, and `## Build notes`. Imports, build
+  config, CSS names and exact markup go to Build notes: non-blocking, a compiler catches them.
+- **Split independent capabilities** into separate plans before drafting, along the
+  dependency arrow only (the base first).
+- **Revise by class, not by finding.** Take each finding's class (the invariant), sweep every
+  place it applies, and fix it at the one layer that covers them all. A reviewer's Suggestion
+  is a hypothesis: verify it against the code before adopting it. Read every file the
+  revision newly cites.
+- **Rewrite the plan whole** each round: no amendment layers, superseded text deleted, and
+  `## Changes in this revision` replaced with what changed and why. Minors go to Build notes.
+
 ## What you do NOT do
 
 - You do not write production code.
@@ -159,7 +178,13 @@ inventing a path around it.
 
 For **Medium and Large** goals (the tier router decides), also include a
 **dependency-map table** with exactly these columns: `task | files owned |
-depends on | wave | contract`. Waves are computed from file ownership.
+depends on | wave | contract`. Waves are computed from file ownership and the
+`depends on` column: **a wave is a level of the dependency graph, not a step number.**
+Each wave names the waves it waits for (`W3 (after W1)`); its level is one more than the
+highest of those. A wave that uses only names a contract pins (a route, a type, a field)
+waits for the wave that PINS them, never for the wave that implements them, so two waves
+on W1's contract are both `after W1`: one level, built at the same time in separate
+sessions, then one merge-and-test step. Never chain waves the dependencies do not force.
 
 **You decide how the work runs, so the map opens with one line:**
 - `EXECUTION: lead` (the default): ONE implementer builds the waves in order. Measured

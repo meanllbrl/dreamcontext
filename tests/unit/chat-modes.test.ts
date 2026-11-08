@@ -201,7 +201,9 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/ONE message/);
     // Fed the ARTIFACT, not the session — a judge that meets the work through the plan text
     // stays independent (goal-skill's two-lane rule).
-    expect(brief).toMatch(/only the plan text/i);
+    // 2026-11-08: the artifact is now the packet `plan packet` prints (the plan snapshot, every
+    // lens's raw reviews, ids, classes, the rules): still never the session.
+    expect(brief).toMatch(/each fed only its packet/i);
     expect(brief).toMatch(/never review your own/i);
   });
 
@@ -213,7 +215,9 @@ describe('modeBriefing', () => {
     for (const lens of ['critic', 'edge-cases', 'security']) {
       expect(brief, `missing lens: ${lens}`).toContain(`**${lens}**`);
     }
-    expect(brief).not.toContain('**pragmatist**');
+    // 2026-11-08 (planlama-dongusu): the pragmatist returns for round 1 and the round after an
+    // owner addition only, proposing and never blocking (reverses 46675642 for those rounds).
+    expect(brief).toMatch(/Round 1 and the round after\s+an owner addition add the \*\*pragmatist\*\* \(cuts and premise questions for the owner; never\s+blocks\)/);
     expect(brief).toMatch(/\*\*security\*\* when the\s+goal touches auth, money, secrets, migrations or outbound messages, else \*\*edge-cases\*\*/);
   });
 
@@ -225,21 +229,37 @@ describe('modeBriefing', () => {
     expect(brief).toContain('`critic lens`');
   });
 
-  it('plan ITERATES on the review, and escalates instead of proceeding when stuck', () => {
+  // 2026-11-08 (owner, planlama-dongusu): the loop converges on classes, not rounds. "No round
+  // cap" and "the same finding twice" (matched by words) are retired: `plan status` computes the
+  // next action from the ledger, a recurring class stops the plan with an owner card, and the
+  // budget is 8 rounds per plan, never reset.
+  it('plan ITERATES through the ledger: packet, record, status; class-first whole rewrites; the stop card is the owner\'s', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: false });
-    expect(brief).toMatch(/SOLID/);
-    expect(brief).toMatch(/re-review/i);
-    // 2026-10-11 evening (owner): severity, not a counter, bounds the loop. Only a Critical or
-    // Major finding costs a round; a serious finding is never dropped because rounds ran out.
-    expect(brief).toMatch(/Iterate while a lens has a Critical or Major finding\*\*; both SOLID = done/);
-    expect(brief).toMatch(/a Minor never\s+costs a round/);
-    expect(brief).toMatch(/no round\s+cap/);
-    expect(brief).toMatch(/The SAME finding twice, or 8 rounds → STOP and put the open findings to the user/);
+    expect(brief).toMatch(/SOLID|plan status/);
+    for (const verb of ['plan open', 'plan packet', 'plan record', 'plan status', 'plan decide', 'plan link']) {
+      expect(brief, `missing ${verb}`).toContain(`dreamcontext ${verb}`.replace('dreamcontext plan decide', 'plan decide'));
+    }
+    expect(brief).toMatch(/fix each finding's CLASS/);
+    expect(brief).toMatch(/\*\*rewrite the plan whole\*\*/);
+    expect(brief).toMatch(/A Minor never costs a round/);
+    expect(brief).toMatch(/8 per plan, never reset/);
+    expect(brief).toMatch(/A \*\*stop card\*\* is the owner's: ask it as an owner card/);
+    expect(brief).toMatch(/never quietly proceed past one/i);
+    expect(brief).not.toMatch(/no round\s+cap/);
+    expect(brief).not.toMatch(/SAME finding twice/i);
     expect(brief).not.toMatch(/at most 2 rounds/);
-    // Convergence by signal (goal-skill Phase 2): the same finding surviving a revision means
-    // the loop is stuck, and a stuck loop goes to the user — it does not get waved through.
-    expect(brief).toMatch(/SAME finding twice/i);
-    expect(brief).toMatch(/never quietly proceed/i);
+  });
+
+  it('plan asks the premise question and writes an Environment block; contract level with Build notes; the task at intake', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/\*\*premise question\*\*/);
+    expect(brief).toMatch(/\*\*Environment\*\* block: repo, base branch \+ SHA/);
+    expect(brief).toMatch(/\*\*Draft at contract level\*\*/);
+    expect(brief).toMatch(/go to Build notes \(non-blocking\)/);
+    expect(brief.indexOf('dreamcontext tasks create')).toBeLessThan(brief.indexOf('**Draft at contract level**'));
+    expect(brief).toMatch(/plan open <plan> --task <slug>/);
+    expect(brief).toMatch(/Price an\s+owner addition first/);
+    expect(brief.length).toBeLessThanOrEqual(5200);
   });
 
   it('plan writes the plan INTO the task — criteria, details, constraints, validation', () => {
@@ -247,9 +267,13 @@ describe('modeBriefing', () => {
     // the decisions and the agreed validation method stayed in the transcript, which is
     // exactly the artifact the next session cannot find.
     const brief = modeBriefing('plan', { worktreeAllowed: false });
-    for (const section of ['acceptance_criteria', 'technical_details', 'constraints']) {
+    // 2026-11-08: the reviewed plan reaches technical_details through `plan link` (the final
+    // snapshot, behind the plan gate), never a hand insert.
+    for (const section of ['acceptance_criteria', 'constraints']) {
       expect(brief, `missing section: ${section}`).toContain(`insert <slug> ${section}`);
     }
+    expect(brief).not.toContain('insert <slug> technical_details');
+    expect(brief).toMatch(/`dreamcontext plan link <plan>` writes the reviewed plan into\s+its technical details/);
     expect(brief).toMatch(/Validation method:/);
   });
 
@@ -364,7 +388,9 @@ describe('modeBriefing', () => {
   it('plan keeps the wave count to the dependency chain, and the critic checks it', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: false });
     expect(brief).toMatch(/As few waves as the dependencies allow/);
-    expect(brief).toMatch(/names what it consumes from\s+an earlier one, or it merges back/);
+    // 2026-11-08 (develop-inceleme-dongusu): a wave is a level; what it waits for is named.
+    expect(brief).toMatch(/names the waves it waits for \(`after W1`\), or it merges back/);
+    expect(brief).toMatch(/names a contract pins count\s+against the wave that pins them, and waves of one level run at once/);
     expect(brief).toMatch(/Criteria sharing a file share a lane, never a new wave/);
     expect(brief).toMatch(/never a closing wave of their own/);
     expect(brief).toMatch(/\*\*critic\*\* \(premise, correctness, scope, a wave that could merge,\s+what the owner sees on\s+first open\)/);
@@ -405,11 +431,16 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/criteria grouped by what one check can prove/);
   });
 
-  it('develop iterates on review findings, and escalates one that survives a fix', () => {
+  // 2026-11-08 (develop-inceleme-dongusu): "the SAME finding twice" matched words and caught none
+  // of the measured repeats; the class stop, the class-wide fix and the harm rule replace it.
+  it('develop iterates on review findings by class, and a class in its 3rd round stops for the owner', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/re-review/i);
-    expect(brief).toMatch(/SAME finding twice/i);
-    expect(brief).toMatch(/never merge past it/i);
+    expect(brief).not.toMatch(/SAME finding twice/i);
+    expect(brief).toContain('Every round runs through `dreamcontext builder review` (its packet, never a prompt you write).');
+    expect(brief).toMatch(/fix each finding's CLASS on every sibling path, in one place,\s+never a reviewer's code unverified/);
+    expect(brief).toMatch(/A Major counts only with a concrete harm/);
+    expect(brief).toMatch(/A class in its 3rd round →\s+STOP with the owner's card; never merge past it/);
   });
 
   // 2026-10-11 (owner decisions 8 and 13): the validator found 0 product bugs in 35 runs. A
@@ -572,7 +603,10 @@ describe('modeBriefing', () => {
   // in step 3 (Develop's recipe reads both) and the two-round cap in step 5.
   // plan +300 (2026-10-11 evening): the EXECUTION line and the severity-bounded review loop.
   // plan +150 (2026-10-23): 2+ waves are sub-tasks (`tasks create … --parent <slug> --basis plan`).
-  const BRIEFING_CEILING: Record<string, number> = { plan: 4000, develop: 4100, train: 2150, assistant: 6650, super: 17350 };  // super +250 (2026-11-07, app-araclari: an app on this Mac may already answer, `apps tools` / `apps do`; a changing tool is refused for the Super and its children). super +500 (2026-11-07, super-metin-gizlenmez: he sees text, never thinking; a summary he asked for is written, never pointed "above"; a reported gap is never blamed on his screen; a question he did not understand is explained in the last text and re-asked reworded, never the same card). super +450 (2026-11-06, super-borc-defteri: one subject per section, his messages, awaited results and sends kept owed until a section says it, `<super-owed>`/`[super owed]`, `--origin` on send/resume, merged on top of the approvals line in the 0.41.4 cut; measured at the merge in super-briefing.test.ts). super +250 (2026-11-06, 0.41.3 cut: rutin-yeni-claude's "+ New routine" line, onay-super's approvals-on-the-Super-screen line and bypass-bash-soru's script-to-a-file rule merged together; measured 16,011). super +150 (2026-11-03, rapor-kurali: a product mockup wears that product's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips; measured 15,817). super +350 (2026-11-02, super-dusunur merged on top of super-araclar in the 0.40.1 cut: weigh a new idea from the owner before agreeing, never agree or argue by reflex; combined measured 15,643). super +250 (2026-11-02, super-araclar: which tool and model a child runs on, `--tool`, Gemini = antigravity; measured 15,245). super +250 (2026-11-01, super-soru-sirasi: the one line comes first, `super ask` is the last act of the turn; measured about 15,000). super +150 (2026-10-31, integration 0.36.5: secim-yorum `[About card]` line, measured 14807; no content dropped). super +250 (2026-10-31, integration 0.36.4: team-talimat-onay `super team amend` bullet merged on top of team-is-basina-model, measured 14,629);  super +250 (2026-10-31, team-is-basina-model: who does a small read, `--light`, one job's `--model`);  super +400 (2026-10-30, super-bilgi-akisi: information he must read is a report card, the question only the decision; measured 14,183); super +100 (2026-10-30, super-sonuc-origin-ref: an awaited=owner result with `origin=<ref>` opens with that message's `re:` mark); super +100 (2026-10-30, super-team-ask-global: a global agent is an AI Team member too, `super team ask` it, never a child); super +300 (2026-10-29, super-plan-ozeti: a start or approve question carries its summary on the card's yes preview and in the text); super +100 (2026-10-29, super-agent-isi-bolerken: the AI Team bullet checks `## Your AI Team` first for every job, never a sub-agent; measured 13,219); super +200 (2026-10-29, super-resim-sun: pictures shown as a result open with `--present`, a group card alone is not showing; measured 13,145); super +120 (2026-10-29, super-pano-kart-turu: a dreamcontext whiteboard opens with `super open whiteboard <slug>`, never `board`; measured 12,978); super +80 (2026-10-27, super-anlik-olay: a child's question marked `shown=owner` is already on the owner's bar, so the Super leaves one it cannot settle; measured 12,810); super +100 (2026-10-27, integration of 0.35.1: the agenda keeps itself true — `--for`, `delegate --note`, `keep`, merged on top of the 0.35.0 briefing; measured 12,737); super +830 (2026-10-25, integration of the 0.34.6 branches: the dock's [On page …] line, `super open pdf|video`, and the sums of the others; measured 12,668); super +650 (2026-10-24, measured +646): several references in one message, a section per part with that part's ref, stacked parts in one section, the pad kept right per line (rev 12); super +350 (2026-10-24, measured +313): one section per message with its own `re:` line, never several refs on one line, and a choice the owner must make lives in a `super ask` card, never only in the text; super +500 (2026-10-23): which answer is to which message (`<owner-msg ref>` in, `<!-- re:<ref> -->` out, the ↩ reply's `quote:` pointer, ~470); super +650 (2026-10-23): a message about one agenda line (`[About agenda line …]`, ~620, the agenda's Write-about icon); super +170 (2026-10-23): a child's pictures carry `--for <child>` and leave the stage once its job moves on (super-anlamsiz-grup); super +550 (2026-10-23): named presentation layouts (`present … --layout`, the count defaults, `kept: owner_layout`, the site-or-document bullet; super-sunum-duzenleri); super +450 (2026-10-23): a running child with no card is said out loud (`card: not_opened`, super-kart-kaydi, ~265) and a live job's card always floats, never stacked or grouped (`live_child`, super-canli-kart-sahnede, ~180); super +400 (2026-10-22): a child waiting on the owner reaches the Super as `event=owner`, is told to him at once, and is closed with `super queue done` when he did it another way (Tilki field: a gcloud login run card under a DONE row); super +650 (2026-10-22): the agenda is the super's own notepad (`super note`, ~620, super-ajanda-kart); super +500 (2026-10-22): pictures group themselves, every card a readable name, the stage tidies itself (orchestration guide, ~500, super-gorsel-grup); super +300 (2026-10-22): ask the way any agent asks (`super ask --json`), `[super answer]` and `<super-while-you-asked>`; super +250 (2026-10-22): the handoff is the super's own FILE (`super handoff`), never a task; super +200 (2026-10-22): xhigh only for the jobs that earn it, the child's default effort; super +200 (2026-10-22): the card sizes line (`super shape <card> small|medium|large|wide`, owner_sized); +250 (2026-10-21): every owner question through `super ask`, never AskUserQuestion (it locks the turn); +1800 (2026-10-21): Show, don't tell, Voice and the revision marker (jarvis plan r9); +200 (2026-10-21): the AI Team line (`super team ask`); super 2600 (2026-10-18): the Super Agent's lead/event/trust rules (plan-r7 D15); +200 (2026-10-21): the child lifecycle line (`super update`, `super adopt`); +1000 (2026-10-21): the job list's owner voice, rows, pool and ask (plan r4); super-briefing.test.ts holds its exact length rule  // develop +300 (2026-10-31, kuyruk-kok-neden: exit 75 keeps your place, --because once per script, light reviewer reads security, `builder ledger --close`; measured 4,063); develop +400 (2026-10-25): browser verify scripts run once at a wave's end, a red re-runs only its failing step, the same script red 3 times stops (ajan-sure rapor, ~340); plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
+  // plan 4000 → 5200 (2026-11-08, planlama-dongusu): premise question, Environment, task at intake + `plan open`, contract level
+  // and Build notes, packet/record/status, class-first whole rewrite, pragmatist at round 1 and after additions, the owner's
+  // stop card, `plan link`; measured 5,043.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 5200, develop: 4100, train: 2150, assistant: 6650, super: 17350 };  // super +250 (2026-11-07, app-araclari: an app on this Mac may already answer, `apps tools` / `apps do`; a changing tool is refused for the Super and its children). super +500 (2026-11-07, super-metin-gizlenmez: he sees text, never thinking; a summary he asked for is written, never pointed "above"; a reported gap is never blamed on his screen; a question he did not understand is explained in the last text and re-asked reworded, never the same card). super +450 (2026-11-06, super-borc-defteri: one subject per section, his messages, awaited results and sends kept owed until a section says it, `<super-owed>`/`[super owed]`, `--origin` on send/resume, merged on top of the approvals line in the 0.41.4 cut; measured at the merge in super-briefing.test.ts). super +250 (2026-11-06, 0.41.3 cut: rutin-yeni-claude's "+ New routine" line, onay-super's approvals-on-the-Super-screen line and bypass-bash-soru's script-to-a-file rule merged together; measured 16,011). super +150 (2026-11-03, rapor-kurali: a product mockup wears that product's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips; measured 15,817). super +350 (2026-11-02, super-dusunur merged on top of super-araclar in the 0.40.1 cut: weigh a new idea from the owner before agreeing, never agree or argue by reflex; combined measured 15,643). super +250 (2026-11-02, super-araclar: which tool and model a child runs on, `--tool`, Gemini = antigravity; measured 15,245). super +250 (2026-11-01, super-soru-sirasi: the one line comes first, `super ask` is the last act of the turn; measured about 15,000). super +150 (2026-10-31, integration 0.36.5: secim-yorum `[About card]` line, measured 14807; no content dropped). super +250 (2026-10-31, integration 0.36.4: team-talimat-onay `super team amend` bullet merged on top of team-is-basina-model, measured 14,629);  super +250 (2026-10-31, team-is-basina-model: who does a small read, `--light`, one job's `--model`);  super +400 (2026-10-30, super-bilgi-akisi: information he must read is a report card, the question only the decision; measured 14,183); super +100 (2026-10-30, super-sonuc-origin-ref: an awaited=owner result with `origin=<ref>` opens with that message's `re:` mark); super +100 (2026-10-30, super-team-ask-global: a global agent is an AI Team member too, `super team ask` it, never a child); super +300 (2026-10-29, super-plan-ozeti: a start or approve question carries its summary on the card's yes preview and in the text); super +100 (2026-10-29, super-agent-isi-bolerken: the AI Team bullet checks `## Your AI Team` first for every job, never a sub-agent; measured 13,219); super +200 (2026-10-29, super-resim-sun: pictures shown as a result open with `--present`, a group card alone is not showing; measured 13,145); super +120 (2026-10-29, super-pano-kart-turu: a dreamcontext whiteboard opens with `super open whiteboard <slug>`, never `board`; measured 12,978); super +80 (2026-10-27, super-anlik-olay: a child's question marked `shown=owner` is already on the owner's bar, so the Super leaves one it cannot settle; measured 12,810); super +100 (2026-10-27, integration of 0.35.1: the agenda keeps itself true — `--for`, `delegate --note`, `keep`, merged on top of the 0.35.0 briefing; measured 12,737); super +830 (2026-10-25, integration of the 0.34.6 branches: the dock's [On page …] line, `super open pdf|video`, and the sums of the others; measured 12,668); super +650 (2026-10-24, measured +646): several references in one message, a section per part with that part's ref, stacked parts in one section, the pad kept right per line (rev 12); super +350 (2026-10-24, measured +313): one section per message with its own `re:` line, never several refs on one line, and a choice the owner must make lives in a `super ask` card, never only in the text; super +500 (2026-10-23): which answer is to which message (`<owner-msg ref>` in, `<!-- re:<ref> -->` out, the ↩ reply's `quote:` pointer, ~470); super +650 (2026-10-23): a message about one agenda line (`[About agenda line …]`, ~620, the agenda's Write-about icon); super +170 (2026-10-23): a child's pictures carry `--for <child>` and leave the stage once its job moves on (super-anlamsiz-grup); super +550 (2026-10-23): named presentation layouts (`present … --layout`, the count defaults, `kept: owner_layout`, the site-or-document bullet; super-sunum-duzenleri); super +450 (2026-10-23): a running child with no card is said out loud (`card: not_opened`, super-kart-kaydi, ~265) and a live job's card always floats, never stacked or grouped (`live_child`, super-canli-kart-sahnede, ~180); super +400 (2026-10-22): a child waiting on the owner reaches the Super as `event=owner`, is told to him at once, and is closed with `super queue done` when he did it another way (Tilki field: a gcloud login run card under a DONE row); super +650 (2026-10-22): the agenda is the super's own notepad (`super note`, ~620, super-ajanda-kart); super +500 (2026-10-22): pictures group themselves, every card a readable name, the stage tidies itself (orchestration guide, ~500, super-gorsel-grup); super +300 (2026-10-22): ask the way any agent asks (`super ask --json`), `[super answer]` and `<super-while-you-asked>`; super +250 (2026-10-22): the handoff is the super's own FILE (`super handoff`), never a task; super +200 (2026-10-22): xhigh only for the jobs that earn it, the child's default effort; super +200 (2026-10-22): the card sizes line (`super shape <card> small|medium|large|wide`, owner_sized); +250 (2026-10-21): every owner question through `super ask`, never AskUserQuestion (it locks the turn); +1800 (2026-10-21): Show, don't tell, Voice and the revision marker (jarvis plan r9); +200 (2026-10-21): the AI Team line (`super team ask`); super 2600 (2026-10-18): the Super Agent's lead/event/trust rules (plan-r7 D15); +200 (2026-10-21): the child lifecycle line (`super update`, `super adopt`); +1000 (2026-10-21): the job list's owner voice, rows, pool and ask (plan r4); super-briefing.test.ts holds its exact length rule  // develop +300 (2026-10-31, kuyruk-kok-neden: exit 75 keeps your place, --because once per script, light reviewer reads security, `builder ledger --close`; measured 4,063); develop +400 (2026-10-25): browser verify scripts run once at a wave's end, a red re-runs only its failing step, the same script red 3 times stops (ajan-sure rapor, ~340); plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
   // plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
   // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list; +850 (2026-10-17): know it yourself — answer from `assistant recall`/`read`/`index` across every brain, delegate only what no brain holds and every action
   const DEFAULT_CEILING = 1600;

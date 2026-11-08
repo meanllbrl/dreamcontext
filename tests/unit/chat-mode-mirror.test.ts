@@ -121,8 +121,8 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     // fingerprint here under the new version.
     const PINNED: Record<string, [version: string, fingerprint: string]> = {
       basic: ['1.0', '7c497717dfe1'],
-      plan: ['1.4', '8d397cb653c1'],
-      develop: ['1.6', '33bbf04eb14c'],
+      plan: ['1.6', 'bffdcffedb5d'],
+      develop: ['1.7', '0ba2b430bf04'],
       train: ['0.1', 'f613cadc20e7'],
     };
     for (const mode of PICKER_MODES) {
