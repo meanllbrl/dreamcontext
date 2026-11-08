@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { promisify } from 'node:util';
@@ -16,9 +16,12 @@ import { registerApp } from '../../src/lib/apps/registry.js';
  */
 
 const execFileAsync = promisify(execFile);
-/** vite-node's own entry under this Node: `.bin/vite-node` is a .cmd shim on Windows, which execFile cannot run. */
-const VITE_NODE = resolve('node_modules/vite-node/dist/cli.mjs');
-const CLI = resolve('src/cli/index.ts');
+/**
+ * The BUILT CLI (`npm run build:cli`), as the other CLI-driving suites spawn it. Running
+ * src/cli/index.ts through vite-node transpiled the whole CLI on every spawn: ~8 s of CPU each
+ * against ~0.3 s for the bundle, and this file spawns it nine times.
+ */
+const CLI = resolve('dist/index.js');
 const FIXTURE = join(__dirname, '..', 'fixtures', 'apps', 'echo-backend');
 const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
 
@@ -44,7 +47,7 @@ function req(opts: { method?: string; path: string; headers?: Record<string, str
 
 async function cli(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<{ code: number; out: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [VITE_NODE, '--root', resolve('.'), CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
+    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
     return { code: 0, out: stdout + stderr };
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string };
@@ -53,6 +56,7 @@ async function cli(args: string[], cwd: string, extraEnv: Record<string, string>
 }
 
 beforeAll(async () => {
+  if (!existsSync(CLI)) throw new Error('dist/index.js is missing: run npm run build:cli first');
   home = realpathSync(mkdtempSync(join(tmpdir(), 'dc-apps-routes-home-')));
   cleanup.push(home);
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'dc-apps-routes-proj-')));

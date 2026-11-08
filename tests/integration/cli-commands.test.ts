@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { hookCommand } from '../../src/cli/commands/install-skill.js';
+import { buildInitTemplate, copyInitTemplate } from '../helpers/init-template.js';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
@@ -46,6 +47,18 @@ function gitIdentityEnv(dir: string, identity: { name: string; email: string } |
 
 describe('CLI commands (integration)', () => {
   let tmpDir: string;
+  /** One real `init` (same arguments, same env) per file; each test that needs a vault gets a copy. */
+  let initTemplate: string;
+
+  beforeAll(() => {
+    initTemplate = buildInitTemplate(makeTmpDir(), (dir) => {
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', dir);
+    });
+  });
+
+  afterAll(() => {
+    rmSync(initTemplate, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -176,7 +189,7 @@ describe('CLI commands (integration)', () => {
     }
 
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('`tasks statuses` lists the shipped four when nothing is declared, and the declared set otherwise (with remote mapping)', () => {
@@ -275,7 +288,7 @@ describe('CLI commands (integration)', () => {
 
   describe('tasks', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('creates a task', () => {
@@ -568,7 +581,7 @@ parent_task: null
 
   describe('features', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('creates a feature', () => {
@@ -667,7 +680,7 @@ parent_task: null
 
   describe('bookmark', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('creates a bookmark with --task flag', () => {
@@ -699,7 +712,7 @@ parent_task: null
 
   describe('knowledge', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('creates a knowledge file with proper YAML (no injection)', () => {
@@ -1002,7 +1015,7 @@ parent_task: null
 
   describe('doctor', () => {
     it('reports results on initialized project', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       const output = run('doctor', tmpDir);
       expect(output).toContain('ok');
       // Fresh init may have placeholder warnings, but no missing required files
@@ -1030,28 +1043,28 @@ parent_task: null
     });
 
     it('reports error on malformed JSON', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       writeFileSync(join(tmpDir, '_dream_context', 'core', 'CHANGELOG.json'), '{ broken', 'utf-8');
       const output = run('doctor', tmpDir);
       expect(output).toContain('Malformed JSON');
     });
 
     it('reports warning on empty core file', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       writeFileSync(join(tmpDir, '_dream_context', 'core', '0.soul.md'), '', 'utf-8');
       const output = run('doctor', tmpDir);
       expect(output).toContain('Empty file');
     });
 
     it('reports warning on placeholder content', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       writeFileSync(join(tmpDir, '_dream_context', 'core', '0.soul.md'), '(Add your principles here)', 'utf-8');
       const output = run('doctor', tmpDir);
       expect(output).toContain('placeholder');
     });
 
     it('warns (non-fatal) when core/taxonomy.json is missing', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
       // taxonomy.json is created by init; delete it to simulate a missing file.
       if (existsSync(taxonomyPath)) {
@@ -1067,7 +1080,7 @@ parent_task: null
 
   describe('taxonomy', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('taxonomy vocab outputs the resolved vocabulary', () => {
@@ -1269,7 +1282,7 @@ parent_task: null
 
   describe('snapshot --tokens', () => {
     it('outputs a number estimating token count', () => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir); // the file's one real `init`, copied
       const output = run('snapshot --tokens', tmpDir);
       const num = parseInt(output.trim(), 10);
       expect(num).toBeGreaterThan(0);
@@ -1284,7 +1297,7 @@ parent_task: null
 
   describe('feature section validation', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
       run('features create auth --why "Login"', tmpDir);
     });
 
@@ -1302,7 +1315,7 @@ parent_task: null
 
   describe('ambiguous file matching', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('errors on ambiguous task prefix match', () => {
@@ -1362,7 +1375,7 @@ parent_task: null
 
   describe('releases', () => {
     beforeEach(() => {
-      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      copyInitTemplate(initTemplate, tmpDir);
     });
 
     it('creates a release with --yes', () => {
