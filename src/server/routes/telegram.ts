@@ -149,7 +149,7 @@ const managerUnbind = async (req: IncomingMessage, res: ServerResponse): Promise
   if (!fromPageHeaders(req)) { refuse(res, 403, 'owner_page_only', 'Only the owner, in the app, removes the manager.'); return; }
   const h = hubOr(res);
   if (!h) return;
-  await h.removeManager?.();
+  await h.removeManager?.(hasOwnerKey(req));
   sendJson(res, 200, { ok: true });
 };
 

@@ -241,6 +241,48 @@ describe('the Super target', () => {
     expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([]);
   });
 
+  it('a written turn lost in a crash is told as "yazıldı ama tamamlanamadı", not "tekrar gönder" (F5)', async () => {
+    reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj, sent } = fakeInjector();
+    reg.registerChatInjector(SID, inj);
+    tg.push(TOKEN, textUpdate(OWNER, 'deploy et'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    // The bridge's writeOwnerTurn honours the ref: the journal follows.
+    expect(reg.telegramRefs.take(SID, sent[0]).ref).not.toBeNull();
+    const pollFile = join(bindingDir(scopeOfContextRoot(root), 'super', home), 'poll.json');
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([expect.objectContaining({ written: true })]));
+    await hub.stop();
+    const before = tg.texts().length;
+    hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+    await hub.start();
+    await vi.waitFor(() => expect(tg.texts().slice(before)).toEqual(["Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak."]));
+  });
+
+  it('a photo then a text reach the Super in that order, even when the photo downloads slowly', async () => {
+    reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj, sent } = fakeInjector();
+    reg.registerChatInjector(SID, inj);
+    tg.files.set('slow1', Buffer.from('jpeg'));
+    tg.slowFiles.set('slow1', 150);
+    tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, photo: [{ file_id: 'slow1', file_size: 4 }] }));
+    tg.push(TOKEN, textUpdate(OWNER, 'bunu düzelt'));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    expect(parseTelegramPrefix(sent[0]).body).toMatch(/agent-drops/);
+    expect(parseTelegramPrefix(sent[1]).body).toBe('bunu düzelt');
+  });
+
+  it('typing stops when the Super dies mid-turn', async () => {
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj } = fakeInjector();
+    reg.registerChatInjector(SID, inj);
+    tg.push(TOKEN, textUpdate(OWNER, 'uzun iş'));
+    await vi.waitFor(() => expect(tg.sent('sendChatAction').length).toBeGreaterThan(0), { timeout: 5000 });
+    h.exited();
+    const n = tg.sent('sendChatAction').length;
+    await new Promise((r) => setTimeout(r, 4500));
+    expect(tg.sent('sendChatAction').length).toBe(n);
+  }, 10_000);
+
   it('a bot.json the hub did not write disables the binding after a last message', async () => {
     const file = join(bindingDir(scopeOfContextRoot(root), 'super', home), 'bot.json');
     const b = JSON.parse(readFileSync(file, 'utf-8'));
@@ -263,3 +305,25 @@ function readdirAll(dir: string): string[] {
   }
   return out;
 }
+
+describe('a held token lock (the tick, a crash inside the stale window)', () => {
+  it('the binding retries until the lock frees, then serves; it is never silently deaf', async () => {
+    await bound();
+    const { lockPathFor } = await import('../../src/lib/telegram/poller.js');
+    const { writeFileSync: w, rmSync: rm } = await import('node:fs');
+    const ab = hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!;
+    hub.halt(ab);
+    await ab.done;
+    // Someone else (a live pid: ours, so the stale check never reclaims it) holds the lock.
+    w(lockPathFor(TOKEN, home), JSON.stringify({ pid: process.pid, at: Date.now(), what: 'other' }));
+    const again = hub.activate(ab.scope, ab.target, ab.binding);
+    await new Promise((r) => setTimeout(r, 300));
+    rm(lockPathFor(TOKEN, home), { force: true });
+    await superOn(false);
+    // The retry (2 s) takes the freed lock and drains what was queued before it: push after that.
+    await new Promise((r) => setTimeout(r, 2_600));
+    tg.push(TOKEN, textUpdate(OWNER, 'merhaba'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('Bu projede Super kapalı.'), { timeout: 8000 });
+    expect(hub.active.get(again.key)?.disabled).toBeUndefined();
+  }, 12_000);
+});

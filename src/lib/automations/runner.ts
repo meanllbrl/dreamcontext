@@ -2086,7 +2086,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   };
   /** The member bot's message for this run, or none (member-forward.ts): only a scheduled fire,
    *  never a task step or a job the Super sent; best-effort, never the run's outcome. */
-  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null }): void => {
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
       if (!scheduled || !manifest.agent) return;
@@ -2095,6 +2095,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       forwardSink.send = buildRoutineForward({
         contextRoot, slug, title: manifest.title, agent: manifest.agent, approvalHash: manifestHash(manifest as AutomationManifest),
         status: params.status, error: params.error,
+        // The published headline from the runner's own memory (what its `ok` entry will carry),
+        // never read back from the thread file, which anyone with brain write access can add to.
+        resultText: params.status === 'ok' && params.document ? params.summary ?? null : null,
         reviewPending: !!params.reviewCardId && !forwardQuestion,
         question: params.reviewCardId ? forwardQuestion : null,
         scheduled, runId: fireIso, entries, verified: verifiedRunPosts(entries, fireIso, runPostKey),

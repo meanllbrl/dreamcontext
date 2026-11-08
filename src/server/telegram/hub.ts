@@ -37,7 +37,7 @@ import { readSuperState } from '../../lib/super/store.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import {
-  CALLBACK_DATA_RE, STATUS_EDIT_MIN_MS, STATUS_GLYPH, STATUS_LABEL, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
+  CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, STATUS_GLYPH, STATUS_LABEL, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, withTelegramRef,
   type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
@@ -61,6 +61,8 @@ export const MANAGER_PAIRING_TARGET = '@manager';
 export const INJECTOR_WAIT_MS = 45_000;
 /** The last-message send never waits longer than this on a binding loss (D3). */
 const LAST_MESSAGE_TIMEOUT_MS = 5_000;
+/** Typing and the live status message stop after this, whatever the turn does. */
+const TURN_TYPING_CAP_MS = 2 * 60 * 60 * 1000;
 
 export const LINES = {
   superOff: 'Bu projede Super kapalı.',
@@ -130,6 +132,10 @@ export interface ActiveBinding {
   poller: TelegramPoller | null;
   /** The poll loop's run: awaited before another loop takes this token's lock. */
   done: Promise<unknown>;
+  /** The hub stopped this loop on purpose (unbind, re-pair, replace, shutdown): no lock retry. */
+  halted?: boolean;
+  /** Deliveries run one after another, in the order Telegram sent them (a photo, then "bunu düzelt"). */
+  chain: Promise<void>;
   contextRoot: string | null;
   projectName: string;
   disabled?: TelegramStatusRow['disabledReason'];
@@ -148,6 +154,8 @@ interface LivePairing {
   done: Promise<unknown>;
   botId: number;
   botUsername: string;
+  /** Bindings on the same token this pairing paused; given back if it is never confirmed. */
+  paused?: ActiveBinding[];
 }
 
 /** One Telegram message's live turn (status, typing, final line). In memory only. */
@@ -200,6 +208,7 @@ export class TelegramHub implements TelegramHubApi {
       onChatChange((c) => this.onChatChange(c.entry, c.from)),
       onChatUserSent((sid, _text, source) => this.noteUserSent(sid, source)),
       telegramRefs.onTelegramRefDropped((id, ref, written) => this.onRefDropped(id, ref, written)),
+      telegramRefs.onTelegramRefWritten((id, ref) => this.onRefWritten(id, ref)),
     );
     for (const row of listBindings(this.home)) {
       if (!row.read.ok) continue;
@@ -214,7 +223,7 @@ export class TelegramHub implements TelegramHubApi {
   async stop(): Promise<void> {
     for (const u of this.unsubs.splice(0)) u();
     this.manager?.stop();
-    for (const ab of this.active.values()) ab.poller?.stop();
+    for (const ab of this.active.values()) this.halt(ab);
     for (const p of this.pairings.values()) p.poller.stop();
     for (const t of this.turns.values()) if (t.typing) clearInterval(t.typing);
     this.turns.clear();
@@ -243,21 +252,22 @@ export class TelegramHub implements TelegramHubApi {
   activate(scope: TelegramScope, target: TelegramTarget, binding: BotBinding): ActiveBinding {
     const key = keyOf(scope, target);
     const prev = this.active.get(key);
-    prev?.poller?.stop();
+    if (prev) this.halt(prev);
     const project = this.projectOf(scope);
     const ab: ActiveBinding = {
-      key, scope, target, binding, transport: this.transportFor(binding.token), poller: null, done: Promise.resolve(),
+      key, scope, target, binding, transport: this.transportFor(binding.token), poller: null, done: Promise.resolve(), chain: Promise.resolve(),
       contextRoot: project?.contextRoot ?? null, projectName: project?.name ?? '',
     };
     this.active.set(key, ab);
     this.recoverJournal(ab);
+    let reported = false;
     ab.poller = new TelegramPoller({
       transport: ab.transport,
       token: binding.token,
       state: this.pollIO(scope, target),
       allowedUpdates: TG_ALLOWED_UPDATES,
       onUpdate: (u) => this.onUpdate(key, u),
-      onStop: (why) => { if (why !== 'stopped') void this.loseBinding(key, why === 'conflict' ? 'conflict' : 'unauthorized'); },
+      onStop: (why) => { reported = true; if (why !== 'stopped') void this.loseBinding(key, why === 'conflict' ? 'conflict' : 'unauthorized'); },
       home: this.home,
       now: this.now,
       sleep: this.deps.sleep,
@@ -265,8 +275,42 @@ export class TelegramHub implements TelegramHubApi {
     });
     // One loop per token: the previous loop on this key (or a pairing's) lets go of the lock first.
     const before = Promise.all([prev?.done, ...this.waitTokens.splice(0)]);
-    ab.done = before.then(() => (this.active.get(key) === ab && !ab.disabled ? ab.poller!.run() : 'stopped'));
+    // A token lock still held (the tick, a crashed run inside the lock's stale window) makes
+    // `run()` return 'conflict' WITHOUT polling or reporting: retry until it frees, never deaf.
+    const loop = async (): Promise<unknown> => {
+      for (let attempt = 0; ; attempt++) {
+        if (this.active.get(key) !== ab || ab.disabled || ab.halted) return 'stopped';
+        reported = false;
+        const why = await ab.poller!.run();
+        if (why !== 'conflict' || reported || ab.halted) return why;
+        await new Promise((r) => { const t = setTimeout(r, Math.min(30_000, 2_000 * (attempt + 1))); t.unref?.(); });
+      }
+    };
+    ab.done = before.then(loop);
     return ab;
+  }
+
+  /** Bindings a pairing paused poll again (expired or voided without a confirm). */
+  private resumePaused(paused: ActiveBinding[] | undefined, after: Promise<unknown>): void {
+    for (const ab of paused ?? []) {
+      if (this.active.get(ab.key) !== ab || ab.disabled) continue;
+      this.waitTokens.push(after);
+      this.activate(ab.scope, ab.target, ab.binding);
+    }
+  }
+
+  /** Stops a binding's loop on purpose (no lock retry afterwards). */
+  halt(ab: ActiveBinding): void {
+    ab.halted = true;
+    ab.poller?.stop();
+  }
+
+  /** Shutdown: stop every loop and drop the token locks synchronously (the run's own finally
+   *  releases them again, harmlessly). */
+  releaseNow(): void {
+    for (const ab of this.active.values()) { this.halt(ab); ab.poller?.release(); }
+    for (const p of this.pairings.values()) { p.poller.stop(); p.poller.release(); }
+    this.manager?.releaseNow();
   }
 
   status(): TelegramStatusRow[] {
@@ -312,7 +356,7 @@ export class TelegramHub implements TelegramHubApi {
     }
     // A new bind for the target voids its previous pairing (B4).
     for (const [id, p] of [...this.pairings]) {
-      if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); await p.done; }
+      if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); await p.done; this.resumePaused(p.paused, p.done); }
     }
     const book = new PairingBook(this.now);
     const pairing = book.mint({ scope: scope === 'manager' ? 'global' : scope, target: scope === 'manager' ? MANAGER_PAIRING_TARGET : target, botId, botUsername });
@@ -329,7 +373,7 @@ export class TelegramHub implements TelegramHubApi {
     });
     // An active binding polling the same token holds its lock: stop it while pairing anew.
     const same = [...this.active.values()].filter((ab) => ab.binding.token === token);
-    for (const ab of same) ab.poller?.stop();
+    for (const ab of same) this.halt(ab);
     await Promise.all(same.map((ab) => ab.done));
     const live: LivePairing = {
       book, pairingId: pairing.pairingId, scope, target: scope === 'manager' ? MANAGER_PAIRING_TARGET : target, token,
@@ -337,6 +381,15 @@ export class TelegramHub implements TelegramHubApi {
     };
     this.pairings.set(pairing.pairingId, live);
     live.done = poller.run().then((why) => { if (why === 'conflict' && this.pairings.get(pairing.pairingId) === live) this.pairings.delete(pairing.pairingId); return why; });
+    // Never confirmed in its 10 minutes: the loop stops and a binding it paused polls again.
+    const expiry = setTimeout(() => {
+      if (this.pairings.get(pairing.pairingId) !== live) return;
+      this.pairings.delete(pairing.pairingId);
+      live.poller.stop();
+      this.resumePaused(same, live.done);
+    }, PAIRING_TTL_MS + 1_000);
+    expiry.unref?.();
+    live.paused = same;
     return { pairingId: pairing.pairingId, deepLink: `https://t.me/${botUsername}?start=${pairing.payload}`, botUsername, expiresAt: pairing.expiresAt };
   }
 
@@ -386,7 +439,7 @@ export class TelegramHub implements TelegramHubApi {
     const key = keyOf(live.scope, live.target);
     const old = this.active.get(key);
     if (old && old.binding.botId !== live.botId) await this.lastMessage(old, LINES.unbound(true));
-    old?.poller?.stop();
+    if (old) this.halt(old);
     if (old && (old.binding.botId !== live.botId || old.binding.chatId !== user.chatId || old.binding.userId !== user.userId)) {
       removeBindingDir(live.scope, live.target, this.home);
     }
@@ -416,7 +469,7 @@ export class TelegramHub implements TelegramHubApi {
     for (const [id, p] of [...this.pairings]) if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); }
     if (ab) {
       await this.lastMessage(ab, LINES.unbound(opts.keyed));
-      ab.poller?.stop();
+      this.halt(ab);
       this.active.delete(key);
       this.deps.handsfree?.onBindingLost?.(scope, target);
       if (ab.binding.managed && opts.replaceManagedToken) await opts.replaceManagedToken(ab.binding.botId).catch(() => { /* manager.ts marks the row */ });
@@ -429,7 +482,7 @@ export class TelegramHub implements TelegramHubApi {
     const ab = this.active.get(key);
     if (!ab || ab.disabled) return;
     ab.disabled = why;
-    ab.poller?.stop();
+    this.halt(ab);
     if (why !== 'unauthorized') await this.lastMessage(ab, why === 'conflict' ? LINES.conflict : LINES.tamper);
     // A 401 on a bot the manager made: the manager token may be out (Z4, AA3).
     if (why === 'unauthorized' && ab.binding.managed) this.manager?.raise('unauthorized');
@@ -511,10 +564,12 @@ export class TelegramHub implements TelegramHubApi {
     if (!state?.enabled || !state.session) { await this.reply(ab, LINES.superOff); return 'accepted'; }
     const media = pickInboundMedia(msg);
     this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now() }]);
-    void this.deliver(ab, updateId, msg, state.session).catch(async () => {
+    // Confirmed now (journaled); delivered in order behind the previous message.
+    const session = state.session;
+    ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, session).catch(async () => {
       this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
       await this.reply(ab, LINES.notWritten);
-    });
+    }));
     return 'accepted';
   }
 
@@ -606,7 +661,19 @@ export class TelegramHub implements TelegramHubApi {
     });
   }
 
+  private onRefWritten(chatRegistryId: string, ref: string): void {
+    for (const ab of this.active.values()) {
+      if (ab.target !== 'super') continue;
+      const s = this.pollIO(ab.scope, ab.target).read();
+      if (!s.pending.some((e) => e.ref === ref && e.chatRegistryId === chatRegistryId && !e.written)) continue;
+      this.journal(ab, (p) => p.map((e) => (e.ref === ref && e.chatRegistryId === chatRegistryId ? { ...e, written: true } : e)));
+    }
+  }
+
   private onRefDropped(chatRegistryId: string, ref: string, written: boolean): void {
+    // A dropped ref's turn is over, whatever happened to it: its typing and status stop.
+    const t = this.turns.get(ref);
+    if (t && (!written || getChat(chatRegistryId)?.status === 'gone' || !getChat(chatRegistryId))) this.endTurn(ref);
     for (const ab of this.active.values()) {
       if (ab.target !== 'super') continue;
       const s = this.pollIO(ab.scope, ab.target).read();
@@ -625,7 +692,13 @@ export class TelegramHub implements TelegramHubApi {
   private beginTurn(ab: ActiveBinding, ref: string, sessionId: string): void {
     const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), statusMessageId: null, statusText: '', lastEditAt: 0, typing: null, answered: false };
     this.turns.set(ref, turn);
-    const tick = () => { void ab.transport.sendChatAction(ab.binding.chatId, 'typing').catch(() => {}); void this.refreshStatus(turn).catch(() => {}); };
+    const tick = () => {
+      // Never forever: a chat that died mid-turn, or a turn past its cap, stops typing.
+      const live = getChat(sessionId);
+      if (!live || live.status === 'gone' || this.now() - turn.startedAt > TURN_TYPING_CAP_MS) { this.endTurn(ref); return; }
+      void ab.transport.sendChatAction(ab.binding.chatId, 'typing').catch(() => {});
+      void this.refreshStatus(turn).catch(() => {});
+    };
     tick();
     turn.typing = setInterval(tick, TYPING_EVERY_MS);
     turn.typing.unref?.();
@@ -693,6 +766,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
+    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     if (entry.status === 'idle' && from !== 'idle') {
       this.turnInputs.delete(entry.sessionId);
       for (const t of [...this.turns.values()]) {
@@ -830,7 +904,7 @@ export class TelegramHub implements TelegramHubApi {
     return { manager: this.managerRow ? this.managerRow() : null, bots };
   }
   managerRow: (() => TelegramStatusRow | null) | null = null;
-  removeManager: (() => Promise<void>) | undefined = undefined;
+  removeManager: ((keyed?: boolean) => Promise<void>) | undefined = undefined;
 
   /** Further button kinds (answer.ts asks, approvals) plug in here. */
   extraButton: ((ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number) => Promise<string | null>) | null = null;

@@ -811,6 +811,7 @@ export function _resetChatRegistry(): void {
   injectorListeners.clear();
   tgRefs.clear();
   tgDropListeners.clear();
+  tgWrittenListeners.clear();
   if (tgSweepTimer) { clearInterval(tgSweepTimer); tgSweepTimer = null; }
   tgNow = Date.now;
 }
@@ -882,6 +883,7 @@ export function onChatInjector(fn: (sessionId: string) => void): () => void {
 interface RefSlot extends PendingTelegramRef { clockAt: number }
 const tgRefs = new Map<string, Map<string, RefSlot>>();
 const tgDropListeners = new Set<TelegramRefDropped>();
+const tgWrittenListeners = new Set<(chatRegistryId: string, ref: string) => void>();
 let tgSweepTimer: ReturnType<typeof setInterval> | null = null;
 let tgNow: () => number = Date.now;
 
@@ -928,6 +930,8 @@ function armSweep(): void {
 export const telegramRefs: PendingTelegramRefStore & {
   has(chatRegistryId: string, ref: string): boolean;
   get(chatRegistryId: string, ref: string): PendingTelegramRef | null;
+  /** Fires once when `writeOwnerTurn` first honours a ref (the turn reached a live child). */
+  onTelegramRefWritten(listener: (chatRegistryId: string, ref: string) => void): () => void;
   /** The hub gives up an UNWRITTEN ref (the injection never happened): no drop notice. */
   forget(chatRegistryId: string, ref: string): void;
   /** Test seam: the clock the TTL reads. */
@@ -945,7 +949,10 @@ export const telegramRefs: PendingTelegramRefStore & {
     sweepTelegramRefs();
     const slot = tgRefs.get(chatRegistryId)?.get(ref);
     if (!slot) return { ref: null, entry: null, body };
+    const first = !slot.written;
     slot.written = true;
+    // The hub's journal follows (F5): a crash after this point yields "yazıldı ama tamamlanamadı".
+    if (first) for (const fn of [...tgWrittenListeners]) { try { fn(chatRegistryId, ref); } catch { /* its own */ } }
     slot.clockAt = tgNow();
     const { clockAt: _c, ...entry } = slot;
     return { ref, entry: { ...entry }, body };
@@ -956,6 +963,10 @@ export const telegramRefs: PendingTelegramRefStore & {
   onTelegramRefDropped(listener) {
     tgDropListeners.add(listener);
     return () => { tgDropListeners.delete(listener); };
+  },
+  onTelegramRefWritten(listener) {
+    tgWrittenListeners.add(listener);
+    return () => { tgWrittenListeners.delete(listener); };
   },
   has(chatRegistryId, ref) {
     return !!tgRefs.get(chatRegistryId)?.has(ref);

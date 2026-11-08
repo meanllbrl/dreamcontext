@@ -138,7 +138,7 @@ import {
 import { sweepBoardStaging } from '../lib/lab/boards.js';
 import { removeLegacyTelegramFiles } from '../lib/telegram/legacy.js';
 import { registerTelegramRoutes } from './routes/telegram.js';
-import { startTelegramHub } from './telegram/start.js';
+import { startTelegramHub, stopTelegramHub } from './telegram/start.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -1599,6 +1599,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
         stopProjectCatchUp?.();
+        // Telegram: every poll loop stops and lets go of its token's lock NOW, so a relaunch
+        // within the lock's stale window is never deaf.
+        stopTelegramHub();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();

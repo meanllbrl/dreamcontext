@@ -124,9 +124,11 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     tg.push(MANAGER, { managed_bot: { bot: { id: 555, is_bot: true, username: 'x_bot' }, user: { id: 4242 } } });
     await vi.waitFor(() => expect(hub.manager!.ignored).toBe(2));
     expect(tg.sent('getManagedBotToken')).toHaveLength(0);
+    // A network blip on the token fetch: the creation is not spent; the re-delivered update adopts it.
+    tg.failOnce.set('getManagedBotToken', 502);
     tg.push(MANAGER, { managed_bot: { bot: { id: 555, is_bot: true, username: 'ua_manager_x1y2_bot' }, user: { id: OWNER } } });
     await vi.waitFor(() => expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(true), { timeout: 5000 });
-    expect(tg.sent('getManagedBotToken')).toHaveLength(1);
+    expect(tg.sent('getManagedBotToken')).toHaveLength(2);
     const b = readBinding(scopeOfContextRoot(root), 'ua-manager', home);
     expect(b.ok && b.binding.managed && b.binding.managerBotId === 900001 && b.binding.chatId === OWNER).toBe(true);
     await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Ben ua-manager'))).toBe(true));

@@ -72,6 +72,8 @@ export interface ForwardInput {
   reviewPending: boolean;
   /** A run that stopped to ask him: the question's text. */
   question?: string | null;
+  /** The published document's headline, from the runner's memory (never the thread file). */
+  resultText?: string | null;
   /** Only scheduled fires forward (Y2): never an ask, an app, a task, a board, a light job. */
   scheduled: boolean;
   runId: string;
@@ -130,14 +132,14 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
   } else if (input.status === 'ok') {
     if (!optedIn) return null;
     const posts = input.entries.filter((e) => e.runId === input.runId && e.kind === 'agent' && input.verified.has(e.id));
-    const end = input.entries.find((e) => e.runId === input.runId && e.kind === 'system' && e.event === 'ok');
-    if (!posts.length && !end?.result) return null;
+    const result = input.resultText?.trim() ? line(input.resultText, 300) : null;
+    if (!posts.length && !result) return null;
     const body: string[] = [`**${title}**`];
     for (const p of posts) {
       if (p.text.trim()) body.push(p.text);
       for (const row of p.summary ?? []) body.push(`- ${row.key}: ${row.value}`);
     }
-    if (end?.result) body.push(`_${end.result}_`);
+    if (result) body.push(`_${result}_`);
     messages.push(...toTelegramMessages(body.join('\n\n'), { codeFences: 'mac' }));
     const projectRoot = dirname(input.contextRoot);
     const paths = posts.flatMap((p) => p.files ?? []).slice(0, 4);

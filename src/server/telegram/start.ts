@@ -12,6 +12,14 @@ import { macSession } from '../routes/handsfree-mac.js';
 import { installDispatcher } from '../../lib/automations/launchd.js';
 import { transcribeVoiceNote } from '../../lib/voice/transcribe.js';
 
+/** Shutdown: stops every loop and releases the token locks synchronously. */
+export function stopTelegramHub(): void {
+  const hub = telegramHub();
+  if (!hub) return;
+  hub.releaseNow();
+  void hub.stop();
+}
+
 export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<TelegramHub> {
   const have = telegramHub();
   if (have) return have;

@@ -97,23 +97,42 @@ export class TelegramManager {
     this.serve(m.binding);
   }
 
-  stop(): void { this.poller?.stop(); }
+  private halted = false;
+
+  stop(): void { this.halted = true; this.poller?.stop(); }
+
+  /** Shutdown: stop and drop the token lock synchronously. */
+  releaseNow(): void { this.halted = true; this.poller?.stop(); this.poller?.release(); }
 
   private serve(b: BotBinding): void {
+    this.halted = true;
     this.poller?.stop();
     const before = this.done;
     this.transport = this.hub.transportFor(b.token);
     // The manager keeps no journal: it only adopts, and every adoption is checked live.
     let mem = { v: 1 as const, offset: 0, seenIds: [] as number[], notifiedIds: [] as number[], pending: [] as never[] };
     const io = { read: () => mem, write: (s: typeof mem) => { mem = { ...s, v: 1 }; } };
+    let reported = false;
     const poller = new TelegramPoller({
       transport: this.transport, token: b.token, state: io as never, allowedUpdates: TG_MANAGER_ALLOWED_UPDATES,
-      onUpdate: async (u) => { await this.onUpdate(b, u); return 'accepted'; },
-      onStop: (why) => { if (why === 'conflict') this.raise('conflict'); if (why === 'unauthorized') this.raise('unauthorized'); },
+      // A failed adoption (network blip on the token fetch) is retried by the poller (3 tries).
+      onUpdate: async (u) => { try { await this.onUpdate(b, u); return 'accepted'; } catch { return 'retry'; } },
+      onStop: (why) => { reported = true; if (why === 'conflict') this.raise('conflict'); if (why === 'unauthorized') this.raise('unauthorized'); },
       home: this.hub.home, now: this.hub.now, sleep: this.hub.deps.sleep, timeoutS: this.hub.deps.pollTimeoutS,
     });
     this.poller = poller;
-    this.done = before.then(() => poller.run());
+    // A token lock still held makes run() return 'conflict' without reporting: retry until it frees.
+    const loop = async (): Promise<unknown> => {
+      this.halted = false;
+      for (let attempt = 0; ; attempt++) {
+        if (this.halted || this.poller !== poller) return 'stopped';
+        reported = false;
+        const why = await poller.run();
+        if (why !== 'conflict' || reported || this.halted) return why;
+        await new Promise((r) => { const t = setTimeout(r, Math.min(30_000, 2_000 * (attempt + 1))); t.unref?.(); });
+      }
+    };
+    this.done = before.then(loop);
   }
 
   raise(why: 'conflict' | 'unauthorized' | 'tamper'): void {
@@ -145,6 +164,9 @@ export class TelegramManager {
     // "Tüm botların anahtarını yenile": every managed binding of this manager gets a fresh token.
     for (const row of listBindings(this.hub.home)) {
       if (!row.read.ok || !row.read.binding.managed || row.read.binding.managerBotId !== fresh.botId) continue;
+      // Its own poll stops first: the revoked token's in-flight poll must not read as a 401 alarm.
+      const live = this.hub.active.get(keyOf(row.scope, row.target));
+      if (live) { this.hub.halt(live); await live.done; }
       try {
         const token = await this.transport!.replaceManagedBotToken(row.read.binding.botId);
         const { bindingHash: _h, v: _v, ...rest } = row.read.binding;
@@ -174,8 +196,10 @@ export class TelegramManager {
       return;
     }
     if (this.alarm || creator.id !== manager.userId || !p || !p.live || now > p.expiresAt) { this.ignored += 1; return; }
-    this.pending = null; // single use (Z5)
+    // Single use (Z5), spent only once the bot is really bound: a failed token fetch throws, the
+    // poller re-delivers the update, and the same live creation adopts it then.
     await this.bindManaged(manager, bot.id, p.scope, p.target, p.projectKey, p.name, p.projectName);
+    if (this.pending === p) this.pending = null;
   }
 
   private async bindManaged(manager: BotBinding, botId: number, scope: string, target: string, pk: string, name: string, projectName: string): Promise<void> {
@@ -207,7 +231,9 @@ export class TelegramManager {
     throw last;
   }
 
-  async removeManager(): Promise<void> {
+  async removeManager(keyed = true): Promise<void> {
+    if (!keyed) this.hub.deps.banner?.('Telegram', 'Telegram yöneticisi Mac\'te kaldırıldı.');
+    this.halted = true;
     this.poller?.stop();
     await this.done;
     this.transport = null;
@@ -370,7 +396,7 @@ export class TelegramManager {
 export function wireManager(hub: TelegramHub): TelegramManager {
   const mgr = new TelegramManager(hub);
   hub.managerRow = () => mgr.row();
-  hub.removeManager = () => mgr.removeManager();
+  hub.removeManager = (keyed) => mgr.removeManager(keyed);
   hub.replaceManagedToken = (botId) => mgr.replaceManagedToken(botId);
   const prevStatus = hub.managerStatus.bind(hub);
   hub.managerStatus = () => ({ ...prevStatus(), ...(mgr.alarm ? { alarm: mgr.alarm } : {}) });

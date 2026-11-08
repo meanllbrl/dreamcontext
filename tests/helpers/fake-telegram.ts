@@ -16,6 +16,10 @@ export class FakeTelegram {
   files = new Map<string, Buffer>();
   /** Methods that answer an error: method → error_code. */
   failing = new Map<string, number>();
+  /** Methods that fail exactly once more each (method → error_code), then work. */
+  failOnce = new Map<string, number>();
+  /** File ids whose download is slow (ms). */
+  slowFiles = new Map<string, number>();
 
   addBot(token: string, username: string): void {
     this.bots.set(token, { id: Number(token.split(':')[0]), username });
@@ -37,6 +41,8 @@ export class FakeTelegram {
     if (!m) return res(404, { ok: false, error_code: 404, description: 'no' });
     const [, file, token, method] = m;
     if (file) {
+      const slow = this.slowFiles.get(method);
+      if (slow) await new Promise((r) => setTimeout(r, slow));
       const data = this.files.get(method) ?? Buffer.from('x');
       return { ok: true, status: 200, json: async () => ({}), arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.length) as ArrayBuffer, headers: { get: () => String(data.length) } };
     }
@@ -48,6 +54,8 @@ export class FakeTelegram {
     if (!bot) return res(401, { ok: false, error_code: 401, description: 'Unauthorized' });
     const fail = this.failing.get(method);
     if (fail) return res(fail, { ok: false, error_code: fail, description: 'failed' });
+    const once = this.failOnce.get(method);
+    if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: 'failed once' }); }
     switch (method) {
       case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username });
       case 'getWebhookInfo': return ok({ url: this.webhook });
