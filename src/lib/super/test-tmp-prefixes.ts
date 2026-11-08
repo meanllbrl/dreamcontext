@@ -226,6 +226,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-create-gate-',
   'dc-ctx-bare-',
   'dc-ctx-other-',
+  'dc-ctx-home-',
   'dc-ctx-watch-',
   'dc-cue-',
   'dc-declined-',

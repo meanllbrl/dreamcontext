@@ -27,10 +27,10 @@ import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
-import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
-import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
@@ -2654,15 +2654,12 @@ export function startChatSession(
   // toggle from this file, so seeding it after the spawn would leave a race in which
   // the first edits of a session silently run under the wrong setting.
   //
-  // Precedence — brain-local (what this person last chose, for THIS vault on THIS
-  // machine) > `.config.json` (the team default) > off. An EXISTING tab file is left
+  // The switch is this Mac's Eco mode (one setting for every project, ON unless turned off
+  // in Settings); the thresholds are the team's `.config.json`. An EXISTING tab file is left
   // alone: a pane that has been toggled owns its own answer across resumes.
   try {
     if (pinId && pinned && !readTabHandoff(contextRoot, pinId)) {
-      const seed = resolveTabSeed(
-        readBrainLocal(projectRoot).contextHandoffDefault,
-        readSetupConfig(projectRoot)?.contextHandoff,
-      );
+      const seed = resolveTabSeed(ecoModeDefault(), readSetupConfig(projectRoot)?.contextHandoff);
       writeTabHandoff(contextRoot, pinId, seed);
     }
   } catch { /* an unseeded pane falls back to the vault default — never a failed spawn */ }
@@ -5167,29 +5164,18 @@ export function startChatSession(
       return;
     }
 
-    // Per-PANE context-handoff toggle. TWO writes, and the split is the whole design:
-    //   • the PANE's tab file is what the hooks read, so this pane changes immediately
-    //     and a sibling pane in the same vault is untouched;
-    //   • brain-local records the vault's default on THIS machine, so the NEXT new pane
-    //     opens the way the person last left it.
-    // Never an app-global setting: `agent-ui.json` is one machine-wide file, so a default
-    // there would switch the nudge on in every vault on the machine and silently override
-    // a team that opted out in `.config.json`.
+    // Per-PANE context-handoff toggle: THIS pane's tab file only (the hooks read it, so the
+    // pane changes at once and a sibling pane is untouched). It writes no project and no
+    // machine default: new panes start from Settings → Chat → Eco mode (owner 2026-11-08).
     //
     // The echo carries what was actually WRITTEN, never what was clicked — if the tab file
-    // could not be written, the switch must snap back rather than lie. It is also
-    // RE-RESOLVED rather than echoed straight back from the tab file: the switch lives in
-    // the tab file but the ladder lives in `.config.json`, and `writeTabHandoff` only ever
-    // sees the switch. Echoing its return value would have shown a vault that tuned
-    // `--nudge-at` the SHIPPED thresholds while the hook nudged on the tuned ones — the
-    // lamp and the behaviour disagreeing is the exact bug this pass exists to remove.
+    // could not be written, the switch must snap back rather than lie. It is RE-RESOLVED, so
+    // the echo carries the vault's ladder from `.config.json`, the thresholds the hook uses.
     if (msg.type === 'setContextHandoff' && typeof msg.enabled === 'boolean') {
       if (!pinId) return; // an unpinned pane has no tab file to own a toggle
       try {
-        const written = writeTabHandoff(contextRoot, pinId, { enabled: msg.enabled });
-        if (written) {
-          writeBrainLocal(projectRoot, { contextHandoffDefault: msg.enabled });
-          const echo = resolveHandoffFor(contextRoot, projectRoot, pinId);
+        const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled);
+        if (echo) {
           sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery } });
         }
       } catch { /* a failed toggle simply does not echo — the client keeps server truth */ }

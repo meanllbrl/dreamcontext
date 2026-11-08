@@ -423,7 +423,6 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'PUT /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster`),
   'PUT /api/agent/sessions/window-order': deny(DESKTOP),
   'GET /api/agent/context-handoff-default': deny(SETTINGS),
-  'POST /api/agent/context-handoff-default': deny(SETTINGS),
   'GET /api/vaults': filtered('read: only the chosen projects, by name (never a path, never another project); side-effect free'),
 
   // Peers and federation (this project's own connections)

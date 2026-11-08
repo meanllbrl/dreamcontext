@@ -995,7 +995,8 @@ task `in_progress`, records the request, and writes a partial session digest.
 stop.** In a terminal nothing rotates for you: the human runs `/clear`.
 
 At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
-read that task file first. Switch the feature on per vault with
-`dreamcontext config context-handoff on [--nudge-at N] [--hard-at N] [--remind-every N]`, or
-per pane from the composer's ECO lamp in the usage popover. The pane owns the **switch**; the
-vault owns the **thresholds**. Default is OFF.
+read that task file first. Desktop chats: every new chat pane, in every project, starts from
+ONE setting for the whole Mac, **Settings → Chat → Eco mode, ON by default**; the composer's
+ECO lamp in the usage popover switches one pane only and changes no default. Terminal and CLI
+sessions follow the vault: `dreamcontext config context-handoff on [--nudge-at N] [--hard-at N]
+[--remind-every N]` (off there unless set). The vault always owns the **thresholds**.
