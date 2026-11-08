@@ -25,7 +25,7 @@ import { emptySuperState, type SuperContainer, type SuperState } from '../../src
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
-import { createProgram } from '../../src/cli/index.js';
+import { createProgram } from '../../src/cli/program.js';
 
 let dir: string;
 let root: string;

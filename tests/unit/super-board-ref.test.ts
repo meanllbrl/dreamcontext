@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { whiteboardSlugOfBoardRef, boardRerouteNote } from '../../src/lib/super/board-ref.js';
-import { createProgram } from '../../src/cli/index.js';
+import { createProgram } from '../../src/cli/program.js';
 
 // 2026-10-29: `super open board <whiteboard slug>` drew a dead card; the whiteboard's path was refused.
 describe('whiteboardSlugOfBoardRef', () => {
