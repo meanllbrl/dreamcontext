@@ -83,7 +83,9 @@ export function branchOf(toplevel: string): string | null {
 
 /** The record's id: toplevel + branch + target. A detached HEAD keys on the toplevel alone. */
 export function suiteRecordId(toplevel: string, branch: string | null, target: string): string {
-  const slug = branch ? branch.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60) : 'HEAD';
+  // The readable slug can collide (`a/b` and `a_b`, two long task branches): the branch's own
+  // hash keeps them apart.
+  const slug = branch ? `${branch.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40)}-${sha1(branch).slice(0, 8)}` : 'HEAD';
   return `suite-${sha1(toplevel).slice(0, 16)}-${slug}-${sha1(target).slice(0, 12)}`;
 }
 
@@ -142,8 +144,8 @@ export function pinTree(toplevel: string, id: string, which: 'red' | 'green', tr
   try { git(toplevel, ['update-ref', `refs/dc-suite/${id}/${which}`, tree]); return true; } catch { return false; }
 }
 
-function unpinTrees(toplevel: string, id: string): void {
-  for (const w of ['red', 'green']) { try { git(toplevel, ['update-ref', '-d', `refs/dc-suite/${id}/${w}`]); } catch { /* none */ } }
+function unpinTrees(gitDir: string, id: string): void {
+  for (const w of ['red', 'green']) { try { git(gitDir, ['--git-dir', gitDir, 'update-ref', '-d', `refs/dc-suite/${id}/${w}`]); } catch { /* none */ } }
 }
 
 /** Where a record's run log is kept: next to it. */
@@ -176,6 +178,13 @@ export function suiteRecordsHere(toplevel: string, branch: string | null, o: { n
  * worktree is gone goes. Its logs and tree refs go with it. Never throws.
  */
 export function pruneSuiteRecords(dir: string, now: number = Date.now()): void {
+  // The logs of slug-less `--failed` runs: kept 14 days, like a receipt.
+  try {
+    const runs = join(dir, 'suite-runs');
+    for (const f of existsSync(runs) ? readdirSync(runs) : []) {
+      try { if (now - statSync(join(runs, f)).mtimeMs > SUITE_RECORD_MAX_AGE_MS) rmSync(join(runs, f), { force: true }); } catch { /* pruned */ }
+    }
+  } catch { /* nothing to prune */ }
   let files: string[];
   try { files = readdirSync(dir).filter((f) => /^suite-.*\.json$/.test(f)); } catch { return; }
   for (const f of files) {
@@ -187,7 +196,8 @@ export function pruneSuiteRecords(dir: string, now: number = Date.now()): void {
       const keep = !gone && (r.state === 'red' || r.state === 'running' || !old);
       if (keep) continue;
       for (const ext of ['.json', '.log', '.green.log']) rmSync(p.replace(/\.json$/, ext), { force: true });
-      if (!gone && typeof r.id === 'string') unpinTrees(r.toplevel!, r.id);
+      // The refs live in the common git dir (this folder's parent), worktree gone or not.
+      if (typeof r.id === 'string' && /^suite-[A-Za-z0-9._-]+$/.test(r.id)) unpinTrees(resolve(dir, '..'), r.id);
     } catch { /* another session pruned it */ }
   }
 }
@@ -361,14 +371,16 @@ export function treeDiff(toplevel: string, from: string, to: string): { path: st
 export interface DistCheck { ok: boolean; why: string }
 
 /**
- * Does `dist/` hold a green build of the code as it is now? It must equal a green build
- * receipt's output, built from a tree that differs from now only in {@link SUITE_DIST_ALLOW}.
+ * Does `dist/` hold a green build of the code? It must equal a green build receipt's output,
+ * built from a tree that differs from `tree` (default: the code as it is now) only in
+ * {@link SUITE_DIST_ALLOW}. A run passes its START tree: an edit made while it runs is not
+ * what it tested ({@link distProof}).
  */
-export function distCheck(toplevel: string): DistCheck {
+export function distCheck(toplevel: string, at?: string | null): DistCheck {
   const now = distFingerprint(toplevel);
   if (now === null) return { ok: false, why: 'dist/ is too big to fingerprint' };
   if (now === '') return { ok: false, why: 'there is no dist/' };
-  const tree = contentTree(toplevel);
+  const tree = at ?? contentTree(toplevel);
   if (!tree) return { ok: false, why: 'the content tree could not be written' };
   const matching = buildReceipts(toplevel).filter((r) => r.outputs === now);
   if (matching.length === 0) return { ok: false, why: 'dist/ matches no green build of `builder heavy` (built outside it, or edited since)' };
@@ -379,6 +391,19 @@ export function distCheck(toplevel: string): DistCheck {
   const diff = treeDiff(toplevel, matching[0].tree, tree);
   const inputs = diff?.filter((d) => !distAllowed(d.path)).map((d) => d.path) ?? [];
   return { ok: false, why: inputs.length ? `the build inputs changed since dist/ was built (${inputs.slice(0, 3).join(', ')}${inputs.length > 3 ? ` and ${inputs.length - 3} more` : ''})` : 'the build cannot be traced to this code' };
+}
+
+/** The dist proof of one run: checked on its start tree, then held to the bytes it started with. */
+export interface DistProof { check: DistCheck; fingerprint: string | null }
+
+export function distProof(toplevel: string, startTree: string | null): DistProof {
+  return { check: distCheck(toplevel, startTree), fingerprint: distFingerprint(toplevel) };
+}
+
+/** The proof at the end of the run: the start check, and `dist/` unchanged since. */
+export function distProofHeld(toplevel: string, p: DistProof): DistCheck {
+  if (!p.check.ok) return p.check;
+  return distFingerprint(toplevel) === p.fingerprint ? p.check : { ok: false, why: 'dist/ changed while the tests ran' };
 }
 
 /**
@@ -404,8 +429,12 @@ export function buildCommand(toplevel: string): string | null {
 
 // ─── CLI-spawn tests ─────────────────────────────────────────────────────────
 
+/**
+ * A path to the built CLI. Naming it is enough: the run may go through a promisified exec, a
+ * helper (`runCliWithStdin(CLI, …)`) or a `src` runner, none of which this can see; a file that
+ * only writes a fake `dist/index.js` is counted too, which costs a rerun and never hides one.
+ */
 const DIST_PATH = /join\([^)]*['"`]dist['"`]\s*,\s*['"`]index\.js['"`]\s*\)|['"`][^'"`\n]*\bdist\/index\.js['"`]/;
-const SPAWNS = /\b(?:spawn|spawnSync|execFile|execFileSync|execSync|exec|fork|execa)\s*\(/;
 
 /** A config's `include` globs, read off its text; vitest's default when none is found. */
 export function includeGlobs(toplevel: string, config?: string): string[] {
@@ -424,16 +453,18 @@ export function includeGlobs(toplevel: string, config?: string): string[] {
 
 function globRe(glob: string): RegExp {
   let re = '';
+  let depth = 0;
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === '*' && glob[i + 1] === '*') { re += glob[i + 2] === '/' ? '(?:.*/)?' : '.*'; i += glob[i + 2] === '/' ? 2 : 1; continue; }
     if (c === '*') { re += '[^/]*'; continue; }
     if (c === '?') { re += glob[i + 1] === '(' ? '' : '[^/]'; continue; }
-    if (c === '{') { re += '(?:'; continue; }
-    if (c === '}') { re += ')'; continue; }
-    if (c === ',') { re += '|'; continue; }
-    if (c === '(') { re += '(?:'; continue; }
-    if (c === ')') { re += ')?'; continue; }
+    if (c === '{') { depth += 1; re += '(?:'; continue; }
+    if (c === '}') { depth -= 1; re += ')'; continue; }
+    if (c === ',' && depth > 0) { re += '|'; continue; }
+    if (c === '|' && depth > 0) { re += '|'; continue; }
+    if (c === '(') { depth += 1; re += '(?:'; continue; }
+    if (c === ')') { depth -= 1; re += ')?'; continue; }
     if (c === '[') { const end = glob.indexOf(']', i); re += glob.slice(i, end + 1); i = end; continue; }
     re += c.replace(/[.+^$|\\]/g, '\\$&');
   }
@@ -453,7 +484,7 @@ function walk(toplevel: string, rel: string, out: string[]): void {
 
 /**
  * Test files (inside the target's include set) that run the built CLI: a path to `dist/index.js`
- * in a file that starts processes, directly or through a test helper that holds both. These read
+ * in the test, or in a test helper it imports. These read
  * whatever `dist/` was last built, and `vitest related` rarely reaches them from a `src/` change.
  */
 export function cliSpawnTests(toplevel: string, config?: string): string[] {
@@ -469,7 +500,7 @@ export function cliSpawnTests(toplevel: string, config?: string): string[] {
   for (const b of bases) walk(toplevel, b, files);
   const unique = [...new Set(files)];
   const isTest = (f: string) => globs.some((re) => re.test(f));
-  const spawnsCli = (text: string) => DIST_PATH.test(text) && SPAWNS.test(text);
+  const spawnsCli = (text: string) => DIST_PATH.test(text);
   const read = (f: string): string => { try { return readFileSync(join(toplevel, f), 'utf-8'); } catch { return ''; } };
   const helpers = unique.filter((f) => !isTest(f) && spawnsCli(read(f))).map((f) => f.replace(/\.[cm]?[jt]sx?$/, ''));
   const out: string[] = [];

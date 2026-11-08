@@ -47,7 +47,7 @@ import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, list
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import { contentTree, describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
 import {
-  branchOf, buildCommand, cliSpawnTests, distCheck, distGateApplies, judgeSuiteRun, pinTree, recordToplevel, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
 } from '../../lib/suite-record.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
@@ -831,8 +831,10 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
     const gone = r.files.filter((f) => deleted.has(f) || !existsSync(join(top, f)));
     for (const f of gone) deps.print(`${name}: ${f} is ${deleted.has(f) ? 'deleted' : 'gone (renamed?)'} since the red, listed as such`);
     const explicit = [...new Set([...r.files.filter((f) => !gone.includes(f)), ...cli, ...extraAlso])].sort();
-    if (cli.length > 0 && distGateApplies(top, r.config)) {
-      const dc = distCheck(top);
+    // The build is judged on the tree this rerun starts from, and held to its bytes to the end.
+    const proof = cli.length > 0 && distGateApplies(top, r.config) ? distProof(top, now) : null;
+    if (proof) {
+      const dc = proof.check;
       if (!dc.ok) {
         deps.print(`${name}: build first: ${dc.why}. The rerun holds ${cli.length} test file(s) that run the built CLI. NOTHING ran.`);
         deps.print(`  dreamcontext builder heavy -- ${buildCommand(top)}`);
@@ -872,7 +874,7 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
     if (notRun) { codes.push(RECORD_INCOMPLETE_EXIT); continue; }
     const summary = noReport ? { ...summaryFromReport(failureFiles, worstExit), found: false } : summaryFromReport(failureFiles, worstExit);
     const missing = explicit.filter((f) => !ranFiles.has(f));
-    const j = judgeSuiteRun({ exit: worstExit, exitNotOwned: null, summary, missing, dist: cli.length > 0 && distGateApplies(top, r.config) ? distCheck(top) : null });
+    const j = judgeSuiteRun({ exit: worstExit, exitNotOwned: null, summary, missing, dist: proof ? distProofHeld(top, proof) : null });
     const at = new Date().toISOString();
     if (j.state === 'green' && now && pinTree(top, r.id, 'green', now)) {
       writeSuiteRecord({ ...r, state: 'green', files: [], greenTree: now, greenLog: explicitLog ?? r.greenLog, reason: `closed by builder test --failed (was ${r.state}${r.files.length ? `: ${r.files.join(', ')}` : ''})`, at, because: undefined, ceilingStreak: undefined });

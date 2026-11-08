@@ -10,7 +10,7 @@ import { contentTree } from '../../src/lib/check-receipt.js';
 import { releaseFileLock } from '../../src/lib/file-lock.js';
 import { HEAVY_OVER_BUDGET_EXIT, markPhase } from '../../src/lib/run-budget.js';
 import {
-  branchOf, cliSpawnTests, distCheck, judgeSuiteRun, parseVitestLog, pinTree, readSuiteRecord, suiteRecordId, writeSuiteRecord, type RunSummary,
+  branchOf, cliSpawnTests, distCheck, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree, readSuiteRecord, suiteRecordId, writeSuiteRecord, type RunSummary,
 } from '../../src/lib/suite-record.js';
 
 /**
@@ -222,6 +222,32 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     expect(runs()).toBe(2);
   }, 30_000);
 
+  it('a partial run (--shard, --bail) writes no record and cannot close one; a suite in a chain is refused', async () => {
+    scenario('green');
+    expect(await builderHeavy(deps(), ['npm', 'test', '--', '--shard=1/2'], {})).toBe(0);
+    expect(record()).toBeNull();
+    expect(err.join('\n')).toMatch(/partial suite run \(--shard\)/);
+    scenario('red2');
+    expect(await builderHeavy(deps(), ['npm', 'test'], {})).toBe(1);
+    scenario('green');
+    // Gated like a whole run while red, and it never turns the red green.
+    expect(await builderHeavy(deps(), ['npm', 'test', '--', '--bail=1'], {})).toBe(HEAVY_OVER_BUDGET_EXIT);
+    expect(record()!.state).toBe('red');
+    err = [];
+    expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], {})).toBe(2);
+    expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], { detach: true })).toBe(2);
+    expect(err.join('\n')).toMatch(/a full test suite inside a chain/);
+    expect(runs()).toBe(2);
+  });
+
+  it('a run past a red (--because) that proves nothing keeps the red list', async () => {
+    scenario('red2');
+    expect(await builderHeavy(deps(), ['npm', 'test'], {})).toBe(1);
+    scenario('unhandled');
+    expect(await builderHeavy(deps(), ['npm', 'test'], { because: 'the owner asked for a second full run' })).toBe(1);
+    expect(record()).toMatchObject({ state: 'red', files: ['tests/a.test.ts', 'tests/b.test.ts'], because: 'the owner asked for a second full run' });
+  });
+
   it('a running record blocks a second start (75)', async () => {
     const top = realpathSync(repo);
     writeSuiteRecord({ v: 1, id: suiteRecordId(top, 'main', 'suite'), state: 'running', pid: process.pid, toplevel: top, branch: 'main', target: 'suite', at: new Date().toISOString(), maxRunMs: 60_000, files: [], checkId: 'habcdef12' });
@@ -332,8 +358,9 @@ describe('the build the CLI-spawn tests run (AC5)', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('finds the CLI-spawn tests of this repo (cli-commands.test.ts among them)', () => {
-    expect(cliSpawnTests(process.cwd())).toContain('tests/integration/cli-commands.test.ts');
+  it('finds the CLI-spawn tests of this repo, however they start the CLI', () => {
+    const here = cliSpawnTests(process.cwd());
+    for (const f of ['tests/integration/cli-commands.test.ts', 'tests/unit/apps-do.test.ts', 'tests/unit/apps-routes.test.ts', 'tests/unit/hook-app-tools.test.ts']) expect(here).toContain(f);
     expect(cliSpawnTests(repo)).toEqual(['tests/cli.test.ts']);
     expect(cliSpawnTests(repo, 'vitest.t3.config.ts')).toEqual([]);
   });
@@ -357,6 +384,19 @@ describe('the build the CLI-spawn tests run (AC5)', () => {
     expect(await builderHeavy(deps(), ['npm', 'run', 'build'], {})).toBe(0);
     // Nothing changed since: that one is a repeat, and the phase limit holds.
     expect(await builderHeavy(deps(), ['npm', 'run', 'build'], { fresh: true })).toBe(HEAVY_OVER_BUDGET_EXIT);
+  });
+
+  it('the build is judged on the tree a run started from, and held to its bytes', async () => {
+    expect(await builderHeavy(deps(), ['npm', 'run', 'build'], {})).toBe(0);
+    const top = realpathSync(repo);
+    const proof = distProof(top, contentTree(top));
+    expect(proof.check.ok).toBe(true);
+    // An edit made while the run goes is not what it tested: the verdict stands.
+    writeFileSync(join(repo, 'src/cli.mjs'), "console.log('edited mid-run');\n");
+    expect(distProofHeld(top, proof).ok).toBe(true);
+    // A dist that changed under the run is no proof.
+    writeFileSync(join(repo, 'dist/index.js'), '// rebuilt mid-run\n');
+    expect(distProofHeld(top, proof)).toMatchObject({ ok: false, why: 'dist/ changed while the tests ran' });
   });
 
   it('no gate for the t3 target, nor for a repo with no build', async () => {

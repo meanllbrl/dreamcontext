@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { constants } from 'node:os';
 import {
   HEAVY_DEFAULT_WAIT_S,
@@ -22,14 +22,14 @@ import {
 import { HEAVY_HOT_WAIT_S, acquireHeavyReporting, queueReport } from '../../lib/heavy-acquire.js';
 import { contentTree, describeHit, dropReceipt, exitNotOwned, findReceipt, gitToplevel, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
 import {
-  CEILING_STREAK_LIMIT, branchOf, buildCommand, buildInputsChanged, configOf, distCheck, distGateApplies, judgeSuiteRun, parseVitestLog, pinTree,
-  readSuiteRecord, recordToplevel, suiteLogPath, suiteRecordId, suiteRecordPath, writeSuiteRecord, type SuiteRecord,
+  CEILING_STREAK_LIMIT, branchOf, buildCommand, buildInputsChanged, configOf, distCheck, distGateApplies, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree,
+  readSuiteRecord, recordToplevel, suiteLogPath, suiteRecordId, suiteRecordPath, writeSuiteRecord, type DistProof, type SuiteRecord,
 } from '../../lib/suite-record.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
   BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
-  recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
+  recordRed, recordStart, refusal, shellQuote, suiteInCommand, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
@@ -330,11 +330,15 @@ function suiteGate(deps: BuilderDeps, ctx: SuiteCtx, opts: HeavyOptions, command
 }
 
 /** Write the suite record from a finished run, and print its verdict last (the red list ends the output). */
-function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null; killed?: string; command: string; log: string | null; startTree: string | null; prev: SuiteRecord | null; because?: string }): void {
+function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null; killed?: string; command: string; log: string | null; startTree: string | null; prev: SuiteRecord | null; because?: string; dist: DistProof | null }): void {
   let text = '';
   try { text = o.log ? readFileSync(o.log, 'utf-8') : ''; } catch { text = ''; }
-  const dist = distGateApplies(ctx.top, ctx.config) ? distCheck(ctx.top) : null;
+  // The build is judged on the tree the run started from, held to the bytes it started with:
+  // an edit made while a detached suite runs is not what it tested.
+  const dist = o.dist ? distProofHeld(ctx.top, o.dist) : null;
   const j = judgeSuiteRun({ exit: o.exit, exitNotOwned: exitNotOwned(o.command), summary: parseVitestLog(text), killed: o.killed, dist });
+  // vitest prints paths from its own root, the folder it ran in: the record keeps them repo-relative.
+  j.files = j.files.map((f) => relative(ctx.top, resolve(recordToplevel(deps.cwd()), f)).split(sep).join('/'));
   const id = suiteRecordId(ctx.top, ctx.branch, ctx.target);
   const base = { v: 1 as const, id, pid: process.pid, toplevel: ctx.top, branch: ctx.branch, target: ctx.target, ...(ctx.config ? { config: ctx.config } : {}), at: new Date().toISOString(), log: o.log ?? undefined };
   let rec: SuiteRecord;
@@ -344,6 +348,13 @@ function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null;
     const greenLog = suiteLogPath(ctx.top, ctx.branch, ctx.target, 'green');
     try { if (o.log && greenLog) copyFileSync(o.log, greenLog); } catch { /* the log is a nicety */ }
     rec = { ...base, state: 'green', files: [], greenTree: o.startTree, greenLog: greenLog ?? undefined, reason: j.reason };
+  } else if (o.prev?.state === 'red') {
+    // A run past a red (--because) that proved nothing leaves the red list as it was.
+    rec = { ...o.prev, because: o.because ?? o.prev.because, at: new Date().toISOString() };
+    writeSuiteRecord(rec);
+    deps.print(`builder heavy: INCOMPLETE, ${j.reason}. The red record stays as it was (${rec.files.length} file(s)): dreamcontext builder test --failed`);
+    for (const f of rec.files) deps.print(`  red: ${f}`);
+    return;
   } else {
     const why = j.state === 'incomplete' ? j.reason : `${j.reason}, but its tree could not be pinned`;
     const streak = o.killed === 'ceiling' ? (o.prev?.state === 'incomplete' ? (o.prev.ceilingStreak ?? 0) : 0) + 1 : 0;
@@ -411,7 +422,8 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
       deps.printErr(`builder heavy --wait: ${id} ended, exit ${s.exit}`);
       return s.exit ?? 1;
     }
-    if (!(deps.alive ?? alive)(s.pid)) {
+    // Read again before calling it dead: the runner may have written its end and exited in between.
+    if (!(deps.alive ?? alive)(s.pid) && readCheckState(deps.cwd(), id)?.state !== 'done') {
       // Nothing will write its end: a running suite record of that runner is incomplete now.
       const ctxStep = heavyStep(s.command, packageScripts(deps.cwd()));
       const ctx = ctxStep?.kind === 'suite' ? suiteCtxOf(deps.cwd(), ctxStep.target) : null;
@@ -434,6 +446,18 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
   }
 }
 
+/**
+ * A full suite chained behind a heavier step (`npm run build && npm test`) would run with no
+ * record and no gate: it runs on its own line, after the build, or not at all. True = refused.
+ */
+function chainRefused(deps: BuilderDeps, command: string): boolean {
+  const scripts = packageScripts(deps.cwd());
+  if (heavyStep(command, scripts)?.kind === 'suite' || !suiteInCommand(command, scripts)) return false;
+  deps.printErr('builder heavy: a full test suite inside a chain runs with no record of its red files. NOTHING ran. Run the parts on their own lines:');
+  deps.printErr('  dreamcontext builder heavy -- <the build or check>, then dreamcontext builder heavy --detach -- <the suite alone>, then --wait <id>');
+  return true;
+}
+
 export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: HeavyOptions): Promise<number> {
   if (opts.wait !== undefined) return heavyWait(deps, opts.wait, opts);
   if (opts.runId !== undefined) {
@@ -447,6 +471,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: Heav
   }
   if (opts.detach) {
     if (!heavySpawnPlan(argv)) { deps.printErr('builder heavy: give the command after --'); return 2; }
+    if (chainRefused(deps, argv.join(' '))) return 2;
     return heavyDetach(deps, argv, opts);
   }
   return heavyRun(deps, argv, opts);
@@ -473,20 +498,25 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     return 2;
   }
   const maxRunMin = opts.maxRun == null ? HEAVY_MAX_RUN_MIN : Number(opts.maxRun);
-  if (!Number.isFinite(maxRunMin) || maxRunMin <= 0) {
-    deps.printErr(`builder heavy: --max-run must be minutes, got "${opts.maxRun}"`);
+  if (!Number.isFinite(maxRunMin) || maxRunMin <= 0 || maxRunMin > 24 * 60) {
+    deps.printErr(`builder heavy: --max-run must be minutes, at most ${24 * 60}, got "${opts.maxRun}"`);
     return 2;
   }
   const maxRunMs = Math.round(maxRunMin * 60_000);
   const command = argv.join(' ');
   const step = heavyStep(command, packageScripts(deps.cwd()));
+  if (chainRefused(deps, command)) return 2;
   // The receipt comes first: a check that already passed on this code costs no queue and no budget.
   const planned = step && step.kind !== 'browser' ? planShellReceipt(deps.cwd(), command, packageScripts(deps.cwd())) : null;
   const receiptPlan = planned && 'plan' in planned ? planned.plan : null;
   if (planned && 'skip' in planned) deps.printErr(`builder heavy: no receipt for this run (${planned.skip}); it runs every time`);
   if (receiptPlan && !opts.fresh && printReceipt(deps, receiptPlan, tail)) return 0;
   // A whole-suite run is gated on its record's state, and leaves a record (lib/suite-record.ts).
+  // A partial one (`--shard`, `--changed`, `--bail`, …) is gated too, but proves no whole suite:
+  // it never writes or closes a record.
   const suite = step?.kind === 'suite' ? suiteCtxOf(deps.cwd(), step.target) : null;
+  const recordable = suite !== null && !step?.partial;
+  if (suite && step?.partial) deps.printErr(`builder heavy: a partial suite run (${step.partial}): it keeps no suite record, and cannot close one`);
   if (suite) {
     const refused = suiteGate(deps, suite, opts, command);
     if (refused !== null) return refused;
@@ -537,7 +567,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   const before = receiptPlan ? receiptState(receiptPlan) : null;
   const ran = Date.now();
-  const red = suite ? readSuiteRecord(suite.top, suite.branch, suite.target).record : null;
+  const red = recordable ? readSuiteRecord(suite.top, suite.branch, suite.target).record : null;
   const because = suite && red?.state === 'red' ? opts.because : undefined;
   recordLedgerStart(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, waits, ...(because ? { because } : {}) });
   deps.printErr(`builder heavy: ${line} line (${pick.why}), waited ${Math.round((ran - started) / 1000)}s`);
@@ -547,8 +577,9 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   if (because) deps.printErr(`builder heavy: a second full run on a RED record, run on purpose: ${because}`);
   // The suite's tree and its `running` record go down before it starts.
-  const startTree = suite ? contentTree(suite.top) : null;
-  if (suite) {
+  const startTree = recordable ? contentTree(suite.top) : null;
+  const proof = recordable && distGateApplies(suite.top, suite.config) ? distProof(suite.top, startTree) : null;
+  if (recordable) {
     writeSuiteRecord({
       v: 1, id: suiteRecordId(suite.top, suite.branch, suite.target), state: 'running', pid: process.pid, toplevel: suite.top, branch: suite.branch,
       target: suite.target, ...(suite.config ? { config: suite.config } : {}), at: new Date(ran).toISOString(), maxRunMs, files: red?.files ?? [],
@@ -556,7 +587,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     });
   }
   // The output is kept (it is the receipt's log, and a suite's record log) and shown as it comes, or its last --tail lines.
-  const suiteLog = suite ? suiteLogPath(suite.top, suite.branch, suite.target) : null;
+  const suiteLog = recordable ? suiteLogPath(suite.top, suite.branch, suite.target) : null;
   const logPath = suiteLog ?? (before && receiptPlan ? scratchLog(receiptPlan.toplevel) : null);
   let logFd: number | null = null;
   try { logFd = logPath ? openSync(logPath, 'w') : null; } catch { logFd = null; }
@@ -575,7 +606,12 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   return new Promise<number>((resolveExit) => {
     const child = spawn(plan.file, plan.args, { cwd: deps.cwd(), stdio: ['ignore', 'pipe', 'pipe'], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments, detached: ownGroup });
     const killGroup = (sig: NodeJS.Signals) => {
-      try { if (ownGroup && child.pid) process.kill(-child.pid, sig); else child.kill(sig); } catch { /* already gone */ }
+      try {
+        if (ownGroup && child.pid) process.kill(-child.pid, sig);
+        // Windows has no process groups: the tree goes with taskkill, or the workers outlive the shell.
+        else if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        else child.kill(sig);
+      } catch { /* already gone */ }
     };
     child.stdout?.on('data', (c: Buffer) => take(c, process.stdout));
     child.stderr?.on('data', (c: Buffer) => take(c, process.stderr));
@@ -613,7 +649,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
         deps.printErr(r ? `builder heavy: green, receipt kept: the same check on the same code will not run again${opts.fresh ? ' (--fresh run recorded)' : ''}` : 'builder heavy: green, but no receipt (the code changed while it ran, or the receipt could not be written)');
       }
       if ((code !== 0 || killed) && receiptPlan && before) dropReceipt(receiptPlan, before);
-      if (suite) settleSuite(deps, suite, { exit: killed ? null : code, killed, command, log: logPath, startTree, prev: red, because });
+      if (recordable) settleSuite(deps, suite, { exit: killed ? null : code, killed, command, log: logPath, startTree, prev: red, because, dist: proof });
       else if (logPath) rmSync(logPath, { force: true });
       if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
       recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: killed === 'ceiling' ? null : code, waits, ...(killed === 'ceiling' ? { reason: 'ceiling' } : {}) });

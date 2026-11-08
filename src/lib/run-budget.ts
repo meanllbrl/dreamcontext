@@ -40,7 +40,15 @@ export type HeavyKind = BudgetKind | 'check';
  * files decide, heavy-queue.ts counts the tests that reach them),
  * 1 for a `look.mjs` glance. Absent = unknown, and heavy-queue.ts reads unknown as long.
  */
-export interface HeavyStep { kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean }
+export interface HeavyStep {
+  kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean;
+  /**
+   * A suite run that narrows or cuts its scope (`--shard`, `--changed`, `--project`, `--bail`, …):
+   * heavy like a suite, but what it ran is not the whole suite, so it never writes or closes a
+   * suite record (lib/suite-record.ts).
+   */
+  partial?: string;
+}
 
 /** `builder heavy`'s exit code for a refusal. Not 75: running it again will not help. */
 export const HEAVY_OVER_BUDGET_EXIT = 77;
@@ -122,7 +130,9 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
   if (testScript || runner) {
     const config = /(?:--config|\s-c)[ =](\S+)/.exec(s)?.[1];
     const args = (testScript ?? runner)![1] ?? '';
-    return namesTests(args) ? { kind: 'check', target: 'tests', ...namedFiles(args) } : { kind: 'suite', target: config ? `suite ${config}` : 'suite' };
+    if (namesTests(args)) return { kind: 'check', target: 'tests', ...namedFiles(args) };
+    const partial = /(?:^|\s)(--shard|--changed|--onlyChanged|-o|--lastCommit|--since|--changedSince|--project|--bail|--testNamePattern|-t|--exclude)(?:[\s=]|$)/.exec(args)?.[1];
+    return { kind: 'suite', target: config ? `suite ${config}` : 'suite', ...(partial ? { partial } : {}) };
   }
   if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc', ...(/\s--noEmit\b/.test(s) ? {} : { emits: true }) };
   return null;
@@ -191,6 +201,25 @@ function heaviest(segments: string[], scripts: Record<string, string>): HeavySte
 
 export const classifyHeavy = (command: string): HeavyKind | null => heavyStep(command)?.kind ?? null;
 
+/**
+ * The whole-suite step anywhere in a command line, also inside an npm script that chains it
+ * (`"test:all": "npm run build && vitest"`), whatever the line's heaviest step is. A suite in a
+ * chain must not slip past its record because a build ranks heavier.
+ */
+export function suiteInCommand(command: string, scripts: Record<string, string> = {}): HeavyStep | null {
+  for (const seg of shellSegments(command)) {
+    const step = stepOfSegment(seg, scripts);
+    if (step?.kind === 'suite') return step;
+    const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)/.exec(seg.trim());
+    const script = npm ? scripts[npm[1]] : undefined;
+    if (script && /&&|;|\|/.test(script)) {
+      const inner = suiteInCommand(script, {});
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
 /** A command the agent ran straight past the lock: a heavy step outside `builder heavy`. */
 export function directHeavy(command: string): HeavyKind | null {
   const direct = shellSegments(command).filter((s) => !/^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+builder\s/.test(s));
@@ -208,11 +237,16 @@ export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
  * while a red suite record is open, the suggestion is to rerun only its files.
  */
 export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}): string {
-  const suite = shellSegments(command).find((seg) => stepOfSegment(seg, {})?.kind === 'suite');
+  const segments = shellSegments(command);
+  const suite = segments.find((seg) => stepOfSegment(seg, {})?.kind === 'suite' && !stepOfSegment(seg, {})?.partial);
   if (suite) {
-    if (ctx.redOpen) return 'dreamcontext builder test --failed (a full suite is RED on this worktree: rerun only its files)';
-    const alone = suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim();
-    return `dreamcontext builder heavy --detach -- ${shellQuote(alone)}, then dreamcontext builder heavy --wait <id> (it prints the id)`;
+    if (ctx.redOpen) return 'dreamcontext builder test --failed';
+    // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
+    const cd = /^\s*(cd\s+\S+)\s*&&/.exec(command)?.[1];
+    const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
+    const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
+    const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';
+    return `${first}dreamcontext builder heavy --detach -- ${shellQuote(alone)}, then dreamcontext builder heavy --wait <id> (it prints the id)`;
   }
   const tailed = /^([\s\S]*?)\s*\|\s*tail\s+(?:-n\s*)?-?(\d+)\s*$/.exec(command.trim());
   if (tailed && !/[|;\n]|&&|\|\|/.test(tailed[1].replace(/\s+2>&1$/, '').replace(/^cd\s+\S+\s+&&\s+/, ''))) {
