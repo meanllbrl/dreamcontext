@@ -1,5 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { CARD_REF_RE, closeCard, getCard, isSessionUuid, type CardRecordEntry } from '../../lib/cards/records.js';
+import type { SecretViewSpec } from '../../lib/chat-view-spec.js';
+import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
+import { ensureCards } from './run-terminal.js';
+import { resolveVaultProjectRoot } from './agent-spawn-shared.js';
 import { homedir } from 'node:os';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { getApp } from '../../lib/apps/registry.js';
@@ -27,6 +32,11 @@ import {
  * Every real guard — path grammar, realpath containment, symlink refusal, git-tracked
  * refusal, gitignore-before-write — lives in `lib/env-secrets.ts` and is re-run here on the
  * raw body. The client validates too, for the error message; this is the check that counts.
+ *
+ * ── From the hands-free phone (plan G2, H9) ──────────────────────────────────────────────
+ * Allowed on the passphrase phone ONLY for a chat's secret card that is OPEN in the server's
+ * records (`{sessionId, cardRef}`), of an exposed project: the record's file and declared keys
+ * are written, nothing else. The value never touches Telegram, the agent or the transcript.
  */
 export async function handleAgentSecret(
   req: IncomingMessage,
@@ -38,6 +48,47 @@ export async function handleAgentSecret(
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
     return;
+  }
+
+  // A chat's secret card names its server record (plan H1, H9, I5): `{sessionId, cardRef}`. The
+  // RECORD then decides the file, the keys, the app and the project, never the body. From the
+  // phone a record is required, must be OPEN and its project exposed; on the Mac a record is used
+  // when named (an agent thread's card has none and keeps the old body path).
+  const named = body.sessionId !== undefined || body.cardRef !== undefined;
+  const phone = isPhoneSocket(req);
+  let record: CardRecordEntry | null = null;
+  if (named || phone) {
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+    const cardRef = typeof body.cardRef === 'string' ? body.cardRef : '';
+    if (!isSessionUuid(sessionId) || !CARD_REF_RE.test(cardRef)) {
+      sendError(res, phone ? 403 : 400, 'no_card', 'This secret card is not one this chat is waiting on.');
+      return;
+    }
+    ensureCards(sessionId);
+    const rec = getCard(sessionId, cardRef);
+    if (!rec || rec.kind !== 'secret' || (phone && !isMacExposed(rec.vault))) {
+      sendError(res, 404, 'no_card', 'This secret card is not one this chat is waiting on.');
+      return;
+    }
+    if (rec.state !== 'open') { sendError(res, 409, 'card_closed', 'This secret card was already answered.'); return; }
+    const recRoot = resolveVaultProjectRoot(rec.vault);
+    if (!recRoot || resolve(recRoot) !== resolve(dirname(contextRoot))) {
+      sendError(res, 409, 'card_project', 'This secret card belongs to another project.');
+      return;
+    }
+    const spec = rec.spec as SecretViewSpec;
+    const declared = new Set(spec.fields.map((f) => f.key));
+    const entries = Array.isArray(body.entries) ? body.entries : [];
+    const keys = entries.map((e) => (e && typeof e === 'object' ? (e as { key?: unknown }).key : undefined));
+    if (!keys.length || keys.some((k) => typeof k !== 'string' || !declared.has(k)) || new Set(keys).size !== keys.length) {
+      sendError(res, 400, 'undeclared_key', 'Only the keys this card asked for can be written.');
+      return;
+    }
+    // The record's file, title and app; whatever the body said about them is ignored.
+    body.file = spec.file;
+    body.title = spec.title;
+    if (spec.app) body.app = spec.app; else delete body.app;
+    record = rec;
   }
 
   // `contextRoot` is <projectRoot>/_dream_context; a .env belongs to the PROJECT, one level
@@ -73,6 +124,8 @@ export async function handleAgentSecret(
       const rt = rec ? existingRuntime(rec.hash) : null;
       if (rt) { rt.refreshSecrets(); if (rt.state === 'running') void rt.update(); }
     }
+    // Its own receipt closes the record (J1), durably: no second submit, no phone form after.
+    if (record) closeCard(record.sessionId, record.cardRef);
     sendJson(res, 200, { ...result, ...(appName !== null ? { app: appName } : {}), receipt: secretReceipt(result, title || undefined) });
   } catch (err) {
     if (err instanceof SecretWriteError) {

@@ -5,6 +5,7 @@
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { setTelegramHub, telegramHub, TelegramHub, type HubDeps } from './hub.js';
 import { wireTelegramAsks } from './asks.js';
+import { wireRunCards } from './runs.js';
 import { memberAdapter } from './member.js';
 import { wireManager } from './manager.js';
 import { handsfreeAdapter } from './handsfree.js';
@@ -35,6 +36,11 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
   });
   setTelegramHub(hub);
   wireTelegramAsks(hub);
+  // Run and secret cards (W4): the phone link is the live hands-free tunnel's bare origin.
+  wireRunCards(hub, {
+    phoneOrigin: () => { const u = macSession().status().url; try { return u ? new URL(u).origin : null; } catch { return null; } },
+    streams: (ab) => handsfree.streamsTo(ab.scope, ab.target),
+  });
   wireManager(hub);
   handsfree.wire(hub);
   await hub.start();

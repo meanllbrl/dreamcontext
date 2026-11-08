@@ -35,6 +35,7 @@
  */
 
 import { outwardAction } from '../super/owed.js';
+import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
 import {
@@ -348,6 +349,8 @@ export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string
   const e = entries.get(sessionId);
   if (!e) return;
   const k = `${kind}:${id}`;
+  // Its run/secret records close with it (H1): no button, phone or Telegram tap runs it after.
+  if (kind === 'run' || kind === 'secret') closeCardsById(sessionId, kind, id);
   const held = (e.ownerWaits ?? []).filter((w) => waitKey(w) === k);
   if (held.length) { answerWaits(e, held); return; }
   if (!e.ownerAnswered?.includes(k)) e.ownerAnswered = [...(e.ownerAnswered ?? []), k].slice(-MAX_ANSWERED);
@@ -641,6 +644,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         syncTools();
         const text = assistantText(frame);
         if (text) {
+          // The server's own run/secret card records (plan H1): keyed by this message's uuid.
+          const uuid = typeof frame.uuid === 'string' ? frame.uuid : typeof (frame.message as { id?: unknown } | undefined)?.id === 'string' ? (frame.message as { id: string }).id : '';
+          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text);
           // Read the whole text, before the cap: a card at the end of a long reply still counts.
           const cards = ownerCardsIn(text);
           if (cards.length) {

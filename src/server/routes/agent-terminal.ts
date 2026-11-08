@@ -31,6 +31,7 @@ const REFUSED = Symbol('refused');
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
+import { handleMacCardUpgrade } from './run-terminal.js';
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, claudeDirectCommand, findClaudeBin, whichOnPathWin32 } from '../../lib/claude-path.js';
@@ -152,7 +153,7 @@ function ensurePtyHelperExecutable(): void {
  * "Open in Terminal" and the Setup panel offers the install).
  */
 let ptyModule: typeof import('node-pty') | null | undefined;
-function loadNodePty(): typeof import('node-pty') | null {
+export function loadNodePty(): typeof import('node-pty') | null {
   if (ptyModule !== undefined) return ptyModule;
   for (const base of ptyResolveBases()) {
     try {
@@ -527,7 +528,7 @@ export async function handleAgentInstallStatus(
  * contained, and it applies to a SPAWN cwd for the same reason it applies to a read: the
  * directory decides what a relative command in it touches.
  */
-function resolveContainedDir(projectRoot: string, relDir: string): string | null {
+export function resolveContainedDir(projectRoot: string, relDir: string): string | null {
   try {
     const root = realpathSync(projectRoot);
     const target = realpathSync(join(root, relDir));
@@ -682,6 +683,8 @@ export function attachAgentTerminal(server: Server): void {
     // Only this very origin, under a loopback Host (T0): a page on another loopback port, or a
     // rebinding page, must not open a shell.
     if (!isSameOriginStrict(req)) { rejectUpgrade(socket, 403); return; }
+    // A chat's run card (plan I1): only `session` + `card` are read, the record decides the rest.
+    if (url.searchParams.has('card')) { handleMacCardUpgrade(req, socket, head, url); return; }
 
     const vault = url.searchParams.get('vault');
     // No terminal on the dreamcontext Assistant's hidden vault — ever. Its one surface is the

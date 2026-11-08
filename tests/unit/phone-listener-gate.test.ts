@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import http from 'node:http';
 import net from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -28,6 +28,9 @@ import { noteRunSession } from '../../src/lib/automations/run-session.js';
 import { updateSuperState } from '../../src/lib/super/store.js';
 import { registerLiveChat, unregisterLiveChat } from '../../src/server/routes/agent-chat-live.js';
 import type { Router } from '../../src/server/router.js';
+import * as cards from '../../src/lib/cards/records.js';
+import * as runs from '../../src/server/runs/registry.js';
+import { _resetPhoneRunsForTests } from '../../src/server/routes/run-terminal.js';
 
 const ORIGIN = 'https://quiet-lake-1234.trycloudflare.com';
 const saved: Record<string, string | undefined> = {};
@@ -275,7 +278,7 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
   it('one sample of every deny category is refused', async () => {
     for (const [m, p] of [
       ['POST', '/api/window/focus'], ['GET', '/api/assistant/status'], ['POST', '/api/agent/open-terminal'],
-      ['POST', '/api/launcher/register'], ['POST', '/api/agent/secret'], ['POST', '/api/handsfree/mac/stop'],
+      ['POST', '/api/launcher/register'], ['GET', '/api/telegram'], ['POST', '/api/handsfree/mac/stop'],
       ['POST', '/api/admin/shutdown'], ['POST', '/api/agent/voice/tts'], ['POST', '/api/notify'], ['POST', '/api/agent/grant'],
       ['POST', '/api/brain/auth/device/start'], ['GET', '/api/launcher/status'], ['POST', '/api/agent/install'],
     ] as const) {
@@ -669,6 +672,111 @@ describe('phone listener: sockets, sign-in and pages', () => {
     expect(r.headers['referrer-policy']).toBe('no-referrer');
     expect(r.headers['cache-control']).toBe('no-store');
     expect(r.body).toContain('Sign in to your Mac');
+  });
+});
+
+describe('phone listener: run cards and secret cards (plan G4, H8, H9, K1)', () => {
+  const SID = 'abcdef01-2345-4678-89ab-cdef01234567';
+  const OSID = 'abcdef01-2345-4678-89ab-cdef0123456f';
+  let ptys: Array<{ killed: boolean; end: (c: number) => void }>;
+  const runCard = (id: string, command: string) => `\`\`\`dream-view\n${JSON.stringify({ type: 'run', id, command })}\n\`\`\``;
+  const secretCard = (id: string) => `\`\`\`dream-view\n${JSON.stringify({ type: 'secret', id, title: 'Stripe key', file: '.env.local', fields: [{ key: 'STRIPE_KEY' }] })}\n\`\`\``;
+  const refOf = (sid: string, id: string) => cards.listCards(sid).filter((c) => c.id === id).at(-1)!.cardRef;
+
+  beforeEach(() => {
+    // Runs first: killing a leftover run closes its card, which writes the closed-cards file.
+    runs._resetRunsForTests();
+    cards._resetCardsForTests();
+    cards.setCardsHomeForTests(dir);
+    rmSync(join(dir, '.dreamcontext', 'cards'), { recursive: true, force: true });
+    _resetPhoneRunsForTests();
+    ptys = [];
+    runs.configureRuns({
+      spawner: () => {
+        const exits: Array<(e: { exitCode: number }) => void> = [];
+        const p = { pid: 1, killed: false, onData() {}, onExit(cb: (e: { exitCode: number }) => void) { exits.push(cb); }, write() {}, resize() {}, kill() { p.killed = true; p.end(130); }, end(c: number) { for (const f of exits) f({ exitCode: c }); } };
+        ptys.push(p);
+        return p;
+      },
+      projectRootOf: (v) => (v === PROJECT ? join(dir, PROJECT) : v === OTHER ? join(dir, OTHER) : null),
+      resolveCwd: (r) => r, delivery: null, trackChild: () => () => {},
+    });
+    cards.noteAssistantCards(SID, PROJECT, 'm1', `${runCard('gh', 'gh auth status')}\n${secretCard('stripe')}`);
+    cards.noteAssistantCards(OSID, OTHER, 'm1', runCard('gh', 'gh auth status'));
+  });
+
+  it('a free terminal from the phone is refused; only a pending card of the exposed project runs', async () => {
+    const h = { cookie, origin: ORIGIN };
+    expect(await upgrade(phonePort, `/api/agent/terminal?vault=${PROJECT}&kind=shell`, h)).toBe(403);
+    expect(await upgrade(phonePort, `/api/agent/terminal?vault=${PROJECT}&kind=agent`, h)).toBe(403);
+    expect(await upgrade(phonePort, `/api/agent/terminal?vault=${PROJECT}&kind=exec&cmd=ls`, h)).toBe(403);
+    // No device session, or a foreign Origin.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, { origin: ORIGIN })).toBe(401);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, { cookie, origin: 'https://evil.example' })).toBe(403);
+    // A cardRef the chat does not hold; another chat's card; another project's card.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${'f'.repeat(32)}&start=1`, h)).toBe(404);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(OSID, 'gh')}&start=1`, h)).toBe(404);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${OSID}&card=${refOf(OSID, 'gh')}&start=1`, h)).toBe(404);
+    // The secret card is not a run.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'stripe')}&start=1`, h)).toBe(404);
+    expect(ptys).toHaveLength(0);
+    // Attach-only with nothing running: 409.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}`, h)).toBe(409);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, h)).toBe(101);
+    expect(ptys).toHaveLength(1);
+    // A second phone attach (or a Telegram-started run) is the SAME process.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, h)).toBe(101);
+    expect(ptys).toHaveLength(1);
+    ptys[0].end(0);
+    // Closed for the phone for good (K1).
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, h)).toBe(409);
+  });
+
+  it('attaches to a Telegram-started run without starting a second one', async () => {
+    const r = runs.startRun(SID, refOf(SID, 'gh'), 'telegram');
+    expect('refused' in r).toBe(false);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}`, { cookie, origin: ORIGIN })).toBe(101);
+    expect(ptys).toHaveLength(1);
+  });
+
+  it('a revoked device\'s run terminal is cut within 1 s and the run it started is killed', async () => {
+    const id = macAuth.store.createDevice('iPad · Safari');
+    const c2 = `${DEVICE_COOKIE}=${id}`;
+    const { WebSocket } = await import('ws');
+    const ws = new WebSocket(`ws://127.0.0.1:${phonePort}/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, { headers: { cookie: c2, origin: ORIGIN } });
+    await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+    const closed = new Promise<number>((res) => ws.once('close', (code) => res(code)));
+    const t0 = Date.now();
+    macAuth.store.revokeDevice(id);
+    expect(await closed).toBe(4401);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(ptys[0].killed).toBe(true);
+  });
+
+  it('GET /api/agent/cards: the phone reads an exposed chat\'s records, never another project\'s', async () => {
+    const r = await request(phonePort, 'GET', `/api/agent/cards?session=${SID}`, { cookie, accept: 'application/json' });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as { cards: Array<{ id: string; kind: string; state: string }> };
+    expect(body.cards.map((c) => [c.id, c.kind, c.state])).toEqual([['gh', 'run', 'open'], ['stripe', 'secret', 'open']]);
+    expect((await request(phonePort, 'GET', `/api/agent/cards?session=${OSID}`, { cookie, accept: 'application/json' })).status).toBe(404);
+    expect((await request(phonePort, 'GET', `/api/agent/cards?session=${SID}`, { accept: 'application/json' })).status).toBe(401);
+  });
+
+  it('POST /api/agent/secret from the phone writes only a pending card\'s declared keys, once', async () => {
+    const H = { cookie, origin: ORIGIN, 'x-dreamcontext-vault': PROJECT };
+    const post = (b: unknown) => request(phonePort, 'POST', `/api/agent/secret?vault=${PROJECT}`, H, JSON.stringify(b));
+    // No record named: refused.
+    expect((await post({ file: '.env', entries: [{ key: 'STRIPE_KEY', value: 'x' }] })).status).toBe(403);
+    // A key the card did not declare.
+    expect((await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'OTHER', value: 'x' }] })).status).toBe(400);
+    // The body's file is ignored: the record's .env.local is written.
+    const ok = await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), file: '.env', entries: [{ key: 'STRIPE_KEY', value: 'sk_test_fixture' }] });
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.body).file).toBe('.env.local');
+    expect(ok.body).not.toContain('sk_test_fixture');
+    expect(readFileSync(join(dir, PROJECT, '.env.local'), 'utf-8')).toContain('STRIPE_KEY=');
+    // The receipt closed the record: a second submit is refused.
+    expect((await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'STRIPE_KEY', value: 'y' }] })).status).toBe(409);
   });
 });
 

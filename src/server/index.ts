@@ -265,6 +265,7 @@ import { handleAgentDrop, handleAgentDropPath } from './routes/agent-drop.js';
 import { handleAgentPickPaths } from './routes/agent-pick.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
+import { attachPhoneRunTerminal, handleAgentCards, wireRunRegistry } from './routes/run-terminal.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus, handleVoiceLog,
   handleVoiceRetranscribe,
@@ -822,6 +823,8 @@ export function buildRouter(): Router {
   // transcript. Vault-SCOPED (the .env belongs to the project named in the header), and
   // NOT desktop-gated — see the route's header for why.
   router.post('/api/agent/secret', handleAgentSecret);
+  // A chat's run/secret card records (plan I1): what the Mac card and the phone page match against.
+  router.get('/api/agent/cards', handleAgentCards);
   // Assistant mode's two audio legs. Desktop-gated, and the ONLY routes in this server
   // that spend money — hence the server-side concurrency and rate caps in
   // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.
@@ -1424,7 +1427,10 @@ export function phoneListenerPort(): number | null {
  * THIS process so the phone can adopt the claude children the desktop already runs. Every
  * socket it accepts is marked a phone socket before a byte is read; every request passes
  * {@link macPhoneGate}; every upgrade passes {@link macUpgradeRefusal} first, and only the chat
- * upgrade listener is attached (never the PTY, the Assistant or the browser mirror).
+ * upgrade listener and a run card's narrow terminal are attached (plan H8: `/api/agent/run-terminal`
+ * reads only `session` + `card`, re-checks the device session and the record's exposed project,
+ * and spawns only a pending record's argv or attaches to its run). Never a free PTY
+ * (`attachAgentTerminal`), the Assistant or the browser mirror.
  */
 export async function startPhoneListener(opts: { port?: number } = {}): Promise<{ port: number }> {
   if (phoneListener) return { port: phoneListener.port };
@@ -1447,6 +1453,7 @@ export async function startPhoneListener(opts: { port?: number } = {}): Promise<
   const mainPort = mainAddress && typeof mainAddress === 'object' ? mainAddress.port : 0;
   // The window-control base stays the MAIN server's port: that is where the agent's CLI calls.
   attachAgentChat(server, { networkToken: null, windowControlPort: mainPort });
+  attachPhoneRunTerminal(server);
   server.setTimeout(30000);
   const port = await new Promise<number>((resolvePort, reject) => {
     server.once('error', reject);
@@ -1518,6 +1525,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
     attachAgentTerminal(server);
+    // Run cards are server-owned processes (plan H4): the registry spawns through node-pty with
+    // the same login-shell argv, and reports what it runs (desktop only: the phone never spawns
+    // a free terminal, and a run card needs the PTY machinery).
+    if (isDesktop()) void wireRunRegistry().catch(() => { /* no node-pty: run cards stay Copy-only */ });
     // Agent Chat (beta): bridge a WebSocket to a headless stream-json `claude` process.
     // Self-gates (desktop + loopback, or a token-bearing tailnet peer when remote access is
     // on); a no-op otherwise. The token rides in because a WS upgrade has no ServerResponse
