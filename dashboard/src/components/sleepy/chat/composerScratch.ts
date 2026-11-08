@@ -32,6 +32,7 @@
  */
 
 import { ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
+import { stripSentinelChars } from '../../../lib/chatProtocol';
 import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refKey, refTokenId, stripTokens, type RefTokenSpan } from './composerRefs';
 
 export interface Attachment {
@@ -454,7 +455,10 @@ export function composeOutgoing(
 ): { message: string; quoted: string; slash: boolean } {
   const out = composeBody(text, attachments, quote, quotePath, opts);
   const page = out.slash ? undefined : attachments.find((a) => a.kind === 'page' && !!a.text);
-  return page?.text && out.quoted.trim() ? { ...out, message: `${out.message.trimEnd()}\n\n${page.text}` } : out;
+  const sent = page?.text && out.quoted.trim() ? { ...out, message: `${out.message.trimEnd()}\n\n${page.text}` } : out;
+  // Owner-typed text never carries the Telegram sentinel: stripped here, at the composer step,
+  // never in `writeUser` (the shared path a resubmitted Telegram turn takes, plan F3).
+  return { ...sent, message: stripSentinelChars(sent.message), quoted: stripSentinelChars(sent.quoted) };
 }
 
 function composeBody(

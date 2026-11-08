@@ -1,6 +1,6 @@
 /**
  * The Settings window of the new layout (task settings-konuya-gore-17-menuye…, wave 2): a
- * window over the app, 16 pages by topic in the owner's order, every deep link lands on its
+ * window over the app, 17 pages by topic in the owner's order, every deep link lands on its
  * page or tab, search reads names, hints and hidden keywords, and the page behind is never
  * navigated away from. Classic Settings is untouched.
  */
@@ -17,13 +17,13 @@ const pages = read('components/settings/window/pages/SimplePages.tsx') + read('c
 const i18n = read('context/I18nContext.tsx');
 
 describe('the menu', () => {
-  it('has exactly 16 pages, in the prototype order', () => {
+  it('has exactly 17 pages, in the prototype order (Telegram after Hands-free, plan X2)', () => {
     expect(SW_PAGES).toEqual([
       'general', 'chat', 'voice',
       'models', 'mcp', 'super', 'assistant',
       'memory', 'sleep',
       'tasks', 'repos',
-      'teamsync', 'mirror', 'connected', 'handsfree',
+      'teamsync', 'mirror', 'connected', 'handsfree', 'telegram',
       'system',
     ]);
     expect(SW_GROUPS.map((g) => g.id)).toEqual(['top', 'agents', 'memory', 'project', 'connections', 'end']);

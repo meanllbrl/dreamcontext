@@ -61,15 +61,17 @@ describe('the Super head keeps Add a card, New session and Turn off in a ⋯ men
     expect(menu.indexOf('data-testid="super-head-add"')).toBeLessThan(menu.indexOf('data-testid="super-head-fresh"'));
   });
 
-  it('the menu holds New session, then Turn off under a rule', () => {
+  it('the menu holds New session, Telegram (plan U, owner 2026-11-08), then Turn off under a rule', () => {
     const fresh = menu.indexOf('data-testid="super-head-fresh"');
+    const telegram = menu.indexOf('data-testid="super-head-telegram"');
     const rule = menu.indexOf('role="separator"');
     const off = menu.indexOf('data-testid="super-head-off"');
     expect(fresh).toBeGreaterThan(-1);
-    expect(rule).toBeGreaterThan(fresh);
+    expect(telegram).toBeGreaterThan(fresh);
+    expect(rule).toBeGreaterThan(telegram);
     expect(off).toBeGreaterThan(rule);
     expect(menu).toContain('role="menu"');
-    expect(menu.match(/role="menuitem"/g)?.length).toBe(3);
+    expect(menu.match(/role="menuitem"/g)?.length).toBe(4);
   });
 
   it('it asks nothing through a browser dialog (a silent no-op in the desktop app)', () => {

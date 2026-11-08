@@ -16,6 +16,7 @@ import { openAgentSurface } from '../../lib/agentSettings';
 import { DELETE_ARM_MS, deleteAction } from '../../lib/agentDraft';
 import { requestTalkToAgent } from '../../lib/talkToAgent';
 import { AgentAvatar } from './AgentAvatar';
+import { TelegramMemberSection } from '../telegram/TelegramMemberSection';
 import { APPROVAL_STATE_KEY, approvalChips, stateHasDot, tx } from './AgentRosterCard';
 import './AgentProfilePanel.css';
 
@@ -321,6 +322,9 @@ export function AgentProfilePanel({
         {agent.shared && <p className="agp-muted">{t('agents.roster.sharedHint')}</p>}
         {agent.implicit && <p className="agp-muted">{t('agents.roster.implicitHint')}</p>}
       </section>
+
+      {/* Its own Telegram bot, right under the job (plan U). Device-only; a teammate's member has none here. */}
+      {!readOnly && <TelegramMemberSection slug={slug} name={name} />}
 
       {/* Read-only: what it learned from its own runs. Notes, never instructions. */}
       <section className="agp-section" aria-label={t('agents.profile.pattern')} data-section="pattern" data-pattern-state={view ?? undefined}>
