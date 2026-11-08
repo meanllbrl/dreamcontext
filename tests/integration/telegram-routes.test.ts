@@ -110,7 +110,7 @@ describe('telegram routes', () => {
   });
 
   it('the Rust-called prefixes are vault-agnostic, the page routes are not', () => {
-    for (const p of ['/api/telegram-pairing/x', '/api/telegram-forward/x/preview', '/api/telegram-creation/x/start', '/api/telegram-readopt/x/start', '/api/telegram-manager/status']) expect(isVaultAgnostic(p)).toBe(true);
+    for (const p of ['/api/telegram-pairing/x', '/api/telegram-forward/x/preview', '/api/telegram-creation/x/start', '/api/telegram-readopt/x/start', '/api/telegram-readopt/x/preview', '/api/telegram-forward/x/confirm', '/api/telegram-pairing/x/confirm', '/api/telegram-manager/status', '/api/telegram-manager/bind', '/api/telegram-manager']) expect(isVaultAgnostic(p)).toBe(true);
     for (const p of ['/api/telegram', '/api/telegram/super/bind']) expect(isVaultAgnostic(p)).toBe(false);
   });
 });

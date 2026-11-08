@@ -6,6 +6,8 @@
 const w = window as unknown as Record<string, unknown>;
 const params = new URLSearchParams(location.search);
 const view = params.get('view') ?? 'sheet-manager';
+/** `real=1`: no faked routes; /api goes through Vite's proxy to a real server. */
+const real = params.get('real') === '1';
 const invoked: Array<{ cmd: string; args: unknown }> = [];
 w.__invoked = invoked;
 
@@ -13,6 +15,8 @@ if (params.get('browser') !== '1') {
   w.__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args: unknown) => {
       invoked.push({ cmd, args });
+      // `real=1`: the Rust command's stand-in (telegram-manager-real.ts) talks to the REAL server.
+      if (cmd === 'confirm_telegram_binding' && real) return (w.__rustConfirm as (id: unknown) => Promise<unknown>)((args as { pairingId: unknown }).pairingId);
       if (cmd === 'confirm_telegram_binding') { state.boundAfterConfirm = true; return { ok: true }; }
       if (cmd === 'confirm_telegram_forward') { state.forwardOn = true; return { ok: true }; }
       if (cmd === 'start_telegram_creation') return { ok: true, link: 'https://t.me/newbot/nm_dc_bot/orbit_super_k3x9_bot?name=Super+%C2%B7+Orbit', projectName: 'Orbit' };
@@ -53,7 +57,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
   const path = url.replace(/^https?:\/\/[^/]+/, '').replace(/\?.*$/, '');
   const method = (init?.method ?? 'GET').toUpperCase();
-  if (!path.startsWith('/api/')) return realFetch(input, init);
+  if (!path.startsWith('/api/') || real) return realFetch(input, init);
   if (path === '/api/telegram' && method === 'GET') return json(status());
   if (path === '/api/telegram/super/bind' && method === 'POST') {
     state.bindPosted = true; state.polls = 0;

@@ -6,6 +6,7 @@
  *   ?view=sheet-manager|sheet-nomanager|sheet-connected|bindflow   the bind sheet
  *   ?view=member-unbound|member-bound        the member's Telegram section in its profile
  *   ?view=settings-none|settings-ready|settings-alarm   Settings → Telegram (`&browser=1`: a tab)
+ *   &real=1 &vault=             no faked routes: /api is proxied to a real server (telegram-manager-real.ts)
  *   ?view=card                               a Telegram turn in the chat, and a Mac turn beside it
  *   &theme=light|dark  &lang=tr|en
  */
@@ -82,7 +83,7 @@ createRoot(document.getElementById('root')!).render(
     <I18nProvider>
       <Locale />
       <QueryClientProvider client={qc}>
-        <VaultProvider vault="proj" instanceId="harness" isActive bus={new EventTarget()}>
+        <VaultProvider vault={params.get("vault") ?? "proj"} instanceId="harness" isActive bus={new EventTarget()}>
           <div style={{ minHeight: '100vh', background: 'var(--color-bg)', color: 'var(--color-text)' }} data-testid="harness"><View /></div>
         </VaultProvider>
       </QueryClientProvider>

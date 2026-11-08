@@ -69,7 +69,7 @@ const status: Handler = async (req, res, _p, contextRoot) => {
   const h = telegramHub();
   const scope = scopeOfContextRoot(contextRoot);
   const rows: TelegramStatusRow[] = (h?.status() ?? []).filter((r) => r.scope === scope || (r.scope === 'global' && scopeOfTarget(contextRoot, r.target) === 'global'));
-  const manager: TelegramStatusRow | null = h?.manager ? h.manager.row() : null;
+  const manager: TelegramStatusRow | null = h ? h.managerNow() : null;
   sendJson(res, 200, { rows, manager });
 };
 
