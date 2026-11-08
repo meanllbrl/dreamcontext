@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperGroup } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
-import { IconButton, chatStatus } from './SuperContainer';
+import { AskButton, CardLights, IconButton, chatStatus } from './SuperContainer';
 import { useLiveSessions } from './liveSession';
 import { GroupTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { cardZIndex, type CardPlan } from './superLayout';
@@ -16,7 +16,7 @@ import { cardPlaceKey } from './cardMenuModel';
  * button shows every card at once (owner 2026-10-27); its hover buttons put it in Others, ask the
  * Super Agent about it, or dissolve it.
  */
-export function SuperGroupCard({ group, plan, members, sessions, closable, pending, dropTarget, onPress, onOpen, onPresentAll, onToOthers, onAskAbout, onUngroup, onCloseCards }: {
+export function SuperGroupCard({ group, plan, members, sessions, closable, pending, dropTarget, onPress, onOpen, onPresentAll, onToOthers, onAskAbout, onCloseCards }: {
   group: SuperGroup;
   plan: CardPlan;
   members: readonly GroupMember[];
@@ -33,7 +33,6 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
   onPresentAll: (id: string) => void;
   onToOthers: (id: string) => void;
   onAskAbout: (id: string) => void;
-  onUngroup: (id: string) => void;
   onCloseCards: (id: string) => void;
 }) {
   const { t } = useI18n();
@@ -99,12 +98,20 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
         </div>
       </div>
       <span className="super-drop-ring" aria-hidden />
+      {/* The same window controls as every card (owner 2026-11-08): red closes its cards, yellow
+          is off (a group tile is already small), green opens them all side by side. */}
+      <CardLights
+        floating
+        close={closable > 0
+          ? { label: t('super.group.closeCards'), onClick: () => setCloseAsk((v) => !v), testId: 'super-group-close', expanded: closeAsk }
+          : { label: t('super.group.closeCards') }}
+        minimize={{ label: t('super.card.minimize') }}
+        zoom={{ label: openAllHint(t, members.length), onClick: () => onPresentAll(group.id), testId: 'super-group-open-all' }}
+      />
+      {/* A 160 px tile holds the lights and two buttons: Ungroup lives in the panel the tile opens. */}
       <div className="super-card-actions">
-        <IconButton icon="side" label={openAllHint(t, members.length)} onClick={() => onPresentAll(group.id)} testId="super-group-open-all" />
         <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => onToOthers(group.id)} />
-        <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => onAskAbout(group.id)} />
-        <IconButton icon="ungroup" label={t('super.group.ungroup')} onClick={() => onUngroup(group.id)} testId="super-group-ungroup" />
-        {closable > 0 && <IconButton icon="close" label={t('super.group.closeCards')} onClick={() => setCloseAsk((v) => !v)} testId="super-group-close" />}
+        <AskButton label={t('super.card.askAbout')} onClick={() => onAskAbout(group.id)} testId="super-group-ask" />
       </div>
       {closeAsk && closable > 0 && (
         <div className="super-close-choice" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-group-close-choice"

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { cardPlaceKey } from '../../dashboard/src/components/sleepy/super/cardMenuModel';
 
 /**
- * Super stage card buttons (owner 2026-11-07): the minimise glyph shows its word on hover, a
+ * Super stage card buttons (owner 2026-11-07, lights 2026-11-08): Mac window controls top left, a
  * card's close menu ("This chat?") belongs to the card where it opened, and that menu offers
  * Minimise. The rendered proof is the screenshots in the task log.
  */
@@ -44,21 +44,68 @@ describe('the close menu offers Minimise where the card can be minimised', () =>
   });
 });
 
-describe('the minimise glyph shows its word on hover and focus', () => {
-  it('the minimise button is a captioned IconButton', () => {
-    expect(CONTAINER).toContain(`<IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" caption />`);
-    expect(CONTAINER).toContain('{caption && <span className="super-icon-btn-caption" aria-hidden>{label}</span>}');
+describe('the Mac window controls: red close, yellow minimise, green full screen (owner 2026-11-08)', () => {
+  it('every card draws the three lights in that order, top left, with no word sliding out', () => {
+    expect(CONTAINER).toContain("{one('close', close)}\n      {one('minimize', minimize)}\n      {one('zoom', zoom)}");
+    expect(CONTAINER).not.toContain('super-icon-btn-caption');
+    expect(CSS).not.toContain('super-icon-btn--caption');
+    expect(CSS).toMatch(/\.super-card-lights \{[^}]*position: absolute;[^}]*top: 6px;[^}]*left: 8px;/);
   });
-  it('the caption is hidden at rest and slides out on hover and focus-visible', () => {
-    expect(CSS).toMatch(/\.super-icon-btn-caption \{[^}]*max-width: 0;[^}]*opacity: 0;/);
-    expect(CSS).toMatch(/\.super-icon-btn--caption:hover > \.super-icon-btn-caption,\s*\.super-icon-btn--caption:focus-visible > \.super-icon-btn-caption \{ max-width: 120px; opacity: 1; \}/);
+  it('a large card minimises on yellow and opens full screen on green; a floating card has yellow off and green brings it back', () => {
+    expect(CONTAINER).toContain("minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}");
+    expect(CONTAINER).toContain("? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }");
+    expect(CONTAINER).toContain(": { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}");
   });
-  it('reduced motion drops the slide', () => {
-    expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.super-icon-btn--caption,\s*\.super-icon-btn-caption \{ transition: none; \}/);
+  it('a control that does not apply is drawn off and disabled, never hidden', () => {
+    expect(CONTAINER).toContain('disabled={off}');
+    expect(CSS).toMatch(/\.super-light:disabled \.super-light-dot \{ background: var\(--color-bg-tertiary\);/);
   });
-  it('Turkish reads Küçült and Kart ekle', () => {
+  it('the colours are always on; the glyphs come on hover and on keyboard focus', () => {
+    expect(CSS).toMatch(/\.super-light-dot > svg \{ opacity: 0;/);
+    expect(CSS).toMatch(/\.super-card-lights:hover \.super-light-dot > svg,\s*\.super-card-lights:has\(:focus-visible\) \.super-light-dot > svg \{ opacity: 1; \}/);
+  });
+  it('each light is a 24 px target with a name, a tooltip and a focus ring', () => {
+    expect(CSS).toMatch(/\.super-light \{[^}]*width: 24px;[^}]*height: 24px;/);
+    expect(CSS).toContain('.super-light:focus-visible { outline: 2px solid var(--color-accent);');
+    expect(CONTAINER).toMatch(/className=\{`super-light super-light--\$\{tone\}`\}[\s\S]*?aria-label=\{l\.label\}[\s\S]*?title=\{l\.label\}/);
+    expect(CONTAINER).toContain("role=\"group\" aria-label={t('super.card.controls')}");
+  });
+  it('a large card head starts after the lights and stops before the ask button', () => {
+    expect(CSS).toContain(":is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }");
+  });
+  it('the group tile wears the same lights: red closes its cards, green opens them all', () => {
+    expect(GROUP).toContain('<CardLights');
+    expect(GROUP).toContain("testId: 'super-group-close'");
+    expect(GROUP).toContain("testId: 'super-group-open-all'");
+  });
+  it('a 160 px tile fits the lights and two buttons: To Others moves into its ⋯ menu, Ungroup into the group panel', () => {
+    expect(CONTAINER).toContain("{!props.remote && !small && <IconButton icon=\"others\"");
+    expect(CONTAINER).toContain("onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}");
+    expect(CONTAINER).toContain('data-testid="super-card-to-others"');
+    expect(GROUP).not.toContain('icon="ungroup"');
+  });
+  it('ask about this sits on the trailing side, larger and in the accent colour', () => {
+    expect(CONTAINER).toContain("<AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />");
+    expect(CSS).toContain('.super-ask-btn { width: 28px; height: 28px; color: var(--color-accent); }');
+  });
+  it("a card's close question opens under the red light; the group panel's stays at the right", () => {
+    expect(CSS).toContain('.super-card-frame > .super-close-choice { top: 42px; left: 6px; right: auto; }');
+    expect(CSS).toMatch(/\.super-close-choice \{\s*position: absolute;\s*top: 38px;\s*right: 6px;/);
+  });
+  it('no lights on a mini or thumb tile, and none left behind while a closed card fades', () => {
+    expect(CONTAINER).toMatch(/\{!thumb && !plan\.mini && \(\s*<CardLights/);
+    expect(CSS).toContain(".super-card-frame[data-cue='close'] .super-card-actions,\n.super-card-frame[data-cue='close'] .super-card-lights { display: none; }");
+  });
+  it('an off light carries no test id, so nothing finds a dead control by name', () => {
+    expect(CONTAINER).toContain('data-testid={off ? undefined : l.testId}');
+  });
+  it('the ⋯ of a small tile names everything it holds', () => {
+    expect(CONTAINER).toContain("label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')}");
+  });
+  it('Turkish reads Küçült, Kart düğmeleri and Kart ekle', () => {
     const i18n = SRC('context/I18nContext.tsx');
     expect(i18n).toContain("'super.card.minimize': 'Küçült'");
+    expect(i18n).toContain("'super.card.controls': 'Kart düğmeleri'");
     expect(i18n).toContain("'super.add.menuItem': 'Kart ekle'");
     expect(i18n).toContain("'super.add.menuItem': 'Add a card'");
     expect(i18n).not.toContain("'super.add.button'");

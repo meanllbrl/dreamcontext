@@ -283,9 +283,13 @@ export function SuperContainer(props: SuperContainerProps) {
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
   // A member's own card is never closed by anyone (plan r4 K3): no close control at all.
-  const closeBtn = c.kind === 'member' ? null : c.kind === 'agenda'
-    ? <IconButton icon="corner" label={t('super.agenda.minimize')} onClick={onCloseClick} testId="super-agenda-minimize" />
-    : props.remote ? null : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
+  // The red light (owner 2026-11-08, Mac window controls). A member's card and a card seen from
+  // the phone have no close: their red light is drawn off, never hidden, so the row reads the same.
+  const closeLight: Light = c.kind === 'member' || (props.remote && c.kind !== 'agenda')
+    ? { label: closeLabel }
+    : c.kind === 'agenda'
+      ? { label: t('super.agenda.minimize'), onClick: onCloseClick, testId: 'super-agenda-minimize' }
+      : { label: closeLabel, onClick: onCloseClick, testId: 'super-card-close', expanded: asksOnClose ? closeAsk : undefined };
   // What only the Mac can show: drawn as a placeholder, never loaded from here.
   const macOnly = !!props.remote && (c.kind === 'browser' || ((c.kind === 'web' || c.kind === 'image') && !c.ref));
   // A floating card's one action, for a click and for Enter/Space alike: it shows side by side (a
@@ -356,30 +360,37 @@ export function SuperContainer(props: SuperContainerProps) {
       {props.cue && <span className="super-card-glint" aria-hidden />}
       {/* A rail's mini tile (a status dot, owner 2026-11-07) draws no buttons: on hover they
           covered it. The whole tile is the button; a click opens the card, its name is the tooltip. */}
+      {/* Top left, the Mac window controls (owner 2026-11-08): red close, yellow minimise, green
+          full screen, always in colour, their glyphs shown on hover and focus. A floating card is
+          already small: its yellow is off and its green brings it back side by side. */}
+      {!thumb && !plan.mini && (
+        <CardLights
+          floating={floating}
+          close={closeLight}
+          minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}
+          zoom={floating
+            ? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }
+            : { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}
+        />
+      )}
       {!thumb && !plan.mini && <div className="super-card-actions">
         {floating ? (
           <>
-            <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
-            {!props.remote && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
-            <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
+            {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
+                screen in its ⋯ menu. */}
+            {!props.remote && !small && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
+            <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
             {small ? (
-              // A 160 px tile has room for five buttons: size and full screen share one menu.
-              <IconButton icon="more" label={t('super.card.more')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
+              <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
             ) : (
               <>
                 <IconButton icon="size" label={t('super.size.label')} onClick={() => setMenu((m) => (m === 'size' ? null : 'size'))} testId="super-card-size-btn" expanded={menu === 'size'} />
                 {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
               </>
             )}
-            {closeBtn}
           </>
         ) : (
-          <>
-            <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
-            {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
-            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" caption />
-            {closeBtn}
-          </>
+          <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
         )}
       </div>}
       {floating && !props.parked && menu && (
@@ -395,6 +406,7 @@ export function SuperContainer(props: SuperContainerProps) {
             setMenu(null);
             openFull();
           } : undefined}
+          onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}
           onClose={() => setMenu(null)}
         />
       )}
@@ -475,29 +487,92 @@ const ICONS: Record<IconName, ReactNode> = {
   more: <><circle cx="4" cy="8" r="0.9" /><circle cx="8" cy="8" r="0.9" /><circle cx="12" cy="8" r="0.9" /></>,
 };
 
-/**
- * A glyph button of the stage. `caption`: a glyph people do not read on sight (owner 2026-11-07,
- * the minimise arrows) grows on hover and focus to show its word beside the glyph; the word is
- * then the button's name, so it carries no second tooltip.
- */
-export function IconButton({ icon, label, onClick, testId, expanded, menu, caption }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean; caption?: boolean }) {
+/** A glyph button of the stage: its name is the native tooltip, no word ever slides out. */
+export function IconButton({ icon, label, onClick, testId, expanded, menu }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean }) {
   return (
     <button
       type="button"
-      className={caption ? 'super-icon-btn super-icon-btn--caption' : 'super-icon-btn'}
+      className="super-icon-btn"
       data-testid={testId}
       aria-haspopup={menu ? 'menu' : undefined}
       aria-expanded={expanded}
       aria-label={label}
-      title={caption ? undefined : label}
+      title={label}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         {ICONS[icon]}
       </svg>
-      {caption && <span className="super-icon-btn-caption" aria-hidden>{label}</span>}
     </button>
+  );
+}
+
+/** "Ask about this card", on the card's trailing side (owner 2026-11-08: the comment icon, clearer):
+ *  a larger speech bubble in the accent colour, its name the native tooltip. */
+export function AskButton({ label, onClick, testId = 'super-card-ask' }: { label: string; onClick: () => void; testId?: string }) {
+  return (
+    <button
+      type="button"
+      className="super-icon-btn super-ask-btn"
+      data-testid={testId}
+      aria-label={label}
+      title={label}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M2.75 4.25A1.75 1.75 0 0 1 4.5 2.5h7a1.75 1.75 0 0 1 1.75 1.75v5a1.75 1.75 0 0 1-1.75 1.75H7.2L4.2 13.4V11A1.5 1.5 0 0 1 2.75 9.5z" />
+        <circle cx="5.6" cy="6.75" r="0.7" fill="currentColor" stroke="none" />
+        <circle cx="8" cy="6.75" r="0.7" fill="currentColor" stroke="none" />
+        <circle cx="10.4" cy="6.75" r="0.7" fill="currentColor" stroke="none" />
+      </svg>
+    </button>
+  );
+}
+
+/** One window control. No `onClick` = the control does not apply here: drawn off and disabled. */
+export type Light = { label: string; onClick?: () => void; testId?: string; expanded?: boolean };
+
+const LIGHT_GLYPHS = {
+  close: <path d="M4.1 4.1l3.8 3.8M7.9 4.1L4.1 7.9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />,
+  minimize: <path d="M3.4 6h5.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />,
+  zoom: <path d="M3.7 8V3.7H8z M8.3 4v4.3H4z" fill="currentColor" />,
+} as const;
+
+/**
+ * The Mac window controls of a stage card (owner 2026-11-08): red close, yellow minimise, green
+ * full screen, always in colour; hover or keyboard focus on the row shows the glyph in each dot.
+ * The dot is 12 px, the button around it 24 px, so every control is a full-size target.
+ */
+export function CardLights({ close, minimize, zoom, floating }: { close: Light; minimize: Light; zoom: Light; floating?: boolean }) {
+  const { t } = useI18n();
+  const one = (tone: keyof typeof LIGHT_GLYPHS, l: Light) => {
+    const off = !l.onClick;
+    return (
+      <button
+        type="button"
+        className={`super-light super-light--${tone}`}
+        data-testid={off ? undefined : l.testId}
+        aria-label={l.label}
+        aria-expanded={l.expanded}
+        title={l.label}
+        disabled={off}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); l.onClick?.(); }}
+      >
+        <span className="super-light-dot" aria-hidden>
+          {!off && <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>{LIGHT_GLYPHS[tone]}</svg>}
+        </span>
+      </button>
+    );
+  };
+  return (
+    <div className={floating ? 'super-card-lights super-card-lights--float' : 'super-card-lights'} role="group" aria-label={t('super.card.controls')} data-testid="super-card-lights">
+      {one('close', close)}
+      {one('minimize', minimize)}
+      {one('zoom', zoom)}
+    </div>
   );
 }
 
@@ -582,9 +657,9 @@ function FloatBody(p: BodyProps): ReactNode {
  * that cannot be drawn on this stage now is disabled and says why. Arrow keys move, Enter picks,
  * Esc closes. On a small tile it is the "more" menu and also holds Full screen.
  */
-function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onClose }: {
+function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onToOthers, onClose }: {
   current: ContainerSize; drawn: ContainerSize; canFit: (size: ContainerSize) => boolean;
-  onPick: (size: ContainerSize) => void; onFullscreen?: () => void; onClose: () => void;
+  onPick: (size: ContainerSize) => void; onFullscreen?: () => void; onToOthers?: () => void; onClose: () => void;
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -626,6 +701,11 @@ function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onClose }: {
       {onFullscreen && (
         <button type="button" role="menuitem" className="super-size-menu-item" data-testid="super-card-fullscreen" onClick={onFullscreen}>
           {t('super.card.fullscreen')}
+        </button>
+      )}
+      {onToOthers && (
+        <button type="button" role="menuitem" className="super-size-menu-item" data-testid="super-card-to-others" onClick={onToOthers}>
+          {t('super.card.toOthers')}
         </button>
       )}
     </div>

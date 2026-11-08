@@ -33,7 +33,8 @@ describe('member cards in the window', () => {
 
   it('SuperContainer: no close for a member card, its body is live from medium up, controls are not a drag', () => {
     const src = read('SuperContainer.tsx');
-    expect(src).toMatch(/const closeBtn = c\.kind === 'member' \? null/);
+    // Its red light is drawn off (no onClick), never wired to a close.
+    expect(src).toMatch(/const closeLight: Light = c\.kind === 'member' \|\| \(props\.remote && c\.kind !== 'agenda'\)\s*\? \{ label: closeLabel \}/);
     expect(src).toMatch(/if \(c\.kind === 'member' && !small\) return;/);
     expect(src).toMatch(/data-inert=\{full \? undefined : 'true'\} data-member-card/);
     expect(src).toMatch(/!inFullscreen\(e\.target\) && !onControl\(c, e\.target\)\) props\.onPress/);
