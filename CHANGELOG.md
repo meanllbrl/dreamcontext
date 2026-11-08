@@ -4,6 +4,17 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.8] - 2026-11-09
+
+Patch on 0.41.7: five finished jobs built together, plus one change. Local build; not published.
+
+- **Telegram follows you.** While you are writing to the Super from Telegram, everything it writes you goes there, and a job's result reaches the phone even when it finishes under a message you typed at the Mac. The bubble you send from Telegram is a normal message with a Telegram label, and one message is answered once.
+- **The Mac stays awake while you are on Telegram, by itself.** Your first message from the phone starts the "Yalnız Telegram" mode (lid closed, no link). It ends only when you write to the Super at the Mac, with one line, "Mac'e döndün". Touching the keyboard or mouse, or writing in the Telegram app on the Mac, does not end it. A run you started with the button or the link is never ended this way.
+- **No "bitti" line after every answer.** The Super's answer on Telegram is not followed by a "1 iş bitti" line.
+- **The admin bot connects after Start.** Press Start on the admin bot in Settings and it links itself.
+- **The CLI opens faster.** Every command starts about 0.3 seconds lighter and prints exactly the same.
+- **A folded Team row shows no member rows.** Only its summed ring and count show, and the open member's row is the folded row itself.
+
 ## [0.41.7] - 2026-11-08
 
 Patch on 0.41.6: twelve finished jobs built together. Local build; not published.
