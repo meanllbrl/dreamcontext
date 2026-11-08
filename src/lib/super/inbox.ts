@@ -3004,7 +3004,11 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
 /** At boot, each member Super of a vault (plan-r10 1): its head and sweep, and a request whose
  *  turn never finished back to pending (an accepted one stays open). A refused record is skipped. */
 async function startMemberSupers(root: string): Promise<void> {
+  // A record left by an earlier member of the same name is moved to the trash before it is loaded
+  // (and every member's identity is recorded at boot, so a later delete by any door is caught).
+  const { settleMemberIdentity } = await import('./member-identity.js');
   for (const slug of await listMemberSupers(root)) {
+    try { if ((await settleMemberIdentity(root, slug)).archived) continue; } catch { /* loaded as before */ }
     const key = superKey(root, superIdOfMember(slug));
     let s: SuperState;
     try { s = await readSuperState(key, superSanitizeOpts()); } catch { continue; }

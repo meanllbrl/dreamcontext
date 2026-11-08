@@ -25,7 +25,8 @@ import { queuedFire } from '../../src/lib/automations/queue.js';
 import { createQuestion, listQuestions, pendingQuestionFor } from '../../src/lib/automations/hitl.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { resumeWithAnswer } from '../../src/lib/automations/verdict.js';
-import { approveAutomation, checkApproval } from '../../src/lib/automations/registry.js';
+import { approveAutomation, approvedTarget, checkApproval } from '../../src/lib/automations/registry.js';
+import { approvedTextsDir } from '../../src/lib/automations/approved-text.js';
 import { buildFeed, buildFeedMessage } from '../../src/lib/automations/feed.js';
 import { agentPath, createAgent } from '../../src/lib/agents/store.js';
 import { splitLegacyManifest } from '../../src/lib/agents/split.js';
@@ -251,14 +252,18 @@ describe('A5b: conversations never carry call settings, and a synced strip block
     expect(identity.approved).toBe(true);
     if (identity.approved) expect(identity.entry).toBeDefined();
 
-    // Anything that RUNS the call target is refused, whichever way it is named.
+    // Owner 2026-11-08: the synced strip waits for his card, and anything that RUNS the call
+    // target runs the version he approved (its call settings intact), whichever way it is named.
+    const kept = approvedTarget(projectRoot, call, home, 'run');
+    expect(kept.pending).not.toBeNull();
+    expect(kept.manifest.outputInstructions).not.toBe('');
     const spawn = capturingSpawn(CLAUDE_JSON_OK);
     for (const opts of [{ target: 'agent' as const }, {}]) {
-      const outcome = await runAutomation(contextRoot, 'helper', { home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, ...opts });
-      expect(outcome.status).toBe('blocked');
-      expect(outcome.error).toContain('needs approval on the AI Team page');
+      const outcome = await runAutomation(contextRoot, 'helper', { home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, notify: () => {}, ...opts });
+      expect(outcome.status).not.toBe('blocked');
     }
-    expect(spawn.calls).toHaveLength(0);
+    // The first run spawned on the approved text; its review question then holds the second.
+    expect(spawn.calls.length).toBeGreaterThanOrEqual(1);
     // The slot is empty, so the plain slug resolves to the same call target.
     expect(getAutomation(contextRoot, 'helper')?.runKind).toBe('agent');
 
@@ -370,6 +375,8 @@ describe("an agent-target approval question, and a pending gate per target", () 
 
   it("records target 'agent' and the task, holds the agent (naming the page), and never the job", async () => {
     seedPairWithEditedAgent();
+    // An approval made before approved texts were kept: the in-session question path.
+    rmSync(approvedTextsDir(home), { recursive: true, force: true });
     const spawn = capturingSpawn(CLAUDE_JSON_OK);
     const task = { slug: 'fix-login', name: 'Fix the login' };
     const asked = await runAutomation(contextRoot, 'scout', {

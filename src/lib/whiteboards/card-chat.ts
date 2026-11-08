@@ -1,3 +1,5 @@
+import { dirname } from 'node:path';
+import { approvedTarget } from '../automations/registry.js';
 import { getRunTarget, isSafeAutomationSlug } from '../automations/store.js';
 import { identityOnly } from '../agents/compose.js';
 import {
@@ -120,6 +122,9 @@ function prepareEnvelope(
   briefing: (m: AutomationManifest, scope: BoardScope | null, homeView: BoardScope | null) => string,
   home?: string,
 ): CardChatPrep {
+  // A change waiting for the owner's card does not stop the conversation: it is built from the
+  // last approved text (`approvedTarget`, owner 2026-11-08). Idempotent for an approved target.
+  target = approvedTarget(dirname(contextRoot), target, home, 'identity').manifest;
   const scoped = resolveSpawnScope(contextRoot, target, home, 'identity');
   if (!scoped.ok) return { ok: false, reason: scoped.reason };
   const manifest = identityOnly(target);
@@ -255,8 +260,10 @@ export function prepareAgentChat(
   home?: string,
   opts: { excludeSession?: string | null } = {},
 ): CardChatPrep {
-  const target = getRunTarget(contextRoot, slug, 'agent');
-  if (!target) return { ok: false, reason: `no agent named "${slug}" in this project` };
+  const raw = getRunTarget(contextRoot, slug, 'agent');
+  if (!raw) return { ok: false, reason: `no agent named "${slug}" in this project` };
+  // The level below is read from what the conversation runs as: the last approved text when a change waits.
+  const target = approvedTarget(dirname(contextRoot), raw, home, 'identity').manifest;
   const prep = prepareEnvelope(
     contextRoot,
     target,

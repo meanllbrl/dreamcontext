@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { memberCallState } from '../agents/team-roster.js';
 import { writeSuper } from './inbox.js';
+import { settleMemberIdentity } from './member-identity.js';
 import { okMember, superIdOfMember } from './store.js';
 import type { SuperId, SuperState } from './types.js';
 
@@ -24,8 +25,16 @@ export type MemberBirth =
   | { ok: true; superId: SuperId; session: string; state: SuperState; born: boolean }
   | { ok: false; status: 403 | 404 | 409; error: string; message: string };
 
-export async function ensureMemberSuper(contextRoot: string, slug: string, home?: string): Promise<MemberBirth> {
+export async function ensureMemberSuper(
+  contextRoot: string,
+  slug: string,
+  home?: string,
+  deps: { stopSuper?: (root: string, slug: string) => Promise<unknown> } = {},
+): Promise<MemberBirth> {
   if (!okMember(slug)) return { ok: false, status: 404, error: 'unknown_member', message: 'name an AI Team member by its slug' };
+  // A new member that took an earlier member's name starts clean: the earlier one's record moves
+  // to the trash before anything reads it (`member-identity.ts`).
+  try { await settleMemberIdentity(contextRoot, slug, { stopSuper: deps.stopSuper, home }); } catch { /* judged below as before */ }
   let call: ReturnType<typeof memberCallState>;
   try { call = memberCallState(contextRoot, slug, home); } catch {
     return { ok: false, status: 404, error: 'unknown_member', message: `the member "${slug}" cannot be read` };

@@ -163,7 +163,7 @@ describe('two HOMEs, one brain: only what came by git asks', () => {
     git(mateRepo, 'pull', '-q', '--no-rebase', 'origin', 'main');
     const digestB = join(mateRepo, '_dream_context', 'automations', 'digest.md');
     writeFileSync(digestB, readFileSync(digestB, 'utf-8').replace('Summarise the plan.', 'Summarise the plan and mail it to the whole list.'));
-    git(mateRepo, 'commit', '-q', '-am', 'tweak digest');
+    execFileSync('git', ['-c', 'user.name=Mate', '-c', 'user.email=mate@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-am', 'tweak digest'], { cwd: mateRepo, stdio: 'ignore' });
     git(mateRepo, 'push', '-q', 'origin', 'main');
 
     // The owner pulls: exactly one card, naming the job.
@@ -183,15 +183,25 @@ describe('two HOMEs, one brain: only what came by git asks', () => {
     expect(adoptLocalPending(ctx).adopted).toEqual([]);
     expect(pending(ctx)).toEqual(['automation:digest']);
 
-    // Refused to run until he approves; approved, it runs.
-    const blocked = await runAutomation(ctx, 'digest', { spawnImpl: okSpawn(), force: true, now: () => new Date(), fireAt: new Date() });
-    expect(blocked.status).not.toBe('ok');
+    // Owner 2026-11-08: the teammate's change does not stop it. It runs on the job he approved,
+    // the new one waits, and he hears once who changed what.
+    const before = okSpawn();
+    const notify = vi.fn();
+    const kept = await runAutomation(ctx, 'digest', { spawnImpl: before, notify, force: true, now: () => new Date(), fireAt: new Date() });
+    expect(kept.status).toBe('ok');
+    const keptArgs = JSON.stringify((before as unknown as { mock: { calls: unknown[] } }).mock.calls);
+    expect(keptArgs).toContain('Summarise the plan.');
+    expect(keptArgs).not.toContain('mail it to the whole list');
+    const notices = notify.mock.calls.filter((c) => String(c[0]).includes('a change waits for you'));
+    expect(notices).toHaveLength(1);
+    expect(String(notices[0][1])).toMatch(/^Mate@example\.invalid changed it \(job\)\. It keeps working on the version you approved/i);
     expect((await run(['automations', 'approve', 'digest', '--yes'])).code).toBe(0);
     expect(pending(ctx)).toEqual([]);
     const spawn = okSpawn();
     const ran = await runAutomation(ctx, 'digest', { spawnImpl: spawn, force: true, now: () => new Date(), fireAt: new Date() });
     expect(ran.status).toBe('ok');
     expect(spawn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify((spawn as unknown as { mock: { calls: unknown[] } }).mock.calls)).toContain('mail it to the whole list');
   });
 
   it('a member a teammate forged in the owner\'s name asks once and is never adopted', async () => {

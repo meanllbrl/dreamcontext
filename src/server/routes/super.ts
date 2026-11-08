@@ -1323,7 +1323,7 @@ async function teamAskRequest(
     refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, `${member} is not approved on this machine.`)} You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet"). His queue strip asks him now; give the job again once he says so.`, { item });
     return;
   }
-  const born = await ensureMemberSuper(root, member);
+  const born = await ensureMemberSuper(root, member, undefined, { stopSuper: stopMemberSuper });
   if (!born.ok) { refuse(res, born.status, born.error, born.message); return; }
   const memberId = born.superId;
   if (openRequests(born.state) >= MAX_OPEN_REQUESTS) {
@@ -3464,7 +3464,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     // so the window spawns the chat with THIS session id and the upgrade gate accepts it. An
     // unapproved, turned-off or missing member gets no record (409 / 404).
     const slug = typeof body.slug === 'string' ? body.slug : '';
-    const r = await ensureMemberSuper(contextRoot, slug);
+    const r = await ensureMemberSuper(contextRoot, slug, undefined, { stopSuper: stopMemberSuper });
     if (!r.ok) { sendError(res, r.status, r.error, r.message); return; }
     sendJson(res, 200, { superId: r.superId, session: r.session, born: r.born, state: superStateView(contextRoot, r.state) });
   },
@@ -3472,7 +3472,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     // A member's Super has no hand-over: "enable" is its birth (or its record as it stands).
     const slug = memberOfSuperId(superId);
     if (slug) {
-      const r = await ensureMemberSuper(contextRoot, slug);
+      const r = await ensureMemberSuper(contextRoot, slug, undefined, { stopSuper: stopMemberSuper });
       if (!r.ok) { sendError(res, r.status, r.error, r.message); return; }
       sendJson(res, 200, { session: r.session, state: superStateView(contextRoot, r.state), skipped: [] });
       return;

@@ -1,7 +1,7 @@
 import type {
   AgentActivity, AgentFeed, AutomationSummary, FeedMessage, RunAnswer, ThreadEntry, ThreadSummaryRow,
 } from '../../hooks/useAutomations';
-import type { AgentSummary } from '../../hooks/useAgents';
+import type { AgentSummary, PendingChange } from '../../hooks/useAgents';
 import type { SuperMemberSummary } from '../../lib/superTypes';
 import type { AgentFace } from '../../../../src/lib/agents/figure.js';
 
@@ -24,13 +24,13 @@ export type TeamAutomation = Pick<
   AutomationSummary,
   'slug' | 'title' | 'agent' | 'runKind' | 'mode' | 'enabled' | 'approved' | 'approvalReason' | 'pendingQuestion'
   | 'nextFireAt' | 'cadenceLabel'
->;
+> & Partial<Pick<AutomationSummary, 'changeWaits'>>;
 
 /** The agent fields the roster reads. */
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt' | 'boardQuestion'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt' | 'boardQuestion' | 'pendingChange'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -141,7 +141,9 @@ export function buildRoster(
     const needs = mine.some((m) => m.question !== null || m.status === 'needs-you')
       || routines.some((r) => r.pendingQuestion !== null);
     const readOnly = agent.readOnly === true;
-    const approval = !readOnly && pendingApprovals(agent, routines).some((p) => p.kind !== 'board-scope');
+    // A member that keeps working while a newer version waits is not "waiting for approval": the
+    // server says it is ready (`memberCallState`), so the badge must not say otherwise.
+    const approval = !readOnly && pendingApprovals(agent, routines).some((p) => p.kind !== 'board-scope' && !p.keepsWorking);
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     // A member whose routines are all off raises no alarm: nothing will run, so nothing waits
     // on the owner. Its pending approval/question stays visible on the AI Team page itself.
@@ -225,6 +227,10 @@ export type PendingApproval = {
   /** Approving this is what lets the owner's next message through. */
   blocksTalk: boolean;
   reason: string | null;
+  /** It keeps working on the version the owner approved last; only the newer one waits. */
+  keepsWorking?: boolean;
+  /** Which change waits, when the server knows it (the member's own row). */
+  change?: PendingChange | null;
 };
 
 /** The i18n key naming a changed instruction field. */
@@ -267,8 +273,8 @@ export function amendmentDiff(before: string, after: string): Array<{ added: boo
 /** What waits for approval, in the order it matters: what blocks talking first, then the
  *  routines, then the call target's own runs (boards and tasks). Empty when all is approved. */
 export function pendingApprovals(
-  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'boardQuestion'>,
-  routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason'>[],
+  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'boardQuestion' | 'pendingChange'>,
+  routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason' | 'changeWaits'>[],
 ): PendingApproval[] {
   // `say` runs the routine that shares the agent's slug when there is one, else the call target.
   // A teammate's agent asks nothing here: it is read-only, never "needs approval".
@@ -279,11 +285,18 @@ export function pendingApprovals(
     out.push({
       kind: 'agent', slug: agent.slug, title: agent.title, reason: agent.approvalReason,
       blocksTalk: !agent.approvedForChat || !talkRoutine,
+      ...(agent.pendingChange ? { change: agent.pendingChange } : {}),
     });
+  } else if (agent.pendingChange) {
+    // Owner 2026-11-08: a change he did not make here never stops the member. It keeps working on
+    // what he approved last; the row only says which change waits for him.
+    out.push({ kind: 'agent', slug: agent.slug, title: agent.title, reason: null, blocksTalk: false, keepsWorking: true, change: agent.pendingChange });
   }
   for (const r of routines) {
     if (!r.approved) {
       out.push({ kind: 'routine', slug: r.slug, title: r.title, reason: r.approvalReason, blocksTalk: r.slug === agent.slug });
+    } else if (r.changeWaits) {
+      out.push({ kind: 'routine', slug: r.slug, title: r.title, reason: null, blocksTalk: false, keepsWorking: true });
     }
   }
   // Asked only once it is approved as it stands: an approval card comes first.
@@ -291,6 +304,49 @@ export function pendingApprovals(
     out.push({ kind: 'board-scope', slug: agent.slug, title: agent.title, reason: null, blocksTalk: false });
   }
   return out.sort((x, y) => Number(y.blocksTalk) - Number(x.blocksTalk));
+}
+
+/** The one sentence a pending item is said in. */
+export function approvalSentence(p: PendingApproval, agentTitle: string, t: (k: string) => string): string {
+  if (p.keepsWorking) {
+    return t(p.kind === 'routine' ? 'aiteam.approval.routineKeepsWorking' : 'aiteam.approval.keepsWorking')
+      .replace('{name}', agentTitle).replace('{routine}', p.title);
+  }
+  const changed = p.reason === 'manifest-changed' || p.reason === 'payload-format-changed';
+  const key = p.kind === 'routine'
+    ? (changed ? 'aiteam.approval.routineChanged' : 'aiteam.approval.routineNew')
+    : p.blocksTalk
+      ? (changed ? 'aiteam.approval.talkChanged' : 'aiteam.approval.talkNew')
+      : 'aiteam.approval.runOnly';
+  return t(key).replace('{name}', agentTitle).replace('{routine}', p.title);
+}
+
+/**
+ * WHICH change waits, in one line (owner 2026-11-08): who wrote it (a teammate by name, or a
+ * background run), when, which fields, and what the risk filter flagged. Null when the server
+ * does not know it (an older server, or a routine's row).
+ */
+export function pendingChangeLine(change: PendingChange | null | undefined, t: (k: string) => string, fallbackFields?: string[] | null): string | null {
+  if (!change) return null;
+  const fieldList = change.fields ?? fallbackFields ?? [];
+  const words = fieldList.map((f) => {
+    const key = `aiteam.approval.field.${f}`;
+    const said = t(key);
+    return said === key ? f : said;
+  });
+  const and = t('aiteam.approval.and');
+  const fields = words.length === 0
+    ? t('aiteam.approval.field.unknown')
+    : words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} ${and} ${words[words.length - 1]}`;
+  const when = change.at ? new Date(change.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+  const head = change.by === 'teammate'
+    ? t('aiteam.approval.byTeammate').replace('{who}', change.who ?? '?').replace('{fields}', fields)
+    : change.by === 'background'
+      ? t('aiteam.approval.byBackground').replace('{fields}', fields)
+      : t('aiteam.approval.byUnknown').replace('{fields}', fields);
+  const at = when ? ` ${t('aiteam.approval.at').replace('{when}', when)}` : '';
+  const risks = change.risks.length ? ` ${t('aiteam.approval.flagged').replace('{risks}', change.risks.join('; '))}` : '';
+  return `${head}${at}.${risks}`;
 }
 
 /** Would a message to this agent be refused here right now? */

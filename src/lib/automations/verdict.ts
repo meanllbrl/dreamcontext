@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { approvedTarget } from './registry.js';
 import { pickToolRunAccount, toolRunAccountArg } from './codex-account.js';
 import { codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
 import { bridgeNode } from '../t3-bridge/node-floor.js';
@@ -562,8 +563,10 @@ function resolveResumeScope(
   /** The target the asking run recorded (`AutomationQuestion.target`). */
   recorded?: 'agent',
 ): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null; home: BoardScope | null } | { ok: false; reason: string } {
-  const manifest = resumeTarget(contextRoot, slug, recorded);
-  if (!manifest) return { ok: false, reason: `no such automation: ${slug}` };
+  const raw = resumeTarget(contextRoot, slug, recorded);
+  if (!raw) return { ok: false, reason: `no such automation: ${slug}` };
+  // A change waiting for the owner's card resumes on the last approved text (`approvedTarget`).
+  const manifest = approvedTarget(dirname(contextRoot), raw, opts.home, 'run').manifest;
   // Strict 'run' use: a resume EXECUTES the target (an agent's call target included),
   // so a binding's identity-only approval never lets it resume.
   const scoped = resolveSpawnScope(contextRoot, manifest, opts.home, 'run');

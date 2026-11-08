@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  buildConversation, buildRoster, focusTargetKey, pendingApprovals, talkBlocked,
+  approvalSentence, buildConversation, buildRoster, focusTargetKey, pendingApprovals, pendingChangeLine, talkBlocked,
   type TeamAgent, type TeamAutomation,
 } from '../../dashboard/src/components/aiteam/teamModel';
 import type { FeedMessage } from '../../dashboard/src/hooks/useAutomations';
@@ -68,6 +68,23 @@ describe('pendingApprovals: what waits on this Mac', () => {
       [routine('sentinel-daily', { approved: false }), routine('sentinel')],
     );
     expect(p.map((x) => `${x.kind}:${x.blocksTalk}`)).toEqual(['agent:true', 'routine:false']);
+  });
+
+  it('a change that waits while the member keeps working on what was approved: a row, never a block (owner 2026-11-08)', () => {
+    const change = { member: 'sentinel', by: 'background' as const, who: null, at: '2026-11-08T15:42:30.375Z', fields: ['prompt', 'soul'], risks: ['a new address (example.invalid)'], runsOnApproved: true };
+    const p = pendingApprovals(agent({ pendingChange: change }), [routine('sentinel-daily', { changeWaits: true })]);
+    expect(p).toEqual([
+      { kind: 'agent', slug: 'sentinel', title: 'Sentinel', reason: null, blocksTalk: false, keepsWorking: true, change },
+      { kind: 'routine', slug: 'sentinel-daily', title: 'Routine sentinel-daily', reason: null, blocksTalk: false, keepsWorking: true },
+    ]);
+    expect(talkBlocked(p)).toBe(false);
+    const t = (k: string) => k;
+    expect(approvalSentence(p[0], 'Sentinel', t)).toBe('aiteam.approval.keepsWorking');
+    const line = pendingChangeLine(change, (k) => ({ 'aiteam.approval.byBackground': 'A background run rewrote {fields}', 'aiteam.approval.at': 'at {when}', 'aiteam.approval.flagged': 'Flagged: {risks}.', 'aiteam.approval.field.prompt': 'its instructions', 'aiteam.approval.field.soul': 'its soul', 'aiteam.approval.and': 'and' } as Record<string, string>)[k] ?? k);
+    expect(line).toMatch(/^A background run rewrote its instructions and its soul at .+\. Flagged: a new address \(example\.invalid\)\.$/);
+    // A blocked member still names the change.
+    const blocked = pendingApprovals(agent({ approvedToRun: false, approvalReason: 'manifest-changed', pendingChange: { ...change, runsOnApproved: false } }), []);
+    expect(blocked[0]).toMatchObject({ kind: 'agent', blocksTalk: true, change: { by: 'background' } });
   });
 
   it('the roster tags the same teammate "approval" the strip shows (one rule, not two)', () => {

@@ -9,7 +9,7 @@ import { dateUpdatesForStatus } from '../task-dates.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import { isSafeTaskSlug, readTaskFile } from '../task-backend/local.js';
 import type { TaskData } from '../task-backend/types.js';
-import { checkApproval } from '../automations/registry.js';
+import { approvedTarget, checkApproval } from '../automations/registry.js';
 import { getRunTarget } from '../automations/store.js';
 import { appendThreadEntry } from '../automations/threads.js';
 import { oneDataLine, TASK_NAME_MAX_CHARS } from '../automations/runner.js';
@@ -166,11 +166,15 @@ export function prepareAssignment(
   if (holder && held && !held.approved && held.reason === 'not_owner') {
     return refuse('not_owner', `${oneDataLine(holder.agentTitle || holder.title, 120)} belongs to ${ownerLabel(held.owner)} and has this task: only its owner can hand it on.`);
   }
-  const target = isSafeAutomationSlug(agentSlug) ? getRunTarget(contextRoot, agentSlug, 'agent') : null;
-  if (!target) return refuse('unknown_agent', `There is no agent named "${oneDataLine(agentSlug, 80)}" in this project.`);
-  const title = oneDataLine(target.agentTitle || target.title, 120);
-  if (!target.enabled) return refuse('agent_disabled', `${title} is switched off, so it cannot take a task.`);
-  const verdict = checkApproval(dirname(contextRoot), target, opts.home, 'run');
+  const raw = isSafeAutomationSlug(agentSlug) ? getRunTarget(contextRoot, agentSlug, 'agent') : null;
+  if (!raw) return refuse('unknown_agent', `There is no agent named "${oneDataLine(agentSlug, 80)}" in this project.`);
+  const title = oneDataLine(raw.agentTitle || raw.title, 120);
+  if (!raw.enabled) return refuse('agent_disabled', `${title} is switched off, so it cannot take a task.`);
+  // The runner's own question (`approvedTarget`): a change waiting for the card leaves it working,
+  // and everything below (tool, level, plan step) reads the version that may run, never the pending one.
+  const view = approvedTarget(dirname(contextRoot), raw, opts.home, 'run');
+  const verdict = view.verdict;
+  const target = view.manifest;
   // A person assigns a task only to an agent they own: refused here for the CLI and the server.
   if (!verdict.approved && verdict.reason === 'not_owner') {
     return refuse('not_owner', `${title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here: only its owner can give it a task.`);
@@ -238,7 +242,7 @@ function resolveJob(
     if (!r) return { ok: false, code: 'unknown_reviewer', message: `There is no agent named "${oneDataLine(slug, 80)}" to review.` };
     const rTitle = oneDataLine(r.agentTitle || r.title, 120);
     if (!r.enabled) return { ok: false, code: 'agent_disabled', message: `${rTitle} is switched off, so it cannot review.` };
-    const v = checkApproval(dirname(contextRoot), r, opts.home, 'run');
+    const v = approvedTarget(dirname(contextRoot), r, opts.home, 'run').verdict;
     if (!v.approved && v.reason === 'not_owner') {
       return { ok: false, code: 'not_owner', message: `${rTitle} belongs to ${ownerLabel(v.owner)}, so it is read-only here: only its owner can make it a reviewer.` };
     }

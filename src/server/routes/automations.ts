@@ -49,7 +49,7 @@ import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
   approvalFields,
   changedApprovalFields,
-  checkApproval, getApproval,
+  approvedTarget, checkApproval, getApproval,
   renderApprovalReview,
   approveAutomation,
   listRegisteredProjects,
@@ -230,6 +230,8 @@ interface AutomationSummary {
   catchupHours: number;
   approved: boolean;
   approvalReason: string | null;
+  /** Approved, running on its last approved text, while a newer version waits for the owner's card. */
+  changeWaits: boolean;
   cache: AutomationCacheSummary | null;
   review: AutomationManifest['review'];
   /** The agent's home board, or null. Approval-hashed; on the summary so the
@@ -307,7 +309,10 @@ function cacheSummary(cache: AutomationCache | null, approvedNow: boolean): Auto
 }
 
 function summarize(projectRoot: string, contextRoot: string, m: AutomationManifest): AutomationSummary {
-  const approval = checkApproval(projectRoot, m, undefined, 'run');
+  // The runner's own question (`approvedTarget`): a change waiting for the owner's card leaves the
+  // routine running on its last approved text, so it reads approved and says a change waits.
+  const view = approvedTarget(projectRoot, m, undefined, 'run');
+  const approval = view.verdict;
   return {
     slug: m.slug,
     title: m.title,
@@ -336,6 +341,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     catchupHours: m.catchupHours,
     approved: approval.approved,
     approvalReason: approval.approved ? null : approval.reason,
+    changeWaits: view.pending !== null,
     cache: cacheSummary(readAutomationCache(contextRoot, m.slug), approval.approved),
     review: m.review,
     whiteboard: m.whiteboard ?? null,
@@ -2272,7 +2278,8 @@ export function sayFromApp(
       return sayRefusal(409, 'say_unsplit', `${manifest.title} is one scheduled job, not a member an app can call. Make it a team member first.`);
     }
     if (!manifest.enabled) return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
-    const verdict = checkApproval(dirname(contextRoot), manifest, undefined, 'run');
+    // The runner's own question: a change waiting for the card leaves it callable on its approved text.
+    const verdict = approvedTarget(dirname(contextRoot), manifest, undefined, 'run').verdict;
     if (!verdict.approved && verdict.reason === 'not_owner') {
       return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here.`);
     }
@@ -2486,7 +2493,8 @@ export function replyToAgent(
   const slug = input.slug;
   const manifest = getAutomation(contextRoot, slug);
   if (!manifest) return sayRefusal(404, 'not_found', `Automation not found: ${slug}`);
-  const verdict = checkApproval(dirname(contextRoot), manifest, undefined, 'run');
+  // The runner's own question: a change waiting for the card leaves it working on its approved text.
+  const verdict = approvedTarget(dirname(contextRoot), manifest, undefined, 'run').verdict;
   if (!verdict.approved && verdict.reason === 'not_owner') {
     return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here.`);
   }
@@ -2588,7 +2596,7 @@ export async function handleAutomationsThreadReply(
       sendError(res, 409, 'reply_disabled', `${manifest.title} is turned off. Turn it on to reply.`);
       return;
     }
-    if (!checkApproval(dirname(contextRoot), manifest, undefined, 'run').approved) {
+    if (!approvedTarget(dirname(contextRoot), manifest, undefined, 'run').verdict.approved) {
       sendError(
         res, 409, 'reply_unapproved',
         `${manifest.title} is not approved on this machine yet. Approve it, then reply again.`,

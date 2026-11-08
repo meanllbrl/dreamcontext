@@ -860,7 +860,8 @@ export function backgroundOutputPath(cwd: string, conversationId: string, taskId
  */
 export function resumeRunsBypass(bypass: boolean, contextRoot: string, chatAgent: string | null): boolean {
   if (bypass) return true;
-  return !!chatAgent && getRunTarget(contextRoot, chatAgent, 'agent')?.autonomy === 'free';
+  // The level the conversation runs at: the approved version's when a change waits (`prepareAgentChat`).
+  return !!chatAgent && approvedRunTarget(contextRoot, chatAgent, 'agent', undefined, 'identity')?.autonomy === 'free';
 }
 
 /** True when any of `ids` is a task step's session on this machine (registry or binding tag). */
@@ -5339,6 +5340,7 @@ export function startChatSession(
 import { parseTranscriptHistory, type ChatHistoryItem } from '../../lib/transcript-history.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
+import { approvedRunTarget } from '../../lib/automations/approved-run-target.js';
 
 export {
   parseTranscriptHistory,

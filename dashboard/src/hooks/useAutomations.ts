@@ -115,6 +115,8 @@ export interface AutomationSummary {
   catchupHours: number;
   approved: boolean;
   approvalReason: ApprovalReason | null;
+  /** Approved, running on its last approved text, while a newer version waits for the owner's card. Optional: an older server sends none. */
+  changeWaits?: boolean;
   cache: AutomationCacheSummary | null;
   review: 'off' | 'agent' | 'output';
   /** The question currently holding this automation, if any (either an

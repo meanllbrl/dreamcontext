@@ -53,11 +53,13 @@ import {
   approvalFields,
   approveAutomation,
   changedApprovalFields,
+  approvedTarget,
   checkApproval,
   registerProject,
   renderApprovalReview,
 } from '../../lib/automations/registry.js';
 import { nextFireIso } from '../../lib/automations/approval-card.js';
+import { describePendingChange, type PendingChangeInfo } from '../../lib/agents/pending-change.js';
 import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
@@ -132,6 +134,9 @@ export interface AgentSummary {
   enabled: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
   approvalReason: string | null;
+  /** A newer version that waits for the owner's card: who wrote it, when, which fields, what was
+   *  flagged, and whether the member keeps working on its last approved text meanwhile. */
+  pendingChange: PendingChangeInfo | null;
   /** Its creator's login (`machine:<id>`, `unowned`), null on an unstamped file (B1-3). */
   owner: string | null;
   /** How the owner reads in a sentence ("nobody (unowned)" …), null when it has none. */
@@ -196,8 +201,12 @@ export function summarizeAgent(
 ): AgentSummary {
   const projectRoot = dirname(contextRoot);
   const global = target.agentScope === 'global';
-  const forChat = checkApproval(projectRoot, target, home, 'identity');
-  const toRun = checkApproval(projectRoot, target, home, 'run');
+  // The one question every run and conversation asks (`approvedTarget`): a change waiting for the
+  // owner's card leaves the member working on its last approved text.
+  const forChat = approvedTarget(projectRoot, target, home, 'identity').verdict;
+  const runView = approvedTarget(projectRoot, target, home, 'run');
+  const toRun = runView.verdict;
+  const waiting = runView.pending !== null || (!toRun.approved && toRun.reason === 'manifest-changed');
   const readOnly = !toRun.approved && toRun.reason === 'not_owner';
   const where = readOnly ? { here: true as const } : placement(contextRoot, target.slug, target.owner ?? null, home);
   const owner = agent?.owner ?? target.owner ?? null;
@@ -225,6 +234,7 @@ export function summarizeAgent(
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
     approvalReason: toRun.approved || readOnly ? null : toRun.reason,
+    pendingChange: waiting && !readOnly ? describePendingChange(contextRoot, target, runView.pending !== null, home) : null,
     enabled: target.enabled,
     owner,
     ownerLabel: owner ? ownerLabel(owner) : null,

@@ -348,6 +348,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-install-tmp-',
   'dc-jsonl-fold-',
   'dc-junk-',
+  'dc-keeps-working-',
   'dc-ki-',
   'dc-kmerge-',
   'dc-kmove-',

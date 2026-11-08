@@ -27,10 +27,12 @@ export interface SuperApproval {
   member: string;
   /** Changed since it was approved (instructions, a synced change), vs new. */
   changed: boolean;
+  /** It keeps working on the version the owner approved; only the newer one waits (owner 2026-11-08). */
+  keepsWorking?: boolean;
 }
 
-type AgentFields = Pick<AgentSummary, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason'> & { readOnly?: boolean; enabled?: boolean };
-type AutomationFields = Pick<AutomationSummary, 'slug' | 'title' | 'agent' | 'agentTitle' | 'approved' | 'approvalReason' | 'enabled' | 'runKind'>;
+type AgentFields = Pick<AgentSummary, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason'> & { readOnly?: boolean; enabled?: boolean; pendingChange?: AgentSummary['pendingChange'] };
+type AutomationFields = Pick<AutomationSummary, 'slug' | 'title' | 'agent' | 'agentTitle' | 'approved' | 'approvalReason' | 'enabled' | 'runKind'> & { changeWaits?: boolean };
 
 const changedReason = (r: string | null | undefined) => r === 'manifest-changed' || r === 'payload-format-changed';
 
@@ -39,20 +41,22 @@ export function superApprovals(agents: readonly AgentFields[] | undefined, autom
   const nameOf = new Map((agents ?? []).map((a) => [a.slug, a.title || a.slug]));
   for (const a of agents ?? []) {
     if (a.readOnly || a.enabled === false) continue;
-    if (a.approvedForChat && a.approvedToRun) continue;
+    const keepsWorking = a.approvedForChat && a.approvedToRun && !!a.pendingChange;
+    if (a.approvedForChat && a.approvedToRun && !keepsWorking) continue;
     if (a.approvalReason === 'not_owner') continue;
     const title = a.title || a.slug;
-    out.push({ key: `agent:${a.slug}`, kind: 'agent', slug: a.slug, title, memberTitle: title, member: a.slug, changed: changedReason(a.approvalReason) });
+    out.push({ key: `agent:${a.slug}`, kind: 'agent', slug: a.slug, title, memberTitle: title, member: a.slug, changed: keepsWorking || changedReason(a.approvalReason), ...(keepsWorking ? { keepsWorking } : {}) });
   }
   for (const m of automations ?? []) {
-    if (m.runKind === 'agent' || m.approved || !m.enabled || m.approvalReason === 'not_owner') continue;
+    if (m.runKind === 'agent' || (m.approved && !m.changeWaits) || !m.enabled || m.approvalReason === 'not_owner') continue;
     // A legacy file that is its own agent (no `agent:`) is already the member's row. A split
     // member's scheduled job keeps the member's slug but is a grant of its own: it gets a row.
     if (!m.agent && out.some((o) => o.kind === 'agent' && o.slug === m.slug)) continue;
     const owner = m.agent ?? m.slug;
     out.push({
       key: `routine:${m.slug}`, kind: 'routine', slug: m.slug, title: m.title || m.slug,
-      memberTitle: nameOf.get(owner) ?? m.agentTitle ?? owner, member: owner, changed: changedReason(m.approvalReason),
+      memberTitle: nameOf.get(owner) ?? m.agentTitle ?? owner, member: owner, changed: m.approved || changedReason(m.approvalReason),
+      ...(m.approved ? { keepsWorking: true } : {}),
     });
   }
   return out;
@@ -78,6 +82,9 @@ export function showMemberApproval(member: string, root?: ParentNode): boolean {
 
 /** The one sentence a row is said in (the AI Team page's own words). */
 export function superApprovalSentence(it: SuperApproval, t: (k: string) => string): string {
+  if (it.keepsWorking) {
+    return t(it.kind === 'routine' ? 'aiteam.approval.routineKeepsWorking' : 'aiteam.approval.keepsWorking').replace('{routine}', it.title).replace('{name}', it.memberTitle);
+  }
   if (it.kind === 'routine') {
     return t(it.changed ? 'aiteam.approval.routineChanged' : 'aiteam.approval.routineNew').replace('{routine}', it.title).replace('{name}', it.memberTitle);
   }

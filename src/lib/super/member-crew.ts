@@ -18,9 +18,10 @@ export const MODE_RANK: Record<string, number> = { plan: 0, default: 1, auto: 2,
  */
 export function memberLevelMode(contextRoot: string, slug: string): string {
   try {
-    if (memberCallState(contextRoot, slug).state !== 'ready') return 'default';
-    const target = getRunTarget(contextRoot, slug, 'agent');
-    if (target) return levelPermissionArgs(target.autonomy ?? DEFAULT_AGENT_AUTONOMY, 'chat')[1] ?? 'default';
+    // `manifest` of a ready member is the version that may run: a pending edit never widens a child.
+    const call = memberCallState(contextRoot, slug);
+    if (call.state !== 'ready' || !call.manifest) return 'default';
+    return levelPermissionArgs(call.manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY, 'chat')[1] ?? 'default';
   } catch { /* gone */ }
   return 'default';
 }

@@ -41,6 +41,8 @@ import {
   writeAutomationsRegistry,
 } from '../../src/lib/automations/registry.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { approvedTarget } from '../../src/lib/automations/registry.js';
+import { approvedTextsDir } from '../../src/lib/automations/approved-text.js';
 import { createQuestion, refreshQuestion } from '../../src/lib/automations/hitl.js';
 import { createWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
@@ -442,11 +444,16 @@ describe('refusals: no spawn, a named reason', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('removing `whiteboard` from an approved scoped manifest refuses the Telegram and the answer path', async () => {
+  it('removing `whiteboard` from an approved scoped manifest never widens it: with no approved text kept it refuses, with one it stays on its board', async () => {
     makeAgent();
     const q = makeQuestion();
     dropManifestLine('board-pilot', 'whiteboard');
     expect(getAutomation(contextRoot, 'board-pilot')?.whiteboard).toBeNull();
+    // Owner 2026-11-08: the approved version (scoped to its board) keeps working.
+    const kept = approvedTarget(projectRoot, getAutomation(contextRoot, 'board-pilot')!, home, 'run');
+    expect(kept.manifest.whiteboard).not.toBeNull();
+    // An approval made before texts were kept: the old refusal.
+    rmSync(approvedTextsDir(home), { recursive: true, force: true });
     const { impl, calls } = fakeSpawn();
     const talked = await resumeWithMessage(contextRoot, 'board-pilot', 'hi', { home, spawnImpl: impl, now: () => NOW });
     expect(talked.status).toBe('refused');

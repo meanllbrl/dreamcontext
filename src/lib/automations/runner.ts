@@ -33,7 +33,8 @@ import {
 } from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
-import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
+import { approvalFields, approvedTarget, getApproval, renderApprovalReview } from './registry.js';
+import { claimPendingNotice } from '../agents/pending-change.js';
 import { ownerLabel } from '../agents/owner.js';
 import { effectivePattern } from '../agents/agent-sync.js';
 import { placement } from '../agents/active.js';
@@ -1920,8 +1921,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
 
   // Step 1 — no manifest, no cache write (never manufacture brain-synced state
   // out of a typo'd slug).
-  const manifest = opts.target ? getRunTarget(contextRoot, slug, opts.target) : getAutomation(contextRoot, slug);
-  if (!manifest) {
+  const loaded = opts.target ? getRunTarget(contextRoot, slug, opts.target) : getAutomation(contextRoot, slug);
+  if (!loaded) {
     return {
       slug,
       status: 'failed',
@@ -1935,6 +1936,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       reviewCardId: null,
     };
   }
+  // Reassigned once, at the approval step, to the last approved text when a change waits.
+  let manifest: AutomationManifest = loaded;
 
   const projectRoot = dirname(contextRoot);
   const fireIso = fireAt.toISOString();
@@ -2208,7 +2211,20 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   //    conversation about a capability already held. It asks, in a weaker
   //    envelope, and exits.
   // Strict 'run' use: anything that EXECUTES a target needs a direct grant.
-  const approval = checkApproval(projectRoot, manifest, home, 'run');
+  // A change the owner did not make here (a teammate's, risky text a background run wrote) waits
+  // for his card while the run goes on the last approved text (`approvedTarget`, owner 2026-11-08).
+  const view = approvedTarget(projectRoot, manifest, home, 'run');
+  if (view.pending) {
+    const notice = claimPendingNotice(contextRoot, manifest, view.pending, home);
+    if (notice) notifyFn(notice.title, notice.body, NOTIFY_SOUND_OK, null, automationLink(contextRoot, slug, null, home));
+    // The clock that fired this read the PENDING file. An on-call target that a waiting change
+    // gave a schedule never fires unattended: the version that may run only runs when called.
+    if (opts.unattended && view.manifest.mode === 'call' && manifest.mode !== 'call') {
+      return shortCircuit('blocked', 'its schedule is part of a change that waits for your approval; until you approve it, it runs only when called');
+    }
+    manifest = view.manifest;
+  }
+  const approval = view.verdict;
   // Someone else's agent or automation is read-only here: refused BEFORE the prior-approval
   // question branch, so it never asks (a held approval from before lends it nothing).
   if (!approval.approved && approval.reason === 'not_owner') {
