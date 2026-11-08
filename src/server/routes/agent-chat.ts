@@ -3450,7 +3450,12 @@ export function startChatSession(
     openTurn();
     lastSentText = tgRef ? raw : text;
     turnProgressed = false;
-    registry?.userSent(text, tgSource ? { source: tgSource } : undefined);
+    // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
+    // the server's text, never his: it owes him nothing, decides no language and ends no Telegram
+    // presence (hub.ts), it only reads.
+    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
+      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
+    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue ? { server: true } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3465,10 +3470,6 @@ export function startChatSession(
     if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
-    // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
-    // the server's text, never his: it owes him nothing and decides no language, it only reads.
-    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
-      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     if (isSuper && !text.startsWith('/')) {
       const lang = serverContinue ? superKnownLanguage(chatRegistryId) : superOwnerLanguage(chatRegistryId, text);
       content.push({ type: 'text', text: ownerLanguageBlock(lang) });

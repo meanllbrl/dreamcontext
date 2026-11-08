@@ -509,7 +509,10 @@ export const TYPING_EVERY_MS = 4000;
 // ─── Hands-free events (D2, E3, E4) ─────────────────────────────────────────
 
 export type HandsfreeChannel = 'telegram' | 'full';
-export interface StartedVia { scope: TelegramScope; target: TelegramTarget }
+/** `auto`: the hub started this power-only run BY ITSELF on the owner's Telegram presence (his
+ *  message reached the Super through its bot); only such a run ends by itself when he is back at
+ *  the Mac. A run he started by the `/handsfree` button or the link mode never carries it. */
+export interface StartedVia { scope: TelegramScope; target: TelegramTarget; auto?: true }
 /** `MacSession` emits these (W2 lane B). Streaming is DERIVED: `isOn() && startedVia` names the
  *  binding, evaluated per message (E3); there is no stored flag. */
 export type HandsfreeEvent =

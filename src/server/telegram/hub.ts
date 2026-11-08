@@ -13,8 +13,10 @@
  *    (or the Super window is reopened through its session link and the injector awaited) →
  *    `withTelegramRef(ref, text)` with the ref put in the store first; journaled, then confirmed;
  *  - the Super's answer → the sections whose `re:` names a routable Telegram ref (24 h hard cap
- *    from first injection), or the whole text when the turn held only Telegram text; while
- *    Telegram-started hands-free is on, every answer (marks stripped);
+ *    from first injection), or the whole text when the turn held only Telegram text; while the
+ *    owner is ON TELEGRAM (his latest message to this Super came through this bot, under 24 h,
+ *    see `onTelegram`) every section, whatever ref it opens with (job results, owed answers);
+ *    while Telegram-started hands-free is on, every answer (marks stripped);
  *  - typing while the turn runs; one status message per Telegram message, rows = children and
  *    team jobs whose origin is that ref; a final "Bitti" message;
  *  - the Super chat's own permission / question prompts as buttons answered through the window
@@ -90,6 +92,10 @@ export interface HubHandsfree {
   onCallback?(hub: TelegramHub, key: BindingKey, record: ButtonRecord, idx: number): Promise<string | null>;
   /** A binding is lost: Telegram-only hands-free it started ends (C3, D3). */
   onBindingLost?(scope: TelegramScope, target: TelegramTarget): void;
+  /** The owner's presence on a Super binding moved (`onTelegram`): `telegram` = an authorized
+   *  message the hub injected, `mac` = his own words typed to the Super on the Mac. Only the hub
+   *  calls it; it is how Telegram-only hands-free starts and ends by itself. */
+  onPresence?(hub: TelegramHub, key: BindingKey, via: 'telegram' | 'mac'): void;
 }
 
 export interface HubMember {
@@ -189,6 +195,14 @@ export class TelegramHub implements TelegramHubApi {
   private superSessions = new Map<string, BindingKey>();
   /** Per Super chat: what the running turn's owner inputs were (fallback rule, plan "Which answer"). */
   private turnInputs = new Map<string, { telegram: Set<string>; mac: boolean }>();
+  /** Per Super binding: where the owner's LATEST message to it came from (`onTelegram`).
+   *  DERIVED, never set by an agent: `injectText` (an authorized Telegram message or a button the
+   *  hub turned into a turn) marks `telegram`; an owner turn the chat wrote with no Telegram ref
+   *  marks `mac`. Memory only: a restarted server starts off Telegram (fails toward fewer sends). */
+  private presence = new Map<BindingKey, { via: 'telegram' | 'mac'; at: number }>();
+  /** A Mac owner turn in a Super chat the hub has not mapped yet (a fresh session): applied once
+   *  the chat → binding map is refreshed, before any answer of that chat is routed. */
+  private macPending = new Map<string, number>();
   /** Prompts already sent (requestId), so a re-emitted `asking` does not send twice. */
   private sentPrompts = new Set<string>();
   private unsubs: Array<() => void> = [];
@@ -209,7 +223,7 @@ export class TelegramHub implements TelegramHubApi {
     this.unsubs.push(
       onChatAssistantText((sid, text) => { void this.onAssistantText(sid, text).catch(() => { /* best-effort */ }); }),
       onChatChange((c) => this.onChatChange(c.entry, c.from)),
-      onChatUserSent((sid, _text, source) => this.noteUserSent(sid, source)),
+      onChatUserSent((sid, text, source, server) => this.noteUserSent(sid, source, text, server)),
       telegramRefs.onTelegramRefDropped((id, ref, written) => this.onRefDropped(id, ref, written)),
       telegramRefs.onTelegramRefWritten((id, ref) => this.onRefWritten(id, ref)),
     );
@@ -683,6 +697,8 @@ export class TelegramHub implements TelegramHubApi {
       await this.reply(ab, LINES.notWritten);
       return false;
     }
+    this.presence.set(ab.key, { via: 'telegram', at: this.now() });
+    try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
     return ref;
   }
 
@@ -814,7 +830,18 @@ export class TelegramHub implements TelegramHubApi {
     turn.lastEditAt = this.now();
   }
 
-  private noteUserSent(sessionId: string, source: string | undefined): void {
+  private noteUserSent(sessionId: string, source: string | undefined, text = '', server = false): void {
+    // His own words typed on the Mac (or a phone mirror) end his Telegram presence. An event turn
+    // (empty), a slash command, a server continue and a Telegram-sourced turn are not that.
+    if (!source && !server && text.trim() && !text.trimStart().startsWith('/')) {
+      const key = this.superSessions.get(sessionId);
+      if (key) this.markMac(key, this.now());
+      else if (this.presence.size) {
+        this.macPending.set(sessionId, this.now());
+        if (this.macPending.size > 200) this.macPending.delete(this.macPending.keys().next().value as string);
+        void this.refreshSuperSessions().catch(() => {});
+      }
+    }
     if (!this.superSessions.has(sessionId)) return;
     const cur = this.turnInputs.get(sessionId) ?? { telegram: new Set<string>(), mac: false };
     if (source !== 'telegram-text') cur.mac = true;
@@ -872,25 +899,49 @@ export class TelegramHub implements TelegramHubApi {
         if (s.session) this.superSessions.set(s.session, ab.key);
       } catch { /* unreadable: nothing routes */ }
     }
+    for (const [sid, at] of [...this.macPending]) {
+      const key = this.superSessions.get(sid);
+      if (key) { this.markMac(key, at); this.macPending.delete(sid); }
+    }
+  }
+
+  private markMac(key: BindingKey, at: number): void {
+    const p = this.presence.get(key);
+    // A Telegram message that came after this Mac turn wins (the latest message decides).
+    if (p && p.at > at) return;
+    this.presence.set(key, { via: 'mac', at });
+    try { this.deps.handsfree?.onPresence?.(this, key, 'mac'); } catch { /* best-effort */ }
+  }
+
+  /** The owner is ON TELEGRAM for this Super binding: his latest message to it came through
+   *  this bot, under 24 h ago (N7's cap). Derived from the hub's own injections and the chats'
+   *  owner turns only: no CLI, route or agent text can set it. */
+  onTelegram(ab: ActiveBinding): boolean {
+    const p = this.presence.get(ab.key);
+    return !!p && p.via === 'telegram' && this.now() - p.at < TURN_ROUTABLE_MS;
   }
 
   async onAssistantText(sessionId: string, text: string): Promise<void> {
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
     if (!ab || ab.disabled || ab.target !== 'super') return;
+    if (this.macPending.has(sessionId)) await this.refreshSuperSessions();
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode()); await this.answerExtras?.(ab, all, sessionId); }
       return;
     }
     const sections = splitReplySections(text);
+    // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
+    // under a Mac ref, an owed answer); each section once, through this one sender.
+    const wide = this.onTelegram(ab);
     let sent = false;
     for (const s of sections) {
       const hit = s.refs.find((r) => this.routable(ab!, r));
-      if (!hit || !s.text.trim()) continue;
+      if ((!hit && !wide) || !s.text.trim()) continue;
       await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode());
       await this.answerExtras?.(ab, s.text, sessionId);
-      const t = this.turns.get(hit);
+      const t = hit ? this.turns.get(hit) : undefined;
       if (t) t.answered = true;
       sent = true;
     }
