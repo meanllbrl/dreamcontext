@@ -666,6 +666,9 @@ export interface ThreadEntry {
    *  the owner's sentence, on any surface, even when he typed it in the app's own chat. */
   app?: string;
   via: ThreadVia;
+  /** A run post's stamp (plan Y3, Z3, AA3): HMAC(per-run key, id + content hash), written by
+   *  `automations post` from the run's own child. Only the parent runner can verify it. */
+  stamp?: string;
 }
 
 /** One run's thread, as a channel list renders it. */

@@ -222,6 +222,7 @@ function parseEntry(json: string): ThreadEntry | null {
       via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app' || r.via === 'telegram')
         ? (r.via as ThreadVia)
         : 'runner',
+      ...(typeof r.stamp === 'string' && /^[0-9a-f]{64}$/.test(r.stamp) ? { stamp: r.stamp } : {}),
     };
   } catch {
     return null;
@@ -410,6 +411,9 @@ export interface AppendThreadEntryInput {
    * mints the id itself, so a caller cannot know it beforehand.
    */
   stamp?: (id: string, contentHash: string) => void;
+  /** Computes the entry's `stamp` field from the id it will carry and its content hash, BEFORE
+   *  it is written (the run-post stamp, `automations post` with the run's key). */
+  runStamp?: (id: string, contentHash: string) => string;
 }
 
 /**
@@ -590,6 +594,10 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     ...(input.app ? { app: input.app } : {}),
     via: input.via,
   };
+  if (input.runStamp) {
+    const sig = input.runStamp(entry.id, threadEntryContentHash(entry));
+    if (/^[0-9a-f]{64}$/.test(sig)) entry.stamp = sig;
+  }
 
   const block = `${THREAD_ENTRY_MARKER}\n\`\`\`json\n${JSON.stringify(entry)}\n\`\`\`\n\n`;
   if (Buffer.byteLength(block, 'utf-8') > THREAD_ENTRY_MAX_BYTES) {

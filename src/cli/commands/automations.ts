@@ -67,6 +67,7 @@ import {
   readThread,
   threadUnread,
 } from '../../lib/automations/threads.js';
+import { RUN_POST_STAMP_ENV, runPostStamp } from '../../lib/telegram/member-forward.js';
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { approvalCardBlock, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
@@ -1594,6 +1595,10 @@ export function registerAutomationsCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        // A post from the run's own child is stamped with the run's key (plan Y3, AA3): only the
+        // parent runner, which minted the key, can verify it; nothing else forwards.
+        const stampKey = process.env[RUN_POST_STAMP_ENV];
+        const ownRun = !!stampKey && runId === process.env.DREAMCONTEXT_AUTOMATION_RUN?.trim();
         const entry = appendThreadEntry(root, slug, {
           runId,
           kind: 'agent',
@@ -1601,6 +1606,7 @@ export function registerAutomationsCommand(program: Command): void {
           files: opts.file,
           ...(opts.kv.length > 0 ? { summary: opts.kv } : {}),
           via: 'cli',
+          ...(ownRun ? { runStamp: (id: string, hash: string) => runPostStamp(stampKey!, id, hash) } : {}),
         });
         success(`Posted to "${slug}".`);
         console.log(chalk.dim(`  run ${runId} · entry ${entry.id}`));

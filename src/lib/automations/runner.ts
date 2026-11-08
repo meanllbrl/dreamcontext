@@ -33,7 +33,9 @@ import {
 } from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
-import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
+import { approvalFields, checkApproval, getApproval, manifestHash, renderApprovalReview } from './registry.js';
+import { buildRoutineForward, mintRunPostKey, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
+import type { OnDeferredSend } from '../telegram/contract.js';
 import { ownerLabel } from '../agents/owner.js';
 import { effectivePattern } from '../agents/agent-sync.js';
 import { placement } from '../agents/active.js';
@@ -1719,6 +1721,9 @@ export function buildApprovalQuestionPrompt(m: AutomationManifest, review: strin
 // ─── RunOptions (host discriminated union — see runAutomation) ─────────────
 
 interface RunOptionsBase extends BoardTurnInput {
+  /** The launchd tick collects the member bot's routine message instead of awaiting each
+   *  (plan Z2, AA3): it awaits its batch after its loop. Absent: `runAutomation` awaits it. */
+  onDeferredSend?: OnDeferredSend;
   now?: () => Date;
   spawnImpl?: SpawnImpl;
   home?: string;
@@ -1835,6 +1840,19 @@ export const OUTPUT_WRITE_FAILURE_REASON = 'could not write output file — see 
  * a programmer error, not a run outcome.
  */
 export async function runAutomation(contextRoot: string, slug: string, opts: RunOptions = {}): Promise<RunOutcome> {
+  // The member bot's routine message (plan W4, Z2): built inside `finalize`, sent HERE, after the
+  // inner body's `finally` released the run lock and before the caller goes on. The launchd tick
+  // collects instead (`onDeferredSend`) and awaits its batch after its loop.
+  const sink: { send: (() => Promise<void>) | null } = { send: null };
+  const outcome = await runAutomationInner(contextRoot, slug, opts, sink);
+  if (sink.send) {
+    if (opts.onDeferredSend) opts.onDeferredSend(sink.send);
+    else await sink.send().catch(() => { /* logged by the sender; never the run's outcome */ });
+  }
+  return outcome;
+}
+
+async function runAutomationInner(contextRoot: string, slug: string, opts: RunOptions, forwardSink: { send: (() => Promise<void>) | null }): Promise<RunOutcome> {
   if (opts.host === 'server' && typeof opts.registerChild !== 'function') {
     throw new AutomationError('host:"server" requires registerChild.');
   }
@@ -1881,6 +1899,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
 
   /** Set the moment any claude child exists for this fire (the task host's "a child ran"). */
   let spawnedAny = false;
+  /** This run's post-stamp key (plan Y3, AA3): in memory and the child's env only, never on disk. */
+  const runPostKey = mintRunPostKey();
+  /** A no-choice flow question this run stopped on: its text reaches the member's bot (Y2). */
+  let forwardQuestion: string | null = null;
   const taskStep = opts.taskStep ?? null;
 
   // ASYNC, AND EVERY CALL INSIDE THE try BELOW MUST BE `return await`ed, never
@@ -1939,6 +1961,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       advanceWatermark: params.advanceWatermark,
       coalesceRepeat: params.coalesceRepeat === true,
     });
+    // After recordRun (plan W4): the message is built now and sent once the lock is released.
+    if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout' || params.status === 'awaiting-review') buildForward(params);
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
     // The run's terminal entry, AFTER `recordRun` so the thread can never claim
     // an outcome the cache does not have. Only the three statuses that mean the
@@ -2059,6 +2083,26 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       sessionId: params.sessionId,
       result: params.resultText ?? null,
     };
+  };
+  /** The member bot's message for this run, or none (member-forward.ts): only a scheduled fire,
+   *  never a task step or a job the Super sent; best-effort, never the run's outcome. */
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null }): void => {
+    try {
+      const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
+      if (!scheduled || !manifest.agent) return;
+      if (superRunQuiet(contextRoot, slug, fireIso)) return;
+      const entries = readThreadRun(contextRoot, slug, fireIso);
+      forwardSink.send = buildRoutineForward({
+        contextRoot, slug, title: manifest.title, agent: manifest.agent, approvalHash: manifestHash(manifest as AutomationManifest),
+        status: params.status, error: params.error,
+        reviewPending: !!params.reviewCardId && !forwardQuestion,
+        question: params.reviewCardId ? forwardQuestion : null,
+        scheduled, runId: fireIso, entries, verified: verifiedRunPosts(entries, fireIso, runPostKey),
+        home, log: logFn,
+      });
+    } catch (err) {
+      logFn(`automation "${slug}": telegram forward skipped: ${(err as Error).message}`);
+    }
   };
 
   const shortCircuit = (status: RunStatus, error: string): Promise<RunOutcome> => {
@@ -2583,6 +2627,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         DREAMCONTEXT_AUTOMATION_SLUG: slug,
         DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
         DREAMCONTEXT_AUTOMATION_SLOT: fireSlotEnv(manifest, fireAt),
+        // The run-post stamp key (plan Y3, Z3): Claude and Codex runs alike.
+        [RUN_POST_STAMP_ENV]: runPostKey,
         // Built from the manifest and the approval entry, never from a caller; empty for
         // an ordinary agent, whose env is unchanged.
         ...scopeVars,
@@ -2899,6 +2945,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               nowISO: nowFn().toISOString(),
             });
             reviewCardId = q.id;
+            forwardQuestion = flow.hitlPrompt ?? 'This run needs your answer before its work takes effect.';
             // `asked` belongs to the run that asked it. The APPROVAL question
             // (the one raised before an unapproved manifest ever runs) writes
             // nothing: its session is forced null and it is not a run of the
