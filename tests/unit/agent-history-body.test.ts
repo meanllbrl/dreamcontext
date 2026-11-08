@@ -89,6 +89,8 @@ describe('the total rule: one row for a run with no post', () => {
     recordRun(contextRoot, 'line-watch', row({ outputPath: doc('---\ntitle: x\n---\n\n# Report\n\nThe **line** is quiet.\n') }));
     const s = session();
     expect(s.hasDocument).toBe(true);
+    // The tile the member's page draws: brain-relative path, name, the opening sentence.
+    expect(s.document).toEqual({ path: 'automations/output/line-watch/run.md', name: 'run.md', head: 'The line is quiet.' });
     expect(s.rows).toMatchObject([{ origin: 'answer', text: 'The line is quiet.' }]);
   });
 
@@ -98,6 +100,7 @@ describe('the total rule: one row for a run with no post', () => {
     recordRun(contextRoot, 'line-watch', row({ outputPath: doc('') }));
     const s = session();
     expect(s.hasDocument).toBe(false);
+    expect(s.document).toBeUndefined();
     expect(s.rows).toMatchObject([{ origin: 'note', text: 'Finished in 1m 16s.' }]);
   });
 

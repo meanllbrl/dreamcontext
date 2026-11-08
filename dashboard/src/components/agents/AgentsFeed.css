@@ -395,6 +395,10 @@
 .agent-msg-file-note {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .agent-msg-file--audio { cursor: default; padding-right: var(--space-3); }

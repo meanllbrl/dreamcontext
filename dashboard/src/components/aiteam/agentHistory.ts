@@ -121,6 +121,7 @@ function metaOf(s: FeedSession): FeedMeta {
     durationMs: s.durationMs,
     unread: s.unread,
     ...(s.hasDocument ? { hasDocument: true } : {}),
+    ...(s.document ? { document: s.document } : {}),
     ...(s.claudeId ? { claudeId: s.claudeId } : {}),
     ...(s.resumable ? { resumable: true } : {}),
     ...(s.elsewhere ? { elsewhere: true } : {}),

@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  feedAnchorMs, feedGroups, firstKnownTs, inlinePlacement, splitFeedAt, type FeedItem, type FeedMeta,
+  chatFilePath, documentHead, feedAnchorMs, feedGroups, firstKnownTs, inlinePlacement, runFootOf, splitFeedAt, type FeedItem, type FeedMeta,
 } from '../../dashboard/src/components/sleepy/chat/chatFeed';
 import { toFeedItems, type FeedSession } from '../../dashboard/src/components/aiteam/agentHistory';
 import {
@@ -122,5 +122,27 @@ describe('the member feed state', () => {
     expect(memberFeedSignature(slugs, [...base, { slug: 'other', runId: 'r10', status: 'running', newestId: null }], ['other'], 'deneme')).toBe(a);
     expect(memberFeedSignature(slugs, base, ['daily-ai-news'], 'deneme')).not.toBe(a);
     expect(memberFeedSignature(slugs, [...base, { slug: 'daily-ai-news', runId: 'r2', status: 'running', newestId: 'e2' }], [], 'deneme')).not.toBe(a);
+  });
+});
+
+describe('a run\'s document is a tile, never a link or an inline report', () => {
+  const doc = { path: 'automations/output/daily-ai-news/2026-11-08.md', name: '2026-11-08.md', head: 'Top story: a model shipped.' };
+  it('the foot offers the document the run published, and nothing for a run without one', () => {
+    const [withDoc] = toFeedItems([session('a', '08:00', '08:01', { hasDocument: true, document: doc })]);
+    const [without] = toFeedItems([session('b', '09:00', '09:01')]);
+    expect(runFootOf(withDoc.feed).document).toEqual(doc);
+    expect(runFootOf(without.feed)).toEqual({ steps: false, document: null });
+  });
+  it('steps stay as they were: offered when a session is on this machine', () => {
+    const [it] = toFeedItems([session('a', '08:00', '08:01', { claudeId: 'sess-1' })]);
+    expect(runFootOf(it.feed).steps).toBe(true);
+  });
+  it('the pane opens a run\'s document from the brain folder (project-relative, never twice)', () => {
+    expect(chatFilePath('automations/output/x/2026-11-08.md')).toBe('_dream_context/automations/output/x/2026-11-08.md');
+    expect(chatFilePath('_dream_context/a.md')).toBe('_dream_context/a.md');
+  });
+  it('the tile\'s lines: two lines, headings lose their marks, marks stripped', () => {
+    expect(documentHead('# Daily news\n\n**Top** story: x\nthird')).toBe('Daily news Top story: x');
+    expect(documentHead('')).toBeUndefined();
   });
 });

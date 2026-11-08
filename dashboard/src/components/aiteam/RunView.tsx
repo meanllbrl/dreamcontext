@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAgentThread } from '../../hooks/useAutomations';
 import { FoldedReport } from '../agents/FoldedReport';
@@ -25,7 +25,7 @@ function useOnScreen<T extends Element>(): { ref: React.RefObject<T | null>; on:
  * something the owner said). A running run re-reads every 4 s only while it is on screen. The
  * server decides what a phone gets (`phoneRunItems`): there it is the agent's words and tool names.
  */
-export function RunView({ claudeId, live = false }: { claudeId: string; live?: boolean }) {
+export function RunView({ claudeId, live = false, endSlot }: { claudeId: string; live?: boolean; endSlot?: ComponentProps<typeof ChildTranscript>['endSlot'] }) {
   const { t } = useI18n();
   const { ref, on } = useOnScreen<HTMLDivElement>();
   const shownLive = live && on;
@@ -43,7 +43,7 @@ export function RunView({ claudeId, live = false }: { claudeId: string; live?: b
   }
   return (
     <div className="run-view" data-testid="run-view" ref={ref}>
-      <ChildTranscript key={claudeId} claudeId={claudeId} live={shownLive} foot="own" prepare={runViewItems} />
+      <ChildTranscript key={claudeId} claudeId={claudeId} live={shownLive} foot="own" prepare={runViewItems} endSlot={endSlot} />
     </div>
   );
 }

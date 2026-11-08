@@ -42,6 +42,8 @@ export interface FeedMeta {
   origin?: 'answer' | 'failure' | 'note';
   /** The run published a document here. */
   hasDocument?: boolean;
+  /** That document as a tile (brain path, name, opening sentence): it opens in the side file panel. */
+  document?: { path: string; name: string; head?: string };
   /** The run's session, from this machine's own records: its steps can be opened. */
   claudeId?: string;
   /** A reply can resume that session. */
@@ -194,24 +196,26 @@ export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): 
   return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
 }
 
-/** Does this row end a run that has a report to open? */
-export function feedReportShown(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
-  return marks.last && meta.sessionKind === 'run' && (meta.origin === 'answer' || meta.hasDocument === true);
+/** A run's document path (brain-relative, as the feeds carry it) as the chat pane opens files:
+ *  project-relative, so the side file panel reads it from the brain folder. */
+export function chatFilePath(brainPath: string): string {
+  return brainPath.startsWith('_dream_context/') ? brainPath : `_dream_context/${brainPath}`;
 }
 
-/** What can be opened under one run. Pure: the phone and the Mac draw the same answer. */
-export function runFootOf(meta: FeedMeta): { steps: boolean; report: boolean; noReport: boolean; canContinue: boolean; line: 'noSession' | 'otherMac' | null } {
-  const reportable = feedReportShown(meta, { last: true });
-  const report = reportable && meta.hasDocument === true;
-  const canContinue = !meta.elsewhere && (meta.resumable === true || meta.status === 'running');
-  const ended = meta.status === 'ok' || meta.status === 'failed' || meta.status === 'stopped';
-  return {
-    steps: !!meta.claudeId,
-    report,
-    noReport: reportable && !report,
-    canContinue,
-    line: meta.elsewhere ? 'otherMac' : !canContinue && ended ? 'noSession' : null,
-  };
+/** The first two lines of a document worth showing on its tile: headings lose their marks. */
+export function documentHead(text: string | null | undefined): string | undefined {
+  const lines = (text ?? '').split('\n').map((l) => l.replace(/^#{1,6}\s+/, '').replace(/[*_`>]/g, '').trim()).filter(Boolean);
+  const head = lines.slice(0, 2).join(' ').slice(0, 180);
+  return head || undefined;
+}
+
+/**
+ * What stands under one run: its steps (a session on this machine) and, when the run published a
+ * document, that document as a tile that opens in the side file panel. A run with no document
+ * shows nothing extra (owner 2026-11-08: no "Full report" link, no inline expand).
+ */
+export function runFootOf(meta: FeedMeta): { steps: boolean; document: { path: string; name: string; head?: string } | null } {
+  return { steps: !!meta.claudeId, document: meta.document ?? null };
 }
 
 /** A running run shows its steps by itself, until the owner closes them. */

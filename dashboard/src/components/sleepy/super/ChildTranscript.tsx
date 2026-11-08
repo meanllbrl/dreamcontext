@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
@@ -40,7 +40,7 @@ export function useChildHistory(claudeId: string, live: boolean) {
  * folder); no `claude` is started for it. The live chat takes the slot back the moment the child
  * runs again (`super resume`), because the card then has a session and draws the slot instead.
  */
-export function ChildTranscript({ claudeId, live = false, foot, prepare, parked = false }: {
+export function ChildTranscript({ claudeId, live = false, foot, prepare, parked = false, endSlot }: {
   claudeId: string;
   /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
   live?: boolean;
@@ -51,6 +51,8 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare, parked 
   /** Parked under machine load, not finished: it reads like a live child (the same read-only
    *  line), since parking is never shown (owner 2026-11-03). */
   parked?: boolean;
+  /** At the end of the transcript, with the pane's file opener (a run's document tile). Stable. */
+  endSlot?: (ctx: { openFile: (path: string) => void }) => ReactNode;
 }) {
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [session] = useState(() => createTranscriptSession(claudeId));
@@ -83,8 +85,9 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare, parked 
       signInCommand="claude auth login"
       // A run's steps are nobody's chat to write in, and whatever stands under them is the host's.
       readOnly={foot === 'own' ? 'silent' : live || parked ? true : 'finished'}
+      endSlot={endSlot}
     />
-  ), [session, modelConfig, live, foot, parked]);
+  ), [session, modelConfig, live, foot, parked, endSlot]);
   // A read-only transcript never draws a new chat's "Say something to start": until the history
   // is read the pane stays hidden behind a loading line, and an empty one says so (super-team.mjs T4).
   const { t } = useI18n();

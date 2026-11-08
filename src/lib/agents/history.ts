@@ -1,13 +1,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { getAgent } from './store.js';
 import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
 import { readMachineIdentity } from '../machine-id.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
-import { feedCutoffDay, readRunHead, runDocumentPath, runUnread } from '../automations/feed.js';
+import { feedCutoffDay, readRunHead, runDocumentPath, runUnread, toBrainRelative } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
@@ -71,6 +71,8 @@ export interface HistorySession {
   unread: boolean;
   /** A run with a published document here (`runDocumentPath`), posted or not. */
   hasDocument?: boolean;
+  /** That document, as a tile: brain-relative path, name, and its opening sentence. */
+  document?: { path: string; name: string; head?: string };
   /** The run's Claude session, from this machine's own records (`runChatSession`), never the
    *  synced cache. Owner audience only; absent when no steps can be opened here. */
   claudeId?: string;
@@ -395,6 +397,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             if (body) rows.splice(after < 0 ? rows.length : after, 0, body);
           }
           const chat = opts.audience === 'owner' ? runChatSession(contextRoot, source, runId, home) : null;
+          const docPath = runDocumentPath(contextRoot, run);
+          const docHead = docPath ? readRunHead(contextRoot, run) : null;
           const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
           return {
             key, kind: 'run', source, title,
@@ -404,7 +408,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             durationMs: run?.durationMs ?? threadDuration(runEntries),
             newestId,
             unread,
-            hasDocument: runDocumentPath(contextRoot, run) !== null,
+            hasDocument: docPath !== null,
+            ...(docPath ? { document: { path: toBrainRelative(contextRoot, docPath), name: basename(docPath), ...(docHead ? { head: docHead } : {}) } } : {}),
             ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
             ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
             rows,

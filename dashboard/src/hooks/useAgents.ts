@@ -425,6 +425,7 @@ export interface AgentHistorySession {
   newestId: string | null;
   unread: boolean;
   hasDocument?: boolean;
+  document?: { path: string; name: string; head?: string };
   claudeId?: string;
   resumable?: true;
   elsewhere?: true;

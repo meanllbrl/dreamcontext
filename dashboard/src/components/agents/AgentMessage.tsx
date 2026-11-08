@@ -101,10 +101,13 @@ export function AgentFiles({
   files,
   onOpenFile,
   layout = 'thread',
+  notes,
 }: {
   files: { path: string; name: string }[];
   onOpenFile: (path: string) => void;
   layout?: 'feed' | 'thread';
+  /** A document's opening lines, under its name, by path (a run's published document). */
+  notes?: Record<string, string>;
 }) {
   const { vault } = useVault();
   const { t } = useI18n();
@@ -211,6 +214,7 @@ export function AgentFiles({
                 <span className="agent-msg-file-type" aria-hidden="true">{typeWord(f.name)}</span>
                 <span className="agent-msg-file-text">
                   <span className="agent-msg-file-name">{middleTruncate(f.name, 40)}</span>
+                  {notes?.[f.path] && <span className="agent-msg-file-note">{notes[f.path]}</span>}
                 </span>
               </button>
             );

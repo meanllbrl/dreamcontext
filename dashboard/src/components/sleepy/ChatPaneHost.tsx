@@ -80,7 +80,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, feed, sendVia, quietResume,
+  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, endSlot, feed, sendVia, quietResume,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -111,6 +111,8 @@ function ChatPaneHostInner({
   readOnly?: boolean | 'finished' | 'silent';
   /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
   aboveComposer?: ReactNode;
+  /** At the end of the transcript, with the pane's file opener (ChatPane.endSlot). */
+  endSlot?: ComponentProps<typeof ChatPane>['endSlot'];
   sendVia?: (message: string) => boolean;
   /** See ChatPane's `quietResume`. */
   quietResume?: boolean;
@@ -184,6 +186,7 @@ function ChatPaneHostInner({
     superMember,
     readOnly,
     aboveComposer,
+    endSlot,
     sendVia,
     quietResume,
     feed,

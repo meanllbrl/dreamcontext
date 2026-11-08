@@ -658,7 +658,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, feed, sendVia, quietResume = false,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, endSlot, feed, sendVia, quietResume = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -749,6 +749,9 @@ export function ChatPane({
   readOnly?: boolean | 'finished' | 'silent';
   /** One line right above the composer, never over it (the phone's waiting toast, W3). */
   aboveComposer?: React.ReactNode;
+  /** Drawn at the END of the transcript, given the pane's own file opener (the side file panel):
+   *  a run's published document as a tile. Absent: nothing. Must be a stable function. */
+  endSlot?: (ctx: { openFile: (path: string) => void }) => React.ReactNode;
   /** The message goes here instead of this session: a run the owner continues. */
   sendVia?: (message: string) => boolean;
   /** Woken from a park: the replayed history carries no "resumed" divider (parking is never shown). */
@@ -2964,6 +2967,7 @@ export function ChatPane({
               </>
             )}
             {liveNodes}
+            {endSlot?.({ openFile: handleOpenFile })}
             {trailingParties}
             {conv.pending
               .filter((p): p is PendingPermission => p.kind === 'permission')

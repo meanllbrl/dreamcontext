@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { useReplyDelivery, useReplyToAgentThread } from '../../../hooks/useAutomations';
 import { RunReport, RunView } from '../../aiteam/RunView';
+import { RunDocumentTileFor } from '../../aiteam/RunDocumentTile';
+import { chatFilePath } from '../chat/chatFeed';
 import { teamStatusOf, type TeamCard } from './TeamTile';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
@@ -96,9 +98,16 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
   const running = status === 'running' || status === 'queued';
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState(false);
   const [previous, setPrevious] = useState(false);
   const prev = card.job.chain?.previous;
+  // The run's published document: a tile at the end of its steps, opening in the pane's side file
+  // panel (owner 2026-11-08, replaces the "Full report" link). A stable function, the pane memoizes on it.
+  const member = card.job.member;
+  const runId = card.job.runId;
+  const docTile = useCallback(
+    (ctx: { openFile: (path: string) => void }) => <RunDocumentTileFor slug={member} runId={runId} onOpenFile={(p) => ctx.openFile(chatFilePath(p))} />,
+    [member, runId],
+  );
   const { mutate, isPending } = useReplyToAgentThread();
   // A reply the server took can still be refused at the resume: said here, never silent.
   const delivery = useReplyDelivery(card.job.member, card.job.runId).data;
@@ -151,15 +160,9 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
       )}
       <div className="super-team-job-body">
         {card.sessionId
-          ? <RunView key={card.sessionId} claudeId={card.sessionId} live={running} />
+          ? <RunView key={card.sessionId} claudeId={card.sessionId} live={running} endSlot={running ? undefined : docTile} />
           : <p className="aiteam-stage-note">{running ? t('super.team.reply.starting') : card.lastLine}</p>}
       </div>
-      {report && <div className="super-team-job-report"><RunReport slug={card.job.member} runId={card.job.runId} /></div>}
-      {!running && (
-        <button type="button" className="chat-feed-link super-team-job-reportbtn" aria-expanded={report} data-testid="team-job-report" onClick={() => setReport((v) => !v)}>
-          {t(report ? 'aiteam.run.hideReport' : 'aiteam.history.fullReport')}
-        </button>
-      )}
       {closed
         ? <p role="status" className="super-team-job-closed" data-testid="team-job-closed">{closed}</p>
         : (

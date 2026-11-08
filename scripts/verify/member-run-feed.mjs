@@ -149,6 +149,21 @@ async function run(base) {
   await page.waitForTimeout(600);
   await page.screenshot({ path: join(OUT, '2-done-1440.png') });
 
+  // Owner 2026-11-08: no underlined "Full report"; the run's document is a tile that opens in the
+  // chat's side file panel, never inline.
+  const tile = st.locator(`[data-run-foot^="${RUN}::"] [data-run-doc]`);
+  ok('(d) no "Full report" link anywhere on the page', (await st.getByText('Full report').count()) === 0 && (await st.locator('[data-feed-report]').count()) === 0);
+  ok('(d) the run\'s document is a tile with its opening lines', await until(page, async () => (await tile.count()) === 1 && /Desk is tidy/.test((await tile.innerText()) ?? ''), 20000), await tile.first().innerText().catch(() => 'none'));
+  ok('(d) the run with no steps or document has nothing extra', (await st.locator(`[data-run-foot^="${OLD}::"] [data-run-doc]`).count()) <= 1);
+  await tile.scrollIntoViewIfNeeded().catch(() => {});
+  await page.screenshot({ path: join(OUT, '4-belge-sonra-1440.png') });
+  await tile.locator('button').first().click();
+  ok('(d) clicking the tile opens the document in the side file panel', await until(page, async () => (await page.locator('.chat-slideover-head:visible').count()) > 0, 10000));
+  ok('(d) …and nothing expanded inline', (await st.locator('[data-testid="run-report"]').count()) === 0);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: join(OUT, '4-belge-panel-1440.png') });
+  await page.keyboard.press('Escape');
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(1200);
   await runB.first().scrollIntoViewIfNeeded().catch(() => {});

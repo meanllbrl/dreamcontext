@@ -7,7 +7,7 @@ import { phoneAllows } from '../../../lib/phoneSurface';
 import { toFeedItems } from '../../aiteam/agentHistory';
 import { RunFoot } from '../../aiteam/RunFoot';
 import { conversationSlugs, dayRuleLabel } from '../../aiteam/teamModel';
-import { runFootOf, stepsOpen, type ChatFeed, type FeedLabels, type FeedMeta } from '../chat/chatFeed';
+import { chatFilePath, runFootOf, stepsOpen, type ChatFeed, type FeedLabels, type FeedMeta } from '../chat/chatFeed';
 import {
   EMPTY_RUN_FEED, RUN_FEED_POLL_MS, RUN_FEED_POLL_RUNNING_MS, anyRunning, landFirst, landFresh, landOlder,
   memberFeedSignature, withPinned, withSeen, type RunFeedState,
@@ -169,13 +169,11 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
   // What is open under each run. Steps the owner closed stay closed while the run works on.
   const [stepsShown, setStepsShown] = useState<ReadonlySet<string>>(() => new Set());
   const [stepsHidden, setStepsHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const [reports, setReports] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSteps = useCallback((meta: FeedMeta) => {
     const open = stepsOpen(meta, stepsShown, stepsHidden);
     setStepsShown((s) => flip(s, meta.sessionKey, !open));
     setStepsHidden((s) => flip(s, meta.sessionKey, open));
   }, [stepsShown, stepsHidden]);
-  const toggleReport = useCallback((key: string) => setReports((s) => flip(s, key, !s.has(key))), []);
 
   const items = useMemo(() => toFeedItems(state.sessions), [state.sessions]);
   return useMemo<ChatFeed | undefined>(() => {
@@ -196,22 +194,18 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
       onSeen,
       // A run opens where it stands: its steps, else its document.
       onBoundary: (meta) => {
-        const foot = runFootOf(meta);
-        if (foot.steps) toggleSteps(meta);
-        else if (foot.report) toggleReport(meta.sessionKey);
+        if (runFootOf(meta).steps) toggleSteps(meta);
       },
       runFoot: (meta, ctx) => (
         <RunFoot
           meta={meta}
           steps={stepsOpen(meta, stepsShown, stepsHidden)}
-          report={reports.has(meta.sessionKey)}
           onSteps={() => toggleSteps(meta)}
-          onReport={() => toggleReport(meta.sessionKey)}
-          onOpenFile={ctx?.openFile}
+          onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined}
         />
       ),
       onDividerScrolled: () => {},
       onPinned: (pinned) => setState((s) => withPinned(s, pinned)),
     };
-  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen, toggleSteps, toggleReport, stepsShown, stepsHidden, reports]);
+  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen, toggleSteps, stepsShown, stepsHidden]);
 }
