@@ -877,10 +877,118 @@
 .chat-cmp-perm-wrap { display: inline-flex; flex: 0 0 auto; min-width: 0; }
 .chat-cmp-model-wrap { display: inline-flex; flex: 0 1 auto; min-width: 0; }
 
-/* Read aloud: an icon switch beside the mic. Off is the resting look (tertiary, like Attach);
-   on takes the speaking colour, so it reads as the same system as Hush and the speaking rail. */
-.chat-cmp-readaloud[aria-pressed='true'] { color: var(--color-speaking); }
-.chat-cmp-readaloud[aria-pressed='true']:hover { color: var(--color-speaking); }
+/* The mic split (owner 2026-11-08, mockup A): the mic and a small caret as ONE borderless
+   button. At rest it is two quiet glyphs like the rest of the row; hover or an open menu tints
+   the whole pair and shows the hairline between them, so it reads as one control with two
+   halves. The speaker button it replaced is the menu's "reply aloud" row. */
+.chat-cmp-micsplit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  transition: background var(--transition-fast);
+}
+.chat-cmp-micsplit:hover,
+.chat-cmp-micsplit.is-open { background: var(--color-bg-tertiary); }
+.chat-cmp-micsplit > .chat-cmp-mic { border-radius: 8px 0 0 8px; }
+.chat-cmp-micsplit > .chat-cmp-micsplit-caret {
+  position: relative;
+  width: 24px; /* the glyph stays small; the target meets the 24px pointer floor */
+  border-radius: 0 8px 8px 0;
+}
+.chat-cmp-micsplit > .chat-cmp-micsplit-caret .chat-cmp-caret { margin-left: 0; }
+.chat-cmp-micsplit-rule {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.chat-cmp-micsplit:hover .chat-cmp-micsplit-rule,
+.chat-cmp-micsplit.is-open .chat-cmp-micsplit-rule { opacity: 1; }
+
+/* Two dots, two meanings, two places: amber on the mic = a setup step is missing (the press
+   opens the menu on it); speaking blue on the caret = replies are read aloud. Ringed in the
+   card colour so they sit on the glyph, not in it. */
+.chat-cmp-micdot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-bg-secondary);
+  box-sizing: content-box;
+  pointer-events: none;
+}
+.chat-cmp-micdot.is-step { top: 5px; right: 6px; background: var(--color-warning); }
+.chat-cmp-micdot.is-speaking { top: 6px; right: 1px; background: var(--color-speaking); }
+
+/* The menu: rows with a leading icon, a title and an optional quiet second line. A setup step
+   is tinted warning (the only rows that ask for action); spoken replies carry a switch. */
+.chat-cmp-micmenu { min-width: 248px; max-width: 300px; }
+.chat-cmp-micmenu-list .chat-cmp-micmenu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--color-text);
+}
+.chat-cmp-micmenu-row > .chat-cmp-ic { color: var(--color-text-secondary); }
+.chat-cmp-micmenu-row:disabled { cursor: default; }
+.chat-cmp-micmenu-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-cmp-micmenu-text small {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-composer-menu--glass .chat-cmp-micmenu-list .chat-cmp-micmenu-row.is-step { background: var(--color-warning-subtle); }
+.agent-composer-menu--glass .chat-cmp-micmenu-list .chat-cmp-micmenu-row.is-step:is(:hover, :focus-visible):not(:disabled) {
+  background: color-mix(in oklab, var(--color-warning-subtle), var(--color-warning) 10%);
+}
+.chat-cmp-micmenu-row.is-step > .chat-cmp-ic,
+.chat-cmp-micmenu-row.is-step .chat-cmp-micmenu-text > span { color: var(--color-warning-ink); }
+.chat-cmp-micmenu-row.is-step .chat-cmp-micmenu-text > span { font-weight: 600; }
+.chat-cmp-micmenu-list .chat-cmp-micmenu-row.is-step + .chat-cmp-micmenu-row.is-step { margin-top: 2px; }
+.chat-cmp-micmenu-bar {
+  width: 100%;
+  height: 4px;
+  margin-top: 4px;
+  accent-color: var(--color-accent);
+}
+.chat-cmp-micmenu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--color-border);
+}
+.chat-cmp-micmenu-switch {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--color-bg-tertiary);
+  transition: background var(--transition-fast);
+}
+.chat-cmp-micmenu-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-snow, #fff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--transition-fast);
+}
+.chat-cmp-micmenu-switch.is-on { background: var(--color-speaking); }
+.chat-cmp-micmenu-switch.is-on::after { transform: translateX(12px); }
+.chat-cmp-micmenu-row[aria-checked='true'] > .chat-cmp-ic { color: var(--color-speaking); }
 
 /* Toolbar controls are BORDERLESS — the card is already a bordered surface, and a row of
    outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome.

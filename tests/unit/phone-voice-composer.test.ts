@@ -39,11 +39,12 @@ describe('the phone composer\'s mic', () => {
   it('turns the existing push-to-talk on with ONE added term on the gate line (AC1, AC5)', () => {
     // The desktop half is the K7 mic gate (jarvis plan r9); the phone stays ONE added term.
     // An app's frame (the embedded chat) has no mic: `!inAppFrame &&` leads the one expression.
-    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const inAppFrame = !!useEmbed\(\);\s*const voiceEnabled = !inAppFrame && \(\(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice\);/);
+    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const inAppFrame = !!useEmbed\(\);\s*const voiceEnabled = micVisible\(\{ inAppFrame, desktop: isDesktop\(\), phoneVoice \}\);/);
   });
 
   it('keeps the laptop\'s voice off the phone: no read-aloud switch, no warm/prefs, no hotkey wording (AC4)', () => {
-    expect(composer).toMatch(/\{voiceEnabled && \(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
+    // The speech switch is the mic split's menu row (2026-11-08), offered only off the phone.
+    expect(composer).toMatch(/readAloudAvailable=\{\(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice\}/);
     // The laptop-only effect (prefs, hotkey) still returns early on the phone; it no longer warms
     // anything at all (2026-10-27: the model loads on the first take, never at launch).
     expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;/);

@@ -50,3 +50,11 @@ commands.allow = ["set_frames"]
 identifier = "allow-mic-take"
 description = "Claim or open a microphone take, end it (returning its samples) or cancel it."
 commands.allow = ["mic_take_begin", "mic_take_end", "mic_take_cancel"]
+
+# The microphone PERMISSION (src/mic_permission.rs): read it, show the macOS prompt, open the
+# fixed System Settings › Microphone page. The composer offers these as setup steps, so the
+# owner can grant the mic before ever recording (owner 2026-11-08).
+[[permission]]
+identifier = "allow-mic-permission"
+description = "Read the microphone permission, ask macOS for it, or open its System Settings page."
+commands.allow = ["mic_permission", "mic_permission_request", "mic_open_settings"]

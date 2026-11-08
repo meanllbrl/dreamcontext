@@ -103,7 +103,7 @@ try {
     await page.goto(url);
     await page.waitForSelector('.chat-cmp-mic', { timeout: 20_000 });
     await sleep(400);
-    row.readAloudButton = await page.locator('.chat-cmp-readaloud').count() > 0;
+    row.readAloudButton = await page.locator('.chat-cmp-micsplit-caret').count() > 0;
     row.shots.idle = await shot(page, `${id}-idle`);
     row.notes.idle = await measure(page);
 

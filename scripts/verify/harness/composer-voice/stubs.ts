@@ -6,14 +6,26 @@
  */
 
 const w = window as unknown as Record<string, unknown>;
+const params = new URLSearchParams(location.search);
+/** `?perm=prompt|denied|granted|restricted`: the shell's microphone permission
+ *  (`desktop/src-tauri/src/mic_permission.rs`). Absent, those commands are refused like every
+ *  other one (an older shell), which the composer reads as "unknown". Every call is recorded. */
+let perm = params.get('perm');
+const invokes: string[] = [];
+w.__invokes = invokes;
 w.__TAURI_INTERNALS__ = {
-  invoke: async (cmd: string) => { throw new Error(`command ${cmd} not found`); },
+  invoke: async (cmd: string) => {
+    invokes.push(cmd);
+    if (perm && cmd === 'mic_permission') return perm;
+    if (perm && cmd === 'mic_permission_request') { if (perm === 'prompt') perm = 'granted'; return perm === 'granted'; }
+    if (perm && cmd === 'mic_open_settings') return null;
+    throw new Error(`command ${cmd} not found`);
+  },
   transformCallback: () => 0,
   metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
 };
 w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
 
-const params = new URLSearchParams(location.search);
 localStorage.setItem('dreamcontext-theme', params.get('theme') === 'light' ? 'light' : 'dark');
 if (params.has('readAloud')) localStorage.setItem('dreamcontext-read-aloud', params.get('readAloud') === '1' ? '1' : '0');
 
@@ -27,7 +39,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
   const path = url.replace(/^https?:\/\/[^/]+/, '');
   if (!path.startsWith('/api/')) return realFetch(input, init);
-  if (path.startsWith('/api/agent/voice/dictation')) return json({ installed: true });
+  if (path.startsWith('/api/agent/voice/dictation')) return dictation(init?.method ?? 'GET');
   if (path.startsWith('/api/agent/voice/status')) {
     return json({ pushToTalk: params.get('chord') ?? 'Shift+V', pushToTalkMode: 'hold', speech: true, speechRate: 1, key: true });
   }
@@ -55,4 +67,27 @@ function silentWav(): string {
   let s = '';
   for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
   return btoa(s);
+}
+
+/** `?dict=0`: dictation not installed yet. A POST (the mic menu's "Set up dictation", the same
+ *  route Settings uses) starts a fake download that every later GET advances by a quarter, then
+ *  reports it installed. Absent: installed, as before. */
+let dictPhase: 'idle' | 'model' | 'done' = params.get('dict') === '0' ? 'idle' : 'done';
+let dictGot = 0;
+const DICT_TOTAL = 466e6;
+w.__dictPosts = 0;
+function dictation(method: string): Response {
+  if (method === 'POST') { (w as { __dictPosts: number }).__dictPosts += 1; dictPhase = 'model'; dictGot = 0; }
+  else if (dictPhase === 'model') { dictGot += DICT_TOTAL / 4; if (dictGot >= DICT_TOTAL) dictPhase = 'done'; }
+  const installed = dictPhase === 'done';
+  return json({
+    installed,
+    choice: installed || dictPhase === 'model' ? { engine: 'local', model: 'small' } : null,
+    engine: installed, model: installed ? 'small' : null, blocked: null, key: false,
+    machine: { memGB: 16, chip: 'Apple M2' }, recommended: 'small',
+    models: [{ id: 'small', downloadMB: 466, ramMB: 900, onDisk: false, fits: true }],
+    brew: true, phase: dictPhase === 'model' ? 'model' : installed ? 'done' : 'idle',
+    received: dictPhase === 'model' ? dictGot : 0, total: dictPhase === 'model' ? DICT_TOTAL : 0,
+    error: null, pending: dictPhase === 'model' ? 'small' : null,
+  }, method === 'POST' ? 202 : 200);
 }

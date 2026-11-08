@@ -54,7 +54,9 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
     // always; or the hands-free phone with the Mac's dictation installed (its takes are transcribed
     // on the Mac: task the-hands-free-phone-sends-a-voice-message…), still in the same one flag.
     // An app's frame has no mic: `!inAppFrame &&` leads the same one expression.
-    expect(composer).toMatch(/const voiceEnabled = !inAppFrame && \(\(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice\);/);
+    // 2026-11-08 (owner): the desktop mic no longer waits for dictation; the one expression is
+    // `micVisible` (lib/voice/micMenu.ts, its truth table in voice-mic-split.test.ts).
+    expect(composer).toMatch(/const voiceEnabled = micVisible\(\{ inAppFrame, desktop: isDesktop\(\), phoneVoice \}\);/);
   });
 
   it('renders NOTHING mic-related unless that flag is true', () => {
