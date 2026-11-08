@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync,
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { oldBuilder } from '../helpers/old-excalidraw-pack.js';
 
 /**
  * `dreamcontext update` and `install-skill` move a project off the old excalidraw pack through the
@@ -45,15 +46,15 @@ function files(dir: string, prefix = ''): string[] {
 }
 
 /** The old pack, rebuilt from skill-draw (see tests/unit/retire-excalidraw.test.ts). */
-function plantOldPack(proj: string): void {
+function plantOldPack(proj: string, o: { shippedBuilder?: boolean } = {}): void {
   const dest = join(proj, OLD);
   mkdirSync(join(dest, 'scripts', 'lib'), { recursive: true });
   mkdirSync(join(dest, 'reference'), { recursive: true });
   cpSync(join(DRAW, 'scripts', 'lib'), join(dest, 'scripts', 'lib'), { recursive: true });
   const now = readFileSync(join(DRAW, 'scripts', 'build_excalidraw.js'), 'utf-8');
-  // A builder the old pack never shipped: the scripts unit is then left as it is, which is what
-  // this wiring test needs to prove nothing is deleted on the way.
-  writeFileSync(join(dest, 'scripts', 'build_excalidraw.js'), `${now}\n// local tweak\n`);
+  // Default: a builder the old pack never shipped, so the scripts unit is left as it is.
+  // shippedBuilder: the exact 0.41 builder, so every script is forwarded.
+  writeFileSync(join(dest, 'scripts', 'build_excalidraw.js'), o.shippedBuilder ? oldBuilder() : `${now}\n// local tweak\n`);
   cpSync(join(DRAW, 'package.json'), join(dest, 'package.json'));
   cpSync(join(DRAW, 'references', 'format.md'), join(dest, 'reference', 'format.md'));
   writeFileSync(join(dest, 'SKILL.md'), '---\nname: excalidraw\n---\nmy own notes\n');
@@ -107,6 +108,44 @@ describe.skipIf(!existsSync(CLI))('update moves the excalidraw pack to draw (int
     expect(second).not.toContain('excalidraw is now');
     expect(files(join(proj, OLD))).toEqual(after1);
   }, 180_000);
+
+  it('shipped scripts: update --yes forwards them, the old path builds a board, and runs 2 and 3 change nothing', () => {
+    rmSync(join(proj, OLD), { recursive: true, force: true });
+    plantOldPack(proj, { shippedBuilder: true });
+    run(['update', '--yes'], proj, home);
+    const shim = readFileSync(join(proj, OLD, 'scripts', 'build_excalidraw.js'), 'utf-8');
+    expect(shim).toContain("require('../../draw/scripts/build_excalidraw.js')");
+    const spec = join(proj, 'spec.json');
+    writeFileSync(spec, JSON.stringify({ elements: [{ type: 'rectangle', x: 0, y: 0, width: 80, height: 40 }] }));
+    const built = spawnSync(process.execPath, [join(proj, OLD, 'scripts', 'build_excalidraw.js'), spec, '--out', join(proj, 'x.excalidraw.md')], { cwd: proj, encoding: 'utf-8' });
+    expect(built.status, built.stderr).toBe(0);
+    rmSync(spec);
+    rmSync(join(proj, 'x.excalidraw.md'));
+    const disk1 = files(join(proj, OLD)).map((f) => [f, readFileSync(join(proj, OLD, f), 'utf-8')]);
+    const old1 = Object.entries(JSON.parse(readFileSync(join(proj, MANIFEST), 'utf-8')).files).filter(([k]) => k.startsWith(`${OLD}/`));
+    for (let i = 0; i < 2; i++) {
+      const out = run(['update', '--yes'], proj, home);
+      expect(out).not.toContain('excalidraw is now');
+      expect(files(join(proj, OLD)).map((f) => [f, readFileSync(join(proj, OLD, f), 'utf-8')])).toEqual(disk1);
+      const m = JSON.parse(readFileSync(join(proj, MANIFEST), 'utf-8'));
+      expect(Object.entries(m.files).filter(([k]) => k.startsWith(`${OLD}/`)).map(([k, v]) => [k, (v as { kind: string }).kind]))
+        .toEqual(old1.map(([k, v]) => [k, (v as { kind: string }).kind]));
+    }
+  }, 240_000);
+
+  it('update --core-only --yes retires too, drops the carried pack records, and is quiet on runs 2 and 3', () => {
+    const first = run(['update', '--core-only', '--yes'], proj, home);
+    expect(first).toContain('excalidraw is now `draw`');
+    expect(readFileSync(join(proj, OLD, 'examples', 'mine.excalidraw.md'), 'utf-8')).toBe('my board\n');
+    const m1 = JSON.parse(readFileSync(join(proj, MANIFEST), 'utf-8'));
+    expect(m1.packs.excalidraw).toBeUndefined();
+    expect(Object.keys(m1.files).filter((k) => k.startsWith(`${OLD}/`) && m1.files[k].kind === 'pack-skill')).toEqual([]);
+    const disk1 = files(join(proj, OLD));
+    for (let i = 0; i < 2; i++) {
+      expect(run(['update', '--core-only', '--yes'], proj, home)).not.toContain('excalidraw is now');
+      expect(files(join(proj, OLD))).toEqual(disk1);
+    }
+  }, 240_000);
 
   it('install-skill --packs excalidraw says it is the core draw skill', () => {
     const out = run(['install-skill', '--packs', 'excalidraw'], proj, home);

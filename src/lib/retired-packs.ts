@@ -368,6 +368,8 @@ export interface RetireExcalidrawOptions {
   readonly table?: ShippedShas;
   /** Tests: the hard-link call used to keep an edited SKILL.md under another name. */
   readonly link?: (existing: string, newPath: string) => void;
+  /** Tests: runs after the folder is walked and before anything is written (a second pane acting). */
+  readonly afterWalk?: () => void;
 }
 
 /**
@@ -484,6 +486,7 @@ export function retireExcalidraw(
     }
     frozenBy.push(e.inPack);
   }
+  o.afterWalk?.();
   for (const abs of leftovers) {
     try {
       unlinkSync(abs);
@@ -569,7 +572,8 @@ export function retireExcalidraw(
   forget();
   for (const rel of stuck) recordFile(newManifest, rel, dreamcontextVersion(), 'pack-skill');
   // Re-recorded after the clean: the forwarding files and the unit's shipped non-scripts are ours.
-  if (!frozen) for (const inPack of keptOurs) recordFile(newManifest, `${prefix}${inPack}`, dreamcontextVersion(), 'core');
+  // Sorted, so the run that writes the forwarding files and every later run record the same bytes.
+  if (!frozen) for (const inPack of [...keptOurs].sort()) recordFile(newManifest, `${prefix}${inPack}`, dreamcontextVersion(), 'core');
 
   result.kept.push(...keptHere);
   if (changed || hadRecords) {

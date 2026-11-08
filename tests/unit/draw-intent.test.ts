@@ -52,6 +52,13 @@ const ROWS: Array<[string, DrawTarget | null]> = [
   ['', null],
   ['   ', null],
   ['run npm test and report failures', null],
+  // Turkish idioms and code names are not drawing requests (end review 2026-11-08)
+  ['bunun altını çizmek istiyorum: testler yeşil olmadan merge yok', null],
+  ['kartın alt çizgisini kaldır', null],
+  ['sınırları çizdik, şimdi kodla', null],
+  ['spec-draw.ts içindeki kitDir hatasını düzelt', null],
+  ['draw.io export is broken', null],
+  ['çizgi grafiği çiz', 'any'],
   ['open the whiteboards feature PRD', 'whiteboard'],
 ];
 

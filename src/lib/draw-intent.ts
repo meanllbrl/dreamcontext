@@ -20,9 +20,23 @@ function tokens(text: string): string[] {
   return foldAscii(text).split(/[^a-z0-9]+/).filter(Boolean);
 }
 
+/**
+ * Tokens that may ASK for a drawing: a code name or path (`spec-draw.ts`, `draw.io`, `a/b_draw`)
+ * is a word joined to others by `.`, `/`, `_` or `-` and never a request, and in the Turkish idioms
+ * `altını çizmek` (to stress) and `sınırları çizmek` (to set limits) `çiz` draws nothing.
+ */
+function requestTokens(text: string): string[] {
+  const words = text.split(/\s+/).filter((w) => !/[\w\u00c0-\u024f][./_-][\w\u00c0-\u024f]/.test(w));
+  const toks = tokens(words.join(' '));
+  return toks.filter((t, i) => !(isCiz(t) && i > 0 && (toks[i - 1]!.startsWith('alt') || toks[i - 1]!.startsWith('sinir'))));
+}
+
+/** The `çiz` stem, minus `çizelge` (a schedule) and `çizgi` (a line: an underline, a CSS rule). */
+const isCiz = (t: string): boolean => t.startsWith('ciz') && !t.startsWith('cizelge') && !t.startsWith('cizgi');
+
 /** A verb that makes a drawing (`grafik çiz`, `draw a chart`). */
 const isDrawVerb = (t: string): boolean =>
-  (t.startsWith('ciz') && !t.startsWith('cizelge'))
+  isCiz(t)
   || t === 'draw' || t === 'draws' || t === 'drawing' || t === 'drawn' || t === 'sketch' || t === 'sketches';
 /** On a whiteboard, explaining or showing something is drawing it too (`tahtada anlat`). */
 const isBoardVerb = (t: string): boolean => isDrawVerb(t) || t.startsWith('anlat') || t.startsWith('goster');
@@ -36,7 +50,7 @@ const isDrawWord = (t: string): boolean =>
   || t.startsWith('wireframe')
   || t.startsWith('mockup')
   || t === 'draw' || t === 'draws' || t === 'drawing' || t === 'sketch' || t === 'sketches'
-  || (t.startsWith('ciz') && !t.startsWith('cizelge'));
+  || isCiz(t);
 
 /** Does `seq` occur in `toks` as consecutive tokens (the last one by prefix)? */
 function hasSequence(toks: readonly string[], seq: readonly string[]): boolean {
@@ -61,14 +75,15 @@ function hasSequence(toks: readonly string[], seq: readonly string[]): boolean {
 export function detectDrawIntent(prompt: string, boardSlugs: readonly string[] = []): { target: DrawTarget } | null {
   if (!prompt || !prompt.trim()) return null;
   const toks = tokens(prompt);
-  const hasVerb = toks.some(isDrawVerb);
-  const hasBoardVerb = toks.some(isBoardVerb);
+  const asks = requestTokens(prompt);
+  const hasVerb = asks.some(isDrawVerb);
+  const hasBoardVerb = asks.some(isBoardVerb);
   const excalidrawFile = /\.excalidraw(\.md)?\b/i.test(prompt);
   const fires = excalidrawFile
-    || toks.some(isDrawWord)
-    || hasSequence(toks, ['akis', 'sema'])
-    || (hasBoardVerb && toks.some((t) => t.startsWith('tahta')))
-    || (hasVerb && toks.some((t) => t === 'chart' || t === 'charts' || t.startsWith('grafik')));
+    || asks.some(isDrawWord)
+    || hasSequence(asks, ['akis', 'sema'])
+    || (hasBoardVerb && asks.some((t) => t.startsWith('tahta')))
+    || (hasVerb && asks.some((t) => t === 'chart' || t === 'charts' || t.startsWith('grafik')));
   if (!fires) return null;
 
   const slugHit = boardSlugs.some((slug) => hasSequence(toks, tokens(slug.replace(/-/g, ' '))) && tokens(slug).length > 0);

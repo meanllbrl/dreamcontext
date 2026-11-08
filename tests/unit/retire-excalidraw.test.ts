@@ -27,33 +27,7 @@ const DRAW = join(ROOT, 'skill-draw');
 const SKILLS = '.claude/skills';
 const OLD = `${SKILLS}/excalidraw`;
 
-/**
- * The old pack as 0.41.x installed it, rebuilt from skill-draw: every file but the builder is the
- * same bytes; the builder differs only by its command block (now `main`). Each file is checked
- * against the retired pack's shipped table, so a drift fails here, never silently.
- */
-const OLD_TAIL = `module.exports = { buildExcalidraw, lane, grid, thumbHeight, SPEC_TYPES, LAYOUT_TYPES };
-
-// ---------- CLI ----------
-if (require.main === module) {
-  const args = process.argv.slice(2);
-  let specPath = null, out = null;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--out') out = args[++i];
-    else specPath = args[i];
-  }
-  if (!specPath) { console.error('usage: node build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]'); process.exit(1); }
-  const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-  if (out) spec.out = out;
-  const res = buildExcalidraw(spec);
-  console.log(\`OK  \${res.outPath}\\n    elements=\${res.elements} images=\${res.images} texts=\${res.texts} overlaps=\${res.overlaps} buriedText=\${res.buriedText} longLines=\${res.longLines} wallOfText=\${res.wallOfText}\\n    vaultRoot=\${res.vaultRoot}\`);
-}
-`;
-function oldBuilder(): string {
-  const now = readFileSync(join(DRAW, 'scripts', 'build_excalidraw.js'), 'utf-8');
-  const cut = now.indexOf('// ---------- CLI ----------');
-  return (now.slice(0, cut) + OLD_TAIL).replace('(see ../references/format.md)', '(see ../reference/format.md)');
-}
+import { oldBuilder } from '../helpers/old-excalidraw-pack.js';
 
 /** Write the old pack into `<proj>/.claude/skills/excalidraw/` and its manifest records. */
 function plantOldPack(proj: string, m: Manifest | null, skillMd = '---\nname: excalidraw\n---\nmy own notes\n'): void {
@@ -256,14 +230,19 @@ describe('retireExcalidraw', () => {
     expect(r.notes.join('\n')).toContain('SKILL.md is a symlink');
   });
 
-  it('a file already at the staging name is never overwritten, and that script is kept', () => {
+  it('a file appearing at the staging name after the walk is never overwritten; the other scripts still forward', () => {
     plantOldPack(proj, null);
     const target = join(proj, OLD, 'scripts', 'lib', 'style.js');
-    writeFileSync(`${target}.tmp-${process.pid}`, 'someone else\n');
+    const staging = `${target}.tmp-${process.pid}`;
     const draw = installDrawSkill(DRAW, proj, SKILLS, null);
-    retireExcalidraw(proj, SKILLS, draw, emptyManifest(), emptyManifest());
-    expect(readFileSync(`${target}.tmp-${process.pid}`, 'utf-8')).toBe('someone else\n');
+    retireExcalidraw(proj, SKILLS, draw, emptyManifest(), emptyManifest(), {
+      afterWalk: () => writeFileSync(staging, 'someone else\n'),
+    });
+    expect(readFileSync(staging, 'utf-8')).toBe('someone else\n');
     expect(readFileSync(target)).toEqual(readFileSync(join(DRAW, 'scripts', 'lib', 'style.js')));
+    // The guard is the exclusive create, not a frozen folder: every other script was forwarded.
+    expect(readFileSync(join(proj, OLD, 'scripts', 'lib', 'charts.js'), 'utf-8')).toBe(excalidrawShimText('scripts/lib/charts.js'));
+    expect(readFileSync(join(proj, OLD, 'scripts', 'build_excalidraw.js'), 'utf-8')).toBe(excalidrawShimText('scripts/build_excalidraw.js'));
   });
 
   it("a crashed run's staged forwarding file is cleaned on the next run", () => {
@@ -292,12 +271,19 @@ describe('retireExcalidraw', () => {
     expect(kept['SKILL.md']).toBeUndefined();
   });
 
-  it('a file vanishing mid-walk (a second pane) does not abort the run', () => {
+  it('files vanishing after the walk (a second pane) do not abort the run, and the rest is decided', () => {
     plantOldPack(proj, null);
     const draw = installDrawSkill(DRAW, proj, SKILLS, null);
-    // A shipped file already gone (removed by a second pane) is skipped, never an abort.
-    rmSync(join(proj, OLD, 'examples', 'sample.png'));
-    expect(() => retireExcalidraw(proj, SKILLS, draw, emptyManifest(), emptyManifest())).not.toThrow();
+    const r = retireExcalidraw(proj, SKILLS, draw, emptyManifest(), emptyManifest(), {
+      afterWalk: () => {
+        rmSync(join(proj, OLD, 'examples', 'sample.png'));
+        rmSync(join(proj, OLD, 'scripts', 'lib', 'wireframe.js'));
+      },
+    });
+    expect(r.removed).not.toContain(`${OLD}/examples/sample.png`);
+    expect(existsSync(join(proj, OLD, 'scripts', 'lib', 'wireframe.js'))).toBe(false);
+    expect(existsSync(join(proj, OLD, 'reference', 'format.md'))).toBe(false);
+    expect(readFileSync(join(proj, OLD, 'scripts', 'lib', 'style.js'), 'utf-8')).toBe(excalidrawShimText('scripts/lib/style.js'));
   });
 });
 
