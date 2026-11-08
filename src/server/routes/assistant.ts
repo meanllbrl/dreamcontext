@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { noteMacOwnerInput } from '../mac-owner.js';
 import { requireLocalDesktop } from './agent-spawn-shared.js';
 import { holdOpen } from '../hold-open.js';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, createReadStream, statSync } from 'node:fs';
@@ -1079,7 +1080,12 @@ export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: Serv
   // Agent and, handed over, its children): only this owner-gated route sets it, `pickUiArgs`
   // never passes it through, and the window claims the args from the server, never the doorbell.
   const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault, by: 'owner' });
-  if (r.ok) { sendJson(res, 200, { ok: true, result: r.result }); return; }
+  if (r.ok) {
+    // His click, on this Mac's notch: the same gate as every other owner input (server/mac-owner.ts).
+    noteMacOwnerInput(req);
+    sendJson(res, 200, { ok: true, result: r.result });
+    return;
+  }
   // A relay can take 25 s to fail. Whether the prompt left is the registry's to say, not the
   // relay's: a window that merely does not hold the chat leaves it open and the owner told.
   if (getChat(sessionId)?.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }

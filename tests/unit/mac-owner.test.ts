@@ -204,6 +204,10 @@ describe('every owner input on the Mac passes the one call; nothing released lat
     expect(perm.match(/noteOwnerWrote\(/g)).toHaveLength(2);
     const plan = read('dashboard/src/components/sleepy/chat/PlanCard.tsx');
     expect(plan.match(/noteOwnerWrote\(\); setSent\(true\)/g)).toHaveLength(2);
+    const peer = read('dashboard/src/components/sleepy/chat/PeerSessionCard.tsx');
+    expect(peer.match(/\)\) noteOwnerWrote\(\); \}\}/g)).toHaveLength(2);
+    // The notch's Allow / Deny / Y / N / spoken answer all ride one owner-gated route that notes after the relay succeeds.
+    expect(read('src/server/routes/assistant.ts')).toMatch(/if \(r\.ok\) \{[^}]*noteMacOwnerInput\(req\);/);
     const bar = read('dashboard/src/components/sleepy/super/JobBar.tsx');
     expect(bar.match(/if \(ok\) noteOwnerWrote\(\)/g)).toHaveLength(2);
   });
