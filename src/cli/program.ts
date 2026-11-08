@@ -24,6 +24,7 @@ import { registerAgentsCommand } from './commands/agents.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerGoalLiveCommand } from './commands/goal-live.js';
+import { registerPlanCommand } from './commands/plan.js';
 import { registerBuilderCommand } from './commands/builder.js';
 import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
@@ -94,6 +95,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('whiteboard')}        Read and edit whiteboards (excalidraw boards with live widgets)
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
   ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
+  ${chalk.magentaBright('plan')}              Plan review loop: ledger, review packet, stops, gate into Develop
 
 ${chalk.bold('System')}
   ${chalk.magentaBright('snapshot')}          Output context snapshot (used by SessionStart hook)
@@ -177,6 +179,7 @@ export function createProgram(): Command {
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
   registerGoalLiveCommand(program);
+  registerPlanCommand(program);
   registerBuilderCommand(program);
   registerReflectCommand(program);
   registerCouncilCommand(program);

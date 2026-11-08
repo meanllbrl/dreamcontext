@@ -3167,6 +3167,83 @@
       ]
     },
     {
+      "path": "plan",
+      "desc": "Plan review loop: ledger, packet, stops and the gate into Develop (open/packet/record/status/decide/merge-class/link)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "plan decide",
+      "desc": "Record the owner's decision: continue | narrow | accept | add | abandon | split",
+      "args": [
+        "<plan>",
+        "<decision>"
+      ],
+      "valueFlags": [
+        "--note",
+        "--finding",
+        "--task",
+        "--class"
+      ]
+    },
+    {
+      "path": "plan link",
+      "desc": "Write the reviewed plan (final snapshot) into its task's technical details; refused while the gate has gaps",
+      "args": [
+        "<plan>"
+      ]
+    },
+    {
+      "path": "plan merge-class",
+      "desc": "Merge one finding class into another (counts only grow)",
+      "args": [
+        "<plan>",
+        "<from>",
+        "<into>"
+      ]
+    },
+    {
+      "path": "plan open",
+      "desc": "Open a plan: its folder and ledger under tmp/plans/, bound to a task",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--task",
+        "--goal",
+        "--lenses"
+      ]
+    },
+    {
+      "path": "plan packet",
+      "desc": "Write the review packet a lens reads; opens the next round when nothing stops it",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--lens"
+      ]
+    },
+    {
+      "path": "plan record",
+      "desc": "Record a lens's raw review into the ledger (parsed; a malformed one is UNPARSED and re-dispatched)",
+      "args": [
+        "<plan>"
+      ],
+      "valueFlags": [
+        "--lens",
+        "--file",
+        "--note"
+      ]
+    },
+    {
+      "path": "plan status",
+      "desc": "Round, budget, verdicts, open findings by class, and the ONE next action",
+      "args": [
+        "<plan>"
+      ]
+    },
+    {
       "path": "recall",
       "desc": "Control memory recall mode (haiku / raw / hybrid / off)",
       "args": [],
