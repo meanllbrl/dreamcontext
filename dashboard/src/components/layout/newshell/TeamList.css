@@ -278,14 +278,12 @@
 .ns-team-sec-row[data-asking="true"] .ns-team-label { color: var(--color-error); }
 .ns-team-mlist { margin: 0; padding: 0; list-style: none; }
 /* The members one level under the Team row: the drawer's nesting (a nested chat's indent and its
-   tree line), hung from the Team row's chevron. One box for the pop-outs, one for the open list
-   (search, rows, Manage members), so the line runs unbroken and never scrolls with the box. */
-.ns-team-sec > .ns-team-mlist,
+   tree line), hung from the Team row's chevron. One box for the open list (search, rows, Manage
+   members), so the line runs unbroken and never scrolls with the box. Folded, nothing hangs here. */
 .ns-team-open-list {
   position: relative;
   margin-left: var(--ns-team-in);
 }
-.ns-team-sec > .ns-team-mlist::before,
 .ns-team-open-list::before {
   content: '';
   position: absolute;

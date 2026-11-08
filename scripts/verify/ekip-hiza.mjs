@@ -15,7 +15,7 @@
  *   h1 open, 6 members + a global one: depth, size, avatar, manage alignment, the tree line.
  *   h2 the Global team: the same depth relative to its own row.
  *   h3 open, 20 members: still a box 8 rows tall that scrolls inside; the row under it holds still.
- *   h4 folded, a member with unread pops out at the members' depth with its count.
+ *   h4 folded, a member with unread: no member row under it, the row's own count carries it.
  *   h5 no member: one plain "Set your team" row whose text starts where "Chat" starts (1px), in
  *      every width and theme; no faces, no chevron.
  * Console errors and failed requests are a FAIL.
@@ -110,7 +110,7 @@ const measure = (page, rowSel) => page.evaluate((sel) => {
   const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
   const fs = (el) => (el ? parseFloat(getComputedStyle(el).fontSize) : null);
   const mrow = sec?.querySelector('.ns-team-mrow');
-  // The line belongs to the members' box (open list or pop-outs), so it never scrolls with them.
+  // The line belongs to the members' box (the open list), so it never scrolls with them.
   const li = mrow?.closest('.ns-team-open-list') ?? mrow?.closest('ul');
   const before = li ? getComputedStyle(li, '::before') : null;
   const manage = sec?.querySelector('[data-testid="team-manage"]');
@@ -220,10 +220,9 @@ async function run(base) {
   console.log('── h4 folded, one member with unread');
   ok('h4 the row is there', await show(page, base, 'folded', { open: false }));
   ok('h4 folded', (await row(page).getAttribute('aria-expanded')) === 'false');
-  const pop = page.locator('[data-testid="team-popout"]:visible');
-  ok('h4 UA Manager pops out with its count', (await pop.count()) === 1 && (await pop.first().getByTestId('team-mark-unread').innerText()).trim() === '1');
-  const pg = await measure(page, `[data-testid="drawer-team-row"][data-vault="${VAULT}"]`);
-  ok('h4 the pop-out sits at the members\' depth', pg?.avatar && own?.avatar && Math.abs(pg.avatar.l - own.avatar.l) <= 1, `pop ${pg?.avatar?.l} open ${own?.avatar?.l}`);
+  // Folded means no member row under it (owner 2026-11-08); the row's own count carries the unread.
+  ok('h4 no member row under the folded row', (await page.locator('[data-testid="drawer-team-row-section"] .ns-team-mrow:visible').count()) === 0);
+  ok('h4 the row\'s count carries the unread', (await row(page).getByTestId('team-row-count').innerText().catch(() => '')).trim() === '1');
 
   // The classic rail draws no Team row for an empty team (SidebarTeam); the drawer reads "Set your team".
   if (!CLASSIC) {

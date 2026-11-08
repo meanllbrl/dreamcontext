@@ -11,12 +11,12 @@
  * the server's counting of them is proven by the unit suites (super-member-notify), so here the
  * answer's `members` is STAGED per state to draw each mockup, and everything else is live.
  *
- *   s1 folded, a member answered: the row shows its count, the member pops out under it.
+ *   s1 folded, a member answered: the row shows its count, no member row under it.
  *   s2 open, 5 members: one end mark each (?, count, ring, "Super için", off dimmed), no switch.
  *   s3 open, 20 members: a box 8 rows tall that scrolls inside, the search field; the rows under
  *      it do not move when the box scrolls; news first.
  *   s4 folded, one works for the owner and one asks: the ring, the label in the question colour,
- *      the asker popped out.
+ *      no member row under it.
  *   s5 a member's stage: Rutinler (its routines), Talimatlar, Üye in Others; no close control.
  *   s5c Rutinler opened: a routine is edited (its switch) and deleted after the in-app ask.
  *   s6 "Bu üyeyi sil": the in-app dialog names its routines; Vazgeç changes nothing.
@@ -179,8 +179,8 @@ async function run(base) {
   ok('s1 the row is there', await showState(page, base, 's1', false));
   ok('s1 folded (aria-expanded false)', (await row(page).getAttribute('aria-expanded')) === 'false');
   ok('s1 the count is 1', (await page.getByTestId('team-row-count').first().innerText().catch(() => '')).trim() === '1');
-  const pops = page.locator('[data-testid="team-popout"]:visible');
-  ok('s1 UA Manager pops out under it', (await pops.count()) === 1 && (await pops.first().getAttribute('data-slug')) === 'ua-manager');
+  // Folded means no member row under it (owner 2026-11-08): the count above says a member answered.
+  ok('s1 no member row under the folded row', (await page.locator('[data-testid="drawer-team-row-section"] .ns-team-mrow:visible').count()) === 0);
   await shots(page, '01', 'kapali-uye-cevapladi', () => ensureDrawer(page));
 
   console.log('── s2 open, 5 members');
@@ -219,7 +219,7 @@ async function run(base) {
   ok('s4 the row is there', await showState(page, base, 's4', false));
   ok('s4 the ring (a member works for the owner)', (await page.getByTestId('team-row-ring').count()) >= 1);
   ok('s4 the label in the question colour', (await row(page).getAttribute('data-asking')) === 'true');
-  ok('s4 the asker pops out', (await page.locator('[data-testid="team-popout"][data-slug="veri-analisti"]:visible').count()) === 1);
+  ok('s4 no member row under the folded row, the asker included', (await page.locator('[data-testid="drawer-team-row-section"] .ns-team-mrow:visible').count()) === 0);
   await shots(page, '04', 'calisiyor-ve-soru-bekliyor', () => ensureDrawer(page));
 
   }
@@ -392,7 +392,7 @@ async function run(base) {
   ok('s9 a trash copy with a receipt', kept.length === 1 && existsSync(join(trashDir, kept[0], 'receipt.json')), JSON.stringify(kept));
   await ensureDrawer(page);
   // The list re-reads its members right after the delete: wait for that read, a few seconds at most.
-  ok('s9 no Team row for it', await until(page, async () => (await page.locator('[data-testid="team-list-member"][data-slug="ua-manager"], [data-testid="team-popout"][data-slug="ua-manager"]').count()) === 0, 5000));
+  ok('s9 no Team row for it', await until(page, async () => (await page.locator('[data-testid="team-list-member"][data-slug="ua-manager"]').count()) === 0, 5000));
   await shots(page, '09', 'uye-silindi', () => ensureDrawer(page));
   } catch (e) { ok('s7-s9 ran', false, e?.message ?? e); }
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));

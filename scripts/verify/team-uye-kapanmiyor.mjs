@@ -59,7 +59,7 @@ if (open1.n !== 2) bad++;
 await sec.locator('.ns-team-mrow[data-slug="meta-the-x"]').click(); await page.waitForTimeout(1200);
 await row.click(); await page.waitForTimeout(500);
 const folded2 = await check('folded with its stage open'); await shot('3-kapali-uye-acik');
-if (folded2.n !== 0) bad++;
+if (folded2.n !== 0 || (await row.getAttribute('aria-current')) !== 'page') bad++;
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 await page.waitForTimeout(2500);
