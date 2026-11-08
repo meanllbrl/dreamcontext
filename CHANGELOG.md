@@ -4,10 +4,20 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
-- **One built-in `draw` skill for every drawing.** Excalidraw files and whiteboards share one skill that every install and update brings, on Claude, Codex and Antigravity. A short guide sends a plain file to the drawing builders and a whiteboard to the builders plus live cards.
-- **The drawing rules load at the right moment.** Any drawing request gets a one-line reminder to load `draw`; in the Chat view a passing sketch stays an inline diagram and a drawing you keep goes through `draw`. On Claude, hand-writing an Excalidraw file is stopped with "draw first". The whiteboard commands, sub-agents and the chat all name `draw`.
-- **The old `excalidraw` pack moves over safely.** Nothing you edited is lost (an edited guide is kept as `SKILL.md.pre-draw`), no second skill stays, and scripts that use the old path keep working. Nothing changes until `draw` is really installed.
-- **Super's children use Eco on time.** The hand-off note now also arrives before shell and agent calls, so a child working through a long turn hears it at the threshold and again every ~100k, not once at 600k+. A child is told to hand off into its own task, never someone else's; its fresh session goes back to its worktree and branch, and the Super is told in one line.
+## [0.41.7] - 2026-11-08
+
+Patch on 0.41.6: twelve finished jobs built together. Local build; not published.
+
+- **Every AI Team member and the Super Agent can have a Telegram bot of their own.** A bind sheet, a Settings manager bot and one-tap bot creation pair a bot with a member. The bot talks to that member's thread, the Super's questions can be answered from its bot, a routine's result arrives through the member's bot, and photos, voice notes and files go through. Run and secret cards show on the phone and in Telegram, and `/dur`, `/durum` and `/gundem` stop, report and list. Hands-free can be driven from Telegram too, and works with the app closed. The old per-routine Telegram channel is retired.
+- **Plan understands first.** Before it drafts, Plan asks two to four questions about the real problem and may push back. A change you will see gets a UX flow in your words and a drawing, and nothing is built before you say yes.
+- **Eco mode is one setting for this Mac, on by default.** The Super's children hear the hand-off note on time, also during a long turn of shell and agent calls, and hand off into their own task, never someone else's.
+- **A change you did not make never stops a member.** A member keeps working on the last text you approved while a change waits for you, the banner names the change, and a new member that takes an earlier member's name starts clean.
+- **A job the app restart cut off continues by itself.** The Super's child that was mid-job when the app restarted resumes, and is never shown as done by mistake.
+- **What the Super shows reaches your eyes.** Answer chips read their whole title, and a presentation that was skipped or is not on your screen is never called shown.
+- **Stage cards show only lights that work.** An inert grey minimise light is not drawn; floating cards and group tiles show red and green only.
+- **The Team row in the drawer stays quiet when open.** Its summed ring and count are drawn only while it is folded.
+- **Publishing an app keeps its native source.** A file the app compiles is no longer dropped, and a file that stays is never read into the package.
+- **Test runs are counted once per folder.** A suite is keyed on the folder it runs in, only a provably whole suite keeps a record, and a long run can be started detached and waited for.
 
 ## [0.41.6] - 2026-11-08
 
