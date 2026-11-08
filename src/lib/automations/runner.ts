@@ -46,7 +46,6 @@ import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
 import { appRunBrief, type AppRunBrief } from '../apps/brief.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
-import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   boardScopeArgs,
   prepareScopePaths,
@@ -116,16 +115,6 @@ import {
  *  and the setting that fixes it: no reset will free an account that is closed to routines. */
 export const NONE_OPEN_REASON =
   'no account is open to routines: every account is set to "Keep for my chats only", so routines and background jobs will not start. Untick it on one account in Settings > Claude accounts';
-
-/** Telegram caps a message at 4096 chars; the result delivery is capped well
- *  under that (same headroom reasoning as `TELEGRAM_BODY_MAX` in telegram.ts)
- *  so the title line always survives. */
-const TELEGRAM_RESULT_MAX_CHARS = 3_000;
-
-/** Upper bound on how long a finished run will wait for its Telegram delivery
- *  before letting go — the send is best-effort and the file lock is still held
- *  while it runs. */
-const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
 
 // ─── Preamble / prompt composition ──────────────────────────────────────────
 
@@ -242,10 +231,6 @@ export function buildPreamble(
   projectRoot: string,
   fireAt: Date,
   outputPath: string,
-  /** The connected per-automation Telegram chat, when one exists on this
-   *  machine. Optional so the many callers (and tests) written before the
-   *  channel line existed keep working unchanged. */
-  telegramChatId?: string | null,
   /** Set for a board-only agent: adds the one scope line and pins the attachment folder. */
   scope?: BoardScope | null,
   /** Set for a home-board agent that is NOT board-only: one line naming where its work shows. */
@@ -300,19 +285,7 @@ export function buildPreamble(
     'brain-relative). Also up to 6 key=value rows with --kv — --kv ' +
     'is for numbers, not prose.' +
     THREAD_BLOCKS +
-    askClause(m) +
-    // Without this line, a run (or its resumed chat) that gets asked "why
-    // didn't this reach my Telegram?" concludes — correctly, from its own
-    // view — that no Telegram connection exists, and starts recommending the
-    // user wire up a different channel. The credentials stay machine-local
-    // and out of the prompt on purpose: the run is told the channel EXISTS
-    // and is system-operated, never handed the capability.
-    (telegramChatId
-      ? ` TELEGRAM: this automation is connected to Telegram (chat ${telegramChatId}). The system ` +
-        'itself delivers your opening result line to that chat when the run finishes, and any ' +
-        'question you ask a human is answerable from there. Do not claim Telegram is unconnected, ' +
-        'and do not try to message it yourself — you have no credentials; delivery is automatic.'
-      : '')
+    askClause(m)
   );
 }
 
@@ -612,9 +585,6 @@ export function composePrompt(
   /** The walked `## Flow` graph. Optional so the many callers that have no graph
    *  (and every test written before flows existed) keep working unchanged. */
   flow?: FlowExecResult,
-  /** The connected per-automation Telegram chat, when one exists — see
-   *  `buildPreamble`. */
-  telegramChatId?: string | null,
   /** What the human typed into `#agents` to call this agent, when this fire is
    *  an ask rather than a schedule. See {@link buildAskBlock}. */
   ask?: string | null,
@@ -635,7 +605,7 @@ export function composePrompt(
   app?: AppRunBrief | null,
 ): string {
   const parts = [
-    buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null, board?.scope ? null : board?.home ?? null), '', m.prompt.trim(),
+    buildPreamble(m, projectRoot, fireAt, outputPath, board?.scope ?? null, board?.scope ? null : board?.home ?? null), '', m.prompt.trim(),
   ];
   // Who you are, then how you work, then this job.
   const soul = buildSoulBlock(m);
@@ -1761,10 +1731,6 @@ interface RunOptionsBase extends BoardTurnInput {
   /** `openTarget` is the fallback file; `link` the `dreamcontext://` link the click opens
    *  first (null when this project is not a registered vault). */
   notify?: (title: string, body: string, sound?: string, openTarget?: string | null, link?: string | null) => void;
-  /** Injectable so NO test in this repo can reach api.telegram.org (the same
-   *  contract `tick.ts` holds for polling). Defaults to the real per-slug
-   *  sender, which is a no-op when the automation has no bot configured. */
-  sendTelegram?: (text: string) => Promise<void>;
   /** What the human typed to call this agent from `#agents`. Present ONLY for
    *  a fire a person started by hand; the scheduler never sets it. Rides into
    *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
@@ -1887,37 +1853,6 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   const home = opts.home;
   /** Where the account register and the recorded refusals live. */
   const accountsHome = home ?? homedir();
-  // The per-automation Telegram connection (D8), read ONCE per run. It feeds
-  // two places: the preamble's channel line (the run must know the connection
-  // exists, or a resumed chat asked "why didn't this reach my phone?" denies
-  // having one) and the completion delivery below. `opts.home` is threaded for
-  // the same reason as `notify`: a test that injects nothing must still never
-  // read the developer's real ~/.dreamcontext.
-  const telegramCfg = readTelegramConfigForSlug(slug, home ?? homedir());
-  const sendTelegramFn =
-    opts.sendTelegram ??
-    (async (text: string) => {
-      // Re-read at SEND time, not the run-start snapshot: a run can last an
-      // hour, and someone who ran `telegram off` mid-run has said "stop
-      // messaging me" — honoring the stale snapshot would send anyway. (The
-      // start-time `telegramCfg` still gates whether delivery is attempted at
-      // all and what the prompt says; this re-read only refuses a connection
-      // that has since been revoked, or picks up a re-pointed chat.)
-      const cfg = readTelegramConfigForSlug(slug, home ?? homedir());
-      if (!cfg) return;
-      // `fetchTransport` never rejects but also never times out, and this is
-      // awaited while the run's file lock is still held — a hung sendMessage
-      // must not keep a finished run open. The loser of the race is abandoned,
-      // not cancelled: one stray HTTP request beats a stuck runner.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, TELEGRAM_SEND_TIMEOUT_MS);
-        timer.unref?.();
-      });
-      await Promise.race([notifyTelegram(cfg, text, fetchTransport), deadline]);
-      clearTimeout(timer);
-    });
-
   // Step 1 — no manifest, no cache write (never manufacture brain-synced state
   // out of a typo'd slug).
   const manifest = opts.target ? getRunTarget(contextRoot, slug, opts.target) : getAutomation(contextRoot, slug);
@@ -1950,9 +1885,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
 
   // ASYNC, AND EVERY CALL INSIDE THE try BELOW MUST BE `return await`ed, never
   // bare-`return`ed: a bare `return finalize(...)` lets the `finally` release
-  // the file lock and clear the sidecar the moment finalize suspends at the
-  // Telegram await — reopening the same-slug overlap window for up to the
-  // send's 10s bound.
+  // the file lock and clear the sidecar the moment finalize suspends at an
+  // await — reopening the same-slug overlap window.
   const finalize = async (params: {
     status: RunStatus;
     error: string | null;
@@ -1975,10 +1909,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     /** The run's own headline, for the notification body. Null on every path
      *  that produced no document to draw one from. */
     summary?: string | null;
-    /** The PUBLISHED document itself, for the Telegram delivery — the phone can
-     *  carry the whole report where the macOS banner can only carry a sentence.
-     *  Null on every path where nothing published (failure, awaiting-review —
-     *  a gated document must not leak to the phone past its own gate). */
+    /** The PUBLISHED document itself. Null on every path where nothing published
+     *  (failure, awaiting-review — a gated document must not leak past its own gate). */
     document?: string | null;
     /** Set when this fire left a card open — changes what the banner says and
      *  where clicking it goes, since nothing published. */
@@ -2080,7 +2012,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // macOS `display notification` cannot carry buttons: reading is the
         // only thing a banner can offer, and the proposal is the thing to read.
         // For an `agent` card there is no staged file; its link still lands on
-        // the thread, which is where that one gets answered (or Telegram).
+        // the thread, which is where that one gets answered.
         //
         // The click opens the app first: `dreamcontext://…/automation/<slug>` lands
         // on this agent's thread (where the card is answered) and names the same
@@ -2110,44 +2042,6 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           params.outputPath,
           automationLink(contextRoot, slug, params.outputPath, home),
         );
-      }
-    }
-    // The Telegram delivery — the reason "connected" in the dashboard means
-    // something for a run that never asks a question. Gated on `params.notify`
-    // (a run actually HAPPENED — the blocked/deferred/orphaned refusals must
-    // stay as silent here as they are on the desktop) but NOT on
-    // `manifest.notify`: that field governs the macOS banner, while connecting
-    // a bot to this specific automation is its own explicit opt-in to phone
-    // delivery, and the person who set it up is by definition not at the Mac.
-    // Best-effort like the banner: a network blip must never fail a run that
-    // already succeeded.
-    if (params.notify && telegramCfg && !taskStep && !superJob) {
-      const text =
-        params.status === 'ok'
-          ? params.reviewCardId
-            ? `✋ ${manifest.title} — needs your verdict\n${params.summary ?? ''}`.trimEnd()
-            : // The phone gets the DOCUMENT, not the banner sentence: a chat
-              // message has a 3 000-char budget where the banner has 240, and
-              // "your digest is ready" on a phone withholds the digest from the
-              // one surface the user is actually looking at. Falls back to the
-              // summary (then the filename) when nothing published a document.
-              `✅ ${manifest.title}\n${
-                params.document?.trim() || params.summary || (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done')
-              }`
-          : `❌ ${manifest.title} — ${params.status}\n${params.error ?? `the run ended ${params.status}`}`;
-      try {
-        // Cap by CODE POINT, not code unit: the summary and failure text are
-        // free-form model output, and a `String.slice` boundary can split a
-        // surrogate pair (an emoji in the title is enough), handing Telegram a
-        // lone surrogate at the cut.
-        const points = [...text];
-        await sendTelegramFn(
-          points.length <= TELEGRAM_RESULT_MAX_CHARS
-            ? text
-            : `${points.slice(0, TELEGRAM_RESULT_MAX_CHARS - 1).join('').trimEnd()}…`,
-        );
-      } catch (err) {
-        logFn(`automation "${slug}": telegram delivery failed (the run is unaffected): ${(err as Error).message}`);
       }
     }
     return {
@@ -2490,7 +2384,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       );
       const asked = questionExecution.result?.parsed ? (questionExecution.result.result ?? '').trim() : '';
       // The duplicate-run note rides the question itself, so it reaches every
-      // answer surface (chat, Telegram, `automations answer`) — the asking
+      // answer surface (chat, `automations answer`) — the asking
       // session can't know this, only this machine's binding store can.
       const foreign = foreignRunEvidence(contextRoot, manifest);
       const dupNote =
@@ -2633,7 +2527,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     const scopeVars = scope && scopePaths ? scopeEnv(scope, scopePaths) : {};
     const { turn, display: askText } = buildBoardTurn(contextRoot, scope ?? homeView, opts.board, opts.ask ?? null);
     const prompt = composePrompt(
-      manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null, askText,
+      manifest, projectRoot, fireAt, outputPath, flow, askText,
       // A home agent's turn is never null: its board block is always there, even as the one
       // sentence that says the board could not be read.
       turn ? { ...turn, scope, home: scope ? null : homeView } : null,
@@ -2917,7 +2811,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         };
         // The machine-local binding that a resume actually trusts, written for
         // EVERY run that produced a session — not only one that asked a
-        // question. Talking to the latest run from Telegram and reopening a
+        // question. Talking to the latest run from a thread and reopening a
         // past run as a chat tab both resolve through this store, and a clean
         // run that asked nothing is exactly the one a human wants to question
         // afterwards. Only the runner may write it — it is the process that
@@ -2980,7 +2874,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         if (claudeResult.limit) {
           status = 'failed';
           error = limitReason(claudeResult.limit);
-          // `finalOutputPath` stays null, so nothing publishes, nothing reaches Telegram,
+          // `finalOutputPath` stays null, so nothing publishes,
           // and the feed offers no file card for a document that was never written.
           logFn(`automation "${slug}": ${error}`);
         } else if (status === 'ok' && declaredRunFailure(claudeResult.result ?? '') !== null) {
@@ -3139,9 +3033,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // wrote — the document is already here, and a re-read would also report
       // nothing on the path where the write itself failed.
       summary: claudeResult?.result ? extractNotificationSummary(claudeResult.result) : null,
-      // Only what actually PUBLISHED travels to the phone: a gated (awaiting-
-      // review) or unwritten document stays out, same reasoning as the gate
-      // itself.
+      // Only what actually PUBLISHED travels on: a gated (awaiting-review) or
+      // unwritten document stays out, same reasoning as the gate itself.
       document: finalOutputPath && !reviewCardId ? claudeResult?.result ?? null : null,
       resultText: claudeResult?.result ?? null,
       reviewCardId,

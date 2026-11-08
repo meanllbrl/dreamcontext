@@ -237,7 +237,6 @@ describe('the dispatcher never fires a mode:call agent', () => {
         ran.push(slug);
         return { slug, status: 'ok' } as never;
       },
-      pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never,
     });
 
     expect(ran).toEqual([]);
@@ -265,7 +264,6 @@ describe('the dispatcher never fires a mode:call agent', () => {
           exitCode: 0, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
         } as never;
       },
-      pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never,
     });
 
     expect(ran).toEqual(['digest']);

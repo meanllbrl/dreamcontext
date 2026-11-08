@@ -76,14 +76,6 @@ import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js
 import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
-  adoptGlobalTelegramConfig,
-  forgetTelegramConfigForSlug,
-  pollTelegram,
-  readTelegramConfigForSlug,
-  telegramConfigPathForSlug,
-  writeTelegramConfigForSlug,
-} from '../../lib/automations/telegram.js';
-import {
   allPendingQuestions,
   claimQuestion,
   listQuestions,
@@ -732,7 +724,7 @@ async function answerApprovalQuestion(root: string, question: AutomationQuestion
  * Answer a `'flow-hitl'` question — an already-approved run stopped
  * mid-flight to ask about its own work, so free text is the correct and only
  * shape of answer. `resumeWithAnswer` is the ONE path every channel (HTTP,
- * CLI, Telegram) uses for this, and it re-checks the kind itself before
+ * CLI) uses for this, and it re-checks the kind itself before
  * touching anything.
  */
 async function answerFlowHitlQuestion(root: string, question: AutomationQuestion, answerText: string): Promise<void> {
@@ -1766,102 +1758,6 @@ export function registerAutomationsCommand(program: Command): void {
       } catch (err) {
         handleAutomationsError(err);
       }
-    });
-
-  const telegram = automations
-    .command('telegram')
-    .description("Answer one automation's questions from your phone (a per-automation bot token; never synced)");
-
-  telegram
-    .command('setup')
-    .argument('<slug>', 'Automation slug — one bot per automation, so a leaked token can only answer this one')
-    .description('Point a Telegram bot at this automation so its questions reach you where you already are')
-    .requiredOption('--token <token>', 'Bot token from @BotFather')
-    .requiredOption('--chat <id>', "Your chat id — the ONLY chat allowed to answer this automation's questions")
-    .action((slug: string, opts: { token: string; chat: string }) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-      try {
-        const botToken = opts.token.trim();
-        const chatId = String(opts.chat).trim();
-        // The offset carries over from any existing config (per-slug, or one
-        // already adopted from the legacy global bot) rather than resetting
-        // to 0 — re-saving the same bot must not replay updates it already
-        // processed. Mirrors `handleAutomationsTelegramSet`'s own carry-over
-        // exactly.
-        const existing = readTelegramConfigForSlug(slug);
-        writeTelegramConfigForSlug(slug, { botToken, chatId, offset: existing?.offset ?? 0 });
-        success(`Telegram configured for "${slug}" — ${telegramConfigPathForSlug(slug)} (0600, machine-local, never synced).`);
-        console.log(chalk.dim('  This token can resume a bypassPermissions session on this machine.'));
-        console.log(chalk.dim('  It is deliberately NOT in the brain: a synced token would hand that to every teammate.'));
-        if (pendingQuestion(root, slug)) {
-          console.log(chalk.dim(`  A question is already waiting — it posts on the next tick, or run \`automations telegram test ${slug}\`.`));
-        }
-      } catch (err) {
-        handleAutomationsError(err);
-      }
-    });
-
-  telegram
-    .command('test')
-    .argument('<slug>', 'Automation slug')
-    .description("Post this automation's waiting question now and report what its bot can see")
-    .action(async (slug: string) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-
-      // `adoptGlobalTelegramConfig`, not a plain per-slug read: someone who ran
-      // the OLD global `telegram setup` (no slug) must not read as
-      // "unconfigured" for an automation that is, in fact, still answered by
-      // it — this migrates that legacy config onto this slug the first time
-      // it is asked about, so nobody is silently unconfigured by the rename.
-      const cfg = adoptGlobalTelegramConfig(slug);
-      if (!cfg) {
-        error(`Telegram is not configured for "${slug}" — run \`dreamcontext automations telegram setup ${slug} --token <t> --chat <id>\`.`);
-        process.exitCode = 1;
-        return;
-      }
-
-      console.log(header(`Telegram channel: ${slug}`));
-      console.log(`  chat: ${cfg.chatId}`);
-      console.log(`  question waiting: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
-
-      // Drives the SAME multi-bot fan-out a real dispatcher tick uses
-      // (`pollTelegram`) — telegram.ts exports no single-bot post/poll
-      // primitive, and this file must not duplicate that internal logic.
-      // Every bot it touches stays scoped to its own slug(s) internally
-      // (S5); this verb's REPORT is scoped to `slug`, its ACTION is a real
-      // tick's worth of delivery for every bot configured on this machine.
-      const result = await pollTelegram(root);
-      success(`Handled ${result.processed} update(s) across every configured bot on this machine.`);
-      if (result.unauthorized > 0) {
-        warn(`  ${result.unauthorized} update(s) came from a chat that is NOT yours and were dropped.`);
-      }
-      console.log(`  "${slug}" question waiting now: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
-    });
-
-  telegram
-    .command('off')
-    .argument('<slug>', 'Automation slug')
-    .description("Forget this automation's bot token and stop its channel")
-    .action((slug: string) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-      // Adopt first: a slug relying only on the legacy global bot must not
-      // read as "already off" when it is, in fact, still being answered —
-      // `off` has to actually stop that, not just check a per-slug file that
-      // never existed.
-      const cfg = adoptGlobalTelegramConfig(slug);
-      if (!cfg) {
-        console.log(chalk.dim(`  Telegram was not configured for "${slug}".`));
-        return;
-      }
-      forgetTelegramConfigForSlug(slug);
-      success(`Telegram channel off for "${slug}" — token removed from this machine.`);
-      console.log(chalk.dim('  Its questions are unaffected: the dashboard and `dreamcontext automations answer` still answer them.'));
     });
 
   automations

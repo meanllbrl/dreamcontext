@@ -24,7 +24,7 @@
  * The review-card half of this file (`resumeWithVerdict`, `applySteer`, and
  * everything they alone depended on) is retired: every surface that could
  * answer a card is gone (the CLI's `review` verb, the dashboard queue, the
- * server routes, Telegram), so `resumeWithAnswer` is now the ONE path an
+ * server routes, the old per-routine Telegram channel), so `resumeWithAnswer` is now the ONE path an
  * answer takes, whatever channel it arrived through.
  */
 import { assertNotAppChat } from '../apps/chat-store.js';
@@ -105,7 +105,7 @@ import {
   type AutomationManifest,
   type AutomationQuestion,
   type BoardTurnInput,
-  type ReviewChannel,
+  type SettableReviewChannel,
   type SpawnModelOverride,
 } from './types.js';
 
@@ -456,10 +456,10 @@ export interface VerdictOptions extends BoardTurnInput {
   timeoutMinutes?: number;
   /**
    * Where this resume's final message is DELIVERED, which is the only thing the
-   * preamble has to say differently. Default `'telegram'` so every existing caller
-   * is byte-for-byte unchanged.
+   * preamble has to say differently. Default `'direct'` (the reply goes straight back
+   * to whoever sent the message) so every existing caller is byte-for-byte unchanged.
    */
-  surface?: 'telegram' | 'thread';
+  surface?: 'direct' | 'thread';
   /**
    * The two run-binding HINTS, and NOTHING else.
    *
@@ -474,7 +474,7 @@ export interface VerdictOptions extends BoardTurnInput {
   env?: { DREAMCONTEXT_AUTOMATION_SLUG?: string; DREAMCONTEXT_AUTOMATION_RUN?: string };
   /**
    * How long a message may WAIT for the run lock before it gives up, in ms. Default 0:
-   * refuse at once, which is what Telegram wants (it says so and the human re-sends).
+   * refuse at once (the caller says so and the human re-sends).
    *
    * A thread reply waits instead. The owner answers a question and types a follow-up
    * seconds later; the answer's resume holds the lock, and refusing the follow-up in 0s
@@ -490,7 +490,7 @@ export interface VerdictOptions extends BoardTurnInput {
   /**
    * The thread run this message continues. It then reaches THAT run's session (`sessionForRun`),
    * waits only behind that run, and only that run's open question stands in its way. Absent: the
-   * member's latest session, the Telegram path.
+   * member's latest session.
    */
   run?: string;
   /** Called once, the moment this message stops WAITING and holds the run lock. A queued
@@ -579,11 +579,10 @@ function resolveResumeScope(
 // ─── Questions ───────────────────────────────────────────────────────────────
 //
 // `resumeWithAnswer` is the ONE path an answer takes, whatever channel it
-// arrived through — the HTTP route, the CLI verb, and the Telegram handler all
-// land here. That placement is the whole point of R1: the CLI does not go
-// through the server (`cli/commands/automations.ts` imports this module
-// directly) and Telegram reaches it by a third, independent route, so a refusal
-// living in the HTTP handler would guard exactly one of three doors.
+// arrived through — the HTTP route and the CLI verb both land here. That
+// placement is the whole point of R1: the CLI does not go through the server
+// (`cli/commands/automations.ts` imports this module directly), so a refusal
+// living in the HTTP handler would guard only one of the doors.
 
 /**
  * THE KIND GATE. An `approval` question must never be resumed.
@@ -644,7 +643,7 @@ function buildAnswerPreamble(q: AutomationQuestion, answer: string, turn?: TurnB
  * `src/lib` must not depend on `src/server`.
  *
  * A MISSING roster means no tab was ever opened, which is the common case on a
- * machine that answers from Telegram or the CLI — so it correctly reports false
+ * machine that answers from a thread or the CLI — so it correctly reports false
  * and the binding retires. A CORRUPT roster reports false too, and that is the
  * deliberate trade: the cost is one session that cannot be reopened as a tab
  * (its output document still exists), against the cost of a standing
@@ -666,7 +665,7 @@ function sessionIsInTabRoster(contextRoot: string, sessionId: string): boolean {
  * The card store this replaces dropped its binding the instant a card stopped
  * being pending, because "a resolvable session is a capability, and it should
  * not outlive the decision it existed for". This store cannot do that: it is
- * deliberately plural, so Telegram can talk to the latest run and the app can
+ * deliberately plural, so a thread can talk to the latest run and the app can
  * reopen past ones as tabs. But retiring NOTHING would leave an automation that
  * fires daily with ~90 simultaneously resumable sessions — a widening of the old
  * model rather than a port of it.
@@ -686,7 +685,7 @@ function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: str
   if (pendingQuestion(contextRoot, q.slug)) return;
   // (b) never opened as a chat tab.
   if (sessionIsInTabRoster(contextRoot, sessionId)) return;
-  // (c) NOT the agent's latest session. The thread's reply box and Telegram both talk to
+  // (c) NOT the agent's latest session. The thread's reply box talks to
   // `latestBoundSession`, so retiring it leaves the conversation the owner is standing in
   // with nothing to reach ("no session to talk to yet" right after he answered). The
   // auto-opened chat tab used to keep it alive by accident, through (b); with that gone,
@@ -712,7 +711,7 @@ export async function resumeWithAnswer(
   contextRoot: string,
   question: AutomationQuestion,
   answer: string,
-  via: ReviewChannel,
+  via: SettableReviewChannel,
   opts: VerdictOptions = {},
 ): Promise<QuestionOutcome> {
   const nowFn = opts.now ?? (() => new Date());
@@ -1101,8 +1100,8 @@ function buildMessagePreamble(message: string, turn?: TurnBoardContext | null): 
  * The THREAD variant of the message preamble.
  *
  * A separate builder rather than a branch inside {@link buildMessagePreamble}: the
- * Telegram wording promises delivery to a phone, and that promise is load-bearing for
- * every existing caller. Here it is false — nothing publishes a thread reply's final
+ * direct wording promises delivery back to the human, and that promise is load-bearing
+ * for every existing caller. Here it is false — nothing publishes a thread reply's final
  * message, so an agent that answers and does not POST has answered into the void. The
  * two differ in exactly that claim, and saying so is the whole reason this exists.
  *
@@ -1151,7 +1150,7 @@ export function buildThreadMessagePreamble(
 
 /**
  * Send a human's free-form message into the automation's LATEST session and
- * return its reply — the "talk to the run" path behind a bare Telegram message.
+ * return its reply — the "talk to the run" path behind a bare message.
  *
  * The same trust chain as `resumeWithAnswer`, minus the question: the session
  * id comes from `latestBoundSession` (the machine-local store only the runner
@@ -1179,8 +1178,7 @@ export async function resumeWithMessage(
 
   // A pending question outranks a chat: the run stopped and is owed an ANSWER,
   // and a parallel conversation with the same session would race the answer's
-  // own resume. The Telegram handler already routes that case to the question;
-  // this guard covers every other caller. A message that names its run answers
+  // own resume. This guard covers every caller. A message that names its run answers
   // to that run alone: a sibling's question is another conversation.
   const openFor = () => (opts.run ? pendingQuestionOfRun(contextRoot, slug, opts.run) : pendingQuestion(contextRoot, slug));
   if (openFor()) {
@@ -1210,7 +1208,7 @@ export async function resumeWithMessage(
     : latestBoundSession(slug, home));
   const sessionId = boundSession();
   // An agent that has only worked on tasks has no conversation of its own: its task sessions
-  // resume through their tasks, never from a thread or Telegram message (C1-14).
+  // resume through their tasks, never from a thread message (C1-14).
   if (!sessionId && onlyTaskSessions(slug, home)) {
     return { status: 'refused', error: 'This agent has only worked on tasks so far: reply on the task.', result: null, costUsd: null };
   }
@@ -1240,9 +1238,9 @@ export async function resumeWithMessage(
     const envelope = resolveResumeScope(contextRoot, slug, opts);
     if (!envelope.ok) return { status: 'refused', error: envelope.reason, result: null, costUsd: null };
     resume = envelope.resume;
-    const thread = (opts.surface ?? 'telegram') === 'thread';
+    const thread = (opts.surface ?? 'direct') === 'thread';
     // A thread reply always gets a nonce (its fence follows the agent's own notes); a
-    // Telegram message only in a board turn, so an ordinary one stays exactly as it was.
+    // direct message only in a board turn, so an ordinary one stays exactly as it was.
     const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? envelope.home, opts.board, text);
     const messageText = display ?? text;
     const execution = await spawnSessionResume(

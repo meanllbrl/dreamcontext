@@ -231,8 +231,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agents/:slug/bring-here',
   'POST /api/automations/dispatcher/install',
   'POST /api/automations/dispatcher/uninstall',
-  'GET /api/automations/:slug/telegram',
-  'POST /api/automations/:slug/telegram',
   'GET /api/app/machine',
   'GET /api/sleep-eval/labels',
   'POST /api/sleep-eval/labels',

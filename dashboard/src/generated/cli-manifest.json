@@ -877,37 +877,6 @@
       ]
     },
     {
-      "path": "automations telegram",
-      "desc": "Answer one automation's questions from your phone (a per-automation bot token; never synced)",
-      "args": [],
-      "group": true
-    },
-    {
-      "path": "automations telegram off",
-      "desc": "Forget this automation's bot token and stop its channel",
-      "args": [
-        "<slug>"
-      ]
-    },
-    {
-      "path": "automations telegram setup",
-      "desc": "Point a Telegram bot at this automation so its questions reach you where you already are",
-      "args": [
-        "<slug>"
-      ],
-      "valueFlags": [
-        "--token",
-        "--chat"
-      ]
-    },
-    {
-      "path": "automations telegram test",
-      "desc": "Post this automation's waiting question now and report what its bot can see",
-      "args": [
-        "<slug>"
-      ]
-    },
-    {
       "path": "automations thread",
       "desc": "Read an automation's channel — every run, or one run's thread",
       "args": [

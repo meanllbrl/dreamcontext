@@ -145,7 +145,7 @@ function makeEntryLegacy(slug: string, kind: 'approvals' | 'agentApprovals' = 'a
 }
 
 function runOpts(spawnImpl: SpawnImpl) {
-  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), sendTelegram: vi.fn(async () => {}), force: true };
+  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), force: true };
 }
 
 beforeEach(() => {

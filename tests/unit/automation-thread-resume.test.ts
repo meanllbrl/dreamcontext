@@ -5,7 +5,7 @@
  * Three properties are under test, and they fail in three different directions:
  *
  *   1. THE SURFACE picks the preamble, and the two preambles make OPPOSITE promises
- *      about delivery. Telegram's says the final message reaches the human; the
+ *      about delivery. The direct one says the final message reaches the human; the
  *      thread's says it reaches nobody unless the run POSTs. An agent briefed with the
  *      wrong one answers into the void and believes it replied.
  *   2. THE ENV IS A GUARD, not a convenience. `executeClaudeDetached` merges the
@@ -132,7 +132,7 @@ afterEach(() => {
 // ─── 1. The surface picks the preamble ───────────────────────────────────────
 
 describe('surface selects the preamble, and the two make opposite delivery promises', () => {
-  it("defaults to telegram — every caller written before `surface` existed is unchanged", async () => {
+  it("defaults to direct — every caller written before `surface` existed is unchanged", async () => {
     makeAutomation();
     bindSession();
     const { impl, calls } = fakeSpawn();
@@ -143,7 +143,7 @@ describe('surface selects the preamble, and the two make opposite delivery promi
     const prompt = promptOf(calls[0]);
     expect(prompt).toContain('delivered');
     expect(prompt).toContain('phone');
-    // The Telegram preamble must NOT tell a run to post — nothing is reading that thread.
+    // The direct preamble must NOT tell a run to post — nothing is reading that thread.
     expect(prompt).not.toContain('automations post');
   });
 
@@ -158,7 +158,7 @@ describe('surface selects the preamble, and the two make opposite delivery promi
     const prompt = promptOf(calls[0]);
     expect(prompt).toContain('automations post');
     expect(prompt).toContain('replied in its thread');
-    // THE LOAD-BEARING HALF: it must not repeat Telegram's promise, because here it
+    // THE LOAD-BEARING HALF: it must not repeat the direct promise, because here it
     // is false — a run that answers without posting has answered nobody.
     expect(prompt).not.toContain('phone');
     expect(prompt).toContain('NOT published anywhere');
@@ -349,7 +349,7 @@ describe('an answered question leaves a record in its run thread', () => {
     writeFileSync(threadSlugDir(contextRoot, 'digest'), 'not a directory', 'utf-8');
 
     const { impl } = fakeSpawn('Sent to 41 subscribers.');
-    const out = await resumeWithAnswer(contextRoot, q, 'send', 'telegram', {
+    const out = await resumeWithAnswer(contextRoot, q, 'send', 'cli', {
       home, spawnImpl: impl, now: () => NOW,
     });
     // The answer still succeeded and still reports the agent's own words.

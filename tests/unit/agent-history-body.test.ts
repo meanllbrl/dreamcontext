@@ -337,7 +337,7 @@ describe('K3: a healthy run of a quiet routine raises no "new"', () => {
     expect(ownerQuietReader(contextRoot)('quiet-watch', [okEntry]).size).toBe(0);
   });
 
-  it('never reaches the reader the banner and Telegram delivery read', () => {
+  it('never reaches the reader the banner reads', () => {
     quietRoutine();
     const ok: ThreadEntry = { id: 'b', runId: RUN, at: RUN, text: '', via: 'runner', kind: 'system', event: 'ok' };
     expect(superQuietReader(contextRoot)('quiet-watch', [ok]).size).toBe(0);

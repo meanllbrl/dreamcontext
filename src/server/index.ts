@@ -136,6 +136,7 @@ import {
   handleLabExplorer,
 } from './routes/lab-boards.js';
 import { sweepBoardStaging } from '../lib/lab/boards.js';
+import { removeLegacyTelegramFiles } from '../lib/telegram/legacy.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -153,8 +154,6 @@ import {
   handleAutomationsFlow,
   handleAutomationsQuestionsList,
   handleAutomationsQuestionAnswer,
-  handleAutomationsTelegramGet,
-  handleAutomationsTelegramSet,
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
@@ -1043,7 +1042,7 @@ export function buildRouter(): Router {
   // load-bearing for these, only relative to one another (never ambiguous:
   // each has a unique literal suffix).
   // Agent identity: edit, delete, and the photo. Same distinct-shape note as
-  // `flow`/`telegram` below — each carries a unique literal suffix, so only
+  // `flow` below — each carries a unique literal suffix, so only
   // their order relative to one another would ever matter, and it doesn't.
   // `delete` is a POST on purpose: `index.ts`'s cross-site write guard is
   // written against state-changing POSTs, and reaching for a prettier verb
@@ -1053,8 +1052,6 @@ export function buildRouter(): Router {
   router.get('/api/automations/:slug/photo', handleAutomationsPhotoGet);
   router.post('/api/automations/:slug/photo', handleAutomationsPhotoUpload);
   router.get('/api/automations/:slug/flow', handleAutomationsFlow);
-  router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
-  router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`
@@ -1640,6 +1637,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       startOrphanSweep();
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
+      // The retired per-routine Telegram channel's token files: deleted once, here.
+      try { removeLegacyTelegramFiles(); } catch { /* best-effort */ }
       // Task jobs: settle what died and start what is due, now and every minute (C1-3).
       startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state

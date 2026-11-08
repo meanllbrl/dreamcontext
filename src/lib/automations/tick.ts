@@ -64,14 +64,6 @@ import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
-import { pollTelegram, type PollResult } from './telegram.js';
-
-/** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
- *  null and it returns without a single network call, which is the state every
- *  machine is in until someone runs `automations telegram setup`. */
-const defaultPollTelegram = (contextRoot: string, home?: string): Promise<PollResult> =>
-  pollTelegram(contextRoot, home);
-
 /** `_dream_context/` sits directly under a registered project root — the same
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
  *  exact registered-root → context-root derivation. */
@@ -94,10 +86,6 @@ export interface TickOptions {
   /** Injectable so tests never spawn a real `claude`. Defaults to the real
    *  `runAutomation`. */
   runImpl?: typeof runAutomation;
-  /** Injectable so NO test in this repo can reach api.telegram.org. Defaults
-   *  to the real poller, which is itself a no-op when Telegram is unconfigured
-   *  (the overwhelmingly common case). */
-  pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
   /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
   taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
   /** The clock each RUN reads: starts at `now` and moves with the wall clock, so a run's start,
@@ -347,32 +335,6 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     ran.push(outcome);
     verdicts.push({ slug: manifest.slug, verdict: verdictFor(outcome.status) });
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
-  }
-
-  // AFTER the runs, so a card a run just proposed is posted and answerable in
-  // this same pass rather than waiting five minutes for the next one.
-  //
-  // This lives in the tick — not in the server, not in a daemon — because that
-  // is the only process guaranteed to be alive when an automation fires. The
-  // whole reason a person needs Telegram is that they are not at the Mac; a
-  // channel that only drains while the app is open would work exactly when it
-  // is least needed. A verdict therefore lands within one tick, which is the
-  // right latency for a scheduler and the wrong one for a chat — the server
-  // polls faster while it happens to be up.
-  const poll = opts.pollTelegram ?? defaultPollTelegram;
-  try {
-    const result = await poll(contextRoot, opts.home);
-    if (result.processed > 0) logFn(`[automations] telegram: ${result.processed} update(s) handled`);
-    if (result.unauthorized > 0) {
-      // Never acted on, always said: a bot being messaged by someone who is not
-      // you is worth knowing about, even though the gate already dropped it.
-      logFn(`[automations] telegram: ${result.unauthorized} update(s) dropped from an unauthorized chat`);
-    }
-  } catch (err) {
-    // Telegram is a CHANNEL, not the gate. A broken token, a network blip or a
-    // rate limit must never stop automations from running or cards from being
-    // answerable everywhere else.
-    logFn(`[automations] telegram polling failed (automations are unaffected): ${(err as Error).message}`);
   }
 
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };

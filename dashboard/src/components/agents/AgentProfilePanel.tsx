@@ -139,7 +139,7 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
  * and approval for chat and approval to run, shown SEPARATELY, read-only. There is no Approve here
  * any more (plan-r10 1e): a member changed on this Mac stamps itself; a synced or widening change
  * waits for its ONE card (TeamApproval, on the AI Team page), which this panel names. No browser
- * dialog anywhere (they are silent no-ops in the desktop app). No Run now and no Telegram.
+ * dialog anywhere (they are silent no-ops in the desktop app). No Run now.
  */
 export function AgentProfilePanel({
   slug, onClose, onEdit, onDeleted, onToast, placement = null,

@@ -541,8 +541,6 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/automations/:slug/photo': allow('read: an automation photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/automations/:slug/photo': allow(PROJECT_WRITE),
   'GET /api/automations/:slug/flow': allow(READ),
-  'GET /api/automations/:slug/telegram': deny(SECRET),
-  'POST /api/automations/:slug/telegram': deny(SECRET),
 
   // Theses and learning
   'GET /api/theses': allow(READ),

@@ -259,7 +259,7 @@ describe('AC-A1-2 level → permission envelope', () => {
     makeAgent('roamer', { autonomy: 'free' });
     const target = getRunTarget(contextRoot, 'roamer', 'agent')!;
     const task = { slug: 'fix-signup', name: 'Fix the signup step', file: 'state/fix-signup.md' } as never;
-    const prompt = composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'), undefined, null, null, null, task);
+    const prompt = composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'), undefined, null, null, task);
     expect(prompt).toContain('--- YOUR AUTONOMY: Free ---');
     expect(prompt).toMatch(/Nobody is watching/);
     expect(composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'))).not.toContain('YOUR AUTONOMY');
@@ -407,11 +407,11 @@ describe('AC-A1-3 account protection', () => {
       calls.push(opts);
       return { slug, status: 'ok' } as unknown as RunOutcome;
     });
-    const during = await tickProject(projectRoot, { now: new Date(T + 10 * 60_000), home, runImpl: runImpl as never, pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never });
+    const during = await tickProject(projectRoot, { now: new Date(T + 10 * 60_000), home, runImpl: runImpl as never });
     expect(runImpl).not.toHaveBeenCalled();
     expect(during.verdicts).toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
     expect(readAccountWait(home, T + 10 * 60_000)).toBe(wakeAt);
-    const after = await tickProject(projectRoot, { now: new Date(wakeAt + 60_000), home, runImpl: runImpl as never, pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never });
+    const after = await tickProject(projectRoot, { now: new Date(wakeAt + 60_000), home, runImpl: runImpl as never });
     expect(after.verdicts, JSON.stringify(after.verdicts)).not.toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
     expect(runImpl).toHaveBeenCalledTimes(1);
     expect(calls[0].unattended).toBe(true);

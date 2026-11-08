@@ -3,15 +3,15 @@
  *
  * THE PROBLEM THIS SOLVES. A recorded session id is a CAPABILITY: resuming one
  * runs `claude --resume <id> --permission-mode bypassPermissions`. Every surface
- * that can resume an automation's conversation — the chat answer, the Telegram
- * answer, a restored tab — needs to know WHICH session it may resume, and every
+ * that can resume an automation's conversation — the chat answer, a thread
+ * reply, a restored tab — needs to know WHICH session it may resume, and every
  * value it could read that from lives somewhere an attacker can write:
  *
  *   - `automations/cache/<slug>.json` IS BRAIN-SYNCED, so its
  *     `history[].sessionId` is writable by anyone who can push to the shared
  *     brain. This is a strictly lower bar than the review cards that came
  *     before: no card needs planting, just a synced JSON edit.
- *   - a manifest, a Telegram message body, and a hand-edited tab roster are all
+ *   - a manifest, a message body, and a hand-edited tab roster are all
  *     equally unverified assertions.
  *
  * So the capability-bearing field lives at the HOME boundary instead — the same
@@ -49,7 +49,7 @@
  * `card-registry.ts` dropped a binding the instant its card stopped being
  * pending, because "a resolvable session is a capability, and it should not
  * outlive the decision it existed for". This store cannot do that: it is
- * deliberately PLURAL, because Telegram talks to an automation's latest session
+ * deliberately PLURAL, because a thread talks to an automation's latest session
  * and the app reopens past runs as chat tabs. But without any retirement, an
  * automation firing daily reaches a steady state of ~90 simultaneously
  * resumable `bypassPermissions` sessions — a widening of the old model, not a
@@ -301,7 +301,7 @@ export function sessionForRun(contextRoot: string, slug: string, runId: string, 
  * THE AUTHORITY on whether a session may be resumed for this automation.
  *
  * Returns the id only if THIS machine recorded it under THIS slug. Returns null
- * for a session that arrived from a synced cache record, a manifest, a Telegram
+ * for a session that arrived from a synced cache record, a manifest, a chat
  * message, or a hand-edited roster — which is exactly what an unauthorized
  * resume attempt looks like. Callers MUST treat null as "not resumable" and
  * never as "fall back to what was claimed".

@@ -484,7 +484,7 @@ describe('the session gate (C1-14, AC-C1-12)', () => {
     expect(spawn.calls).toHaveLength(0);
     expect(readQuestion(questionPath(f.contextRoot, 'scout', q.id))?.state).toBe('answered');
     expect(taskData(f, 'fix').agent_state).toBe('queued');
-    const again = await resumeWithAnswer(f.contextRoot, q, 'Another answer.', 'telegram', { home: f.home, spawnImpl: spawn.impl });
+    const again = await resumeWithAnswer(f.contextRoot, q, 'Another answer.', 'cli', { home: f.home, spawnImpl: spawn.impl });
     expect(again.status).toBe('refused');
     expect(spawn.calls).toHaveLength(0);
     startDueTaskJobs(f.contextRoot, h.deps);
@@ -494,11 +494,11 @@ describe('the session gate (C1-14, AC-C1-12)', () => {
     expect(taskData(f, 'fix').status).toBe('in_review');
   });
 
-  it('a thread or Telegram message never resumes a task session; the chat socket refuses it', async () => {
+  it('a thread or direct message never resumes a task session; the chat socket refuses it', async () => {
     const { sid } = await askedTask();
     expect(latestBoundSession('scout', f.home)).toBeNull();
     const spawn = standInClaude([]);
-    const talk = await resumeWithMessage(f.contextRoot, 'scout', 'hello?', { home: f.home, spawnImpl: spawn.impl, surface: 'telegram' });
+    const talk = await resumeWithMessage(f.contextRoot, 'scout', 'hello?', { home: f.home, spawnImpl: spawn.impl, surface: 'direct' });
     expect(talk.status).toBe('refused');
     expect(spawn.calls).toHaveLength(0);
     expect(refusesTaskSession(f.contextRoot, [sid], f.home)).toBe(true);

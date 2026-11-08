@@ -345,7 +345,7 @@ describe('review: output asks the human before publishing', () => {
     expect(openTarget).toBeNull();
   });
 
-  it('an AGENT question has nothing to open either — the app and Telegram answer that one', async () => {
+  it('an AGENT question has nothing to open either — the app answers that one', async () => {
     const m = makeApproved('digest', 'agent');
     const impl = vi.fn(() => {
       openQuestion('digest', { sessionId: null, question: 'Send the mail?', runFiredAt: NOW.toISOString() });

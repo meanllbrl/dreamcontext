@@ -141,7 +141,7 @@ describe('the history block in composePrompt', () => {
 
   it('sits after the pattern and before the owner\'s message, which stays last', () => {
     say('scout', 'agent', 'Yesterday I compared the pricing pages.', 1);
-    const p = composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, null, 'Do it again for B.', null, null, history);
+    const p = composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, 'Do it again for B.', null, null, history);
     const pattern = p.indexOf('--- YOUR PATTERN');
     const hist = p.indexOf('--- YOUR RECENT HISTORY');
     const ask = p.indexOf('Do it again for B.');
@@ -152,8 +152,8 @@ describe('the history block in composePrompt', () => {
   });
 
   it('adds nothing when there is no history, and nothing when no builder is passed', () => {
-    const bare = composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, null, 'Hi.', null, null);
-    expect(composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, null, 'Hi.', null, null, history)).toBe(bare);
+    const bare = composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, 'Hi.', null, null);
+    expect(composePrompt(manifest(), projectRoot, NOW, '/o.md', undefined, 'Hi.', null, null, history)).toBe(bare);
     say('scout', 'agent', 'Something.', 1);
     expect(bare).not.toContain('RECENT HISTORY');
   });
@@ -162,7 +162,7 @@ describe('the history block in composePrompt', () => {
     for (let i = 0; i < 8; i++) say('scout', 'agent', `line ${i} ${'y'.repeat(280)}`, 2 - i * 0.1);
     const ask = 'THE LIVE ASK, verbatim.';
     const compose = (promptBytes: number, h?: typeof history) =>
-      composePrompt(manifest({ prompt: 'p'.repeat(promptBytes) }), projectRoot, NOW, '/o.md', undefined, null, ask, null, null, h);
+      composePrompt(manifest({ prompt: 'p'.repeat(promptBytes) }), projectRoot, NOW, '/o.md', undefined, ask, null, null, h);
     const base = Buffer.byteLength(compose(0), 'utf-8');
     const askTail = `${ask}\n--- END OF WHAT THEY SAID ---`;
 

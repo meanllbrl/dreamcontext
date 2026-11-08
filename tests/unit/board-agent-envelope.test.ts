@@ -170,7 +170,7 @@ function dropManifestLine(slug: string, key: string): void {
 }
 
 function runOpts(spawnImpl: SpawnImpl) {
-  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), sendTelegram: vi.fn(async () => {}), force: true };
+  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), force: true };
 }
 
 beforeEach(() => {
@@ -360,7 +360,7 @@ describe('the scoped envelope on every spawn path', () => {
     expect(prompt.trimEnd().endsWith(`Why is hiring first?\n--- END MESSAGE ${nonce} ---`)).toBe(true);
   });
 
-  it('a Telegram message to a home agent carries the board and puts the message last', async () => {
+  it('a direct message to a home agent carries the board and puts the message last', async () => {
     makeAgent();
     bindSession();
     const { impl, calls } = fakeSpawn();
@@ -442,7 +442,7 @@ describe('refusals: no spawn, a named reason', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('removing `whiteboard` from an approved scoped manifest refuses the Telegram and the answer path', async () => {
+  it('removing `whiteboard` from an approved scoped manifest refuses the message and the answer path', async () => {
     makeAgent();
     const q = makeQuestion();
     dropManifestLine('board-pilot', 'whiteboard');
@@ -450,7 +450,7 @@ describe('refusals: no spawn, a named reason', () => {
     const { impl, calls } = fakeSpawn();
     const talked = await resumeWithMessage(contextRoot, 'board-pilot', 'hi', { home, spawnImpl: impl, now: () => NOW });
     expect(talked.status).toBe('refused');
-    const answered = await resumeWithAnswer(contextRoot, q, 'go', 'telegram', { home, spawnImpl: impl, now: () => NOW });
+    const answered = await resumeWithAnswer(contextRoot, q, 'go', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(answered.status).toBe('refused');
     expect(answered.error).toContain('manifest-changed');
     expect(calls).toHaveLength(0);
