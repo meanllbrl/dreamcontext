@@ -2672,14 +2672,14 @@ export function createChatSession(
    *  at that moment decides. */
   let aboutHeader: ((text: string) => string) | null = null;
   function withAbout(text: string): string {
-    if (!aboutHeader) return text;
+    // A resubmitted Telegram turn keeps its sentinel pair in front: nothing is put before it.
+    if (!aboutHeader || text.startsWith(TG_SENTINEL_CHAR)) return text;
     try { return aboutHeader(text); } catch { return text; }
   }
 
   function send(text: string): boolean {
     if (ownerWordsTaken(text)) return true;
-    // A resubmitted Telegram turn keeps its sentinel pair in front: nothing is put before it.
-    return writeUser(text.startsWith(TG_SENTINEL_CHAR) ? text : withAbout(text), { steered: false });
+    return writeUser(withAbout(text), { steered: false });
   }
 
   /**
@@ -2696,7 +2696,7 @@ export function createChatSession(
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(text.startsWith(TG_SENTINEL_CHAR) ? text : withAbout(text), { steered: true });
+    return writeUser(withAbout(text), { steered: true });
   }
 
   /**

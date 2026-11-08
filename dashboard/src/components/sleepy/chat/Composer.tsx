@@ -1,5 +1,4 @@
 import { useEmbed } from '../../embed/embedMode';
-import { stripSentinelChars } from '../../../lib/chatProtocol';
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { McpPicker } from './McpPicker';
 import { asMcpHost } from './useMcpLive';
@@ -2023,11 +2022,7 @@ export function Composer({
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
     // A message about an agenda line opens with its block (the About chip), before the quote.
-    const composed = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
-    // Owner-typed text never carries the Telegram sentinel: stripped here, at the composer step,
-    // never in `writeUser` (the shared path a resubmitted Telegram turn takes, plan F3).
-    const message = stripSentinelChars(composed.message);
-    const { quoted, slash } = composed;
+    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
     if (!quoted.trim()) return;
     // Every test below reads his words without the chips; every path that clears the box keeps
     // them for the next message (they were not sent) and never hands a token to a peer.
