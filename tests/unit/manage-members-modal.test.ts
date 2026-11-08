@@ -95,10 +95,10 @@ describe('a project not on screen: queued, never a timer (end review Major 4)', 
     const at = chrome.indexOf('const manageMembers = useCallback');
     const body = chrome.slice(at, chrome.indexOf('}, [activate, addTab, consumeManage]);', at));
     expect(body).not.toMatch(/requestAnimationFrame|setTimeout/);
-    expect(body).toMatch(/setPendingManage\(\(prev\) => \(\{ \.\.\.prev, \[target\]: nonce \}\)\)/);
+    expect(body).toMatch(/setPendingManage\(\(prev\) => \(\{ \.\.\.prev, \[target\]: \{ nonce/);
     expect(body).toMatch(/if \(!intentLands\(result, !!tab && !tab\.cold\)\) consumeManage\(target, nonce\)/);
     expect(chrome).toMatch(/pendingManage=\{pendingManage\[p\.vault\] \?\? null\}/);
-    expect(inst).toMatch(/if \(pendingManage === null \|\| !isActive\) return;\s*onManageConsumed\?\.\(vault, pendingManage\);\s*openManage\(\{\}\);/);
+    expect(inst).toMatch(/if \(pendingManage === null \|\| !isActive\) return;\s*onManageConsumed\?\.\(vault, pendingManage\.nonce\);\s*openManage\(pendingManage\.create \? \{ create: true \} : \{\}\);/);
   });
 
   it('the ChromeApi exposes queueDrawerIntent: the drawer\'s own per-project pending-intent path', () => {
@@ -121,7 +121,7 @@ describe('where it is opened from', () => {
   it('the Ekip lists offer it on the desktop only; the alias page and the drawer call requestManageMembers', () => {
     expect(code(read('components/layout/newshell/ChatDrawer.tsx'))).toMatch(/!phone && p\.onManage/);
     expect(code(read('components/layout/newshell/TeamList.tsx'))).toMatch(/!p\.sheet && p\.onManage/);
-    expect(code(read('components/layout/WindowChrome.tsx'))).toMatch(/requestManageMembers\(\)/);
+    expect(code(read('components/layout/WindowChrome.tsx'))).toMatch(/requestManageMembers\(/);
     expect(code(read('pages/AiTeamPage.tsx'))).toMatch(/requestManageMembers\(/);
   });
 });

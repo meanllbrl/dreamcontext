@@ -95,7 +95,6 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'pages/AiTeamPage.css::.aiteam-temp-dot': 'temporary-model dot (non-text, 3:1 rule)',
   'components/roadmap/InsightPicker.css::.inp-check--on': 'check mark (non-text, 3:1 rule)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-project[data-drop-before="true"]::before, .ns-dr-drop-end': 'drag drop marker line (non-text, 3:1 rule)',
-  'components/layout/newshell/ChatDrawer.css::.ns-dr-child.is-sel::before': 'selected-row tick (non-text, 3:1 rule)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-handle:hover::after': 'resize handle line (non-text, 3:1 rule)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-guide': 'resize guide line (non-text, 3:1 rule)',
   'components/sleepy/chat/cards.css::.chat-surveycard-dot.done .chat-surveycard-dot-i': 'progress dot',

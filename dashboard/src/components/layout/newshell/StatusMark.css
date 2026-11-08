@@ -37,7 +37,8 @@
   border: 1.5px solid var(--color-text-tertiary);
   border-top-color: transparent;
   border-radius: var(--radius-full);
-  animation: ns-mark-spin 0.9s linear infinite;
+  animation: var(--dc-motion-status-name, ns-mark-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes ns-mark-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {

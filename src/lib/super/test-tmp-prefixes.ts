@@ -919,6 +919,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'tg-w5-home-',
   'tg-w5-proj-',
   'tick-hf-home-',
+  'tmp-clean-test-',
   'tool-handoff-',
   'transcript-locate-',
   'upgrade-lock-',

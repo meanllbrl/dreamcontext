@@ -257,8 +257,8 @@ describe('review r1 fixes', () => {
     const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/PlanCard.tsx', import.meta.url), 'utf-8')
       .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
     // Every lock is conditional on the write, and a refused write asks for the connection.
-    expect(src).toMatch(/if \(session\.answer\(item\.requestId, \{ behavior: 'allow'[^\n]*\)\) setSent\(true\);\s*else session\.reconnectSoon\(\);/);
-    expect(src).toMatch(/if \(written\) setSent\(true\);\s*else session\.reconnectSoon\(\);/);
+    expect(src).toMatch(/if \(session\.answer\(item\.requestId, \{ behavior: 'allow'[^\n]*\)\) \{ noteOwnerWrote\(\); setSent\(true\); \}\s*else session\.reconnectSoon\(\);/);
+    expect(src).toMatch(/if \(written\) \{ noteOwnerWrote\(\); setSent\(true\); \}\s*else session\.reconnectSoon\(\);/);
     expect(src.match(/setSent\(true\)/g)).toHaveLength(2);
   });
 });

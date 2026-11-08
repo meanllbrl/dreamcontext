@@ -292,8 +292,8 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/if \(head && answerKey\) noteOwnerPending\(answerKey, ownerPendingPresent\(head, child, openOwnerQuestions\(state\.queue\)\)\);\s*const locked = answerKey !== null && ownerAnswerLocked\(answerKey\);/);
     // The answer rides the child's socket, or for the super agent's own ask its own (verify finding).
     expect(strip).toMatch(/const carrier = head\.kind === 'ask' \? superSession : child;\n\s*if \(!claimOwnerAnswer\(answerKey, head\.id, state\.session \?\? '', carrier\?\.status === 'open'\)\) return;\n\s*if \(send\(\) === false\) releaseOwnerAnswer\(answerKey\);/);
-    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
-    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
+    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => \{ const ok = child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
+    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => \{ const ok = child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
     // No answer path bypasses the latch: the permission's two. A question is answered in the
     // chat's own card (SuperQuestionCard.tsx), never from the bar.
     expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(2);
