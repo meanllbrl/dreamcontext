@@ -125,7 +125,7 @@ export async function handleAgentSecret(
       if (rt) { rt.refreshSecrets(); if (rt.state === 'running') void rt.update(); }
     }
     // Its own receipt closes the record (J1), durably: no second submit, no phone form after.
-    if (record) closeCard(record.sessionId, record.cardRef);
+    if (record) closeCard(record.sessionId, record.cardRef, 'done');
     sendJson(res, 200, { ...result, ...(appName !== null ? { app: appName } : {}), receipt: secretReceipt(result, title || undefined) });
   } catch (err) {
     if (err instanceof SecretWriteError) {

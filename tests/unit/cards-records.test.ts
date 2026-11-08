@@ -7,8 +7,8 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  _resetCardsForTests, cardRefOf, cardsInText, closeCard, closeCardsById, getCard, listCards, newestCard,
-  noteAssistantCards, readClosedFile, rebuildCards, setCardsHomeForTests,
+  _resetCardsForTests, cardRefOf, cardsInText, closeCard, closeCardsById, finishCardRun, getCard, listCards,
+  markCardStarted, newestCard, noteAssistantCards, onCardsChange, readClosedFile, rebuildCards, setCardRun, setCardsHomeForTests,
 } from '../../src/lib/cards/records.js';
 import { TG_SENTINEL } from '../../src/lib/telegram/contract.js';
 
@@ -58,6 +58,9 @@ describe('records', () => {
     expect(cards[1].state).toBe('open');
     expect(newestCard(SID, 'run', 'deploy')?.cardRef).toBe(cards[1].cardRef);
     expect(readClosedFile(SID)?.closed).toEqual([first.cardRef]);
+    // Replaced, not finished: no card may say it ran or was saved.
+    expect(cards[0].closedBy).toBe('superseded');
+    expect(readClosedFile(SID)?.why).toEqual({ [first.cardRef]: 'superseded' });
   });
 
   it('the same message seen twice adds nothing', () => {
@@ -71,7 +74,7 @@ describe('records', () => {
     for (let i = 1; i <= 16; i++) {
       noteAssistantCards(SID, 'acme', `m${i}`, run(`c${i}`, `echo ${i}`));
       const ref = listCards(SID).find((c) => c.id === `c${i}`)!.cardRef;
-      closeCard(SID, ref);
+      closeCard(SID, ref, 'done');
     }
     const cards = listCards(SID);
     expect(cards).toHaveLength(16);
@@ -81,8 +84,8 @@ describe('records', () => {
   it('closing writes the file once (0700 dir, 0600 file); re-closing adds no duplicate', () => {
     noteAssistantCards(SID, 'acme', 'm1', secret('k', 'Key'));
     const ref = listCards(SID)[0].cardRef;
-    expect(closeCard(SID, ref)).toBe(true);
-    expect(closeCard(SID, ref)).toBe(false);
+    expect(closeCard(SID, ref, 'done')).toBe(true);
+    expect(closeCard(SID, ref, 'done')).toBe(false);
     const dir = join(home, '.dreamcontext', 'cards');
     expect(lstatSync(dir).mode & 0o777).toBe(0o700);
     const file = join(dir, `${SID}.json`);
@@ -95,6 +98,30 @@ describe('records', () => {
     noteAssistantCards(SID, 'acme', 'm1', run('a', 'ls'));
     closeCardsById(SID, 'run', 'a');
     expect(listCards(SID)[0].state).toBe('closed');
+    expect(listCards(SID)[0].closedBy).toBe('dropped');
+  });
+
+  it('a finished run closes its card as done in ONE change: run cleared, exit kept', () => {
+    noteAssistantCards(SID, 'acme', 'm1', run('a', 'ls'));
+    const ref = listCards(SID)[0].cardRef;
+    setCardRun(SID, ref, { runId: 'r1', owner: 'phone' });
+    const seen: string[] = [];
+    const off = onCardsChange(() => { const c = listCards(SID)[0]; seen.push(`${c.state}/${c.closedBy ?? '-'}/${c.run ? 'run' : 'idle'}`); });
+    finishCardRun(SID, ref, 3);
+    off();
+    expect(seen).toEqual(['closed/done/idle']);
+    expect(listCards(SID)[0].exit).toBe(3);
+  });
+
+  it('done replaces a weaker reason (a Mac Run again of a replaced card that finished), never the reverse', () => {
+    noteAssistantCards(SID, 'acme', 'm1', run('a', 'ls'));
+    const ref = listCards(SID)[0].cardRef;
+    closeCardsById(SID, 'run', 'a');
+    closeCard(SID, ref, 'done');
+    expect(listCards(SID)[0].closedBy).toBe('done');
+    closeCard(SID, ref, 'dropped');
+    expect(listCards(SID)[0].closedBy).toBe('done');
+    expect(readClosedFile(SID)?.why?.[ref]).toBe('done');
   });
 
   it('a symlinked closed-cards file is not read and not written through', () => {
@@ -105,7 +132,7 @@ describe('records', () => {
     symlinkSync(target, join(dir, `${SID}.json`));
     expect(readClosedFile(SID)).toBeNull();
     noteAssistantCards(SID, 'acme', 'm1', run('a', 'ls'));
-    closeCard(SID, listCards(SID)[0].cardRef);
+    closeCard(SID, listCards(SID)[0].cardRef, 'done');
     expect(JSON.parse(readFileSync(target, 'utf-8')).closed).toEqual(['0'.repeat(32)]);
   });
 
@@ -123,7 +150,7 @@ describe('rebuild after a restart', () => {
     noteAssistantCards(SID, 'acme', 'u1', run('a', 'ls'));
     noteAssistantCards(SID, 'acme', 'u2', run('b', 'pwd'));
     const [a, b] = listCards(SID);
-    closeCard(SID, a.cardRef);
+    closeCard(SID, a.cardRef, 'done');
     _resetCardsForTests();
     const jsonl = [row('assistant', 'u1', run('a', 'ls')), row('user', 'x', 'thanks'), row('assistant', 'u2', run('b', 'pwd'))].join('\n');
     rebuildCards(SID, 'acme', jsonl);
@@ -131,6 +158,61 @@ describe('rebuild after a restart', () => {
     expect(getCard(SID, b.cardRef)?.state).toBe('open');
     // After the marker, an owner line never closes a card by inference.
     expect(getCard(SID, b.cardRef)?.rebuilt).toBe(true);
+  });
+
+  it('a run that started and never ended (server killed mid-run) comes back CLOSED as interrupted, never as a fresh card', () => {
+    noteAssistantCards(SID, 'acme', 'u1', run('deploy', 'npm run deploy'));
+    const ref = listCards(SID)[0].cardRef;
+    markCardStarted(SID, ref);
+    // In this process the card is still the open, running one.
+    expect(getCard(SID, ref)?.state).toBe('open');
+    _resetCardsForTests();
+    rebuildCards(SID, 'acme', row('assistant', 'u1', run('deploy', 'npm run deploy')));
+    expect(getCard(SID, ref)?.state).toBe('closed');
+    expect(getCard(SID, ref)?.closedBy).toBe('interrupted');
+  });
+
+  it('a start never overwrites a closure; the exit after it does', () => {
+    noteAssistantCards(SID, 'acme', 'u1', run('a', 'ls'));
+    const ref = listCards(SID)[0].cardRef;
+    closeCard(SID, ref, 'done');
+    markCardStarted(SID, ref);
+    expect(readClosedFile(SID)?.why?.[ref]).toBe('done');
+    noteAssistantCards(SID, 'acme', 'u2', run('b', 'pwd'));
+    const b = listCards(SID)[1].cardRef;
+    markCardStarted(SID, b);
+    finishCardRun(SID, b, 0);
+    expect(readClosedFile(SID)?.why?.[b]).toBe('done');
+    expect(readClosedFile(SID)?.closed).toEqual([ref, b]);
+  });
+
+  it('a live card noted BEFORE the transcript is read does not stop the older cards from coming back', () => {
+    noteAssistantCards(SID, 'acme', 'u1', run('old', 'ls'));
+    const old = listCards(SID)[0].cardRef;
+    _resetCardsForTests();
+    // The resumed chat posts a new card first...
+    noteAssistantCards(SID, 'acme', 'u2', run('new', 'pwd'));
+    // ...then something reads the transcript back.
+    rebuildCards(SID, 'acme', [row('assistant', 'u1', run('old', 'ls')), row('assistant', 'u2', run('new', 'pwd'))].join('\n'));
+    const cards = listCards(SID);
+    expect(cards.map((c) => c.id)).toEqual(['old', 'new']);
+    expect(getCard(SID, old)?.state).toBe('open');
+    // The live record is untouched (still announceable), and no copy of it was added.
+    expect(getCard(SID, cards[1].cardRef)?.rebuilt).toBeUndefined();
+    // Read back once per process.
+    rebuildCards(SID, 'acme', '');
+    expect(listCards(SID)).toHaveLength(2);
+  });
+
+  it('a read-back card the live chat posted again is superseded by the live copy', () => {
+    noteAssistantCards(SID, 'acme', 'u1', run('k', 'ls'));
+    _resetCardsForTests();
+    noteAssistantCards(SID, 'acme', 'u2', run('k', 'ls -la'));
+    rebuildCards(SID, 'acme', row('assistant', 'u1', run('k', 'ls')));
+    const [older, live] = listCards(SID);
+    expect(older.closedBy).toBe('superseded');
+    expect(live.state).toBe('open');
+    expect(newestCard(SID, 'run', 'k')?.cardRef).toBe(live.cardRef);
   });
 
   it('a pre-tracking (legacy) card is closed by a later owner line, never by a Telegram owner block', () => {
@@ -145,5 +227,6 @@ describe('rebuild after a restart', () => {
     // The Telegram block answered nothing; the receipt names pwd, so only `b` closes.
     expect(cards.find((c) => c.id === 'a')?.state).toBe('open');
     expect(cards.find((c) => c.id === 'b')?.state).toBe('closed');
+    expect(cards.find((c) => c.id === 'b')?.closedBy).toBe('answered');
   });
 });

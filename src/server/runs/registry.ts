@@ -26,7 +26,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { platform } from 'node:os';
 import { appendTail, buildRunReport, finishTail, stripAnsi } from '../../lib/run-report.js';
-import { closeCard, getCard, setCardRun, type CardRecordEntry } from '../../lib/cards/records.js';
+import { finishCardRun, getCard, markCardStarted, setCardRun, type CardRecordEntry } from '../../lib/cards/records.js';
 import { RUN_CAP_MS, RUN_REPLAY_BYTES, type RunReport } from '../../lib/telegram/contract.js';
 import { scrubLoginToken } from '../../lib/telegram/format.js';
 import { RELAYED_PTY_ENV } from '../../lib/handsfree/mac/contract.js';
@@ -84,7 +84,11 @@ export interface Run {
 export type RunRefusal = 'no_record' | 'closed' | 'busy' | 'not_run' | 'no_pty' | 'bad_cwd' | 'spawn_failed';
 
 export interface RunDelivery {
-  /** The run ended: deliver its report to the chat (H5). The record is already closed. */
+  /** The run started: hold a "cut off" report on disk now, so a server that dies before the
+   *  exit still owes the agent one (sent when the chat's window mounts after the restart). */
+  started?(run: Run, record: CardRecordEntry): void;
+  /** The run ended: deliver its report to the chat (H5). The record is already closed. Must put
+   *  the report on disk before its first await: the process may exit right after. */
   report(run: Run, record: CardRecordEntry, report: RunReport): void;
 }
 
@@ -162,6 +166,10 @@ export function startRun(
   }
   const run = makeRun(rec, pty, by, { withheld: !!opts.withheld, rerun });
   runs.set(sessionId, run);
+  // On disk before the first byte of output: a crash from here on can never bring this card
+  // back as a fresh ▶, and the agent is still owed a report.
+  markCardStarted(sessionId, cardRef);
+  try { deps.delivery?.started?.(run, rec); } catch { /* delivery logs its own */ }
   setCardRun(sessionId, cardRef, { runId: run.runId, owner: by });
   return run;
 }
@@ -231,8 +239,7 @@ function makeRun(rec: CardRecordEntry, pty: RunPty, by: RunStarter, o: { withhel
     finalReport = { report, code };
     if (runs.get(rec.sessionId) === run) runs.delete(rec.sessionId);
     // J1: the record closes itself first, whatever happens to the report afterwards.
-    closeCard(rec.sessionId, rec.cardRef);
-    setCardRun(rec.sessionId, rec.cardRef, null, code);
+    finishCardRun(rec.sessionId, rec.cardRef, code);
     for (const fn of [...exits]) { try { fn(report, code); } catch { /* its own */ } }
     try { deps.delivery?.report(run, rec, report); } catch { /* delivery logs its own */ }
   });

@@ -7,7 +7,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetCardsForTests, getCard, listCards, noteAssistantCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
+import { _resetCardsForTests, getCard, listCards, noteAssistantCards, readClosedFile, rebuildCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
+import { flushHeldReports, readHeld, runDelivery, setHeldHomeForTests } from '../../src/server/runs/delivery.js';
 import {
   _resetRunsForTests, attachRun, configureRuns, relayLine, runOfSession, setEchoReaderForTests, startRun,
   type RunPty, type SpawnRequest,
@@ -114,6 +115,33 @@ describe('the end of a run (J1, K1)', () => {
     expect(getCard(SID, ref)?.state).toBe('closed');
     expect(runOfSession(SID)).toBeNull();
     expect(listCards(SID)[0].exit).toBe(0);
+    expect(listCards(SID)[0].closedBy).toBe('done');
+  });
+
+  it('a start is on disk before any output: a server killed mid-run brings the card back cut off, and still owes the agent a report', async () => {
+    setHeldHomeForTests(home);
+    try {
+      configureRuns({ delivery: runDelivery });
+      const ref = refOf('login');
+      startRun(SID, ref, 'phone');
+      expect(readClosedFile(SID)?.why?.[ref]).toBe('started');
+      // The cut-off placeholder is held from the start, and a window mounting mid-run does not send it.
+      expect(readHeld(SID)).toEqual([expect.objectContaining({ cardRef: ref, pending: true, text: expect.stringContaining('cut off') })]);
+      expect(await flushHeldReports(SID)).toBe(0);
+      expect(readHeld(SID)).toHaveLength(1);
+      // "Crash": no exit callback ever fires; the process forgets everything, and the transcript
+      // and the files are what is left.
+      spawned[0].pty.kill = () => { /* the process died with the server */ };
+      _resetRunsForTests();
+      _resetCardsForTests();
+      rebuildCards(SID, 'acme', JSON.stringify({ type: 'assistant', uuid: 'm1', message: { content: [{ type: 'text', text: card('login', 'gh auth status', 'app') }] } }));
+      expect(getCard(SID, ref)?.state).toBe('closed');
+      expect(getCard(SID, ref)?.closedBy).toBe('interrupted');
+      expect(startRun(SID, ref, 'phone')).toEqual({ refused: 'closed' });
+      expect(readHeld(SID)[0]?.text).toContain('cut off');
+    } finally {
+      setHeldHomeForTests(null);
+    }
   });
 
   it('withheld output reports the exit code alone', () => {

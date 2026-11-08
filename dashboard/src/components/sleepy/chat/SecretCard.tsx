@@ -112,15 +112,24 @@ export function SecretCard({ spec, report, sessionId }: {
     );
   }
 
-  // A chat's card: no record yet (loading), none at all (an old card), or already answered.
-  // The phone can fill ONLY a live record; the Mac keeps the old path for a card without one.
-  const answered = !!sessionId && record?.state === 'closed';
+  // A chat's card: no record yet (loading), none at all (an old card), or closed. The phone can
+  // fill ONLY a live record; the Mac keeps the old path for a card without one. A closed card says
+  // "saved" ONLY when its own receipt closed it: one the agent replaced or withdrew wrote nothing.
+  const closed = !!sessionId && record?.state === 'closed';
   const unfillable = !!sessionId && (!loaded || (phone && !record));
-  if (answered) {
+  if (closed) {
+    const saved = record?.closedBy === 'done';
+    const note = saved
+      ? <>Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</>
+      : record?.closedBy === 'superseded'
+        ? <>Nothing was saved here. The agent posted a newer copy of this card further down.</>
+        : record?.closedBy === 'dropped'
+          ? <>Nothing was saved here. The agent no longer needs this key.</>
+          : <>Closed in the chat. Check <code>{spec.file}</code> before you rely on this key.</>;
     return (
-      <div className="chat-viewcard chat-secretcard" data-phase="saved" data-view-kind="secret" data-view-id={spec.id}>
-        <CardHeader glyph="✓" title={spec.title} aside={<span className="chat-secretcard-file">{spec.file}</span>} />
-        <p className="chat-secretcard-note">Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</p>
+      <div className="chat-viewcard chat-secretcard" data-phase={saved ? 'saved' : 'closed'} data-closed-by={record?.closedBy} data-view-kind="secret" data-view-id={spec.id}>
+        <CardHeader glyph={saved ? '✓' : '🔑'} title={spec.title} aside={<span className="chat-secretcard-file">{spec.file}</span>} />
+        <p className="chat-secretcard-note">{note}</p>
       </div>
     );
   }

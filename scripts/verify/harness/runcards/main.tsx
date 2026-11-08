@@ -1,6 +1,6 @@
 /**
  * The REAL run and secret cards (W4) in a chat host, Mac and phone, with their real CSS:
- *   ?host=mac|phone  &view=idle|live-telegram|done|unrecorded  &theme=light|dark
+ *   ?host=mac|phone  &view=idle|live-telegram|done|superseded|interrupted|unrecorded  &sock=live|refuse|exit  &theme=light|dark
  */
 import { SID, RUN_SPEC, SECRET_SPEC } from './stubs';
 import { createRoot } from 'react-dom/client';

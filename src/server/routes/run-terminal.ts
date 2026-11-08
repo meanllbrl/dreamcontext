@@ -23,7 +23,7 @@ import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { join } from 'node:path';
 import { lstatSync, readFileSync } from 'node:fs';
-import { CARD_REF_RE, getCard, hasCards, isSessionUuid, listCards, rebuildCards, type CardRecordEntry } from '../../lib/cards/records.js';
+import { CARD_REF_RE, getCard, isRebuilt, isSessionUuid, listCards, rebuildCards, type CardRecordEntry } from '../../lib/cards/records.js';
 import { PHONE_RUN_TERMINAL_PATH } from '../../lib/telegram/contract.js';
 import { attachRun, startRun, type Run } from '../runs/registry.js';
 import { sendError, sendJson } from '../middleware.js';
@@ -95,9 +95,15 @@ async function upgradeTo(req: IncomingMessage, socket: Duplex, head: Buffer, the
   });
 }
 
-/** Try to rebuild a session's records from its transcript (after a restart) before a lookup. */
+/**
+ * Read a session's older cards back from its transcript (after a restart) before a lookup or a
+ * snapshot, once per process. Gated on "read back yet", never on "has records": a resumed chat
+ * that posts a new card first must still get its older ones (the rebuild merges). Every reader
+ * of the records goes through here: the phone and Mac terminals, the secret route, the cards
+ * GET and the chat socket's `cards` frame.
+ */
 export function ensureCards(sessionId: string): void {
-  if (hasCards(sessionId)) return;
+  if (isRebuilt(sessionId)) return;
   const entry = getChat(sessionId);
   const vault = entry?.vault;
   if (!vault) return;

@@ -81,6 +81,15 @@ export function buildRunReport(
   return lines.join('\n');
 }
 
+/** The report owed for a run the server never saw end (it stopped mid-run). Held on disk from
+ *  the run's start and replaced by the real report at its exit. */
+export function buildInterruptedReport(command: string): string {
+  return [
+    '[ran in chat]',
+    `$ ${command}`,
+    'cut off: the app stopped before this command finished, so it may have run only partly. Ask the owner to check before running it again.',
+  ].join('\n');
+}
 
 /**
  * Fit a run report into a host with a hard length cap — an agent thread's reply is at most

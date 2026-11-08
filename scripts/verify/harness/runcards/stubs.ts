@@ -2,13 +2,15 @@
  * Runs before any dashboard module (W4 run/secret cards harness). `?host=mac` believes it is the
  * desktop shell; `?host=phone` is the hands-free phone page (the surface meta, no shell). The
  * card records come from a fake `GET /api/agent/cards` keyed by `?view=`; every terminal socket
- * is a fake that records its URL in `window.__sockets` and plays a little output; every secret
- * POST body is recorded in `window.__posts`.
+ * is a fake that records its URL in `window.__sockets` and plays a little output (`?sock=refuse`:
+ * the server refuses the upgrade, it never opens; `?sock=exit`: the process exits 0 after its
+ * output); every secret POST body is recorded in `window.__posts`.
  */
 const w = window as unknown as Record<string, unknown>;
 const params = new URLSearchParams(location.search);
 const view = params.get('view') ?? 'idle';
 const host = params.get('host') ?? 'mac';
+const sock = params.get('sock') ?? 'live';
 export const SID = '11111111-2222-4333-8444-555555555555';
 export const RUN_SPEC = { type: 'run', id: 'gh-login', command: 'gh auth login --web', why: 'GitHub girişini senin yapman gerekiyor.' };
 export const SECRET_SPEC = { type: 'secret', id: 'stripe', title: 'Stripe test key', file: '.env.local', fields: [{ key: 'STRIPE_SECRET_KEY', label: 'Secret key', hint: 'sk_test_ ile başlar' }] };
@@ -33,10 +35,14 @@ const SECRET_REF = 'b'.repeat(32);
 function records(): unknown[] {
   if (view === 'unrecorded') return [];
   const run = view === 'live-telegram' ? { runId: 'r1', owner: 'telegram' } : null;
-  const state = view === 'done' ? 'closed' : 'open';
+  // done: both finished by their own end; superseded: the agent posted both again further down;
+  // interrupted: the app stopped mid-run (the secret is still open).
+  const runClosedBy = view === 'done' ? 'done' : view === 'superseded' ? 'superseded' : view === 'interrupted' ? 'interrupted' : null;
+  const secretClosedBy = view === 'done' ? 'done' : view === 'superseded' ? 'superseded' : null;
+  const closed = (by: string | null) => (by ? { state: 'closed', closedBy: by } : { state: 'open' });
   return [
-    { id: RUN_SPEC.id, cardRef: RUN_REF, kind: 'run', spec: RUN_SPEC, state, run, ...(view === 'done' ? { exit: 0 } : {}) },
-    { id: SECRET_SPEC.id, cardRef: SECRET_REF, kind: 'secret', spec: SECRET_SPEC, state: view === 'done' ? 'closed' : 'open', run: null },
+    { id: RUN_SPEC.id, cardRef: RUN_REF, kind: 'run', spec: RUN_SPEC, ...closed(runClosedBy), run, ...(view === 'done' ? { exit: 0 } : {}) },
+    { id: SECRET_SPEC.id, cardRef: SECRET_REF, kind: 'secret', spec: SECRET_SPEC, ...closed(secretClosedBy), run: null },
   ];
 }
 
@@ -73,11 +79,26 @@ class FakeSocket extends EventTarget {
     super();
     this.url = url;
     sockets.push(url.replace(/^wss?:\/\/[^/]+/, ''));
+    if (sock === 'refuse') {
+      setTimeout(() => {
+        this.readyState = 3;
+        this.onerror?.(new Event('error'));
+        this.onclose?.(new CloseEvent('close', { code: 1006 }));
+      }, 50);
+      return;
+    }
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.(new Event('open'));
       const lines = ['! First copy your one-time code: 4F2A-9C1D\r\n', 'Press Enter to open github.com in your browser... '];
       lines.forEach((l, i) => setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: l })), 80 * (i + 1)));
+      if (sock === 'exit') {
+        setTimeout(() => {
+          this.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(JSON.stringify({ type: 'exit', code: 0 })).buffer }));
+          this.readyState = 3;
+          this.onclose?.(new CloseEvent('close', { code: 1000 }));
+        }, 400);
+      }
     }, 50);
   }
   send(): void { /* keystrokes and resizes go nowhere */ }

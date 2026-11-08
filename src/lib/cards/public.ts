@@ -8,6 +8,16 @@ import type { RunViewSpec, SecretViewSpec } from '../chat-view-spec.js';
 export type CardKind = 'run' | 'secret';
 export type CardSpec = RunViewSpec | SecretViewSpec;
 
+/**
+ * Why a record closed. Only `done` means the card's own end happened (the run exited, the secret
+ * was written); a card may say "finished" or "saved" for that one and no other.
+ *  - `interrupted`: a run started and the server stopped before it ended (it may have run partly).
+ *  - `superseded`: the agent posted the same card again; the newer copy is the live one.
+ *  - `dropped`: the Super closed the owner item another way.
+ *  - `answered`: a card from before records were kept, closed by the old owner-line rule.
+ */
+export type CardCloseReason = 'done' | 'interrupted' | 'superseded' | 'dropped' | 'answered';
+
 export interface CardRunInfo {
   runId: string;
   owner: 'mac' | 'phone' | 'telegram';
@@ -20,6 +30,8 @@ export interface PublicCard {
   kind: CardKind;
   spec: CardSpec;
   state: 'open' | 'closed';
+  /** Set when closed; absent on an entry written before reasons were kept. */
+  closedBy?: CardCloseReason;
   run: CardRunInfo | null;
   exit?: number | null;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { canonicalJson, type PublicCard } from '../../../src/lib/cards/public.js';
+import { canonicalJson, type CardCloseReason, type PublicCard } from '../../../src/lib/cards/public.js';
 import type { RunViewSpec, SecretViewSpec } from './chatViewSpec';
 
 /**
@@ -14,6 +14,7 @@ import type { RunViewSpec, SecretViewSpec } from './chatViewSpec';
  */
 
 export type CardRecordView = PublicCard;
+export type { CardCloseReason };
 
 interface SessionCards { loaded: boolean; cards: PublicCard[] }
 

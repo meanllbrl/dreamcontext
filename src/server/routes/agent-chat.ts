@@ -108,6 +108,7 @@ import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
 import { listCards, onCardsChange } from '../../lib/cards/records.js';
 import { flushHeldReports } from '../runs/delivery.js';
+import { ensureCards } from './run-terminal.js';
 import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
@@ -3549,7 +3550,11 @@ export function startChatSession(
   // The chat's run/secret card records (plan I1): the socket that holds the chat and the phone
   // mirrors are told on every change (the client matches its cards and sends back the server's
   // cardRef, never one of its own). A report held while no window was mounted goes now (H5).
-  const cardsFrame = (): Record<string, unknown> => ({ subtype: 'cards', session: chatRegistryId, cards: listCards(chatRegistryId) });
+  const cardsFrame = (): Record<string, unknown> => {
+    // A client treats this frame as the whole set: the older cards are read back first.
+    ensureCards(chatRegistryId);
+    return { subtype: 'cards', session: chatRegistryId, cards: listCards(chatRegistryId) };
+  };
   const unlistenCards = registry
     ? onCardsChange((sid) => {
       if (sid !== chatRegistryId) return;

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -6,6 +6,7 @@ import { useCardRecord } from '../../../lib/cardRecords';
 import { CardHeader } from './molecules';
 import { InlineTerminal, type CardTarget } from './InlineTerminal';
 import { buildRunReport, type RunOutcome } from './runReport';
+import { runCardView, type RunOutcome as CardOutcome } from './runCardView';
 import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 /**
@@ -73,7 +74,20 @@ function useCopy(command: string): [boolean, () => void] {
   return [copied, copy];
 }
 
-/** The chat host: the server's record decides what can be done here. */
+/** A terminal shown in a chat card: one this card started (`user`), or one watching a run that
+ *  was started elsewhere. `runId` is the server run it shows, once known. */
+interface Shown {
+  key: string;
+  target: CardTarget;
+  user: boolean;
+  runId?: string;
+  /** Its socket ended. */
+  ended: boolean;
+  /** It ended with the server's exit frame: the process really finished. */
+  exited: boolean;
+}
+
+/** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
 function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string }) {
   const api = useApi();
   const { vault } = useVaultId();
@@ -83,99 +97,116 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
   const desktop = isDesktop();
   const [includeOutput, setIncludeOutput] = useState(true);
   const [copied, copy] = useCopy(spec.command);
-  // A terminal this card opened: kept mounted until its process ends, whatever the records say.
-  const [local, setLocal] = useState<{ n: number; target: CardTarget } | null>(null);
-  const [localExit, setLocalExit] = useState<number | null | undefined>(undefined);
-  const [n, setN] = useState(0);
+  // The terminal in this card. It STAYS mounted after its process ends (read-only), so the last
+  // output stays on screen until a newer run replaces it.
+  const [shown, setShown] = useState<Shown | null>(null);
+  // What this card's own last terminal led to, tied to that terminal's key (a newer one voids it).
+  const [outcome, setOutcome] = useState<(CardOutcome & { key: string }) | null>(null);
+  const starts = useRef(0);
 
   const live = record?.run ?? null;
+  const liveRunId = live?.runId;
+  const cardRef = record?.cardRef;
   const closed = record?.state === 'closed';
-  const phase: Phase = local || live ? 'running' : closed || localExit !== undefined ? 'done' : 'idle';
+  const shownEnded = shown?.ended;
+
+  // Watch a run going for this card (started on the phone, from Telegram, or before a reload).
+  // A connected terminal is only tagged with its run; one whose run already ended here, or whose
+  // watch already dropped once, is kept (no reconnect loop); otherwise the new run is attached.
+  useEffect(() => {
+    if (!liveRunId || !cardRef) return;
+    setShown((cur) => {
+      if (cur && !cur.ended) return cur.runId ? cur : { ...cur, runId: liveRunId };
+      if (cur && cur.runId === liveRunId && (cur.exited || !cur.user)) return cur;
+      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone }, user: false, ended: false, exited: false };
+    });
+  }, [liveRunId, cardRef, sessionId, phone, shownEnded]);
+
+  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean }) => {
+    if (user && !r.opened && !r.exited) {
+      // Refused before it opened (busy, too many starts, no terminal): nothing ran.
+      setShown((cur) => (cur?.key === key ? null : cur));
+      setOutcome({ kind: 'refused', key });
+      return;
+    }
+    setShown((cur) => (cur?.key === key ? { ...cur, ended: true, exited: r.exited } : cur));
+    if (r.exited) setOutcome({ kind: 'exited', code: r.code, key });
+  };
+
   const canStart = (desktop || phone) && !!vault;
-  const startable = loaded && !!record && !live && !local && canStart && (!closed || (desktop && !phone));
-  const exitCode = localExit !== undefined ? localExit : record?.exit;
+  const view = runCardView({
+    loaded,
+    hasRecord: !!record,
+    canStart,
+    phone,
+    desktop,
+    state: record?.state,
+    closedBy: record?.closedBy,
+    recordExit: record?.exit,
+    liveOwner: live?.owner ?? null,
+    connected: !!shown && !shown.ended,
+    connectedIsOwn: !!shown?.user,
+    outcome: outcome && (!shown || shown.key === outcome.key) ? outcome : null,
+  });
 
   const start = () => {
     if (!record) return;
-    const target: CardTarget = { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone };
-    setLocalExit(undefined);
-    setN((x) => x + 1);
-    setLocal({ n: n + 1, target });
+    starts.current += 1;
+    setOutcome(null);
+    setShown({
+      key: `l${starts.current}`,
+      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone },
+      user: true,
+      ended: false,
+      exited: false,
+    });
   };
 
-  const attachTarget: CardTarget | null = live && record ? { sessionId, cardRef: record.cardRef, start: false, phone } : null;
-  const target = local?.target ?? attachTarget;
-  const termKey = local ? `l${local.n}` : live ? `r${live.runId}` : 'none';
-
-  const note = !loaded
-    ? 'Checking this card…'
-    : !record
-      ? 'This card is older than the chat\'s newest cards, so it cannot run here. Copy it and run it in your terminal.'
-      : !canStart
-        ? 'Running a command in the chat needs the desktop app. Copy it and run it in your terminal.'
-        : phase === 'running'
-          ? live?.owner === 'telegram'
-            ? 'Started from Telegram. Type here as you would in your own terminal.'
-            : live?.owner === 'phone' && !phone
-              ? 'Started on the phone. Type here as you would in your own terminal.'
-              : 'Type here as you would in your own terminal.'
-          : phase === 'done'
-            ? phone
-              ? 'Finished. The result went back to the agent. Run it again from the Mac.'
-              : 'Finished. The result went back to the agent.'
-            : null;
-
-  const title = phase === 'running' ? 'Running in chat' : phase === 'done' ? 'Ran in chat' : 'Run this yourself';
   return (
-    <div className="chat-viewcard chat-runcard" data-phase={phase} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')}>
+    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')}>
       <CardHeader
-        glyph={phase === 'running' ? '▸' : '>_'}
-        title={title}
-        aside={phase === 'done' ? exitChip(exitCode) : spec.cwd ? <span className="chat-runcard-cwd">{spec.cwd}</span> : undefined}
+        glyph={view.phase === 'running' ? '▸' : '>_'}
+        title={view.title}
+        aside={view.chip !== undefined ? exitChip(view.chip) : spec.cwd ? <span className="chat-runcard-cwd">{spec.cwd}</span> : undefined}
       />
 
-      {spec.why && phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
+      {spec.why && view.phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
       <div className="chat-runcard-cmdrow">
         <code className="chat-runcard-cmd">{spec.command}</code>
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {record && canStart && phase !== 'running' && (closed ? desktop && !phone : true) && (
+        {view.runLabel && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"
             onClick={start}
-            disabled={!startable}
+            disabled={!view.startable}
           >
-            <span aria-hidden>▶</span> {phase === 'done' ? 'Run again' : 'Run'}
-          </button>
-        )}
-        {!loaded && canStart && (
-          <button type="button" className="chat-btn pill primary chat-runcard-play" disabled>
-            <span aria-hidden>▶</span> Run
+            <span aria-hidden>▶</span> {view.runLabel}
           </button>
         )}
       </div>
 
-      {startable && (
+      {view.startable && (
         <label className="chat-runcard-share">
           <input type="checkbox" checked={includeOutput} onChange={(e) => setIncludeOutput(e.target.checked)} />
           Send the output back to the agent when it finishes
         </label>
       )}
 
-      {target && vault && (
+      {shown && vault && (
         <InlineTerminal
-          key={termKey}
+          key={shown.key}
           vault={vault}
           command={spec.command}
-          card={target}
-          onExit={(r) => { setLocal(null); setLocalExit(r.code); }}
+          card={shown.target}
+          onExit={(r) => onEnd(shown.key, shown.user, r)}
         />
       )}
 
-      {note && <p className="chat-runcard-note">{note}</p>}
+      {view.note && <p className="chat-runcard-note">{view.note}</p>}
     </div>
   );
 }
