@@ -203,6 +203,7 @@ describe('end-review r1 fixes', () => {
     expect(keepTelegramRef(tg, stripTgPrefix(tg))).toBe(tg);
     expect(parseTelegramClaim(keepTelegramRef(tg, 'evet, ama yarın'))).toEqual({ ref: 'k3x9a1', body: 'evet, ama yarın' });
     expect(keepTelegramRef('normal', 'normal 2')).toBe('normal 2');
+    expect(keepTelegramRef(tg, '   ')).toBe('   ');
   });
 
   it('a pending row read before this pairing began never raises its confirm', () => {

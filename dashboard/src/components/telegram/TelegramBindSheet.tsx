@@ -172,7 +172,7 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
     body = <p className="tg-hint" data-testid="tg-browser-only">{t('telegram.browserOnly')}</p>;
   } else if (status.isLoading) {
     body = <p className="tg-hint">{t('telegram.loading')}</p>;
-  } else if (status.isError) {
+  } else if (status.isError && !status.data) {
     // A failed read is never "not set up": that would send the owner to Settings for nothing.
     body = <StatusError onRetry={() => void status.refetch()} />;
   } else if (row?.state === 'active') {

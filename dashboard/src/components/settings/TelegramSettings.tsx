@@ -72,7 +72,7 @@ export function TelegramSettings() {
   }
   if (status.isLoading) return <div className="tg-settings"><p className="tg-hint">{t('telegram.loading')}</p></div>;
   // A failed read is never "not set up": that would ask for the manager key again for nothing.
-  if (status.isError && flow.kind === 'idle') return <div className="tg-settings"><StatusError onRetry={() => void status.refetch()} /></div>;
+  if (status.isError && !status.data && flow.kind === 'idle') return <div className="tg-settings"><StatusError onRetry={() => void status.refetch()} /></div>;
 
   const submit = () => {
     const value = token.trim();

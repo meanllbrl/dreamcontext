@@ -184,6 +184,8 @@ function whenLabel(paused: boolean, total: number, owed: number): string {
  *  still routed back to Telegram and an unchanged Save is no change at all. */
 export function keepTelegramRef(original: string, edited: string): string {
   const claim = parseTelegramClaim(original);
+  // Emptied: nothing left to send, so the row goes (an empty body never keeps a ref alive).
+  if (!edited.trim()) return edited;
   return claim.ref ? `${TG_SENTINEL_CHAR}${claim.ref}${TG_SENTINEL_CHAR}${edited}` : edited;
 }
 
