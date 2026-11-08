@@ -221,6 +221,11 @@ const MEMBER_AMEND_2026_10_31 = 370;
   // 2026-11-08 (owner, super-model-secimi): the work to model map is always on; the handoff never fixes a model per job kind.
   const MODEL_MAP_2026_11_08 = 600;
   const TEXT_NOT_THOUGHT_2026_11_07 = 470; // + the not-understood re-ask line (~190)
+  // 2026-11-08 (owner, super-sunum-gorunur): a skipped or NOT-on-screen present is never claimed as shown (measured +118).
+  const NOT_ON_SCREEN_2026_11_08 = 120;
+  it('never claims a kept or skipped presentation is on his screen', () => {
+    expect(brief).toContain('`state: skipped` or a `note` saying NOT on his screen: never say it is shown; tell him where it is.');
+  });
   it('writes what he asked for in text, never only in thinking, and never blames his screen', () => {
     expect(brief).toContain('He sees your text, never your thinking');
     expect(brief).toContain('never point him "above" at what you did not write there');

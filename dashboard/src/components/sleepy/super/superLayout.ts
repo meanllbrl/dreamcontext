@@ -1856,10 +1856,15 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   // The server's order: the cards leave, an explicit view wins (without his marks: those travel
   // set-guarded), the set-guarded fields, then the store's sanitize re-resolves the layout.
   let v: SuperView = viewWithout(state.view, unshown);
-  if (patch.view) { v = { ...patch.view }; delete v.layoutBy; delete v.chat; }
+  if (patch.view) {
+    v = { ...patch.view };
+    for (const k of ['layoutBy', 'chat', 'ask', 'auto', 'by', 'ownerAt'] as const) delete v[k];
+    // A side by side or a presentation he sets is his (the server stamps the same mark).
+    if (v.mode === 'half' || v.mode === 'present') v.by = 'owner';
+  }
   v = applyOwnerViewFields(v, patch);
   let view: SuperView = { mode: 'float' };
-  if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card };
+  if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card, ...(v.by === 'owner' ? { by: 'owner' as const } : {}), ...(v.auto && !patch.view ? { auto: true as const } : {}) };
   else if (v.mode === 'present') view = resolvePresent(v, containers) ?? { mode: 'float' };
   return { ...state, containers, groups, view };
 }
@@ -1921,4 +1926,19 @@ export function sameView(a: SuperView, b: SuperView): boolean {
   if (a.mode === 'half') return a.card === b.card;
   if (a.mode === 'present') return (a.cards ?? []).join('\n') === (b.cards ?? []).join('\n') && a.layout === b.layout && a.chat === b.chat;
   return true;
+}
+
+/**
+ * The agent just put NEW cards in front of the owner (owner 2026-11-08: "a presentation stays
+ * open and another does not replace it, so I never saw what you talked about"): the view now
+ * presents, or shows side by side, cards it did not show before, and it is not his own view nor
+ * the server's automatic page. The stage then closes what it draws OVER the view (a card full
+ * screen, a group's or Others' panel), so the new thing is really in front of him. Pure.
+ */
+export function agentShowsNew(prev: SuperView, next: SuperView): boolean {
+  if (next.by === 'owner' || next.auto) return false;
+  if (next.mode !== 'present' && next.mode !== 'half') return false;
+  const cardsOf = (v: SuperView) => (v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? v.cards ?? [] : []);
+  const before = new Set(cardsOf(prev));
+  return cardsOf(next).some((id) => !before.has(id));
 }

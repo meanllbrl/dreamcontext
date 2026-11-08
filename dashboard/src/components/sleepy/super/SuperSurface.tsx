@@ -20,7 +20,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
@@ -528,6 +528,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const [full, setFull] = useState<{ id: string; subject: CardFullscreen } | null>(null);
   // A card opened full screen is looked at too, while the stage is on screen.
   useEffect(() => lookAt(props.visible ? full?.id : null), [full?.id, props.visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The agent presents something NEW (superLayout.ts agentShowsNew): what the stage draws over the
+  // view (a card full screen, a panel) closes, so it is in front of him and not behind a look he
+  // left open. A full screen of a card the new view shows stays.
+  const lastViewRef = useRef(state.view);
+  useEffect(() => {
+    const prev = lastViewRef.current;
+    lastViewRef.current = state.view;
+    if (!agentShowsNew(prev, state.view)) return;
+    const shown = new Set(state.view.mode === 'half' && state.view.card ? [state.view.card] : state.view.cards ?? []);
+    setFull((f) => (f && !shown.has(f.id) ? null : f));
+    setOpenGroup(null);
+  }, [state.view]);
   const webOnScreen = props.visible
     // A small or medium floating tile shows a page's title; the frame lives side by side,
     // presented, or in a large/wide floating card (owner 2026-10-22), within the same budget.

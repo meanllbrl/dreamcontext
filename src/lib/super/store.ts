@@ -255,7 +255,8 @@ export function sanitizeView(raw: unknown, containers: readonly SuperContainer[]
   if (raw.mode === 'half') {
     if (typeof raw.card !== 'string' || !ids.has(raw.card)) return { mode: 'float' };
     if (raw.auto === true) return { mode: 'half', card: raw.card, auto: true };
-    return raw.by === 'owner' ? { mode: 'half', card: raw.card, by: 'owner' } : { mode: 'half', card: raw.card };
+    if (raw.by !== 'owner') return { mode: 'half', card: raw.card };
+    return { mode: 'half', card: raw.card, by: 'owner', ...(typeof raw.ownerAt === 'number' && Number.isFinite(raw.ownerAt) ? { ownerAt: raw.ownerAt } : {}) };
   }
   // A presentation always carries its resolved layout, and so every path that removes a card
   // (close, end, Others, a hand-over) re-resolves it here (plan-r2 D4, R2-E1/E2).

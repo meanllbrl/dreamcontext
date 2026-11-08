@@ -130,7 +130,7 @@ export interface RemoteContainer {
 
 export interface RemoteGroup { id: string; name: string; cards: string[]; place: 'float' | 'others'; pos?: { x: number; y: number } }
 
-export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar' }
+export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar'; auto?: true; by?: 'owner' }
 
 export interface RemoteChild { sessionId: string; row?: string; startedAt: number; finishedAt?: number; seenAt?: number; endedAt?: number }
 

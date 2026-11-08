@@ -652,6 +652,12 @@ function readCardsOf(s: SuperState, shown: ReturnType<typeof applyAskShow>): str
   return shown.ids.filter((id) => s.containers.some((k) => k.id === id && isReadKind(k.kind))).slice(0, MAX_ASK_READS);
 }
 
+/** What the agent is told when the owner's own current arrangement kept a question's cards off
+ *  his screen (types.ts ownerViewHeld): plainly, so it never claims they are in front of him. */
+export const OWNER_KEPT_NOTE = 'NOT on his screen: the owner arranged his stage himself a moment ago, so it stays. Do not say it is on screen; tell him where it is (the card\'s title, on the stage or in Others) so he can open it.';
+/** A present that kept the owner's layout for the same cards: they ARE shown, in his layout. */
+export const OWNER_LAYOUT_NOTE = 'Shown, in the layout the owner picked for these same cards (his layout stays).';
+
 /** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
 function finishAskShow(
   c: SuperCaller, state: SuperState, item: string, prep: AskShowPrep, r: ReturnType<typeof applyAskShow>,
@@ -668,7 +674,7 @@ function finishAskShow(
   const st = askShowState(state, item);
   return {
     cards: r?.ids ?? [], ...(r?.ids.length ? { via: r.via } : {}), state: st,
-    ...(st === 'skipped' ? { reason: 'owner_layout' } : {}),
+    ...(st === 'skipped' ? { reason: 'owner_layout', note: OWNER_KEPT_NOTE } : {}),
     ...(r?.cut ? { cut: r.cut } : {}),
     ...(prep.skipped.length ? { skipped: prep.skipped } : {}),
   };
@@ -1240,7 +1246,7 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
   }
   door.done(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
-    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
+    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) } } : {}),
     ...(note ? { kind, note } : {}) }, state);
 }
 
@@ -1690,7 +1696,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // cards show stay; other cards are a new presentation.
       kept = presentCards(s, ids, layout).kept;
     });
-    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout' } : {}) });
+    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) });
   },
 
   stack: async (c, b, res) => {
@@ -3363,13 +3369,14 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
     // presentation is no longer one once he sets the view himself.
     if (s.view && typeof s.view === 'object') {
       const raw = s.view as unknown as Record<string, unknown>;
-      for (const k of ['auto', 'layoutBy', 'chat', 'ask', 'by'] as const) delete raw[k];
-      // A side by side or a presentation he sets is his: a picture question never replaces it.
-      if (raw.mode === 'half' || raw.mode === 'present') raw.by = 'owner';
+      for (const k of ['auto', 'layoutBy', 'chat', 'ask', 'by', 'ownerAt'] as const) delete raw[k];
+      // A side by side or a presentation he sets is his, stamped with when: it keeps a picture
+      // question off the stage only while it is his current intent (types.ts ownerViewHeld).
+      if (raw.mode === 'half' || raw.mode === 'present') { raw.by = 'owner'; raw.ownerAt = Date.now(); }
     }
   }
   // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
-  s.view = applyOwnerViewFields(s.view, ownerView);
+  s.view = applyOwnerViewFields(s.view, ownerView, Date.now());
   return s;
 }
 

@@ -337,7 +337,7 @@ describe('owner 2026-10-22: a page the agent opens is shown, never a small tile'
     makeVault();
     await layout({ view: { mode: 'half', card: 'task-a', auto: true } });
     // His own mark instead (`by: owner`, task a-picture-question…): never the server's `auto`.
-    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-a', by: 'owner' });
+    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-a', by: 'owner', ownerAt: expect.any(Number) });
   });
 });
 
@@ -415,7 +415,7 @@ describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presen
     await layout({ cards: [{ id: 'task-a', pos: { x: 0.2, y: 0.2 } }, { id: 'task-b', place: 'float' }] });
     expect(onDisk().view).toEqual({ ...PRES, layout: 'compare' });
     await layout({ cards: [{ id: 'task-a', place: 'others' }], view: { mode: 'half', card: 'task-b' } });
-    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-b', by: 'owner' });
+    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-b', by: 'owner', ownerAt: expect.any(Number) });
   });
 
   it('a group moved to Others takes its presented cards out (the owner\'s drop and the agent\'s stack)', async () => {

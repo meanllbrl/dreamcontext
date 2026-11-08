@@ -238,8 +238,45 @@ export interface SuperView {
    *  stage floats when that question closes. Server-written; a raw owner view drops it. */
   ask?: string;
   /** `half`/`present`: the OWNER set this view himself (a side by side, a presentation from his
-   *  window). A picture question never replaces it. Stamped only by his layout POST. */
+   *  window). Stamped only by his layout POST. A picture question leaves it only while it is
+   *  his current intent ({@link ownerViewHeld}). */
   by?: 'owner';
+  /** When the owner last set this view or picked its layout (epoch ms, server-stamped with `by` /
+   *  `layoutBy`). A mark with no time (written before it existed) is not current. */
+  ownerAt?: number;
+}
+
+/**
+ * How long the owner's own arrangement of the stage (a side by side or a presentation he set, a
+ * layout he picked) is his current intent (owner 2026-11-08: "a presentation stays open and
+ * another does not replace it, so I never saw what you talked about"). Past this, or pinned to a
+ * job that ended, it no longer keeps a new thing the Super presents off his screen.
+ */
+export const OWNER_VIEW_HOLD_MS = 5 * 60_000;
+
+/** The cards a view shows. */
+export function viewCards(v: SuperView): string[] {
+  return v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? [...(v.cards ?? [])] : [];
+}
+
+/**
+ * The owner's own arrangement is his CURRENT intent: he set the view (or picked its layout)
+ * within {@link OWNER_VIEW_HOLD_MS}, and it does not show the chat of a job that is over (ended,
+ * handed on, or gone from the record). Only then does it keep a new presentation off his screen.
+ */
+export function ownerViewHeld(
+  s: Pick<SuperState, 'view' | 'containers' | 'children'>, now: number, holdMs: number = OWNER_VIEW_HOLD_MS,
+): boolean {
+  const v = s.view;
+  if (!(v.by === 'owner' || (v.mode === 'present' && v.layoutBy === 'owner'))) return false;
+  if (typeof v.ownerAt !== 'number' || now - v.ownerAt >= holdMs) return false;
+  for (const id of viewCards(v)) {
+    const k = s.containers.find((c) => c.id === id);
+    if (k?.kind !== 'chat') continue;
+    const ch = Object.prototype.hasOwnProperty.call(s.children, k.ref) ? s.children[k.ref] : undefined;
+    if (!ch || ch.endedAt !== undefined || ch.succeededBy) return false;
+  }
+  return true;
 }
 
 /**
@@ -343,7 +380,7 @@ export function resolveLayout(asked: unknown, cards: readonly LayoutCard[]): Pre
  * resolved, then cut to that layout's most. The owner's mark and the chat bar stay only while the
  * layout read is the layout kept (a closed card that changed it drops both). Null: no card left.
  */
-export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
+export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown; ownerAt?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
   const byId = new Map(containers.map((c) => [c.id, c] as const));
   const cards: string[] = [];
   for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
@@ -361,6 +398,8 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
     // The question it shows and the owner's mark stay while any card does (ask-show.ts).
     ...(typeof raw.ask === 'string' && QUEUE_ID_RE.test(raw.ask) ? { ask: raw.ask } : {}),
     ...(raw.by === 'owner' ? { by: 'owner' as const } : {}),
+    ...((raw.by === 'owner' || (kept && raw.layoutBy === 'owner')) && typeof raw.ownerAt === 'number' && Number.isFinite(raw.ownerAt)
+      ? { ownerAt: raw.ownerAt } : {}),
   };
 }
 
@@ -458,7 +497,7 @@ export function readOwnerViewFields(body: Record<string, unknown>): OwnerViewFie
 }
 
 /** The view after the owner's fields: unchanged unless it presents the set they name. */
-export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): SuperView {
+export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields, now?: number): SuperView {
   // A malformed whole view (null, a string) is left for the store's sanitize, which floats it.
   if (!view || typeof view !== 'object' || view.mode !== 'present') return view;
   const shown = view.cards ?? [];
@@ -467,11 +506,13 @@ export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): Super
     || sameCardSet(shown.filter((id) => !f.exit!.closing.includes(id)), f.exit.cards))) return { mode: 'float' };
   let next = view;
   if (f.presentLayout && sameCardSet(shown, f.presentLayout.cards)) {
-    next = { ...next, layout: f.presentLayout.layout, layoutBy: 'owner' };
+    next = { ...next, layout: f.presentLayout.layout, layoutBy: 'owner', ...(now !== undefined ? { ownerAt: now } : {}) };
   }
   if (f.chat && sameCardSet(shown, f.chat.cards)) {
     next = { ...next };
     if (f.chat.value === 'bar') next.chat = 'bar'; else delete next.chat;
+    // A touch of his own arrangement renews it as his current intent (ownerViewHeld).
+    if (now !== undefined && (next.by === 'owner' || next.layoutBy === 'owner')) next.ownerAt = now;
   }
   return next;
 }
@@ -1646,9 +1687,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * (and again after a compaction drops that message). The fixed `<super-brief rev=N>` marker is
  * how the transcript tells whether this revision already arrived. Whoever changes the sections
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
- * src/server/chat-modes.ts).
+ * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
+ * claimed as shown; he is told where it is.
  */
-export const SUPER_BRIEF_REV = 32;
+export const SUPER_BRIEF_REV = 33;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

@@ -235,7 +235,7 @@ describe('the owner wins for his card set (D9, D10)', () => {
     makeVault();
     await present(ids(3));
     expect((await owner({ presentLayout: { layout: 'filmstrip', cards: ['t2', 't0', 't1'] } })).status).toBe(200);
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'filmstrip', layoutBy: 'owner' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'filmstrip', layoutBy: 'owner', ownerAt: expect.any(Number) });
     // A pick for cards no longer presented is ignored.
     await owner({ presentLayout: { layout: 'grid', cards: ['t0', 't1'] } });
     expect(onDisk().view.layout).toBe('filmstrip');
@@ -251,7 +251,7 @@ describe('the owner wins for his card set (D9, D10)', () => {
     await owner({ chat: { value: 'bar', cards: ids(3) } });
     let r = await present(['t2', 't1', 't0']);
     expect((r.json.result as Record<string, unknown>).kept).toBe('owner_layout');
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['t2', 't1', 't0'], layout: 'filmstrip', layoutBy: 'owner', chat: 'bar' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['t2', 't1', 't0'], layout: 'filmstrip', layoutBy: 'owner', chat: 'bar', ownerAt: expect.any(Number) });
     r = await present(ids(3), 'grid');
     expect(r.status).toBe(200);
     expect((r.json.result as Record<string, unknown>).kept).toBe('owner_layout');
@@ -295,9 +295,9 @@ describe('the owner wins for his card set (D9, D10)', () => {
   it('a whole owner view never carries his layout marks (only the server\'s `by: owner`); malformed fields are ignored', async () => {
     makeVault();
     await owner({ view: { mode: 'present', cards: ids(2), layout: 'grid', layoutBy: 'owner', chat: 'bar', ask: 'q-1', by: 'nobody' } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner', ownerAt: expect.any(Number) });
     expect((await owner({ presentLayout: { layout: 'grid', cards: 't0' }, chat: { value: 'side', cards: ids(2) }, exit: 'now' })).status).toBe(200);
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner', ownerAt: expect.any(Number) });
   });
 });
 
