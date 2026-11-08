@@ -211,7 +211,7 @@ async function run(base) {
       window.__samples.push({
         t: Math.round(performance.now() - t0),
         rows: rows.length,
-        working: rows.filter((r) => r.querySelector('[data-testid="team-mark-working"], .project-chip-bubbles, [class*="spin"], [class*="pulse"]')).map((r) => r.getAttribute('data-slug')),
+        working: rows.filter((r) => r.querySelector('[data-testid="mark-working"], .project-chip-bubbles, [class*="spin"], [class*="pulse"]')).map((r) => r.getAttribute('data-slug')),
         busy: rows.filter((r) => r.querySelector('[aria-busy="true"], [data-loading="true"]')).length,
         pendingImg: rows.filter((r) => { const i = r.querySelector('.agent-av img'); return !!i && !(i.complete && i.naturalWidth > 0); }).length,
       });

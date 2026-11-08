@@ -134,7 +134,7 @@ async function run(browser, { w, h, dark, full }, seeded) {
   await wait(p, 300);
   await shot(p, `1-super-stage-${tag}`);
   if (full) {
-    if (!dark) check('note9: 3 working children, ring shown', await seen(p, '[data-testid="super-working-ring"]'));
+    if (!dark) check('note9: 3 working children, ring shown', await seen(p, '[data-testid="mark-working"]'));
     check('note9: another project asks (red)', (await p.locator('[data-testid="drawer-super-row"][data-asking="true"]').count()) >= 1);
     await shot(p, `9-super-row-${tag}`);
   }

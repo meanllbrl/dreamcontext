@@ -356,7 +356,7 @@ async function run(engineName, base, port) {
     ring = working > 0;
     want = ring ? working : countOf(own);
     shown = ring
-      ? ((await row.getByTestId('team-row-ring').count()) === 1 && (await row.getByTestId('team-row-count').count()) === 0 ? lastInt(await row.getByTestId('team-row-ring').innerText()) : -1)
+      ? ((await row.getByTestId('mark-working').count()) === 1 && (await row.getByTestId('team-row-count').count()) === 0 ? lastInt(await row.getByTestId('mark-working').innerText()) : -1)
       : lastInt(await row.innerText());
     return want >= 1 && shown === want;
   }, 20000), `${ring ? 'ring' : 'count'}: row ${shown}, summary ${want}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
