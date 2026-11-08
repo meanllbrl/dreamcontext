@@ -11,7 +11,7 @@ import type { TaskBackend } from '../../lib/task-backend/types.js';
 import { cliStatusAuthor, statusChangeEntry } from '../../lib/task-history.js';
 import {
   changesLines, classResolver, computePlanState, FIXED_SECOND_LENSES, nextSeq, normClass, ownerOf, parseReview, planGateGaps, planSection,
-  pragmatistAllowed, renderNextAction, renderStopCard, PLAN_BUDGET_BASE, PLAN_LEDGER_VERSION, PLAN_LENSES,
+  pragmatistAllowed, renderNextAction, renderStopCard, PLAN_BUDGET_BASE, PLAN_LEDGER_VERSION, PLAN_LENSES, CODE_LENSES, isCodeLedger, loopCommand,
   type FindingLevel, type Ledger, type LedgerEvent, type LedgerRound, type PlanState,
 } from '../../lib/plan-ledger.js';
 import { PLAN_REVIEW_RULES } from '../../lib/plan-review-rules.js';
@@ -51,21 +51,53 @@ function loadLedger(deps: PlanDeps, plan: string): Ledger {
   return r.ledger;
 }
 
+/**
+ * Where one review loop lives: a plan under the brain's tmp/plans/, or a Develop run's code
+ * review loop under the code repo's tmp/develop/<task>/review/ (cli/commands/review-loop.ts).
+ * record, decide and merge-class run on either, so the two loops share one engine.
+ */
+export interface LoopStore {
+  /** The safety root every read and write stays inside. */
+  root: string;
+  /** The loop's folder. */
+  dir: string;
+  lock<T>(fn: () => Promise<T> | T): Promise<T>;
+  load(): Ledger;
+  write(ledger: Ledger): void;
+  reviewPath(n: number, lens: string): string;
+}
+
+export function planStore(deps: PlanDeps, plan: string): LoopStore {
+  return {
+    root: deps.root,
+    get dir() { return planDir(deps.root, plan); },
+    lock: (fn) => withPlanLock(deps.root, plan, fn),
+    load: () => loadLedger(deps, plan),
+    write: (ledger) => writeLedger(deps.root, ledger),
+    reviewPath: (n, lens) => reviewPath(deps.root, plan, n, lens),
+  };
+}
+
 /** Keep the ledger's `budget` field a true copy of the computed budget, then write. */
-function save(deps: PlanDeps, ledger: Ledger): PlanState {
+function saveIn(store: LoopStore, ledger: Ledger): PlanState {
   const s = computePlanState(ledger);
   ledger.budget = { base: ledger.budget.base, extra: s.budget.extra, unlimited: s.budget.unlimited };
-  writeLedger(deps.root, ledger);
+  store.write(ledger);
   return s;
 }
 
-function event(deps: PlanDeps, ledger: Ledger, kind: LedgerEvent['kind'], extra: Partial<LedgerEvent> = {}): LedgerEvent {
+function save(deps: PlanDeps, ledger: Ledger): PlanState {
+  return saveIn(planStore(deps, ledger.plan), ledger);
+}
+
+export function event(deps: Pick<PlanDeps, 'now'>, ledger: Ledger, kind: LedgerEvent['kind'], extra: Partial<LedgerEvent> = {}): LedgerEvent {
   const e: LedgerEvent = { at: deps.now().toISOString(), round: ledger.rounds.length, kind, ...extra, seq: nextSeq(ledger) };
   ledger.events.push(e);
   return e;
 }
 
-const latestRound = (ledger: Ledger): LedgerRound | undefined => [...ledger.rounds].sort((a, b) => a.n - b.n).pop();
+export const latestRound = (ledger: Ledger): LedgerRound | undefined => [...ledger.rounds].sort((a, b) => a.n - b.n).pop();
+const loopNoun = (ledger: Ledger): string => (isCodeLedger(ledger) ? `review loop ${ledger.plan} of ${ledger.task}` : `Plan ${ledger.plan}`);
 
 // ─── open ───────────────────────────────────────────────────────────────────
 
@@ -246,51 +278,72 @@ export async function planPacket(deps: PlanDeps, plan: string, lens: string): Pr
 
 export async function planRecord(deps: PlanDeps, plan: string, lens: string, opts: { file?: string; abandon?: boolean; note?: string }): Promise<string> {
   if (!(PLAN_LENSES as readonly string[]).includes(lens)) throw new PlanRefusal(`--lens must be one of ${PLAN_LENSES.join(', ')}.`);
-  return withPlanLock(deps.root, plan, () => {
-    const ledger = loadLedger(deps, plan);
+  return recordIn(planStore(deps, plan), deps, lens, opts);
+}
+
+/** A PARTIAL code review's text, kept for the fresh copy dispatched into the same round. */
+export const partialPath = (store: LoopStore, n: number, lens: string): string => join(store.dir, `r${n}-${lens}.partial.md`);
+
+/** Record a lens's raw review into a loop's ledger (a plan's or a code review loop's). */
+export async function recordIn(store: LoopStore, deps: Pick<PlanDeps, 'now'>, lens: string, opts: { file?: string; abandon?: boolean; note?: string }): Promise<string> {
+  return store.lock(() => {
+    const ledger = store.load();
+    const code = isCodeLedger(ledger);
+    if (code && !(CODE_LENSES as readonly string[]).includes(lens)) throw new PlanRefusal(`--lens must be one of ${CODE_LENSES.join(', ')}.`);
+    const packetCmd = loopCommand(ledger, 'packet', `--lens ${lens}`);
     const before = computePlanState(ledger);
-    if (before.abandoned) throw new PlanRefusal(`Plan ${plan} was abandoned.`);
+    if (before.abandoned) throw new PlanRefusal(`${loopNoun(ledger)} was abandoned.`);
     const round = latestRound(ledger);
     const rec = round?.lenses[lens];
     if (!round || !rec || rec.verdict !== 'PENDING') {
-      throw new PlanRefusal(`${lens} is not PENDING in an open round of ${plan}: run \`dreamcontext plan packet ${plan} --lens ${lens}\` first.`);
+      throw new PlanRefusal(`${lens} is not PENDING in an open round of ${code ? `review loop ${ledger.plan}` : ledger.plan}: run \`${packetCmd}\` first.`);
     }
     const now = deps.now().toISOString();
     if (opts.abandon) {
       if (!opts.note?.trim()) throw new PlanRefusal('--abandon needs --note "<why the review did not land>".');
       round.lenses[lens] = { ...rec, verdict: 'ABANDONED', note: opts.note.trim(), recordedAt: now, seq: nextSeq(ledger) };
-      save(deps, ledger);
-      return `${lens} marked ABANDONED in round ${round.n} (not counted). Re-dispatch it: \`dreamcontext plan packet ${plan} --lens ${lens}\`.`;
+      saveIn(store, ledger);
+      return `${lens} marked ABANDONED in round ${round.n} (not counted). Re-dispatch it: \`${packetCmd}\`.`;
     }
-    const target = reviewPath(deps.root, plan, round.n, lens);
+    const target = store.reviewPath(round.n, lens);
     const file = opts.file ? resolve(opts.file) : target;
-    const inVault = !relative(deps.root, file).startsWith('..') && !isAbsolute(relative(deps.root, file));
-    const text = inVault ? readSafe(deps.root, file) : readExternalNoLink(file);
+    const inRoot = !relative(store.root, file).startsWith('..') && !isAbsolute(relative(store.root, file));
+    const text = inRoot ? readSafe(store.root, file) : readExternalNoLink(file);
     const ownOpen = new Map<string, FindingLevel>(before.open.filter((f) => f.lens === lens).map((f) => [f.id, f.level]));
     const otherOpen = new Set(before.open.filter((f) => f.lens !== lens).map((f) => f.id));
-    const parsed = parseReview(text, { round: round.n, lens, ownOpen, otherOpen, accepted: new Set(before.accepted), cut: new Set(before.cut) });
-    if (file !== target) writeSafe(deps.root, target, text);
+    const knownClasses = new Set<string>([...before.knownClasses, ...ledger.events.filter((e) => e.kind === 'merge' && e.cls).map((e) => normClass(e.cls!))]);
+    const parsed = parseReview(text, {
+      round: round.n, lens, ownOpen, otherOpen, accepted: new Set(before.accepted), cut: new Set(before.cut),
+      ...(code ? { mode: 'code' as const, knownClasses } : {}),
+    });
+    // A PARTIAL is kept beside the round, never as the review: the fresh copy re-states it.
+    if (parsed.partial) writeSafe(store.root, partialPath(store, round.n, lens), text);
+    else if (file !== target) writeSafe(store.root, target, text);
     round.lenses[lens] = {
       ...rec,
       verdict: parsed.verdict,
-      file: `r${round.n}-${lens}.md`,
+      ...(parsed.partial ? {} : { file: `r${round.n}-${lens}.md` }),
       findings: parsed.findings,
       closed: parsed.closed,
       ...(parsed.proposals.length > 0 ? { proposals: parsed.proposals } : {}),
+      ...(parsed.downgraded.length > 0 ? { downgraded: parsed.downgraded } : {}),
       ...(parsed.errors.length > 0 ? { note: parsed.errors.join('; ') } : {}),
       recordedAt: now,
       seq: nextSeq(ledger),
     };
-    const after = save(deps, ledger);
+    const after = saveIn(store, ledger);
+    const minors = parsed.downgraded.length > 0
+      ? `\nRecorded as Minor, no concrete harm (opens no round): ${parsed.downgraded.map((d) => `${d.id} (${d.cls})`).join(', ')}.`
+      : '';
     if (parsed.verdict === 'UNPARSED') {
       return [
         `${lens}'s review is UNPARSED (round ${round.n}, not counted):`,
         ...parsed.errors.map((e) => `- ${e}`),
-        `Re-dispatch it into the same round: \`dreamcontext plan packet ${plan} --lens ${lens}\`.`,
+        `Re-dispatch it into the same round: \`${packetCmd}\`.`,
       ].join('\n');
     }
     const counts = parsed.findings.length > 0 ? `, ${parsed.findings.length} blocking (${parsed.findings.map((f) => `${f.id} ${f.level}`).join(', ')})` : '';
-    return `Recorded ${lens} ${parsed.verdict} for round ${round.n}${counts}.\n${renderNextAction(ledger, after)}`;
+    return `Recorded ${lens} ${parsed.verdict} for round ${round.n}${counts}.${minors}\n${renderNextAction(ledger, after)}`;
   });
 }
 
@@ -348,13 +401,19 @@ export const DECIDE_KINDS: readonly DecideKind[] = ['continue', 'narrow', 'accep
 export interface DecideOpts { note?: string; finding?: string; cancelTask?: boolean; task?: string; classes?: string[] }
 
 export async function planDecide(deps: PlanDeps, plan: string, kind: string, opts: DecideOpts): Promise<string> {
+  return decideIn(planStore(deps, plan), deps, kind, opts);
+}
+
+/** Record the owner's decision on a loop (a plan's or a code review loop's). */
+export async function decideIn(store: LoopStore, deps: PlanDeps, kind: string, opts: DecideOpts): Promise<string> {
   if (!(DECIDE_KINDS as readonly string[]).includes(kind)) throw new PlanRefusal(`Decision must be one of ${DECIDE_KINDS.join(', ')}.`);
   if (!opts.note?.trim()) throw new PlanRefusal('--note "<the owner\'s words>" is required: a decision is the owner\'s.');
   const note = opts.note.trim();
-  return withPlanLock(deps.root, plan, async () => {
-    const ledger = loadLedger(deps, plan);
+  return store.lock(async () => {
+    const ledger = store.load();
+    const code = isCodeLedger(ledger);
     const s = computePlanState(ledger);
-    if (s.abandoned) throw new PlanRefusal(`Plan ${plan} was abandoned.`);
+    if (s.abandoned) throw new PlanRefusal(`${loopNoun(ledger)} was abandoned.`);
     switch (kind as DecideKind) {
       case 'accept': {
         const id = opts.finding?.trim();
@@ -362,33 +421,39 @@ export async function planDecide(deps: PlanDeps, plan: string, kind: string, opt
         if (!id || !f) throw new PlanRefusal(`--finding <id> must name an open finding (${s.open.map((x) => x.id).join(', ') || 'none open'}).`);
         if (f.level === 'Critical') throw new PlanRefusal(`${id} is Critical: a Critical cannot be accepted. Fix it, or cut its part (narrow/split).`);
         event(deps, ledger, 'accept', { finding: id, note });
-        save(deps, ledger);
+        saveIn(store, ledger);
         return `Accepted ${id} (Major) on the owner's word. It stays out of the open set unless a lens re-lists it at a higher level.`;
       }
       case 'add': {
+        if (code) throw new PlanRefusal('An owner addition belongs to the plan, not to a code review: change the task or its plan first.');
         event(deps, ledger, 'add', { note });
-        save(deps, ledger);
+        saveIn(store, ledger);
         return `Owner addition recorded: rewrite the plan whole; the pragmatist joins the next round. Rounds keep counting (${s.latestComplete} used).`;
       }
       case 'continue':
       case 'narrow': {
         const cleared = s.stops.filter((x) => x.kind !== 'redesign');
         event(deps, ledger, kind as 'continue' | 'narrow', { note });
-        const after = save(deps, ledger);
-        return `${kind === 'continue' ? 'Devam: rounds are unlimited for this plan; a recurring class still stops it.' : 'Daralt: cut the feature carrying the class, open a follow-up task for it, rewrite the plan whole.'}${cleared.length > 0 ? ` Cleared: ${cleared.map((x) => x.kind + (x.cls ? ` "${x.cls}"` : '')).join(', ')}.` : ''}\n${renderNextAction(ledger, after)}`;
+        const after = saveIn(store, ledger);
+        const said = code
+          ? (kind === 'continue' ? 'Devam: one more fix; the class stops the loop again at its next counted round.' : 'Daralt: take the change carrying the class out of this run, open a follow-up task for it, then re-review what is left.')
+          : (kind === 'continue' ? 'Devam: rounds are unlimited for this plan; a recurring class still stops it.' : 'Daralt: cut the feature carrying the class, open a follow-up task for it, rewrite the plan whole.');
+        return `${said}${cleared.length > 0 ? ` Cleared: ${cleared.map((x) => x.kind + (x.cls ? ` "${x.cls}"` : '')).join(', ')}.` : ''}\n${renderNextAction(ledger, after)}`;
       }
       case 'abandon': {
         const crit = [...new Set([...s.open.filter((f) => f.level === 'Critical').map((f) => f.id), ...s.pendingCriticals])];
         if (crit.length > 0 && !opts.cancelTask) {
-          throw new PlanRefusal(`An open Critical (${crit.join(', ')}) cannot be dropped by abandoning the plan. Fix it, or abandon with --cancel-task (the task ${ledger.task} is cancelled with it).`);
+          throw new PlanRefusal(`An open Critical (${crit.join(', ')}) cannot be dropped by abandoning the ${code ? 'review loop' : 'plan'}. Fix it, or abandon with --cancel-task (the task ${ledger.task} is cancelled with it).`);
         }
         if (opts.cancelTask) await cancelTask(deps, ledger.task, note);
         event(deps, ledger, 'abandon', { note });
-        save(deps, ledger);
-        return `Plan ${plan} abandoned${opts.cancelTask ? ` and task ${ledger.task} cancelled` : ''}. The gate skips it; \`plan open --task\` may start a new plan.`;
+        saveIn(store, ledger);
+        return code
+          ? `Review loop ${ledger.plan} of ${ledger.task} abandoned${opts.cancelTask ? ' and the task cancelled' : ''}. Nothing closes on an unreviewed change: a new loop needs \`builder review open\`.`
+          : `Plan ${ledger.plan} abandoned${opts.cancelTask ? ` and task ${ledger.task} cancelled` : ''}. The gate skips it; \`plan open --task\` may start a new plan.`;
       }
       case 'split':
-        return splitPlan(deps, ledger, s, note, opts);
+        return splitPlan(store, deps, ledger, s, note, opts);
     }
   });
 }
@@ -402,7 +467,7 @@ async function cancelTask(deps: PlanDeps, slug: string, note: string): Promise<v
   await backend.updateFields(slug, { status: key, updated_at: today() });
 }
 
-async function splitPlan(deps: PlanDeps, ledger: Ledger, s: PlanState, note: string, opts: DecideOpts): Promise<string> {
+async function splitPlan(store: LoopStore, deps: PlanDeps, ledger: Ledger, s: PlanState, note: string, opts: DecideOpts): Promise<string> {
   const latest = latestRound(ledger);
   if (latest && !s.roundComplete) throw new PlanRefusal('A split waits for the round in progress to complete (stops stand only between rounds).');
   const follow = opts.task?.trim();
@@ -421,20 +486,21 @@ async function splitPlan(deps: PlanDeps, ledger: Ledger, s: PlanState, note: str
   const sectionName = SECTION_MAP.acceptance_criteria;
   const existing = target.acceptance_criteria ?? '';
   let inserted = 0;
-  const planRel = relative(deps.root, planDir(deps.root, ledger.plan));
+  const planRel = relative(store.root, store.dir);
+  const noun = isCodeLedger(ledger) ? 'review' : 'plan';
   for (const f of moved) {
     // Ids repeat across plans (every plan has an r1-critic-1): a criterion is this plan's only
     // when its line also names this plan's folder.
-    const mine = existing.split('\n').some((l) => l.includes(`Resolve plan finding ${f.id} `) && l.includes(`raw review ${planRel}/`));
+    const mine = existing.split('\n').some((l) => l.includes(`Resolve ${noun} finding ${f.id} `) && l.includes(`raw review ${planRel}/`));
     if (mine) continue;
     const raw = join(planRel, `r${f.round}-${f.lens}.md`);
     const sentence = (f.text ?? '').replace(/\s+/g, ' ').trim() || '(see the raw review)';
-    const prep = prepareSectionInsert('acceptance_criteria', `Resolve plan finding ${f.id} (${f.level}, ${f.cls}): ${sentence}; raw review ${raw}`, today())!;
+    const prep = prepareSectionInsert('acceptance_criteria', `Resolve ${noun} finding ${f.id} (${f.level}, ${f.cls}): ${sentence}; raw review ${raw}`, today())!;
     await backend.insertSection(follow, sectionName, prep.content, { position: prep.position, replacePlaceholders: prep.replacePlaceholders });
     inserted += 1;
   }
   event(deps, ledger, 'split', { note, classes, moved: moved.map((f) => f.id), task: follow });
-  const after = save(deps, ledger);
+  const after = saveIn(store, ledger);
   return [
     `Böl: ${moved.length} finding${moved.length === 1 ? '' : 's'} (${moved.map((f) => f.id).join(', ')}) moved to ${follow} as criteria (${inserted} inserted).`,
     renderNextAction(ledger, after),
@@ -442,19 +508,23 @@ async function splitPlan(deps: PlanDeps, ledger: Ledger, s: PlanState, note: str
 }
 
 export async function planMergeClass(deps: PlanDeps, plan: string, from: string, into: string): Promise<string> {
+  return mergeClassIn(planStore(deps, plan), deps, from, into);
+}
+
+export async function mergeClassIn(store: LoopStore, deps: Pick<PlanDeps, 'now'>, from: string, into: string): Promise<string> {
   const a = normClass(from);
   const b = normClass(into);
   if (!a || !b || a === b) throw new PlanRefusal('merge-class needs two different class names.');
-  return withPlanLock(deps.root, plan, () => {
-    const ledger = loadLedger(deps, plan);
+  return store.lock(() => {
+    const ledger = store.load();
     const s = computePlanState(ledger);
-    if (!s.knownClasses.includes(a)) throw new PlanRefusal(`"${a}" is not a known class of ${plan} (${s.knownClasses.join(', ') || 'none'}).`);
+    if (!s.knownClasses.includes(a)) throw new PlanRefusal(`"${a}" is not a known class of ${ledger.plan} (${s.knownClasses.join(', ') || 'none'}).`);
     // Merge into the class `into` already resolves to, and never back into `from`: a cycle
     // (a→b, then b→a) would split the counts again, which is the rename-to-dodge a merge exists to stop.
     const target = classResolver(ledger.events)(b);
     if (target === a) throw new PlanRefusal(`"${b}" already resolves to "${a}": merging back would split the counts. Merge only grows counts.`);
     event(deps, ledger, 'merge', { cls: a, into: target });
-    const after = save(deps, ledger);
+    const after = saveIn(store, ledger);
     return `Merged "${a}" into "${target}": ${after.classCounts[target] ?? 0} counted round(s). A merge only ever grows a count.`;
   });
 }
@@ -505,7 +575,7 @@ function defaultDeps(): PlanDeps {
   return { root, now: () => new Date(), backend: () => getTaskBackend(root) };
 }
 
-async function run(fn: () => Promise<string | void> | string | void): Promise<void> {
+export async function run(fn: () => Promise<string | void> | string | void): Promise<void> {
   try {
     const out = await fn();
     if (out) console.log(out);
@@ -519,7 +589,7 @@ async function run(fn: () => Promise<string | void> | string | void): Promise<vo
   }
 }
 
-const collect = (v: string, prev: string[] = []): string[] => [...prev, v];
+export const collect = (v: string, prev: string[] = []): string[] => [...prev, v];
 
 export function registerPlanCommand(program: Command): void {
   const plan = program

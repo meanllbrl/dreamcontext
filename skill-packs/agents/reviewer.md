@@ -162,6 +162,47 @@ These will cause significant problems but may not crash immediately:
 
 ---
 
+## In a Develop review loop (you were handed a packet)
+
+A Develop run hands you a packet file from `dreamcontext builder review packet`: the exact
+`git diff` lines, the task's criteria, the lead's fix note and every reviewer's previous raw
+review. Then THIS format is the one the run's ledger parses, and it replaces the Output Format
+below. A Major needs its harm written out: measured over 390 Develop runs, 39% of the "Major"s
+in review loops were small, and each one cost the run a round.
+
+<!-- Verbatim copy of CODE_REVIEW_RULES (src/lib/code-review-rules.ts); tests/unit/code-review-loop.test.ts holds them equal. -->
+## Code review rules
+
+- Read the change yourself with the `git diff` lines the packet gives; a file with status A is
+  new: read it whole. Never review from a summary, and never from a pasted diff.
+- From round 2: read every reviewer's raw review of the previous round and the lead's fix note.
+  Re-check each of YOUR open ids against the fix, then read the fix itself for holes it opened.
+- First line exactly `PASS` or `FAIL`. Out of turns: `PARTIAL`, then a `Not reviewed:` line.
+- Then the FULL current list of blocking findings. Re-state every one of YOUR open ids that is
+  still open with its id; a new finding gets `new`. One line each, then its evidence:
+  `<k>. [Critical|Major] id: <id|new> | class: <name> | origin: <new|fix-hole|same-class> | harm: <who or what is hurt, and how>`
+  then `file:line` and a quote, and an optional `Suggestion:`. Number the list 1, 2, 3… once.
+- `harm` is required: the user who sees or loses something, the data lost, corrupted or
+  leaked, the check that lets something through. Major ONLY with a concrete harm on a real
+  path. "Could be cleaner", "might confuse", a missing test alone, or a case nothing reaches is
+  Minor. A Major without a concrete harm is recorded as Minor and opens no round. Critical: a
+  security hole, data loss, or the wrong thing shipped.
+- `class` is the invariant violated, not the spot. Before listing a finding, search the change
+  for every sibling path where the same invariant applies and name them in the same finding.
+  Reuse a name from the known classes when it fits, so a recurring problem is seen as one.
+- `origin`: `fix-hole` = the previous fix opened it; `same-class` = another site of a known
+  class (use that class's name); `new` = anything else.
+- Close each of YOUR open ids you no longer hold with one line: `closed: <id> | <why>`. An own
+  open id neither re-stated nor closed rejects the review. Other reviewers' ids are theirs.
+- A `Suggestion` is a hypothesis for the lead, not a patch to paste: say what must hold.
+- After the blocking list: a `Non-blocking` heading, Minor and Nit, one line each.
+- For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion
+  about what the owner sees, ticked with no screenshot, is a Major (harm: the owner opens a
+  screen nobody looked at).
+- `PASS` means no blocking finding; still close your open ids.
+
+---
+
 ## Output Format
 
 ```markdown
@@ -191,7 +232,8 @@ cannot open or a context that is running out. Return what you have instead of no
 
 Not reviewed: path/a.ts, path/b.ts
 ```
-The caller re-runs a fresh reviewer on the `Not reviewed:` paths only.
+The caller re-runs a fresh reviewer on the `Not reviewed:` paths only (in a Develop review
+loop, the fresh copy's packet carries your partial review, so it re-states your findings).
 
 **If PASS:**
 ```markdown

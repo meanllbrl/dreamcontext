@@ -105,11 +105,17 @@ export type LedgerRead = { ok: true; ledger: Ledger } | { ok: false; missing: bo
 
 /** One plan's ledger. A plan exists only when its ledger does. */
 export function readLedger(root: string, plan: string): LedgerRead {
-  const p = ledgerPath(root, plan);
+  return readLedgerAt(root, ledgerPath(root, plan), plan, 'plan');
+}
+
+/** A ledger at `p` whose `plan` field must be `name` (a plan's name, or a code loop's). */
+export function readLedgerAt(root: string, p: string, name: string, mode: 'plan' | 'code'): LedgerRead {
   try {
-    if (!existsSync(p) && !isDanglingLink(p)) return { ok: false, missing: true, problem: `no plan "${plan}" (no ledger at ${p})` };
+    if (!existsSync(p) && !isDanglingLink(p)) return { ok: false, missing: true, problem: `no ${mode === 'plan' ? 'plan' : 'review loop'} "${name}" (no ledger at ${p})` };
     const raw = JSON.parse(readSafe(root, p));
-    const problem = ledgerProblem(raw) ?? ((raw as Ledger).plan !== plan ? `names plan "${(raw as Ledger).plan}" but lives in folder "${plan}"` : null);
+    const problem = ledgerProblem(raw)
+      ?? ((raw as Ledger).plan !== name ? `names "${(raw as Ledger).plan}" but lives in folder "${name}"` : null)
+      ?? (((raw as Ledger).mode === 'code') !== (mode === 'code') ? `is a ${(raw as Ledger).mode === 'code' ? 'code review loop' : 'plan'} ledger where a ${mode === 'code' ? 'code review loop' : 'plan'} was expected` : null);
     if (problem) return { ok: false, missing: false, problem: `${p}: ${problem}` };
     return { ok: true, ledger: raw as Ledger };
   } catch (err) {
@@ -156,12 +162,56 @@ export function readPlanLedgers(root: string): LedgerReadResult[] {
  */
 export async function withPlanLock<T>(root: string, plan: string, fn: () => Promise<T> | T): Promise<T> {
   ensurePlansDir(root);
-  const lock = join(plansDir(root), `${planDir(root, plan).split(sep).pop()}.lock`);
+  return withLockFile(join(plansDir(root), `${planDir(root, plan).split(sep).pop()}.lock`), `plan "${plan}"`, fn);
+}
+
+/** Run `fn` holding one lockfile (a plan's, or a code review loop's). */
+export async function withLockFile<T>(lock: string, label: string, fn: () => Promise<T> | T): Promise<T> {
   const held = await acquireFileLockWithin(lock, { waitMs: 15_000, staleMs: 120_000, verifyPidLiveness: true });
-  if (!held) throw new PlanStoreError(`Busy: another session is writing plan "${plan}" (${lock}). Try again in a moment.`);
+  if (!held) throw new PlanStoreError(`Busy: another session is writing ${label} (${lock}). Try again in a moment.`);
   try {
     return await fn();
   } finally {
     releaseFileLock(lock);
   }
+}
+
+// ─── Code review loops ──────────────────────────────────────────────────────
+//
+//   <code repo>/tmp/develop/<task>/review/<loop>/
+//     ledger.json        the same ledger, `mode: "code"`
+//     changes.md         the lead's fix note, rewritten whole each round
+//     changes.r<N>.md    its snapshot when round N opened
+//     r<N>-<lens>.md     each reviewer's raw review, verbatim (`.partial.md` for a PARTIAL)
+//     r<N>-<lens>.packet.md
+//
+// In the CODE repo, beside the run's other files, because a code worktree holds no brain: the
+// review loop must run where the lead builds. The same symlink refusal and lock as a plan.
+
+export const TASK_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,239}$/;
+export const LOOP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+export function reviewLoopsDir(root: string, task: string): string {
+  if (!TASK_SLUG_RE.test(task) || task.includes('..')) throw new PlanStoreError(`"${task}" is not a task slug.`);
+  return join(root, 'tmp', 'develop', task, 'review');
+}
+
+export function reviewLoopDir(root: string, task: string, loop: string): string {
+  if (!LOOP_NAME_RE.test(loop)) throw new PlanStoreError(`Invalid loop name "${loop}": use [a-z0-9-], 1-40 characters (end, w2, …).`);
+  return join(reviewLoopsDir(root, task), loop);
+}
+
+/** The loop's folder, with a `.gitignore` above it (nothing in it is ever committed). */
+export function ensureReviewLoopDir(root: string, task: string, loop: string): string {
+  const parent = reviewLoopsDir(root, task);
+  assertSafePath(root, parent);
+  mkdirSync(parent, { recursive: true });
+  assertSafePath(root, parent);
+  const gi = join(parent, '.gitignore');
+  if (!existsSync(gi)) writeSafe(root, gi, '*\n');
+  const dir = reviewLoopDir(root, task, loop);
+  assertSafePath(root, dir);
+  mkdirSync(dir, { recursive: true });
+  assertSafePath(root, dir);
+  return dir;
 }

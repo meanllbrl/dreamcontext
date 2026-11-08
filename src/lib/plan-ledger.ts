@@ -15,6 +15,7 @@
  */
 
 import type { HandoffGap } from './handoff-readiness.js';
+import { CODE_REVISION_RECIPE, CODE_STOP_CARD } from './code-review-rules.js';
 import { PLAN_REVISION_RECIPE, PLAN_STOP_CARD } from './plan-review-rules.js';
 
 // ─── Shape ───────────────────────────────────────────────────────────────────
@@ -26,9 +27,24 @@ export const FIXED_SECOND_LENSES = ['security', 'edge-cases'] as const;
 export const PLAN_LENSES = ['critic', 'security', 'edge-cases', 'pragmatist'] as const;
 export type PlanLens = typeof PLAN_LENSES[number];
 
-export type LensVerdict = 'PENDING' | 'SOLID' | 'NEEDS_WORK' | 'PROPOSALS' | 'UNPARSED' | 'ABANDONED';
+export type LensVerdict = 'PENDING' | 'SOLID' | 'NEEDS_WORK' | 'PROPOSALS' | 'PASS' | 'FAIL' | 'UNPARSED' | 'ABANDONED';
 export type FindingLevel = 'Critical' | 'Major';
 export const FINDING_KINDS = ['premise', 'contract', 'security', 'criteria', 'map'] as const;
+
+/**
+ * Code mode (2026-11-08, task develop-inceleme-dongusu-…): the SAME ledger runs a Develop
+ * run's code review loop. Measured over 390 Develop runs: of 180 blocking findings inside
+ * review loops, 42% were holes the previous fix opened and 32% another site of the same
+ * class, and 39% of the "Major"s were small. So the plan's class rule (2nd counted round →
+ * redesign, 3rd → the owner's stop card) applies unchanged; what differs is the reviewers
+ * (the end review's `reviewer` or its team), the verdict (PASS / FAIL), the finding's third
+ * field (where it came from, not what it violates) and a harm line every blocking finding
+ * must carry. There is no round cap: rounds are counted, never limited.
+ */
+export type LedgerMode = 'plan' | 'code';
+export const CODE_LENSES = ['reviewer', 'review-edge-cases', 'review-security', 'review-frontend', 'review-cloud-functions'] as const;
+/** Where a code finding came from: the previous fix opened it, another site of a known class, or neither. */
+export const CODE_ORIGINS = ['new', 'fix-hole', 'same-class'] as const;
 
 export interface LedgerFinding {
   id: string;
@@ -51,6 +67,10 @@ export interface LensRecord {
   recordedAt?: string;
   /** Position on the ledger's one clock (`Ledger.seq`); orders reviews against events. */
   seq?: number;
+  /** Code mode: this lens's scope when it differs from the round's (a team member in round 1). */
+  paths?: string[];
+  /** Code mode: blocking-shaped findings with no concrete harm, recorded as Minor. */
+  downgraded?: Array<{ id: string; cls: string; text: string }>;
 }
 
 export interface LedgerRound {
@@ -59,6 +79,10 @@ export interface LedgerRound {
   snapshotSha: string;
   openSeq?: number;
   lenses: Record<string, LensRecord>;
+  /** Code mode: the tree this round reviews, the tree it is read against, and the paths. */
+  tree?: string;
+  base?: string;
+  paths?: string[];
 }
 
 export type LedgerEventKind = 'continue' | 'narrow' | 'split' | 'accept' | 'add' | 'merge' | 'redesign' | 'abandon';
@@ -89,7 +113,19 @@ export interface Ledger {
   seq?: number;
   events: LedgerEvent[];
   rounds: LedgerRound[];
+  /** Absent = a plan (every ledger written before code mode). */
+  mode?: LedgerMode;
+  /** Code mode: the run's start tree and the task's criteria, read once at open. */
+  start?: string;
+  criteria?: string;
   [extra: string]: unknown;
+}
+
+export const isCodeLedger = (ledger: Pick<Ledger, 'mode'>): boolean => ledger.mode === 'code';
+
+/** The lenses a round waits on: a plan's fixed pair, or the code round's own set. */
+export function roundLenses(ledger: Ledger, round: LedgerRound): string[] {
+  return isCodeLedger(ledger) ? Object.keys(round.lenses) : ledger.lenses;
 }
 
 /** Trimmed and lowercased: "Build Gate " and "build gate" are one class. */
@@ -109,7 +145,14 @@ export function ledgerProblem(raw: unknown): string | null {
   const l = raw as Partial<Ledger>;
   if (l.v !== PLAN_LEDGER_VERSION) return `unknown ledger version ${JSON.stringify(l.v)} (this CLI reads v${PLAN_LEDGER_VERSION})`;
   if (typeof l.plan !== 'string' || typeof l.task !== 'string') return 'missing plan or task';
-  if (!Array.isArray(l.lenses) || l.lenses.length !== 2 || l.lenses[0] !== 'critic' || !(FIXED_SECOND_LENSES as readonly string[]).includes(l.lenses[1] as string)) {
+  if (l.mode !== undefined && l.mode !== 'plan' && l.mode !== 'code') return `unknown mode ${JSON.stringify(l.mode)}`;
+  const code = l.mode === 'code';
+  const lensSet: readonly string[] = code ? CODE_LENSES : PLAN_LENSES;
+  if (code) {
+    if (!Array.isArray(l.lenses) || l.lenses.length === 0 || new Set(l.lenses).size !== l.lenses.length || l.lenses.some((x) => !lensSet.includes(x as string))) {
+      return `lenses must be a non-empty set of ${CODE_LENSES.join(', ')}`;
+    }
+  } else if (!Array.isArray(l.lenses) || l.lenses.length !== 2 || l.lenses[0] !== 'critic' || !(FIXED_SECOND_LENSES as readonly string[]).includes(l.lenses[1] as string)) {
     return 'lenses must be the fixed pair (critic + security or edge-cases)';
   }
   if (!l.budget || typeof l.budget.base !== 'number' || typeof l.budget.extra !== 'number') return 'missing budget';
@@ -120,8 +163,9 @@ export function ledgerProblem(raw: unknown): string | null {
   }
   for (const r of l.rounds) {
     if (!r || typeof r.n !== 'number' || !r.lenses || typeof r.lenses !== 'object') return 'a round is malformed';
+    if (code && Object.keys(r.lenses).length === 0) return `round ${r.n} has no lenses`;
     for (const [lens, rec] of Object.entries(r.lenses)) {
-      if (!(PLAN_LENSES as readonly string[]).includes(lens)) return `unknown lens "${lens}" in round ${r.n}`;
+      if (!lensSet.includes(lens)) return `unknown lens "${lens}" in round ${r.n}`;
       if (!rec || typeof rec !== 'object' || typeof rec.verdict !== 'string' || !Array.isArray(rec.findings)) return `round ${r.n} ${lens} is malformed`;
       if (rec.closed !== undefined && !Array.isArray(rec.closed)) return `round ${r.n} ${lens}: closed is not a list`;
       if (rec.findings.some((f) => !f || typeof f.id !== 'string' || typeof f.cls !== 'string' || typeof f.level !== 'string')) return `round ${r.n} ${lens}: a finding is malformed`;
@@ -143,6 +187,9 @@ export interface ParseContext {
   accepted: Set<string>;
   /** Moved ids already closed `cut`. */
   cut: Set<string>;
+  /** Code mode: the review format of a code reviewer, and the class names a `same-class` may use. */
+  mode?: LedgerMode;
+  knownClasses?: Set<string>;
 }
 
 export interface ParsedReview {
@@ -152,6 +199,18 @@ export interface ParsedReview {
   proposals: string[];
   /** Why the review is UNPARSED, with the lines the CLI expected. Empty = accepted. */
   errors: string[];
+  /** Code mode: Majors written without a concrete harm, kept as Minor (never open, never counted). */
+  downgraded: Array<{ id: string; cls: string; text: string }>;
+  /** Code mode: the reviewer ran out of turns (`PARTIAL`); its text is kept for the re-dispatch. */
+  partial?: boolean;
+}
+
+const CODE_FINDING_RE = /^\s*(\d+)\.\s*\[(Critical|Major)\]\s*id:\s*([^|]+?)\s*\|\s*class:\s*([^|]+?)\s*\|\s*origin:\s*([^|]+?)\s*(?:\|\s*(.*))?$/i;
+const HARM_RE = /^harm:\s*(.*)$/i;
+/** A harm line that names nobody and nothing ("none", "n/a", "-") is no harm. */
+export function hasConcreteHarm(harm: string | undefined): boolean {
+  const h = (harm ?? '').trim();
+  return h.length >= 12 && !/^(?:none|n\/?a|-+|tbd|unknown|minor|cosmetic)\b/i.test(h);
 }
 
 const FINDING_START_RE = /^\s*\d+\.\s*\[/;
@@ -172,11 +231,15 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
   const errors: string[] = [];
   const first = lines.find((l) => l.trim() !== '') ?? '';
   const head = first.replace(/[*#`]/g, '').trim().toUpperCase();
-  const pragmatist = ctx.lens === 'pragmatist';
-  const allowed = pragmatist ? ['PROPOSALS', 'SOLID'] : ['SOLID', 'NEEDS_WORK'];
+  const code = ctx.mode === 'code';
+  const pragmatist = !code && ctx.lens === 'pragmatist';
+  const allowed = code ? ['PASS', 'FAIL'] : pragmatist ? ['PROPOSALS', 'SOLID'] : ['SOLID', 'NEEDS_WORK'];
   let verdict: LensVerdict = allowed.includes(head) ? (head as LensVerdict) : 'UNPARSED';
-  if (verdict === 'UNPARSED') errors.push(`first line must be exactly ${allowed.map((v) => `\`${v}\``).join(' or ')}`);
+  const partial = code && head === 'PARTIAL';
+  if (partial) errors.push('`PARTIAL` is not a verdict: the reviewer ran out of turns. Its text is kept and handed to the fresh copy, which re-states its findings and reads the `Not reviewed:` paths');
+  else if (verdict === 'UNPARSED') errors.push(`first line must be exactly ${allowed.map((v) => `\`${v}\``).join(' or ')}`);
 
+  const downgraded: Array<{ id: string; cls: string; text: string }> = [];
   const findings: LedgerFinding[] = [];
   const closed: Array<{ id: string; why: string }> = [];
   const proposals: string[] = [];
@@ -204,8 +267,13 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
     if (FINDING_START_RE.test(line)) {
       blockingLines += 1;
       current = null;
-      const m = FINDING_RE.exec(line);
-      if (!m) { errors.push(`unreadable finding line: "${raw.trim().slice(0, 120)}"`); continue; }
+      const m = (code ? CODE_FINDING_RE : FINDING_RE).exec(line);
+      if (!m) {
+        errors.push(code
+          ? `unreadable finding line (use \`<k>. [Critical|Major] id: <id|new> | class: <name> | origin: <new|fix-hole|same-class> | harm: <who loses what>\`): "${raw.trim().slice(0, 120)}"`
+          : `unreadable finding line: "${raw.trim().slice(0, 120)}"`);
+        continue;
+      }
       const [, k, lvl, rawId, cls, kind, rest] = m;
       if (seenK.has(k)) {
         // Two findings numbered alike would get one id and the open set would keep only one.
@@ -216,11 +284,33 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
       const level = (lvl[0].toUpperCase() + lvl.slice(1).toLowerCase()) as FindingLevel;
       const id = rawId.trim();
       const kindN = kind.trim().toLowerCase();
-      if (!(FINDING_KINDS as readonly string[]).includes(kindN)) {
-        errors.push(`finding ${k}: kind must be one of ${FINDING_KINDS.join('|')}, got "${kind.trim()}"`);
+      const kinds: readonly string[] = code ? CODE_ORIGINS : FINDING_KINDS;
+      if (!kinds.includes(kindN)) {
+        errors.push(`finding ${k}: ${code ? 'origin' : 'kind'} must be one of ${kinds.join('|')}, got "${kind.trim()}"`);
         continue;
       }
-      const fresh = { id: `r${ctx.round}-${ctx.lens}-${k}`, level, cls: normClass(cls), kind: kindN, text: (rest ?? '').trim() };
+      let text = (rest ?? '').trim();
+      if (code) {
+        const harm = HARM_RE.exec(text)?.[1];
+        if (kindN === 'same-class' && !(ctx.knownClasses ?? new Set()).has(normClass(cls))) {
+          errors.push(`finding ${k}: origin \`same-class\` needs a class from the packet's Known classes, got "${cls.trim()}"`);
+          continue;
+        }
+        if (!hasConcreteHarm(harm)) {
+          if (level === 'Critical') {
+            errors.push(`finding ${k}: a Critical names its harm: \`| harm: <the user or the data that is hurt, and how>\``);
+            continue;
+          }
+          // A Major with no concrete harm is a Minor: kept in the record, never open, never counted.
+          // A re-stated own id that loses its harm leaves the open set this way too.
+          downgraded.push({ id: ctx.ownOpen.has(id) ? id : `r${ctx.round}-${ctx.lens}-${k}`, cls: normClass(cls), text: text.slice(0, 300) });
+          if (ctx.ownOpen.has(id)) restated.add(id);
+          blockingLines -= 1;
+          continue;
+        }
+        text = `harm: ${harm!.trim()}`;
+      }
+      const fresh = { id: `r${ctx.round}-${ctx.lens}-${k}`, level, cls: normClass(cls), kind: kindN, text };
       if (id.toLowerCase() === 'new') { findings.push(fresh); current = fresh; continue; }
       if (ctx.ownOpen.has(id)) {
         restated.add(id);
@@ -250,6 +340,12 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
   }
   if (verdict === 'PROPOSALS' && blockingLines > 0) errors.push('the pragmatist never blocks: list proposals, not findings');
   if (verdict === 'NEEDS_WORK' && blockingLines === 0) errors.push('`NEEDS_WORK` needs at least one blocking finding line');
+  if (verdict === 'PASS' && blockingLines > 0) errors.push('`PASS` cannot carry blocking findings: move them under `Non-blocking`, or answer `FAIL`');
+  if (verdict === 'FAIL' && blockingLines === 0) {
+    // Every blocking finding was a Major with no harm: a review of Minors is a pass.
+    if (downgraded.length > 0) verdict = 'PASS';
+    else errors.push('`FAIL` needs at least one blocking finding line');
+  }
   if (!pragmatist) {
     const closedOwn = new Set(closed.map((c) => c.id).filter((id) => ctx.ownOpen.has(id)));
     const missing = [...ctx.ownOpen.keys()].filter((id) => !restated.has(id) && !closedOwn.has(id));
@@ -258,7 +354,7 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
     }
   }
   if (errors.length > 0) verdict = 'UNPARSED';
-  return { verdict, findings, closed: closed.filter((c) => ctx.ownOpen.has(c.id)), proposals, errors };
+  return { verdict, findings, closed: closed.filter((c) => ctx.ownOpen.has(c.id)), proposals, errors, downgraded, ...(partial ? { partial } : {}) };
 }
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -303,7 +399,8 @@ export interface PlanState {
   next: NextAction;
 }
 
-const COMPLETE: readonly LensVerdict[] = ['SOLID', 'NEEDS_WORK'];
+const COMPLETE: readonly LensVerdict[] = ['SOLID', 'NEEDS_WORK', 'PASS', 'FAIL'];
+export const isCompleteVerdict = (v: LensVerdict | undefined): boolean => !!v && COMPLETE.includes(v);
 const CLEARING_DECISIONS: readonly LedgerEventKind[] = ['continue', 'narrow', 'split', 'abandon'];
 
 /** The lens that owns an id (`r3-edge-cases-1` → `edge-cases`); null for a malformed id. */
@@ -311,10 +408,10 @@ export function ownerOf(id: string): string | null {
   return /^r\d+-(.+)-\d+$/.exec(id)?.[1] ?? null;
 }
 
-/** When a round completed on the ledger clock: every fixed lens holds SOLID or NEEDS_WORK. */
+/** When a round completed on the ledger clock: every lens it waits on holds a verdict. */
 export function roundCompleteSeq(ledger: Ledger, round: LedgerRound): number | null {
   let max = round.openSeq ?? 0;
-  for (const lens of ledger.lenses) {
+  for (const lens of roundLenses(ledger, round)) {
     const rec = round.lenses[lens];
     if (!rec || !COMPLETE.includes(rec.verdict)) return null;
     max = Math.max(max, rec.seq ?? 0);
@@ -340,7 +437,8 @@ export function classResolver(events: LedgerEvent[]): (c: string) => string {
  */
 export function computePlanState(ledger: Ledger): PlanState {
   const resolve = classResolver(ledger.events);
-  const fixed = ledger.lenses;
+  const code = isCodeLedger(ledger);
+  const lensesOf = (r: LedgerRound): string[] => roundLenses(ledger, r);
   const rounds = [...ledger.rounds].sort((a, b) => a.n - b.n);
   const events = [...ledger.events].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
@@ -369,7 +467,7 @@ export function computePlanState(ledger: Ledger): PlanState {
 
   const openOf = (r: LedgerRound): OpenFinding[] => {
     const out = new Map<string, OpenFinding>();
-    for (const lens of fixed) {
+    for (const lens of lensesOf(r)) {
       for (const f of r.lenses[lens]?.findings ?? []) {
         if (f.level === 'Major' && accepted.has(f.id)) continue;
         if (cut.has(f.id)) continue;
@@ -402,7 +500,7 @@ export function computePlanState(ledger: Ledger): PlanState {
     }
     const r = it.complete!;
     // A moved id closed `cut` by its owning lens in a round opened after the split leaves for good.
-    for (const lens of fixed) {
+    for (const lens of lensesOf(r)) {
       for (const c of r.lenses[lens]?.closed ?? []) {
         const ms = movedSeq.get(c.id);
         if (ms !== undefined && (r.openSeq ?? 0) > ms && /^cut\b/i.test(c.why) && ownerOf(c.id) === lens) cut.add(c.id);
@@ -417,9 +515,10 @@ export function computePlanState(ledger: Ledger): PlanState {
       if (counts[c] === 2) standing.push({ kind: 'redesign', cls: c });
       else if (counts[c] >= 3) standing.push({ kind: 'class', cls: c });
     }
+    // Code mode counts rounds and never limits them (owner, 2026-11-08): the class stop is its brake.
     const limit = ledger.budget.base + extra;
-    if (open.length > 0 && !unlimited && r.n >= limit) standing.push({ kind: 'budget' });
-    if (unlimited) {
+    if (!code && open.length > 0 && !unlimited && r.n >= limit) standing.push({ kind: 'budget' });
+    if (unlimited && !code) {
       churnRun = prevOpen !== null && open.length >= prevOpen && newClass ? churnRun + 1 : 0;
       if (churnRun >= 3) standing.push({ kind: 'churn' });
     }
@@ -449,16 +548,17 @@ export function computePlanState(ledger: Ledger): PlanState {
     : null;
 
   const verdicts: Record<string, LensVerdict> = {};
-  for (const lens of fixed) verdicts[lens] = latest?.lenses[lens]?.verdict ?? 'PENDING';
+  const latestLenses = latest ? lensesOf(latest) : [...ledger.lenses];
+  for (const lens of latestLenses) verdicts[lens] = latest?.lenses[lens]?.verdict ?? 'PENDING';
   const pendingCriticals = latest && !roundComplete
-    ? fixed.flatMap((l) => (latest.lenses[l]?.findings ?? []).filter((f) => f.level === 'Critical').map((f) => f.id))
+    ? latestLenses.flatMap((l) => (latest.lenses[l]?.findings ?? []).filter((f) => f.level === 'Critical').map((f) => f.id))
     : [];
 
   let next: NextAction;
   if (abandoned) next = { kind: 'abandoned' };
-  else if (!latest) next = { kind: 'review', lenses: [...fixed], redispatch: [] };
+  else if (!latest) next = { kind: 'review', lenses: [...ledger.lenses], redispatch: [] };
   else if (!roundComplete) {
-    const lenses = fixed.filter((l) => !COMPLETE.includes(latest.lenses[l]?.verdict ?? 'PENDING'));
+    const lenses = latestLenses.filter((l) => !COMPLETE.includes(latest.lenses[l]?.verdict ?? 'PENDING'));
     next = { kind: 'review', lenses, redispatch: lenses.filter((l) => ['UNPARSED', 'ABANDONED'].includes(latest.lenses[l]?.verdict ?? '')) };
   } else if (done) next = { kind: 'done' };
   else if (standing.some((s) => s.kind !== 'redesign')) next = { kind: 'stop', stops: standing };
@@ -505,6 +605,19 @@ export function changesLines(planText: string, prefix: 'redesign' | 'split'): st
   return changes.split('\n').map((l) => re.exec(l)?.[1]).filter((x): x is string => !!x).map((s) => s.trim());
 }
 
+/**
+ * Lines `<prefix>: <a> | <b> | …` anywhere in a code loop's fix note, split on `|` and trimmed.
+ * A line whose parts after the prefix are not all filled in does not count.
+ */
+export function noteLines(text: string, prefix: 'sweep' | 'redesign' | 'split', parts: number): string[][] {
+  const re = new RegExp(`^\\s*(?:[-*]\\s*)?${prefix}:\\s*(.+)$`, 'i');
+  return text.replace(/\r\n/g, '\n').split('\n')
+    .map((l) => re.exec(l)?.[1])
+    .filter((x): x is string => !!x)
+    .map((rest) => rest.split('|').map((p) => p.trim()))
+    .filter((p) => p.length >= parts && p.slice(0, parts).every((x) => x.length > 0 && !/^<.*>$/.test(x)));
+}
+
 /** The body of the plan's `## <title…>` section (prefix match), or null. */
 export function planSection(planText: string, title: string): string | null {
   const lines = planText.replace(/\r\n/g, '\n').split('\n');
@@ -516,6 +629,82 @@ export function planSection(planText: string, title: string): string | null {
 }
 
 // ─── What the lead is told ──────────────────────────────────────────────────
+
+/**
+ * The lenses the next code round waits on: the whole review in round 1, then only a lens that
+ * still owns an open id or a moved id it has not closed `cut` (the fresh re-check of the
+ * develop recipe: one per reviewer that raised a blocking finding).
+ */
+export function nextRoundLenses(ledger: Ledger, s: PlanState): string[] {
+  if (ledger.rounds.length === 0) return [...ledger.lenses];
+  const owners = new Set<string>([...s.open.map((f) => f.lens), ...s.moved.map((id) => ownerOf(id)).filter((x): x is string => !!x)]);
+  return ledger.lenses.filter((l) => owners.has(l)).concat([...owners].filter((l) => !ledger.lenses.includes(l)));
+}
+
+/** A CLI line for this ledger: `dreamcontext plan <verb> <plan>` or `dreamcontext builder review <verb> <task> --loop <loop>`. */
+export function loopCommand(ledger: Ledger, verb: string, rest = ''): string {
+  const tail = rest ? ` ${rest}` : '';
+  return isCodeLedger(ledger)
+    ? `dreamcontext builder review ${verb} ${ledger.task}${ledger.plan === 'end' ? '' : ` --loop ${ledger.plan}`}${tail}`
+    : `dreamcontext plan ${verb} ${ledger.plan}${tail}`;
+}
+
+function codeStopCard(ledger: Ledger, s: PlanState): string {
+  const why = s.stops.filter((x) => x.kind === 'class').map((x) => `"${x.cls}" sınıfı ${s.classCounts[x.cls!]}. turunda hâlâ açık: düzeltmeler sınıfı kapatmıyor.`);
+  const byClass = new Map<string, OpenFinding[]>();
+  for (const f of s.open) byClass.set(f.cls, [...(byClass.get(f.cls) ?? []), f]);
+  const passed = Object.entries(s.verdicts).filter(([, v]) => v === 'PASS').map(([l]) => l);
+  const order = recommendation(s);
+  const criticals = s.open.filter((f) => f.level === 'Critical');
+  const lines = [
+    `İnceleme durdu → ${ledger.task}${ledger.plan === 'end' ? '' : ` (${ledger.plan})`}`,
+    '',
+    `Neden: ${why.join(' ')}`,
+    `Sağlam olan: ${passed.length > 0 ? `${passed.join(', ')} PASS; ` : ''}açık sınıf dışındaki her şey incelemeden geçti.`,
+    'Açık sınıflar:',
+    ...[...byClass.keys()].map((c) => `- ${c}: ${byClass.get(c)!.length} bulgu (${byClass.get(c)!.map((f) => `${f.id} ${f.level}`).join(', ')}), ${s.classCounts[c] ?? 1}. tur`),
+    `Tur: ${s.latestComplete} (tavan yok; sınıf tekrarı durdurur)`,
+    '',
+    'Seçenekler (öneri ilk sırada):',
+    ...order.map((k, i) => `${i + 1}. ${CODE_STOP_CARD[k].label}${i === 0 ? ' (önerilen)' : ''}: ${CODE_STOP_CARD[k].detail}`),
+  ];
+  if (criticals.length > 0) {
+    lines.push('', `Kritik bulgu açık kalır (${criticals.map((f) => f.id).join(', ')}): Daralt ve Devam'da bu işte kalır, Böl'de takip görevinin işaretsiz kriteri olur; hiçbir seçenek onu düşürmez.`);
+  }
+  lines.push('', `Owner's pick → \`${loopCommand(ledger, 'decide', '<narrow|split|continue> --note "<his words>"')}\` (split also needs --task <follow-up> --class <c>).`);
+  return lines.join('\n');
+}
+
+function codeNextAction(ledger: Ledger, s: PlanState): string {
+  const n = s.next;
+  switch (n.kind) {
+    case 'abandoned': return 'Next: nothing. This review loop was abandoned.';
+    case 'review': {
+      const opening = s.round === 0 || s.roundComplete;
+      const lines = n.lenses.map((l) => `- ${l}: \`${loopCommand(ledger, 'packet', `--lens ${l}`)}\`${n.redispatch.includes(l) ? ' (re-dispatch: its review did not land)' : ''}, then \`${loopCommand(ledger, 'record', `--lens ${l} --file <its review>`)}\``);
+      return [`Next: review ${n.lenses.join(' + ')}${opening ? ` (opens round ${s.round + 1})` : ` (round ${s.round})`}.`, ...lines].join('\n');
+    }
+    case 'done': return `Next: done. Every reviewer of round ${s.latestComplete} PASS with nothing open: record review-end, then the final check.`;
+    case 'stop': return `Next: STOP. Ask the owner this card (an owner card; a Super Agent never answers it):\n\n${codeStopCard(ledger, s)}`;
+    case 'redesign':
+    case 'revise': {
+      const classes = [...new Set(s.open.map((f) => f.cls))];
+      const redesign = n.kind === 'redesign' ? n.classes : [];
+      const lenses = nextRoundLenses(ledger, s);
+      const split = s.splitPending ? [`  split: ${s.splitPending.classes.join(', ')} | <what this run no longer carries>`] : [];
+      return [
+        `Next: ${n.kind === 'redesign' ? `redesign. ${redesign.length === 1 ? 'This class is' : 'These classes are'} in a 2nd counted round, so the fix moves to the one place that covers the whole class` : 'fix by class'}, then write the fix note and re-review.`,
+        `Write the fix note, changes.md in the loop folder (\`${loopCommand(ledger, 'status')}\` prints the folder); round ${s.round + 1} opens only when it carries:`,
+        ...classes.map((c) => `  sweep: ${c} | <every sibling path you checked> | <the one place you fixed it>`),
+        ...redesign.map((c) => `  redesign: ${c} | <the one layer that now covers the whole class>`),
+        ...split,
+        `Then: \`${loopCommand(ledger, 'packet', `--lens ${lenses[0] ?? 'reviewer'} --tree <FIX> --paths <files the fix changed>`)}\` opens round ${s.round + 1} for ${lenses.join(' + ')}.`,
+        '',
+        CODE_REVISION_RECIPE,
+      ].join('\n');
+    }
+  }
+}
 
 function budgetLine(s: PlanState): string {
   return s.budget.unlimited ? `${s.latestComplete} rounds used, unlimited (owner: Devam)` : `${s.latestComplete} / ${s.budget.limit} rounds used`;
@@ -533,6 +722,7 @@ function recommendation(s: PlanState): Array<keyof typeof PLAN_STOP_CARD> {
  * in plain words; the owner's pick goes back through `plan decide`.
  */
 export function renderStopCard(ledger: Ledger, s: PlanState): string {
+  if (isCodeLedger(ledger)) return codeStopCard(ledger, s);
   const why = s.stops.filter((x) => x.kind !== 'redesign').map((x) => {
     if (x.kind === 'class') return `"${x.cls}" sınıfı ${s.classCounts[x.cls!]}. turunda hâlâ açık: düzeltmeler sınıfı kapatmıyor.`;
     if (x.kind === 'budget') return `${s.latestComplete}. tur bitti ve plan hâlâ geçmedi (bütçe ${s.budget.limit} tur).`;
@@ -565,6 +755,7 @@ export function renderStopCard(ledger: Ledger, s: PlanState): string {
 
 /** The one next action, as the lead reads it in `plan status`. */
 export function renderNextAction(ledger: Ledger, s: PlanState): string {
+  if (isCodeLedger(ledger)) return codeNextAction(ledger, s);
   const n = s.next;
   switch (n.kind) {
     case 'abandoned': return 'Next: nothing. This plan was abandoned; `plan open --task` starts a new one.';
@@ -604,7 +795,7 @@ export function planGateGaps(ledgers: readonly LedgerReadResult[], taskSlug: str
       gaps.push({ field: 'plan', problem: `unreadable plan ledger ${r.path} (${r.problem}): repair it, or move that plan folder out of tmp/plans/` });
       continue;
     }
-    if (r.ledger.task !== taskSlug) continue;
+    if (r.ledger.task !== taskSlug || isCodeLedger(r.ledger)) continue; // a code review loop is no plan
     let s: PlanState;
     try {
       s = computePlanState(r.ledger);
