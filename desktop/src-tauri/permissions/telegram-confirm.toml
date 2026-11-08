@@ -1,0 +1,20 @@
+"$schema" = "schemas/schema.json"
+
+# The owner's native yes for a Telegram binding, a one-tap bot creation and a re-adopt.
+# See src/telegram_confirm.rs. Each command takes only a server-minted id, checks that the
+# calling page is the app's own project window, raises a native alert where one is due and
+# posts with the owner key itself: the key never reaches the webview.
+[[permission]]
+identifier = "allow-confirm-telegram"
+description = "Show the native confirm for a pending Telegram pairing and activate it with the owner key."
+commands.allow = ["confirm_telegram_binding"]
+
+[[permission]]
+identifier = "allow-start-telegram-creation"
+description = "Start a one-tap Telegram bot creation the page minted an id for."
+commands.allow = ["start_telegram_creation"]
+
+[[permission]]
+identifier = "allow-start-telegram-readopt"
+description = "Show the native confirm to bind a bot made earlier again, and do it with the owner key."
+commands.allow = ["start_telegram_readopt"]

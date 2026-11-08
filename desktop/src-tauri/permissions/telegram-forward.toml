@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# Ticking a routine in a member's Telegram section: a native confirm, then the shell turns
+# forwarding on with the owner key (plan W3, Y4). Unticking needs no key and no command.
+[[permission]]
+identifier = "allow-confirm-telegram-forward"
+description = "Show the native confirm for forwarding a routine's results to its member's Telegram bot."
+commands.allow = ["confirm_telegram_forward"]

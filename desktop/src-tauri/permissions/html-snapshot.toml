@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# A picture of a server-built page for Telegram, rendered in the sealed `html-snapshot`
+# webview (src/html_snapshot.rs). The project window passes the server's bytes through.
+[[permission]]
+identifier = "allow-html-snapshot"
+description = "Render a server-built HTML page to PNG slices in a sealed, network-less webview."
+commands.allow = ["html_snapshot"]

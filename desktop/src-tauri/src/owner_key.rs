@@ -26,7 +26,7 @@ pub(crate) fn node_can_disable_sigusr1((major, minor, _): (u32, u32, u32)) -> bo
 
 /// The app's own server, port included. The capability's remote scope allows every loopback
 /// port, and a card or a redirect can put another one in a window.
-fn is_app_page(url: &Url, port: u16) -> bool {
+pub(crate) fn is_app_page(url: &Url, port: u16) -> bool {
     url.scheme() == "http"
         && matches!(url.host_str(), Some("127.0.0.1") | Some("localhost"))
         && url.port() == Some(port)
