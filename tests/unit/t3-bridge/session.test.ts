@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { parseChatLine } from '../../../dashboard/src/lib/chatProtocol.js';
 import type { BridgeSession } from '../../../src/lib/t3-bridge/session.js';
 import { isResult, openReplaySession, waitFor } from './replay-harness.js';
+import { owedWordsRoute } from '../../../src/lib/t3-bridge/stdio.js';
 
 const open: BridgeSession[] = [];
 afterEach(async () => { await Promise.all(open.splice(0).map((s) => s.close())); });
@@ -71,6 +72,31 @@ describe('t3 bridge session (T3 replay)', () => {
     await session.answer(String(ask.request_id), { behavior: 'allow', updatedInput: { questions: req.input.questions, answers: { [q.question]: q.options[0]!.label } } });
     await waitFor(() => frames.some(isResult));
     expect(JSON.stringify(frames.filter((f) => f.type === 'assistant'))).toContain('plan questions fixture complete');
+  });
+
+  it('a question turned down WITH a reason: the reason reaches the tool as its next message', async () => {
+    // A card the server hands back (card-standalone.ts: it pointed at an example not on it) or
+    // the owner's "Unclear? Ask again": the empty answer alone would tell the tool nothing.
+    // answer() hands the words back; stdio routes them (owedWordsRoute: Codex steers them in,
+    // ACP holds them to the turn's end, since it cannot take a message into a running turn).
+    const deny = async (message: string): Promise<string | null> => {
+      const { session, frames, fixture } = await openReplaySession('plan_questions', { mode: 'plan' });
+      open.push(session);
+      await session.send(fixture.prompt);
+      await waitFor(() => frames.some((f) => f.type === 'control_request'));
+      const ask = frames.find((f) => f.type === 'control_request')!;
+      return session.answer(String(ask.request_id), { behavior: 'deny', message });
+    };
+    expect(await deny('Not shown to the owner: put the example on the card.'))
+      .toBe('I did not pick an option. Not shown to the owner: put the example on the card.');
+    // A plain dismissal ("Denied", the server's default) owes nothing.
+    expect(await deny('Denied')).toBeNull();
+  });
+
+  it('owed words: an instance tool holds them while busy, Codex sends them now', () => {
+    expect(owedWordsRoute('antigravity', true)).toBe('hold');
+    expect(owedWordsRoute('antigravity', false)).toBe('send');
+    expect(owedWordsRoute('codex', true)).toBe('send');
   });
 
   it('interrupts a running turn: the turn ends with an aborted result', async () => {

@@ -75,6 +75,7 @@ import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-re
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
+import { offCardQuestionFrame } from '../../lib/card-standalone.js';
 import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
 import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
@@ -3863,6 +3864,15 @@ export function startChatSession(
         send: (l) => { if (ws.readyState === ws.OPEN) { try { ws.send(l); } catch { /* closing */ } } },
         mirror: (l) => mirrors?.line(l),
         control: (o) => mcpControl.handle(o),
+        // A question card that points at something not on it ("örnekteki gibi", "as shown
+        // above") never reaches the owner: the agent gets it back with what to add (owner
+        // 2026-11-08). Every tool's question passes here (the T3 bridge speaks this frame).
+        intercept: (o) => {
+          const off = offCardQuestionFrame(o);
+          if (!off) return false;
+          writeStdin({ type: 'control_response', response: { subtype: 'success', request_id: off.requestId, response: { behavior: 'deny', message: off.message } } });
+          return true;
+        },
       });
       if (!obj) continue;
 
