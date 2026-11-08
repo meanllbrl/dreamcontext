@@ -149,7 +149,8 @@ export function TeamSection(p: TeamSectionProps) {
         <svg className={`ns-team-chev${open && !empty ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>
         {empty ? <span className="ns-team-faces" aria-hidden="true"><span className="ns-team-face ns-team-face--empty" data-testid="team-empty-slot" /></span> : <TeamFaces members={p.members} vault={p.vault} />}
         <span className="ns-team-label">{p.label}</span>
-        {working > 0
+        {/* The group's summed mark is drawn only while the group is folded: open, each member row carries its own. */}
+        {open && !empty ? null : working > 0
           ? <span data-testid="team-row-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
           : count > 0 && <span className="ns-team-count" data-asking={asking ? 'true' : undefined} data-testid="team-row-count">{count}</span>}
       </button>
