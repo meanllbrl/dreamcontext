@@ -64,6 +64,7 @@ import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
+import { telegramAwayTick } from '../telegram/away.js';
 /** `_dream_context/` sits directly under a registered project root — the same
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
  *  exact registered-root → context-root derivation. */
@@ -73,6 +74,8 @@ const CONTEXT_DIR_NAME = '_dream_context';
 export const PROJECT_CONCURRENCY = 3;
 
 export interface TickOptions {
+  /** False skips the Telegram away duties (tests of the routine loop). Default: on. */
+  telegramAway?: boolean;
   /** Business "now" for dueness math and both heartbeat timestamps — a single
    *  fixed value (not a clock function), so one tick sees one consistent time
    *  across every project and automation it considers. Defaults to `new Date()`. */
@@ -182,6 +185,10 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const now = opts.now ?? new Date();
   const logFn = opts.log ?? (() => {});
   const runImpl = opts.runImpl ?? runAutomation;
+  // The member bots' routine messages (plan Z2): collected here and awaited after this project's
+  // loop, outside every run lock, so a slow send never delays the next due routine.
+  const deferred: Array<() => Promise<void>> = [];
+  const collect = (send: () => Promise<void>): void => { deferred.push(send); };
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
   // Before this, a run read the fixed `now` as its clock: every run looked 0s long and a timeout
   // read "Timed out after 0s" in the owner's thread.
@@ -274,6 +281,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${fire.slug} draining a queued fire (fired ${fire.firedAt}) — running`);
     const outcome = await runImpl(contextRoot, fire.slug, {
+      onDeferredSend: collect,
       now: clock,
       fireAt: new Date(firedAtMs),
       home: opts.home,
@@ -326,6 +334,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
+      onDeferredSend: collect,
       now: clock,
       fireAt: due.fireAt ?? now,
       home: opts.home,
@@ -337,6 +346,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }
 
+  for (const send of deferred) await send().catch((err) => logFn(`[telegram] a routine message failed: ${(err as Error)?.message ?? err}`));
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };
 }
 
@@ -400,6 +410,12 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   };
   await Promise.all(Array.from({ length: Math.min(PROJECT_CONCURRENCY, roots.length) }, worker));
   const projects = results.filter((r): r is TickProjectResult => r !== null);
+  // Telegram while the app is quit (W2 lane B): one "ulaşılamıyor" per message, power restored
+  // once after a dead server. Never polls the manager; works on a machine with no routines.
+  // A test run with no injected home never reaches the real ~/.dreamcontext's bots.
+  if (opts.telegramAway !== false && (home !== undefined || !process.env.VITEST)) {
+    try { await telegramAwayTick({ home, log: logFn }); } catch (err) { logFn(`[telegram] away tick failed: ${(err as Error)?.message ?? err}`); }
+  }
 
   const durationMs = Date.now() - wallStart;
   // The completion moment, not the start: `now` is when the tick BEGAN, so

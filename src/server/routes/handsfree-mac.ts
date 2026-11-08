@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { carriesOwnOrigin } from '../owner-page.js';
+import { hasOwnerKey } from '../owner-key.js';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -311,7 +313,13 @@ export const handsfreeMacRoutes = {
     }
     sendJson(res, 200, await macSession().start({ vaults, ...(typeof b?.bagMode === 'boolean' ? { bagMode: b.bagMode } : {}) }));
   }, 5 * 60_000),
-  stop: guarded(async (_req, res) => { await macSession().stop(); sendJson(res, 200, macSession().status()); }),
+  // Every end is announced to the bot that started it (E3): the Mac panel's own page says
+  // "Mac'ten kapatıldı"; a request with no Origin is an HTTP stop, keyed only with the owner key.
+  stop: guarded(async (req, res) => {
+    const fromPanel = carriesOwnOrigin(req);
+    await macSession().stop({ reason: fromPanel ? 'mac' : 'http', keyed: fromPanel || hasOwnerKey(req) });
+    sendJson(res, 200, macSession().status());
+  }),
   qr: guarded(async (_req, res) => { sendJson(res, 200, { url: macSession().mintQr() }); }),
   password: guarded(async (_req, res) => { sendJson(res, 200, { passphrase: await macSession().setPassword() }); }),
   devices: guarded(async (_req, res) => { sendJson(res, 200, { devices: macSession().devices() }); }),
