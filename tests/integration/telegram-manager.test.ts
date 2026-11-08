@@ -145,6 +145,28 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(false);
   });
 
+  it('re-pairing the manager with its own token re-keys managed bots; a failed replace keeps that bot polling', async () => {
+    await pair(MANAGER, '/api/telegram-manager/bind', 900001);
+    const id = (await call('POST', '/api/telegram/ua-manager/creation/request', PAGE)).json.creationId;
+    await call('POST', `/api/telegram-creation/${id}/start`, KEYED);
+    tg.push(MANAGER, { managed_bot: { bot: { id: 555, is_bot: true, username: 'ua_manager_x1y2_bot' }, user: { id: OWNER } } });
+    await vi.waitFor(() => expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(true), { timeout: 5000 });
+    await drained();
+    // A failed replace: the bot goes on polling its old (still live) token.
+    tg.failOnce.set('replaceManagedBotToken', 502);
+    await pair(MANAGER, '/api/telegram-manager/bind', 900001);
+    await vi.waitFor(() => expect(tg.sent('replaceManagedBotToken')).toHaveLength(1), { timeout: 5000 });
+    const key = `${scopeOfContextRoot(root)}/ua-manager`;
+    await vi.waitFor(() => expect(hub.active.get(key)?.halted).toBeFalsy(), { timeout: 5000 });
+    await drained();
+    tg.push('555:NEWTOKENNEWTOKENNEWTOKENNEWTOKEN12', textUpdate(4242, 'stranger'));
+    await vi.waitFor(() => expect(hub.strangers.total).toBeGreaterThan(0), { timeout: 5000 });
+    expect(hub.manager!.alarm).toBeNull();
+    // A working re-key replaces the token through the manager.
+    await pair(MANAGER, '/api/telegram-manager/bind', 900001);
+    await vi.waitFor(() => expect(tg.sent('replaceManagedBotToken')).toHaveLength(2), { timeout: 5000 });
+  }, 20_000);
+
   it('creation without a manager → 409 no_manager; a 409 on the manager poll raises the alarm', async () => {
     expect((await call('POST', '/api/telegram/ua-manager/creation/request', PAGE)).json.error).toBe('no_manager');
     await pair(MANAGER, '/api/telegram-manager/bind', 900001);

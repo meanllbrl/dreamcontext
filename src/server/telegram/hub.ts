@@ -156,6 +156,8 @@ interface LivePairing {
   botUsername: string;
   /** Bindings on the same token this pairing paused; given back if it is never confirmed. */
   paused?: ActiveBinding[];
+  /** The manager's own loop yielded this token to the pairing (re-key): resumed if unconfirmed. */
+  managerYielded?: boolean;
 }
 
 /** One Telegram message's live turn (status, typing, final line). In memory only. */
@@ -291,7 +293,8 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** Bindings a pairing paused poll again (expired or voided without a confirm). */
-  private resumePaused(paused: ActiveBinding[] | undefined, after: Promise<unknown>): void {
+  private resumePaused(paused: ActiveBinding[] | undefined, after: Promise<unknown>, managerYielded = false): void {
+    if (managerYielded) void after.then(() => this.manager?.start());
     for (const ab of paused ?? []) {
       if (this.active.get(ab.key) !== ab || ab.disabled) continue;
       this.waitTokens.push(after);
@@ -356,7 +359,7 @@ export class TelegramHub implements TelegramHubApi {
     }
     // A new bind for the target voids its previous pairing (B4).
     for (const [id, p] of [...this.pairings]) {
-      if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); await p.done; this.resumePaused(p.paused, p.done); }
+      if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); await p.done; this.resumePaused(p.paused, p.done, p.managerYielded); }
     }
     const book = new PairingBook(this.now);
     const pairing = book.mint({ scope: scope === 'manager' ? 'global' : scope, target: scope === 'manager' ? MANAGER_PAIRING_TARGET : target, botId, botUsername });
@@ -372,6 +375,7 @@ export class TelegramHub implements TelegramHubApi {
       timeoutS: this.deps.pollTimeoutS,
     });
     // An active binding polling the same token holds its lock: stop it while pairing anew.
+    const managerYielded = scope === 'manager' ? (await this.manager?.yieldToken(token)) ?? false : false;
     const same = [...this.active.values()].filter((ab) => ab.binding.token === token);
     for (const ab of same) this.halt(ab);
     await Promise.all(same.map((ab) => ab.done));
@@ -380,16 +384,22 @@ export class TelegramHub implements TelegramHubApi {
       projectName: input.projectName, contextRoot: input.contextRoot ?? null, transport, poller, done: Promise.resolve(), botId, botUsername,
     };
     this.pairings.set(pairing.pairingId, live);
-    live.done = poller.run().then((why) => { if (why === 'conflict' && this.pairings.get(pairing.pairingId) === live) this.pairings.delete(pairing.pairingId); return why; });
+    live.done = poller.run().then((why) => {
+      // A lock held elsewhere (e.g. the manager re-paired with its own live token): this pairing
+      // cannot serve; whatever it paused polls again.
+      if (why === 'conflict' && this.pairings.get(pairing.pairingId) === live) { this.pairings.delete(pairing.pairingId); this.resumePaused(live.paused, Promise.resolve(), live.managerYielded); }
+      return why;
+    });
     // Never confirmed in its 10 minutes: the loop stops and a binding it paused polls again.
     const expiry = setTimeout(() => {
       if (this.pairings.get(pairing.pairingId) !== live) return;
       this.pairings.delete(pairing.pairingId);
       live.poller.stop();
-      this.resumePaused(same, live.done);
+      this.resumePaused(same, live.done, managerYielded);
     }, PAIRING_TTL_MS + 1_000);
     expiry.unref?.();
     live.paused = same;
+    live.managerYielded = managerYielded;
     return { pairingId: pairing.pairingId, deepLink: `https://t.me/${botUsername}?start=${pairing.payload}`, botUsername, expiresAt: pairing.expiresAt };
   }
 
@@ -569,7 +579,7 @@ export class TelegramHub implements TelegramHubApi {
     ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, session).catch(async () => {
       this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
       await this.reply(ab, LINES.notWritten);
-    }));
+    })).catch(() => { /* one failed link never stops the next delivery */ });
     return 'accepted';
   }
 

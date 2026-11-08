@@ -98,8 +98,19 @@ export class TelegramManager {
   }
 
   private halted = false;
+  private serial = 0;
 
   stop(): void { this.halted = true; this.poller?.stop(); }
+
+  /** A pairing for the manager's own token (re-key, AA3) takes its lock: the loop yields. */
+  async yieldToken(token: string): Promise<boolean> {
+    const m = readManagerBinding(this.hub.home);
+    if (!m.ok || m.binding.token !== token || !this.poller) return false;
+    this.halted = true;
+    this.poller.stop();
+    await this.done;
+    return true;
+  }
 
   /** Shutdown: stop and drop the token lock synchronously. */
   releaseNow(): void { this.halted = true; this.poller?.stop(); this.poller?.release(); }
@@ -122,10 +133,12 @@ export class TelegramManager {
     });
     this.poller = poller;
     // A token lock still held makes run() return 'conflict' without reporting: retry until it frees.
+    // The stop check is per serve: `this.poller !== poller` (a newer serve) or a stop/remove after it.
+    const serial = ++this.serial;
+    this.halted = false;
     const loop = async (): Promise<unknown> => {
-      this.halted = false;
       for (let attempt = 0; ; attempt++) {
-        if (this.halted || this.poller !== poller) return 'stopped';
+        if (this.halted || this.poller !== poller || this.serial !== serial) return 'stopped';
         reported = false;
         const why = await poller.run();
         if (why !== 'conflict' || reported || this.halted) return why;
@@ -172,7 +185,11 @@ export class TelegramManager {
         const { bindingHash: _h, v: _v, ...rest } = row.read.binding;
         const b = writeBinding(row.scope, row.target, { ...rest, token }, this.hub.home);
         this.hub.activate(row.scope, row.target, b);
-      } catch { /* that row stays on its old token; the Settings list marks it */ }
+      } catch {
+        // The old token is still the live one: that bot polls it again (a revoked one comes back
+        // as a 401 → the alarm, visible), never deaf-but-active.
+        if (live && this.hub.active.get(live.key) === live) this.hub.activate(row.scope, row.target, row.read.binding);
+      }
     }
   }
 
