@@ -8,7 +8,9 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
  *   --related <files>  type-check every package the files belong to, then the tests that import
  *                      them (`vitest related`, `jest --findRelatedTests`) per test package.
  *   --failed           only what failed last time, plus --related when given (a fix can break
- *                      something it imports).
+ *                      something it imports). With no task: the red files a whole-suite run left
+ *                      in its record (lib/suite-record.ts), with their own config, plus the tests
+ *                      related to what changed since (builder-sessions.ts builderTestRecords).
  *   --also <tests>     test files `related` cannot see (they read files by path, not import).
  *
  * Every failure gets a KEY (test file + name + first message line, or tsc code + file + line)
@@ -93,8 +95,8 @@ export function planChecks(root: string, changed: string[], also: string[] = [])
  * `--passWithNoTests`: "nothing matched" must still write a report, so it reads as no
  * coverage (related) or a vanished file (explicit), never as a crash.
  */
-export function testArgv(runner: TestRunner, mode: 'related' | 'explicit', files: string[], outFile: string): string[] {
-  const common = ['--maxWorkers=2', '--passWithNoTests'];
+export function testArgv(runner: TestRunner, mode: 'related' | 'explicit', files: string[], outFile: string, config?: string): string[] {
+  const common = ['--maxWorkers=2', '--passWithNoTests', ...(config && runner === 'vitest' ? ['-c', config] : [])];
   if (runner === 'vitest') {
     return mode === 'related'
       ? ['vitest', 'related', '--run', ...common, '--reporter=json', `--outputFile=${outFile}`, ...files]

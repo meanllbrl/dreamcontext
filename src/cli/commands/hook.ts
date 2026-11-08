@@ -1,6 +1,7 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
 import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
+import { suiteRedOpen } from '../../lib/suite-record.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { GATE_BEAT_ENV, antigravityCallAsClaude, antigravitySkillsCwd, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
@@ -3078,7 +3079,7 @@ export function registerHookCommand(program: Command): void {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
         const kind = directHeavy(command);
         if (!kind) allow();
-        const suggested = heavySuggestion(command);
+        const suggested = heavySuggestion(command, { redOpen: kind === 'suite' && suiteRedOpen(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()) });
         // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
         // builds are not ours to hold. Our children and a project that opted in keep the limit.
         if (hookTool() === 'codex' && !process.env.DREAMCONTEXT_CONTEXT_BY && !codexProjectOptedIn(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd())) process.exit(0); // allow
@@ -3090,7 +3091,9 @@ export function registerHookCommand(program: Command): void {
               `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
               `Run it as: ${suggested}`,
               'A check that already passed on the same code prints its receipt instead of running (--fresh runs it anyway).',
-              'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
+              kind === 'suite'
+                ? 'The full suite runs once per release cut, after its build; a fix reruns only the red files (dreamcontext builder test --failed), never the whole suite again.'
+                : 'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
             ].join(' '),
           },
         }));

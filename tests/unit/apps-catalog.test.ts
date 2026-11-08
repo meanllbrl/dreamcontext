@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -91,11 +91,12 @@ describe('the catalog', () => {
   });
 
   it('catalog remove refuses inside an agent run or a Super chat', () => {
-    const cli = resolve('src/cli/index.ts');
-    const vite = resolve('node_modules/vite-node/dist/cli.mjs');
+    // The BUILT CLI (`npm run build:cli`): vite-node transpiled src/ on each spawn (~8 s CPU).
+    const cli = resolve('dist/index.js');
+    if (!existsSync(cli)) throw new Error('dist/index.js is missing: run npm run build:cli first');
     for (const env of [{ DREAMCONTEXT_AUTOMATION_RUN: 'r' }, { DREAMCONTEXT_SUPER_CREW: '1' }, { DREAMCONTEXT_AGENT_CHAT: 'x' }]) {
       let out = '';
-      try { execFileSync(process.execPath, [vite, '--root', resolve('.'), cli, 'apps', 'catalog', 'remove', 'crm'], { cwd: project, env: { ...process.env, HOME: home, ...env }, stdio: 'pipe' }); } catch (e) { out = String((e as { stdout?: Buffer }).stdout ?? '') + String((e as { stderr?: Buffer }).stderr ?? ''); }
+      try { execFileSync(process.execPath, [cli, 'apps', 'catalog', 'remove', 'crm'], { cwd: project, env: { ...process.env, HOME: home, ...env }, stdio: 'pipe' }); } catch (e) { out = String((e as { stdout?: Buffer }).stdout ?? '') + String((e as { stderr?: Buffer }).stderr ?? ''); }
       expect(out, JSON.stringify(env)).toContain('owner_only');
     }
   }, 120_000);

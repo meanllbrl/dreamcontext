@@ -1056,14 +1056,17 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit, nothing ran)",
+      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite needs a fresh build first). A whole-suite run keeps a record of its red files",
       "args": [
-        "<command...>"
+        "[command...]"
       ],
       "valueFlags": [
         "--max-wait",
         "--because",
-        "--tail"
+        "--tail",
+        "--wait",
+        "--max-run",
+        "--run-id"
       ]
     },
     {
@@ -1246,9 +1249,9 @@
     },
     {
       "path": "builder test",
-      "desc": "Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), 75 a check did not run",
+      "desc": "Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), 75 a check did not run. With --failed and no task: 0 green (the record closes, kept), 1 still red, 3 incomplete or no record, 5 build first",
       "args": [
-        "<slug>"
+        "[slug]"
       ],
       "valueFlags": [
         "--wave",

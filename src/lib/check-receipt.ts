@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSy
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { heavyStep, shellSegments } from './run-budget.js';
+import { distAllowed, pruneSuiteRecords } from './suite-record.js';
 
 /**
  * Check receipts: the same check on the same code does not run twice.
@@ -71,6 +72,8 @@ export interface Receipt {
   /** The stored log / report, absolute paths inside the receipts folder. */
   log?: string;
   report?: string;
+  /** The worktree it ran in (written since 0.41.7): a build's budget exemption reads only its own. */
+  toplevel?: string;
 }
 
 /** `dist`: the built output's fingerprint, test runs only (in the key, outside the family). */
@@ -402,11 +405,14 @@ function readReceipt(dir: string, key: string): Receipt | null {
  *          only with a dist rebuilt for it (findReceipt): the built CLI reports its version
  *          (tests/integration/bundled-cli-version.test.ts), so a stale dist is a real red.
  *   tsc: also Markdown, and any package.json / package-lock.json whose only change is the version.
+ *   build: also what cannot make a build stale (suite-record.ts SUITE_DIST_ALLOW: tests, Markdown
+ *          the build neither copies nor bundles); its outputs must still be on disk (outputsStill).
  */
 export function harmlessFor(kind: ReceiptKind, path: string, versionOnly: (path: string) => boolean): boolean {
   // The root brain only: a nested `_dream_context/` is a test fixture (tests/fixtures/*/vault).
   if (/^_(?:dream|agent)_context\//.test(path)) return true;
   if (kind === 'tests') return /^package(?:-lock)?\.json$/.test(path) && versionOnly(path);
+  if (kind === 'build') return distAllowed(path);
   if (kind !== 'tsc') return false;
   if (/\.md$/i.test(path)) return true;
   if (/(?:^|\/)package(?:-lock)?\.json$/.test(path)) return versionOnly(path);
@@ -541,7 +547,7 @@ export function writeReceipt(plan: ReceiptPlan, before: ReceiptState, o: { exit:
     };
     const r: Receipt = {
       v: 1, key: before.key, family: before.family, tree: before.tree, kind: plan.kind, command: plan.command, cwdRel: plan.cwdRel,
-      exit: 0, at: new Date().toISOString(), ms: Math.round(o.ms), ...(o.fresh ? { fresh: true } : {}), ...(outputs ? { outputs } : {}), ...tested,
+      exit: 0, at: new Date().toISOString(), ms: Math.round(o.ms), toplevel: plan.toplevel, ...(o.fresh ? { fresh: true } : {}), ...(outputs ? { outputs } : {}), ...tested,
       log: keep(o.log, 'log'), report: keep(o.report, 'report.json'),
     };
     atomicWrite(join(dir, `${before.key}.json`), `${JSON.stringify(r, null, 1)}\n`);
@@ -581,7 +587,10 @@ function atomicWrite(path: string, text: string): void {
 
 function prune(dir: string): void {
   const now = Date.now();
+  // Suite records keep a red while its worktree exists, whatever its age (suite-record.ts).
+  pruneSuiteRecords(dir, now);
   for (const f of readdirSync(dir)) {
+    if (f.startsWith('suite-')) continue;
     try {
       const p = join(dir, f);
       if (now - statSync(p).mtimeMs > RECEIPT_MAX_AGE_MS) rmSync(p, { force: true });

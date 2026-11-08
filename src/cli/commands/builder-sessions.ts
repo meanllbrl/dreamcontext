@@ -45,7 +45,10 @@ import {
 } from '../../lib/builder-spawn.js';
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
-import { describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, writeReceipt } from '../../lib/check-receipt.js';
+import { contentTree, describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
+import {
+  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+} from '../../lib/suite-record.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
 import {
@@ -621,9 +624,24 @@ const RELATED_TEST_CEILING = 1500;
  * The lead's wave-end check: type-check + related tests once, through the heavy lock. Exit 0
  * green, 1 failures (each with its key and owning lane), 75 when a check did not run at all.
  */
-export async function builderTest(deps: SessionDeps, slug: string, opts: TestOptions): Promise<number> {
+export async function builderTest(deps: SessionDeps, slug: string | undefined, opts: TestOptions): Promise<number> {
+  // No task: rerun what a whole-suite record left open (plan C3).
+  if (slug === undefined) {
+    if (!opts.failed) throw new BuilderInputError('give a task slug and --wave <n|final>, or --failed alone to rerun the red files of a full suite on this worktree');
+    if (opts.wave !== undefined) throw new BuilderInputError('--wave needs the task slug');
+    return builderTestRecords(deps, opts);
+  }
   const wave: TestWave = opts.wave === 'final' ? 'final' : Number(opts.wave);
   if (wave !== 'final' && (!Number.isInteger(wave) || wave < 1)) throw new BuilderInputError('--wave <n|final> is required');
+  // With a task, a RED full-suite record's files are rerun with the wave's failures.
+  const fromRecord = opts.failed ? await builderTestRecords(deps, { fresh: opts.fresh, onlyRed: true }) : RECORD_GREEN_EXIT;
+  const waveCode = await builderTestWave(deps, slug, wave, opts);
+  if (fromRecord === RECORD_GREEN_EXIT) return waveCode;
+  if (waveCode === 1 || fromRecord === RECORD_RED_EXIT) return 1;
+  return waveCode !== 0 ? waveCode : fromRecord;
+}
+
+async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, opts: TestOptions): Promise<number> {
   const root = deps.root();
   const dir = developDir(root, slug);
   mkdirSync(dir, { recursive: true });
@@ -759,6 +777,127 @@ function firstLogLine(log: string): string {
   try { return readFileSync(log, 'utf-8').trim().split('\n').slice(-1)[0] ?? ''; } catch { return ''; }
 }
 
+// ─── a full suite's red files (no task needed) ───────────────────────────────
+
+/** `builder test --failed` exits: green, still red, incomplete or never ran, build first. */
+export const RECORD_GREEN_EXIT = 0;
+export const RECORD_RED_EXIT = 1;
+export const RECORD_INCOMPLETE_EXIT = 3;
+export const RECORD_BUILD_FIRST_EXIT = 5;
+
+const codeFile = (p: string) => /\.[cm]?[jt]sx?$/.test(p);
+
+/**
+ * Rerun what this worktree's whole-suite records left open (plan C3), per suite target with its
+ * own config. The scope is the tool's, never the caller's: a red record's files, plus the tests
+ * related to `git diff <redTree> <now>` (a fix and anything merged since), plus the CLI-spawn set
+ * when that diff touches `src/`; `--related` / `--also` only add. A closed green record reruns the
+ * related scope of whatever changed since its green tree. {@link judgeSuiteRun} decides the end
+ * state. Exit: 0 green, 1 still red, 3 incomplete or nothing to rerun, 5 build first.
+ */
+export async function builderTestRecords(deps: SessionDeps, opts: { related?: string[]; also?: string[]; fresh?: boolean; onlyRed?: boolean }): Promise<number> {
+  const top = recordToplevel(deps.root());
+  const branch = branchOf(top);
+  const records = suiteRecordsHere(top, branch).filter((r) => !opts.onlyRed || r.state === 'red');
+  if (records.length === 0) {
+    if (!opts.onlyRed) deps.print(`no full-suite record on this worktree and branch (${branch ?? 'detached HEAD'}): no file list to rerun. The full suite runs once per release cut (builder heavy --detach -- npm test).`);
+    return opts.onlyRed ? RECORD_GREEN_EXIT : RECORD_INCOMPLETE_EXIT;
+  }
+  const rd = receiptsDir(top);
+  if (!rd) { deps.print('not a git repo: no record'); return RECORD_INCOMPLETE_EXIT; }
+  const dir = join(rd, 'suite-runs');
+  mkdirSync(dir, { recursive: true });
+  const now = contentTree(top);
+  const extraRelated = normalizeOwns(top, opts.related ?? []);
+  const extraAlso = normalizeOwns(top, opts.also ?? []);
+  const codes: number[] = [];
+  for (const r of records) {
+    const name = r.target;
+    if (r.state === 'running') { deps.print(`${name}: a full run is still going (pid ${r.pid}); wait for it${r.checkId ? `: builder heavy --wait ${r.checkId}` : ''}`); codes.push(RECORD_INCOMPLETE_EXIT); continue; }
+    if (r.state === 'incomplete') { deps.print(`${name}: INCOMPLETE (${r.reason ?? 'no reason kept'}): no file list, the full run did not finish. Nothing to rerun; it never reads as green.`); codes.push(RECORD_INCOMPLETE_EXIT); continue; }
+    const base = r.state === 'red' ? r.redTree : r.greenTree;
+    const diff = base && now ? treeDiff(top, base, now) : null;
+    if (!diff) {
+      deps.print(`${name}: INCOMPLETE, the tree the record was proven on (${base?.slice(0, 12) ?? 'none'}) cannot be compared with now; never "nothing changed"`);
+      codes.push(RECORD_INCOMPLETE_EXIT);
+      continue;
+    }
+    if (r.state === 'green' && diff.length === 0) { deps.print(`${name}: nothing open since ${base!.slice(0, 12)} (closed green, log ${r.greenLog ?? r.log ?? '-'})`); codes.push(RECORD_GREEN_EXIT); continue; }
+    const deleted = new Set(diff.filter((d) => d.status === 'D').map((d) => d.path));
+    // A deleted path has no tests to relate; its importers changed too, so they are in the diff.
+    const related = [...new Set([...diff.filter((d) => d.status !== 'D' && codeFile(d.path)).map((d) => d.path), ...extraRelated])].sort();
+    const touchesSrc = diff.some((d) => d.path.startsWith('src/'));
+    const cli = touchesSrc ? cliSpawnTests(top, r.config) : [];
+    // Only git's word drops a red file (a delete; a rename is a delete plus an add). A file that
+    // is merely not on disk stays required, so it reads as missing and keeps the record red.
+    const gone = r.files.filter((f) => deleted.has(f));
+    for (const f of gone) deps.print(`${name}: ${f} is deleted since the red, listed as such`);
+    const explicit = [...new Set([...r.files.filter((f) => !gone.includes(f)), ...cli, ...extraAlso])].sort();
+    // The build is judged on the tree this rerun starts from, and held to its bytes to the end.
+    const proof = cli.length > 0 && distGateApplies(top, r.config) ? distProof(top, now) : null;
+    if (proof) {
+      const dc = proof.check;
+      if (!dc.ok) {
+        deps.print(`${name}: build first: ${dc.why}. The rerun holds ${cli.length} test file(s) that run the built CLI. NOTHING ran.`);
+        deps.print(`  dreamcontext builder heavy -- ${buildCommand(top)}`);
+        codes.push(RECORD_BUILD_FIRST_EXIT);
+        continue;
+      }
+    }
+    if (related.length === 0 && explicit.length === 0) {
+      deps.print(`${name}: nothing to rerun (no red file left and no code changed since ${base!.slice(0, 12)}); the record stays ${r.state}`);
+      codes.push(r.state === 'green' ? RECORD_GREEN_EXIT : RECORD_INCOMPLETE_EXIT);
+      continue;
+    }
+    deps.print(`${name}: rerunning ${explicit.length} file(s) by name (${r.files.length - gone.length} red${cli.length ? `, ${cli.length} CLI-spawn` : ''}) + tests related to ${related.length} changed file(s) since ${base!.slice(0, 12)}`);
+    const tag = `${r.id}-${Date.now()}`;
+    const failureFiles: string[] = [];
+    const ranFiles = new Set<string>();
+    let worstExit = 0;
+    let noReport = false;
+    let notRun = false;
+    let explicitLog: string | undefined;
+    for (const mode of ['related', 'explicit'] as const) {
+      const files = mode === 'related' ? related : explicit;
+      if (files.length === 0) continue;
+      const out = join(dir, `${tag}-${mode}.json`);
+      const log = out.replace(/\.json$/, '.log');
+      if (mode === 'explicit') explicitLog = log;
+      const code = await deps.runCheck(testArgv('vitest', mode, files, out, r.config), top, log, { fresh: opts.fresh });
+      if (code == null) { notRun = true; deps.print(`${name}: NOT RUN (${mode}): the wait ran out or it was killed; run the same command again`); continue; }
+      if (code !== 0) worstExit = code;
+      if (!existsSync(out)) { noReport = true; deps.print(`${name} ${mode}: exit ${code}, no report (log ${relativeTo(top, log)})`); continue; }
+      const report = parseTestReport(readFileSync(out, 'utf-8'), top);
+      for (const f of report.files) ranFiles.add(f);
+      failureFiles.push(...report.failures.map((f) => f.file));
+      if (mode === 'related' && report.total > RELATED_TEST_CEILING) deps.print(`${name}: ${report.total} tests: the scope of the diff ran close to the whole suite, because ${related.length} file(s) changed since ${base!.slice(0, 12)} reach most tests (scope of the diff, not a second full run)`);
+      deps.print(`${name} ${mode}: ${report.total} test(s), ${new Set(report.failures.map((f) => f.file)).size} file(s) red (log ${relativeTo(top, log)})`);
+    }
+    if (notRun) { codes.push(RECORD_INCOMPLETE_EXIT); continue; }
+    const summary = noReport ? { ...summaryFromReport(failureFiles, worstExit), found: false } : summaryFromReport(failureFiles, worstExit);
+    const missing = explicit.filter((f) => !ranFiles.has(f));
+    const j = judgeSuiteRun({ exit: worstExit, exitNotOwned: null, summary, missing, dist: proof ? distProofHeld(top, proof) : null });
+    const at = new Date().toISOString();
+    if (j.state === 'green' && now && pinTree(top, r.id, 'green', now)) {
+      writeSuiteRecord({ ...r, state: 'green', files: [], greenTree: now, greenLog: explicitLog ?? r.greenLog, reason: `closed by builder test --failed (was ${r.state}${r.files.length ? `: ${r.files.join(', ')}` : ''})`, at, because: undefined, ceilingStreak: undefined });
+      deps.print(`${name}: GREEN, the record is closed and kept (green tree ${now.slice(0, 12)}); a second --failed says "nothing open"`);
+      codes.push(RECORD_GREEN_EXIT);
+    } else if (j.state === 'red' && now && pinTree(top, r.id, 'red', now)) {
+      writeSuiteRecord({ ...r, state: 'red', files: j.files, redTree: now, reason: j.reason, at });
+      deps.print(`${name}: still RED, ${j.files.length} file(s): fix them, then the same command again`);
+      for (const f of j.files) deps.print(`  red: ${f}`);
+      codes.push(RECORD_RED_EXIT);
+    } else {
+      deps.print(`${name}: INCOMPLETE, ${j.reason}; the record is left as it was (${r.state})`);
+      codes.push(RECORD_INCOMPLETE_EXIT);
+    }
+  }
+  if (codes.includes(RECORD_BUILD_FIRST_EXIT)) return RECORD_BUILD_FIRST_EXIT;
+  if (codes.includes(RECORD_RED_EXIT)) return RECORD_RED_EXIT;
+  if (codes.includes(RECORD_INCOMPLETE_EXIT)) return RECORD_INCOMPLETE_EXIT;
+  return RECORD_GREEN_EXIT;
+}
+
 // ─── commander wiring ────────────────────────────────────────────────────────
 
 function run(deps: SessionDeps, action: () => Promise<number>): Promise<void> {
@@ -825,14 +964,14 @@ export function registerBuilderSessionCommands(cmd: Command, deps: SessionDeps =
 
   cmd
     .command('test')
-    .argument('<slug>', 'The task slug')
-    .requiredOption('--wave <n|final>', 'The wave being checked, or final for the run-end check (failures are tracked per wave)')
+    .argument('[slug]', 'The task slug (none with --failed: rerun the red files a full suite left on this worktree)')
+    .option('--wave <n|final>', 'With a task: the wave being checked, or final for the run-end check (failures are tracked per wave)')
     .option('--related <files...>', 'Changed files: type-check their packages and run the tests that import them')
-    .option('--failed', 'Re-run only what failed last time (plus --related when given)')
+    .option('--failed', 'Re-run only what failed last time (plus --related when given); with no task, the red files of this worktree\'s full-suite record plus the tests related to what changed since')
     .option('--also <tests...>', 'Test files related cannot see (they read files by path)')
     .option('--fresh', 'Run every check even when a green receipt for the same code exists (the run is recorded)')
-    .description(`Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), ${HEAVY_LOCK_BUSY_EXIT} a check did not run`)
-    .action((slug: string, opts: TestOptions) => run(deps, () => builderTest(deps, slug, opts)));
+    .description(`Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), ${HEAVY_LOCK_BUSY_EXIT} a check did not run. With --failed and no task: 0 green (the record closes, kept), 1 still red, ${RECORD_INCOMPLETE_EXIT} incomplete or no record, ${RECORD_BUILD_FIRST_EXIT} build first`)
+    .action((slug: string | undefined, opts: TestOptions) => run(deps, () => builderTest(deps, slug, opts)));
 
   cmd
     .command('status')

@@ -93,7 +93,7 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(end).not.toMatch(/SAME finding twice/);
     expect(end).toMatch(/A class in its 3rd counted round = STOP: the loop prints the owner's card/);
     expect(end).toMatch(/You never sign off on your own work/);
-    expect(end).toMatch(/The\s+full suite runs only when the Validation method names it/);
+    expect(end).toMatch(/A run's own\s+proof is the tests of its whole diff, the type checks and the build; the full suite is not\s+a run's check\. It runs once per release cut, after its build/);
   });
 
   it('closes by the Validation method; the validator only on the owner\'s request, never after an unreviewed fix', () => {
@@ -366,7 +366,7 @@ describe('closing by the Validation method (owner decisions 8 and 13)', () => {
   });
 
   it('the full suite is not in the loop: only when the Validation method names it', () => {
-    expect(end).toMatch(/The\s+full suite runs only when the Validation method names it/);
+    expect(end).toMatch(/A run's own\s+proof is the tests of its whole diff, the type checks and the build; the full suite is not\s+a run's check\. It runs once per release cut, after its build/);
   });
 });
 

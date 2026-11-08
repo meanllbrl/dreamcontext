@@ -16,8 +16,8 @@ import { appOutDir, pruneAppOut, writeAppOut } from '../../src/lib/apps/out-file
  */
 
 const execFileAsync = promisify(execFile);
-const VITE_NODE = resolve('node_modules/vite-node/dist/cli.mjs');
-const CLI = resolve('src/cli/index.ts');
+/** The BUILT CLI (`npm run build:cli`): vite-node transpiled src/ on every one of ~20 spawns (~8 s CPU each). */
+const CLI = resolve('dist/index.js');
 const FIXTURE = join(__dirname, '..', 'fixtures', 'apps', 'echo-backend');
 const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
 
@@ -60,7 +60,7 @@ async function cli(args: string[], extraEnv: Record<string, string> = {}): Promi
     if (!(k in extraEnv)) delete env[k];
   }
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [VITE_NODE, '--root', resolve('.'), CLI, ...args], { cwd: project, env, timeout: 90_000 });
+    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, ...args], { cwd: project, env, timeout: 90_000 });
     return { code: 0, out: stdout + stderr };
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string };
@@ -74,6 +74,7 @@ async function hits(): Promise<number> {
 }
 
 beforeAll(async () => {
+  if (!existsSync(CLI)) throw new Error('dist/index.js is missing: run npm run build:cli first');
   home = realpathSync(mkdtempSync(join(tmpdir(), 'dc-apps-do-home-')));
   cleanup.push(home);
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'dc-apps-do-proj-')));

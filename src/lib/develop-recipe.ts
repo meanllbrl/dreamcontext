@@ -31,7 +31,8 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
  * prose and did not hold is now the command's. The numbers live there, never here.
  */
 const REPEAT_LIMIT = `\`builder heavy\` counts browser runs, builds and full test suites per branch, phase and command,
-and a red earns one more. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
+and a red browser run or build earns one more. A red full suite earns none: while its record is red, a second full
+run exits 77 and prints \`dreamcontext builder test --failed\`, which reruns only its files. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
 the proof you have, or, when the run is truly needed, \`builder heavy --because "<why>" -- <cmd>\`,
 recorded in \`builder budget\`. That works once per run and command; past it you stop and ask the owner.
 A check that already passed on the same code does not run again: \`builder heavy\` and \`builder test\`
@@ -57,8 +58,12 @@ const END_FINAL_CHECK = `- The final check, ONCE, after the last PASS: \`dreamco
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
   method when it is a command, the builds and generator scripts the change needs, and, when a
-  fix changed something visible after the observed check, that check again. The
-  full suite runs only when the Validation method names it.`;
+  fix changed something visible after the observed check, that check again. A run's own
+  proof is the tests of its whole diff, the type checks and the build; the full suite is not
+  a run's check. It runs once per release cut, after its build, started with
+  \`builder heavy --detach\` and followed with \`--wait <id>\`; a red full run is never run
+  again: its red files are kept, and \`dreamcontext builder test --failed\` (no task needed)
+  reruns only them plus the tests related to what changed since.`;
 
 /**
  * The end review is picked by the diff, not by the lead (owner, 2026-10-14). One generalist

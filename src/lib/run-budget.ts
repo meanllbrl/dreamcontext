@@ -11,7 +11,9 @@ import type { LanePick } from './run-lane.js';
  * 13 minutes an hour re-running checks after the reviewer, and the proof share of a session up
  * from 40% to 53% after "tests and builds run once" was written down as prose. So the command
  * counts now: per branch, phase and command, a browser run, a full build or a full test suite
- * past its limit is REFUSED before anything starts. A red run earns one more, to see the fix go green.
+ * past its limit is REFUSED before anything starts. A red browser run or build earns one more, to
+ * see the fix go green. A red full suite earns none: its red files are kept in its suite record
+ * (lib/suite-record.ts) and rerun alone by `builder test --failed` (owner, 2026-11-08).
  *
  * A valid check must not trap an agent: `--because "<reason>"` runs it anyway, ONCE per run and
  * command, and leaves a record in the budget file, shown by `dreamcontext builder budget`. A
@@ -38,7 +40,16 @@ export type HeavyKind = BudgetKind | 'check';
  * files decide, heavy-queue.ts counts the tests that reach them),
  * 1 for a `look.mjs` glance. Absent = unknown, and heavy-queue.ts reads unknown as long.
  */
-export interface HeavyStep { kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean }
+export interface HeavyStep {
+  kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean;
+  /**
+   * A suite run whose shape is not provably the whole suite: any argument outside
+   * {@link wholeSuiteArgs}' allow-list (`--shard`, `--dir`, `--root`, `--bail`, …, deny by
+   * default). Heavy like a suite and gated like one, but it never writes or closes a suite
+   * record (lib/suite-record.ts).
+   */
+  partial?: string;
+}
 
 /** `builder heavy`'s exit code for a refusal. Not 75: running it again will not help. */
 export const HEAVY_OVER_BUDGET_EXIT = 77;
@@ -90,6 +101,37 @@ function namedFiles(args: string): { scoped?: number; related?: string[] } {
   return related ? { scoped: 0, related: named } : { scoped: named.length };
 }
 
+/** Flags that change how a whole suite runs, never which files it runs; the value-taking ones. */
+const WHOLE_SUITE_FLAG = /^--(?:reporter|maxWorkers|minWorkers|testTimeout|hookTimeout|teardownTimeout|outputFile|pool|retry|config|silent|passWithNoTests|no-file-parallelism|fileParallelism|color|no-color|logHeapUsage|clearScreen|no-watch|isolate|no-isolate|run)(?:=\S*)?$/;
+const WHOLE_SUITE_VALUE = /^(?:-c|--(?:reporter|maxWorkers|minWorkers|testTimeout|hookTimeout|teardownTimeout|outputFile|pool|retry|config))$/;
+
+/**
+ * Why a suite's arguments may not be the whole suite (the first one outside the allow-list), or
+ * null when every argument provably keeps it whole. Deny by default: a narrowing flag nobody
+ * listed (`--dir`, `--root`, `--shard`, `--project`, `--bail`) must never close a record green.
+ * A config outside the repo is not this repo's suite either.
+ */
+export function wholeSuiteArgs(args: string): string | null {
+  const words = args.trim().split(/\s+/).filter((w) => w && w !== '&' && w !== '--');
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w === 'run') continue;
+    if (WHOLE_SUITE_VALUE.test(w) && !w.includes('=')) {
+      const v = words[i + 1];
+      if (v === undefined || v.startsWith('-')) return w;
+      if (/^(?:-c|--config)$/.test(w) && (v.startsWith('/') || /(?:^|\/)\.\.(?:\/|$)/.test(v))) return `${w} ${v}`;
+      i += 1;
+      continue;
+    }
+    if (WHOLE_SUITE_FLAG.test(w)) {
+      if (/^--config=/.test(w) && /=(?:\/|.*(?:^|\/)\.\.(?:\/|$))/.test(w)) return w;
+      continue;
+    }
+    return w;
+  }
+  return null;
+}
+
 /** One shell command's kind and identity, or null when it is not a heavy step at all. */
 function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep | null {
   const s = raw.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
@@ -120,7 +162,12 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
   if (testScript || runner) {
     const config = /(?:--config|\s-c)[ =](\S+)/.exec(s)?.[1];
     const args = (testScript ?? runner)![1] ?? '';
-    return namesTests(args) ? { kind: 'check', target: 'tests', ...namedFiles(args) } : { kind: 'suite', target: config ? `suite ${config}` : 'suite' };
+    if (namesTests(args)) return { kind: 'check', target: 'tests', ...namedFiles(args) };
+    // `npm test` whose script chains (`npm run test:unit`, `tsc && vitest --dir x`) was not read
+    // through above: what it runs cannot be told, so it is no provable whole suite.
+    const chainedScript = testScript && npm && scripts[npm[1]] && /\bnpm\b|&&/.test(scripts[npm[1]]) ? `a test script that chains (${scripts[npm[1]].slice(0, 60)})` : null;
+    const partial = chainedScript ?? wholeSuiteArgs(args);
+    return { kind: 'suite', target: config ? `suite ${config}` : 'suite', ...(partial ? { partial } : {}) };
   }
   if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc', ...(/\s--noEmit\b/.test(s) ? {} : { emits: true }) };
   return null;
@@ -189,6 +236,41 @@ function heaviest(segments: string[], scripts: Record<string, string>): HeavySte
 
 export const classifyHeavy = (command: string): HeavyKind | null => heavyStep(command)?.kind ?? null;
 
+/**
+ * The npm script a command's suite runs (`npm test`, `pnpm run test:unit`) when that script is
+ * not in `scripts`: what it runs cannot be read, so it is no provable whole suite. null when the
+ * suite is not an npm script, or its script is there.
+ */
+export function suiteScriptUnread(command: string, scripts: Record<string, string>): string | null {
+  for (const seg of shellSegments(command)) {
+    if (stepOfSegment(seg, scripts)?.kind !== 'suite') continue;
+    const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)/.exec(seg.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, ''));
+    const name = npm?.[1] === 't' ? 'test' : npm?.[1];
+    if (name && scripts[name] === undefined) return name;
+  }
+  return null;
+}
+
+/**
+ * The whole-suite step anywhere in a command line, also inside an npm script that chains it
+ * (`"test:all": "npm run build && vitest"`), whatever the line's heaviest step is. A suite in a
+ * chain must not slip past its record because a build ranks heavier.
+ */
+export function suiteInCommand(command: string, scripts: Record<string, string> = {}, depth = 0): HeavyStep | null {
+  for (const seg of shellSegments(command)) {
+    const step = stepOfSegment(seg, scripts);
+    if (step?.kind === 'suite') return step;
+    // Into every script a segment names (`npm run test:unit` inside "ci"), a few levels deep.
+    const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)/.exec(seg.trim());
+    const script = npm && depth < 4 ? scripts[npm[1]] : undefined;
+    if (script) {
+      const inner = suiteInCommand(script, scripts, depth + 1);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
 /** A command the agent ran straight past the lock: a heavy step outside `builder heavy`. */
 export function directHeavy(command: string): HeavyKind | null {
   const direct = shellSegments(command).filter((s) => !/^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+builder\s/.test(s));
@@ -201,9 +283,22 @@ export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
  * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
- * it becomes `--tail N` on the check alone.
+ * it becomes `--tail N` on the check alone. A full suite starts detached, the suite command
+ * alone (so its exit is its own and its record can be red), and is followed with `--wait`;
+ * while a red suite record is open, the suggestion is to rerun only its files.
  */
-export function heavySuggestion(command: string): string {
+export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}): string {
+  const segments = shellSegments(command);
+  const suite = segments.find((seg) => stepOfSegment(seg, {})?.kind === 'suite' && !stepOfSegment(seg, {})?.partial);
+  if (suite) {
+    if (ctx.redOpen) return 'dreamcontext builder test --failed';
+    // A leading `cd <dir> &&` is where the suite runs: kept. A build in the chain runs first, alone.
+    const cd = /^\s*(cd\s+\S+)\s*&&/.exec(command)?.[1];
+    const alone = `${cd ? `${cd} && ` : ''}${suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim()}`;
+    const build = segments.map((seg) => seg.trim()).find((seg) => stepOfSegment(seg, {})?.kind === 'build');
+    const first = build ? `dreamcontext builder heavy -- ${shellQuote(`${cd ? `${cd} && ` : ''}${build}`)}, then ` : '';
+    return `${first}dreamcontext builder heavy --detach -- ${shellQuote(alone)}, then dreamcontext builder heavy --wait <id> (it prints the id)`;
+  }
   const tailed = /^([\s\S]*?)\s*\|\s*tail\s+(?:-n\s*)?-?(\d+)\s*$/.exec(command.trim());
   if (tailed && !/[|;\n]|&&|\|\|/.test(tailed[1].replace(/\s+2>&1$/, '').replace(/^cd\s+\S+\s+&&\s+/, ''))) {
     return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
@@ -263,9 +358,12 @@ function writeBudget(path: string, file: BudgetFile, nowMs: number): void {
   renameSync(tmp, path);
 }
 
-/** Runs this bucket may still start: the limit, plus one once a run came back red. */
+/**
+ * Runs this bucket may still start: the limit, plus one once a browser run or build came back
+ * red. A suite gets no extra run: its reds are rerun by `builder test --failed`.
+ */
 export function allowedRuns(kind: BudgetKind, bucket: BudgetBucket | undefined): number {
-  return BUDGET_LIMITS[kind] + ((bucket?.reds ?? 0) > 0 ? 1 : 0);
+  return BUDGET_LIMITS[kind] + (kind !== 'suite' && (bucket?.reds ?? 0) > 0 ? 1 : 0);
 }
 
 function fresh(bucket: BudgetBucket | undefined, nowMs: number): BudgetBucket | undefined {

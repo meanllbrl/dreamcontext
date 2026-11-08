@@ -1,4 +1,5 @@
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { heavyRepoDir } from './builder-tools.js';
 import { currentScope } from './run-budget.js';
@@ -27,8 +28,21 @@ export type LedgerMark = 'open' | 'review-start' | 'review-end' | 'close';
 
 export type LedgerRow =
   | { type: 'mark'; run: string; what: LedgerMark; at: number }
-  | ({ type: 'start'; run: string; label: string; line: string; asked: number; ran: number; pid: number } & Partial<WaitParts>)
-  | ({ type: 'check'; run: string; label: string; line: string; asked: number; ran: number; ended: number; exit: number | null } & Partial<WaitParts>);
+  | ({ type: 'start'; run: string; label: string; line: string; asked: number; ran: number; pid: number } & Partial<WaitParts> & Where & { because?: string })
+  | ({ type: 'check'; run: string; label: string; line: string; asked: number; ran: number; ended: number; exit: number | null } & Partial<WaitParts> & Where & { reason?: 'ceiling' });
+
+/**
+ * The worktree and branch a check ran in (rows since 0.41.7): one ledger is shared by every
+ * worktree of a repo, so the Super splits it per child by these. Older rows have neither.
+ */
+export interface Where { branch?: string; toplevel?: string }
+
+const whereOf = (cwd: string): Where => {
+  const out: Where = {};
+  try { out.toplevel = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { /* not a repo */ }
+  try { const b = execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (b) out.branch = b; } catch { /* detached */ }
+  return out;
+};
 
 export const ledgerPath = (cwd: string): string => join(heavyRepoDir(cwd), 'dc-run-ledger.jsonl');
 
@@ -44,18 +58,18 @@ const runOf = (cwd: string, at: number): string => {
 };
 
 /** A check got its slot. It stays in the record if it is killed before it ends. */
-export function recordStart(cwd: string, c: { label: string; line: string; asked: number; ran: number; waits?: WaitParts }): void {
+export function recordStart(cwd: string, c: { label: string; line: string; asked: number; ran: number; waits?: WaitParts; because?: string }): void {
   try {
     const { waits, ...row } = c;
-    appendLedger(ledgerPath(cwd), { type: 'start', run: runOf(cwd, c.ran), ...row, ...waits, label: c.label.slice(0, 120), pid: process.pid });
+    appendLedger(ledgerPath(cwd), { type: 'start', run: runOf(cwd, c.ran), ...row, ...waits, ...whereOf(cwd), label: c.label.slice(0, 120), pid: process.pid, ...(c.because ? { because: c.because.slice(0, 300) } : {}) });
   } catch { /* the ledger never fails a check */ }
 }
 
 /** Write one check, against the run open on this branch or {@link NO_RUN}. */
-export function recordCheck(cwd: string, c: { label: string; line: string; asked: number; ran: number; ended: number; exit: number | null; waits?: WaitParts }): void {
+export function recordCheck(cwd: string, c: { label: string; line: string; asked: number; ran: number; ended: number; exit: number | null; waits?: WaitParts; reason?: 'ceiling' }): void {
   try {
     const { waits, ...row } = c;
-    appendLedger(ledgerPath(cwd), { type: 'check', run: runOf(cwd, c.ended), ...row, ...waits, label: c.label.slice(0, 120) });
+    appendLedger(ledgerPath(cwd), { type: 'check', run: runOf(cwd, c.ended), ...row, ...waits, ...whereOf(cwd), label: c.label.slice(0, 120) });
   } catch { /* the ledger never fails a check */ }
 }
 
@@ -171,4 +185,46 @@ export function waitWhy(r: WaitRow, alive: (pid: number) => boolean = pidAlive):
     (r.slotLineMs ?? 0) >= 1000 ? `${span(r.slotLineMs!)} behind others in the slot line` : '',
   ].filter(Boolean);
   return `${head}${parts.length ? `: ${parts.join(', ')}` : ''}${tail}`;
+}
+
+/** One child's test time today, from the shared ledger, split by the worktree it ran in. */
+export interface TestMinutes { queuedMin: number; runningMin: number; checks: number; because: number }
+
+const mins = (ms: number): number => Math.round((ms / 60_000) * 10) / 10;
+
+/**
+ * Today's minutes a worktree (and branch, when given) spent waiting for and running checks
+ * (plan C6). Every worktree of a repo writes one ledger; rows carry `toplevel` and `branch`
+ * since 0.41.7. A check still running counts up to now; a start whose runner died counts to
+ * its last known moment, its start. Rows without `toplevel` are {@link unattributedMinutes}.
+ */
+export function testMinutesToday(rows: readonly LedgerRow[], where: Where, dayStartMs: number, nowMs: number, isAlive: (pid: number) => boolean = pidAlive): TestMinutes {
+  const mine = (r: Extract<LedgerRow, { type: 'check' | 'start' }>) => r.toplevel !== undefined && r.toplevel === where.toplevel && (where.branch === undefined || r.branch === where.branch);
+  const key = (r: { label: string; asked: number; ran: number }) => `${r.label}\0${r.asked}\0${r.ran}`;
+  const clip = (a: number, b: number) => Math.max(0, Math.min(b, nowMs) - Math.max(a, dayStartMs));
+  let queued = 0; let running = 0; let checks = 0; let because = 0;
+  const ended = new Set<string>();
+  for (const r of rows) {
+    if (r.type !== 'check' || !mine(r)) continue;
+    ended.add(key(r));
+    if (r.ended < dayStartMs) continue;
+    checks += 1;
+    queued += clip(r.asked, r.ran);
+    running += clip(r.ran, r.ended);
+  }
+  for (const r of rows) {
+    if (r.type !== 'start' || !mine(r)) continue;
+    if (r.because && r.ran >= dayStartMs) because += 1;
+    if (ended.has(key(r)) || !isAlive(r.pid)) continue;
+    queued += clip(r.asked, r.ran);
+    running += clip(r.ran, nowMs);
+  }
+  return { queuedMin: mins(queued), runningMin: mins(running), checks, because };
+}
+
+/** Today's check minutes on rows written before rows named their worktree. */
+export function unattributedMinutes(rows: readonly LedgerRow[], dayStartMs: number, nowMs: number): number {
+  let ms = 0;
+  for (const r of rows) if (r.type === 'check' && r.toplevel === undefined && r.ended >= dayStartMs) ms += Math.max(0, Math.min(r.ended, nowMs) - Math.max(r.asked, dayStartMs));
+  return mins(ms);
 }

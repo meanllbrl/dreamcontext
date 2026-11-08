@@ -40,7 +40,7 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
    A Plan unit's prompt carries the premise question's answer, the Environment (repo, base branch
    + SHA, sync mode, tools), what is out of scope, the owner's decisions and the validation method
-   (his, else "unit tests + tsc"), so its "ask first" has little left to ask. Answer every child question
+   (his, else "related tests + tsc": the full suite runs once per release cut, detached), so its "ask first" has little left to ask. Answer every child question
    the brief or the brain settles (`super answer`), else leave a `shown=owner` one;
    escalate only per §2.
 9. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.

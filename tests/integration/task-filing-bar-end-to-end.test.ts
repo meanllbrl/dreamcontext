@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isEmbedModelDownloaded } from '../../src/lib/embeddings/embedder.js';
+import { buildInitTemplate, copyInitTemplate } from '../helpers/init-template.js';
 
 /**
  * B, end to end through the REAL binary: the bar, the cap, the tombstone and
@@ -95,9 +96,16 @@ const THIN_WHY = 'tidy this up';
  *  what makes a model-gated assertion evidence rather than a coincidence. */
 const SKIP_NOTICE = 'neighbor check skipped';
 
+/** One real `init` per file (same arguments, same env); each test gets its own copy of it. */
+let initTemplate = '';
+beforeAll(() => {
+  initTemplate = buildInitTemplate(mkdtempSync(join(tmpdir(), 'dc-bar-e2e-')), (dir) => { cli(INIT, { cwd: dir }); });
+});
+afterAll(() => rmSync(initTemplate, { recursive: true, force: true }));
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dc-bar-e2e-'));
-  cli(INIT);
+  copyInitTemplate(initTemplate, root);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 

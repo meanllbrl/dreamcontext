@@ -14,8 +14,18 @@ describe('the heavy-step gate', () => {
   it('offers --tail N instead of a pipe to tail, and leaves anything else as it was', () => {
     expect(heavySuggestion('npx vitest run tests/a.test.ts 2>&1 | tail -40')).toBe("dreamcontext builder heavy --tail 40 -- 'npx vitest run tests/a.test.ts'");
     expect(heavySuggestion('cd app && npx tsc --noEmit | tail -n 5')).toBe("dreamcontext builder heavy --tail 5 -- 'cd app && npx tsc --noEmit'");
-    expect(heavySuggestion('npx vitest run | grep FAIL | tail -5')).toBe(`dreamcontext builder heavy -- 'npx vitest run | grep FAIL | tail -5'`);
-    expect(heavySuggestion('npx tsc --noEmit; npx vitest run | tail -5')).toBe(`dreamcontext builder heavy -- 'npx tsc --noEmit; npx vitest run | tail -5'`);
+    expect(heavySuggestion('npx vitest run tests/a.test.ts | grep FAIL | tail -5')).toBe(`dreamcontext builder heavy -- 'npx vitest run tests/a.test.ts | grep FAIL | tail -5'`);
     expect(heavySuggestion('npm run build')).toBe("dreamcontext builder heavy -- 'npm run build'");
+  });
+  // A full suite starts detached, its command alone (so its exit is its own and its record can
+  // be red); while a red record is open, only its files rerun (plan C2, 2026-11-08).
+  it('starts a full suite detached, alone, and offers --failed while a red is open', () => {
+    expect(heavySuggestion('npx vitest run | grep FAIL | tail -5')).toBe("dreamcontext builder heavy --detach -- 'npx vitest run', then dreamcontext builder heavy --wait <id> (it prints the id)");
+    expect(heavySuggestion('npx tsc --noEmit; npm test 2>&1 | tail -5')).toBe("dreamcontext builder heavy --detach -- 'npm test', then dreamcontext builder heavy --wait <id> (it prints the id)");
+    expect(heavySuggestion('npm test', { redOpen: true })).toBe('dreamcontext builder test --failed');
+    // A build in the chain runs first, on its own line; a leading cd is where the suite runs.
+    expect(heavySuggestion('npm run build && npm test')).toBe("dreamcontext builder heavy -- 'npm run build', then dreamcontext builder heavy --detach -- 'npm test', then dreamcontext builder heavy --wait <id> (it prints the id)");
+    expect(heavySuggestion('cd packages/api && npx vitest run')).toBe("dreamcontext builder heavy --detach -- 'cd packages/api && npx vitest run', then dreamcontext builder heavy --wait <id> (it prints the id)");
+    expect(heavySuggestion('npx tsc --noEmit', { redOpen: true })).toBe("dreamcontext builder heavy -- 'npx tsc --noEmit'");
   });
 });

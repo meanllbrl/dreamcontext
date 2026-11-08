@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
@@ -248,26 +248,61 @@ describe.skipIf(process.platform === 'win32')('the file gate, every tool x every
 
 const cli = resolve('dist/index.js');
 
-function runHook(stdin: unknown): { status: number | null; out: string } {
+function runHook(stdin: unknown): Promise<{ status: number | null; out: string }> {
   const entry = appFileGateHook([process.execPath, cli], gateFile).PreToolUse[0] as { hooks: Array<{ command: string }> };
-  const r = spawnSync('bash', ['-c', entry.hooks[0].command], { input: JSON.stringify(stdin), encoding: 'utf-8' });
-  return { status: r.status, out: r.stdout };
+  return new Promise((res, rej) => {
+    const p = spawn('bash', ['-c', entry.hooks[0].command], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.setEncoding('utf-8');
+    p.stdout.on('data', (c: string) => { out += c; });
+    p.on('error', rej);
+    p.on('close', (status) => res({ status, out }));
+    p.stdin.end(JSON.stringify(stdin));
+  });
+}
+
+/**
+ * Every call is its own `bash -c '<node> <cli> hook app-write-gate …'` and decides alone (the gate
+ * only reads), so the ~180 of them run a few at a time; they ran one after another before and the
+ * test outgrew its timeout on a loaded box. Results come back in call order and are asserted in
+ * that order, exactly as before.
+ */
+async function runHooks(stdins: unknown[], parallel = 8): Promise<Array<{ status: number | null; out: string }>> {
+  const results: Array<{ status: number | null; out: string }> = new Array(stdins.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < stdins.length) {
+      const i = next++;
+      results[i] = await runHook(stdins[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(parallel, stdins.length) }, worker));
+  return results;
 }
 
 describe.skipIf(process.platform === 'win32' || !existsSync(cli))('the same matrix through the real `hook app-write-gate` command', () => {
-  it('another app\'s data is refused for every tool and shape; its own canonical folder passes', { timeout: 120_000 }, () => {
+  it('another app\'s data is refused for every tool and shape; its own canonical folder passes', { timeout: 120_000 }, async () => {
+    const otherCalls: Array<{ name: string; tool: string; input: Record<string, unknown> }> = [];
     for (const [name, shape] of Object.entries(SHAPES)) {
       for (const [tool, input] of calls('other', shape)) {
         if (name === 'relative' && tool === 'Glob' && input.path === neutral) continue; // walks only neutral
-        const r = runHook({ tool_name: tool, tool_input: input, cwd: project });
-        expect(r.status, `${name} ${tool}`).toBe(0);
-        expect(JSON.parse(r.out).hookSpecificOutput?.permissionDecision, `${name} ${tool} ${JSON.stringify(input)}`).toBe('deny');
+        otherCalls.push({ name, tool, input });
       }
     }
-    for (const [tool, input] of calls('own', SHAPES.absolute)) {
-      const r = runHook({ tool_name: tool, tool_input: input, cwd: project });
+    const ownCalls = calls('own', SHAPES.absolute);
+    const results = await runHooks([
+      ...otherCalls.map(({ tool, input }) => ({ tool_name: tool, tool_input: input, cwd: project })),
+      ...ownCalls.map(([tool, input]) => ({ tool_name: tool, tool_input: input, cwd: project })),
+    ]);
+    otherCalls.forEach(({ name, tool, input }, i) => {
+      const r = results[i];
+      expect(r.status, `${name} ${tool}`).toBe(0);
+      expect(JSON.parse(r.out).hookSpecificOutput?.permissionDecision, `${name} ${tool} ${JSON.stringify(input)}`).toBe('deny');
+    });
+    ownCalls.forEach(([tool, input], j) => {
+      const r = results[otherCalls.length + j];
       expect(r.status, tool).toBe(0);
       expect(r.out, `${tool} ${JSON.stringify(input)}`).toBe('{}');
-    }
+    });
   });
 });

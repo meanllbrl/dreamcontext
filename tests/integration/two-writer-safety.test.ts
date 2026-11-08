@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainGitignore, FULL_REPO_LOCAL_GITIGNORE_ENTRIES } from '../../src/lib/git-sync/brain-repo.js';
 import { activeTaskSet, HANDS_OFF_WINDOW_MS } from '../../src/lib/auto-sleep.js';
+import { buildInitTemplate, copyInitTemplate } from '../helpers/init-template.js';
 
 /**
  * Workstream D, proved with REAL concurrent processes rather than by reasoning
@@ -27,9 +28,19 @@ function cli(args: string): string {
 
 const WHY = 'Two processes write this task at once and one of the writes used to vanish.';
 
+/** One real `init` per file (same arguments, same env); each test gets its own copy of it. */
+let initTemplate = '';
+beforeAll(() => {
+  initTemplate = buildInitTemplate(mkdtempSync(join(tmpdir(), 'dc-2w-')), (dir) => {
+    root = dir;
+    cli('init --yes --name "T" --description "d" --stack "Node" --priority "p"');
+  });
+});
+afterAll(() => rmSync(initTemplate, { recursive: true, force: true }));
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dc-2w-'));
-  cli('init --yes --name "T" --description "d" --stack "Node" --priority "p"');
+  copyInitTemplate(initTemplate, root);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
