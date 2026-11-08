@@ -108,8 +108,8 @@ describe('the quiet steps line', () => {
 
   it('draws no Working pill in the Super view: the live line carries the clock instead', () => {
     const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
-    // The plain Chat keeps its pill; the Super view never draws it.
-    expect(pane).toMatch(/\{working && !superView && \(\s*<WorkingIndicator/);
+    // The plain Chat keeps its pill (for the whole turn, workingPillShown); the Super view never draws it.
+    expect(pane).toMatch(/\{!superView && workingPillShown\(!ended && session\.busy, conv\.pending\.length, askRouting != null\) && \(\s*<WorkingIndicator/);
     expect(pane).not.toMatch(/\{working && \(\s*<WorkingIndicator/);
     // With a live steps line as the tail, nothing extra; without one, the same quiet line stands in.
     expect(pane).toContain("const superLineLive = superView && liveTail >= 0 && liveSegments[liveTail].kind === 'run' && accruingAt(liveTail);");
