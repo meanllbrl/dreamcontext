@@ -117,11 +117,13 @@ export function TelegramSettings() {
     const bots = status.data?.bots ?? [];
     body = (
       <>
-        <div className="tg-row-between"><span /><span className="tg-chip tg-chip--good">{t('telegram.manager.ready')}</span></div>
-        <p className="tg-member-who">
-          {t('telegram.manager.who').replace('{bot}', atName(manager.botUsername))}
-          {manager.userLabel && <span>{' · '}{atName(manager.userLabel)}</span>}
-        </p>
+        <div className="tg-row-between">
+          <p className="tg-member-who">
+            {t('telegram.manager.who').replace('{bot}', atName(manager.botUsername))}
+            {manager.userLabel && <span>{' · '}{atName(manager.userLabel)}</span>}
+          </p>
+          <span className="tg-chip tg-chip--good">{t('telegram.manager.ready')}</span>
+        </div>
         <p className="tg-forward-title">{t('telegram.manager.bots')}</p>
         {bots.length === 0 ? (
           <p className="tg-hint">{t('telegram.manager.noBots')}</p>

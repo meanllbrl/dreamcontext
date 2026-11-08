@@ -92,7 +92,7 @@
   line-height: 1.5;
 }
 
-.tg-steps { margin: 0; padding-left: var(--space-5); font-size: var(--font-size-sm); line-height: 1.5; }
+.tg-steps { margin: 0; padding-left: var(--space-5); list-style: decimal; font-size: var(--font-size-sm); line-height: 1.5; }
 .tg-steps li + li { margin-top: var(--space-1); }
 
 .tg-field { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -191,10 +191,11 @@
   line-height: 1.5;
 }
 .tg-sees summary { cursor: pointer; font-weight: var(--font-weight-semibold); }
-.tg-sees ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); color: var(--color-text-tertiary); }
+.tg-sees ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); list-style: disc; color: var(--color-text-tertiary); }
+.tg-sees li + li { margin-top: var(--space-1); }
 
 /* ─── The member's Telegram section (AgentProfilePanel) ───────────────────── */
-.tg-member { display: flex; flex-direction: column; gap: var(--space-2); }
+.tg-member { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; align-self: stretch; }
 .tg-member-who { margin: 0; font-size: var(--font-size-sm); }
 .tg-member-who span { color: var(--color-text-secondary); }
 .tg-forward-title { margin: var(--space-1) 0 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
@@ -206,6 +207,7 @@
 
 /* ─── Settings → Telegram ─────────────────────────────────────────────────── */
 .tg-settings { display: flex; flex-direction: column; gap: var(--space-3); max-width: 440px; }
+.tg-title-row { display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; }
 .tg-bots { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--font-size-sm); }
 .tg-bots dt { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .tg-bots dd { margin: 0; color: var(--color-text-secondary); }

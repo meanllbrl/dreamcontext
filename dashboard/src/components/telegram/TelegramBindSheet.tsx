@@ -240,7 +240,10 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
     <div className="tg-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={dialogRef} className="tg-sheet" role="dialog" aria-modal="true" aria-labelledby="tg-sheet-title" tabIndex={-1} data-testid="tg-sheet" data-target={target}>
         <header className="tg-sheet-head">
-          <h2 id="tg-sheet-title" className="tg-title">{row?.state === 'active' ? t('telegram.connected.title') : title}</h2>
+          <div className="tg-title-row">
+            <h2 id="tg-sheet-title" className="tg-title">{row?.state === 'active' ? t('telegram.connected.title') : title}</h2>
+            {row?.state === 'active' && <span className="tg-chip tg-chip--good">{t('telegram.bound')}</span>}
+          </div>
           <button type="button" className="tg-icon-btn" onClick={onClose} aria-label={t('telegram.close')}>✕</button>
         </header>
         <div className="tg-sheet-body">
@@ -321,9 +324,6 @@ export function TelegramConnected({ row, fresh, target, onRemoved }: {
 
   return (
     <div className="tg-connected" data-testid="tg-connected">
-      <div className="tg-row-between">
-        <span className="tg-chip tg-chip--good">{t('telegram.bound')}</span>
-      </div>
       {fresh && <p className="tg-hint" role="status">{t('telegram.connected.fresh')}</p>}
       <dl className="tg-facts">
         <dt>{t('telegram.connected.bot')}</dt><dd>{atName(row.botUsername)}</dd>
