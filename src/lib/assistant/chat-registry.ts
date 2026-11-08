@@ -132,6 +132,11 @@ export interface ChatEntry {
    *  background agent), not a server or a watch left running (`persistentBackground`). A job
    *  holds a child's row as working for as long as the CLI says it runs. Absent = 0. */
   backgroundJobs?: number;
+  /** When that roster last SHRANK since the latest turn began: background work ended, and its
+   *  CLI owes a turn for its notification. That turn is invisible here until its first output:
+   *  the CLI runs the prompt hooks and waits for the first token first (field 2026-11-08: 14-21 s
+   *  on a cold cache), so the child reads idle with an empty roster. Cleared when a turn starts. */
+  wakeOwedAt?: string;
   /** What the child left for the OWNER to do and he has not done yet: an unrun `run` card, an
    *  unsubmitted `secret` or `checklist` (super/owner-wait.ts).
    *  Read from its own stream as it arrives; cleared by his answer written back into the chat. */
@@ -358,6 +363,9 @@ function setStatus(e: ChatEntry, status: ChatStatus): void {
   e.status = status;
   e.updatedAt = new Date().toISOString();
   if (from === status) return;
+  // A turn began: it is the one any ended background work was owed (a roster that shrinks while
+  // it runs owes again, see `wakeOwedAt`).
+  if (status === 'working' && from !== 'asking') delete e.wakeOwedAt;
   const set = waiters.get(e.sessionId);
   for (const w of set ? [...set] : []) {
     if (status === 'gone') settle(e.sessionId, w, { entry: clone(e), ended: true });
@@ -584,8 +592,10 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         const n = tasks.length;
         const jobs = tasks.filter((t) => !t || typeof t !== 'object' || !persistentBackground(t as Record<string, unknown>)).length;
         if (n !== (e.backgroundTasks ?? 0) || e.backgroundAt === undefined) {
+          const at = new Date().toISOString();
+          if (n < (e.backgroundTasks ?? 0)) e.wakeOwedAt = at;
           e.backgroundTasks = n;
-          e.backgroundAt = new Date().toISOString();
+          e.backgroundAt = at;
         }
         if (jobs > 0) e.backgroundJobs = jobs; else delete e.backgroundJobs;
         return;

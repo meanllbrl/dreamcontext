@@ -2199,6 +2199,11 @@ export const BACKGROUND_QUIET_MS = 10 * 60_000;
 /** The outer bar for a background JOB the roster still lists with no turn and no roster change:
  *  past this it is left running, not awaited (a script that hangs must not hold a row forever). */
 export const BACKGROUND_JOB_MAX_MS = 3 * 60 * 60_000;
+/** How long a child whose background work just ended may stay silent before it reads done: the
+ *  CLI owes a turn for that work's notification, and the turn shows here only at its first
+ *  output, after the prompt hooks and the first token (measured 14-21 s on a cold cache). Past
+ *  this with no turn, it is done. A plain turn end keeps DONE_SETTLE_MS. */
+export const BACKGROUND_WAKE_MS = 60_000;
 
 /** The quiet bar; the verify run shortens it (`DREAMCONTEXT_SUPER_BACKGROUND_QUIET_MS`) to watch
  *  a job outlast it on screen. */
@@ -2300,7 +2305,10 @@ async function settleChild(root: string, sid: string): Promise<void> {
 /** How long a finished turn settles: short, unless the owner stopped it or a limit switch ended
  *  it (review 2026-10-27: a Stop to redirect a child became a false `done` 2 s later). */
 function settleWindow(e: ChatEntry | null): number {
-  return e?.lastTurn?.interrupted || e?.lastTurn?.limited ? STOPPED_SETTLE_MS : DONE_SETTLE_MS;
+  if (e?.lastTurn?.interrupted || e?.lastTurn?.limited) return STOPPED_SETTLE_MS;
+  // Its background work ended and the turn its notification owes has not shown yet: wait for it
+  // (field 2026-11-08: two children read done mid-turn, the Super nudged them for nothing).
+  return e?.wakeOwedAt !== undefined ? BACKGROUND_WAKE_MS : DONE_SETTLE_MS;
 }
 
 function armSettle(root: string, sid: string, ms = settleWindow(getChat(sid))): void {

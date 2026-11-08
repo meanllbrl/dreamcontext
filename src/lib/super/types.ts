@@ -1387,9 +1387,9 @@ export const MAX_MAIN_BATCHES = 100;
 export const MAX_ASK_OPTIONS = 4;
 export const MAX_ASK_OPTION = 24;
 /** A child's turn end is "done" once it has stayed idle this long (plan r4 D5). Short: the
- *  registry flips to idle on the turn's own `result` frame, and a turn that goes on (a queued
- *  message, a background job's notification) starts within it or closes a pending `done` before
- *  it is delivered. Owner 2026-10-27: 30 s made the Super hear every finished job half a minute
+ *  registry flips to idle on the turn's own `result` frame, and a queued message starts within
+ *  it. A background job's notification does NOT (its turn shows only at its first output,
+ *  14-21 s later): that end waits BACKGROUND_WAKE_MS (inbox.ts, `wakeOwedAt`). Owner 2026-10-27: 30 s made the Super hear every finished job half a minute
  *  late (measured: done item 30.5 s after the turn end at the median, 61 s at p90). */
 export const DONE_SETTLE_MS = 2_000;
 /** The window for a turn the OWNER stopped (or a limit switch ended): he is about to write the
