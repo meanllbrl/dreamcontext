@@ -570,7 +570,8 @@ export function CardLights({ close, minimize, zoom, floating }: { close: Light; 
   return (
     <div className={floating ? 'super-card-lights super-card-lights--float' : 'super-card-lights'} role="group" aria-label={t('super.card.controls')} data-testid="super-card-lights">
       {one('close', close)}
-      {one('minimize', minimize)}
+      {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}
+      {minimize.onClick && one('minimize', minimize)}
       {one('zoom', zoom)}
     </div>
   );
