@@ -90,7 +90,8 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
   const running = anyRunning(state);
   useEffect(() => {
     if (!enabled || !state.loaded) return;
-    const timer = setInterval(refresh, running ? RUN_FEED_POLL_RUNNING_MS : RUN_FEED_POLL_MS);
+    const pollMs = running ? RUN_FEED_POLL_RUNNING_MS : RUN_FEED_POLL_MS;
+    const timer = setInterval(refresh, pollMs);
     return () => clearInterval(timer);
   }, [enabled, state.loaded, running, refresh]);
 
@@ -123,7 +124,9 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
   const [dayTick, setDayTick] = useState(() => new Date().toDateString());
   useEffect(() => {
     if (!enabled) return;
-    const timer = setInterval(() => setDayTick(new Date().toDateString()), 60_000);
+    const pollMs = 60_000;
+    const tick = () => setDayTick(new Date().toDateString());
+    const timer = setInterval(tick, pollMs);
     return () => clearInterval(timer);
   }, [enabled]);
   const labels = useMemo<FeedLabels>(() => {
