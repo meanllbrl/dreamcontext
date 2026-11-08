@@ -253,6 +253,79 @@ describe('chat registry — status derived at the agent-chat.ts parse point', ()
   });
 });
 
+// The CLI's own answer to a local slash command, as measured on 2026-11-08 (`/effort medium`).
+const EFFORT_ECHO = 'Set effort level to medium (this session only): Balanced approach with standard implementation and testing';
+const effortEcho = (child: FakeChild) => line(child, {
+  type: 'assistant', parent_tool_use_id: null, local_command_run: { command: 'effort', args: 'medium' },
+  local_command_source: `<local-command-stdout>${EFFORT_ECHO}</local-command-stdout>`,
+  message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: EFFORT_ECHO }] },
+});
+const effortResult = (child: FakeChild) => line(child, { type: 'result', subtype: 'success', num_turns: 0, local_command: 'effort', result: EFFORT_ECHO });
+
+describe('a local slash command is a setting, never the end of a turn (field 2026-11-08)', () => {
+  beforeEach(() => { spawned.length = 0; registry._resetChatRegistry(); });
+
+  it('super update --effort then super send: the effort result does not end the message\'s turn', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'warm up' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    line(child, { type: 'result', subtype: 'success' });
+    expect(registry.getChat(SID)?.status).toBe('idle');
+    const restedAt = registry.getChat(SID)!.lastTurn!.resultSeq;
+
+    // `super update --effort medium`: the bridge writes `/effort medium` as a user frame.
+    ws.emit('message', JSON.stringify({ type: 'setEffort', effort: 'medium' }));
+    // `super send`: the owner message follows at once, before the CLI answered the effort.
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'Remove the Full report link' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    const written = child.stdin.write.mock.calls.map((c) => String(c[0]));
+    expect(written.some((w) => w.includes('/effort medium'))).toBe(true);
+    expect(written.some((w) => w.includes('Remove the Full report link'))).toBe(true);
+
+    // The CLI answers the effort first: the message is still owed, so the chat keeps working,
+    // no turn end is stamped and the echo is no reply of the child's.
+    effortEcho(child);
+    effortResult(child);
+    const mid = registry.getChat(SID)!;
+    expect(mid.status).toBe('working');
+    expect(mid.lastTurn?.resultSeq).toBe(restedAt);
+    expect(mid.lastAssistantText).not.toContain(EFFORT_ECHO);
+
+    // The message's own turn: its result is the end.
+    line(child, { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Link removed.' }] } });
+    line(child, { type: 'result', subtype: 'success' });
+    const end = registry.getChat(SID)!;
+    expect(end.status).toBe('idle');
+    expect(end.lastTurn!.resultSeq).toBeGreaterThan(restedAt);
+    expect(end.lastAssistantText.at(-1)).toBe('Link removed.');
+  });
+
+  it('an effort change on a resting chat leaves it resting: no working edge, no new turn end', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'warm up' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    line(child, { type: 'result', subtype: 'success' });
+    const seq = registry.getChat(SID)!.lastTurn!.resultSeq;
+    const moves: string[] = [];
+    const off = registry.onChatChange(({ entry }) => { if (entry.sessionId === SID) moves.push(entry.status); });
+    ws.emit('message', JSON.stringify({ type: 'setEffort', effort: 'medium' }));
+    effortEcho(child);
+    effortResult(child);
+    off();
+    expect(moves).toEqual([]);
+    expect(registry.getChat(SID)!.lastTurn!.resultSeq).toBe(seq);
+  });
+
+  it('the owner\'s own typed /effort still ends its turn (never stuck working)', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: '/effort medium' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    effortEcho(child);
+    effortResult(child);
+    expect(registry.getChat(SID)?.status).toBe('idle');
+  });
+});
+
 describe('a seeded chat: what a restored conversation is about, before any frame', () => {
   beforeEach(() => { registry._resetChatRegistry(); });
 

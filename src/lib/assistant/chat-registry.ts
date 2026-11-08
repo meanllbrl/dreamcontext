@@ -384,6 +384,19 @@ export function assistantText(frame: Record<string, unknown>): string {
     .trim();
 }
 
+/**
+ * A frame of a LOCAL slash command (`/effort`, `/model`…): the CLI answers it itself, with a
+ * synthetic `assistant` frame (`local_command_run`) and a `result` (`local_command`), and no
+ * model ran (measured on the CLI, 2026-11-08). It is a setting, never the chat's work: its echo
+ * is no reply and its `result` ends no turn of the owner's. An older CLI without the markers
+ * reads as before.
+ */
+export function isLocalCommandFrame(frame: Record<string, unknown>): boolean {
+  if (frame.type === 'assistant') return (frame.local_command_run != null && typeof frame.local_command_run === 'object') || typeof frame.local_command_source === 'string';
+  if (frame.type === 'result') return typeof frame.local_command === 'string' && frame.local_command !== '';
+  return false;
+}
+
 /** Ids of the content blocks of one `type` in a frame's message (tool_use ids, or the
  *  tool_use_id a tool_result answers). */
 function blockIds(frame: Record<string, unknown>, type: 'tool_use' | 'tool_result'): string[] {
@@ -520,6 +533,11 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   let dead = false;
   let interruptAsked = false;
   let limitAsked = false;
+  /** Messages (not slash commands) written since the last model `result`. A local command's
+   *  `result` answers only itself: while one of these is still owed, it must not read as the
+   *  turn's end (field 2026-11-08: `super update --effort` then `super send` gave a false `done`
+   *  whose last reply was the effort echo, while the child had just started on the message). */
+  let messagesOwed = 0;
   const openTools = new Set<string>();
   const outwardOpen = new Map<string, string>();
   const outwardTold = new Set<string>();
@@ -615,6 +633,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // `null` and absent both mean top level: real CLI frames carry `parent_tool_use_id: null`
       // on `assistant` and omit it on `result`.
       const topLevel = frame.parent_tool_use_id == null;
+      // A local slash command's echo and `result` (isLocalCommandFrame): no work started, so its
+      // echo opens no turn and is no reply. Its `result` ends a turn only when it was the owner's
+      // own slash command and no message is still owed; a setting the bridge wrote while the chat
+      // rested (`super update`, a picker) leaves the chat as it was.
+      if (topLevel && isLocalCommandFrame(frame)) {
+        if (frame.type === 'assistant' || messagesOwed > 0 || (e.status !== 'working' && e.status !== 'asking')) return;
+      }
       // A tool_result for a request's tool call (top level or inside a sub-agent): the CLI is done
       // with that call, so it waits on the request no more (a stream that closed under it, say).
       if (frame.type === 'user' && pendingRequestIds(e).length) {
@@ -662,6 +687,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         };
         interruptAsked = false;
         limitAsked = false;
+        // A model's `result` answers every frame written before it (the CLI folds them).
+        if (!isLocalCommandFrame(frame)) messagesOwed = 0;
         setStatus(e, 'idle');
       }
     },
@@ -671,6 +698,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
+      if (text.trim() && !text.trimStart().startsWith('/')) messagesOwed += 1;
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
       // Super Agent steering the child (a send the server noted for it) clears nothing.
       if (!takeSuperSend(e.sessionId, text)) {
@@ -697,6 +725,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     stopSettled() {
       if (dead) return;
       interruptAsked = false;
+      messagesOwed = 0;
       if (e.status !== 'working' && e.status !== 'asking') return;
       e.pendingQuestion = null;
       delete e.earlierPending;
