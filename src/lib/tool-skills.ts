@@ -15,7 +15,7 @@ import { findPackageDir } from './catalog.js';
 import { toolText, type TextTool } from './tool-text.js';
 
 /** What every project gets at install. `skill-agent-core` is for Claude's sub-agents only. */
-export const TOOL_SKILL_SOURCES = ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design'] as const;
+export const TOOL_SKILL_SOURCES = ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design', 'skill-draw'] as const;
 export const SKILLS_MARKER = '.dreamcontext-skills.json';
 export const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** Bump when a {@link toolText} rule changes, so every copy is rewritten. */

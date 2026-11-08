@@ -708,9 +708,9 @@ describe('excalidraw-docs', () => {
     expect(refContent).toContain('Dark siblings');
   });
 
-  it('skill-packs/excalidraw/SKILL.md documents dreamcontext knowledge conventions', () => {
+  it('skill-draw/references/excalidraw.md documents dreamcontext knowledge conventions', () => {
     const packContent = readFileSync(
-      join(__dirname, '..', '..', 'skill-packs', 'excalidraw', 'SKILL.md'),
+      join(__dirname, '..', '..', 'skill-draw', 'references', 'excalidraw.md'),
       'utf-8',
     );
 
@@ -1074,7 +1074,7 @@ describe('knowledge-assets co-located assets/ resolution (Bug B1)', () => {
 describe('build_excalidraw dangling-asset guard (Bug B2)', () => {
   const require = createRequire(import.meta.url);
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { buildExcalidraw } = require('../../skill-packs/excalidraw/scripts/build_excalidraw.js');
+  const { buildExcalidraw } = require('../../skill-draw/scripts/build_excalidraw.js');
 
   let tmpDir: string;
 

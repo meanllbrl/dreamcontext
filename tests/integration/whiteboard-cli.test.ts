@@ -21,7 +21,7 @@ const PNG_3x2 = Buffer.concat([
  */
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
-const BUILDER = join(__dirname, '..', '..', 'skill-packs', 'excalidraw', 'scripts', 'build_excalidraw.js');
+const BUILDER = join(__dirname, '..', '..', 'skill-draw', 'scripts', 'build_excalidraw.js');
 
 let project: string;
 let root: string;
@@ -52,6 +52,15 @@ afterAll(() => rmSync(project, { recursive: true, force: true }));
 describe('whiteboard CLI (integration)', { timeout: 60_000 }, () => {
   const slug = 'gunluk';
   const ids: Record<string, string> = {};
+
+  it('kit prints "What goes where" and names the draw skill; whiteboard and draw help name it too', () => {
+    const kit = run(['whiteboard', 'kit']);
+    expect(kit.code).toBe(0);
+    expect(kit.out).toContain('## What goes where on a whiteboard');
+    expect(kit.out).toContain('Full guide: the `draw` skill.');
+    expect(run(['whiteboard', '--help']).out).toContain('`draw` skill');
+    expect(run(['whiteboard', 'draw', '--help']).out).toContain('`draw` kit');
+  });
 
   it('create "Günlük" writes the board, keeps the name verbatim, and the dashboard parser reads it', () => {
     const created = json(['whiteboard', 'create', 'Günlük', '-d', 'her gün']);

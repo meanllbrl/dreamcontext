@@ -192,6 +192,28 @@ describe('pruneRetiredPacks', () => {
     }
   });
 
+  it('a linked .claude/skills (not just the pack folder) is never walked: nothing deleted outside the project', () => {
+    const target = join(root, 'elsewhere');
+    mkdirSync(join(target, 'oldpack'), { recursive: true });
+    writeFileSync(join(target, 'oldpack', 'SKILL.md'), SHIPPED['SKILL.md']);
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    symlinkSync(target, join(root, '.claude', 'skills'));
+    recordFile(oldM, '.claude/skills/oldpack/SKILL.md', '0.40.0', 'pack-skill');
+    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    expect(existsSync(join(target, 'oldpack', 'SKILL.md'))).toBe(true);
+    expect(r.removed).toEqual([]);
+    expect(r.notes.join('\n')).toContain('symlink');
+  });
+
+  it('a file that vanished before it was read (a second pane) does not abort the run', () => {
+    put('.claude/skills/oldpack/SKILL.md', SHIPPED['SKILL.md']);
+    put('.claude/skills/oldpack/sub/ref.md', SHIPPED['sub/ref.md']);
+    // A dangling link is listed by the walk; a regular file removed between walk and read is
+    // covered by the same ENOENT tolerance (readIfThere). Here: the folder goes mid-run.
+    rmSync(join(root, '.claude/skills/oldpack/sub'), { recursive: true });
+    expect(() => pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE])).not.toThrow();
+  });
+
   it('is a no-op on a project that never had the pack', () => {
     delete oldM.packs.oldpack;
     const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);

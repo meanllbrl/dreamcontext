@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -159,40 +159,43 @@ describe('uninstallPack — idempotent', () => {
   });
 });
 
-// ─── A9 — bundleDir standalone (excalidraw) ships its whole code-bearing tree ──
+// ─── A9 — bundleDir standalone (video-watching) ships its whole code-bearing tree ──
+// (It was excalidraw until 2026-11-08, when that pack became the core `draw` skill.)
 
-describe('installPack — excalidraw (bundleDir standalone)', () => {
-  it('A9a: copies the entire skill dir (scripts, lib, examples + binary, package.json), not just SKILL.md', () => {
-    const result = installPack('excalidraw', tmpDir, ['claude'], manifest);
+describe('installPack — video-watching (bundleDir standalone)', () => {
+  it('A9a: copies the entire skill dir (scripts), not just SKILL.md', () => {
+    const result = installPack('video-watching', tmpDir, ['claude'], manifest);
 
-    const base = join(tmpDir, '.claude', 'skills', 'excalidraw');
-    // Prompt + runnable assets + vendored lib + commonjs scoping + binary asset.
+    const base = join(tmpDir, '.claude', 'skills', 'video-watching');
     expect(existsSync(join(base, 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(base, 'scripts', 'build_excalidraw.js'))).toBe(true);
-    expect(existsSync(join(base, 'scripts', 'lib', 'style.js'))).toBe(true);
-    expect(existsSync(join(base, 'package.json'))).toBe(true);
-    expect(existsSync(join(base, 'examples', 'sample.png'))).toBe(true);
+    const scripts = readdirSync(join(__dirname, '..', '..', 'skill-packs', 'video-watching', 'scripts'));
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const f of scripts) expect(existsSync(join(base, 'scripts', f))).toBe(true);
 
     // Every copied file is recorded as pack-skill, with clean ANSI-free rel paths.
-    expect(result.installed).toContain('.claude/skills/excalidraw/SKILL.md');
-    expect(result.installed).toContain('.claude/skills/excalidraw/scripts/build_excalidraw.js');
+    expect(result.installed).toContain('.claude/skills/video-watching/SKILL.md');
+    expect(result.installed).toContain(`.claude/skills/video-watching/scripts/${scripts[0]}`);
     for (const p of result.installed) {
       expect(ANSI.test(p)).toBe(false);
       expect(manifest.files[p]?.kind).toBe('pack-skill');
     }
-    expect(manifest.packs.excalidraw).toBeDefined();
+    expect(manifest.packs['video-watching']).toBeDefined();
   });
 
   it('A9b: uninstall removes the whole bundled dir and drops its manifest entries', () => {
-    installPack('excalidraw', tmpDir, ['claude'], manifest);
-    const base = join(tmpDir, '.claude', 'skills', 'excalidraw');
+    installPack('video-watching', tmpDir, ['claude'], manifest);
+    const base = join(tmpDir, '.claude', 'skills', 'video-watching');
     expect(existsSync(base)).toBe(true);
 
-    const result = uninstallPack('excalidraw', tmpDir, ['claude'], manifest);
-    expect(result.removed).toContain('.claude/skills/excalidraw/scripts/build_excalidraw.js');
+    const result = uninstallPack('video-watching', tmpDir, ['claude'], manifest);
+    expect(result.removed).toContain('.claude/skills/video-watching/SKILL.md');
     expect(existsSync(base)).toBe(false);
-    expect(manifest.packs.excalidraw).toBeUndefined();
-    expect(Object.keys(manifest.files).some((f) => f.startsWith('.claude/skills/excalidraw/'))).toBe(false);
+    expect(manifest.packs['video-watching']).toBeUndefined();
+    expect(Object.keys(manifest.files).some((f) => f.startsWith('.claude/skills/video-watching/'))).toBe(false);
+  });
+
+  it('A9c: excalidraw is no longer an optional pack (it is the core draw skill)', () => {
+    expect(() => installPack('excalidraw', tmpDir, ['claude'], manifest)).toThrow();
   });
 });
 

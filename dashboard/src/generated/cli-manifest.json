@@ -5019,7 +5019,7 @@
     },
     {
       "path": "whiteboard",
-      "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki)",
+      "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki); draw on them with the `draw` skill",
       "args": [],
       "group": true
     },
@@ -5061,7 +5061,7 @@
     },
     {
       "path": "whiteboard draw",
-      "desc": "Draw onto a board with the excalidraw kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the excalidraw skill built (--file); refused where it would cover live elements",
+      "desc": "Draw onto a board with the `draw` kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the `draw` skill built (--file); refused where it would cover live elements",
       "args": [
         "<slug>"
       ],
@@ -5111,7 +5111,7 @@
     },
     {
       "path": "whiteboard kit",
-      "desc": "How to draw on a whiteboard: the excalidraw kit's spec types, with a worked example, for `draw --spec`",
+      "desc": "How to draw on a whiteboard: the `draw` kit's spec types, what goes where, a worked example, for `draw --spec`",
       "args": []
     },
     {

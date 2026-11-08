@@ -272,23 +272,6 @@
       "alwaysApply": false
     },
     {
-      "name": "excalidraw",
-      "file": "excalidraw/SKILL.md",
-      "description": "The drawing kit for Obsidian Excalidraw (.excalidraw.md) boards AND dreamcontext whiteboards (an explanation on a whiteboard is a drawing: `dreamcontext whiteboard draw <board> --spec`; only a live metric is a widget) — charts (line/bar/compare/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline), funnels, wireframes and real-proportion device mockups (iPhone/iPad/Mac), flowcharts (wired `flow`s, `panel` group boxes), images/screenshots, shapes, arrows, frames, lanes and grids — by passing DATA to ~46 ready-made deterministic builders that emit valid plugin markup (near-zero tokens, always renders). Every builder works from JS or straight from a JSON spec; the build audits the scene for overlaps, buried labels and over-long lines. Embeds local images via the plugin's sha1 wikilink trick (no base64). Triggers: 'draw this in excalidraw', 'make an excalidraw board', 'excalidraw diagram', 'chart', 'gantt', 'funnel map board', 'wireframe', 'iphone mockup', 'embed screenshots into excalidraw', 'excalidraw çiz', 'excalidraw board oluştur', 'grafik çiz', 'wireframe çiz', 'whiteboard'a çiz', 'tahtaya anlat'.",
-      "tags": [
-        "excalidraw",
-        "obsidian",
-        "diagram",
-        "board",
-        "visualization",
-        "screenshots",
-        "funnel-map",
-        "drawing"
-      ],
-      "alwaysApply": false,
-      "bundleDir": true
-    },
-    {
       "name": "video-watching",
       "file": "video-watching/SKILL.md",
       "description": "Load when the user hands over a video file/link or asks to watch/analyze a video, extract a transcript, or 'bu videoda ne var'. Turns a video into a time-mapped transcript with on-screen visuals (slides, UI, charts, text) described inline, then reasons about it. Triggers: 'watch this video', 'videoyu izle/analiz et', 'transkript çıkar', 'video transcript'.",

@@ -143,7 +143,7 @@ Don't guess the use-case — let the user direct it.
 > e.g. tearing down a competitor's onboarding funnel — run `--frames-only --mode ui`
 > and skip the `.transcript.md` entirely. The deliverable becomes a **curated screen
 > list** (one entry per onboarding step, in order, from `frames.json`), which feeds a
-> board (`excalidraw`) or an `onboarding-design` analysis directly. Use `--contact-sheet`
+> board (the `draw` skill) or an `onboarding-design` analysis directly. Use `--contact-sheet`
 > to eyeball coverage first, and trust the coverage warning — under-sampling here is
 > exactly what makes a teardown wrongly report "screen X wasn't shown".
 

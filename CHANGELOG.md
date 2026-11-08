@@ -4,6 +4,10 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **One built-in `draw` skill for every drawing.** Excalidraw files and whiteboards share one skill that every install and update brings, on Claude, Codex and Antigravity. A short guide sends a plain file to the drawing builders and a whiteboard to the builders plus live cards.
+- **The drawing rules load at the right moment.** Any drawing request gets a one-line reminder to load `draw`; in the Chat view a passing sketch stays an inline diagram and a drawing you keep goes through `draw`. On Claude, hand-writing an Excalidraw file is stopped with "draw first". The whiteboard commands, sub-agents and the chat all name `draw`.
+- **The old `excalidraw` pack moves over safely.** Nothing you edited is lost (an edited guide is kept as `SKILL.md.pre-draw`), no second skill stays, and scripts that use the old path keep working. Nothing changes until `draw` is really installed.
+
 ## [0.41.5] - 2026-11-08
 
 Patch on 0.41.4: one batch of fixes and small features, built together. Local build; not published.

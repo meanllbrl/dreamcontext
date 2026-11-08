@@ -85,8 +85,9 @@ const FLOWS = 'sleep, curator, initializer, goal-skill, dreamcontext-deep-resear
  * Rides Codex's developer instructions (trusted, so the sub-agent authorization holds there) and
  * Antigravity's first turn.
  */
-export function toolNote(tool: TextTool, o: { roles?: readonly string[]; roleDirs?: readonly string[] } = {}): string {
-  const ours = "dreamcontext's skills (dreamcontext, initializer, curator, dream-sync, dreamcontext-deep-research, patterns, apps)";
+export function toolNote(tool: TextTool, o: { roles?: readonly string[]; roleDirs?: readonly string[]; skills?: readonly string[] } = {}): string {
+  // The names come from what the copier wrote this session (tool-skills.ts), never a list kept by hand.
+  const ours = o.skills?.length ? `dreamcontext's skills (${o.skills.join(', ')})` : "dreamcontext's skills";
   const use = "When one covers the work, open its SKILL.md before acting; for a dreamcontext command you are unsure of, open the dreamcontext skill, never guess from the brain's files.";
   const skills = tool === 'codex'
     ? `${ours} and this project's .claude/skills are in your skill list. ${use}`

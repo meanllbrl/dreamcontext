@@ -90,7 +90,7 @@ dreamcontext is **more than memory files**. Each capability below ships; its ref
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory: reminders that fire when context matches | this file |
-| **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
+| **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](../draw/references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
 | **Apps** | Own-window apps, own icon, not our logo (`/apps`) | [apps.md](references/apps.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`), **AI Team**: automations pick one, tasks go to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>`. A mistake: `super team amend` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |
@@ -143,7 +143,7 @@ Two routing rules that override surface reading:
 | "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
 | "make an agent", "ajan oluştur", **or the problem-shape:** "one someone reused by jobs, tasks and chat" | **Agent**: `agents/<slug>.md` | WHO does the work: prompt, model, home board; no schedule. Not a person | `dreamcontext agents create <slug> --title "…" --prompt "…"` |
 | "every evening at 6pm, summarize today", "her akşam / her cuma / her gün", **or the problem-shape:** "it happens on its own while nobody is at the keyboard" | **Automation**: `automations/<slug>.md` | A schedule plus a job for the agent it picks, run unattended. **Private to this machine by default** (say so; `automations share <slug>` shares it) | `dreamcontext automations create <slug> --agent <a> --title "…" --days <daily\|mon,wed> --at HH:MM` (capture protocol → [automations.md](references/automations.md)) |
-| "board / whiteboard / control panel / kontrol paneli / pano" | **Whiteboard**: `whiteboards/<slug>/` | A canvas, not a knowledge `.excalidraw.md` or Tasks view. Explaining is a drawing (excalidraw kit), never notes; a metric a live `insight` widget | `whiteboard draw <slug> --spec`, `whiteboard add <slug> insight` |
+| "board / whiteboard / control panel / kontrol paneli / pano" | **Whiteboard**: `whiteboards/<slug>/` | A canvas, not a knowledge `.excalidraw.md` or Tasks view. Explaining is a drawing (`draw` skill), never notes; a metric a live `insight` widget | `whiteboard draw <slug> --spec`, `whiteboard add <slug> insight` |
 | "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
 | "add a teammate", "who am I", "kim çalışıyor" | **Person** — `people/<slug>.md` (constitution) + a row in `people/people.json` (roster) | A **human who works in this vault**; the constitution renders verbatim when they are ACTIVE on this machine. **Not knowledge** | `dreamcontext people add "<Name>" --email <address>`; `dreamcontext people whoami [--set <slug>]` binds THIS machine |
 
@@ -221,7 +221,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 1. **User's request is king.** Execute direct instructions. The task queue is reference, not auto-pilot. Suggest related tasks; never auto-pick them.
 
 2. **Skill triage before action — HARD RULE.** Your available-skills list is your primary toolkit. Before user-visible output or code in any skill's domain, match the task to skill `description` triggers and invoke `Skill` for each match BEFORE drafting, in parallel, unprompted. Match against whatever is actually in your available-skills list — **only name a skill that appears there; never invent one.** The skills dreamcontext ships (`design` is core; rest: `install-skill --packs`) and their typical triggers:
-   UI/frontend → `design`; a multi-aspect diff review → `multi-review`; a big feature end-to-end → `goal-skill`; Meta ads → `meta-marketing` + `growth`; retention, ASO, paywalls → `growth`; brand writing → `brand-voice`; "let's debate" → `council`; system prompts or agent definitions → `system-prompts`; vault diagrams → `excalidraw`; a video → `video-watching`; browser validation of a screen or funnel → `jev-verify`; business ideas → `business-idea-discovery` / `business-idea-validation`.
+   UI/frontend → `design`; a multi-aspect diff review → `multi-review`; a big feature end-to-end → `goal-skill`; Meta ads → `meta-marketing` + `growth`; retention, ASO, paywalls → `growth`; brand writing → `brand-voice`; "let's debate" → `council`; system prompts or agent definitions → `system-prompts`; a drawing → `draw`; a video → `video-watching`; browser validation of a screen or funnel → `jev-verify`; business ideas → `business-idea-discovery` / `business-idea-validation`.
 
    Skip triage only when the request is (a) a 1-line factual question, (b) purely about dreamcontext mechanics (this skill), or (c) outside every available skill's domain. When in doubt, load.
 
@@ -448,7 +448,6 @@ Open these with `Read` when the task needs depth:
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
 - **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, Telegram, sharing, the channel, approval, stopping a run.
-- **[whiteboards.md](references/whiteboards.md)**: widgets, board agents, format, recipes.
 - **[apps.md](references/apps.md)**: local web apps in their own Mac windows: manifest, run, `apps do`, schedules.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync, dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.

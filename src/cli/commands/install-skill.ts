@@ -499,7 +499,8 @@ export {
 import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform, AGENT_CORE_SKILL } from '../../lib/catalog.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
-import { DESIGN_SKILL, DESIGN_SKILL_SOURCE, installDesignSkill } from '../../lib/core-design-skill.js';
+import { DESIGN_SKILL, DESIGN_SKILL_SOURCE, DRAW_SKILL, DRAW_SKILL_SOURCE, installDesignSkill, installDrawSkill, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
+import { EXCALIDRAW_PACK, retireExcalidraw } from '../../lib/retired-packs.js';
 import {
   installPack,
   installAgentForPlatform,
@@ -650,6 +651,10 @@ export function directPackInstall(
       info(`${chalk.bold(DESIGN_SKILL)} is a core skill now: setup and \`dreamcontext update\` install it on every project.`);
       continue;
     }
+    if (name === EXCALIDRAW_PACK) {
+      info(`${chalk.bold(EXCALIDRAW_PACK)} is now the core ${chalk.bold(DRAW_SKILL)} skill: setup and \`dreamcontext update\` install it on every project.`);
+      continue;
+    }
     const isPackName = catalog.packs.some((p) => p.name === name);
     try {
       info(isPackName ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
@@ -680,6 +685,11 @@ export function directPackInstall(
 // ─── Individual Skill Install ───────────────────────────────────────────────
 
 function installSingleSkill(skillName: string, projectRoot: string, platforms: PlatformId[]): void {
+  if (skillName === EXCALIDRAW_PACK || skillName === DRAW_SKILL || skillName === DESIGN_SKILL) {
+    const core = skillName === DESIGN_SKILL ? DESIGN_SKILL : DRAW_SKILL;
+    info(`${chalk.bold(skillName === EXCALIDRAW_PACK ? `${EXCALIDRAW_PACK} is now the core ${DRAW_SKILL} skill` : `${core} is a core skill now`)}: setup and \`dreamcontext update\` install it on every project.`);
+    return;
+  }
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -923,9 +933,10 @@ export async function installCoreForPlatform(
   platform: PlatformId,
   projectRoot: string,
   manifest?: Manifest,
-): Promise<{ installed: string[]; notes: string[] }> {
+): Promise<{ installed: string[]; notes: string[]; draw: { skillRootRel: string; result: GuardedInstallResult } | null }> {
   const installed: string[] = [];
   const notes: string[] = [];
+  let drawInstall: { skillRootRel: string; result: GuardedInstallResult } | null = null;
 
   const skillSource = findPackageFile('skill', 'SKILL.md');
   if (!skillSource) {
@@ -934,7 +945,7 @@ export async function installCoreForPlatform(
   // The foundational core skills below are each "non-fatal if absent", but `update` treats whatever
   // this install did not record as retired and prunes it. A package missing one of these folders
   // would therefore delete the project's copy, so a partial package fails here instead.
-  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', DESIGN_SKILL_SOURCE]
+  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', DESIGN_SKILL_SOURCE, DRAW_SKILL_SOURCE]
     .filter((dir) => !findPackageFile(dir, 'SKILL.md'));
   if (missingCore.length > 0) {
     throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
@@ -1062,29 +1073,30 @@ export async function installCoreForPlatform(
     }
   }
 
-  // Copy the `design` core skill (universal UI rules: hierarchy, states, contrast, a 4px grid, a
-  // truthful screen). It was an optional pack until 2026-11-04; every skill and agent that says
-  // "load `design`" (the /apps builder, Develop and Plan briefs) now finds it on every project.
-  // Unlike the copies above it honours edits: a file changed since we wrote it is kept and
-  // reported, never overwritten (see core-design-skill.ts). Shipped from `skill-design/`.
-  {
-    const designSkillMd = findPackageFile(DESIGN_SKILL_SOURCE, 'SKILL.md');
-    if (designSkillMd) {
-      const designSource = dirname(designSkillMd);
-      const design = installDesignSkill(designSource, projectRoot, skillRootRel, readManifest(projectRoot));
-      for (const w of design.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
-      for (const k of design.kept) {
-        // Still tracked, so `update` never offers the owner's own copy for deletion.
-        if (k.reason !== 'not-ours') recordIfManifest(manifest, k.rel, 'core', k.baselineSha ? { baselineSha: k.baselineSha } : undefined);
-        notes.push(chalk.dim(k.reason === 'edited'
-          ? `Kept ${k.rel}: it is edited (not a version dreamcontext shipped). Delete it and run \`dreamcontext update\` to take the shipped one.`
-          : k.reason === 'symlink'
-            ? `Left ${k.rel} alone: it or a folder above it is a symlink, never written through.`
-            : `Left ${k.rel} alone: it was not written by dreamcontext.`));
-      }
-      if (design.written.length > 0) {
-        installed.push(platformPrefixed(platform, `${skillRootRel}/${DESIGN_SKILL}/ ${chalk.dim(`(${design.written.length} file${design.written.length === 1 ? '' : 's'})`)}`));
-      }
+  // The guarded core skills: `design` (universal UI rules, an optional pack until 2026-11-04) and
+  // `draw` (Excalidraw files and whiteboards, the excalidraw pack until 2026-11-08). Unlike the
+  // copies above they honour edits: a file changed since we wrote it is kept and reported, never
+  // overwritten (see core-guarded-skill.ts). Shipped from `skill-design/` and `skill-draw/`.
+  for (const [name, sourceDirName, install] of [
+    [DESIGN_SKILL, DESIGN_SKILL_SOURCE, installDesignSkill],
+    [DRAW_SKILL, DRAW_SKILL_SOURCE, installDrawSkill],
+  ] as const) {
+    const skillMd = findPackageFile(sourceDirName, 'SKILL.md');
+    if (!skillMd) continue;
+    const res = install(dirname(skillMd), projectRoot, skillRootRel, readManifest(projectRoot));
+    if (name === DRAW_SKILL) drawInstall = { skillRootRel, result: res };
+    for (const w of res.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
+    for (const k of res.kept) {
+      // Still tracked, so `update` never offers the owner's own copy for deletion.
+      if (k.reason !== 'not-ours') recordIfManifest(manifest, k.rel, 'core', k.baselineSha ? { baselineSha: k.baselineSha } : undefined);
+      notes.push(chalk.dim(k.reason === 'edited'
+        ? `Kept ${k.rel}: it is edited (not a version dreamcontext shipped). Delete it and run \`dreamcontext update\` to take the shipped one.`
+        : k.reason === 'symlink'
+          ? `Left ${k.rel} alone: it or a folder above it is a symlink, never written through.`
+          : `Left ${k.rel} alone: it was not written by dreamcontext.`));
+    }
+    if (res.written.length > 0) {
+      installed.push(platformPrefixed(platform, `${skillRootRel}/${name}/ ${chalk.dim(`(${res.written.length} file${res.written.length === 1 ? '' : 's'})`)}`));
     }
   }
 
@@ -1234,7 +1246,7 @@ export async function installCoreForPlatform(
     }
   }
 
-  return { installed, notes };
+  return { installed, notes, draw: drawInstall };
 }
 
 // ─── Command Registration ───────────────────────────────────────────────────
@@ -1308,6 +1320,12 @@ export function registerInstallSkillCommand(program: Command): void {
           const result = await installCoreForPlatform(platform, projectRoot, manifest);
           installed.push(...result.installed);
           notes.push(...result.notes);
+          // The excalidraw pack is the `draw` skill now: retire its folder once, after the core
+          // install proved draw is on disk. `manifest` is both the old and the new record here.
+          if (result.draw) {
+            const retired = retireExcalidraw(projectRoot, result.draw.skillRootRel, result.draw.result, manifest, manifest);
+            notes.push(...retired.notes);
+          }
         }
 
         writeManifest(projectRoot, manifest);

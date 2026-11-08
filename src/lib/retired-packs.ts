@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { installAgentForPlatform } from './install-packs.js';
 import { agentBaselineSha, isCustomizedAgent } from './sleep-specialist-frontmatter.js';
 import { dreamcontextVersion, recordFile, PRE_MANIFEST_VERSION, type Manifest } from './manifest.js';
+import { guardedFileSha, linkedFolderOnPath, type GuardedInstallResult, type ShippedShas } from './core-guarded-skill.js';
+import { EXCALIDRAW_SHIPPED_SHAS } from './retired-packs/excalidraw.js';
 
 /**
  * Skill packs dreamcontext once shipped and has retired.
@@ -86,12 +88,35 @@ export interface RetiredPackResult {
 }
 
 const sha256 = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex');
+const isGone = (e: unknown): boolean => (e as NodeJS.ErrnoException)?.code === 'ENOENT';
+/** The file's bytes, or null when it is already gone (a second pane running update at the same time). */
+function readIfThere(abs: string): Buffer | null {
+  try {
+    return readFileSync(abs);
+  } catch (e: unknown) {
+    if (isGone(e)) return null;
+    throw e;
+  }
+}
 
 /** Every regular file under `dir`, never following a symlink. Symlinks are reported apart. */
 function walkFiles(dir: string, out: string[], links: string[]): void {
-  for (const name of readdirSync(dir)) {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch (e: unknown) {
+    if (isGone(e)) return; // a second pane removed it mid-walk
+    throw e;
+  }
+  for (const name of names) {
     const abs = join(dir, name);
-    const st = lstatSync(abs);
+    let st;
+    try {
+      st = lstatSync(abs);
+    } catch (e: unknown) {
+      if (isGone(e)) continue;
+      throw e;
+    }
     if (st.isSymbolicLink()) links.push(abs);
     else if (st.isDirectory()) walkFiles(abs, out, links);
     else if (st.isFile()) out.push(abs);
@@ -102,7 +127,11 @@ function walkFiles(dir: string, out: string[], links: string[]): void {
 function removeEmptyDirs(dir: string): void {
   for (const name of readdirSync(dir)) {
     const abs = join(dir, name);
-    if (lstatSync(abs).isDirectory()) removeEmptyDirs(abs);
+    try {
+      if (lstatSync(abs).isDirectory()) removeEmptyDirs(abs);
+    } catch {
+      // gone, or will not go: harmless
+    }
   }
   if (readdirSync(dir).length === 0) rmdirSync(dir);
 }
@@ -147,11 +176,13 @@ export function pruneRetiredPacks(
     } catch {
       // not installed
     }
+    // A linked `.claude` or `.claude/skills` would carry every delete below out of the project.
+    if (!isLink && linkedFolderOnPath(projectRoot, ['.claude', 'skills'])) isLink = true;
     const hadPack = isDir || Boolean(oldManifest.packs[pack.name]);
 
     if (isLink) {
       if (oldManifest.packs[pack.name]) {
-        result.notes.push(`Left ${folderRel} alone: it is a symlink, and the retired ${pack.name} pack is never followed through one.`);
+        result.notes.push(`Left ${folderRel} alone: it or a folder above it is a symlink, and the retired ${pack.name} pack is never followed through one.`);
       }
     } else if (isDir) {
       const files: string[] = [];
@@ -160,7 +191,9 @@ export function pruneRetiredPacks(
       for (const abs of files) {
         const inPack = toPosix(relative(folder, abs));
         const rel = `${prefix}${inPack}`;
-        const ours = (pack.shipped[inPack] ?? []).includes(sha256(readFileSync(abs)));
+        const bytes = readIfThere(abs);
+        if (bytes === null) continue;
+        const ours = (pack.shipped[inPack] ?? []).includes(sha256(bytes));
         if (ours) {
           try {
             rmSync(abs, { force: true });
@@ -274,4 +307,309 @@ function keepAgent(
   }
   const agent = installAgentForPlatform('claude', projectRoot, source, name);
   recordFile(newManifest, rel, dreamcontextVersion(), 'pack-agent', { baselineSha: agent.baselineSha });
+}
+
+// ─── excalidraw → draw ──────────────────────────────────────────────────────────────────────
+
+/**
+ * The excalidraw pack became the core `draw` skill (2026-11-08). Unlike a plain retirement, its
+ * scripts have users outside the skill: pipelines (`*.board.cjs`, `boards/pipeline/*.cjs`) that
+ * `require()` or `node` `.claude/skills/excalidraw/scripts/…`. So its folder is not emptied: each
+ * shipped script becomes a forwarding file into `../draw/scripts/`, everything else that is exactly
+ * what we shipped goes, and anything else stays where it is. The pack was installed whole
+ * (`bundleDir`), so the old manifest lists every file in the folder, user boards included, as
+ * `pack-skill`: this function, never the generic stale prune, decides each one.
+ */
+export const EXCALIDRAW_PACK = 'excalidraw' as const;
+
+/** The draw files a forwarding file points at: they must be our current bytes in this run. */
+const DRAW_REQUIRED = [
+  'package.json',
+  'scripts/build_excalidraw.js',
+  'scripts/lib/charts.js',
+  'scripts/lib/fractional-indexing.js',
+  'scripts/lib/imagesize.js',
+  'scripts/lib/style.js',
+  'scripts/lib/typography.js',
+  'scripts/lib/wireframe.js',
+] as const;
+
+/** Is this a file of the old pack's scripts unit (`scripts/**` and its `package.json`)? */
+const inScriptsUnit = (inPack: string): boolean => inPack === 'package.json' || inPack.startsWith('scripts/');
+
+/** The forwarding file written in place of a shipped `scripts/**.js`. */
+export function excalidrawShimText(inPack: string): string {
+  const depth = inPack.split('/').length - 1; // scripts/x.js → 1, scripts/lib/x.js → 2
+  const target = `${'../'.repeat(depth + 1)}draw/${inPack}`;
+  const lines = [
+    '// dreamcontext: the excalidraw skill is now `draw`. This file forwards to it so pipelines that',
+    '// require or run this path keep working. Do not edit: dreamcontext manages it.',
+    `module.exports = require('${target}');`,
+  ];
+  if (inPack === 'scripts/build_excalidraw.js') lines.push('if (require.main === module) module.exports.main(process.argv.slice(2));');
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * The files of the old folder that stay, ours by hash: every forwarding script, plus the scripts
+ * unit's shipped non-scripts (the LICENSE beside the vendored lib, the CommonJS `package.json`).
+ */
+export function excalidrawKeptShas(table: ShippedShas = EXCALIDRAW_SHIPPED_SHAS): Record<string, readonly string[]> {
+  const out: Record<string, readonly string[]> = {};
+  for (const [inPack, shas] of Object.entries(table)) {
+    if (!inScriptsUnit(inPack)) continue;
+    out[inPack] = inPack.endsWith('.js') ? [guardedFileSha(excalidrawShimText(inPack))] : shas;
+  }
+  return out;
+}
+
+export interface RetireExcalidrawOptions {
+  /** Tests: the pack's shipped table. */
+  readonly table?: ShippedShas;
+  /** Tests: the hard-link call used to keep an edited SKILL.md under another name. */
+  readonly link?: (existing: string, newPath: string) => void;
+  /** Tests: runs after the folder is walked and before anything is written (a second pane acting). */
+  readonly afterWalk?: () => void;
+}
+
+/**
+ * Retire `<skillRootRel>/excalidraw/` once `draw` is really installed. Runs AFTER the core install
+ * (it needs this run's `draw` result) and BEFORE the stale prune. `oldManifest` is the previous
+ * record, `newManifest` the one being built (the same object for a plain `install`).
+ *
+ * All or nothing: unless `draw` is our current bytes in this run and no folder on the way is a
+ * link, nothing on disk changes and every old entry under the folder is carried into the new
+ * manifest unchanged, so the stale prune cannot delete what this run did not decide.
+ */
+export function retireExcalidraw(
+  projectRoot: string,
+  skillRootRel: string,
+  draw: GuardedInstallResult | null,
+  oldManifest: Manifest,
+  newManifest: Manifest,
+  o: RetireExcalidrawOptions = {},
+): RetiredPackResult {
+  const result: RetiredPackResult = { removed: [], kept: [], notes: [] };
+  const table = o.table ?? EXCALIDRAW_SHIPPED_SHAS;
+  const link = o.link ?? linkSync;
+  const rootSegs = skillRootRel.split('/').filter(Boolean);
+  const folderRel = `${skillRootRel}/${EXCALIDRAW_PACK}`;
+  const prefix = `${folderRel}/`;
+  const folder = join(projectRoot, ...rootSegs, EXCALIDRAW_PACK);
+  const drawPrefix = `${skillRootRel}/draw/`;
+
+  const carry = (): void => {
+    for (const [rel, entry] of Object.entries(oldManifest.files)) if (rel.startsWith(prefix)) newManifest.files[rel] = entry;
+    const pack = oldManifest.packs[EXCALIDRAW_PACK];
+    if (pack) newManifest.packs[EXCALIDRAW_PACK] = pack;
+  };
+  const forget = (): void => {
+    for (const rel of Object.keys(oldManifest.files)) if (rel.startsWith(prefix)) delete oldManifest.files[rel];
+    for (const rel of Object.keys(newManifest.files)) if (rel.startsWith(prefix)) delete newManifest.files[rel];
+    delete oldManifest.packs[EXCALIDRAW_PACK];
+    delete newManifest.packs[EXCALIDRAW_PACK];
+  };
+
+  // A link anywhere on the way to the folder: touch nothing.
+  if (linkedFolderOnPath(projectRoot, rootSegs)) {
+    carry();
+    if (oldManifest.packs[EXCALIDRAW_PACK]) result.notes.push(`excalidraw kept: a folder on the way to ${folderRel} is a symlink, never followed.`);
+    return result;
+  }
+  let st;
+  try {
+    st = lstatSync(folder);
+  } catch {
+    forget(); // nothing on disk: nothing to protect, only stale records to drop
+    return result;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    carry();
+    if (oldManifest.packs[EXCALIDRAW_PACK]) result.notes.push(`excalidraw kept: ${folderRel} is a symlink, never followed.`);
+    return result;
+  }
+
+  // Preconditions, all or nothing.
+  const stall = ((): string | null => {
+    if (Object.keys(table).length === 0) return 'the shipped table is empty';
+    if (!draw) return 'draw is not installed here yet';
+    const written = new Set(draw.written.map((w) => w.rel));
+    const skillMd = `${drawPrefix}SKILL.md`;
+    const keptSkill = draw.kept.find((k) => k.rel === skillMd);
+    if (!written.has(skillMd) && !(keptSkill?.reason === 'edited' && keptSkill.baselineSha)) {
+      return keptSkill?.reason === 'symlink' ? 'your draw skill folder is a symlink' : "your draw/SKILL.md is not dreamcontext's";
+    }
+    const missing = DRAW_REQUIRED.filter((f) => !written.has(`${drawPrefix}${f}`));
+    if (missing.length > 0) return `draw/${missing[0]} is not dreamcontext's current copy`;
+    if (linkedFolderOnPath(folder, ['scripts', 'lib'])) return `a folder in ${folderRel}/scripts is a symlink`;
+    return null;
+  })();
+  if (stall) {
+    carry();
+    if (existsSync(join(folder, 'SKILL.md')) || oldManifest.packs[EXCALIDRAW_PACK]) result.notes.push(`excalidraw kept: ${stall}.`);
+    return result;
+  }
+
+  const keptShas = excalidrawKeptShas(table);
+  const files: string[] = [];
+  const links: string[] = [];
+  walkFiles(folder, files, links);
+  const linkSet = new Set(links.map((abs) => toPosix(relative(folder, abs))));
+  const entries = files.map((abs) => ({ abs, inPack: toPosix(relative(folder, abs)) }));
+
+  const keptHere: string[] = [];
+  const stuck: string[] = [];
+  let changed = false;
+
+  // The scripts unit: forwarded whole, or left exactly as it is.
+  const unit = entries.filter((e) => inScriptsUnit(e.inPack));
+  const leftovers: string[] = [];
+  const frozenBy: string[] = [...linkSet].filter(inScriptsUnit);
+  const toShim: { abs: string; inPack: string }[] = [];
+  const keptOurs: string[] = [];
+  for (const e of unit) {
+    const bytes = readIfThere(e.abs);
+    if (bytes === null) continue;
+    const sha = guardedFileSha(bytes);
+    const tmp = /^(.*)\.tmp-\d+$/.exec(e.inPack);
+    if (tmp && (keptShas[tmp[1]] ?? []).includes(sha)) {
+      leftovers.push(e.abs); // a forwarding file a crashed run staged: ours, removed below
+      continue;
+    }
+    if ((keptShas[e.inPack] ?? []).includes(sha)) {
+      keptOurs.push(e.inPack);
+      continue;
+    }
+    if (e.inPack.endsWith('.js') && (table[e.inPack] ?? []).includes(sha)) {
+      toShim.push(e);
+      continue;
+    }
+    frozenBy.push(e.inPack);
+  }
+  o.afterWalk?.();
+  for (const abs of leftovers) {
+    try {
+      unlinkSync(abs);
+      changed = true;
+    } catch {
+      // the next run tries again
+    }
+  }
+  const frozen = frozenBy.length > 0;
+  if (frozen) {
+    for (const e of unit) if (!leftovers.includes(e.abs)) keptHere.push(`${prefix}${e.inPack}`);
+  } else {
+    for (const e of toShim) {
+      const tmpPath = `${e.abs}.tmp-${process.pid}`;
+      try {
+        writeFileSync(tmpPath, excalidrawShimText(e.inPack), { flag: 'wx' });
+      } catch {
+        keptHere.push(`${prefix}${e.inPack}`); // a file is already there: never overwritten
+        continue;
+      }
+      try {
+        const now = readIfThere(e.abs);
+        if (now === null || !(table[e.inPack] ?? []).includes(guardedFileSha(now))) throw new Error('changed under us');
+        renameSync(tmpPath, e.abs);
+        keptOurs.push(e.inPack);
+        changed = true;
+      } catch {
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          // a leftover is cleaned on the next run
+        }
+        keptHere.push(`${prefix}${e.inPack}`);
+      }
+    }
+  }
+
+  // Everything outside the scripts unit: exactly ours goes, anything else stays.
+  for (const e of entries.filter((x) => !inScriptsUnit(x.inPack))) {
+    const rel = `${prefix}${e.inPack}`;
+    const bytes = readIfThere(e.abs);
+    if (bytes === null) continue;
+    if ((table[e.inPack] ?? []).includes(guardedFileSha(bytes))) {
+      try {
+        rmSync(e.abs, { force: true });
+        result.removed.push(rel);
+        changed = true;
+      } catch (err: unknown) {
+        stuck.push(rel);
+        result.notes.push(`Could not remove ${rel}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      continue;
+    }
+    if (e.inPack === 'SKILL.md') {
+      // Edited: kept under another name, so no second `excalidraw` skill stays registered.
+      const kept = keepAsPreDraw(e.abs, link);
+      if (kept) {
+        keptHere.push(`${prefix}${kept}`);
+        changed = true;
+      } else {
+        keptHere.push(rel);
+        result.notes.push(`excalidraw: ${rel} could not be renamed, so a second \`excalidraw\` skill stays until you remove it.`);
+      }
+      continue;
+    }
+    keptHere.push(rel);
+  }
+  for (const inPack of linkSet) {
+    if (inScriptsUnit(inPack)) continue;
+    keptHere.push(`${prefix}${inPack}`);
+    if (inPack === 'SKILL.md') result.notes.push(`excalidraw: ${prefix}SKILL.md is a symlink, so a second \`excalidraw\` skill stays until you remove the link.`);
+  }
+  try {
+    removeEmptyDirs(folder);
+  } catch {
+    // A folder that will not go is harmless.
+  }
+
+  // Anything recorded besides our own forwarding files means this is the run that retires.
+  const hadRecords = Boolean(oldManifest.packs[EXCALIDRAW_PACK]) || Object.entries(oldManifest.files).some(
+    ([rel, entry]) => rel.startsWith(prefix) && !(entry.kind === 'core' && keptShas[rel.slice(prefix.length)]),
+  );
+  forget();
+  for (const rel of stuck) recordFile(newManifest, rel, dreamcontextVersion(), 'pack-skill');
+  // Re-recorded after the clean: the forwarding files and the unit's shipped non-scripts are ours.
+  // Sorted, so the run that writes the forwarding files and every later run record the same bytes.
+  if (!frozen) for (const inPack of [...keptOurs].sort()) recordFile(newManifest, `${prefix}${inPack}`, dreamcontextVersion(), 'core');
+
+  result.kept.push(...keptHere);
+  if (changed || hadRecords) {
+    const scripts = frozen ? ` Its scripts/ stays exactly as it was (${frozenBy[0]} is edited or not dreamcontext's), so it gets no builder fixes.` : '';
+    const list = keptHere.length > 0 ? ` Kept: ${keptHere.join(', ')}.` : '';
+    result.notes.push(`excalidraw is now \`draw\`. ${folderRel}/ keeps forwarding scripts for old pipelines and your own files; do not delete it while a pipeline requires that path.${scripts}${list}`);
+  }
+  return result;
+}
+
+/**
+ * Keep an edited SKILL.md as `SKILL.md.pre-draw` (then `.pre-draw.2`, `.3`…): a hard link that
+ * fails when the name exists, then the original unlinked. No moment where a check and a rename
+ * race, and nothing is ever overwritten. Returns the kept name, or null (SKILL.md left in place).
+ */
+function keepAsPreDraw(abs: string, link: (existing: string, newPath: string) => void): string | null {
+  for (let n = 1; n < 100; n++) {
+    const name = n === 1 ? 'SKILL.md.pre-draw' : `SKILL.md.pre-draw.${n}`;
+    const target = join(abs, '..', name);
+    try {
+      link(abs, target);
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException)?.code === 'EEXIST') continue;
+      return null; // a filesystem without hard links: the original stays
+    }
+    try {
+      unlinkSync(abs);
+      return name;
+    } catch {
+      try {
+        unlinkSync(target);
+      } catch {
+        // both names hold the same bytes
+      }
+      return null;
+    }
+  }
+  return null;
 }

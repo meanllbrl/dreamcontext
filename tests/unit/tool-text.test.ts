@@ -73,6 +73,17 @@ describe('toolText', () => {
     expect(agy).toContain('dreamcontext snapshot');
     expect(agy).not.toContain('No sub-agents');
   });
+
+  it("names dreamcontext's skills from what the copier wrote, so none is missing (design, draw)", () => {
+    const names = ['dreamcontext', 'initializer', 'curator', 'dream-sync', 'dreamcontext-deep-research', 'patterns', 'apps', 'design', 'draw'];
+    for (const tool of TOOLS) {
+      const note = toolNote(tool, { skills: names });
+      expect(note).toContain(`dreamcontext's skills (${names.join(', ')})`);
+      // No copy this session: no list, never a stale one.
+      expect(toolNote(tool)).toContain("dreamcontext's skills ");
+      expect(toolNote(tool)).not.toContain("dreamcontext's skills (");
+    }
+  });
 });
 
 describe('recipe output per tool', () => {

@@ -1,32 +1,3 @@
----
-name: excalidraw
-description: >-
-  The visual-first drawing kit. Draws and writes on a dreamcontext whiteboard
-  (`_dream_context/whiteboards/`): an explanation there is a drawing from these builders
-  (`dreamcontext whiteboard draw <board> --spec`, reference: `dreamcontext whiteboard kit`), never a
-  stack of note widgets, and only a live METRIC there is an insight widget (`whiteboard add`), never
-  a chart drawn from today's values. Generates or extends Obsidian Excalidraw (.excalidraw.md) boards
-  in this vault — visual-first diagrams,
-  charts (line/bar/comparison/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline),
-  funnels, device mockups (iPhone/iPad/Mac) and wireframes/prototypes, flowcharts, image/screenshot
-  layouts, shapes, arrows, frames, lanes and grids — by passing DATA to ~45 ready-made deterministic
-  builders and letting a script emit valid plugin markup (so it costs ~no tokens and always renders).
-  Every builder works from JS or straight from a JSON spec. Body text is set in a real UI sans on a
-  readable measure and line height, with inline emphasis (**bold** rules, ==highlight== bands, `code`
-  chips) drawn as geometry behind a single clean text element; the build audits the scene for overlaps,
-  buried labels, over-long lines and walls of text. Embeds local images via the plugin's
-  sha1 wikilink trick (no base64). Triggers: '/excalidraw', 'draw this in excalidraw', 'make an
-  excalidraw board', 'excalidraw diagram', 'chart', 'line chart', 'bar chart', 'compare before/after',
-  'gantt', 'timeline', 'quadrant', 'impact effort matrix', 'heatmap', 'KPI tiles', 'dashboard board',
-  'draw on the whiteboard', 'whiteboard'a çiz', 'whiteboard'a kur', 'tahtaya çiz', 'panoya anlat',
-  'funnel', 'conversion funnel', 'wireframe', 'prototype', 'mockup', 'app/web screen mockup', 'iphone
-  mockup', 'ipad mockup', 'mac app mockup', 'ui kit', 'icon button', 'funnel map board', 'embed
-  screenshots into excalidraw', 'add images to an excalidraw file', 'excalidraw çiz', 'excalidraw board
-  oluştur', 'grafik çiz', 'çizgi grafik', 'bar grafik', 'karşılaştırma grafiği', 'zaman çizelgesi',
-  'funnel çiz', 'wireframe çiz', 'prototip çiz', 'iphone ekranı çiz', 'ekran tasarımı çiz', 'ekran
-  görüntülerini excalidraw a ekle'.
----
-
 # Excalidraw board generator (Obsidian)
 
 Write `.excalidraw.md` files that render natively in this vault's Obsidian Excalidraw plugin.
@@ -34,19 +5,8 @@ Write `.excalidraw.md` files that render natively in this vault's Obsidian Excal
 frontmatter, `## Text Elements`, `## Embedded Files`, and the `%% ## Drawing … %%` JSON, with
 correct sha1 image links, fractional z-indices, and deterministic seeds (clean git diffs).
 
-> **Drawing on a dreamcontext whiteboard** (a board under `_dream_context/whiteboards/`, or a file
-> whose frontmatter has `dreamcontext-whiteboard: 1`): this kit IS how you draw there, but never by
-> writing that file. Write a JSON spec of these builders and run `dreamcontext whiteboard draw
-> <board> --spec spec.json --tag <tag>` (or build an `.excalidraw.md` elsewhere and `draw --file`
-> it); `dreamcontext whiteboard kit` prints the whiteboard reference
-> (`reference/whiteboard-kit.md`), and the `dreamcontext` skill's `references/whiteboards.md` owns
-> placement, widgets and agent cards. **An explanation on a whiteboard is a drawing** (a `flow`,
-> groups in a `panel`, a comparison, a `timeline`, short labels), never a stack of note widgets; a
-> note is a caption. **A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live
-> `insight` widget** (`dreamcontext whiteboard add <board> insight --ref <insight-slug>`), never a
-> `kpi()`/`lineChart()`/`donut()` drawn from today's values: a drawn number is stale the moment the
-> board is saved. If the metric has no insight yet, create the insight first (`dreamcontext lab
-> create`), then add its widget.
+> **Drawing on a dreamcontext whiteboard?** Read the `draw` skill's router (`../SKILL.md`) first: a whiteboard
+> is never written by hand, it is drawn with `dreamcontext whiteboard draw` (`dreamcontext whiteboard kit`).
 
 ## Design principles (read first)
 
@@ -94,7 +54,7 @@ maps `<sha1>: [[image.png]]`. The plugin resolves the picture from the vault via
 
 ### CLI (most common)
 ```bash
-node .claude/skills/excalidraw/scripts/build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]
+node .claude/skills/draw/scripts/build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]
 ```
 Write a spec JSON, then run it. On success it prints
 `elements=… images=… texts=… overlaps=… buriedText=… longLines=… wallOfText=…` — the last four must all
@@ -107,8 +67,8 @@ If the project's `package.json` sets `"type": "module"`, a `.js` generator canno
 this for its own scripts), or name the generator `.cjs`.
 ```js
 const path = require('path');
-// skill lives at <project>/.claude/skills/excalidraw/ — adjust leading ../ count to match your script's depth from project root
-const { buildExcalidraw, lane, grid } = require(path.resolve(__dirname, '../.claude/skills/excalidraw/scripts/build_excalidraw.js'));
+// skill lives at <project>/.claude/skills/draw/ — adjust leading ../ count to match your script's depth from project root
+const { buildExcalidraw, lane, grid } = require(path.resolve(__dirname, '../.claude/skills/draw/scripts/build_excalidraw.js'));
 buildExcalidraw({ out: path.resolve(__dirname, '../boards/Board.excalidraw.md'), elements: [ ...lane({ title, images, x, y, thumbW }) ] });
 ```
 
@@ -154,7 +114,7 @@ Use this pattern when multiple boards pull from the same data set (e.g. one boar
 const path = require('path');
 const ROOT  = path.resolve(__dirname, '..');          // boards/ directory
 // ../../ = project root (boards/ → project/); adjust if boards/ is nested deeper
-const { buildExcalidraw, lane } = require(path.resolve(__dirname, '../../.claude/skills/excalidraw/scripts/build_excalidraw.js'));
+const { buildExcalidraw, lane } = require(path.resolve(__dirname, '../../.claude/skills/draw/scripts/build_excalidraw.js'));
 const style  = require(path.resolve(__dirname, 'shared-style.js'));
 const items  = require(path.resolve(__dirname, 'spec/items.json'));  // shared data
 
@@ -172,7 +132,7 @@ for (const item of items) {
 // pipeline/shared-style.js  (lives at boards/pipeline/shared-style.js)
 const path = require('path');
 // ../../ = project root (boards/ → project/); adjust if boards/ is nested deeper
-const { card, connector, sectionTitle } = require(path.resolve(__dirname, '../../.claude/skills/excalidraw/scripts/lib/style.js'));
+const { card, connector, sectionTitle } = require(path.resolve(__dirname, '../../.claude/skills/draw/scripts/lib/style.js'));
 
 exports.buildItemBoard = (item) => [
   sectionTitle({ x: 0, y: 0, text: item.name, fontSize: 40 }),
@@ -539,7 +499,7 @@ composes inside `stack()`/`row()`, and everything is also a spec JSON `type`.
 - Re-running with the same `out` + same spec yields a byte-stable file (seeds are derived from the
   output path), so boards diff cleanly in git.
 - **Self-contained / portable.** No `npm install` — `build_excalidraw.js` uses only Node builtins +
-  the vendored `scripts/lib/*` (fractional-indexing, imagesize, style). Copy `.claude/skills/excalidraw/`
+  the vendored `scripts/lib/*` (fractional-indexing, imagesize, style). Copy `.claude/skills/draw/`
   into any project and it works. `vaultRoot` auto-detects `.obsidian`; with none it falls back to the
   board's own folder, so the `.excalidraw.md` is still written (it just renders inside Obsidian).
 
@@ -547,7 +507,7 @@ composes inside `stack()`/`row()`, and everything is also a spec JSON `type`.
 Run the bundled examples from the skill folder (they use skill-relative paths + a bundled `sample.png`,
 so they work in any project):
 ```bash
-cd .claude/skills/excalidraw
+cd .claude/skills/draw
 node scripts/build_excalidraw.js examples/hello.spec.json   # spec-driven: text/shapes/image → examples/Hello Excalidraw.excalidraw.md
 node examples/style_board.js                                # JS API: card/connector/lane house style → examples/Style Demo.excalidraw.md
 node examples/visual_board.js                              # visual-first kit: funnel + browser prototype + readable prose
@@ -588,7 +548,7 @@ render above. Putting a drawing on a dreamcontext whiteboard: `dreamcontext whit
 `dreamcontext whiteboard place <slug> --size <w,h> --below <tag>` or let `whiteboard draw --below <tag>`
 place it; a `draw --at` that would cover live elements is refused and lists them.
 
-See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
+See `format.md` (beside this file) for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
 
 ---
 

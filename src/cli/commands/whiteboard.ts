@@ -565,7 +565,7 @@ function registerPlaceAndRender(wb: Command): void {
     .option('--tag <tag>', 'Frame the group with this tag (outlined in red); everything around it is drawn too, so an overlap shows')
     .option('--region <x,y,w,h>', 'Draw exactly this board rectangle')
     .option('--band <y0,y1>', 'Draw the board between two y coordinates, full width: walk a tall board in strips')
-    .option('--file <path>', 'Render an .excalidraw.md or scene .json instead of a board (e.g. one the excalidraw skill just built)')
+    .option('--file <path>', 'Render an .excalidraw.md or scene .json instead of a board (e.g. one the `draw` skill just built)')
     .option('--scale <n>', `Output pixels per board unit (default 1, shrunk so the longest side stays within 2000px; at most ${MAX_SIDE}px either way)`)
     .option('--json', 'Machine-readable output')
     .action(run((slug: string | undefined, opts: { out: string; tag?: string; region?: string; band?: string; file?: string; scale?: string; json?: boolean }) => {
@@ -631,7 +631,7 @@ function registerPlaceAndRender(wb: Command): void {
 export function registerWhiteboardCommand(program: Command): void {
   const wb = program
     .command('whiteboard')
-    .description('Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki)');
+    .description('Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki); draw on them with the `draw` skill');
 
   // --- list ---
   wb.command('list', { isDefault: true })
@@ -1074,7 +1074,7 @@ export function registerWhiteboardCommand(program: Command): void {
 
   // --- kit ---
   wb.command('kit')
-    .description('How to draw on a whiteboard: the excalidraw kit\'s spec types, with a worked example, for `draw --spec`')
+    .description('How to draw on a whiteboard: the `draw` kit\'s spec types, what goes where, a worked example, for `draw --spec`')
     .option('--json', 'Machine-readable output: the type list and the reference')
     .action(run(async (opts: { json?: boolean }) => {
       const reference = readKitReference();
@@ -1087,9 +1087,9 @@ export function registerWhiteboardCommand(program: Command): void {
 
   // --- draw ---
   wb.command('draw <slug>')
-    .description('Draw onto a board with the excalidraw kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the excalidraw skill built (--file); refused where it would cover live elements')
-    .option('--spec <path>', 'A JSON spec ({ "elements": [ … ] }) built with the excalidraw kit\'s own builders; `whiteboard kit` lists the types')
-    .option('--file <path>', 'An x.excalidraw.md or scene x.json the excalidraw skill already built')
+    .description('Draw onto a board with the `draw` kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the `draw` skill built (--file); refused where it would cover live elements')
+    .option('--spec <path>', 'A JSON spec ({ "elements": [ … ] }) built with the `draw` kit\'s own builders; `whiteboard kit` lists the types')
+    .option('--file <path>', 'An x.excalidraw.md or scene x.json the `draw` skill already built')
     .option('--at <x,y>', 'Top-left of the imported group (default: right of existing content); refused when the group would cover a live element')
     .option('--below <tag>', 'Place the group in the first free grid slot under the group with this tag, lined up with its left edge (decided under the board lock)')
     .option('--right-of <tag>', 'Place the group in the first free grid slot right of the group with this tag, lined up with its top')

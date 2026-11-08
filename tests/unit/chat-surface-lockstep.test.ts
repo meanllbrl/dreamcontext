@@ -65,6 +65,10 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
     expect(typesInBriefing.size).toBe(VIEW_TYPES.length);
   });
 
+  it('a drawing that is kept goes to the draw skill', () => {
+    expect(CHAT_SURFACE_BRIEFING).toContain('A drawing to KEEP (board, Excalidraw file) is the\n  `draw` skill.');
+  });
+
   it('the fence name itself is named in prose, not just shown in examples', () => {
     expect(CHAT_SURFACE_BRIEFING).toContain('dream-view');
   });

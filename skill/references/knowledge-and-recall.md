@@ -269,7 +269,7 @@ Standard bare tags: `architecture`, `api`, `frontend`, `backend`, `database`, `d
 
 ## Excalidraw boards (diagrams)
 
-> **Editable boards live in Whiteboards, not here.** A board the user and you both edit, with live widgets (todos, notes, insight cards, HTML blocks), is a **whiteboard** at `_dream_context/whiteboards/<slug>/`, edited with `dreamcontext whiteboard …` → [whiteboards.md](whiteboards.md). The boards below are read-only knowledge diagrams, generated from a spec.
+> **Editable boards live in Whiteboards, not here.** A board the user and you both edit, with live widgets (todos, notes, insight cards, HTML blocks), is a **whiteboard** at `_dream_context/whiteboards/<slug>/`, edited with `dreamcontext whiteboard …` → [whiteboards.md](../../draw/references/whiteboards.md). The boards below are read-only knowledge diagrams, generated from a spec.
 
 Excalidraw boards (`.excalidraw.md`) are first-class knowledge files. **A board belongs INSIDE the context folder it documents**, co-located with that context's `.md` knowledge — not in a separate top-level diagrams dump. A board lives in its own `<title>/` wrapper folder so its tooling siblings stay together:
 
@@ -280,7 +280,7 @@ knowledge/recall/recall/recall.excalidraw.md
 
 Rules:
 - **REQUIRED frontmatter**: every board must have `name:` and `description:`. Boards with no `## Text Elements` fall back to description-only recall — make the description rich.
-- **Do NOT hand-edit scene JSON.** The `.excalidraw.md` is generated output. Build a spec and run the generator (`.board.cjs`). Edit the spec, not the board. The spec is the source of truth; if they disagree, the spec wins. Commit both. (See the `excalidraw` skill pack for generating boards.)
+- **Do NOT hand-edit scene JSON.** The `.excalidraw.md` is generated output. Build a spec and run the generator (`.board.cjs`). Edit the spec, not the board. The spec is the source of truth; if they disagree, the spec wins. Commit both. Boards are made with the `draw` skill; a `.board.cjs` requires `.claude/skills/draw/scripts/build_excalidraw.js` (the old `.claude/skills/excalidraw/scripts/` path keeps working through forwarding files).
 - **Dark siblings**: tooling files inside a board's `<title>/` folder — generator scripts (`.board.cjs`), spec `.json`, and frontmatter-less helper `.md` — are excluded from index/recall/snapshot/dashboard. **Exception:** a companion `.md` with `name:` frontmatter is indexed as first-class, so you can co-locate a board with its teardown (`acme/acme.excalidraw.md` + `acme/acme.teardown.md`).
 - **Indexing strips scene JSON/base64/element ids** — only frontmatter + `## Text Elements` are searchable, so a 2 MB board is as searchable as a tiny one. The dashboard renderer still gets the raw scene via the detail API and shows the full nested folder tree.
 

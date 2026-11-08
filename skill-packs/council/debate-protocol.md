@@ -111,7 +111,7 @@ _dream_context/council/
     ├── round-log.md           # append-only timeline
     ├── verdicts.json          # options + per-round per-persona {stance, conviction, headline, concession}
     ├── final-report.md        # written by synthesizer
-    ├── decision-board.excalidraw.md   # optional, only when the excalidraw pack was available
+    ├── decision-board.excalidraw.md   # optional, drawn with the draw skill
     ├── migration-risk-auditor/
     │   ├── context-and-persona.md   # persona body + per-round cross-context + directives
     │   ├── report.md                # round entries LIFO

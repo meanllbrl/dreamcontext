@@ -47,7 +47,7 @@ docs/
 
 
 # Generated example boards — build artifacts, fully derived from examples/*.js (run them to regenerate)
-skill-packs/excalidraw/examples/*.excalidraw.md
+skill-draw/examples/*.excalidraw.md
 
 
 # Scratch harness written by scripts/verify/project-chip-status.mjs. The script removes it

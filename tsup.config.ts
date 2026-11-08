@@ -109,6 +109,10 @@ export default defineConfig({
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });
     cpSync('skill-packs', 'dist/skill-packs', { recursive: true });
+    // The draw skill's builder is code `whiteboard draw --spec` runs (spec-draw.ts kitDir): the
+    // copy beside the bundle is the one it loads, never a folder further up. Generated example
+    // boards are left out.
+    cpSync('skill-draw', 'dist/skill-draw', { recursive: true, filter: (src) => !/[\\/]examples[\\/][^\\/]*\.excalidraw\.md$/.test(src) && !/[\\/]node_modules([\\/]|$)/.test(src) });
     // askpass.cjs must ship as a real standalone file (git execs it directly as
     // the GIT_ASKPASS helper) — it can't be bundled into dist/index.js. Copied
     // to dist/git-sync/ so credentials.ts's runtime path resolution (relative to

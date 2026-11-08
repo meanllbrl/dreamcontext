@@ -690,11 +690,12 @@ More skills install with the core (no pack needed) and run only when the moment 
 - **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
 - **`patterns`** — the drift-free bridge to your project's documented patterns (`_dream_context/knowledge/patterns/`): `/patterns` lists them, `/patterns <slug>` loads one — so the agent reaches for a documented pattern before rebuilding something the project already solved.
 - **`design`** — universal UI rules for any screen an agent builds: hierarchy, every state designed, measured contrast, a 4px grid, a screen that tells the truth. Sub-files for app screens (`product-ui`), frontend code, web, mobile and onboarding. It gives principles, never a look, and `/apps` builds on it. An installed copy you edited is kept on `update`, never overwritten.
+- **`draw`** — every drawing that is kept: Obsidian Excalidraw files (~45 deterministic builders: charts, wireframes, real-proportion device mockups, flows, with a render audit) and dreamcontext whiteboards (the same builders plus live widgets). A short router sends a plain file to the builders and a whiteboard to the kit; the prompt hook names it on any drawing request. Projects that had the old `excalidraw` pack keep their edits, and pipelines that require the old script path keep working.
 
 ```bash
 dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
 dreamcontext install-skill --packs growth council    # Install specific packs directly
-dreamcontext install-skill --skill excalidraw        # Install a single sub-skill or standalone skill
+dreamcontext install-skill --skill video-watching    # Install a single sub-skill or standalone skill
 dreamcontext install-skill --list                     # See everything available
 ```
 
@@ -716,7 +717,6 @@ dreamcontext install-skill --list                     # See everything available
 | **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
 | **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design |
-| **excalidraw** | ~44 deterministic builders — charts, wireframes, real-proportion device mockups — that turn data into valid Obsidian Excalidraw boards at near-zero token cost, with a 3-check render audit |
 | **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline, then reason about it |
 | **jev-verify** | Browser validation judged in plain language: Playwright drives the page, TypeSafe Jev (System One model via OpenRouter) answers acceptance criteria against the page's text in ~0.5 s for a fraction of a cent; `assert` / `walk` / `judge`. Needs `OPENROUTER_JEV_KEY` |
 

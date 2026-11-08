@@ -6,7 +6,7 @@ import matter from 'gray-matter';
 import { installCoreForPlatform } from '../../src/cli/commands/install-skill.js';
 import { emptyManifest, writeManifest, type Manifest } from '../../src/lib/manifest.js';
 import { TOOL_SKILL_SOURCES } from '../../src/lib/tool-skills.js';
-import { designFileIsUnchanged, designFileSha, installDesignSkill, isDesignSkillPath } from '../../src/lib/core-design-skill.js';
+import { guardedFileIsUnchanged, guardedFileSha as designFileSha, installDesignSkill, isGuardedSkillPath } from '../../src/lib/core-guarded-skill.js';
 
 /**
  * `design` became a core skill on 2026-11-04 (it was an optional pack): every skill and brief that
@@ -160,14 +160,18 @@ describe('design skill: core install and the edit guard', () => {
     expect(designFileSha('a\r\nb')).toBe(designFileSha('a\nb'));
   });
 
-  it('designFileIsUnchanged: only an untouched copy may be pruned when a release drops it', () => {
-    const f = join(tmp, 'x.md');
-    writeFileSync(f, 'shipped\n');
-    expect(designFileIsUnchanged(f, designFileSha('shipped\n'))).toBe(true);
-    writeFileSync(f, 'edited\n');
-    expect(designFileIsUnchanged(f, designFileSha('shipped\n'))).toBe(false);
-    expect(designFileIsUnchanged(f, undefined)).toBe(false);
-    expect(designFileIsUnchanged(join(tmp, 'missing.md'), undefined)).toBe(false);
+  it('guardedFileIsUnchanged: only an untouched copy may be pruned when a release drops it', () => {
+    mkdirSync(join(tmp, '.claude', 'skills', 'design'), { recursive: true });
+    const rel = '.claude/skills/design/x.md';
+    writeFileSync(join(tmp, rel), 'shipped\n');
+    expect(guardedFileIsUnchanged(tmp, rel, designFileSha('shipped\n'))).toBe(true);
+    writeFileSync(join(tmp, rel), 'edited\n');
+    expect(guardedFileIsUnchanged(tmp, rel, designFileSha('shipped\n'))).toBe(false);
+    expect(guardedFileIsUnchanged(tmp, rel, undefined)).toBe(false);
+    expect(guardedFileIsUnchanged(tmp, '.claude/skills/design/missing.md', undefined)).toBe(false);
+    // With no baseline, a version we shipped at that path is ours.
+    writeFileSync(join(tmp, '.claude', 'skills', 'design', 'SKILL.md'), readFileSync(join(SOURCE, 'SKILL.md')));
+    expect(guardedFileIsUnchanged(tmp, '.claude/skills/design/SKILL.md', undefined)).toBe(true);
   });
 
   it('never writes through a symlink', () => {
@@ -215,9 +219,11 @@ describe('design skill: core install and the edit guard', () => {
     expect(notes.join('\n')).toContain('Kept .claude/skills/design/product-ui.md');
   });
 
-  it('isDesignSkillPath matches only the design skill folder', () => {
-    expect(isDesignSkillPath('.claude/skills/design/SKILL.md')).toBe(true);
-    expect(isDesignSkillPath('.claude/skills/design-extra/SKILL.md')).toBe(false);
-    expect(isDesignSkillPath('.claude/skills/engineering/SKILL.md')).toBe(false);
+  it('isGuardedSkillPath matches only the design and draw skill folders', () => {
+    expect(isGuardedSkillPath('.claude/skills/design/SKILL.md')).toBe(true);
+    expect(isGuardedSkillPath('.claude/skills/draw/scripts/lib/style.js')).toBe(true);
+    expect(isGuardedSkillPath('.claude/skills/design-extra/SKILL.md')).toBe(false);
+    expect(isGuardedSkillPath('.claude/skills/drawer/SKILL.md')).toBe(false);
+    expect(isGuardedSkillPath('.claude/skills/engineering/SKILL.md')).toBe(false);
   });
 });

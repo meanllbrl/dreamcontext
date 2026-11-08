@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, realpathSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pruneStaleFiles } from '../../src/cli/commands/update.js';
-import { designFileSha } from '../../src/lib/core-design-skill.js';
+import { guardedFileSha as designFileSha } from '../../src/lib/core-guarded-skill.js';
 import {
   emptyManifest,
   writeManifest,

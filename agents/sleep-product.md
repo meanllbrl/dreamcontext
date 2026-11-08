@@ -125,7 +125,7 @@ Task has `product: X` → the PRD carries `product: X` in frontmatter; product-s
 
 `knowledge/**/*.md` is indexed recursively, so subfolders are recall-safe.
 
-- **Diagrams live in their context folder:** `knowledge/<context>/<title>/<title>.excalidraw.md` (plus its dark-sibling `.board.cjs`/`.json`). Only canonical boards go under `knowledge/`; scratch boards in `inbox/` or `workspace/` stay there. Never hand-edit board scene JSON or wikilinks.
+- **Diagrams live in their context folder:** `knowledge/<context>/<title>/<title>.excalidraw.md` (plus its dark-sibling `.board.cjs`/`.json`). Only canonical boards go under `knowledge/`; scratch boards in `inbox/` or `workspace/` stay there. Never hand-edit board scene JSON or wikilinks: a board is built with the `draw` skill (`.claude/skills/draw/`; a `.board.cjs` requires `.claude/skills/draw/scripts/build_excalidraw.js`).
 - Run `dreamcontext migrations apply-diagrams` each cycle: it folds LEGACY flat boards under `knowledge/diagrams/` into per-title folders and rewrites `[[wikilinks]]` (idempotent, any depth). New boards go straight to their context folder.
 - **Grouping is deep-only.** ≥3 top-level files in a sharp topical cluster: at light/standard flag it (`group candidate: <group>/ ← a.md, b.md`); at **deep**, archive-before (B1.5), then `dreamcontext knowledge move <slug> <group>` per file (never hand-move) and verify with `knowledge index --plain`. Re-check moved files' tags in Pass C.
 

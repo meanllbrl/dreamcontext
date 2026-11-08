@@ -92,7 +92,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('roadmap')}           PO-authored objective board (rollups, dependencies, target vs forecast)
   ${chalk.magentaBright('lab')}               Analytics insights: curated metrics from HTTP APIs or scripts
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
-  ${chalk.magentaBright('whiteboard')}        Read and edit whiteboards (excalidraw boards with live widgets)
+  ${chalk.magentaBright('whiteboard')}        Read and edit whiteboards (excalidraw boards with live widgets; the draw skill)
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
   ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
   ${chalk.magentaBright('plan')}              Plan review loop: ledger, review packet, stops, gate into Develop
