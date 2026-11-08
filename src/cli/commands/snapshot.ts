@@ -2922,6 +2922,8 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
       '- To log progress: `dreamcontext tasks log <name> "what was done"`',
       'Untracked work gets lost across sessions. Tasks are how knowledge persists.',
       '',
+      'Drawing (an `.excalidraw.md`, a diagram file, a whiteboard): read `.claude/skills/draw/SKILL.md` first; a whiteboard: `dreamcontext whiteboard kit`.',
+      '',
       '## Context Directory\n',
       '`_dream_context/core/` -- Core files: soul (0), memory (2), extended (3+); people live in `_dream_context/people/`',
       '`_dream_context/knowledge/` -- Deep research documents on specific topics (includes features/ — feature PRDs as typed knowledge)',

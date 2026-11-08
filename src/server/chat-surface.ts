@@ -81,7 +81,8 @@ qualify, nothing else does:
 - **A diagram** — the shape IS the message: it branches, merges or loops and the reader has
   to hold it whole. \`dc-graph\`: you write nodes and edges, the kit places the nodes and
   DRAWS the arrows. A 2-4 step chain is a sentence; a longer one (a user journey) is a
-  \`dc-graph\` too, never a row of chips.
+  \`dc-graph\` too, never a row of chips. A drawing to KEEP (board, Excalidraw file) is the
+  \`draw\` skill.
 - **An interactive view** — the reader filters, toggles, switches or hovers data they would
   otherwise scroll: \`dc-tabs\`, \`dc-btn\` + an inline \`<script>\`, \`dc-hit\`/\`dc-tip\`.
 - **A deck** — several screens for the fullscreen button: \`<section class="dc-slide">\`s in a

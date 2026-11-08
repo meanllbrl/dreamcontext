@@ -169,6 +169,8 @@ describe('sub-agent briefing on a large brain', () => {
     expect(text).toContain('BEFORE using Glob, Grep, or searching code');
     expect(text).toContain('ACTIVE TASK-FORMAT OVERRIDE:');
     expect(text).toContain('Estimate');
+    // A sub-agent asked to draw reads the draw skill first, even on a vault this large.
+    expect(text).toContain('Drawing (an `.excalidraw.md`, a diagram file, a whiteboard): read `.claude/skills/draw/SKILL.md` first');
   });
 
   it('names every pinned file', () => {

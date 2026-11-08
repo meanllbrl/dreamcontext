@@ -12,7 +12,7 @@ import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
-  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
+  readFileSync, existsSync, statSync, lstatSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
 import { format as formatArgs } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -21,6 +21,7 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative, sep } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
   enterHookProject, fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
@@ -3038,6 +3039,24 @@ export function registerHookCommand(program: Command): void {
         return;
       }
 
+      // Gate 1e: a hand-written Excalidraw scene goes back to the `draw` skill's builder. Claude
+      // only: a Codex or Antigravity hook sees a file path, never the content, and runs Mac-wide.
+      // Only inside a dreamcontext project; anything unreadable is allowed (guidance, not safety).
+      if (hookTool() === null && !agy && (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit')) {
+        try {
+          const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+          const refusal = resolveContextRoot(cwd) ? excalidrawHandWriteRefusal(toolName, toolInput) : null;
+          if (refusal) {
+            console.log(JSON.stringify({
+              hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: refusal },
+            }));
+            return;
+          }
+        } catch {
+          // fail open
+        }
+      }
+
       // Gate 1d: a heavy step goes through the lock and the repeat limit. Measured 2026-10-31:
       // 88% of them went straight past `builder`, so the limit would count almost nothing.
       if (toolName === 'Bash') {
@@ -3297,6 +3316,29 @@ export function registerHookCommand(program: Command): void {
           if (trigger) console.log(renderOffer(trigger));
         } catch (initErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
+        }
+      }
+
+      // Drawing request: one line naming the `draw` skill, on every tool (the desktop bridge runs
+      // this same hook per message). In the Chat view a passing sketch is a dc-graph in the reply,
+      // a drawing that is kept is `draw` (owner decision 2026-11-08). Suppressed during sleep by
+      // the early return above; `DREAMCONTEXT_DRAW_HOOK=0` turns it off.
+      if (process.env.DREAMCONTEXT_DRAW_HOOK !== '0') {
+        try {
+          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          let slugs: string[] = [];
+          const boards = join(root, 'whiteboards');
+          try {
+            const st = lstatSync(boards);
+            if (st.isDirectory() && !st.isSymbolicLink()) slugs = readdirSync(boards).filter((n) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(n));
+          } catch { /* no boards */ }
+          const intent = detectDrawIntent(prompt, slugs);
+          if (intent) {
+            const chatView = (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) || inAppChat();
+            emitPromptBlock('gate', drawDirective(intent.target, { chatView, tool: hookTool() }));
+          }
+        } catch (drawErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[draw] error:', (drawErr as Error).message ?? drawErr);
         }
       }
 

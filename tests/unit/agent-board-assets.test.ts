@@ -402,9 +402,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * could not answer). Written to a file, the same script asks nothing. Actual 15,277.
    * 2026-11-07: -> 15400, +102 for the `app-install` button (app-araclari §5: an app the project
    * has and this Mac does not, shared with this account). Actual 15,379.
+   * 2026-11-08: -> 15500, +67 for one sentence sending a drawing that is KEPT to the core `draw`
+   * skill (draw-skill plan, owner decision 1: a passing sketch stays a dc-graph). Actual 15,446.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15500);
   });
 
   /**
@@ -415,7 +417,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15379)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15446)).toBeLessThanOrEqual(20);
   });
 
   /**
