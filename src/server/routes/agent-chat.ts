@@ -122,10 +122,11 @@ import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
+import { ownerLanguageBlock } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwedBlock, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -3408,6 +3409,9 @@ export function startChatSession(
     // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
     // from the exact text the window sent; a slash command is no message of his.
     if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerMsgBlock(text) });
+    // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
+    // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
+    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerLanguageBlock(superOwnerLanguage(chatRegistryId, text)) });
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
     // replay drops it and the owner's bubble and `userSent` keep his text. Read from memory

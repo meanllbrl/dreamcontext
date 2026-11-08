@@ -26,6 +26,7 @@ import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fres
 import { readHandoffRecord } from '../context-watch.js';
 import { memberCallState } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
+import { detectOwnerLanguage, ownerLanguageLine, type OwnerLanguage } from './owner-language.js';
 import {
   closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, stampOwedSince,
   type OwedEnd,
@@ -847,6 +848,28 @@ export function noteSuperOwnerMsg(sessionId: string, ref: string | null): void {
 }
 export function superOwnerMsgRef(sessionId: string): string | undefined {
   return ownerMsgRefs.get(sessionId);
+}
+
+/** The owner's language per super (owner-language.ts), ahead of the record's write: a second
+ *  message right after the first must not read the old one. */
+const ownerLanguages = new Map<string, OwnerLanguage>();
+/** An owner message to the super session `sessionId`: the language his turn names. Detected from
+ *  his words; when they do not tell, the one he wrote in before (memory, then the record). A
+ *  change is written to the record, so it outlives a restart and a fresh session. */
+export function superOwnerLanguage(sessionId: string, text: string): OwnerLanguage | null {
+  const root = superKeyOfSession(sessionId);
+  const detected = detectOwnerLanguage(text);
+  if (!root) return detected;
+  const key = keyOf(root);
+  const known = ownerLanguages.get(key) ?? lastStates.get(key)?.ownerLanguage ?? null;
+  if (!detected) return known;
+  ownerLanguages.set(key, detected);
+  if (detected !== lastStates.get(key)?.ownerLanguage) void track(writeSuper(key, (s) => { s.ownerLanguage = detected; }));
+  return detected;
+}
+/** The language a server-written turn of `key` names: memory first, then its record. */
+function ownerLanguageOf(key: string, state: SuperState): OwnerLanguage | null {
+  return ownerLanguages.get(keyOf(key)) ?? state.ownerLanguage ?? null;
 }
 
 /** The Super Agent escalated a question to the owner in the turn now running (`super queue
@@ -1863,8 +1886,11 @@ async function pumpOnce(key: string): Promise<void> {
       state = await writeSuper(key, (s) => { opened = openResultDebts(s, items, Date.now()); });
     }
     const batch = newBatchId();
-    const text = owedTurn ? owedTurnText(key, owedNow)
+    const body = owedTurn ? owedTurnText(key, owedNow)
       : solo ? superEventText(key, state, items[0], now, batch) : superBatchText(key, state, items.filter((q) => !heldIds.has(q.id)), batch, now, held);
+    // Every server-written turn ends by naming the owner's language (owner-language.ts).
+    const langLine = ownerLanguageLine(ownerLanguageOf(key, state));
+    const text = langLine ? `${body}\n${langLine}` : body;
     // A request, reply or owed turn goes as a batch of one (its own kind is no event kind of the window's).
     const asBatch = !solo || items[0].kind === 'request' || items[0].kind === 'reply' || items[0].kind === 'owed';
     const event: SuperEventFrame = !asBatch
