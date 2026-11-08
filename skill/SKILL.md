@@ -358,7 +358,7 @@ When on, a long session gets a `[context handoff]` note that gets louder: at **3
 dreamcontext tasks handoff <slug> --done "…" --next "…" --decisions "…" --learned "…" --style "…" --files "…"
 ```
 
-It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff. Super Agent: `super handoff`, into its own file.
+It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff. Super Agent: `super handoff`, into its own file. A Super's child: into its OWN task, never the newest one; its fresh session `cd`s back to its worktree.
 
 ---
 

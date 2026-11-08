@@ -52,7 +52,7 @@ import {
 import { planGateGaps } from '../../lib/plan-ledger.js';
 import { readPlanLedgers } from '../../lib/plan-store.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
-import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
+import { superChildContext, superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
 import { commitAssignment, prepareAssignment } from '../../lib/agents/task-assignment.js';
 import {
   approvePlanAction, cancelTaskAction, changePlanAction, continueTaskAction, endTaskJobIfClosed, letFinishAction, oneMoreRoundAction,
@@ -2293,6 +2293,8 @@ export function registerTasksCommand(program: Command): void {
         contextTokens,
         fromSession: sessionId,
         tab: tab || null,
+        // A Super child's fresh session opens in the brain's folder: the record names its worktree.
+        ...superChildPlace(root, [process.env.DREAMCONTEXT_TAB_SESSION, process.env.CLAUDE_CODE_SESSION_ID, tab]),
       };
       const key = handoffKey();
       writeHandoffRecord(root, key, record);
@@ -2815,4 +2817,11 @@ export function taskAgentAction(root: string, task: string, action: string, text
     case 'send-back': return sendBackAction(root, task, text);
     default: return { ok: false, code: 'unknown_action', message: `Unknown action "${action}".` };
   }
+}
+
+/** A Super child's worktree and branch for its handoff record, or nothing. */
+function superChildPlace(root: string, ids: Array<string | null | undefined>): Pick<HandoffRecord, 'worktree' | 'branch'> {
+  const child = superChildContext(root, ids);
+  if (!child?.worktree) return {};
+  return { worktree: child.worktree, ...(child.branch ? { branch: child.branch } : {}) };
 }

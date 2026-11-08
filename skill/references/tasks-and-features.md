@@ -994,6 +994,16 @@ task `in_progress`, records the request, and writes a partial session digest.
 **In Chat a fresh session opens automatically after this turn — finish your sentence and
 stop.** In a terminal nothing rotates for you: the human runs `/clear`.
 
+The note arrives on your next prompt, Edit/Write or **Bash/Agent call**, so a long turn of
+shell work hears it at the threshold, not hundreds of thousands of tokens later.
+
+**A Super Agent's child** is told to hand off into **its own task** (the one its Super gave it),
+never the brain's newest in-progress task; with no task it is told to create one first. Put the
+brief file you were given in `--next`. Your fresh session opens in the same pane (same card,
+same row, the Super keeps you as the same child) but in the brain's folder: its first message
+names your worktree and branch, so `cd` there first. The Super reads one line on its next event
+about you: that you handed off, and at what size.
+
 At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
 read that task file first. Desktop chats: every new chat pane, in every project, starts from
 ONE setting for the whole Mac, **Settings → Chat → Eco mode, ON by default**; the composer's

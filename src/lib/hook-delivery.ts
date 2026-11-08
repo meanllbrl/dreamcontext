@@ -44,6 +44,22 @@ export function writeStdoutSync(text: string): void {
 }
 
 /**
+ * The brain a tool hook (Pre/PostToolUse) reads, WITHOUT moving the process: the hook's cwd first,
+ * else the session's project dir. A Super child works in a code worktree with no brain, and its
+ * tool hooks run there: measured 2026-11-08, every nudge a child ever got came from
+ * UserPromptSubmit (which falls back like this), none from PostToolUse.
+ */
+export function hookContextRoot(env: NodeJS.ProcessEnv = process.env): string | null {
+  try {
+    const here = resolveContextRoot();
+    if (here) return here;
+  } catch { /* the folder is gone */ }
+  const dir = env.CLAUDE_PROJECT_DIR;
+  if (!dir) return null;
+  try { return resolveContextRoot(dir); } catch { return null; }
+}
+
+/**
  * The session moved out of the brain's folder (a code worktree, with the brain isolated from the
  * code): the hook runs in that folder and finds no `_dream_context/`, so it used to end silently
  * and the agent got nothing. CLAUDE_PROJECT_DIR is where the session started, and where the
@@ -53,6 +69,7 @@ export function writeStdoutSync(text: string): void {
  * Returns the line that tells the agent, when the hook had to move: the agent's own `dreamcontext`
  * commands still run in the code folder, and there they fail with "_dream_context/ not found".
  */
+
 export function enterHookProject(env: NodeJS.ProcessEnv = process.env): string | null {
   try {
     if (resolveContextRoot()) return null;
