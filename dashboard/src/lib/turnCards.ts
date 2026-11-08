@@ -240,18 +240,22 @@ export type TurnTile =
   | { kind: 'card'; key: string; card: KnownCard; place?: string }
   /** Cards of one group the turn showed: one tile, the group's first shown card as its face. */
   | { kind: 'group'; key: string; group: { id: string; name: string; place: string }; cards: KnownCard[] }
-  /** A card the stage no longer holds: a quiet line, never a click. */
-  | { kind: 'closed'; key: string; title: string; cardKind: string };
+  /** Cards the stage no longer holds (the owner closed them): drawn from the turn's own record, a
+   *  click opens them again; cards the turn grouped come back as one tile. Only when the file
+   *  behind it is gone does the window draw a quiet "closed" line instead. */
+  | { kind: 'reopen'; key: string; cards: KnownCard[]; name?: string };
 
 /**
  * The tiles under an answer. With the live record (`now`), a card still there is drawn as it is
- * now (its title, its place), cards still together in one group become that group's tile, and a
- * card gone from the record is `closed`. Without one (a surface that holds no stage record), the
- * turn's own record draws each card it knows and leaves out what it cannot name.
+ * now (its title, its place), cards still together in one group become that group's tile, and
+ * cards gone from the record become `reopen` tiles (one per group the turn put them in). Without
+ * one (a surface that holds no stage record), the turn's own record draws each card it knows.
+ * A card the turn cannot name (a `present` of a card opened before this conversation) is left out.
  */
 export function turnTiles(turn: TurnCards, now: StageNow | null): TurnTile[] {
   const tiles: TurnTile[] = [];
   const doneGroups = new Set<string>();
+  const reopenAt = new Map<string, number>(); // the turn's group id -> index of its reopen tile
   for (const id of turn.ids) {
     const known = turn.known[id];
     if (!now) {
@@ -260,7 +264,12 @@ export function turnTiles(turn: TurnCards, now: StageNow | null): TurnTile[] {
     }
     const live = now.containers.find((k) => k.id === id);
     if (!live) {
-      if (known) tiles.push({ kind: 'closed', key: id, title: known.title || known.ref.split('/').pop() || known.ref, cardKind: known.kind });
+      if (!known) continue;
+      const g = turn.groupOf[id];
+      const at = g !== undefined ? reopenAt.get(g) : undefined;
+      if (at !== undefined) { (tiles[at] as Extract<TurnTile, { kind: 'reopen' }>).cards.push(known); continue; }
+      if (g !== undefined) reopenAt.set(g, tiles.length);
+      tiles.push({ kind: 'reopen', key: `reopen:${g ?? id}`, cards: [known] });
       continue;
     }
     const card: KnownCard = { id, kind: live.kind, ref: live.ref, ...(live.title || known?.title ? { title: live.title || known?.title } : {}) };
@@ -280,6 +289,22 @@ export function turnTiles(turn: TurnCards, now: StageNow | null): TurnTile[] {
     tiles.push({ kind: 'card', key: id, card, place: live.place });
   }
   return tiles;
+}
+
+/** What the owner's own open (`POST /api/super/open`) takes to bring a closed card back: a kind
+ *  and a ref, or a project file by its path. Null for a card he cannot open himself (a chat, a
+ *  browser, a member): those never come back from a tile. */
+export function reopenBody(card: KnownCard): { kind: 'web' | 'knowledge' | 'task' | 'insight' | 'whiteboard'; ref: string } | { path: string } | null {
+  if (card.kind === 'web' || card.kind === 'knowledge' || card.kind === 'task' || card.kind === 'insight' || card.kind === 'whiteboard') return { kind: card.kind, ref: card.ref };
+  if (card.kind === 'image' || card.kind === 'pdf' || card.kind === 'video' || card.kind === 'board') return { path: card.ref };
+  return null;
+}
+
+/** A card that stands on a file of the project (its file can be gone): a picture, a PDF, a clip,
+ *  a board, a project page. A web page off this machine, a task or an insight is not. */
+export function isProjectFileCard(card: Pick<KnownCard, 'kind' | 'ref'>): boolean {
+  if (card.kind === 'image' || card.kind === 'pdf' || card.kind === 'video' || card.kind === 'board') return true;
+  return card.kind === 'web' && !/^[a-z][a-z0-9+.-]*:/i.test(card.ref);
 }
 
 /** A tile's own name: the card's title, else its file name, else what it points at. */

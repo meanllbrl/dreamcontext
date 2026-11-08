@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import type { SurveyRead } from '../chat/SurveyCard';
-import type { StageNow } from '../../../lib/turnCards';
+import type { KnownCard, StageNow } from '../../../lib/turnCards';
 
 /**
  * The one channel between the centre chat's event lines and the stage: a child's name in an
@@ -139,6 +139,9 @@ export interface SuperStageView {
   now: StageNow;
   /** Bring a card (side by side) or a group (presented) to the front of the stage, from Others too. */
   bring: (target: { card: string } | { group: string }) => void;
+  /** Open again cards the owner closed (the owner's own open): one side by side, several as a
+   *  group presented. Resolves false when none could be opened. */
+  reopen: (cards: readonly KnownCard[]) => Promise<boolean>;
 }
 const stageViews = new Map<string, SuperStageView>();
 const stageKeys = new Map<string, string>();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  bringPatch, cardName, cardsOfCall, jsonObjectsIn, sameTurnCards, turnCardsByAnswer, turnTiles,
+  bringPatch, cardName, cardsOfCall, isProjectFileCard, reopenBody, jsonObjectsIn, sameTurnCards, turnCardsByAnswer, turnTiles,
   type StageNow, type TurnItem,
 } from '../../dashboard/src/lib/turnCards.js';
 
@@ -169,15 +169,37 @@ describe('turnTiles: the turn against the stage as it is now', () => {
     expect((tiles[1] as { cards: unknown[] }).cards).toHaveLength(2);
   });
 
-  it('a card the stage no longer holds is a closed tile; a group broken to one card is that card', () => {
+  it('a card the owner closed stays a tile to open again; a group broken to one card is that card', () => {
     const now = stage({
       containers: [{ id: 'image-b2', kind: 'image', ref: 'shots/two.png', title: 'Second', place: 'float' }],
       groups: [],
     });
     const tiles = turnTiles(turn, now);
-    expect(tiles.map((t) => t.kind)).toEqual(['closed', 'closed', 'card']);
-    expect(tiles[0]).toMatchObject({ title: 'Routing plan', cardKind: 'web' });
-    expect(tiles[1]).toMatchObject({ title: 'one.png' });
+    expect(tiles.map((t) => t.kind)).toEqual(['reopen', 'reopen', 'card']);
+    expect(tiles[0]).toMatchObject({ kind: 'reopen', cards: [{ id: 'web-a1', kind: 'web', ref: 'reports/plan.html', title: 'Routing plan' }] });
+    expect(tiles[1]).toMatchObject({ kind: 'reopen', cards: [{ id: 'image-b1', ref: 'shots/one.png' }] });
+  });
+
+  it('a closed group comes back as ONE reopen tile holding all its cards', () => {
+    const now = stage({ containers: [], groups: [] });
+    const tiles = turnTiles(turn, now);
+    expect(tiles.map((t) => t.kind)).toEqual(['reopen', 'reopen']);
+    expect((tiles[1] as { cards: Array<{ id: string }> }).cards.map((c) => c.id)).toEqual(['image-b1', 'image-b2']);
+  });
+
+  it('reopening uses the owner\'s own open: a kind and ref, or a project file by its path', () => {
+    expect(reopenBody({ id: 'web-a1', kind: 'web', ref: 'reports/plan.html' })).toEqual({ kind: 'web', ref: 'reports/plan.html' });
+    expect(reopenBody({ id: 'task-x', kind: 'task', ref: 'launch-banner' })).toEqual({ kind: 'task', ref: 'launch-banner' });
+    expect(reopenBody({ id: 'image-b1', kind: 'image', ref: 'shots/one.png' })).toEqual({ path: 'shots/one.png' });
+    expect(reopenBody({ id: 'pdf-1', kind: 'pdf', ref: 'docs/a.pdf' })).toEqual({ path: 'docs/a.pdf' });
+    expect(reopenBody({ id: 'chat-1', kind: 'chat', ref: 'abc' })).toBeNull();
+  });
+
+  it('only a card on a project file can be gone from disk', () => {
+    expect(isProjectFileCard({ kind: 'image', ref: 'shots/one.png' })).toBe(true);
+    expect(isProjectFileCard({ kind: 'web', ref: 'reports/plan.html' })).toBe(true);
+    expect(isProjectFileCard({ kind: 'web', ref: 'https://acme.example/plan' })).toBe(false);
+    expect(isProjectFileCard({ kind: 'task', ref: 'launch-banner' })).toBe(false);
   });
 
   it('with no stage record (a fresh session, the phone) every known card is drawn from the turn', () => {

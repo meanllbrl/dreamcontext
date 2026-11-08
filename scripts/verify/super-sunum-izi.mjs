@@ -161,8 +161,10 @@ async function run(base, pw) {
   const web = st1.containers.find((k) => k.kind === 'web');
   const grp = st1.groups[0];
   ok('1 the stage record holds the page and a group of two', !!web && grp?.cards.length === 2);
-  ok('1 the page tile draws the page itself', (await row.locator(`[data-card="${web?.id}"] .super-tile-page iframe, [data-card="${web?.id}"] .super-tile-page .doc-reader`).count()) > 0);
-  ok('1 the group tile draws its first picture', (await row.locator(`[data-card="${grp?.id}"] .super-tile-picture img`).count()) > 0);
+  const heights = await row.locator('[data-testid="super-turn-chip"]').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+  ok('1 the chips are low (40-48 px)', heights.length === 2 && heights.every((h) => h >= 40 && h <= 48), heights.join(','));
+  ok('1 the group chip shows its first picture and its count', (await row.locator(`[data-card="${grp?.id}"] img.chat-cmp-hl-thumb-img`).count()) > 0
+    && /· 2/.test(await row.locator(`[data-card="${grp?.id}"]`).innerText()));
   await page.waitForTimeout(1500);
   await both(page, '1-cevap-kutucuklar-1440');
 
@@ -176,14 +178,14 @@ async function run(base, pw) {
   await both(page, '2-digerlerinde-1440');
 
   console.log('── 3 a click brings them back');
-  await row.locator(`[data-card="${web.id}"]`).click();
+  await row.locator(`[data-card="${web.id}"] [data-testid="super-turn-chip"]`).click();
   ok('3 the page is back, side by side', await until(page, async () => {
     const st = await superState(page);
     return st.view?.mode === 'half' && st.view.card === web.id && st.containers.find((k) => k.id === web.id)?.place === 'float';
   }, 8000));
   await page.waitForTimeout(1200);
   await both(page, '3-tikla-sayfa-geri-1440');
-  await row.locator(`[data-card="${grp.id}"]`).click();
+  await row.locator(`[data-card="${grp.id}"] [data-testid="super-turn-chip"]`).click();
   ok('3 the group is presented, out of Others', await until(page, async () => {
     const st = await superState(page);
     return st.view?.mode === 'present' && grp.cards.every((id) => st.view.cards.includes(id)) && st.groups.find((g) => g.id === grp.id)?.place === 'float';
@@ -205,13 +207,22 @@ async function run(base, pw) {
   }))));
   ok('4 the tiles are still under the answer', await until(page, async () => (await stage(page, 'main').locator('[data-testid="super-turn-card"]').count()) === 2, 20000));
 
-  console.log('── 5 the page closed for good');
+  console.log('── 5 the page closed, then opened again from its chip');
   await sayOnStage(page, 'main', 'Raporu kapat');
   ok('5 the answer lands', await until(page, async () => (await stage(page, 'main').locator('.chat-msg-assistant-row', { hasText: 'Raporu kapattım' }).count()) === 1, 30000));
   const first = stage(page, 'main').locator('[data-testid="super-turn-cards"]').first();
-  ok('5 its tile is a quiet closed line, not a button', await until(page, async () => (await first.locator('[data-testid="super-turn-card-closed"]').count()) === 1
-    && (await first.locator('button[data-testid="super-turn-card"]').count()) === 1, 8000));
+  ok('5 the page is gone from the stage record', await until(page, async () => !(await superState(page)).containers.some((k) => k.id === web.id), 8000));
+  ok('5 its chip stays, to open again (no dead "closed" line)', await until(page, async () => (await first.locator(`[data-card="${web.id}"][data-reopen="true"]`).count()) === 1
+    && (await first.locator('[data-testid="super-turn-card-closed"]').count()) === 0, 8000));
   await both(page, '5-kapatildi-1440');
+  await first.locator(`[data-card="${web.id}"] [data-testid="super-turn-chip"]`).click();
+  ok('5 a click opens it again, side by side', await until(page, async () => {
+    const st = await superState(page);
+    return st.containers.some((k) => k.id === web.id) && st.view?.mode === 'half' && st.view.card === web.id;
+  }, 10000));
+  ok('5 the chip is a live one again', await until(page, async () => (await first.locator(`[data-card="${web.id}"]:not([data-reopen])`).count()) === 1, 8000));
+  await page.waitForTimeout(1200);
+  await both(page, '5-yeniden-acildi-1440');
   ok('no console errors (desktop)', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
   ok('no failed requests (desktop)', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));
 
@@ -237,7 +248,7 @@ async function run(base, pw) {
   await ptiles.scrollIntoViewIfNeeded().catch(() => {});
   await phone.waitForTimeout(1500);
   await both(phone, '6-telefon-390');
-  const pic = ptiles.locator('button[data-testid="super-turn-card"]').filter({ has: phone.locator('[data-tile="image"]') }).first();
+  const pic = ptiles.locator('[data-testid="super-turn-card"]').filter({ has: phone.locator('img.chat-cmp-hl-thumb-img') }).first().locator('[data-testid="super-turn-chip"]');
   await pic.click();
   ok('6 a click opens the picture full screen', await until(phone, async () => (await phone.locator('.image-viewer').count()) > 0, 8000));
   await phone.waitForTimeout(600);
