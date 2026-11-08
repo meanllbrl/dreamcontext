@@ -1221,7 +1221,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onPresentAll={presentGroup}
               onToOthers={actions.onToOthers}
               onAskAbout={actions.onAskAbout}
-              onUngroup={onUngroup}
               onCloseCards={(id) => closeGroups([id])}
             />
           );

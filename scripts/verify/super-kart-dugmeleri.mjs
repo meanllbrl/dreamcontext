@@ -186,9 +186,10 @@ async function sceneCard(browser) {
   await min.hover();
   await wait(p, 400);
   const hover = await min.boundingBox();
-  const caption = await min.evaluate((el) => { const c = el.querySelector('.super-icon-btn-caption'); return c ? { w: c.getBoundingClientRect().width, text: c.textContent, op: getComputedStyle(c).opacity } : null; });
+  // Since 2026-11-08 minimise is the yellow light: hovered, it shows its glyph and no word slides out.
+  const caption = await min.evaluate((el) => !!el.querySelector('.super-icon-btn-caption'));
   report.caption = { rest, hover, caption };
-  check('hovered, the minimise button grows and reads Minimize', !!caption && caption.w > 20 && caption.op === '1' && /Minimi/.test(caption.text) && hover.width > rest.width + 20, JSON.stringify(report.caption));
+  check('hovered, the yellow light keeps its size and no word slides out', !caption && Math.abs(hover.width - rest.width) < 1, JSON.stringify(report.caption));
   const actions = await card(p, 'c0').locator('.super-card-actions').boundingBox();
   await p.screenshot({ path: shotPath('4-minimise-hover-1440'), clip: around(actions, vp) });
   await p.mouse.move(5, vp.height - 5);

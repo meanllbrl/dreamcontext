@@ -413,6 +413,9 @@
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-md);
 }
+/* A stage card's close question opens under its red light, top left (owner 2026-11-08). The
+   group panel's questions keep the base rule: their buttons sit at the right. */
+.super-card-frame > .super-close-choice { top: 42px; left: 6px; right: auto; }
 .super-close-choice-q {
   padding: 0 var(--space-1);
   font-size: var(--font-size-xs);
@@ -463,33 +466,79 @@
 }
 .super-icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-icon-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
-/* A glyph people do not read on sight (owner 2026-11-07, the minimise arrows): on hover and on
-   focus the button grows into a pill and its word slides out beside the glyph. */
-.super-icon-btn--caption {
-  width: auto;
-  min-width: 24px;
-  padding: 0 4px;
-  gap: 0;
-  transition: background 120ms ease-out, color 120ms ease-out, gap 160ms ease-out, padding 160ms ease-out;
+
+/* ── The Mac window controls (owner 2026-11-08) ──
+   Red close, yellow minimise, green full screen at the card's top left, always in colour: the
+   colour says what each does, hover or keyboard focus adds the glyph, no word ever slides out.
+   Apple's own fixed system colours, the same in light and dark. A 12 px dot in a 24 px button. */
+.super-card-lights {
+  --super-light-red: #ff5f57;
+  --super-light-yellow: #febc2e;
+  --super-light-green: #28c840;
+  --super-light-red-ink: #7a0b07;
+  --super-light-yellow-ink: #7a4a00;
+  --super-light-green-ink: #0a5212;
+  --super-light-edge: rgba(0, 0, 0, 0.2);
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
 }
-.super-icon-btn--caption > svg { flex: none; }
-.super-icon-btn-caption {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  line-height: 24px;
+/* On a floating tile the row shows on hover, like the buttons on the right, on its own pill. */
+.super-card-lights--float {
+  padding: 2px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
   opacity: 0;
-  transition: max-width 160ms ease-out, opacity 120ms ease-out;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
 }
-.super-icon-btn--caption:hover,
-.super-icon-btn--caption:focus-visible { gap: 4px; padding: 0 8px 0 4px; background: var(--color-bg-tertiary); color: var(--color-text); }
-.super-icon-btn--caption:hover > .super-icon-btn-caption,
-.super-icon-btn--caption:focus-visible > .super-icon-btn-caption { max-width: 120px; opacity: 1; }
+.super-card-frame:hover .super-card-lights--float,
+.super-card-frame:focus-within .super-card-lights--float { opacity: 1; pointer-events: auto; }
+.super-card-frame[data-lifted] .super-card-lights { opacity: 0; pointer-events: none; }
+.super-light {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
+}
+.super-light:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -1px; }
+.super-light:disabled { cursor: default; }
+.super-light-dot {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px var(--super-light-edge);
+}
+.super-light--close .super-light-dot { background: var(--super-light-red); color: var(--super-light-red-ink); }
+.super-light--minimize .super-light-dot { background: var(--super-light-yellow); color: var(--super-light-yellow-ink); }
+.super-light--zoom .super-light-dot { background: var(--super-light-green); color: var(--super-light-green-ink); }
+.super-light:disabled .super-light-dot { background: var(--color-bg-tertiary); box-shadow: inset 0 0 0 1px var(--color-border); }
+.super-light-dot > svg { opacity: 0; transition: opacity 100ms ease-out; }
+.super-card-lights:hover .super-light-dot > svg,
+.super-card-lights:has(:focus-visible) .super-light-dot > svg { opacity: 1; }
+.super-light:active:not(:disabled) .super-light-dot { filter: brightness(0.85); }
+/* A large card's head starts after the lights and stops before the ask button (both always shown there). */
+.super-card-frame:is([data-where='half'], [data-where='present'], [data-where='sheet']) :is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }
+/* A large card's trailing side holds only "ask about this": no pill around one button. */
+.super-card-frame:not([data-where='float']) .super-card-actions { top: 4px; padding: 0; border: 0; background: none; box-shadow: none; }
+/* "Ask about this" (owner 2026-11-08, the comment icon, clearer): bigger, in the accent colour. */
+.super-ask-btn { width: 28px; height: 28px; color: var(--color-accent); }
+.super-ask-btn:hover { background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) {
-  .super-icon-btn--caption,
-  .super-icon-btn-caption { transition: none; }
+  .super-card-lights--float,
+  .super-light-dot > svg { transition: none; }
 }
 
 /* The agent card: the child at a glance (O10). */
@@ -1326,7 +1375,8 @@
 .super-card-frame[data-cue='close'] { pointer-events: none; }
 .super-card-frame[data-cue='close'] .super-card-clip,
 .super-card-frame[data-cue='close'] .super-card-lift { animation: super-cue-fade 360ms ease-in both; }
-.super-card-frame[data-cue='close'] .super-card-actions { display: none; }
+.super-card-frame[data-cue='close'] .super-card-actions,
+.super-card-frame[data-cue='close'] .super-card-lights { display: none; }
 
 @keyframes super-cue-fly {
   from { opacity: 0; transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.35); }
@@ -1355,9 +1405,10 @@
 .super-card-view--web, .super-card-view--browser { height: 100%; }
 .super-card-view--web > .wb-widget { flex: 1 1 auto; min-height: 0; }
 /* The card's one title line: the widget's head stands where the card's would, and stops short of
-   the card's buttons at the top right (they are always shown on a large card). Past the file
+   the card's window controls at the top left and its ask button at the top right. Past the file
    head's own padding (widgets.css), which reads through :has(). */
-.super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { height: 36px; min-height: 0; padding-block: 0; padding-inline-end: 124px; }
+.super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { height: 36px; min-height: 0; padding-block: 0; padding-inline-start: 88px; padding-inline-end: 124px; }
+.super-card-frame:not([data-where='float']) .super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { padding-inline-end: 44px; }
 .super-web-one-line .wb-widget-title { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); }
 
 /* ── Card sizes (owner 2026-10-22: "like Apple widgets") ─────────────────────────────────── */
@@ -1373,7 +1424,7 @@
 /* The size menu: four presets as little grids under the card's buttons. */
 .super-size-menu {
   position: absolute;
-  top: 38px;
+  top: 42px;
   right: 6px;
   z-index: 4;
   display: flex;
