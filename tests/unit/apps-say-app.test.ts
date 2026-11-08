@@ -35,7 +35,7 @@ vi.mock('../../src/server/automation-job.js', async (orig) => ({
 }));
 
 const { sayFromApp } = await import('../../src/server/routes/automations.js');
-const { createAgent, updateAgent } = await import('../../src/lib/agents/store.js');
+const { createAgent } = await import('../../src/lib/agents/store.js');
 const { createAutomation, getRunTarget } = await import('../../src/lib/automations/store.js');
 const { appendThreadEntry, readThread, parseDayFile } = await import('../../src/lib/automations/threads.js');
 const { buildRecentHistoryBlock, isAppRunSession } = await import('../../src/lib/automations/history.js');
@@ -102,9 +102,9 @@ describe('sayFromApp', () => {
   });
 
   it('a member approved only through its automation may not run from an app', () => {
-    member('both');
-    // The edit voids the direct approval; the routine's own approval only lends identity.
-    updateAgent(root, 'both', { prompt: 'Help more.' });
+    // Never approved directly (an approved member whose text is edited keeps running on its last
+    // approved text, owner 2026-11-08): the routine's own approval only lends identity.
+    member('both', false);
     createAutomation(root, { slug: 'both-daily', title: 'Daily', agent: 'both', days: 'daily', at: '09:00' }, { approve: { now: new Date() } });
     approveAutomation(dirname(root), getRunTarget(root, 'both-daily', 'automation')!, new Date());
     expect(ask('both')).toMatchObject({ ok: false, code: 'say_unapproved' });

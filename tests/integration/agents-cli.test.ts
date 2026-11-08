@@ -166,12 +166,16 @@ describe("answering an agent target's approval question from the owner's shell",
       state: 'pending', answeredAt: null, answeredVia: null, answer: null, resolutionNote: null, resolutionError: null,
       steers: [], channelRefs: {}, createdAt: '2026-10-12T09:00:00.000Z',
     }));
-    expect(JSON.parse(run(['agents', 'show', 'scout', '--json'], projectDir, home).stdout).agent.approvedToRun).toBe(false);
+    // The edit waits for the owner while the agent keeps running on its last approved text (owner 2026-11-08).
+    const waiting = JSON.parse(run(['agents', 'show', 'scout', '--json'], projectDir, home).stdout).agent;
+    expect(typeof waiting.waits).toBe('string');
 
     const out = run(['automations', 'answer', 'q_agent1', 'approve'], projectDir, home);
     expect(out.exitCode).toBe(0);
     expect(out.stdout).toContain('did not run again');
-    expect(JSON.parse(run(['agents', 'show', 'scout', '--json'], projectDir, home).stdout).agent.approvedToRun).toBe(true);
+    const settled = JSON.parse(run(['agents', 'show', 'scout', '--json'], projectDir, home).stdout).agent;
+    expect(settled.approvedToRun).toBe(true);
+    expect(settled.waits).toBeNull();
     expect(run(['automations', 'show', 'scout'], projectDir, home).stdout).toMatch(/approval: NOT approved/);
   });
 });
