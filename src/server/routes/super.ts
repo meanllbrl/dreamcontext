@@ -69,7 +69,7 @@ import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { IMAGE_EXT_RE, PDF_EXT_RE, VIDEO_EXT_RE, ownerFileTarget } from '../../lib/super/owner-file.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
 import { insightPath } from '../../lib/lab/store.js';
 import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
@@ -92,6 +92,7 @@ import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 import { ensureTidy, keepOwnerLooked, noteSeenClick, retireClockFrom, retireKeep, seenClickAt, touchCards, touchedAt, viewShows, type RetireLive, type TidyIo } from '../../lib/super/tidy.js';
 import { titleFromBrief } from '../../lib/super/remote-view.js';
+import { ledgerPath, readLedger, testMinutesToday, type LedgerRow, type TestMinutes } from '../../lib/run-ledger.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -525,6 +526,27 @@ export function setVaultLiveForTest(fn: ((root: string) => Promise<number>) | nu
 
 /** K10: a delegated child pins the dev server it starts, so its site card opens by itself (S1). */
 export const DEV_SERVER_LINE = 'If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site.';
+
+/**
+ * Per child: today's minutes its worktree spent queued for and running checks (plan C6), read
+ * from the repo's shared run ledger, each ledger read once. null when it cannot be read.
+ */
+function childTestMinutes(now: number): (worktree: string, branch?: string) => TestMinutes | null {
+  const day = new Date(now);
+  day.setHours(0, 0, 0, 0);
+  const ledgers = new Map<string, LedgerRow[]>();
+  return (worktree, branch) => {
+    try {
+      if (!existsSync(worktree)) return null;
+      const path = ledgerPath(worktree);
+      let rows = ledgers.get(path);
+      if (!rows) { rows = readLedger(path); ledgers.set(path, rows); }
+      return testMinutesToday(rows, { toplevel: realpathSync(worktree), ...(branch ? { branch } : {}) }, day.getTime(), now);
+    } catch {
+      return null;
+    }
+  };
+}
 
 function worktreePreamble(w: CreatedWorktree): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
@@ -1470,6 +1492,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const now = Date.now();
     const children: Record<string, Record<string, unknown>> = {};
     const status: Array<Record<string, unknown>> = [];
+    const testsOf = childTestMinutes(now);
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
       const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null);
@@ -1486,6 +1509,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         ...(last.length > 600 ? { lastLineCut: `cut at 600 of ${last.length} characters; the whole reply: dreamcontext super read ${sid}` } : {}),
         ...(limit ? { limit: wrapUntrusted(vault, limit) } : {}),
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
+        // Today's checks in its worktree: minutes waiting in line and running, and full runs past a red on purpose.
+        ...(ch.worktree ? { testsToday: testsOf(ch.worktree, ch.branch) } : {}),
       };
       // The live row rides on the child itself; `status[]` stays for older readers.
       children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...row };

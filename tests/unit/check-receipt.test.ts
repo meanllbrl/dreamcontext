@@ -363,7 +363,13 @@ describe('check receipts', () => {
     expect(harmlessFor('tests', 'package.json', yes)).toBe(true);
     expect(harmlessFor('tests', 'package.json', () => false)).toBe(false);
     expect(harmlessFor('tests', '_dream_context/core/CHANGELOG.json', yes)).toBe(true);
-    expect(harmlessFor('build', 'skills/x.md', yes)).toBe(false);
+    // A build reads no test and no Markdown it neither copies nor bundles (suite-record.ts SUITE_DIST_ALLOW).
+    expect(harmlessFor('build', 'skills/x.md', yes)).toBe(true);
+    expect(harmlessFor('build', 'tests/unit/a.test.ts', yes)).toBe(true);
+    expect(harmlessFor('build', 'skill-packs/goal-skill/SKILL.md', yes)).toBe(false);
+    expect(harmlessFor('build', 'agents/reviewer.md', yes)).toBe(false);
+    expect(harmlessFor('build', 'src/a.ts', yes)).toBe(false);
+    expect(harmlessFor('build', 'dashboard/src/App.tsx', yes)).toBe(false);
     expect(sameButVersion('{"version":"1","a":1}', '{"version":"2","a":1}')).toBe(true);
     expect(sameButVersion('{"version":"1","a":1}', '{"version":"2","a":2}')).toBe(false);
     expect(sameButVersion('{"packages":{"":{"version":"1"},"node_modules/x":{"version":"1"}}}', '{"packages":{"":{"version":"2"},"node_modules/x":{"version":"1"}}}')).toBe(true);
@@ -438,7 +444,9 @@ describe('check receipts', () => {
 
     it('--tail shows only the last lines; a pipe gets no receipt and says why', async () => {
       expect(await builderHeavy(deps(), ['npm', 'test'], { tail: '1' })).toBe(0);
-      expect(out).toEqual(['Tests 3 passed']);
+      // A whole suite also leaves its record's verdict last: this fake prints no vitest summary.
+      expect(out[0]).toBe('Tests 3 passed');
+      expect(out.slice(1)).toEqual([expect.stringMatching(/^builder heavy: INCOMPLETE, no vitest summary/)]);
       err = [];
       expect(await builderHeavy(deps(), ['npm test | tail -3'], {})).toBe(0);
       expect(await builderHeavy(deps(), ['npm test | tail -3'], {})).toBe(0);

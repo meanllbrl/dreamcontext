@@ -11,7 +11,9 @@ import type { LanePick } from './run-lane.js';
  * 13 minutes an hour re-running checks after the reviewer, and the proof share of a session up
  * from 40% to 53% after "tests and builds run once" was written down as prose. So the command
  * counts now: per branch, phase and command, a browser run, a full build or a full test suite
- * past its limit is REFUSED before anything starts. A red run earns one more, to see the fix go green.
+ * past its limit is REFUSED before anything starts. A red browser run or build earns one more, to
+ * see the fix go green. A red full suite earns none: its red files are kept in its suite record
+ * (lib/suite-record.ts) and rerun alone by `builder test --failed` (owner, 2026-11-08).
  *
  * A valid check must not trap an agent: `--because "<reason>"` runs it anyway, ONCE per run and
  * command, and leaves a record in the budget file, shown by `dreamcontext builder budget`. A
@@ -201,9 +203,17 @@ export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 /**
  * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
  * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
- * it becomes `--tail N` on the check alone.
+ * it becomes `--tail N` on the check alone. A full suite starts detached, the suite command
+ * alone (so its exit is its own and its record can be red), and is followed with `--wait`;
+ * while a red suite record is open, the suggestion is to rerun only its files.
  */
-export function heavySuggestion(command: string): string {
+export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}): string {
+  const suite = shellSegments(command).find((seg) => stepOfSegment(seg, {})?.kind === 'suite');
+  if (suite) {
+    if (ctx.redOpen) return 'dreamcontext builder test --failed (a full suite is RED on this worktree: rerun only its files)';
+    const alone = suite.replace(/\s+2>&1\s*$/, '').replace(/^\(+|\)+$/g, '').trim();
+    return `dreamcontext builder heavy --detach -- ${shellQuote(alone)}, then dreamcontext builder heavy --wait <id> (it prints the id)`;
+  }
   const tailed = /^([\s\S]*?)\s*\|\s*tail\s+(?:-n\s*)?-?(\d+)\s*$/.exec(command.trim());
   if (tailed && !/[|;\n]|&&|\|\|/.test(tailed[1].replace(/\s+2>&1$/, '').replace(/^cd\s+\S+\s+&&\s+/, ''))) {
     return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
@@ -263,9 +273,12 @@ function writeBudget(path: string, file: BudgetFile, nowMs: number): void {
   renameSync(tmp, path);
 }
 
-/** Runs this bucket may still start: the limit, plus one once a run came back red. */
+/**
+ * Runs this bucket may still start: the limit, plus one once a browser run or build came back
+ * red. A suite gets no extra run: its reds are rerun by `builder test --failed`.
+ */
 export function allowedRuns(kind: BudgetKind, bucket: BudgetBucket | undefined): number {
-  return BUDGET_LIMITS[kind] + ((bucket?.reds ?? 0) > 0 ? 1 : 0);
+  return BUDGET_LIMITS[kind] + (kind !== 'suite' && (bucket?.reds ?? 0) > 0 ? 1 : 0);
 }
 
 function fresh(bucket: BudgetBucket | undefined, nowMs: number): BudgetBucket | undefined {
