@@ -72,6 +72,7 @@ import {
 } from '../../lib/claude-accounts.js';
 import { claudeRules, codexRules } from '../../lib/account-rules.js';
 import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-reset.js';
+import { isServerTurnText } from '../../lib/usage-readers.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
@@ -3450,7 +3451,13 @@ export function startChatSession(
     openTurn();
     lastSentText = tgRef ? raw : text;
     turnProgressed = false;
-    registry?.userSent(text, tgSource ? { source: tgSource } : undefined);
+    // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
+    // the server's text, never his: it owes him nothing, decides no language and ends no Telegram
+    // presence (hub.ts), it only reads.
+    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
+      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
+    // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
+    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3465,10 +3472,6 @@ export function startChatSession(
     if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
-    // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
-    // the server's text, never his: it owes him nothing and decides no language, it only reads.
-    const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
-      || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     if (isSuper && !text.startsWith('/')) {
       const lang = serverContinue ? superKnownLanguage(chatRegistryId) : superOwnerLanguage(chatRegistryId, text);
       content.push({ type: 'text', text: ownerLanguageBlock(lang) });
@@ -3522,7 +3525,7 @@ export function startChatSession(
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
-    const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text) : null;
+    const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
@@ -3535,7 +3538,7 @@ export function startChatSession(
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

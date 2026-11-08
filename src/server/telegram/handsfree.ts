@@ -10,8 +10,15 @@
  *    istek)" only for an HTTP stop without the owner key; a Mac-panel stop reads "Mac'ten
  *    kapatıldı"). Battery floor and heat are relayed; a new tunnel origin is re-sent.
  *  - Losing the binding that started Telegram-only hands-free ends it (C3, D3).
- * Only the hub (after an authorized tap) starts hands-free with `startedVia`; no CLI or HTTP path.
+ *  - On Telegram, by itself (owner 2026-11-09): an authorized owner message to the Super's bot
+ *    (the hub's presence fact, `onPresence`) starts power-only hands-free marked `auto` when
+ *    nothing is on; it ends by itself when he is back at the Mac: he writes to the Super there,
+ *    or the Mac sees real keyboard or mouse input after it started (HIDIdleTime drops). A run
+ *    he started by the button or the link mode is never ended this way.
+ * Only the hub (after an authorized tap or message) starts hands-free with `startedVia`; no CLI
+ * or HTTP path.
  */
+import { execFile } from 'node:child_process';
 import type { ButtonRecord, HandsfreeEvent, StartedVia } from '../../lib/telegram/contract.js';
 import type { MacStatus } from '../../lib/handsfree/mac/contract.js';
 import { LINES, keyOf, type BindingKey, type HubHandsfree, type TelegramHub } from './hub.js';
@@ -37,6 +44,7 @@ const REASONS: Record<string, string> = {
   shutdown: 'uygulama kapandı',
   crash: 'uygulama beklenmedik şekilde kapandı',
   failed: 'açılamadı',
+  back: "Mac'e döndün",
 };
 
 export const HF_LINES = {
@@ -50,11 +58,94 @@ export const HF_LINES = {
   ended: (why: string, keyed: boolean) => `Hands-free kapandı: ${why}${keyed ? '' : ' (anahtarsız istek)'}. Mac uyuyabilir.`,
   battery: 'Pil düşük, Mac uyuyabilir.',
   heat: 'Mac çok ısındı; işler yavaşlayabilir.',
+  noGrant: "Mac'i uyanık tutamıyorum: izin Mac'te verilmeli",
+  back: "Mac'e döndün, Mac normal uykusuna döndü",
 } as const;
 
-export function handsfreeAdapter(session: () => HandsfreeSessionLike): HubHandsfree & { wire(hub: TelegramHub): () => void } {
+/** How often an auto run checks for local input on the Mac. */
+export const HID_POLL_MS = 15_000;
+/** Input this close to the start is the start itself (a click that sent nothing), never a return. */
+const HID_MARGIN_MS = 2_000;
+
+/** Milliseconds since the last keyboard or mouse input on this Mac (`ioreg` HIDIdleTime, ns), or
+ *  null when it cannot be read (then nothing ends by itself on input). */
+export function readHidIdleMs(): Promise<number | null> {
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/ioreg', ['-c', 'IOHIDSystem', '-d', '4'], { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
+      if (err) { resolve(null); return; }
+      const m = /"HIDIdleTime"\s*=\s*(\d+)/.exec(String(out));
+      resolve(m ? Number(m[1]) / 1e6 : null);
+    });
+  });
+}
+
+export interface HandsfreeAdapterOpts {
+  readHidIdleMs?: () => Promise<number | null>;
+  hidPollMs?: number;
+  now?: () => number;
+}
+
+export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: HandsfreeAdapterOpts = {}): HubHandsfree & { wire(hub: TelegramHub): () => void } {
   const matches = (v: StartedVia | null | undefined, scope: string, target: string) => !!v && v.scope === scope && v.target === target;
+  const now = opts.now ?? Date.now;
+  const readIdle = opts.readHidIdleMs ?? readHidIdleMs;
+  /** Bindings already told the sleep permission is missing (once per process). */
+  const noGrantTold = new Set<string>();
+  let arming = false;
+  /** He came back to the Mac while the run was still starting: end it once it is on. */
+  let backWhileArming = false;
+  let watch: ReturnType<typeof setInterval> | null = null;
+  const unwatch = () => { if (watch) clearInterval(watch); watch = null; };
+  /** The live run is one the hub started by itself for this binding. */
+  const autoRun = (scope: string, target: string) => {
+    const s = session();
+    return s.isOn() && s.channel === 'telegram' && s.startedVia?.auto === true && matches(s.startedVia, scope, target);
+  };
+  const backAtMac = async (scope: string, target: string) => {
+    unwatch();
+    if (arming) { backWhileArming = true; return; }
+    if (autoRun(scope, target)) await session().stop({ reason: 'back', keyed: true });
+  };
+  /** While an auto run is on: real input on the Mac after it started ends it. */
+  const watchInput = (scope: string, target: string) => {
+    unwatch();
+    const startedAt = now();
+    let busy = false;
+    watch = setInterval(() => {
+      if (busy) return;
+      if (!autoRun(scope, target)) { unwatch(); return; }
+      busy = true;
+      void readIdle().then(async (idle) => {
+        if (idle !== null && idle + HID_MARGIN_MS < now() - startedAt) await backAtMac(scope, target);
+      }).catch(() => {}).finally(() => { busy = false; });
+    }, opts.hidPollMs ?? HID_POLL_MS);
+    watch.unref?.();
+  };
   return {
+    onPresence(hub: TelegramHub, key: BindingKey, via: 'telegram' | 'mac') {
+      const ab = hub.active.get(key);
+      if (!ab || ab.target !== 'super') return;
+      if (via === 'mac') { void backAtMac(ab.scope, ab.target).catch(() => {}); return; }
+      const s = session();
+      if (s.isOn() || arming) return;
+      arming = true;
+      backWhileArming = false;
+      void s.startPowerOnly({ scope: ab.scope, target: ab.target, auto: true })
+        .then(async () => {
+          arming = false;
+          if (backWhileArming) { backWhileArming = false; await backAtMac(ab.scope, ab.target); return; }
+          watchInput(ab.scope, ab.target);
+        })
+        .catch(async (err) => {
+          const code = (err as { code?: string }).code;
+          if ((code === 'mac_not_setup' || code === 'mac_sudo_missing') && !noGrantTold.has(key)) {
+            noGrantTold.add(key);
+            await hub.reply(ab, HF_LINES.noGrant).catch(() => {});
+          }
+        })
+        .finally(() => { arming = false; });
+    },
+
     streamsTo(scope, target) {
       const s = session();
       return s.isOn() && matches(s.startedVia, scope, target);
@@ -111,7 +202,10 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike): HubHandsf
         if (!e.startedVia) return;
         const ab = hub.active.get(keyOf(e.startedVia.scope, e.startedVia.target));
         if (!ab) return;
-        if (e.type === 'ended') void hub.reply(ab, HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed || e.reason === 'mac'));
+        if (e.type === 'ended') {
+          if (e.startedVia.auto) unwatch();
+          void hub.reply(ab, e.reason === 'back' ? HF_LINES.back : HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed || e.reason === 'mac'));
+        }
         else if (e.type === 'batteryFloor') void hub.reply(ab, HF_LINES.battery);
         else if (e.type === 'heat') void hub.reply(ab, HF_LINES.heat);
         else if (e.type === 'url') void hub.reply(ab, HF_LINES.newLink(e.origin));

@@ -179,9 +179,13 @@ export function trimClosed(s: SuperState): void {
 }
 
 /** His message to the Super (not a slash command): one `msg` debt. Mutates `s`. */
-export function openMessageDebt(s: SuperState, text: string, now = Date.now()): SuperOwed {
-  const parts = partRefs(text);
-  return openDebt(s, { kind: 'msg', ref: msgRef(text), ...(parts.length ? { parts } : {}), at: now, gist: cutGist(text, MAX_OWED_MSG_GIST) }, now);
+export function openMessageDebt(s: SuperState, text: string, now = Date.now(), ref?: string): SuperOwed {
+  // A Telegram message carries the ref the hub drew (ownerMsgBlock writes that one, and the Super
+  // answers under it): the debt MUST use it too, or the same message is owed a second time
+  // under its words' hash.
+  const own = ref && MSG_REF_RE.test(ref) ? ref : undefined;
+  const parts = partRefs(text, own);
+  return openDebt(s, { kind: 'msg', ref: own ?? msgRef(text), ...(parts.length ? { parts } : {}), at: now, gist: cutGist(text, MAX_OWED_MSG_GIST) }, now);
 }
 
 /** A result (or a send) that reached the Super: one `result` debt. Mutates `s`. */

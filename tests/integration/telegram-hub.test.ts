@@ -18,6 +18,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
+import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -30,6 +31,8 @@ let root: string;
 let tg: FakeTelegram;
 let hub: TelegramHub;
 let opened: string[];
+/** Added to the hub's clock (the 24 h expiry test). */
+let skew = 0;
 
 async function superOn(on = true): Promise<void> {
   writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SID, enabled: on }));
@@ -74,8 +77,9 @@ beforeEach(async () => {
   tg = new FakeTelegram();
   tg.addBot(TOKEN, 'acme_super_bot');
   opened = [];
+  skew = 0;
   hub = new TelegramHub({
-    home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {},
+    home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => Date.now() + skew,
     vaults: () => [{ name: 'acme', contextRoot: root }],
     openLink: (u) => opened.push(u), injectorWaitMs: 300,
   });
@@ -130,7 +134,7 @@ describe('the Super target', () => {
     expect(tg.sent().length).toBe(before);
   });
 
-  it('a text reaches the injector under a store-honoured ref; its re: answer goes back, a Mac answer does not', async () => {
+  it('a text reaches the injector under a store-honoured ref; its re: answer goes back; after a Mac text a Mac answer does not', async () => {
     const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
     const { inj, sent } = fakeInjector();
     reg.registerChatInjector(SID, inj);
@@ -139,16 +143,127 @@ describe('the Super target', () => {
     const { ref, body } = parseTelegramPrefix(sent[0]);
     expect(body).toBe('durum ne?');
     expect(reg.telegramRefs.has(SID, ref!)).toBe(true);
-    const before = tg.texts().length;
-    assistant(h, `<!-- re:abcdef -->\nMac'e cevap\n<!-- re:${ref} -->\nHer şey yolunda.`);
+    assistant(h, `<!-- re:${ref} -->\nHer şey yolunda.`);
     await vi.waitFor(() => expect(tg.texts()).toContain('Her şey yolunda.'));
-    expect(tg.texts().slice(before)).not.toContain("Mac'e cevap");
-    // A later Mac-only answer with no mark is not sent.
+    // He writes on the Mac: he is off Telegram, a Mac answer (marked or not) is not sent.
     const n = tg.texts().length;
     h.userSent('mac text');
+    assistant(h, `<!-- re:abcdef -->\nMac'e cevap`);
     assistant(h, 'Sadece Mac için.');
     await new Promise((r) => setTimeout(r, 50));
     expect(tg.texts().length).toBe(n);
+  });
+
+  describe('on Telegram (presence): every owner-facing section goes, whatever ref it opens with', () => {
+    async function onTelegram() {
+      const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      tg.push(TOKEN, textUpdate(OWNER, 'ne yapıyorsun'));
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      const ref = parseTelegramPrefix(sent[0]).ref!;
+      assistant(h, `<!-- re:${ref} -->\nİki işi takip ediyorum.`);
+      await vi.waitFor(() => expect(tg.texts()).toContain('İki işi takip ediyorum.'));
+      return { h, ref };
+    }
+    const quiet = () => new Promise((r) => setTimeout(r, 50));
+
+    it('a job result under a Mac ref, written on a later event turn, reaches Telegram once', async () => {
+      const { h } = await onTelegram();
+      h.userSent(''); // the event turn: no words of his
+      assistant(h, "<!-- re:abc123 -->\nCLI açılışı 0.35 sn'den 0.16 sn'ye indi.");
+      await vi.waitFor(() => expect(tg.texts()).toContain("CLI açılışı 0.35 sn'den 0.16 sn'ye indi."));
+      await quiet();
+      expect(tg.texts().filter((t) => t.includes('CLI açılışı'))).toHaveLength(1);
+      // An unmarked text goes too.
+      assistant(h, 'Onay verdim, iş sürüyor.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Onay verdim, iş sürüyor.'));
+    });
+
+    it('no double send: a section under his Telegram ref and a Mac-ref section each go once', async () => {
+      const { h, ref } = await onTelegram();
+      const before = tg.texts().length;
+      assistant(h, `<!-- re:${ref} abc123 -->\nİkisine birden cevap.\n<!-- re:abc123 -->\nSonuç hazır.`);
+      await vi.waitFor(() => expect(tg.texts()).toContain('Sonuç hazır.'));
+      await quiet();
+      expect(tg.texts().slice(before)).toEqual(['İkisine birden cevap.', 'Sonuç hazır.']);
+    });
+
+    it('a Mac message ends it; a slash command and a server continue do not', async () => {
+      const { h } = await onTelegram();
+      h.userSent('/compact');
+      h.userSent('The usage limit that stopped this chat has reset. Continue exactly where you stopped; do not redo finished work.', { server: true });
+      assistant(h, '<!-- re:abc123 -->\nHâlâ telefondasın.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Hâlâ telefondasın.'));
+      h.userSent('Mac\'ten yazdım');
+      const n = tg.texts().length;
+      assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
+      await quiet();
+      expect(tg.texts().length).toBe(n);
+    });
+
+    it('a post nobody typed (a run report, an agent\'s send into the Super) does not end it', async () => {
+      const { h } = await onTelegram();
+      h.userSent('[ran in chat] npm test: exit 0', { server: true });
+      noteSuperSend(SID, 'Durumu özetle.');
+      h.userSent('Durumu özetle.');
+      assistant(h, '<!-- re:abc123 -->\nÖzet hazır.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Özet hazır.'));
+    });
+
+    it('a run report the hub injected moves no presence', async () => {
+      const onPresence = vi.fn();
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence };
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      const ab = [...hub.active.values()][0];
+      expect(await hub.injectText(ab, hub.syntheticUpdateId(), '[ran in chat] ok', SID, { kind: 'run-report', cardRef: 'r1' })).not.toBe(false);
+      expect(onPresence).not.toHaveBeenCalled();
+      expect(hub.onTelegram(ab)).toBe(false);
+    });
+
+    it('a Mac message in a session the hub has not mapped yet (a fresh Super session) ends it too', async () => {
+      await onTelegram();
+      const NEW = '99999999-2222-4333-8444-555555555555';
+      writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: NEW, enabled: true }));
+      resetSuperIndex();
+      await readSuperState(root);
+      const h2 = reg.registerChat({ sessionId: NEW, conversationId: null, vault: 'acme', mode: 'super' });
+      h2.userSent('yeni oturumda Mac\'ten yazdım');
+      const n = tg.texts().length;
+      assistant(h2, 'Yeni oturumda Mac cevabı.');
+      await quiet();
+      expect(tg.texts().length).toBe(n);
+    });
+
+    it('expires after 24 h with no new Telegram message', async () => {
+      const { h } = await onTelegram();
+      skew = 24 * 60 * 60 * 1000 + 1;
+      const n = tg.texts().length;
+      assistant(h, '<!-- re:abc123 -->\nBir gün sonra.');
+      await quiet();
+      expect(tg.texts().length).toBe(n);
+    });
+
+    it('tells hands-free: telegram on his Telegram message, mac on his Mac words, nothing on an event turn', async () => {
+      const onPresence = vi.fn();
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence };
+      const { h } = await onTelegram();
+      expect(onPresence.mock.calls.map((c) => c[2])).toEqual(['telegram']);
+      h.userSent('');
+      h.userSent('Mac\'ten yazdım');
+      expect(onPresence.mock.calls.map((c) => c[2])).toEqual(['telegram', 'mac']);
+    });
+
+    it('nothing outside the hub sets it: no injected Telegram message, no wide send', async () => {
+      const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      // A Telegram-looking source on a chat turn and a text that claims via="telegram" are not presence.
+      h.userSent('<owner-msg ref="abc123" via="telegram"/>', { source: 'telegram-text' });
+      assistant(h, '<!-- re:abc123 -->\nMac işi bitti.');
+      await quiet();
+      expect(tg.texts()).not.toContain('Mac işi bitti.');
+    });
   });
 
   it('no live Super: the window is reopened through its session link and the text waits for the injector', async () => {

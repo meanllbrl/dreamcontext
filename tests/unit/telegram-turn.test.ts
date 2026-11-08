@@ -276,6 +276,21 @@ describe('writeOwnerTurn through the real bridge (D1 a-d, B1)', () => {
   });
 });
 
+describe('who wrote a turn, for Telegram presence (2026-11-09)', () => {
+  it('his typed words are his; a run report and a server continue are marked server', async () => {
+    await record({ enabled: true });
+    const { ws, child } = start();
+    const seen: Array<[string, boolean]> = [];
+    const off = reg.onChatUserSent((sid, text, _src, server) => { if (sid === SUPER) seen.push([text, server]); });
+    owner(ws, 'Mac\'ten yazdım');
+    owner(ws, '[ran in chat] npm test: exit 0');
+    owner(ws, 'The usage limit that stopped this chat has reset. Continue exactly where you stopped; do not redo finished work.');
+    await vi.waitFor(() => expect(userFrames(child)).toHaveLength(3), { timeout: 10_000 });
+    off();
+    expect(seen.map(([, server]) => server)).toEqual([false, true, true]);
+  });
+});
+
 describe('a refused Telegram turn\'s continue text keeps its ref (E1)', () => {
   it('prefixed only while the store honours the ref; a Mac text stays bare', () => {
     expect(continueWithTelegramRef(withTelegramRef('tg0003', 'deploy'), 'Continue.', (r) => r === 'tg0003')).toBe(withTelegramRef('tg0003', 'Continue.'));

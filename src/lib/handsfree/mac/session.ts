@@ -569,7 +569,8 @@ export class MacSession {
       this.state = {
         on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: null, tunnelBin: null,
         startedAt: new Date().toISOString(), priorLpm: null, sleepDisabledByUs: true, url: null, mode: 'quick',
-        exposedVaults: [], bagMode: false, channel: 'telegram', startedVia: { scope: startedVia.scope, target: startedVia.target },
+        exposedVaults: [], bagMode: false, channel: 'telegram',
+        startedVia: { scope: startedVia.scope, target: startedVia.target, ...(startedVia.auto ? { auto: true as const } : {}) },
       };
       writeState(this.home, this.state);
       this.governor = new thermal.ThermalGovernor({

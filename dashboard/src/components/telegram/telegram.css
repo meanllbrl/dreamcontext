@@ -50,7 +50,7 @@
   cursor: pointer;
 }
 .tg-icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
-.tg-icon-btn:focus-visible, .tg-btn:focus-visible, .tg-link:focus-visible, .tg-sees summary:focus-visible, .tg-card-head:focus-visible {
+.tg-icon-btn:focus-visible, .tg-btn:focus-visible, .tg-link:focus-visible, .tg-sees summary:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
@@ -213,59 +213,12 @@
 .tg-bots dt { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .tg-bots dd { margin: 0; color: var(--color-text-secondary); }
 
-/* ─── The Telegram card in the transcript (one owner message from Telegram) ─ */
-.tg-card {
-  align-self: flex-end;
-  max-width: min(560px, 92%);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-bubble-own, var(--color-bg-secondary));
-  overflow: hidden;
-}
-.tg-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-}
-.tg-card-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: none;
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-}
-.tg-card-time { flex: none; color: var(--color-text-secondary); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
-.tg-card-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
-.tg-card-caret { flex: none; color: var(--color-text-secondary); transition: transform 180ms ease-out; }
-.tg-card[data-open='true'] .tg-card-caret { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .tg-card-caret { transition: none; } }
-.tg-card-body {
-  padding: 0 var(--space-3) var(--space-3);
-  font-size: var(--chat-text, 15px);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+/* ─── A Telegram owner message in the transcript: his normal bubble under a chip header ─ */
+.tg-turn { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); max-width: 100%; min-width: 0; }
+.tg-turn-chip { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 /* ─── The Super head ⋯ row (SuperHeadMenu) ────────────────────────────────── */
 .super-size-menu.super-head-menu:has([data-testid='super-head-telegram'][data-bound]) { min-width: 224px; }
 .super-head-menu-grow { flex: 1; }
 .super-head-menu-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--color-success); }
 .super-head-menu-aside { flex: none; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-/* Inside the card the message is plain text: no second bubble around it. */
-.tg-card-body .chat-msg-user-bubble { padding: 0; border: 0; background: none; box-shadow: none; max-width: none; }
-.tg-card-body .chat-msg-user-media { margin-bottom: var(--space-2); }

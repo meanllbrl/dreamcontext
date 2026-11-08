@@ -176,7 +176,7 @@ export interface ChatHandle {
   observe(frame: Record<string, unknown>): void;
   /** `source` = who wrote the turn (I4, J1): a Telegram text clears no owner wait and is never
    *  "unheard" (a run or secret card is answered on the Mac or the phone, never by a chat text). */
-  userSent(text: string, opts?: { source?: InjectedSource }): void;
+  userSent(text: string, opts?: { source?: InjectedSource; server?: true }): void;
   answered(requestId?: string): void;
   /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
   interrupted(): void;
@@ -730,11 +730,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
       if (text.trim() && !text.trimStart().startsWith('/')) messagesOwed += 1;
-      emitUserSent(e.sessionId, text, opts?.source);
+      // A send the server noted for an agent (`super send`, an agent's `window send` into the
+      // Super) is never his words: it answers no wait and ends no Telegram presence.
+      const steered = opts?.source !== 'telegram-text' && takeSuperSend(e.sessionId, text);
+      emitUserSent(e.sessionId, text, opts?.source, opts?.server === true || steered);
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
       // Super Agent steering the child (a send the server noted for it) clears nothing. A
       // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
-      if (opts?.source !== 'telegram-text' && !takeSuperSend(e.sessionId, text)) {
+      if (opts?.source !== 'telegram-text' && !steered) {
         if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
@@ -896,17 +899,19 @@ function emitAssistantText(sessionId: string, text: string): void {
   }
 }
 
-const userSentListeners = new Set<(sessionId: string, text: string, source: InjectedSource | undefined) => void>();
+type UserSentListener = (sessionId: string, text: string, source: InjectedSource | undefined, server: boolean) => void;
+const userSentListeners = new Set<UserSentListener>();
 
-/** Be told every owner turn a chat wrote, with who wrote it (a Telegram text or not). */
-export function onChatUserSent(fn: (sessionId: string, text: string, source: InjectedSource | undefined) => void): () => void {
+/** Be told every owner turn a chat wrote, with who wrote it (a Telegram text or not). `server` =
+ *  the server's own text riding the owner path (a usage-reset or account-move continue): never his. */
+export function onChatUserSent(fn: UserSentListener): () => void {
   userSentListeners.add(fn);
   return () => { userSentListeners.delete(fn); };
 }
 
-function emitUserSent(sessionId: string, text: string, source: InjectedSource | undefined): void {
+function emitUserSent(sessionId: string, text: string, source: InjectedSource | undefined, server: boolean): void {
   for (const fn of [...userSentListeners]) {
-    try { fn(sessionId, text, source); } catch { /* a listener's failure is its own */ }
+    try { fn(sessionId, text, source, server); } catch { /* a listener's failure is its own */ }
   }
 }
 

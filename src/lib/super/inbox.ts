@@ -39,7 +39,7 @@ import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
-  MAX_HELD, MAX_MAIN_BATCHES, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
+  MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
 } from './types.js';
 
 /**
@@ -1175,16 +1175,16 @@ function ownerGist(text: string): string {
  * The owner's message was WRITTEN into a Super session (typed, phone, dock, a card answer; never a
  * slash command): one `msg` debt, closed only by a section under its ref (or a part ref).
  */
-export function superOwnerOwes(sessionId: string, text: string, now = Date.now()): Promise<void> {
+export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null): Promise<void> {
   const root = superKeyOfSession(sessionId);
   if (!root || typeof text !== 'string' || !text.trim() || text.startsWith('/')) return Promise.resolve();
   return track(writeSuper(root, (s) => {
     if (!s.enabled || s.session !== sessionId) return;
     // The same words again while their debt is still fresh (a message the bridge resubmits after
     // a limit or an account switch): one debt, so one section answers it.
-    const ref = msgRefOf(text);
+    const ref = tgRef && MSG_REF_RE.test(tgRef) ? tgRef : msgRefOf(text);
     if (openDebts(s).some((d) => d.kind === 'msg' && d.ref === ref && (d.nudges === 0 || d.parked === 'limit'))) return;
-    const d = openMessageDebt(s, text, now);
+    const d = openMessageDebt(s, text, now, ref);
     d.gist = ownerGist(text);
   }));
 }
@@ -1206,14 +1206,14 @@ export function superSaid(sessionId: string, text: string): Promise<void> {
 
 /** The block his message carries: what is still owed from before (never this message itself),
  *  or null. Starts with `<`: his replay never shows it. Read from the cached record. */
-export function superOwedBlock(sessionId: string, text: string): string | null {
+export function superOwedBlock(sessionId: string, text: string, tgRef?: string | null): string | null {
   const root = superKeyOfSession(sessionId);
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
   // His "write about this" on a Cevaplanmadı row names that debt: it rides with its ref and gist.
   const about = aboutHeads(text).filter((h) => h.kind === 'owed').map((h) => h.id);
-  const debts = owedForMessage(s, text.startsWith('/') ? null : msgRefOf(text), about);
+  const debts = owedForMessage(s, text.startsWith('/') ? null : tgRef && MSG_REF_RE.test(tgRef) ? tgRef : msgRefOf(text), about);
   if (!debts.length) return null;
   const vault = superVaultName(root);
   return [
