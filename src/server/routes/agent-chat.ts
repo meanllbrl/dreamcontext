@@ -106,6 +106,9 @@ import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
+import { listCards, onCardsChange } from '../../lib/cards/records.js';
+import { flushHeldReports } from '../runs/delivery.js';
+import { ensureCards } from './run-terminal.js';
 import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
@@ -3544,6 +3547,29 @@ export function startChatSession(
     }
   };
 
+  // The chat's run/secret card records (plan I1): the socket that holds the chat and the phone
+  // mirrors are told on every change (the client matches its cards and sends back the server's
+  // cardRef, never one of its own). A report held while no window was mounted goes now (H5).
+  const cardsFrame = (): Record<string, unknown> => {
+    // A client treats this frame as the whole set: the older cards are read back first.
+    ensureCards(chatRegistryId);
+    return { subtype: 'cards', session: chatRegistryId, cards: listCards(chatRegistryId) };
+  };
+  const unlistenCards = registry
+    ? onCardsChange((sid) => {
+      if (sid !== chatRegistryId) return;
+      const frame = cardsFrame();
+      if (mirrors) mirrors.frame(JSON.stringify({ type: '_meta', ...frame }));
+      sendMeta(frame);
+    })
+    : () => { /* no records */ };
+  const flushHeld = (): void => {
+    if (!registry || !windowControl) return;
+    const t = setTimeout(() => { void flushHeldReports(chatRegistryId).catch(() => { /* next mount */ }); }, 1500);
+    t.unref?.();
+  };
+  flushHeld();
+
   // The live browser view: watches the override's CDP port once the agent calls a browser tool.
   // The Super Agent's stage reads every non-super chat's output for a dev-server pin or a
   // live browser (jarvis S1, S2); a chat that is not a super child returns on the first check.
@@ -3668,6 +3694,7 @@ export function startChatSession(
     unwatchAuth();
     registry?.exited();
     unregisterInjector();
+    unlistenCards();
     // A respawn in place hands the notch's surface to its successor on the same socket.
     if (!handedOff) disposeSurface();
     windowControl?.release();
@@ -3807,6 +3834,7 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    if (registry) { sendMeta(cardsFrame()); flushHeld(); }
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });

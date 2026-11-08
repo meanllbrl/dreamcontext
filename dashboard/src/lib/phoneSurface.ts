@@ -205,7 +205,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/pick-paths',
   'GET /api/notifications',
   'POST /api/notify',
-  'POST /api/agent/secret',
   'GET /api/telegram',
   'POST /api/telegram/:target/bind',
   'DELETE /api/telegram/:target',

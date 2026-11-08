@@ -548,6 +548,8 @@ export class TelegramHub implements TelegramHubApi {
     if (!msg) return 'accepted';
     if (ab.target !== 'super') return this.deps.member ? this.deps.member.onMessage(this, key, u) : 'accepted';
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+    // A reply to a live run's output goes to that run's stdin before anything else (W4, H6).
+    if (this.messageHook && await this.messageHook(ab, msg)) return 'accepted';
     if (text.startsWith('/')) {
       if (await this.deps.handsfree?.onCommand?.(this, key, u)) return 'accepted';
       if (this.commandHook && await this.commandHook(ab, u)) return 'accepted';
@@ -659,12 +661,12 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
     if (!inj) { await this.reply(ab, LINES.cannotOpen); return false; }
     const ref = this.mintRef(ab);
-    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: 'text' });
+    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as ? { cardRef: as.cardRef } : {}) });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
     const dir = bindingDir(ab.scope, ab.target, this.home);
     const turns = readTurns(dir, this.home);
@@ -673,7 +675,7 @@ export class TelegramHub implements TelegramHubApi {
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
     this.beginTurn(ab, ref, sessionId);
-    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: 'telegram-text' });
+    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? 'run-report' : 'telegram-text' });
     if (!r.ok) {
       telegramRefs.forget(inj.chatRegistryId, ref);
       this.endTurn(ref);
@@ -849,7 +851,12 @@ export class TelegramHub implements TelegramHubApi {
     return readTurns(bindingDir(ab.scope, ab.target, this.home), this.home).turns.some((t) => t.ref === ref && this.now() - t.firstAt < TURN_ROUTABLE_MS);
   }
 
-  private bindingOfSession(sessionId: string): ActiveBinding | null {
+  /** A Telegram owner turn of this Super chat is in flight (W4: a run card posted in it is sent). */
+  hasTelegramTurn(sessionId: string): boolean {
+    return [...this.turns.values()].some((t) => t.sessionId === sessionId);
+  }
+
+  bindingOfSession(sessionId: string): ActiveBinding | null {
     const key = this.superSessions.get(sessionId);
     if (key) return this.active.get(key) ?? null;
     return null;
@@ -985,6 +992,8 @@ export class TelegramHub implements TelegramHubApi {
 
   /** Further button kinds (answer.ts asks, approvals) plug in here. */
   extraButton: ((ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number) => Promise<string | null>) | null = null;
+  /** W4 (runs.ts): an owner message the run cards take (a reply into a live run). True = handled. */
+  messageHook: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
 
   /** The Super chat's own pending prompt as buttons (permission: allow once / deny only). */
   private async sendPrompt(ab: ActiveBinding, sessionId: string, q: PendingQuestion): Promise<void> {

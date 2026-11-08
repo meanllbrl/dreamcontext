@@ -219,6 +219,10 @@ export const MAC_LOGIN_TOKEN_TTL_MS = 5 * 60_000;
 /** The QR carries `https://<url>/login?t=<token>`. */
 export const MAC_LOGIN_TOKEN_PARAM = 't';
 
+/** Set on a PTY the server relays off the Mac (a run card from the phone or Telegram, plan H7):
+ *  the CLI treats it as no terminal, so no terminal-only secret is printed into it. */
+export const RELAYED_PTY_ENV = 'DREAMCONTEXT_RELAYED_PTY';
+
 // ─── The phone listener's public routes (the API policy: route-policy.ts) ────
 
 /** Reachable with no credential at all. */
@@ -237,8 +241,10 @@ export const MAC_PUBLIC_ROUTES: readonly string[] = [
   'GET /icons/apple-touch-icon-180.png',
 ];
 
-/** The only WebSocket the phone opens. PTY, Assistant and browser-mirror are refused. */
-export const MAC_WS_PATHS: readonly string[] = ['/api/agent/chat'];
+/** The only WebSockets the phone opens: the chat, and a run card's narrow terminal (plan H8:
+ *  it reads only `session` + `card` and spawns only a pending record's argv). A free PTY, the
+ *  Assistant and the browser mirror are refused. */
+export const MAC_WS_PATHS: readonly string[] = ['/api/agent/chat', '/api/agent/run-terminal'];
 
 /** The routes the main listener's Mac panel calls (desktop + loopback + same-site only). */
 export const MAC_ROUTES = {

@@ -400,7 +400,12 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/pick-paths': deny('the composer\'s file picker opens a dialog on the Mac; the phone has its own sheet'),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
-  'POST /api/agent/secret': deny(SECRET),
+  // A secret card filled on the phone (plan G2, H9, I5): only for an OPEN server record of a chat
+  // of an exposed project, matched by {sessionId, cardRef}; the handler writes only that record's
+  // file and the keys it declared, under that chat's project. Without a matching record: 403/409.
+  'POST /api/agent/secret': filtered(`${CHAT}: a pending secret card's value, written only to the file and keys the card declared (record matched by session + cardRef; the record's project must be exposed)`),
+  // The chat's run/secret card records (plan I1, J4): the record's project must be exposed, else 404.
+  'GET /api/agent/cards': filtered(`${CHAT}: a chat's run and secret card records (what the agent wrote, never a path); side-effect free`),
   // Telegram bindings (W2, plan A1, AA1, AB): never from a phone; the Rust-called id routes act on
   // the vault their id was minted in, never the request's.
   'GET /api/telegram': deny(SECRET),
