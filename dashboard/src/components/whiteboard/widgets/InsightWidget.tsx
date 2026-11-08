@@ -153,7 +153,7 @@ function FramedInsight({ detail }: { detail: InsightDetail }) {
         {cache?.app ? (
           <LabAppBody summary={summary} cache={cache} series={cache.series ?? []} emptyHint={chartEntry(summary.render).emptyHint} fill />
         ) : cache?.html ? (
-          <HtmlInsightBody html={cache.html} title={summary.title} fill />
+          <HtmlInsightBody html={cache.html} title={summary.title} fill slug={summary.slug} />
         ) : null}
       </div>
     </div>

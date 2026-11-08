@@ -271,7 +271,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
                     and a screen reader is never locked to the iframe. */}
                 {cache?.html && (
                   <div className="idp-chart" style={{ marginBottom: 12 }}>
-                    <HtmlInsightBody html={cache.html} title={summary.title} full />
+                    <HtmlInsightBody html={cache.html} title={summary.title} full slug={summary.slug} />
                     <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
                       Script-rendered body (sandboxed) — the typed data below is the same numbers.
                     </div>

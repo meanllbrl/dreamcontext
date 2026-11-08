@@ -65,6 +65,11 @@ export function isMacOnlyHost(hostname: string, tunnelHost: string | null): bool
   return !h.includes('.');
 }
 
+/** The page-link rule, exported for Telegram (plan Q4): an https URL the phone can open, or null. */
+export function remoteWebUrl(ref: string, tunnelHost: string | null): string | null {
+  return remoteWeb(ref, tunnelHost).ref ?? null;
+}
+
 function remoteWeb(ref: string, tunnelHost: string | null): Pick<RemoteContainer, 'ref' | 'blocked'> {
   let url: URL | null = null;
   try { url = new URL(ref); } catch { url = null; }

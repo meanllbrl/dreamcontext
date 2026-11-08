@@ -97,7 +97,10 @@ export function planHubAnswer(args: unknown, pending: readonly PendingItem[]): H
     if (picksMatchOptions(v, q.options.map((o) => o.label), !!q.multiSelect)) picked[q.question] = v;
   }
   if (!Object.keys(picked).length) return { ok: false, error: 'no_choice' };
-  const notes = a.notes ? Object.fromEntries(Object.entries(a.notes).filter(([k]) => k in picked)) : undefined;
+  // Every note on one of the card's own questions, picked or not: buildQuestionAnswer carries an
+  // unpicked question's note as its annotation, exactly as the Mac card does.
+  const known = new Set(entry.questions.map((q) => q.question));
+  const notes = a.notes ? Object.fromEntries(Object.entries(a.notes).filter(([k, v]) => known.has(k) && v.trim())) : undefined;
   return {
     ok: true, requestId: a.requestId, behavior: 'allow',
     updatedInput: buildQuestionAnswer(entry.questions, picked, { input: entry.input, ...(notes && Object.keys(notes).length ? { notes } : {}) }),
@@ -140,4 +143,38 @@ export async function runHtmlSnapshot(args: unknown, invoke: ((cmd: string, a: R
     const known = ['unsupported', 'busy', 'rate', 'too_large', 'timeout', 'blank', 'forbidden'];
     return { ok: false, error: known.includes(code) ? code : 'failed' };
   }
+}
+
+// ─── super_handover and render_card: answered by the project surface, not the chat ──────────
+
+/**
+ * Both are PER PROJECT: one window mounts every open project's surface at once, so a command that
+ * reached a chat of project A must run A's surface, never whichever registered last. Keyed by the
+ * vault the chat session belongs to; a surface's cleanup removes only its own entry.
+ */
+/** `super_handover` (N5, P4): the project's own hand-over, adopting nothing. */
+export type HubHandover = () => Promise<HubResult>;
+const handovers = new Map<string, HubHandover>();
+export function setHubHandover(vault: string, fn: HubHandover): () => void {
+  handovers.set(vault, fn);
+  return () => { if (handovers.get(vault) === fn) handovers.delete(vault); };
+}
+export async function runHubHandover(vault: string, args: unknown): Promise<HubResult> {
+  if (!isRecord(args) || !Array.isArray(args.adopt) || args.adopt.length !== 0) return { ok: false, error: 'bad_args' };
+  const fn = vault ? handovers.get(vault) : undefined;
+  if (!fn) return { ok: false, error: 'no_window', reason: 'no_window' };
+  return fn();
+}
+
+/** `render_card` (R5, S2, T4): the project's stage insight cards only. */
+export type HubCardRenderer = (args: unknown) => Promise<HubResult>;
+const renderers = new Map<string, HubCardRenderer>();
+export function setHubCardRenderer(vault: string, fn: HubCardRenderer): () => void {
+  renderers.set(vault, fn);
+  return () => { if (renderers.get(vault) === fn) renderers.delete(vault); };
+}
+export async function runHubRenderCard(vault: string, args: unknown): Promise<HubResult> {
+  const fn = vault ? renderers.get(vault) : undefined;
+  if (!fn) return { ok: false, error: 'not_mounted', reason: 'not_mounted' };
+  return fn(args);
 }

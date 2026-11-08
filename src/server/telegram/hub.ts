@@ -36,6 +36,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { teamJobStatus } from '../../lib/super/team.js';
+import { msgRef } from '../../lib/super/types.js';
 import {
   CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, STATUS_GLYPH, STATUS_LABEL, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, withTelegramRef,
@@ -71,7 +72,7 @@ export const LINES = {
   writtenNotDone: "Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak.",
   stale: 'Bu soru artık geçerli değil.',
   waitingOnMac: "Mac'te seni bekliyor.",
-  unknownCommand: 'Bu komut burada yok. Komutlar: /handsfree',
+  unknownCommand: 'Bu komut burada yok. Komutlar: /durum /gundem /dur /handsfree',
   bound: (who: string) => `Bağlandı: ${who}. Buradan yazabilirsin.`,
   unbound: (keyed: boolean) => `Telegram bağlantısı Mac'te kaldırıldı${keyed ? '' : ' (anahtarsız istek)'}.`,
   conflict: "Bu bot başka bir yerde de dinleniyor; bağlantı durdu. BotFather'da token'ı yenile.",
@@ -182,7 +183,7 @@ export class TelegramHub implements TelegramHubApi {
   readonly strangers = new StrangerCounter();
   readonly active = new Map<BindingKey, ActiveBinding>();
   private pairings = new Map<string, LivePairing>();
-  private buttons = new Map<string, ButtonRecord & { key: BindingKey; data?: Obj }>();
+  private buttons = new Map<string, ButtonRecord & { key: BindingKey; data?: Obj; hubEdited?: boolean }>();
   private turns = new Map<string, TgTurn>();
   /** Super chat pin id → the binding that routes it. */
   private superSessions = new Map<string, BindingKey>();
@@ -467,7 +468,7 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   async afterBound(ab: ActiveBinding, who: string): Promise<void> {
-    if (ab.target === 'super') await ab.transport.setMyCommands(TELEGRAM_COMMANDS.filter((c) => c.command === 'handsfree')).catch(() => {});
+    if (ab.target === 'super') await ab.transport.setMyCommands(TELEGRAM_COMMANDS).catch(() => {});
     await this.send(ab, escapeHtml(LINES.bound(who))).catch(() => {});
   }
 
@@ -521,8 +522,13 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** Markdown → one or more Telegram messages. */
-  async sendMarkdown(ab: ActiveBinding, md: string): Promise<void> {
-    for (const html of toTelegramMessages(redactSecrets(md))) await this.send(ab, html);
+  /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
+   *  answer paths call `answerExtras`); every other caller (members, notices) keeps "Mac'te" lines. */
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac'): Promise<void> {
+    for (const html of toTelegramMessages(redactSecrets(md), { blocks })) {
+      const sent = await this.send(ab, html);
+      if (reply && Number.isSafeInteger(sent?.message_id)) this.noteReply(ab, sent.message_id, { ref: reply.ref, quote: reply.quote ?? md, from: 'super' });
+    }
   }
 
   async reply(ab: ActiveBinding, line: string): Promise<void> {
@@ -544,10 +550,12 @@ export class TelegramHub implements TelegramHubApi {
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
     if (text.startsWith('/')) {
       if (await this.deps.handsfree?.onCommand?.(this, key, u)) return 'accepted';
+      if (this.commandHook && await this.commandHook(ab, u)) return 'accepted';
       if (/^\/start(?:@\w+)?(?:\s|$)/.test(text)) { await this.reply(ab, 'Buradayım. Yaz, Super Mac\'te okusun.'); return 'accepted'; }
       await this.reply(ab, LINES.unknownCommand);
       return 'accepted';
     }
+    if (text && this.interceptText && await this.interceptText(ab, msg)) return 'accepted';
     return this.onOwnerMessage(ab, Number(u.update_id), msg);
   }
 
@@ -571,7 +579,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab.contextRoot) return 'accepted';
     let state;
     try { state = await readSuperState(ab.contextRoot); } catch { state = null; }
-    if (!state?.enabled || !state.session) { await this.reply(ab, LINES.superOff); return 'accepted'; }
+    if (!state?.enabled || !state.session) { await (this.superOff ? this.superOff(ab) : this.reply(ab, LINES.superOff)); return 'accepted'; }
     const media = pickInboundMedia(msg);
     this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now() }]);
     // Confirmed now (journaled); delivered in order behind the previous message.
@@ -605,13 +613,53 @@ export class TelegramHub implements TelegramHubApi {
     let text = inboundTurnText(msg, paths);
     if (spoken) text = `🎙 ${spoken}${text ? `\n\n${text}` : ''}`;
     if (!text.trim()) { drop(); return; }
-    if (!(await this.injectText(ab, updateId, text, sessionId))) drop();
+    // A hub-built header (a reply to a bot message, an agenda line's "Yaz", W5 M4/N6) goes first.
+    const head = this.turnPrefix ? this.turnPrefix(ab, msg) : '';
+    if (head) text = `${head}\n\n${text}`;
+    const ref = await this.injectText(ab, updateId, text, sessionId);
+    if (!ref) { drop(); return; }
+    const mid = Number(msg.message_id);
+    if (Number.isSafeInteger(mid)) this.noteReply(ab, mid, { ref, quote: inboundTurnText(msg, []) || (spoken ?? ''), from: 'owner' });
+  }
+
+  // ── Replies (M4, N6): message_id → what a reply to it means. Memory only (it holds a quote). ──
+
+  private replies = new Map<string, { ref: string; quote: string; from: 'super' | 'owner' }>();
+
+  noteReply(ab: ActiveBinding, messageId: number, entry: { ref: string; quote: string; from: 'super' | 'owner' }): void {
+    this.replies.set(`${ab.key}:${messageId}`, entry);
+    if (this.replies.size > 2000) this.replies.delete(this.replies.keys().next().value as string);
+  }
+
+  replyOf(ab: ActiveBinding, messageId: number): { ref: string; quote: string; from: 'super' | 'owner' } | null {
+    return this.replies.get(`${ab.key}:${messageId}`) ?? null;
+  }
+
+  /** W5 seams, set by `wireTelegramW5`: commands (/dur /durum /gundem), the header a turn opens
+   *  with, and what an answer's blocks become (pictures, buttons). */
+  commandHook: ((ab: ActiveBinding, update: Obj) => Promise<boolean>) | null = null;
+  turnPrefix: ((ab: ActiveBinding, msg: Obj) => string) | null = null;
+  answerExtras: ((ab: ActiveBinding, text: string, sessionId: string) => Promise<void>) | null = null;
+  /** A text that answers the hub itself (a rich ask's "Not ekle", W5): never a turn. */
+  interceptText: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
+  /** A prompt richer than one single-select question (multi-select, several questions, M3). */
+  richQuestion: ((ab: ActiveBinding, sessionId: string, q: PendingQuestion) => Promise<boolean>) | null = null;
+  /** "Bu projede Super kapalı" with a Super'i aç button (N5). */
+  superOff: ((ab: ActiveBinding) => Promise<void>) | null = null;
+
+  /** The answer paths leave the blocks to `answerExtras` only when it is wired. */
+  private extrasMode(): 'hub' | 'mac' { return this.answerExtras ? 'hub' : 'mac'; }
+
+  /** The live Telegram turn of a Super chat (its ref), or null. */
+  telegramTurnOf(sessionId: string): string | null {
+    for (const t of this.turns.values()) if (t.sessionId === sessionId) return t.ref;
+    return null;
   }
 
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string): Promise<boolean> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
     if (!inj) { await this.reply(ab, LINES.cannotOpen); return false; }
@@ -633,7 +681,7 @@ export class TelegramHub implements TelegramHubApi {
       await this.reply(ab, LINES.notWritten);
       return false;
     }
-    return true;
+    return ref;
   }
 
   /** The Super binding of a project by vault name, or null. */
@@ -825,7 +873,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab || ab.disabled || ab.target !== 'super') return;
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
-      if (all.trim()) await this.sendMarkdown(ab, all);
+      if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode()); await this.answerExtras?.(ab, all, sessionId); }
       return;
     }
     const sections = splitReplySections(text);
@@ -833,7 +881,8 @@ export class TelegramHub implements TelegramHubApi {
     for (const s of sections) {
       const hit = s.refs.find((r) => this.routable(ab!, r));
       if (!hit || !s.text.trim()) continue;
-      await this.sendMarkdown(ab, s.text);
+      await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode());
+      await this.answerExtras?.(ab, s.text, sessionId);
       const t = this.turns.get(hit);
       if (t) t.answered = true;
       sent = true;
@@ -842,20 +891,38 @@ export class TelegramHub implements TelegramHubApi {
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     const inputs = this.turnInputs.get(sessionId);
     const tgTurn = [...this.turns.values()].some((t) => t.sessionId === sessionId);
-    if (tgTurn && !inputs?.mac && text.trim()) await this.sendMarkdown(ab, text);
+    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode()); await this.answerExtras?.(ab, text, sessionId); }
   }
 
   // ── Buttons (plan "Button integrity") ──
 
   /** Sends a message with buttons and binds them: random id, message id, text hash, single use. */
-  async sendButtons(ab: ActiveBinding, html: string, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<string> {
+  async sendButtons(ab: ActiveBinding, html: string, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj, urlRows: unknown[][] = []): Promise<string> {
     const id = randomBytes(8).toString('hex');
     let idx = 0;
-    const keyboard = labels.map((row) => row.map((label) => ({ text: label, callback_data: `a:${id}:${idx++}` })));
+    const keyboard: unknown[][] = labels.map((row) => row.map((label) => ({ text: label, callback_data: `a:${id}:${idx++}` })));
+    keyboard.push(...urlRows);
     const sent = await this.send(ab, html, { reply_markup: { inline_keyboard: keyboard } });
     this.buttons.set(id, {
       ...rec, id, key: ab.key, botId: ab.binding.botId, chatId: ab.binding.chatId, messageId: sent.message_id,
       textHash: sha256(typeof sent.text === 'string' ? sent.text : ''), options: idx, ...(data ? { data } : {}),
+    });
+    return id;
+  }
+
+  /** A multi-select toggle (P4): the message's buttons re-drawn under a FRESH record bound to the
+   *  same message and text; the records it replaces die. Only the hub edits its own messages. */
+  async reissueButtons(ab: ActiveBinding, messageId: number, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<string | null> {
+    const old = [...this.buttons.values()].filter((b) => b.key === ab.key && b.messageId === messageId);
+    if (!old.length) return null;
+    const id = randomBytes(8).toString('hex');
+    let idx = 0;
+    const keyboard = labels.map((row) => row.map((label) => ({ text: label, callback_data: `a:${id}:${idx++}` })));
+    await ab.transport.call('editMessageReplyMarkup', { chat_id: ab.binding.chatId, message_id: messageId, reply_markup: { inline_keyboard: keyboard } });
+    for (const b of old) this.buttons.delete(b.id);
+    this.buttons.set(id, {
+      ...rec, id, key: ab.key, botId: ab.binding.botId, chatId: ab.binding.chatId, messageId, textHash: old[0].textHash, options: idx, hubEdited: true,
+      ...(data ? { data } : {}),
     });
     return id;
   }
@@ -868,7 +935,7 @@ export class TelegramHub implements TelegramHubApi {
     const message = obj(cb.message);
     const idx = m ? Number(m[2]) : -1;
     const ok = !!rec && rec.key === ab.key && rec.botId === ab.binding.botId && rec.chatId === ab.binding.chatId
-      && Number(message?.message_id) === rec.messageId && message?.edit_date === undefined
+      && Number(message?.message_id) === rec.messageId && (message?.edit_date === undefined || rec.hubEdited === true)
       && sha256(typeof message?.text === 'string' ? message.text : '') === rec.textHash && idx >= 0 && idx < rec.options;
     if (!ok) { await ab.transport.answerCallbackQuery(id, LINES.stale).catch(() => {}); return; }
     if (rec!.singleUse) this.buttons.delete(rec!.id);
@@ -935,11 +1002,14 @@ export class TelegramHub implements TelegramHubApi {
       return;
     }
     const qs = q.questions ?? [];
-    if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8) {
+    // Option previews are pictures: the rich path (W5) sends them before the buttons.
+    const previews = !!this.richQuestion && qs.some((x) => x.options.some((o) => typeof o.preview === 'string' && o.preview.trim()));
+    if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8 && !previews) {
       const labels = qs[0].options.map((o) => o.label);
       await this.sendButtons(ab, `${prefix}❓ ${escapeHtml(redactSecrets(qs[0].question))}`, labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
       return;
     }
+    if (this.richQuestion && await this.richQuestion(ab, sessionId, q).catch(() => false)) return;
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);
   }
 }

@@ -67,7 +67,8 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
 describe('hand over / take back (D5, D9, D17)', () => {
   it('the hand-over posts the adoption body built with the predicate (never the super itself)', () => {
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
-    expect(hand).toMatch(/const body = adoptionBody\(windowed \? \[\] : tabs, before\?\.session\);/);
+    // Telegram's "Super'i aç" adopts nothing (W5 N5); the Mac button keeps the predicate.
+    expect(hand).toMatch(/const body = adoptionBody\(windowed \|\| adoptNone \? \[\] : tabs, before\?\.session\);/);
     expect(hand).toMatch(/await enableSuper\(scopedApi, body\)/);
     // First rects in ONE batch BEFORE the request and the DOM switch (D18).
     expect(hand.indexOf('const first = new Map')).toBeLessThan(hand.indexOf('await enableSuper'));
@@ -425,7 +426,7 @@ describe('the window rules (D10, AC12)', () => {
 
   it('a second press while the hand-over request is out reverses as soon as the flight starts (AC Motion)', () => {
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
-    expect(hand).toMatch(/if \(superBusyRef\.current\) \{ reverseQueuedRef\.current = !reverseQueuedRef\.current; return; \}/);
+    expect(hand).toMatch(/if \(superBusyRef\.current\) \{ reverseQueuedRef\.current = !reverseQueuedRef\.current; return null; \}/);
     expect(hand).toMatch(/if \(reverseQueuedRef\.current\) \{ reverseQueuedRef\.current = false; settleReversedRef\.current\('in'\); \}/);
     const flight = surface.slice(surface.indexOf('const startFlight = (stage?'), surface.indexOf('const onStageReady = useCallback'));
     expect(flight).toMatch(/if \(reverseQueuedRef\.current\) \{ reverseQueuedRef\.current = false; run\.reverse\(\); \}/);

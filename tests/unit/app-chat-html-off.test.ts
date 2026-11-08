@@ -36,6 +36,7 @@ const SRC = fileURLToPath(new URL('../../dashboard/src/', import.meta.url));
 const MAY_DRAW: Record<string, string> = {
   'components/sleepy/chat/PdfViewer.tsx': 'a PDF of this server, drawn by the local viewer; a PDF in an app chat must still draw',
   'components/sleepy/chat/htmlExport.ts': "only reached from HtmlView's fullscreen export, which the rule replaces with the notice",
+  'lib/renderCard.ts': 'an EMPTY placeholder frame inside a detached clone serialised for Telegram (render_card); never attached, never drawn, no content',
 };
 
 function walk(dir: string, out: string[] = []): string[] {
