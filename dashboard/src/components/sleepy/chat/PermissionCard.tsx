@@ -12,6 +12,7 @@ import { allowAlertText, allowOffered, cleanAlertText } from './permissionAlert'
 import type { ChatSession, PendingPermission } from '../chatSession';
 import { looksInteractive, permissionReasonLine } from './permissionReason';
 import { PermissionDetails } from './PermissionDetails';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
 /**
  * ORGANISM — permission request, state 6. Header (🔓 + tool badge), a human sentence
@@ -76,9 +77,12 @@ export function PermissionCard({
   const allow = () => {
     if (embed && !window.confirm(cleanAlertText(alertText))) return;
     if (alwaysAllow && !embed && !item.suppressAlwaysAllow) session.alwaysAllow(item.toolName);
-    session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input });
+    // His click on this card (lib/ownerAtMac.ts); an agent's decision never passes a card.
+    if (session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input })) noteOwnerWrote();
   };
-  const deny = () => session.answer(item.requestId, { behavior: 'deny', message: 'Denied by user.' });
+  const deny = () => {
+    if (session.answer(item.requestId, { behavior: 'deny', message: 'Denied by user.' })) noteOwnerWrote();
+  };
 
   const handleExit = useCallback((result: { code: number | null; tail: string }) => {
     const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));

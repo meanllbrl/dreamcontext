@@ -18,6 +18,7 @@ import type { PowerRunner } from '../../src/lib/handsfree/mac/power.js';
 import { World } from '../helpers/thermal-world.js';
 import type { HandsfreeEvent } from '../../src/lib/telegram/contract.js';
 import { handsfreeAdapter, HF_LINES } from '../../src/server/telegram/handsfree.js';
+import { LINES } from '../../src/server/telegram/hub.js';
 
 let home: string; let auth: HandsfreeAuth; let events: string[]; let world: World;
 const VIA = { scope: 'ba9e7119eaab8c22', target: 'super' };
@@ -187,14 +188,14 @@ describe('the hub adapter', () => {
       await s.stop({ reason: 'mac' });
     });
 
-    it('a message typed on the Mac disarms it and tells him once', async () => {
+    it('a message typed on the Mac disarms it, names the binding it tells, and tells him once', async () => {
       const { hub, replies } = fakeHub();
       const s = fakeSession();
       const a = handsfreeAdapter(() => s as never);
       a.wire(hub);
       a.onPresence!(hub, KEY, 'telegram');
       await settle();
-      a.onPresence!(hub, KEY, 'mac');
+      expect(a.onBackAtMac!(hub)).toBe(KEY);
       await settle();
       expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true });
       expect(s.isOn()).toBe(false);
@@ -209,7 +210,7 @@ describe('the hub adapter', () => {
       s.startPowerOnly = vi.fn((v: unknown) => new Promise((r) => { release = () => r(real(v)); })) as never;
       const a = handsfreeAdapter(() => s as never);
       a.onPresence!(hub, KEY, 'telegram');
-      a.onPresence!(hub, KEY, 'mac');
+      expect(a.onBackAtMac!(hub)).toBe(KEY);
       release();
       await vi.waitFor(() => expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true }));
       expect(s.isOn()).toBe(false);
@@ -233,11 +234,49 @@ describe('the hub adapter', () => {
       const a = handsfreeAdapter(() => s as never);
       await a.onCallback!(hub, KEY, {} as never, 0);
       a.onPresence!(hub, KEY, 'telegram');
-      a.onPresence!(hub, KEY, 'mac');
+      expect(a.onBackAtMac!(hub)).toBeNull();
       await settle();
       expect(s.isOn()).toBe(true);
       expect(s.startPowerOnly).toHaveBeenCalledTimes(1);
       expect(s.stop).not.toHaveBeenCalled();
+    });
+
+    it('manual hands-free from the Mac panel, the phone link or the link button: a Mac message touches none', async () => {
+      const { hub } = fakeHub();
+      for (const start of ['panel', 'linkButton'] as const) {
+        const s = fakeSession();
+        const a = handsfreeAdapter(() => s as never);
+        if (start === 'panel') s.macStart();
+        else await a.onCallback!(hub, KEY, {} as never, 1);
+        expect(a.onBackAtMac!(hub)).toBeNull();
+        await settle();
+        expect(s.isOn()).toBe(true);
+        expect(s.stop).not.toHaveBeenCalled();
+      }
+    });
+
+    it('the automatic run of ANOTHER project\'s bot ends on a Mac message too (machine-wide)', async () => {
+      const { hub } = fakeHub();
+      const other = { key: 'other-scope/super', scope: 'other-scope', target: 'super', projectName: 'beta' };
+      (hub as unknown as { active: Map<string, unknown> }).active.set(other.key, other);
+      const s = fakeSession();
+      const a = handsfreeAdapter(() => s as never);
+      a.onPresence!(hub, other.key, 'telegram');
+      await settle();
+      expect(a.onBackAtMac!(hub)).toBe(other.key);
+      await settle();
+      expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true });
+    });
+
+    it('back at the Mac while it was starting and the start fails: the bot still gets its one "back" line', async () => {
+      const { hub, replies } = fakeHub();
+      let fail: () => void = () => {};
+      const s = fakeSession({ startPowerOnly: vi.fn(() => new Promise((_r, rej) => { fail = () => rej(Object.assign(new Error('x'), { code: 'boom' })); })) });
+      const a = handsfreeAdapter(() => s as never);
+      a.onPresence!(hub, KEY, 'telegram');
+      expect(a.onBackAtMac!(hub)).toBe(KEY);
+      fail();
+      await vi.waitFor(() => expect(replies).toEqual([LINES.back]));
     });
 
     it('no sleep permission: one line to Telegram, no crash, no second line', async () => {

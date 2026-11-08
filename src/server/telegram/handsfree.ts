@@ -12,9 +12,11 @@
  *  - Losing the binding that started Telegram-only hands-free ends it (C3, D3).
  *  - On Telegram, by itself (owner 2026-11-09): an authorized owner message to the Super's bot
  *    (the hub's presence fact, `onPresence`) starts power-only hands-free marked `auto` when
- *    nothing is on; it ends by itself ONLY when he writes to the Super from the Mac (owner
- *    2026-11-09: the keyboard, the mouse or the Telegram desktop app never end it). A run he
- *    started by the button or the link mode is never ended this way.
+ *    nothing is on; it ends by itself ONLY when he types a message on the Mac in ANY dreamcontext
+ *    chat, any project (`onBackAtMac`, `lib/telegram/back-at-mac.ts`; the keyboard, the mouse,
+ *    the Telegram desktop app or the phone link never end it).
+ *  - Manual hands-free is never automatic: a run started by the `/handsfree` buttons (either
+ *    channel), the Mac panel or the phone link ends only by hand or `/handsfree kapat`.
  * Only the hub (after an authorized tap or message) starts hands-free with `startedVia`; no CLI
  * or HTTP path.
  */
@@ -69,32 +71,43 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
   /** Bindings already told the sleep permission is missing (once per process). */
   const noGrantTold = new Set<string>();
   let arming = false;
+  /** The binding whose automatic run is starting right now. */
+  let armingKey: BindingKey | null = null;
   /** He came back to the Mac while the run was still starting: end it once it is on. */
   let backWhileArming = false;
-  /** The live run is one the hub started by itself for this binding. */
-  const autoRun = (scope: string, target: string) => {
+  /** The live run is one the hub started by itself (never one started by hand). */
+  const autoRun = () => {
     const s = session();
-    return s.isOn() && s.channel === 'telegram' && s.startedVia?.auto === true && matches(s.startedVia, scope, target);
+    return s.isOn() && s.channel === 'telegram' && s.startedVia?.auto === true;
   };
-  const backAtMac = async (scope: string, target: string) => {
-    if (arming) { backWhileArming = true; return; }
-    if (autoRun(scope, target)) await session().stop({ reason: 'back', keyed: true });
+  const endAuto = async () => {
+    if (autoRun()) await session().stop({ reason: 'back', keyed: true });
   };
   return {
-    onPresence(hub: TelegramHub, key: BindingKey, via: 'telegram' | 'mac') {
+    onBackAtMac() {
+      if (arming) { backWhileArming = true; return armingKey; }
+      const v = session().startedVia;
+      if (!autoRun() || !v) return null;
+      void endAuto().catch(() => {});
+      return keyOf(v.scope, v.target);
+    },
+
+    onPresence(hub: TelegramHub, key: BindingKey, via: 'telegram') {
       const ab = hub.active.get(key);
-      if (!ab || ab.target !== 'super') return;
-      if (via === 'mac') { void backAtMac(ab.scope, ab.target).catch(() => {}); return; }
+      if (!ab || ab.target !== 'super' || via !== 'telegram') return;
       const s = session();
       if (s.isOn() || arming) return;
       arming = true;
+      armingKey = key;
       backWhileArming = false;
       void s.startPowerOnly({ scope: ab.scope, target: ab.target, auto: true })
         .then(async () => {
           arming = false;
-          if (backWhileArming) { backWhileArming = false; await backAtMac(ab.scope, ab.target); }
+          if (backWhileArming) { backWhileArming = false; await endAuto(); }
         })
         .catch(async (err) => {
+          // He came back while it was starting and the hub left this bot's line to us: say it.
+          if (backWhileArming) { backWhileArming = false; await hub.reply(ab, LINES.back).catch(() => {}); }
           const code = (err as { code?: string }).code;
           if ((code === 'mac_not_setup' || code === 'mac_sudo_missing') && !noGrantTold.has(key)) {
             noGrantTold.add(key);

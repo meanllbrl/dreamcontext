@@ -19,6 +19,7 @@ import { emptySuperState } from '../../src/lib/super/types.js';
 import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
+import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -145,13 +146,14 @@ describe('the Super target', () => {
     expect(reg.telegramRefs.has(SID, ref!)).toBe(true);
     assistant(h, `<!-- re:${ref} -->\nHer şey yolunda.`);
     await vi.waitFor(() => expect(tg.texts()).toContain('Her şey yolunda.'));
-    // He writes on the Mac: he is off Telegram, a Mac answer (marked or not) is not sent.
+    // He writes on the Mac: he is off Telegram (told once), a Mac answer (marked or not) is not sent.
     const n = tg.texts().length;
     h.userSent('mac text');
+    noteOwnerAtMac();
     assistant(h, `<!-- re:abcdef -->\nMac'e cevap`);
     assistant(h, 'Sadece Mac için.');
     await new Promise((r) => setTimeout(r, 50));
-    expect(tg.texts().length).toBe(n);
+    expect(tg.texts().slice(n)).toEqual(["Mac'e döndün; cevaplar artık Mac'te."]);
   });
 
   describe('on Telegram (presence): every owner-facing section goes, whatever ref it opens with', () => {
@@ -196,6 +198,8 @@ describe('the Super target', () => {
       assistant(h, '<!-- re:abc123 -->\nHâlâ telefondasın.');
       await vi.waitFor(() => expect(tg.texts()).toContain('Hâlâ telefondasın.'));
       h.userSent('Mac\'ten yazdım');
+      noteOwnerAtMac();
+      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
       const n = tg.texts().length;
       assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
       await quiet();
@@ -231,6 +235,8 @@ describe('the Super target', () => {
       await readSuperState(root);
       const h2 = reg.registerChat({ sessionId: NEW, conversationId: null, vault: 'acme', mode: 'super' });
       h2.userSent('yeni oturumda Mac\'ten yazdım');
+      noteOwnerAtMac();
+      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
       const n = tg.texts().length;
       assistant(h2, 'Yeni oturumda Mac cevabı.');
       await quiet();
@@ -246,14 +252,70 @@ describe('the Super target', () => {
       expect(tg.texts().length).toBe(n);
     });
 
-    it('tells hands-free: telegram on his Telegram message, mac on his Mac words, nothing on an event turn', async () => {
+    it('tells hands-free: telegram on his Telegram message, back at the Mac on his Mac words, nothing on an event turn', async () => {
       const onPresence = vi.fn();
-      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence };
+      const onBackAtMac = vi.fn(() => null);
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence, onBackAtMac };
       const { h } = await onTelegram();
       expect(onPresence.mock.calls.map((c) => c[2])).toEqual(['telegram']);
+      // A turn with no Mac mark (an event turn, a phone or agent send) tells nothing.
       h.userSent('');
-      h.userSent('Mac\'ten yazdım');
-      expect(onPresence.mock.calls.map((c) => c[2])).toEqual(['telegram', 'mac']);
+      h.userSent('telefondan yazdım');
+      expect(onBackAtMac).not.toHaveBeenCalled();
+      noteOwnerAtMac();
+      expect(onBackAtMac).toHaveBeenCalledTimes(1);
+    });
+
+    // Owner 2026-11-09: "back at the Mac" is a message typed on the Mac in ANY dreamcontext chat.
+    it('a Mac message in ANOTHER project\'s ordinary chat ends it, with one "Mac\'e döndün" line', async () => {
+      const { h } = await onTelegram();
+      const other = reg.registerChat({ sessionId: '22222222-2222-4333-8444-555555555555', conversationId: null, vault: 'beta' });
+      other.userSent('başka projede yazdım');
+      noteOwnerAtMac(); // what the chat route calls for his composer send in ANY chat (back-at-mac.ts)
+      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      const n = tg.texts().length;
+      assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
+      other.userSent('bir daha');
+      noteOwnerAtMac();
+      await quiet();
+      expect(tg.texts().length).toBe(n);
+    });
+
+    it('a member chat on the Mac (the AI Team routes call noteOwnerAtMac) ends it too', async () => {
+      const { h } = await onTelegram();
+      noteOwnerAtMac();
+      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      const n = tg.texts().length;
+      assistant(h, '<!-- re:abc123 -->\nÜye işi bitti.');
+      await quiet();
+      expect(tg.texts().length).toBe(n);
+    });
+
+    it('a phone-link message (no Mac mark) and a Telegram-sourced turn do not end it', async () => {
+      const { h } = await onTelegram();
+      const other = reg.registerChat({ sessionId: '33333333-2222-4333-8444-555555555555', conversationId: null, vault: 'beta' });
+      other.userSent('telefondan yazdım');
+      h.userSent('telefondan Super\'e');
+      h.userSent('tg', { source: 'telegram-text' });
+      assistant(h, '<!-- re:abc123 -->\nHâlâ Telegram.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Hâlâ Telegram.'));
+      expect(tg.texts()).not.toContain("Mac'e döndün; cevaplar artık Mac'te.");
+    });
+
+    it('a bot still streaming a run he started by hand gets no "back" line (its answers keep coming)', async () => {
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => true, onPresence: () => {}, onBackAtMac: () => null };
+      await onTelegram();
+      noteOwnerAtMac();
+      await quiet();
+      expect(tg.texts()).not.toContain("Mac'e döndün; cevaplar artık Mac'te.");
+    });
+
+    it('the bot whose automatic keep-awake ends is told once, by hands-free, not twice', async () => {
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence: () => {}, onBackAtMac: () => [...hub.active.keys()][0] };
+      await onTelegram();
+      noteOwnerAtMac();
+      await quiet();
+      expect(tg.texts()).not.toContain("Mac'e döndün; cevaplar artık Mac'te.");
     });
 
     it('nothing outside the hub sets it: no injected Telegram message, no wide send', async () => {

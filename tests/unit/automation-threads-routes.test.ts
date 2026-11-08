@@ -41,6 +41,8 @@ const { sayToAgent } = await import('../../src/server/routes/automations.js');
 const { createWhiteboard } = await import('../../src/lib/whiteboards/store.js');
 const { emptyWhiteboard, serializeWhiteboard } = await import('../../src/lib/whiteboards/format.js');
 const { makeWidgetElement } = await import('../../src/lib/whiteboards/widgets.js');
+const { onOwnerAtMac } = await import('../../src/lib/telegram/back-at-mac.js');
+const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
 
 /**
  * The three routes the `#agents` feed reads. What is under test is the CONTRACT
@@ -706,5 +708,58 @@ describe('board on say and reply — display text in the thread, raw text and bo
     setAutomationEnabled(contextRoot, 'digest', false);
     expect(sayToAgent(contextRoot, { slug: 'digest', text: 'x', via: 'assistant' })).toMatchObject({ ok: false, status: 409, code: 'say_disabled' });
     expect(sayToAgent(contextRoot, { slug: 'digest', text: '  ', via: 'dashboard' })).toMatchObject({ ok: false, status: 400, code: 'bad_say' });
+  });
+});
+
+describe('a member chat typed on the Mac is "back at the Mac" (owner 2026-11-09)', () => {
+  const HOST = '127.0.0.1:4173';
+  function macReq(body: unknown, o: { origin?: string | null; phone?: boolean } = {}): IncomingMessage {
+    const r = makePostReq(body) as unknown as { socket: object; headers: Record<string, string> };
+    r.socket = { remoteAddress: '127.0.0.1' };
+    if (o.phone) markPhoneSocket(r.socket);
+    r.headers = { host: HOST, ...(o.origin === null ? {} : { origin: o.origin ?? `http://${HOST}` }) };
+    return r as unknown as IncomingMessage;
+  }
+  let desktop: string | undefined;
+  let at: number[];
+  let off: () => void;
+  beforeEach(() => {
+    desktop = process.env.DREAMCONTEXT_DESKTOP;
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    at = [];
+    off = onOwnerAtMac((t) => at.push(t));
+  });
+  afterEach(() => {
+    off();
+    if (desktop === undefined) delete process.env.DREAMCONTEXT_DESKTOP; else process.env.DREAMCONTEXT_DESKTOP = desktop;
+  });
+
+  it('a reply in a member chat from the app page ends it; the phone link and an Origin-less call do not', async () => {
+    makeRepliable();
+    const send = async (o: { origin?: string | null; phone?: boolean }) => {
+      const r = makeRes();
+      await handleAutomationsThreadReply(macReq({ text: 'nasıl gitti?', runId: NEWEST }, o), r.res, { slug: 'digest' }, contextRoot);
+      expect(r.status()).toBe(202);
+    };
+    await send({ phone: true });
+    await send({ origin: null });
+    expect(at).toHaveLength(0);
+    await send({});
+    expect(at).toHaveLength(1);
+  });
+
+  it('a new message to a member from the app page ends it; a refused one does not', async () => {
+    makeRepliable();
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
+    const r1 = makeRes();
+    await handleAutomationsSay(macReq({ slug: 'nope', text: 'merhaba' }), r1.res, {}, contextRoot);
+    expect(r1.status()).toBe(404);
+    expect(at).toHaveLength(0);
+    const r2 = makeRes();
+    await handleAutomationsSay(macReq({ slug: 'digest', text: 'merhaba' }), r2.res, {}, contextRoot);
+    expect(r2.status()).toBe(200);
+    expect(at).toHaveLength(1);
+    spy.mockRestore();
   });
 });

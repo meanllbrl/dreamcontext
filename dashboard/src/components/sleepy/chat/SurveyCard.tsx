@@ -18,6 +18,7 @@ import {
 import { markSurveyDraftSent, readSurveyDraft, surveyDraftOwner, writeSurveyDraft } from './surveyDrafts';
 import { RECONNECT_CHIP_DELAY_MS } from './reconnectChip';
 import { recordPhoneEvent } from '../../../lib/phoneConnLog';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 import { useI18n } from '../../../context/I18nContext';
 
 /**
@@ -221,6 +222,8 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     if (!complete || submitted) return;
     if (connected === false) { hold(); return; }
     if (!session.answerQuestion(item.requestId, questions, resolveAnswers(questions, picks), resolveNotes(questions, picks))) { hold(); return; }
+    // His answer, on this card, now: the one place a question card says so (lib/ownerAtMac.ts).
+    noteOwnerWrote();
     // Written is not arrived: the picks stay until the turn moves on (surveyDrafts.ts).
     if (draftKey) markSurveyDraftSent(draftKey);
     setSubmitted('answered');
@@ -230,6 +233,7 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     if (submitted) return;
     if (connected === false) { hold(); return; }
     if (!session.answer(item.requestId, { behavior: 'deny', message: unclearMessage(questions, picks) })) { hold(); return; }
+    noteOwnerWrote();
     if (draftKey) markSurveyDraftSent(draftKey);
     setSubmitted('unclear');
   };

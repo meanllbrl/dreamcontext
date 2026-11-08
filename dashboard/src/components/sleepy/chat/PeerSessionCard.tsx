@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 import { createPortal } from 'react-dom';
 import { createChatSession, type ChatSession, type ChatItem } from '../chatSession';
 import { useChrome } from '../../layout/WindowChrome';
@@ -347,14 +348,14 @@ function PeerSessionPanel({
                     <button
                       type="button"
                       className="peer-session-btn is-primary"
-                      onClick={() => session.answer(p.requestId, { behavior: 'allow' })}
+                      onClick={() => { if (session.answer(p.requestId, { behavior: 'allow' })) noteOwnerWrote(); }}
                     >
                       Allow
                     </button>
                     <button
                       type="button"
                       className="peer-session-btn"
-                      onClick={() => session.answer(p.requestId, { behavior: 'deny' })}
+                      onClick={() => { if (session.answer(p.requestId, { behavior: 'deny' })) noteOwnerWrote(); }}
                     >
                       Deny
                     </button>

@@ -79,6 +79,7 @@ import { micVisible, micSetupSteps, micPressAction } from '../../../lib/voice/mi
 import { useMicPermission } from '../../../lib/voice/micPermission';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { useStageCards } from '../super/stageCards';
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -2006,6 +2007,10 @@ export function Composer({
     // A message about an agenda line opens with its block (the About chip), before the quote.
     const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
     if (!quoted.trim()) return;
+    // He wrote this, now, whatever happens to it next (sent, steered, queued by ⌥⏎ or behind an
+    // open card, handed to a sleeping tab, a peer or a member): the one place the composer says
+    // so (lib/ownerAtMac.ts). A slash command is not his words; a queue drain never passes here.
+    if (!slash) noteOwnerWrote();
     // Every test below reads his words without the chips; every path that clears the box keeps
     // them for the next message (they were not sent) and never hands a token to a peer.
     const staged = readScratch(convId).attachments;

@@ -49,6 +49,7 @@ import {
   bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readTurns,
   redactToken, removeBindingDir, scopeOfContextRoot, writeBinding, writePollState, writeTurns,
 } from '../../lib/telegram/config.js';
+import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
 import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
@@ -80,6 +81,7 @@ export const LINES = {
   conflict: "Bu bot başka bir yerde de dinleniyor; bağlantı durdu. BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
   endedSilent: 'Bu tur sana yazı göndermeden bitti. Gerekirse Mac\'e bak ya da tekrar yaz.',
+  back: "Mac'e döndün; cevaplar artık Mac'te.",
 } as const;
 
 // ─── Dependencies (tests inject fakes) ──────────────────────────────────────
@@ -92,10 +94,12 @@ export interface HubHandsfree {
   onCallback?(hub: TelegramHub, key: BindingKey, record: ButtonRecord, idx: number): Promise<string | null>;
   /** A binding is lost: Telegram-only hands-free it started ends (C3, D3). */
   onBindingLost?(scope: TelegramScope, target: TelegramTarget): void;
-  /** The owner's presence on a Super binding moved (`onTelegram`): `telegram` = an authorized
-   *  message the hub injected, `mac` = his own words typed to the Super on the Mac. Only the hub
-   *  calls it; it is how Telegram-only hands-free starts and ends by itself. */
-  onPresence?(hub: TelegramHub, key: BindingKey, via: 'telegram' | 'mac'): void;
+  /** An authorized owner message the hub injected into a Super (`onTelegram`). Only the hub calls
+   *  it; it is how Telegram-only hands-free starts by itself. */
+  onPresence?(hub: TelegramHub, key: BindingKey, via: 'telegram'): void;
+  /** He wrote on the Mac, in any dreamcontext chat (`lib/telegram/back-at-mac.ts`): the automatic
+   *  run ends, machine-wide. Returns the binding it tells itself (its own "back" line), or null. */
+  onBackAtMac?(hub: TelegramHub): BindingKey | null;
 }
 
 export interface HubMember {
@@ -195,14 +199,12 @@ export class TelegramHub implements TelegramHubApi {
   private superSessions = new Map<string, BindingKey>();
   /** Per Super chat: what the running turn's owner inputs were (fallback rule, plan "Which answer"). */
   private turnInputs = new Map<string, { telegram: Set<string>; mac: boolean }>();
-  /** Per Super binding: where the owner's LATEST message to it came from (`onTelegram`).
+  /** Per Super binding: where the owner's LATEST message came from (`onTelegram`).
    *  DERIVED, never set by an agent: `injectText` (an authorized Telegram message or a button the
-   *  hub turned into a turn) marks `telegram`; an owner turn the chat wrote with no Telegram ref
-   *  marks `mac`. Memory only: a restarted server starts off Telegram (fails toward fewer sends). */
+   *  hub turned into a turn) marks `telegram`; his own words typed on the Mac in ANY dreamcontext
+   *  chat (`onOwnerAtMac`, owner 2026-11-09) mark every binding `mac`. Memory only: a restarted
+   *  server starts off Telegram (fails toward fewer sends). */
   private presence = new Map<BindingKey, { via: 'telegram' | 'mac'; at: number }>();
-  /** A Mac owner turn in a Super chat the hub has not mapped yet (a fresh session): applied once
-   *  the chat → binding map is refreshed, before any answer of that chat is routed. */
-  private macPending = new Map<string, number>();
   /** Prompts already sent (requestId), so a re-emitted `asking` does not send twice. */
   private sentPrompts = new Set<string>();
   private unsubs: Array<() => void> = [];
@@ -223,7 +225,8 @@ export class TelegramHub implements TelegramHubApi {
     this.unsubs.push(
       onChatAssistantText((sid, text) => { void this.onAssistantText(sid, text).catch(() => { /* best-effort */ }); }),
       onChatChange((c) => this.onChatChange(c.entry, c.from)),
-      onChatUserSent((sid, text, source, server) => this.noteUserSent(sid, source, text, server)),
+      onChatUserSent((sid, _text, source) => this.noteUserSent(sid, source)),
+      onOwnerAtMac((at) => this.backAtMac(at)),
       telegramRefs.onTelegramRefDropped((id, ref, written) => this.onRefDropped(id, ref, written)),
       telegramRefs.onTelegramRefWritten((id, ref) => this.onRefWritten(id, ref)),
     );
@@ -833,18 +836,8 @@ export class TelegramHub implements TelegramHubApi {
     turn.lastEditAt = this.now();
   }
 
-  private noteUserSent(sessionId: string, source: string | undefined, text = '', server = false): void {
-    // His own words typed on the Mac (or a phone mirror) end his Telegram presence. An event turn
-    // (empty), a slash command, a server continue and a Telegram-sourced turn are not that.
-    if (!source && !server && text.trim() && !text.trimStart().startsWith('/')) {
-      const key = this.superSessions.get(sessionId);
-      if (key) this.markMac(key, this.now());
-      else if (this.presence.size) {
-        this.macPending.set(sessionId, this.now());
-        if (this.macPending.size > 200) this.macPending.delete(this.macPending.keys().next().value as string);
-        void this.refreshSuperSessions().catch(() => {});
-      }
-    }
+  private noteUserSent(sessionId: string, source: string | undefined): void {
+    // Presence is not read here: only words typed on the Mac end it (`backAtMac`), whichever chat.
     if (!this.superSessions.has(sessionId)) return;
     const cur = this.turnInputs.get(sessionId) ?? { telegram: new Set<string>(), mac: false };
     if (source !== 'telegram-text') cur.mac = true;
@@ -901,18 +894,28 @@ export class TelegramHub implements TelegramHubApi {
         if (s.session) this.superSessions.set(s.session, ab.key);
       } catch { /* unreadable: nothing routes */ }
     }
-    for (const [sid, at] of [...this.macPending]) {
-      const key = this.superSessions.get(sid);
-      if (key) { this.markMac(key, at); this.macPending.delete(sid); }
-    }
   }
 
-  private markMac(key: BindingKey, at: number): void {
-    const p = this.presence.get(key);
-    // A Telegram message that came after this Mac turn wins (the latest message decides).
-    if (p && p.at > at) return;
-    this.presence.set(key, { via: 'mac', at });
-    try { this.deps.handsfree?.onPresence?.(this, key, 'mac'); } catch { /* best-effort */ }
+  /** He wrote on the Mac, in any dreamcontext chat of any project (owner 2026-11-09): the automatic
+   *  Telegram part ends machine-wide. Every Super bot that was forwarding stops and says so once;
+   *  the bot whose automatic keep-awake ends says it with its own line (handsfree.ts), not twice.
+   *  A hands-free run started by hand is never touched (`onBackAtMac` ends only an `auto` run), and
+   *  its bot, which keeps streaming every answer, is told nothing (a "back" line would be false). */
+  private backAtMac(at: number): void {
+    const forwarding: ActiveBinding[] = [];
+    for (const ab of this.active.values()) {
+      if (ab.target !== 'super') continue;
+      if (this.onTelegram(ab) && !ab.disabled) forwarding.push(ab);
+      if (this.presence.has(ab.key)) this.presence.set(ab.key, { via: 'mac', at });
+    }
+    let toldBy: BindingKey | null = null;
+    try { toldBy = this.deps.handsfree?.onBackAtMac?.(this) ?? null; } catch { /* best-effort */ }
+    for (const ab of forwarding) {
+      if (ab.key === toldBy) continue;
+      // Still streaming (a manual run, decided after hands-free answered): its answers keep coming.
+      if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) continue;
+      void this.reply(ab, LINES.back).catch(() => {});
+    }
   }
 
   /** The owner is ON TELEGRAM for this Super binding: his latest message to it came through
@@ -927,7 +930,6 @@ export class TelegramHub implements TelegramHubApi {
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
     if (!ab || ab.disabled || ab.target !== 'super') return;
-    if (this.macPending.has(sessionId)) await this.refreshSuperSessions();
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode()); await this.answerExtras?.(ab, all, sessionId); }

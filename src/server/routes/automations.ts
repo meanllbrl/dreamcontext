@@ -88,6 +88,7 @@ import { noteTeamFollowUp } from '../../lib/super/team.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
+import { noteMacOwnerInput } from '../mac-owner.js';
 import { expandBoardRefs } from '../../lib/whiteboards/board-refs.js';
 import {
   startAutomationJob, currentAutomationJob, runningAutomationJobs,
@@ -2385,6 +2386,8 @@ export async function handleAutomationsSay(
       board: body?.board as string | null | undefined,
       override: picked.override,
     });
+    // A member chat typed on this Mac: back at the Mac (lib/telegram/back-at-mac.ts).
+    if (result.ok && typeof body?.text === 'string') noteMacOwnerInput(req, body.text);
     if (result.ok) sendJson(res, result.status, result.body);
     else sendError(res, result.status, result.code, result.message);
   } catch {
@@ -2557,6 +2560,8 @@ export async function handleAutomationsThreadReply(
       sendError(res, r.status, r.code, r.message);
       return;
     }
+    // His reply in a member chat, typed on this Mac: back at the Mac (lib/telegram/back-at-mac.ts).
+    noteMacOwnerInput(req, text);
     const out = r.body as { entry: ThreadEntry; job: { id: string; status: string }; answers: boolean };
     // The owner's own words on a team job's run: the Super Agent hears them (route-only; Super's
     // own follow-up is recorded once by `team-ask`).

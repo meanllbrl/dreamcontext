@@ -29,6 +29,7 @@ import { markPhoneSocket, setMacPublicOrigin } from '../../src/server/phone-orig
 import { OWNER_KEY_HEADER, OWNER_KEY_STDIN_ENV, hasOwnerKey, receiveOwnerKey, refuseInspectorSignal, setOwnerKey } from '../../src/server/owner-key.js';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { _resetAssistantState, setAssistantSurface } from '../../src/lib/assistant/session-state.js';
+import { onOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverResult } from '../../src/lib/assistant/relay.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
@@ -89,6 +90,18 @@ describe('POST /api/assistant/answer', () => {
     child.observe(bash('r1'));
   });
   afterEach(() => { _resetAssistantState(); setOwnerKey(null); });
+
+  it('"back at the Mac": the owner\'s click on the notch counts once; a refused or failed answer does not', async () => {
+    let n = 0;
+    const off = onOwnerAtMac(() => { n += 1; });
+    try {
+      await answer({ ...OWNER_PAGE, [OWNER_KEY_HEADER]: undefined });
+      await answer(OWNER_PAGE, 'r-stale');
+      expect(n).toBe(0);
+      await answer(OWNER_PAGE);
+      expect(n).toBe(1);
+    } finally { off(); }
+  });
 
   it('the notch page itself gets through', async () => {
     expect((await answer(OWNER_PAGE)).body()).toMatchObject({ ok: true });
