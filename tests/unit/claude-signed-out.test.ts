@@ -84,13 +84,17 @@ describe('a running chat refused for sign-in moves (agent-chat.ts)', () => {
   const src = readFileSync(join(__dirname, '../../src/server/routes/agent-chat.ts'), 'utf-8');
   it('reads the frame, records it, and moves through the same switch as a refused turn', () => {
     expect(src).toMatch(/isAuthFailureFrame\(obj\)\) onAuthFailed\(\)/);
-    const body = src.slice(src.indexOf('const onAuthFailed = (): void => {'), src.indexOf('const maybeSwitchAccount = async'));
+    // Up to the Codex accounts block (Track T W2) that follows it, which has its own auto-switch rule.
+    const start = src.indexOf('const onAuthFailed = (): void => {');
+    const ends = ['// ── Codex accounts (Track T W2)', 'const maybeSwitchAccount = async'].map((m) => src.indexOf(m, start)).filter((i) => i > start);
+    const body = src.slice(start, Math.min(...ends));
     expect(body).toContain('recordSignedOut(activeAccountId)');
     expect(body).toContain("decideAndAnnounce(text ?? '', 'needs_relogin'");
     expect(body).not.toContain('autoSwitchEnabled');
   });
 
   it('a turn that went through clears the record, never the refused turn\'s own result', () => {
-    expect(src).toMatch(/if \(!authFailedTurn && obj\.is_error !== true && activeAccountId\) clearSignedOut\(activeAccountId\)/);
+    // `!bridgeTool &&` (Track T W2): a Codex pane's turn never clears a CLAUDE account's record.
+    expect(src).toMatch(/if \((!bridgeTool && )?!authFailedTurn && obj\.is_error !== true && activeAccountId\) clearSignedOut\(activeAccountId\)/);
   });
 });

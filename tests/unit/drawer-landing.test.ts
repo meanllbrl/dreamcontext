@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildDrawerRows, teamRowsOf, type DrawerProjectInput } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import { buildRoster, type TeamAgent } from '../../dashboard/src/components/aiteam/teamModel';
-import { landsOnChat } from '../../dashboard/src/lib/drawerIntents';
+import { arrivalCovers, landsOnChat } from '../../dashboard/src/lib/drawerIntents';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
 const project = (name: string, o: Partial<DrawerProjectInput> = {}): DrawerProjectInput => ({
@@ -91,8 +91,31 @@ describe('one step to what was clicked', () => {
   it('the surface takes it before the first paint', () => {
     expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!arrival \|\| !windowed\) return;\s*setExpanded\(true\);/);
   });
-  it("a member's conversation fills the chat area", () => {
-    expect(src('dashboard/src/components/sleepy/AgentTerminal.css')).toMatch(/\.agent-peek-body > \.aiteam-convo \{[^}]*flex: 1 1 auto/);
+  it('the project already on screen is never covered while a click lands (owner 2026-11-07: a member row gave a blank white page)', () => {
+    // Brought forward or still restoring: the plain wait covers what it would flash first.
+    expect(arrivalCovers({ kind: 'member', slug: 'a', title: 'A' }, false)).toBe(true);
+    expect(arrivalCovers({ kind: 'super' }, false)).toBe(true);
+    // On screen and ready: it keeps its stage until the click has run, a member's and main's.
+    expect(arrivalCovers({ kind: 'member', slug: 'a', title: 'A' }, true)).toBe(false);
+    expect(arrivalCovers({ kind: 'super' }, true)).toBe(false);
+    expect(arrivalCovers({ kind: 'new-window' }, true)).toBe(false);
+    // A History pick never waits.
+    expect(arrivalCovers({ kind: 'open-session', sessionId: 's' }, false)).toBe(false);
+    const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
+    // The arrival reads the commit before the click's (a passive effect), and only then covers.
+    expect(surface).toMatch(/useEffect\(\(\) => \{\s*shownReadyRef\.current = isActive && expanded && caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;\s*\}\);/);
+    expect(surface).toMatch(/if \(arrivalCovers\(arrival\.intent, shownReadyRef\.current\)\) setArriving\(arrival\.intent\.kind\);/);
+    expect(surface).not.toMatch(/if \(arrival\.intent\.kind !== 'open-session'\) setArriving\(/);
+  });
+  it("a member lands on its own stage (plan-r10 1), a task intent included; the peek is transcripts only", () => {
+    expect(landsOnChat({ kind: 'member', slug: 'a', title: 'A', task: 'some-task' })).toBe(true);
+    const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
+    expect(surface).toMatch(/void openMemberStage\(intent\.slug, intent\.task\);/);
+    expect(surface).toMatch(/setSuperView\('super'\);\s*setExpanded\(true\);/);
+    expect(surface).toMatch(/\{windowed && superPeek && \(/);
+    expect(surface).toMatch(/\{renderChildTranscript\(superPeek\.claudeId\)\}/);
+    // The drawer marks the member's row while its stage shows, not main's.
+    expect(surface).toMatch(/const peekMember = superView === 'super' \? memberOf\(activeSuperId\) : null;/);
   });
 });
 

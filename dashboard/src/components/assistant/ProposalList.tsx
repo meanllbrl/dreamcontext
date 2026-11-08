@@ -17,7 +17,16 @@ const VERB_LABEL: Record<string, string> = {
   send: 'Send a message',
   answer: 'Answer a question',
   broadcast: 'Tell every project',
+  'app-open': 'Open an app',
+  'app-do': 'Run an app action',
+  'app-shot': 'See an app window',
+  // A dreamcontext App asks to use a project .mcp.json server with its own keys. Not an
+  // assistant verb: approved by a click only (no Y), never edited (the pin is what was shown).
+  'app-mcp-accept': 'Let an app use an MCP server',
 };
+
+/** Proposals the owner answers only with a click: no Y shortcut, no Edit. */
+export const CLICK_ONLY_VERBS: ReadonlySet<string> = new Set(['app-mcp-accept']);
 
 /** `gone`: it was decided or timed out already. `refused`: a yes takes the shell's key, and this
  *  app has none to give; rejecting still works. */
@@ -66,8 +75,8 @@ function ProposalRow({ p, keyed, failure, onDecided }: { p: Proposal; keyed: boo
           <>
             {editing
               ? <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy || !draft.trim()} onClick={() => void act('edit')}>Send edited</button>
-              : <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy} onClick={() => void act('approve')}>Approve{keyed && <kbd>Y</kbd>}</button>}
-            <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => setEditing((v) => !v)}>{editing ? 'Cancel edit' : 'Edit'}</button>
+              : <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy} onClick={() => void act('approve')}>Approve{keyed && !CLICK_ONLY_VERBS.has(p.verb) && <kbd>Y</kbd>}</button>}
+            {!CLICK_ONLY_VERBS.has(p.verb) && <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => setEditing((v) => !v)}>{editing ? 'Cancel edit' : 'Edit'}</button>}
           </>
         )}
         <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => void act('reject')}>Reject{keyed && !editing && <kbd>N</kbd>}</button>

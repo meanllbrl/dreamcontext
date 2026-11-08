@@ -79,8 +79,9 @@ describe('the surface wiring', () => {
     const guard = block.indexOf('if (superBusyRef.current || flightRunRef.current?.run.active || superRowBusyRef.current) {');
     expect(guard).toBeGreaterThan(0);
     expect(guard).toBeLessThan(block.indexOf('planSuperRow('));
-    expect(block).toMatch(/superRowBusyRef\.current = true;\s*void runSuperRow\(plan, \{/);
-    expect(block).toMatch(/\}\)\.finally\(\(\) => \{ superRowBusyRef\.current = false; \}\);/);
+    // 6dc73060: the run also holds the drawer's arrival overlay (arrivalHeldRef) and clears it at the end.
+    expect(block).toMatch(/superRowBusyRef\.current = true;\s*arrivalHeldRef\.current = true;\s*void runSuperRow\(plan, \{/);
+    expect(block).toMatch(/\}\)\.finally\(\(\) => \{ superRowBusyRef\.current = false; arrivalHeldRef\.current = false; setArriving\(null\); \}\);/);
   });
 
   it('open-on-restore yields to a page the window was opened for or already went to', () => {

@@ -221,7 +221,7 @@ export interface ScaffoldAnswers {
   projectPath?: string;
   /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
-  /** Optional skill-pack names to install after setup (e.g. ['engineering']). */
+  /** Optional skill-pack names to install after setup (e.g. ['design']). */
   packs?: string[];
   /** Run `git init` in the project once it is set up (now, or when Git finishes installing). */
   gitInit?: boolean;
@@ -948,6 +948,19 @@ interface AgentUiSettings {
   /** Remembered default EFFORT level for a new Chat session, same menu, same empty-string
    *  = inherit-the-CLI contract as chatDefaultModel. Mirrors dashboard/src/lib/agentSettings. */
   chatDefaultEffort: string;
+  /** The tool a new chat opens on: '' = Claude (the resting value), `codex` = Codex. Saved with
+   *  the default model. Mirrors dashboard/src/lib/agentSettings. */
+  chatDefaultTool: '' | 'codex';
+  /** Codex's own default model and effort, kept apart so a Codex id can never reach
+   *  `claude --model`. '' = the Codex account's own. */
+  codexDefaultModel: string;
+  codexDefaultEffort: string;
+  /** The Super Agent's tool (Track T W4). */
+  superTool: '' | 'codex';
+  /** The model picker's starred models, `<tool>:<model id>` (Track T W4), at most 24. */
+  /** Which engine runs a Claude chat: `dreamcontext` (today's, the default) or `t3`, T3's Claude
+   *  driver through the bridge (plan r5 §5, experimental). */
+  claudeEngine: 'dreamcontext' | 't3';
   /** Light mode (Settings → Performance): 'auto' (on for ≤ 8 GB or on battery), 'on', 'off'.
    *  Mirrors dashboard/src/lib/agentSettings (the effective value is computed client-side). */
   lightMode: 'auto' | 'on' | 'off';
@@ -975,6 +988,11 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatPermissionMode: 'auto',
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  chatDefaultTool: '',
+  codexDefaultModel: '',
+  codexDefaultEffort: '',
+  superTool: '',
+  claudeEngine: 'dreamcontext',
   lightMode: 'auto',
   parkIdleChats: true,
   superModel: SUPER_AGENT_DEFAULT.model,
@@ -1029,6 +1047,12 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // which is not a failure state but the documented "inherit the CLI's own default".
     chatDefaultModel: sanitizeModel(typeof raw.chatDefaultModel === 'string' ? raw.chatDefaultModel : null),
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
+    chatDefaultTool: raw.chatDefaultTool === 'codex' ? 'codex' : '',
+    codexDefaultModel: sanitizeModel(typeof raw.codexDefaultModel === 'string' ? raw.codexDefaultModel : null),
+    codexDefaultEffort: sanitizeEffort(typeof raw.codexDefaultEffort === 'string' ? raw.codexDefaultEffort : null),
+    superTool: raw.superTool === 'codex' ? 'codex' : '',
+    // Only an explicit 't3' leaves today's engine.
+    claudeEngine: raw.claudeEngine === 't3' ? 't3' : 'dreamcontext',
     // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.
     lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
     // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old
@@ -1047,7 +1071,7 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
 }
 
 /** The persisted blob as it is on disk right now, coerced (defaults if absent or unreadable). */
-function readAgentUiSettings(): AgentUiSettings {
+export function readAgentUiSettings(): AgentUiSettings {
   try {
     const p = agentSettingsPath();
     if (existsSync(p)) return coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
@@ -1135,6 +1159,9 @@ interface LauncherUiSettings {
   drawerExpanded?: string[];
   drawerWidth?: number;
   drawerOpen?: boolean;
+  /** The dashboard theme, kept app-global so dreamcontext App windows (their own processes and
+   *  origins) follow it, also when no dashboard window is open (dreamcontext-apps plan r19). */
+  theme?: 'light' | 'dark' | 'system';
 }
 
 /** List leads until Space has been CHOSEN — mirrors dashboard/src/lib/launcherPrefs.ts. */
@@ -1187,7 +1214,13 @@ export function coerceLauncherUiPartial(raw: Record<string, unknown>): Partial<L
     out.drawerWidth = Math.min(DRAWER_WIDTH_MAX, Math.max(DRAWER_WIDTH_MIN, Math.round(raw.drawerWidth)));
   }
   if (typeof raw.drawerOpen === 'boolean') out.drawerOpen = raw.drawerOpen;
+  if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') out.theme = raw.theme;
   return out;
+}
+
+/** The dashboard theme as stored (dreamcontext App windows read it); `system` when unset. */
+export function readLauncherTheme(): 'light' | 'dark' | 'system' {
+  return readLauncherUiStored().theme ?? 'system';
 }
 
 /** The stored file, coerced; a missing file is `{}`. A corrupt one is copied to `.bad` (only the
@@ -1226,7 +1259,7 @@ export async function handleLauncherUiGet(
 ): Promise<void> {
   const settings: LauncherUiSettings = { ...LAUNCHER_UI_DEFAULTS, ...readLauncherUiStored() };
   if (isPhoneSocket(req)) {
-    sendJson(res, 200, { view: settings.view, ...(settings.shell ? { shell: settings.shell } : {}) });
+    sendJson(res, 200, { view: settings.view, ...(settings.shell ? { shell: settings.shell } : {}), ...(settings.theme ? { theme: settings.theme } : {}) });
     return;
   }
   sendJson(res, 200, settings);
@@ -1546,7 +1579,7 @@ const MAX_LOGO_BYTES = 5 * 1024 * 1024;
  *
  * The image is identified by MAGIC BYTES, never the client's content-type: this route
  * writes into a vault the user will later commit, so only a verified raster
- * (png/jpeg/webp/gif) is accepted and it gets its canonical extension. An SVG can still be
+ * (png/jpeg/webp) is accepted and it gets its canonical extension. An SVG can still be
  * used by dropping the file in by hand; the upload path stays strict. Every other
  * `logo.*` candidate is deleted first — a stale `logo.png` would shadow a freshly
  * written `logo.webp` (candidate order is preference order).
@@ -1596,9 +1629,11 @@ export async function handleLauncherLogoSet(
     return;
   }
 
+  // `logo.gif` is no candidate (`vault-logo.ts`): written, it would delete the old logo and
+  // show nothing.
   const sniffed = sniffImageType(buf);
-  if (!sniffed) {
-    sendError(res, 400, 'not_an_image', 'The file is not a PNG, JPEG, WebP or GIF image.');
+  if (!sniffed || sniffed === 'image/gif') {
+    sendError(res, 400, 'not_an_image', 'The file is not a PNG, JPEG or WebP image.');
     return;
   }
 
@@ -1620,6 +1655,35 @@ export async function handleLauncherLogoSet(
 
   const logo = findVaultLogo(contextRoot);
   sendJson(res, 200, { ok: true, logo: logo !== null, logoStamp: logo ? Math.round(logo.mtimeMs) : null });
+}
+
+/**
+ * POST /api/launcher/logo/remove?vault=<name> — REMOVE a registered vault's logo: every
+ * `logo.*` candidate goes, so no shadowed file surfaces in its place. Only those fixed names
+ * under a registered vault, never a path from the request.
+ */
+export async function handleLauncherLogoRemove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url ?? '', 'http://localhost');
+  const name = (url.searchParams.get('vault') ?? '').trim();
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 404, 'unknown_vault', `No registered vault "${name}".`);
+    return;
+  }
+  const contextRoot = join(resolve(vault.path), '_dream_context');
+  try {
+    for (const candidate of vaultLogoCandidates(contextRoot)) rmSync(candidate, { force: true });
+  } catch (err) {
+    console.error('[launcher] logo remove failed:', err);
+    sendError(res, 500, 'remove_failed', 'Could not remove the logo from the vault.');
+    return;
+  }
+  sendJson(res, 200, { ok: true, logo: false, logoStamp: null });
 }
 
 /**

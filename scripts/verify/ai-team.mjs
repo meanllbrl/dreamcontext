@@ -62,17 +62,6 @@ async function openTeam(page, phone) {
   await page.waitForTimeout(1500);
 }
 
-/**
- * A teammate opens on its conversation (AI Team v2: the real Chat pane); the routines' activity
- * these screens are about is one click away ("See activity" in its header).
- */
-async function toActivity(page) {
-  if (!(await page.locator('.aiteam-stage').first().isVisible().catch(() => false))) return;
-  await page.locator('[data-team-activity]').first().click();
-  await page.locator('[data-team-stage]').first().waitFor({ timeout: 10000 });
-  await page.waitForTimeout(600);
-}
-
 const browser = await chromium.launch();
 try {
   for (const theme of ['light', 'dark']) {
@@ -80,29 +69,11 @@ try {
     {
       const { context, page } = await open(browser, theme, 1440, 900);
       await openTeam(page, false);
-      await shot(page, `1440-${theme}-0-stage`);
-      await toActivity(page);
-      await shot(page, `1440-${theme}-1-conversation`);
+      await shot(page, `1440-${theme}-1-stage`);
       await page.locator('[data-team-routines]').click();
       await page.locator('.aiteam-panel').waitFor();
       await shot(page, `1440-${theme}-2-routines`);
       await page.locator('.aiteam-panel-close').click();
-      // The temporary model: open the trigger and pick another model.
-      await page.locator('[data-team-row="sabah-brifingi"]').click();
-      await page.waitForTimeout(800);
-      await toActivity(page);
-      await page.locator('.chat-cmp-modeltrigger').click();
-      await page.locator('.chat-cmp-modelmenu').waitFor();
-      await shot(page, `1440-${theme}-3-model-menu`);
-      await page.locator('.chat-cmp-modelrow').filter({ hasText: /Sonnet/ }).first().click();
-      await page.locator('.aiteam-temp').waitFor();
-      await shot(page, `1440-${theme}-4-model-temporary`);
-      await page.locator('.aiteam-temp .aiteam-linkbtn').click();
-      await page.locator('[data-team-row="arastirmaci"]').click();
-      await page.waitForTimeout(800);
-      await toActivity(page);
-      await page.locator('[data-team-event]').first().waitFor();
-      await shot(page, `1440-${theme}-5-routine-created`);
       await page.locator('.aiteam-newbtn').click();
       await page.locator('.aiteam-new').waitFor();
       await shot(page, `1440-${theme}-6-new-teammate`);
@@ -116,8 +87,6 @@ try {
       await page.locator('[data-team-row="buyume-analisti"]').click();
       await page.locator('.aiteam-stage').first().waitFor();
       await shot(page, `390-${theme}-2-stage`);
-      await toActivity(page);
-      await shot(page, `390-${theme}-2-conversation`);
       await context.close();
     }
   }

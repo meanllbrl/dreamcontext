@@ -3,6 +3,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { error } from '../../lib/format.js';
 import { GOAL_LIVE_RECIPES } from '../../lib/develop-recipe.js';
+import { forEnvTool } from '../../lib/tool-text.js';
 import {
   AGENT_ROLE_IDS,
   GOAL_FORK_STATES,
@@ -234,7 +235,8 @@ export function goalLiveState(deps: GoalLiveDeps, pairs: string[], opts: { wave?
 export function goalLiveRecipe(name: string, print: (text: string) => void = (t) => process.stdout.write(t)): void {
   const text = GOAL_LIVE_RECIPES[name];
   if (!text) throw new GoalLiveInputError(`no recipe "${name}"; known: ${Object.keys(GOAL_LIVE_RECIPES).join(', ')}`);
-  print(text);
+  // Run from a Codex or Antigravity chat: in that tool's words (tool-text.ts); Claude's unchanged.
+  print(forEnvTool(text));
 }
 
 /** Escalation / abort only — a finished run keeps its file so the win and receipt stay up. */

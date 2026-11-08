@@ -1,0 +1,26 @@
+# reason: T3 runs one instance per server and clears the whole runtime temp at create; each dreamcontext pane is its own process on one account's profile, so a second pane deleted the first pane's unpacked runtime. Only run folders a week old go.
+--- a/apps/server/src/provider/acp/AntigravitySessionFiles.ts
++++ b/apps/server/src/provider/acp/AntigravitySessionFiles.ts
+@@ -44,10 +44,21 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
+ );
+ 
+ /** Sweep only private runtimes before launch; Windows does not protect live extracted data files from deletion. */
++// Each dreamcontext pane is its own process on one account's profile: only a stale run folder goes.
++const STALE_RUN_MS = 7 * 24 * 60 * 60 * 1000;
++
+ export const removeAntigravityRuntimeTempDirs = Effect.fn("removeAntigravityRuntimeTempDirs")(
+   function* (tempDirectory: string) {
+     const fs = yield* FileSystem.FileSystem;
+-    yield* fs.remove(tempDirectory, { recursive: true, force: true });
++    if (!(yield* fs.exists(tempDirectory))) return;
++    const names = yield* fs.readDirectory(tempDirectory);
++    const cutoff = Date.now() - STALE_RUN_MS;
++    for (const name of names) {
++      const entry = `${tempDirectory}/${name}`;
++      const info = yield* fs.stat(entry);
++      const modified = info.mtime._tag === "Some" ? info.mtime.value.getTime() : 0;
++      if (modified < cutoff) yield* fs.remove(entry, { recursive: true, force: true });
++    }
+   },
+   Effect.catch(() =>
+     Effect.logWarning("Could not remove leftover Antigravity runtime temp files."),

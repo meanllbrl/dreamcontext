@@ -377,3 +377,14 @@ describe('BoardCanvas — fully removed (Capability 3, criterion 10)', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('toAction — app-install kind (app-araclari §5)', () => {
+  it('takes an owner/name repo and nothing else', () => {
+    expect(toAction({ label: 'Install CRM', action: 'app-install', repo: 'acme/crm' }))
+      .toEqual({ label: 'Install CRM', action: 'app-install', repo: 'acme/crm' });
+    for (const repo of ['', 'acme', 'https://github.com/acme/crm', 'acme/crm; rm -rf', '../x/y', 'a/b/c']) {
+      expect(toAction({ label: 'x', action: 'app-install', repo }), repo).toBeNull();
+    }
+    expect(toAction({ label: 'x', action: 'app-install', id: 'acme/crm' })).toBeNull();
+  });
+});

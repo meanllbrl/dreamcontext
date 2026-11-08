@@ -29,8 +29,9 @@ export const AGENTS_DIR = 'agents';
  * an agent that has no automation of its own. Every field but `enabled` and
  * `notify` is approval-hashed in the agent's call target.
  *
- * Nothing edits these in this build: the migration writes them for an on-call
- * agent (its old run settings), and every other agent has the defaults.
+ * The migration writes them for an on-call agent (its old run settings), and every other agent
+ * has the defaults. One write path exists: `enabled`, through `setAgentCallEnabled` (the Ekip
+ * list's on/off switch, owner page only, plan-r10 1d); it is unhashed, so the member stays approved.
  */
 export interface AgentCallSettings {
   timeoutMinutes: number;
@@ -96,6 +97,14 @@ export interface AgentManifest {
   /** The MCP tools its light jobs may call (`read_tools:`, literal names, set by hand in the
    *  file; `light-run.ts`). Absent = none: a light job then has the file readers only. Hashed. */
   readTools?: string[];
+  /** `scope: board`: a home-board agent limited to its board (the `dontAsk` envelope). Absent
+   *  (false) = it runs under its autonomy level like any member; the board only shows its work.
+   *  Hashed only when true. Meaningless without a `whiteboard`, so a write without one drops it. */
+  boardOnly?: boolean;
+  /** Runs on this tool when it is not Claude (Track T W4). Hashed through the composed target. */
+  tool?: 'codex' | 'antigravity';
+  /** The account it is pinned to, unhashed. Absent = chosen per run. */
+  account?: string;
   /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
    *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
    *  yet. Unhashed. Only the owner writes, runs, talks to or assigns it (`agents/owner.ts`). */
@@ -128,6 +137,8 @@ export interface AgentInput {
   effort?: EffortLevel | null;
   learning?: boolean;
   whiteboard?: string | null;
+  /** `scope: board` (see `AgentManifest.boardOnly`). */
+  boardOnly?: boolean;
   photo?: string | null;
   shared?: boolean;
   autonomy?: AgentAutonomy;
@@ -138,7 +149,11 @@ export interface AgentInput {
  * settings: no verb edits those in this build, and `withRestamp` re-approves
  * only what this patch can express.
  */
-export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>>;
+export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'boardOnly' | 'photo' | 'autonomy'>> & {
+  /** null = back to Claude. Changing it leaves the agent awaiting the owner's approval. */
+  tool?: 'codex' | 'antigravity' | null;
+  account?: string | null;
+};
 
 /**
  * Where an agent sits in the team: its manager and its team's name. `null` clears a key,

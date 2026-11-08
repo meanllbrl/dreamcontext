@@ -67,6 +67,8 @@ export interface PastSession {
 /** A {@link PastSession} plus the lowercased search haystack, which stays server-side —
  *  shipping every session's prompts to the client would be megabytes for a list view. */
 interface IndexedSession extends PastSession {
+  /** {@link isUnattendedRun}. */
+  unattended: boolean;
   haystack: string;
   /** The haystack's lines in their own case (title, harvested prompts, last prompt), for the
    *  match snippet. Bounded like the haystack. */
@@ -353,6 +355,27 @@ export function scanChunk(chunk: string, maxPrompts: number): ScanResult {
   return out;
 }
 
+/** The brief of a scheduled run: every other brief of ours opens a tab a person sits at. */
+const SCHEDULED_BRIEF = 'you are scheduled dreamcontext automation';
+
+/**
+ * Did this conversation run with nobody at it? An agent run ({@link isAgentRun}), less the briefs
+ * that open a person's own chat (a task handed to a tab, the sleep agent): those are a person's,
+ * running or not. Its first prompt answers for a session nothing else knows.
+ */
+export function isUnattendedRun(firstPrompt: string): boolean {
+  if (!isAgentRun(firstPrompt)) return false;
+  const lower = firstPrompt.trim().toLowerCase();
+  return lower.startsWith(SCHEDULED_BRIEF) || !OWN_AGENT_BRIEFS.some((b) => lower.startsWith(b.prefix));
+}
+
+export function transcriptIsUnattendedRun(path: string): boolean {
+  try {
+    const { head, tail } = readEnds(path);
+    return isUnattendedRun(promptLabel(scanChunk(head, 1).prompts[0] ?? (tail ? scanChunk(tail, 1).prompts[0] : '') ?? ''));
+  } catch { return false; }
+}
+
 /**
  * Summarize one transcript file into a listable session. Returns null when the file holds
  * nothing a person would recognize — no human prompt at all (a tab opened and never used,
@@ -421,6 +444,7 @@ export function summarizeTranscript(
     // leading attachment path — and both ends of the classifier's rules are anchored to the
     // START of the prompt.
     agentRun: isAgentRun(promptLabel(firstRaw)),
+    unattended: isUnattendedRun(promptLabel(firstRaw)),
     haystack,
     lines,
   };
@@ -673,6 +697,9 @@ export function listPastSessions(
     query?: string;
     limit?: number;
     includeAgentRuns?: boolean;
+    /** Sessions this listing must not know of at all: gone before the query, so neither a row, a
+     *  total nor the withheld count answers for what they contain. */
+    hide?: (session: { id: string; unattended: boolean }) => boolean;
     /** The new shell's History: the project's Super Agent as one entry (`partitionSuper`). */
     superRows?: { owned: ReadonlySet<string>; mode: 'group' | 'only' };
     /** The name each conversation carried in its tab (`session-titles.ts`), keyed by
@@ -682,6 +709,8 @@ export function listPastSessions(
     content?: ContentLookup;
     /** Precomputed {@link listTranscriptFiles} (the caller already needed it to index). */
     files?: { files: TranscriptFile[]; truncated: boolean };
+    /** Only these conversations, judged before `limit` (an app's window lists its own). */
+    onlyIds?: ReadonlySet<string>;
   } = {},
 ): ListPastSessionsResult {
   const home = opts.home ?? homedir();
@@ -690,6 +719,7 @@ export function listPastSessions(
 
   const all: Array<IndexedSession & { path: string }> = [];
   for (const c of scanned) {
+    if (opts.onlyIds && !opts.onlyIds.has(c.id)) continue;
     const hit = summaryCache.get(c.path);
     let summary: IndexedSession | null;
     if (hit && hit.mtimeMs === c.mtimeMs && hit.size === c.size) {
@@ -700,6 +730,7 @@ export function listPastSessions(
       summaryCache.set(c.path, { mtimeMs: c.mtimeMs, size: c.size, summary });
     }
     if (!summary) continue;
+    if (opts.hide?.(summary)) continue;
     // Applied per listing, never baked into the memo: a tab can be renamed without its
     // transcript changing, so a cached summary must not pin yesterday's name.
     const named = opts.titles?.get(summary.id);
@@ -766,7 +797,7 @@ export function listPastSessions(
   // queried listing says why each row matched, and where.
   const TIERS = ['title', 'prompt', 'content'] as const;
   const sessions = shown.slice(0, limit).map(({ s, tier, match }) => {
-    const { haystack: _h, lines: _l, path: _p, ...rest } = s;
+    const { haystack: _h, lines: _l, path: _p, unattended: _u, ...rest } = s;
     return tokens.length ? { ...rest, match, matchIn: TIERS[tier] } : rest;
   });
   return {

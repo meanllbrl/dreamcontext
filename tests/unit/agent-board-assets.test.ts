@@ -386,9 +386,25 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * owner-asked (task composer-photos-are-inline-chips…): each picture goes out as
    * `[Picture N: <path>]` with his words after it, and the agent has to know those words are
    * about that picture. Both rules kept in one briefing.
+   * 2026-11-01: +231 for the `automation` approval card (owner: "onay sohbette kart olarak
+   * gelsin"), one worked example as the lockstep test requires; still under 14800.
+   * 2026-11-03: +94 for the one-line `dc-kv` shape (dt/dd pairs, or a div per row opening
+   * with a dc-label), owner screenshot of a report whose kv rows crushed to a letter a line.
+   * Actual 14,743; still under 14800.
+   * 2026-11-03: -> 15100 for +304, owner ("Kuralı düzelt", a plan report of grey boxes and a
+   * 13-chip journey): a product mockup copies that product's real look (the kit rule is the
+   * page's), a sequence past 2-4 steps is a dc-graph never a chip row, mixed node tones get a
+   * legend. Actual 15,047.
+   * 2026-11-03: +46 for the run card's one-line rule said plainly (Gemini and Codex both wrote
+   * `"command":"ls\npwd"`, a card the chat drops). Merged in 0.40.5 with the rule above: actual 15,093 (to be checked); still under 15100.
+   * 2026-11-06: -> 15300, a RAISE for +184, a "## Scripts" section (owner 2026-11-05: a Bypass
+   * chat still asked him for a heredoc script, Claude Code's own parse check, and hands-free he
+   * could not answer). Written to a file, the same script asks nothing. Actual 15,277.
+   * 2026-11-07: -> 15400, +102 for the `app-install` button (app-araclari §5: an app the project
+   * has and this Mac does not, shared with this account). Actual 15,379.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15400);
   });
 
   /**
@@ -399,7 +415,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14418)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15379)).toBeLessThanOrEqual(20);
   });
 
   /**

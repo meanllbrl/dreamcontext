@@ -44,7 +44,7 @@ function fnBody(src: string, signature: string): string {
 }
 
 describe('spawnAutoSleep — the background cycle does not inherit the tab it was triggered from', () => {
-  const body = fnBody(HOOK, 'function spawnAutoSleep()');
+  const body = fnBody(HOOK, 'function spawnAutoSleep(');
 
   it('passes an env of its own rather than inheriting the hook process env wholesale', () => {
     expect(body, 'no env option means the tab identity rides along')

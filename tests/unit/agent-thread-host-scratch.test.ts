@@ -63,8 +63,8 @@ describe('a host given its own scratchId', () => {
     expect(mount({ scratchId: CARD }).host.scratchId).toBe(CARD);
   });
 
-  it('without one, keeps the per-slug page bucket', () => {
-    expect(mount().host.scratchId).toBe(`agents-thread-${TARGET.slug}`);
+  it('without one, the page bucket is per run: a reply goes to its own run\'s session', () => {
+    expect(mount().host.scratchId).toBe(`agents-thread-${TARGET.slug}::${TARGET.runId}`);
   });
 
   it('keys the draft by that id: a remount on the same card gets it back, another card does not', () => {

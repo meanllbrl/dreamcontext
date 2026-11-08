@@ -1,5 +1,5 @@
-// AC4 (client) and AC6: a handed-over project's Sohbetler list on the phone is ONE Super Agent row
-// and nothing else; without a hand-over the list is unchanged. The row opens the Super Agent's
+// AC4 (client) and AC6: a handed-over project on a device shell is ONE Super Agent row and nothing
+// else; without a hand-over its rows are unchanged. The row opens the Super Agent's
 // chat as a mirror (never `reattach=1`), and the owner's words typed on the other surface arrive
 // as `owner_echo` and draw as the owner's bubble. Rules are plain functions; the wiring is
 // checked against the source like the other phone tests (root vitest runs under plain Node).
@@ -39,19 +39,18 @@ describe('the Super Agent row (AC6)', () => {
     expect(superTap(row({ live: false }), [])).toBeNull();
   });
 
-  it('in the one list (W3) a handed-over project is its one Super row: no chat of it, no new chat there', async () => {
-    const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
-    expect(list).toContain('data-testid="super-row"');
-    expect(list).toMatch(/const superHere = superRowFor\(live, vault\);/);
-    // No ＋ in a handed-over project (its chats are the Super's); the rest of the list stays.
-    expect(list).toMatch(/\{!superHere && \(\s*<button type="button" className="mlist-foot-btn mlist-foot-btn--primary" onClick=\{onNewChat\} data-testid="list-new">/);
-    for (const kept of ['list-search', 'past-row', 'mac-live-row']) expect(list).toContain(kept);
+  it('on a device shell a handed-over project lists its Super row beside its own chats', async () => {
     const { homeRows } = await import('../../dashboard/src/components/sleepy/phoneHome.js');
     const rows = homeRows({
-      vault: 'acme', tabs: [], projects: ['acme'], pastByVault: { acme: [{ id: 'old', title: 'old', preview: '', updatedAt: 1, startedAt: 1, sizeBytes: 1, gitBranch: '' }] },
-      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true }] },
+      vault: 'acme', tabs: [], projects: ['acme'],
+      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true, jobs: [], runningIds: [], childIds: [] }] },
     });
-    expect(rows.map((r) => r.kind)).toEqual(['super']);
+    expect(rows.map((r) => r.kind)).toEqual(['super', 'open']);
+    // The phone's empty chat screen there: New chat, and the Super's button beside it (disabled offline).
+    const surface = code('dashboard/src/components/sleepy/AgentSurface.tsx');
+    expect(surface).not.toContain('handsfree.super.hint');
+    expect(surface).toMatch(/disabled=\{!phoneSuperRow\.row\.live\}/);
+    expect(surface).toMatch(/windowChrome\.openChatRow\(vault, phoneSuperRow\)/);
   });
 
   it('opening it never evicts the window: a passive open, no `reattach=1`', () => {
@@ -59,12 +58,11 @@ describe('the Super Agent row (AC6)', () => {
     const fn = surface.slice(surface.indexOf('const openSuperOnPhone = useCallback'), surface.indexOf('}, [resumePastSession]);', surface.indexOf('const openSuperOnPhone')));
     expect(fn).toMatch(/resumePastSession\(\{ id: row\.conversationId[^]*'passive'\)/);
     expect(fn).not.toContain("'1'");
-    expect(surface).toMatch(/onOpenSuper=\{\(row\) => \{ openSuperOnPhone\(row\); setPhoneView\('chat'\); \}\}/);
   });
 
   it('both languages carry the row\'s words', () => {
     const i18n = readFileSync(join(ROOT, 'dashboard/src/context/I18nContext.tsx'), 'utf-8');
-    for (const k of ['handsfree.super.title', 'handsfree.super.hint', 'handsfree.super.offline']) {
+    for (const k of ['handsfree.super.title', 'handsfree.super.offline', 'super.phoneJobs.title', 'super.phoneJobs.done']) {
       expect(i18n.split(`'${k}':`).length - 1).toBe(2);
     }
   });

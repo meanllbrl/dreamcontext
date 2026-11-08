@@ -105,7 +105,7 @@ function AuthoredRow({
       <RowFace who={entry.kind === 'user' ? 'user' : 'agent'} message={message} />
       <div className="agent-thread-post-main">
       <div className="agent-thread-post-head">
-        <span className="agent-thread-post-who">{entry.kind === 'user' ? 'You' : agentFaceOf(message).title}</span>
+        <span className="agent-thread-post-who">{entry.kind === 'user' ? (entry.via === 'app' ? `${entry.app ?? 'An'} app` : 'You') : agentFaceOf(message).title}</span>
         <span className="agent-thread-post-time">{hhmm(entry.at)}</span>
         {queued && <span className="agent-thread-post-queued">{t('agents.thread.queued')}</span>}
       </div>
@@ -143,6 +143,7 @@ function LiveRow({
   waiting,
   elsewhere = false,
   onOpen,
+  runId,
 }: {
   activity: AgentActivity;
   waiting: number;
@@ -150,10 +151,14 @@ function LiveRow({
   elsewhere?: boolean;
   /** Open the thread the turn writes into. */
   onOpen?: () => void;
+  /** The run this line is about. */
+  runId: string | null;
 }) {
   const { t } = useI18n();
   const now = useNow(true);
-  const time = runDuration(now - activity.since) ?? '';
+  // This line's own run, never the oldest of the agent's: `since` is that one.
+  const start = activity.runs?.find((r) => r.runId === runId)?.since ?? activity.since;
+  const time = runDuration(now - start) ?? '';
   return (
     <div className="agent-thread-live" role="status" aria-live="polite">
       <span className="agent-msg-live-dot" aria-hidden="true" />
@@ -299,7 +304,7 @@ export function AgentThreadPanel({
    *  question block needs one, and the panel has no toast surface of its own. */
   onToast?: (msg: string) => void;
   /** This thread's agent, by title, while it is working; null otherwise. The field stays
-   *  open: a reply to a working agent queues behind its turn, and the placeholder says so. */
+   *  open: a reply to the run in flight queues behind its turn, and the placeholder says so. */
   busyWith: string | null;
   /** What this thread's agent is doing, from the feed, until the thread's own read says. */
   working?: AgentActivity | null;
@@ -351,9 +356,10 @@ export function AgentThreadPanel({
     () => new Set((activity?.queued ?? []).filter((q) => q.runId === message.runId).map((q) => q.entryId)),
     [activity, message.runId],
   );
-  const liveHere = !!activity && (activity.runId === message.runId || queuedHere.size > 0);
-  // The agent is working, but on ANOTHER run (a newer one started while this thread was
-  // open). The thread still says so, where the reader is looking, and offers the way there;
+  const liveHere = !!activity && (activity.runId === message.runId || queuedHere.size > 0
+    || !!activity.runs?.some((r) => r.runId === message.runId));
+  // The agent is working, but on ANOTHER run (it runs several side by side).
+  // The thread still says so, where the reader is looking, and offers the way there;
   // a status that only showed in the channel row read as "this thread is dead".
   const liveElsewhere = !!activity && !liveHere;
 
@@ -617,11 +623,12 @@ export function AgentThreadPanel({
         {answer && answerAt === entries.length && (
           <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />
         )}
-        {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} />}
+        {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} runId={message.runId} />}
         {liveElsewhere && activity && (
           <LiveRow
             activity={activity}
             waiting={0}
+            runId={activity.runId}
             elsewhere={activity.runId !== null}
             onOpen={activity.runId && onOpenRun ? () => onOpenRun(activity.runId as string) : undefined}
           />
@@ -681,13 +688,13 @@ export function AgentThreadPanel({
                 // There is no turn to steer into: the reply is a JOB, polled.
                 busy={false}
                 connected
-                // NEVER held down by a run: a reply sent while this agent works QUEUES behind
-                // it and is delivered when the turn ends, and a reply while it waits on a
+                // NEVER held down by a run: a reply sent while THIS run works QUEUES behind
+                // it and is delivered when the turn ends (other runs do not matter here), and a reply while it waits on a
                 // question IS the answer. The placeholder says which of the two this is.
                 idlePlaceholder={
                   message.question
                     ? t('agents.thread.answerPlaceholder').replace('{name}', message.title)
-                    : busyWith
+                    : busyWith && liveHere
                       ? t('agents.thread.queuePlaceholder').replace('{name}', message.title)
                       : `Reply to ${message.title}…`
                 }

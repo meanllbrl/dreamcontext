@@ -225,6 +225,17 @@ export const PATTERNS_FLOOR_CHARS = 1_000;
  */
 export const PEOPLE_ROSTER_L1_CHARS = 600;
 
+/**
+ * Pending peer mail, rendered in full while it is the handful of short messages the mailbox was
+ * built for. Measured 2026-11-02: a project held 30+ pending messages, 14 KB of never-evict text,
+ * and the snapshot carrying it never arrived whole. Past this the newest keep their bodies.
+ */
+export const PEER_MAIL_FULL_CHARS = 3_000;
+/** Past {@link PEER_MAIL_FULL_CHARS}: one line per older message, then a named count. */
+export const PEER_MAIL_LIST_CHARS = 1_500;
+/** One older message's line: sender, kind, the start of its text. */
+export const PEER_MAIL_LINE_CHARS = 100;
+
 // ─── AC-locked rungs ────────────────────────────────────────────────────────
 
 /**
@@ -273,7 +284,8 @@ export type DemotableSectionId =
   | 'people-roster'
   | 'objectives'
   | 'theses'
-  | 'lab';
+  | 'lab'
+  | 'apps';
 
 /**
  * Sections that are never demoted. Small, behaviour-binding, or positional
@@ -302,8 +314,9 @@ export type DemotableSectionId =
  * section someone is WAITING on. A peer addressed this project and is holding an
  * open thread; if the message is demoted away the agent never learns it exists
  * and the sender gets silence that is indistinguishable from a refusal. It is
- * also self-limiting — pending mail is a handful of short messages, and it stops
- * rendering entirely the moment they are answered and closed.
+ * not self-limiting, though (2026-11-02: 36 pending messages, 14 KB): its render is bounded
+ * (`PEER_MAIL_FULL_CHARS`), and past the ladder it falls to a pointer naming `peer inbox`
+ * (`BudgetSection.lastResort`) rather than pushing the sections after it out of the hooks.
  */
 export type NeverEvictSectionId =
   | 'header'
@@ -358,6 +371,9 @@ export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   objectives: 120,
   theses: 130,
   lab: 140,
+  // dreamcontext Apps: one line naming this project's apps (and the verb that lists their
+  // actions). Cut right after warm knowledge: an agent asked about an app runs `apps list`.
+  apps: 15,
   // 150 and 160 intentionally free — they were the user file's and the soul's
   // ranks before both became never-evict. Nothing should reclaim them without a
   // reason to demote AFTER Lab.

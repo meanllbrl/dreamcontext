@@ -253,12 +253,20 @@ function useHostClaim(session: ChatSession): boolean {
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
+export function CardChat({ session, reopen, placeholder, pane = false, feed, aboveComposer, sendVia, readOnly, openPage }: {
+  /** Where a page link goes when there is no surface around this chat (an app's frame). */
+  openPage?: (page: string, id?: string | null) => void;
   session: ChatSession;
   reopen: () => void;
   placeholder: string;
   /** The agent's past sessions above the conversation (the AI Team stage). */
   feed?: ChatFeed;
+  /** Drawn over the box (the AI Team stage: open questions, the run it continues). */
+  aboveComposer?: ReactNode;
+  /** The stage's box writes into a pinned run instead of this session. */
+  sendVia?: (message: string) => boolean;
+  /** No box at all: a member this machine reads and does not talk to. */
+  readOnly?: 'silent';
   /** The full Chat pane (the AI Team page's conversation), not a board card's slim one: only the
    *  controls that cannot reach an agent-bound session stay out (ChatPane `agentBound`). */
   pane?: boolean;
@@ -276,6 +284,8 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
 
   const reopenRef = useRef(reopen);
   reopenRef.current = reopen;
+  const openPageRef = useRef(openPage);
+  openPageRef.current = openPage;
   const actions = useMemo<ChatSurfaceActions>(() => ({
     changeModel: (_sid, id) => session.setModel(id),
     changeEffort: (_sid, level) => session.setEffort(level),
@@ -285,7 +295,7 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
     changeMode: () => { /* a card speaks as its agent */ },
     changeAccount: () => { /* follows the default account */ },
     handoffToDevelop: () => { /* a card does not hand off */ },
-    openAppPage: () => { /* opened from the AI Team or the tab */ },
+    openAppPage: (page: string, id?: string | null) => { openPageRef.current?.(page, id); },
     signIn: async () => { /* sign in from a project chat */ },
   }), [session]);
 
@@ -306,6 +316,9 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
           agentBound={pane}
           idlePlaceholder={placeholder}
           feed={feed}
+          aboveComposer={aboveComposer}
+          sendVia={sendVia}
+          readOnly={readOnly}
         />,
         session.container,
       )}

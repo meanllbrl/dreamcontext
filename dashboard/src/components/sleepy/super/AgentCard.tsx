@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useMemo, useReducer } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { pollMs } from '../../../lib/windowActivity';
 import type { SuperChild } from '../../../lib/superTypes';
@@ -7,8 +7,11 @@ import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
 import { AccountLimitRing } from '../chat/UsageRings';
-import { chatAccountOf } from '../../../lib/agentComposer';
-import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
+import { FALLBACK_MODEL_CONFIG, chatAccountOf } from '../../../lib/agentComposer';
+import { useAgentModelConfig, useAgentTools } from '../../../hooks/useAgentCapabilities';
+import { ToolMark } from '../chat/model-picker/ModelPicker';
+import { activeRow, claudeState, codexState, type PickerToolState } from '../chat/model-picker/pickerModel';
+import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, chipFromPickerLabel, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
 /** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
  *  only he can do (`owner`: a command to run himself, a key, a checklist, a sign-in). */
@@ -47,11 +50,12 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
 
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
-  const line = doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : '');
+  const line = child?.startError ?? (doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : ''));
   const bg = model ? backgroundOf(model.subAgents) : { shells: 0, agents: 0 };
   const lines = tall && model ? lastLinesOf(model.items, 4).filter((l) => l !== line) : [];
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
   const chip = childModelChip(session, child);
+  const tool = childTool(session, child);
   return (
     <div className="super-card" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)}>
       <div className="super-card-top">
@@ -67,10 +71,10 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
       )}
       {/* Anchored to the card's foot, like a widget: what state it is in, for how long, what it holds. */}
       <div className="super-card-foot">
-        {(asksOwner || child?.branch || chip) && (
+        {(asksOwner || child?.branch || chip || tool !== 'claude') && (
           <div className="super-card-tags">
             {asksOwner && <span className="super-card-asks" data-asks={asksOwner}>{t(asksKey(asksOwner))}</span>}
-            {chip && <span className="super-tile-model" data-testid="super-card-model">{chip}</span>}
+            <ChildModelChip session={session} child={child} />
             {child?.branch && <span className="super-card-branch" title={child.worktree}>{child.branch}</span>}
           </div>
         )}
@@ -110,19 +114,20 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   useLiveSession(session, () => cardKeyOf(session, false));
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
-  const line = doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : '');
+  const line = child?.startError ?? (doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : ''));
   const bg = model ? backgroundOf(model.subAgents) : { shells: 0, agents: 0 };
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
   const state = t(`super.card.state.${status.kind}`);
   const bgCount = bg.shells + bg.agents;
   // The model it really runs (owner 2026-10-21), where the kind word stood: a chat tile is a chat.
   const chip = childModelChip(session, child);
+  const tool = childTool(session, child);
   // While it works, a thin ring turns on its border (motion carries "working", the colour the
   // state): one of at most MAX_SPINNING at a time, the rest drawn closed (spinSlots.ts).
   const working = status.kind === 'working';
   const spin = useSpinSlot(child?.sessionId ?? session?.claudeId ?? '', working);
   return (
-    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={child?.branch ? `${title}\n${child.branch}` : title}>
+    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={[title, child?.branch, child?.startError].filter(Boolean).join('\n')}>
       <span className="super-tile-corners" aria-hidden />
       {working && <span className="super-tile-spin" data-spin={spin ? 'on' : 'closed'} data-testid="super-tile-spin" aria-hidden />}
       <div className="super-tile-top">
@@ -130,8 +135,8 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
             the composer's ring. The chat's state, which this ring used to draw, is the dot and
             the toned state word at the foot. */}
         <AccountLimitRing accountId={chatAccountOf(session)} />
-        {chip
-          ? <span className="super-tile-model" data-testid="super-card-model" title={session?.model || undefined}>{chip}</span>
+        {chip || tool !== 'claude'
+          ? <ChildModelChip session={session} child={child} />
           : <span className="super-tile-kind">{t('super.tile.kind.chat')}</span>}
       </div>
       <div className="super-tile-title">{title}</div>
@@ -199,9 +204,63 @@ export function cardKeyOf(session: ChatSession | undefined, tall: boolean): stri
 /** A child's model chip: its live session's spawn values (what its composer shows), else what the
  *  record stored for it (`super delegate --model/--effort`, a field a newer record carries). */
 export function childModelChip(session: ChatSession | undefined, child: SuperChild | undefined): string | null {
-  const stored = child as (SuperChild & { model?: string; effort?: string }) | undefined;
-  if (session?.model) return modelChip(session.model, session.effort || stored?.effort);
-  return modelChip(stored?.model, stored?.effort);
+  const tool = childTool(session, child);
+  if (session?.model) return modelChip(session.model, session.effort || child?.effort, tool);
+  return modelChip(child?.model, child?.effort, tool);
+}
+
+const TOOL_LABEL = { codex: 'Codex', antigravity: 'Antigravity' } as const;
+
+/** Every tool's models as the chat's model picker lists them (ChatPaneHost reads them the same
+ *  way), so a card names a model with the picker's own words. */
+function usePickerCatalog(): PickerToolState[] {
+  const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((x) => x.tool === 'codex');
+  const antigravityInfo = tools?.find((x) => x.tool === 'antigravity');
+  return useMemo(
+    () => [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])],
+    [modelConfig, codexInfo, antigravityInfo],
+  );
+}
+
+/** A child's model as the picker names it, with its level: the live session's spawn values, else
+ *  what the record holds (its `system/init` or `delegate --model`). Null when no model is known. */
+export function childChipParts(catalog: PickerToolState[], session: ChatSession | undefined, child: SuperChild | undefined): { name: string; level: string } | null {
+  const tool = childTool(session, child);
+  const model = (session?.model || child?.model || '').trim();
+  if (!model) return null;
+  const effort = session?.model ? session.effort || child?.effort : child?.effort;
+  const own = catalog.find((x) => x.tool === tool);
+  const row = own ? activeRow(own, model) : null;
+  return chipFromPickerLabel(row?.label, model, effort, tool);
+}
+
+/**
+ * A child's model chip: a Codex or Antigravity child's tool mark (an icon, no tool word) and the
+ * model's full name as the picker shows it, then its level. The name is never cut: in a narrow
+ * card the chip takes its own line and the level drops under the name. Its title and label say
+ * the tool and the model in words. Null for a Claude child whose model is not known yet.
+ */
+function ChildModelChip({ session, child }: { session: ChatSession | undefined; child: SuperChild | undefined }) {
+  const catalog = usePickerCatalog();
+  const tool = childTool(session, child);
+  const parts = childChipParts(catalog, session, child);
+  if (!parts && tool === 'claude') return null;
+  const label = tool === 'claude' ? '' : TOOL_LABEL[tool];
+  const words = [label, parts ? (parts.level ? `${parts.name} · ${parts.level}` : parts.name) : ''].filter(Boolean).join(' ');
+  return (
+    <span className="super-tile-model" data-testid="super-card-model" data-tool={tool} title={words} aria-label={words}>
+      {tool !== 'claude' && <ToolMark tool={tool} />}
+      <span className="super-tile-model-name" data-testid="super-card-model-name">{parts ? parts.name : label}</span>
+      {parts?.level ? <span className="super-tile-model-level">{`· ${parts.level}`}</span> : null}
+    </span>
+  );
+}
+
+/** The tool a child runs on: its live session's binding, else the record's (`delegate --tool`). */
+export function childTool(session: ChatSession | undefined, child: SuperChild | undefined): 'claude' | 'codex' | 'antigravity' {
+  return session?.tool || child?.tool || 'claude';
 }
 
 function doingText(t: (k: string) => string, d: DoingLine): string {

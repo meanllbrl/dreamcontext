@@ -1,3 +1,4 @@
+import { readGlobalGitHubToken } from '../git-sync/auth-store.js';
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from '../gitignore.js';
@@ -162,7 +163,8 @@ export function removeProjectGitHubToken(projectRoot: string): void {
 
 export interface ResolvedToken {
   token: string;
-  source: 'env' | 'secrets';
+  /** `global` = the machine's GitHub sign-in (Settings → Team sync), the last tier. */
+  source: 'env' | 'secrets' | 'global';
   /** Which env var or secrets slot produced the token (for `config show`). */
   via: string;
 }
@@ -198,15 +200,18 @@ export function resolveClickUpToken(
 }
 
 /**
- * Resolve a GitHub token. Order (mirrors ClickUp): env → secrets file.
+ * Resolve a GitHub token. Order (mirrors ClickUp): env → secrets file → sign-in.
  *  1. `opts.envVar` (per-person `tokenEnv` from the identity layer)
  *  2. `GITHUB_TOKEN` / `GH_TOKEN`
  *  3. secrets file per-user slot (`opts.user`)
  *  4. secrets file default slot
+ *  5. the machine's GitHub sign-in (`~/.dreamcontext` global secrets), so a Team sync
+ *     login alone is enough for Issues mirroring. LAST on purpose: any token someone set
+ *     for this project still wins.
  */
 export function resolveGitHubToken(
   projectRoot: string,
-  opts?: { envVar?: string; user?: string },
+  opts?: { envVar?: string; user?: string; home?: string },
 ): ResolvedToken | null {
   if (opts?.envVar) {
     const v = process.env[opts.envVar];
@@ -224,6 +229,8 @@ export function resolveGitHubToken(
   }
   const v = secrets.github?.token;
   if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
+  const signedIn = readGlobalGitHubToken(opts?.home);
+  if (signedIn) return { token: signedIn.token, source: 'global', via: 'sign-in' };
   return null;
 }
 

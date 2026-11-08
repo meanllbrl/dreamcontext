@@ -28,7 +28,7 @@ import { approveAutomation, checkApproval, manifestHash } from '../../src/lib/au
 import { AGENT_CHAT_ENV, AGENT_SELF_ENV, insideAgentRun } from '../../src/lib/automations/types.js';
 import { resumeRunsBypass } from '../../src/server/routes/agent-chat.js';
 import { levelBrief, levelPermissionArgs, REVIEW_DISALLOWED_TOOLS, TASK_DOER_ALLOWED, TASK_REVIEWER_ALLOWED } from '../../src/lib/agents/permission.js';
-import { composePrompt } from '../../src/lib/automations/runner.js';
+import { composePrompt, NONE_OPEN_REASON } from '../../src/lib/automations/runner.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
 import {
   protectedAutomationAccount, readAccountWait, recordAccountWait, withoutOwnerOnly,
@@ -102,7 +102,7 @@ async function runCli(argv: string[]): Promise<{ code: number; out: string }> {
 
 function fakeReq(body: unknown = null, remote = '127.0.0.1'): IncomingMessage {
   const req = new EventEmitter() as unknown as IncomingMessage & EventEmitter;
-  (req as unknown as { headers: Record<string, string> }).headers = { 'content-type': 'application/json', host: '127.0.0.1' };
+  (req as unknown as { headers: Record<string, string> }).headers = { 'content-type': 'application/json', host: '127.0.0.1', origin: 'http://127.0.0.1' };
   (req as unknown as { method: string }).method = 'POST';
   (req as unknown as { socket: { remoteAddress: string } }).socket = { remoteAddress: remote };
   setImmediate(() => {
@@ -186,6 +186,8 @@ describe('AC-A1-1 autonomy', () => {
     // The agent-run refusal is the CLI verb's (the server cannot see a caller's environment; a run
     // that reaches the local API directly is plan-r9's named residual).
     makeAgent();
+    // Toward free widens the member, and his own save of it is his approval (owner 2026-11-07):
+    // written and stamped at once, no inline confirm.
     const res = fakeRes();
     await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), res, { slug: 'scout' }, contextRoot);
     expect(res.status).toBe(200);
@@ -257,7 +259,7 @@ describe('AC-A1-2 level → permission envelope', () => {
     makeAgent('roamer', { autonomy: 'free' });
     const target = getRunTarget(contextRoot, 'roamer', 'agent')!;
     const task = { slug: 'fix-signup', name: 'Fix the signup step', file: 'state/fix-signup.md' } as never;
-    const prompt = composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'), undefined, null, null, null, task);
+    const prompt = composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'), undefined, null, null, task);
     expect(prompt).toContain('--- YOUR AUTONOMY: Free ---');
     expect(prompt).toMatch(/Nobody is watching/);
     expect(composePrompt(target, projectRoot, NOW, join(projectRoot, 'out.md'))).not.toContain('YOUR AUTONOMY');
@@ -353,6 +355,21 @@ describe('AC-A1-3 account protection', () => {
     expect(pick).toEqual({ waitUntil: T + 2 * 3_600_000 });
   });
 
+  it('every account kept for the owner: the wait says none is open, and the run reason says so in plain words', async () => {
+    account('one', true); account('two');
+    setAccountOwnerOnly('one', true, home);
+    setAccountOwnerOnly('two', true, home);
+    const pick = await protectedAutomationAccount({ home, probe: probeWith({ one: [1, 1], two: [1, 1] }), now: T });
+    expect(pick).toEqual({ waitUntil: expect.any(Number), noneOpen: true });
+    expect(NONE_OPEN_REASON).toContain('Keep for my chats only');
+    expect(NONE_OPEN_REASON).toContain('Settings > Claude accounts');
+    expect(NONE_OPEN_REASON).not.toContain('\u2014');
+    // One account open again: no `noneOpen`, the ordinary pick.
+    setAccountOwnerOnly('two', false, home);
+    const open = await protectedAutomationAccount({ home, probe: probeWith({ one: [1, 1], two: [1, 1] }), now: T });
+    expect('account' in open && open.account.id).toBe('two');
+  });
+
   it('auto-switch off keeps the preferred account as the only candidate', async () => {
     account('one', true); account('two');
     cache('one', 90, 10);
@@ -390,11 +407,11 @@ describe('AC-A1-3 account protection', () => {
       calls.push(opts);
       return { slug, status: 'ok' } as unknown as RunOutcome;
     });
-    const during = await tickProject(projectRoot, { now: new Date(T + 10 * 60_000), home, runImpl: runImpl as never, pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never });
+    const during = await tickProject(projectRoot, { now: new Date(T + 10 * 60_000), home, runImpl: runImpl as never });
     expect(runImpl).not.toHaveBeenCalled();
     expect(during.verdicts).toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
     expect(readAccountWait(home, T + 10 * 60_000)).toBe(wakeAt);
-    const after = await tickProject(projectRoot, { now: new Date(wakeAt + 60_000), home, runImpl: runImpl as never, pollTelegram: async () => ({ processed: 0, unauthorized: 0 }) as never });
+    const after = await tickProject(projectRoot, { now: new Date(wakeAt + 60_000), home, runImpl: runImpl as never });
     expect(after.verdicts, JSON.stringify(after.verdicts)).not.toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
     expect(runImpl).toHaveBeenCalledTimes(1);
     expect(calls[0].unattended).toBe(true);

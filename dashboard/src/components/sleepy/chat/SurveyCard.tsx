@@ -1,14 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ChatSession, PendingQuestion } from '../chatSession';
 import type { QuestionSpec } from '../../../lib/chatProtocol';
 import { HtmlView } from './HtmlView';
+import { useInAppChat } from './appChatContext';
 import { loneMedia, usePreviewHtml } from './previewImages';
 import { MediaEmbed } from './MediaEmbed';
 import { Lightbox } from './Lightbox';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import {
   allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
@@ -111,7 +112,14 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
   reads?: readonly SurveyRead[];
 }) {
   const { t } = useI18n();
-  const questions = item.questions;
+  // An app chat draws no assistant-written HTML (`appChatContext.ts`): the options keep their
+  // labels and descriptions, the previews go, and the card says so.
+  const htmlOff = useInAppChat();
+  const previewsOff = htmlOff && item.questions.some((q) => q.options.some((o) => o.preview));
+  const questions = useMemo(
+    () => (previewsOff ? item.questions.map((q) => ({ ...q, options: q.options.map(({ preview: _p, ...o }) => o) })) : item.questions),
+    [item.questions, previewsOff],
+  );
   // Read once, at mount: the store is the card's memory across a remount, not a live source.
   const [restored] = useState(() => (draftKey ? readSurveyDraft(draftKey, questions.map((q) => q.question)) : null));
   const [picks, setPicks] = useState<SurveyPicks>(() => restored?.picks ?? {});
@@ -293,6 +301,8 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
           <span className="chat-surveycard-progress">{answered} / {total}</span>
         )}
       </div>
+
+      {previewsOff && <p className="chat-html-off" role="note" data-model-html-off="">{t('appChat.previewsOff')}</p>}
 
       {item.title && (
         <div className="chat-surveycard-context">
@@ -603,7 +613,7 @@ function OptionRows({ q, indexes, lettered, chosen, onToggle }: {
  */
 function SoloPreview({ letter, label, preview }: { letter: string; label: string; preview: string }) {
   const { t } = useI18n();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const media = loneMedia(preview);
   const html = usePreviewHtml(preview);
   const [full, setFull] = useState(false);
@@ -728,7 +738,7 @@ function FreeField({ q, value, role, other, pickedLabel, onChange, onCommit, com
  * project pictures inlined.
  */
 function PreviewSurface({ preview }: { preview: string | undefined }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const media = loneMedia(preview);
   const html = usePreviewHtml(preview);
   if (media) return <MediaPreview kind={media.kind} path={media.src} src={agentFileUrl(vault, media.src, { raw: true })} />;

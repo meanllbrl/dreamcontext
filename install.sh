@@ -3,7 +3,8 @@
 # Review this script before piping it to sh: https://www.npmjs.com/package/dreamcontext
 set -e
 
-NODE_MIN_MAJOR=18
+# The bundled provider layer (T3 Code, src/vendor/t3) needs Node 22.16 or later.
+NODE_MIN="22.16"
 
 # The private Node.js build installed when this computer has no usable Node and no
 # Homebrew. These values MIRROR assets/runtime-pins.json (the desktop app reads the same
@@ -28,19 +29,15 @@ have() {
   command -v "$1" > /dev/null 2>&1
 }
 
-node_major() {
-  if ! have node; then
-    printf '0'
-    return
-  fi
-  node -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2> /dev/null || printf '0'
+# True when the node at $1 is NODE_MIN or newer (major AND minor: 22.15 is not enough).
+node_meets_min() {
+  "$1" -e "const [a,b]=process.versions.node.split('.').map(Number);const [x,y]='${NODE_MIN}'.split('.').map(Number);process.exit(a>x||(a===x&&b>=y)?0:1)" 2> /dev/null
 }
 
 node_is_ready() {
   have node || return 1
   have npm || return 1
-  major=$(node_major)
-  [ "$major" -ge "$NODE_MIN_MAJOR" ]
+  node_meets_min node
 }
 
 # Homebrew installs to /opt/homebrew (Apple Silicon) or /usr/local (Intel), and
@@ -158,7 +155,7 @@ sha256_of() {
 # Refuse to write through a symlink: a link here could point the install anywhere.
 refuse_link() {
   if [ -L "$1" ]; then
-    die "$1 is a link, so dreamcontext will not install Node.js through it. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org instead, then re-run this script."
+    die "$1 is a link, so dreamcontext will not install Node.js through it. Install Node.js >= ${NODE_MIN} from https://nodejs.org instead, then re-run this script."
   fi
 }
 
@@ -183,13 +180,13 @@ managed_fail() {
 }
 
 install_managed_node() {
-  key=$(node_platform_key) || die "There is no private Node.js build for this computer. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org (or your package manager), then re-run this script."
-  node_pin_for "$key" || die "There is no private Node.js build for this computer. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org (or your package manager), then re-run this script."
+  key=$(node_platform_key) || die "There is no private Node.js build for this computer. Install Node.js >= ${NODE_MIN} from https://nodejs.org (or your package manager), then re-run this script."
+  node_pin_for "$key" || die "There is no private Node.js build for this computer. Install Node.js >= ${NODE_MIN} from https://nodejs.org (or your package manager), then re-run this script."
   if [ "${key%%-*}" = "darwin" ] && ! macos_at_least "$NODE_MIN_MACOS"; then
-    die "The private Node.js needs macOS ${NODE_MIN_MACOS} or later. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org, then re-run this script."
+    die "The private Node.js needs macOS ${NODE_MIN_MACOS} or later. Install Node.js >= ${NODE_MIN} from https://nodejs.org, then re-run this script."
   fi
-  have curl || die "curl is required to download Node.js. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org instead, then re-run this script."
-  have tar || die "tar is required to unpack Node.js. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org instead, then re-run this script."
+  have curl || die "curl is required to download Node.js. Install Node.js >= ${NODE_MIN} from https://nodejs.org instead, then re-run this script."
+  have tar || die "tar is required to unpack Node.js. Install Node.js >= ${NODE_MIN} from https://nodejs.org instead, then re-run this script."
 
   dc_home="$HOME/.dreamcontext"
   node_root="$dc_home/node"
@@ -197,7 +194,7 @@ install_managed_node() {
   dest="$node_root/$NODE_VERSION"
   case "$npm_global" in
     *"
-"* | *"$(printf '\r')"*) die "Your home folder path cannot be written to npm's settings. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org instead." ;;
+"* | *"$(printf '\r')"*) die "Your home folder path cannot be written to npm's settings. Install Node.js >= ${NODE_MIN} from https://nodejs.org instead." ;;
   esac
   refuse_link "$dc_home"
   refuse_link "$node_root"
@@ -254,10 +251,8 @@ install_managed_node() {
   swap_current "$node_root" "$NODE_VERSION" || die "Could not point $node_root/current at Node.js ${NODE_VERSION}."
 
   installed=$("$node_root/current/bin/node" --version 2> /dev/null) \
-    || die "The private Node.js did not start. Install Node.js >= ${NODE_MIN_MAJOR} from https://nodejs.org instead, then re-run this script."
-  installed_major=${installed#v}
-  installed_major=${installed_major%%.*}
-  [ "$installed_major" -ge "$NODE_MIN_MAJOR" ] 2> /dev/null \
+    || die "The private Node.js did not start. Install Node.js >= ${NODE_MIN} from https://nodejs.org instead, then re-run this script."
+  node_meets_min "$node_root/current/bin/node" \
     || die "The private Node.js reported an unexpected version (${installed})."
   if [ -n "$aside" ]; then
     rm -rf "$aside"
@@ -330,7 +325,7 @@ ensure_node() {
   fi
 
   if [ -n "${DREAMCONTEXT_INSTALL_NO_NODE:-}" ]; then
-    die "Node.js >= ${NODE_MIN_MAJOR} is required and DREAMCONTEXT_INSTALL_NO_NODE is set. Install it from https://nodejs.org, then re-run this script."
+    die "Node.js >= ${NODE_MIN} is required and DREAMCONTEXT_INSTALL_NO_NODE is set. Install it from https://nodejs.org, then re-run this script."
   fi
 
   if ! have node; then
@@ -338,7 +333,7 @@ ensure_node() {
   elif ! have npm; then
     say "Node.js $(node --version) is installed but npm is missing."
   else
-    say "Node.js $(node --version) is too old. dreamcontext requires v${NODE_MIN_MAJOR} or later."
+    say "Node.js $(node --version) is too old. dreamcontext requires v${NODE_MIN} or later."
   fi
 
   if have brew; then
@@ -352,7 +347,7 @@ ensure_node() {
   fi
 
   if ! node_is_ready; then
-    die "Node.js >= ${NODE_MIN_MAJOR} is still not the active version after the install. Open a NEW terminal and run 'node --version'. If it is still missing or too old, another Node.js (nvm, asdf, /usr/local) is earlier on your PATH. Fix that, then re-run this script."
+    die "Node.js >= ${NODE_MIN} is still not the active version after the install. Open a NEW terminal and run 'node --version'. If it is still missing or too old, another Node.js (nvm, asdf, /usr/local) is earlier on your PATH. Fix that, then re-run this script."
   fi
   say "Node.js $(node --version) ready."
 }

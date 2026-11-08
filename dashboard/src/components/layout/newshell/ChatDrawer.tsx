@@ -1,13 +1,17 @@
 import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
+import { ProjectLogoPanel } from './ProjectLogoPanel';
 import { ProjectChipBubbles } from '../ProjectTabs';
 import { AgentAvatar } from '../../agents/AgentAvatar';
+import type { EkipMember } from '../../aiteam/teamModel';
+import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
+import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
+import { filterProjectRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -18,6 +22,9 @@ export interface ChatDrawerProps {
   width: number;
   /** Floats over the page with a scrim (≤900) or slides from the top (≤600). */
   floating: boolean;
+  /** A phone's first screen (≤600 on a phone): the floating drawer takes the full height above
+   *  the bottom bar, whether it opened at launch, by the toggle or by back. */
+  home?: boolean;
   onClose(): void;
   onResize(width: number): void;
   onToggleExpanded(name: string): void;
@@ -30,13 +37,31 @@ export interface ChatDrawerProps {
   onMoveWindow(vault: string, windowId: string, before: string | null): void;
   onOpenInWindow(name: string): void;
   onCloseProject(name: string): void;
+  /** "Remove from app…": asks first, then drops the project from the list (its folder stays). */
+  onRemoveProject?(name: string): void;
   /** "+" beside Projects: the app's Add Project flow. */
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
   newWindowNonce: number;
+  /** A device shell (`readDeviceShell`): chats only. No New project, Project Relations, Open in
+   *  new window, Close project or drag. New window is offered in every project it lists. */
+  device?: boolean;
+  /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
+   *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
+  foot?: ReactNode;
+  /** The Global ekip row at the very bottom (plan-r10 1f), or null when no project has a member
+   *  of all projects. */
+  globalTeam?: GlobalTeamRow | null;
+  /** A member's on/off switch in an Ekip list: `POST /api/agents/:slug/enabled` in `vault`. */
+  onSwitchMember?(vault: string, slug: string, enabled: boolean): Promise<unknown>;
+  /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view). */
+  onManage?(vault: string | null): void;
 }
 
-interface Menu { kind: 'project' | 'new' | 'window'; name?: string; windowId?: string; x: number; y: number }
+interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
+
+/** Which Ekip list is open: a project's, or the Global ekip's. */
+type TeamOpen = { kind: 'project'; vault: string; x: number; y: number } | { kind: 'global'; x: number; y: number };
 
 /** The stored name of a project's first window (agent-sessions.ts `DEFAULT_WINDOW`): drawn in the
  *  owner's language. */
@@ -51,6 +76,12 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [winDrag, setWinDrag] = useState<{ vault: string; id: string; before: string | null } | null>(null);
   /** A window row being renamed in place (the desktop WebView has no `prompt`). */
   const [renaming, setRenaming] = useState<{ vault: string; id: string; value: string } | null>(null);
+  /** The project whose logo panel is open. */
+  const [editing, setEditing] = useState<string | null>(null);
+  /** The open Ekip list (r8-06, r8-12). */
+  const [teamOpen, setTeamOpen] = useState<TeamOpen | null>(null);
+  /** A phone: the lists are bottom sheets, and nothing is edited there. */
+  const phone = !!p.device || !!p.home;
   const renameDone = useRef(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
@@ -215,9 +246,62 @@ export function ChatDrawer(p: ChatDrawerProps) {
     p.onMove(name, e.key === 'ArrowUp' ? -1 : 1);
   };
 
+  /** The Projects header's search (owner 2026-11-03): null = closed; while it holds a query the
+   *  list is filtered and project drag is off (a drop index would point into the full list). */
+  const [search, setSearch] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searching = !!search?.trim();
+  const shownRows = searching ? filterProjectRows(p.rows, search!) : p.rows;
+  useEffect(() => { if (search !== null) searchRef.current?.focus(); }, [search !== null]);
+
   const pick = (vault: string, intent: DrawerIntent) => {
     p.onIntent(vault, intent);
     if (p.floating) p.onClose();
+  };
+
+  /** The open member's slug when it is one of the global members. */
+  const globalOpenSlug = (() => {
+    const open = p.rows.flatMap((r) => r.children).find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team' && !!c.openSlug)?.openSlug;
+    return open && p.globalTeam?.members.some((m) => m.slug === open) ? open : null;
+  })();
+
+  /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
+   *  D1); a phone keeps its bottom sheet. */
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone && c.members.length === 0 && p.onManage ? (
+    // No member yet (owner 2026-11-03): one plain row like "Chat", same edge, type and states; it opens team setup.
+    <button key="team" type="button" className={`ns-dr-row ns-dr-child ns-dr-team-empty${c.selected ? ' is-sel' : ''}`}
+      data-testid="drawer-team-row" data-vault={c.vault} data-empty="true" aria-haspopup="dialog"
+      onClick={() => p.onManage?.(c.vault)}>
+      <span className="ns-dr-t">{t('drawer.team.setYour')}</span>
+    </button>
+  ) : !phone ? (
+    <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
+      openSlug={c.openSlug ?? null} className="ns-dr-child" testid="drawer-team-row"
+      onOpen={(m) => openMember(c.vault, m)}
+      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault) } : {})} />
+  ) : (
+    <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
+      selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
+      expanded={teamOpen?.kind === 'project' && teamOpen.vault === c.vault}
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
+  ));
+
+  /** A project's members for the New window menu: its own, then the members of all projects. */
+  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
+    const own = row.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
+    const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));
+    return [...own, ...global].filter((m) => m.enabled);
+  };
+
+  const teamOf = (vault: string): EkipMember[] => {
+    const row = p.rows.find((r) => r.name === vault);
+    return row?.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
+  };
+
+  /** The member's stage, its one conversation, in the project it is opened for. */
+  const openMember = (vault: string, m: Pick<EkipMember, 'slug' | 'title'>) => {
+    setTeamOpen(null);
+    pick(vault, { kind: 'member', slug: m.slug, title: m.title });
   };
 
   const child = (row: DrawerProjectRow, c: DrawerChild) => {
@@ -228,23 +312,48 @@ export function ChatDrawer(p: ChatDrawerProps) {
           unreadLabel={(n) => t('super.unread.count').replace('{n}', String(n))} onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
-    if (c.kind === 'member') {
+    if (c.kind === 'team') return teamRow(c);
+    if (c.kind === 'chat') {
+      const title = c.title || t('shell.drawer.untitled');
       return (
-        <button key={`m-${c.slug}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-member${c.selected ? ' is-sel' : ''}`} data-status={c.status}
-          data-testid="drawer-member-row" onClick={() => pick(row.name, { kind: 'member', slug: c.slug, title: c.title })}>
-          <AgentAvatar of="agent" slug={c.slug} title={c.title} hasPhoto={c.hasPhoto} size={16} />
-          <span className="ns-dr-t">{c.title}</span>
-          <span className="ns-dr-status" data-status={c.status} aria-hidden="true" />
-        </button>
+        <div key={`c-${c.id}`} className={`ns-dr-chat${c.windowId ? ' is-nested' : ''}${c.closable ? ' is-closable' : ''}`}>
+          <button type="button" className={`ns-dr-row ns-dr-child ns-dr-chatrow${c.selected ? ' is-sel' : ''}`}
+            data-testid="drawer-chat-row" data-chat-id={c.id} data-state={c.state} data-flagged={c.flagged ? 'true' : undefined}
+            disabled={c.offline} data-offline={c.offline ? 'true' : undefined}
+            onClick={() => pick(row.name, { kind: 'open-chat', row: c.row })}>
+            <span className="ns-dr-cdot" data-state={c.state} aria-hidden="true" />
+            <span className="ns-dr-t">{title}</span>
+            <span className="ns-dr-cstate">{t(c.state === 'asking' ? 'handsfree.mac.state.asking' : c.state === 'working' ? 'handsfree.mac.state.working' : 'handsfree.mac.state.idle')}</span>
+          </button>
+          {c.closable && (
+            // Closing ends the chat's process: the surface asks first for one mid-turn or asking.
+            <button type="button" className="ns-dr-cclose" data-testid="drawer-chat-close"
+              aria-label={t('shell.drawer.closeChat').replace('{title}', () => title)}
+              onClick={() => p.onIntent(row.name, { kind: 'close-chat', id: c.id })}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
+            </button>
+          )}
+        </div>
       );
     }
     if (c.kind === 'new-chat') {
+      // r8-07: "Claude" (today's new chat) or a member's ONE conversation, behind the chevron.
+      const members = newChatMembers(row);
       return (
-        <button key="new-chat" type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
-          onClick={() => pick(row.name, { kind: 'new-window' })}>
-          <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
-          <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
-        </button>
+        <div key="new-chat" className="ns-dr-newchat-wrap">
+          <button type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
+            onClick={() => pick(row.name, { kind: 'new-window' })}>
+            <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
+            <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
+          </button>
+          {members.length > 0 && (
+            <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
+              aria-label={t('drawer.newChat.menu')}
+              onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+              <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
+            </button>
+          )}
+        </div>
       );
     }
     const live = c.working + c.asking + c.other;
@@ -304,41 +413,62 @@ export function ChatDrawer(p: ChatDrawerProps) {
   };
 
   return (
-    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
+    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
       ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer">
       <div className="ns-dr-scroll">
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
           onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
-          <kbd className="ns-dr-kbd">⌘N</kbd>
+          {!p.device && <kbd className="ns-dr-kbd">⌘N</kbd>}
         </button>
+        {!p.device && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row" onClick={p.onNewProject}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11zM8 7.8v3M6.5 9.3h3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newProject')}</span>
         </button>
+        )}
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.history')}</span>
         </button>
+        {!p.device && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-relations" onClick={p.onRelations}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4" r="1.8" /><circle cx="12" cy="4" r="1.8" /><circle cx="8" cy="12" r="1.8" /><path d="M5.6 4h4.8M5 5.4l2.2 5M11 5.4l-2.2 5" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.relations')}</span>
         </button>
+        )}
 
-        <div className="ns-dr-sec">
-          <span>{t('shell.drawer.projects')}</span>
-          <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
-            data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+        <div className="ns-dr-sec" data-searching={search !== null ? 'true' : undefined}>
+          {search === null ? <span>{t('shell.drawer.projects')}</span> : (
+            <input ref={searchRef} type="search" className="ns-dr-search" data-testid="drawer-project-search" value={search}
+              placeholder={t('shell.drawer.searchProjects')} aria-label={t('shell.drawer.searchProjects')}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSearch(null); } }}
+              onBlur={() => { if (!search) setSearch(null); }} />
+          )}
+          <span className="ns-dr-sec-acts">
+            <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.searchProjects')} title={t('shell.drawer.searchProjects')}
+              aria-pressed={search !== null} data-testid="drawer-project-search-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setSearch((v) => (v === null ? '' : null))}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2l3.3 3.3" /></svg>
+            </button>
+            {!p.device && (
+            <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
+              data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+            )}
+          </span>
         </div>
-        {p.rows.map((row, i) => (
+        {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
+        {shownRows.map((row, i) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
             {/* Two sibling buttons, never one inside the other: the row's own toggle (name, notes)
                 and "+". The rest of the row (the chevron, the gaps) toggles on a pointer click. */}
             <div className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
-              onPointerDown={(e) => startDrag(e, row.name)}
+              onPointerDown={p.device ? undefined : (e) => { if (!searching) startDrag(e, row.name); }}
               onClick={(e) => {
                 if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
                 p.onToggleExpanded(row.name);
@@ -346,10 +476,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
               onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
               <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
                 onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
-                onKeyDown={(e) => onRowKey(e, row.name)}>
+                onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
                 <span className="ns-dr-pic">
                   {row.logo
-                    ? <VaultLogo name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
+                    ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
                     : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
                 </span>
                 <span className="ns-dr-t">{row.name}</span>
@@ -368,14 +498,69 @@ export function ChatDrawer(p: ChatDrawerProps) {
         ))}
         {drag && drag.over >= p.rows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
       </div>
+      {p.globalTeam && (
+        // r8-12: outside every project, at the very bottom.
+        <div className="ns-team-global">
+          <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
+          {!phone ? (
+            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row" openSlug={globalOpenSlug}
+              onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
+              {...(p.onManage ? { onManage: () => p.onManage?.(null) } : {})} />
+          ) : (
+          <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
+            label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
+            expanded={teamOpen?.kind === 'global'}
+            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'global', x: r.right + 8, y: r.bottom }); }} />
+          )}
+        </div>
+      )}
+      {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
+      {teamOpen?.kind === 'project' && (
+        <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
+          sheet={phone} testid="team-list" vault={teamOpen.vault} anchor={{ x: teamOpen.x, y: teamOpen.y }}
+          onOpen={(m) => openMember(teamOpen.vault, m)}
+          onSwitch={(m, enabled) => p.onSwitchMember?.(teamOpen.vault, m.slug, enabled) ?? Promise.resolve()}
+          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(teamOpen.vault) } : {})}
+          onClose={() => setTeamOpen(null)} />
+      )}
+      {teamOpen?.kind === 'global' && p.globalTeam && (
+        <TeamList title={`${t('drawer.team.global')} · ${t('drawer.team.globalAll')}`} members={p.globalTeam.members as TeamListMember[]}
+          sheet={phone} testid="global-team-list" anchor={{ x: teamOpen.x, y: teamOpen.y - 8 }}
+          onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
+          onSwitch={(m, enabled) => {
+            // A global member's switch writes its global manifest: any project it opens in will do.
+            const g = p.globalTeam?.members.find((x) => x.slug === m.slug);
+            return g?.openIn ? (p.onSwitchMember?.(g.openIn, m.slug, enabled) ?? Promise.resolve()) : Promise.reject(new Error('no project'));
+          }}
+          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(null) } : {})}
+          onClose={() => setTeamOpen(null)} />
+      )}
 
       {!p.floating && <div className="ns-dr-handle" onPointerDown={startResize} aria-hidden="true" />}
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
         <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" onKeyDown={onMenuKey} style={{ left: menu.x, top: menu.y }}
-          data-testid={menu.kind === 'new' ? 'drawer-new-menu' : menu.kind === 'window' ? 'drawer-window-menu' : 'drawer-project-menu'}>
-          {menu.kind === 'new' ? (
+          data-testid={menu.kind === 'new' ? 'drawer-new-menu' : menu.kind === 'window' ? 'drawer-window-menu' : menu.kind === 'new-chat' ? 'new-chat-menu-list' : 'drawer-project-menu'}>
+          {menu.kind === 'new-chat' && menu.name ? (
+            <>
+              <div className="ns-drawer-menu-head">{t('shell.drawer.newChat')}</div>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item ns-newchat-item" data-testid="new-chat-claude"
+                onClick={() => { closeMenu(); pick(menu.name!, { kind: 'new-window' }); }}>
+                <span className="ns-newchat-name">{t('drawer.newChat.claude')}</span>
+              </button>
+              {(() => {
+                const row = p.rows.find((r) => r.name === menu.name);
+                return row ? newChatMembers(row).map((m) => (
+                  <button key={m.slug} type="button" role="menuitem" className="ns-drawer-menu-item ns-newchat-item" data-testid="new-chat-member" data-slug={m.slug}
+                    onClick={() => { closeMenu(); openMember(menu.name!, m); }}>
+                    <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={20} />
+                    <span className="ns-newchat-name">{m.title}</span>
+                  </button>
+                )) : null;
+              })()}
+            </>
+          ) : menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
               {p.rows.map((row) => (
@@ -413,6 +598,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, 1); }}>
                 {t('shell.drawer.moveDown')}<kbd>⌥↓</kbd>
               </button>
+              {!p.device && (
+              <>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-edit"
+                onClick={() => {
+                  // The panel takes focus and hands it back to the row itself.
+                  setEditing(menu.name!);
+                  setMenu(null);
+                }}>
+                {t('shell.drawer.editProject')}
+              </button>
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onOpenInWindow(menu.name!); }}>
                 {t('shell.drawer.openInWindow')}
               </button>
@@ -421,10 +616,25 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 onClick={() => { closeMenu(); p.onCloseProject(menu.name!); }}>
                 {t('shell.drawer.closeProject')}
               </button>
+              {p.onRemoveProject && (
+              <>
+              <hr className="ns-drawer-menu-sep" aria-hidden="true" />
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-remove"
+                onClick={() => { closeMenu(); p.onRemoveProject!(menu.name!); }}>
+                {t('shell.drawer.removeProject')}
+              </button>
+              </>
+              )}
+              </>
+              )}
             </>
           )}
         </div>
       )}
+      {editing && !p.device && (() => {
+        const row = p.rows.find((r) => r.name === editing);
+        return row ? <ProjectLogoPanel name={row.name} logo={row.logo} stamp={row.logoStamp} onClose={() => setEditing(null)} /> : null;
+      })()}
     </aside>
   );
 }

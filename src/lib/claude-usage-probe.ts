@@ -7,7 +7,11 @@ import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaude
 import { ensureSandbox } from './claude-account-sandbox.js';
 import { claudeAuthStatus, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
 import { endRefusalOnReading } from './claude-limit-rejections.js';
-import { configDirSignedInAs, readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
+import {
+  configDirIdentity, configDirSignedInAs, readAccountUsageCache, readUsageLimits, usageReadingIsCurrent,
+  USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse,
+} from './claude-usage.js';
+import { recordUsageMeter } from './claude-usage-meter.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
 /**
@@ -78,6 +82,8 @@ export interface ProbeRun {
   timedOut: boolean;
   error?: string;
   stdout?: string;
+  /** The child was stopped because `stopWhen` said the answer had already landed on disk. */
+  stoppedEarly?: boolean;
 }
 
 /** The probe's total budget. The judge escalation is taken OUT of this, never added to it. */
@@ -89,7 +95,15 @@ const PROBE_STDOUT_CAP = 256 * 1024;
 
 export interface ProbeDeps {
   /** Injectable for tests: resolves once the child has exited. */
-  runProbe?: (configDir: string, timeoutMs: number) => Promise<ProbeRun>;
+  runProbe?: (configDir: string, timeoutMs: number, stopWhen?: () => boolean) => Promise<ProbeRun>;
+  /** This probe's total budget (default {@link USAGE_PROBE_TIMEOUT_MS}). */
+  timeoutMs?: number;
+  /**
+   * Answer from a cache inside the CLI's write throttle without spawning at all. For the
+   * Settings refresh, where "current to five minutes" is the question. NOT for a switch
+   * decision taken at a limit, which wants the report's minute-fresh numbers.
+   */
+  trustCurrentCache?: boolean;
   /** Injectable for tests: the authoritative judge. */
   authStatus?: typeof claudeAuthStatus;
   /** Injectable for tests: the pause before a "signed out" is re-asked. */
@@ -150,11 +164,14 @@ function reportText(stdout: string | undefined): string {
 }
 
 /** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report. */
-async function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
-  return spawnUsageProbe(configDir, timeoutMs);
+async function defaultRunProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean): Promise<ProbeRun> {
+  return spawnUsageProbe(configDir, timeoutMs, stopWhen);
 }
 
-function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
+/** How often a running probe looks at the cache file to see whether its answer has landed. */
+const STOP_POLL_MS = 250;
+
+function spawnUsageProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean): Promise<ProbeRun> {
   return new Promise((resolveOut) => {
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
@@ -170,8 +187,10 @@ function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
       // update notices and warnings, never the report.
       // A cwd outside every project, so the probe's own session never lands in one.
       child = bin
-        ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env })
-        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env });
+      // `--strict-mcp-config`: no tool server starts for a `/usage` that calls none (measured
+      // 2026-11-03: the full report took 83s without it and 42s with it).
+        ? spawn(bin, ['-p', '/usage', '--output-format', 'json', '--strict-mcp-config'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env })
+        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json --strict-mcp-config'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env });
     } catch (err) {
       resolveOut({ timedOut: false, error: (err as Error)?.message ?? String(err) });
       return;
@@ -189,12 +208,26 @@ function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (poll) clearInterval(poll);
       resolveOut(v);
     };
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* already gone */ }
       done({ timedOut: true });
     }, timeoutMs);
+    // The numbers land in the cache seconds in (measured 2026-11-03, CLI 2.1.317: the usage
+    // fetch returned at +5.7s), then `/usage` spends 40-130s scanning every local transcript
+    // for its "what's contributing" section, which nothing here reads. So once the cache moves
+    // the child has nothing left to tell us, and is stopped.
+    const poll = stopWhen
+      ? setInterval(() => {
+        let landed = false;
+        try { landed = stopWhen(); } catch { /* keep waiting */ }
+        if (!landed) return;
+        try { child.kill(); } catch { /* already gone */ }
+        done({ timedOut: false, stdout, stoppedEarly: true });
+      }, STOP_POLL_MS)
+      : null;
 
     child.on('error', (e) => done({ timedOut: false, error: e.message }));
     // `close`, not `exit`: it waits for stdout's EOF, so the report is complete. The exit code
@@ -267,16 +300,44 @@ export async function probeAccountUsage(
     return { status: 'unknown', reason: (err as Error)?.message ?? String(err) };
   }
 
+  // ── 0. Whose directory is this? Asked BEFORE any spawn: a directory signed in as another
+  //      account answers for that account's quota pool, however well the report parses.
+  const account = accountForDir(dir, home);
+  if (account) {
+    const identity = configDirIdentity(account, home);
+    if (identity.kind === 'other') {
+      return {
+        status: 'stale',
+        reason: 'That account directory is signed in as a different account — the reading was discarded.',
+      };
+    }
+    // A cache inside the CLI's own write throttle IS current (see USAGE_CACHE_WRITE_THROTTLE_MS):
+    // a spawn could only print the same numbers, after a minute of transcript scanning.
+    const own = deps.trustCurrentCache && identity.kind === 'match' ? readAccountUsageCache(account, home) : null;
+    if (own && own.limits.length > 0 && own.fetchedAtMs !== null
+      && Math.max(0, Date.now() - own.fetchedAtMs) <= USAGE_CACHE_WRITE_THROTTLE_MS) {
+      return { status: 'ok', limits: readUsageLimits(dir) };
+    }
+  }
+
   const before = readCacheStamp(dir);
   const startedAt = Date.now();
+  const budget = deps.timeoutMs ?? USAGE_PROBE_TIMEOUT_MS;
+  const landed = (): boolean => {
+    const now = readCacheStamp(dir);
+    return now.fetchedAtMs !== null && (before.fetchedAtMs === null || now.fetchedAtMs > before.fetchedAtMs);
+  };
 
-  const run = await runProbe(dir, USAGE_PROBE_TIMEOUT_MS);
+  const run = await runProbe(dir, budget, landed);
   if (run.timedOut) return { status: 'unknown', reason: 'The usage probe timed out.' };
   if (run.error) return { status: 'unknown', reason: run.error.slice(0, 400) };
 
   const after = readCacheStamp(dir);
   const expected = expectedAccountUuid(dir, home);
-  if (expected !== null && after.accountUuid !== null && after.accountUuid !== expected) {
+  // Asked again AFTER the spawn: a sign-in that landed in this directory while the child ran
+  // (the register's uuid is empty on most machines, so the email check is the one that bites).
+  if ((expected !== null && after.accountUuid !== null && after.accountUuid !== expected)
+    || (account !== undefined && configDirIdentity(account, home).kind === 'other')) {
     return {
       status: 'stale',
       reason: 'That account directory is signed in as a different account — the reading was discarded.',
@@ -291,6 +352,10 @@ export async function probeAccountUsage(
   if (live) {
     const limits = withLockedReasons(live, cached, now);
     endRefusalOnReport(dir, limits, home);
+    // Kept, so the list shows what was just measured. The CLI may not have rewritten its cache
+    // (its 5-minute throttle), and this reading used to reach nobody but the caller: Settings
+    // pressed Refresh, got "ok", re-read the disk and drew the old numbers again.
+    try { recordUsageMeter(dir, limits, home); } catch { /* the caller still gets the reading */ }
     return { status: 'ok', limits };
   }
 
@@ -306,7 +371,7 @@ export async function probeAccountUsage(
   }
 
   // ── 3. No answer at all. Escalate exactly once, inside the remaining budget.
-  const remaining = USAGE_PROBE_TIMEOUT_MS - (Date.now() - startedAt);
+  const remaining = budget - (Date.now() - startedAt);
   if (remaining <= 0) {
     return { status: 'unknown', reason: 'No usage came back and there was no budget left to check why.' };
   }
@@ -314,7 +379,7 @@ export async function probeAccountUsage(
   if (judged.loggedIn === false) {
     // Confirm before eliminating — see "Why a signed out is asked TWICE" above.
     await sleep(RELOGIN_RECHECK_DELAY_MS);
-    const left = USAGE_PROBE_TIMEOUT_MS - (Date.now() - startedAt);
+    const left = budget - (Date.now() - startedAt);
     if (left <= 0) {
       return { status: 'unknown', reason: 'The account read as signed out once, and there was no budget left to confirm it.' };
     }

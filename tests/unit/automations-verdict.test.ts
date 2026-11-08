@@ -58,7 +58,9 @@ import type { AutomationManifest, AutomationQuestion } from '../../src/lib/autom
 let projectRoot: string;
 let contextRoot: string;
 let home: string;
-const NOW = new Date('2026-08-03T18:00:00.000Z');
+// Recent, never a fixed calendar day: a binding older than its 90-day TTL is expired on read
+// against the real clock, so a fixed date turned this suite red on 2026-11-01.
+const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 2 * 3_600_000);
 const SESSION = 'sess-abc123';
 const RUN_PGID = 4242;
 
@@ -293,11 +295,10 @@ describe('propose is guarded by the run\'s ancestry', () => {
 
 // ─── resumeWithAnswer — the question surface ────────────────────────────────
 //
-// One path for every channel. The HTTP route, the CLI verb and the Telegram
-// handler all land here, which is why the kind gate lives INSIDE this function
-// rather than in any one of their handlers: the CLI imports this module
-// directly and Telegram arrives by a third route, so a gate in the HTTP layer
-// would guard one door of three.
+// One path for every channel. The HTTP route and the CLI verb both land here,
+// which is why the kind gate lives INSIDE this function rather than in either
+// handler: the CLI imports this module directly, so a gate in the HTTP layer
+// would guard only one door.
 
 describe('resumeWithAnswer — the kind gate', () => {
   it('REFUSES an approval question, spawning nothing', async () => {
@@ -348,7 +349,7 @@ describe('resumeWithAnswer — the binding is the authority', () => {
       sessionId: SESSION, channel: 'chat', question: 'Send it?', nowISO: NOW.toISOString(),
     });
     const { impl, calls } = fakeSpawn(claudeJson('done'));
-    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'telegram', { home, spawnImpl: impl, now: () => NOW });
+    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(outcome.status).toBe('refused');
     expect(outcome.error).toMatch(/not registered on this machine/);
     expect(calls).toHaveLength(0);
@@ -434,7 +435,7 @@ describe('resumeWithAnswer — ordering and double-answer', () => {
     const first = fakeSpawn(claudeJson('done'));
     await resumeWithAnswer(contextRoot, q, 'send', 'dashboard', { home, spawnImpl: first.impl, now: () => NOW });
     const second = fakeSpawn(claudeJson('done'));
-    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'telegram', { home, spawnImpl: second.impl, now: () => NOW });
+    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: second.impl, now: () => NOW });
     expect(outcome.status).toBe('refused');
     expect(second.calls).toHaveLength(0);
   });
@@ -548,7 +549,7 @@ describe('resumeWithAnswer — capability lifetime', () => {
   it('KEEPS the binding while another question for the same automation is still open', async () => {
     makeAutomation();
     const q = makeQuestion();
-    makeQuestion({ nowISO: '2026-08-03T19:00:00.000Z' });
+    makeQuestion({ nowISO: new Date(NOW.getTime() + 3_600_000).toISOString() });
     const { impl } = fakeSpawn(claudeJson('done'));
     await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(readAutomationSession('digest', SESSION, home)).toBe(SESSION);

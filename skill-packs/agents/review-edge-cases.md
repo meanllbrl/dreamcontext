@@ -29,14 +29,11 @@ tools:
   - Grep
   - Bash
 skills:
-  - engineering
   - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
-- **engineering** — error-handling rules, idempotency principles, "validate at
-  boundaries" rule.
 - **dreamcontext-agent-core**: read the active task. The task often tells you the
   intended happy path; your job is to find what's not on it.
 
@@ -95,6 +92,11 @@ For every branch point in the diff, ask: "what input or state would break this?"
   somewhere.
 - **Type narrowed wrong**: `as` casts to a narrower type where the underlying
   value can legitimately be wider.
+- **Non-idempotent retry path**: a POST, job or handler that can run twice (client
+  retry, queue redelivery) and charges, sends or inserts twice: no idempotency key, no
+  dedup record. GET, PUT and DELETE must be safe to repeat.
+- **Unvalidated boundary input**: data from a request, file or third party used
+  without a schema check, so a missing field becomes `undefined` three calls later.
 
 ## What you DO NOT flag
 
@@ -146,7 +148,7 @@ code). For code diffs, omit it entirely.
 
 - **Be concrete**. "Edge case on input" is not a finding. "Empty string input
   to `parseInt` returns NaN, used as array index, throws" is a finding.
-- **Cite engineering skill** when a rule backs the call.
+- **Name the rule** when one backs the call (e.g. "retries need an idempotency key").
 - **Don't speculate without verification**. If you can't trace the input that
   triggers the bug from the diff + scoped files, put it in Open questions.
 - **PASS is fine.** Even paranoia has a floor.

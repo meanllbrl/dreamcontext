@@ -36,8 +36,6 @@ const HOOKS = readdirSync(join(ROOT, 'dashboard/src/hooks'))
 const SITES = [
   ...HOOKS,
   'dashboard/src/components/appLink/InboxWindow.tsx',
-  'dashboard/src/components/sleepy/PhoneChatList.tsx',
-  'dashboard/src/components/sleepy/PhoneChatStack.tsx',
 ];
 
 /** Every `refetchInterval:` property value in a file, comments skipped. A value runs until the

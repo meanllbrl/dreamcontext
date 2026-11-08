@@ -13,7 +13,7 @@ import {
 import {
   clearContentIndex, contentCharsHeld, contentOf, contentReadsForTest, ensureContentIndex, messageTextOf, setContentBudgetForTest,
 } from '../../src/lib/transcript-content-index.js';
-import { chmodSync } from 'node:fs';
+import { renameSync, rmdirSync } from 'node:fs';
 import { computeChatSessions } from '../../src/server/routes/agent-chat-sessions.js';
 
 const PROJECT = '/Users/tester/projects/demo';
@@ -229,13 +229,15 @@ describe('index bookkeeping (end-review fixes)', () => {
   });
 
   it('a transcript that could not be read is retried, not remembered as empty', async () => {
-    if (process.getuid?.() === 0) return; // root reads anything
     const p = write(A, file([user('locked'), reply('the heron')]));
     const f = statOf(p);
-    chmodSync(p, 0o000);
+    // A folder where the file was: unreadable for root and on Windows too (chmod 000 is neither).
+    renameSync(p, `${p}.away`);
+    mkdirSync(p);
     await ensureContentIndex([f]).promise;
     expect(contentOf(p)).toBeUndefined();
-    chmodSync(p, 0o644);
+    rmdirSync(p);
+    renameSync(`${p}.away`, p);
     // Same mtime and size as the failed attempt: only an unstamped entry is read again.
     await ensureContentIndex([f]).promise;
     expect(contentOf(p)!.text).toBe('locked\nthe heron');

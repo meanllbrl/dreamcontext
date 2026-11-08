@@ -59,6 +59,22 @@ describe('runAutoSleep — what it actually spawns', () => {
     expect(opts.cwd).toBe(project);
   });
 
+  it.each(['codex', 'antigravity'] as const)('runs the cycle on %s through t3-run, in that tool\'s words', async (tool) => {
+    const { impl, calls } = fakeExec();
+    const res = await runAutoSleep(ctx, { tool, execImpl: impl, notifyImpl: () => {} });
+    // No Node 22.16 on this machine: refused before anything spawns, and says so.
+    if (!res.started && res.status === 'refused') { expect(res.detail).toContain('Node 22.16'); expect(calls).toHaveLength(0); return; }
+    const { args, opts } = calls[0]!;
+    expect(args[0]).toBe('t3-run');
+    expect(args.slice(0, 3)).toEqual(['t3-run', '--surface', 'sleep']);
+    expect(args.includes('--tool')).toBe(tool === 'antigravity');
+    const prompt = args.find((a: string) => a.startsWith('--prompt='))!;
+    expect(prompt).not.toMatch(/\bAgent tool\b/);
+    if (tool === 'codex') expect(prompt).toContain('spawn_agent');
+    expect(opts.command.prefix).toHaveLength(1);
+    expect(opts.env.DREAMCONTEXT_AUTO_SLEEP).toBe('1');
+  });
+
   it('denies web and MCP but KEEPS the Agent tool — the fan-out is the flow', () => {
     expect(AUTO_SLEEP_DISALLOWED_TOOLS).toContain('WebFetch');
     expect(AUTO_SLEEP_DISALLOWED_TOOLS).toContain('WebSearch');

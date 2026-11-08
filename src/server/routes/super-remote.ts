@@ -3,9 +3,12 @@ import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket, macPublicOrigin } from '../phone-origin.js';
 import { readSuperState } from '../../lib/super/store.js';
+import type { SuperId } from '../../lib/super/types.js';
+import { querySuperId } from '../super-id-query.js';
 import { superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { superRemoteView } from '../../lib/super/remote-view.js';
+import { teamLiveRows } from '../../lib/super/team.js';
 import { CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, PRESENT_LAYOUTS, type SuperState } from '../../lib/super/types.js';
 import type { SuperRemoteView } from '../../lib/handsfree/mac/contract.js';
 import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks } from './super.js';
@@ -141,7 +144,7 @@ function tunnelHost(): string | null {
 
 /** The allowlisted view of `state` for this project. */
 export function remoteViewOf(contextRoot: string, state: SuperState): SuperRemoteView {
-  return superRemoteView(state, superVaultName(contextRoot), tunnelHost(), isRotating(state.session));
+  return superRemoteView(state, superVaultName(contextRoot), tunnelHost(), isRotating(state.session), teamLiveRows(contextRoot, state));
 }
 
 const NOT_HANDED_OVER = { status: 409, code: 'not_handed_over', message: 'This project\'s Super Agent is not handed over right now.' };
@@ -156,8 +159,10 @@ function refusal(res: ServerResponse, err: unknown): void {
 /** GET /api/agent/super-stage */
 export async function handleSuperStageGet(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!remoteOnly(req, res)) return;
+  const superId = querySuperId(req, res, contextRoot);
+  if (!superId) return;
   try {
-    const state = await readSuperState(contextRoot, superSanitizeOpts());
+    const state = await readSuperState(contextRoot, superId, superSanitizeOpts());
     if (!state.enabled || !state.session) { sendError(res, NOT_HANDED_OVER.status, NOT_HANDED_OVER.code, NOT_HANDED_OVER.message); return; }
     sendJson(res, 200, remoteViewOf(contextRoot, state));
   } catch (err) { refusal(res, err); }
@@ -165,9 +170,9 @@ export async function handleSuperStageGet(req: IncomingMessage, res: ServerRespo
 
 /** A remote write: refused unless handed over, applied inside the locked write (the record it
  *  checks is the one it writes), answered with the allowlisted view. */
-async function remoteWrite(res: ServerResponse, contextRoot: string, fn: (s: SuperState) => void): Promise<void> {
+async function remoteWrite(res: ServerResponse, contextRoot: string, fn: (s: SuperState) => void, superId: SuperId = 'main'): Promise<void> {
   try {
-    const state = await writeSuper(contextRoot, (s) => {
+    const state = await writeSuper(contextRoot, superId, (s) => {
       if (!s.enabled || !s.session) throw new RemoteRefused(NOT_HANDED_OVER.status, NOT_HANDED_OVER.code, NOT_HANDED_OVER.message);
       fn(s);
     });
@@ -178,6 +183,8 @@ async function remoteWrite(res: ServerResponse, contextRoot: string, fn: (s: Sup
 /** POST /api/agent/super-stage/layout */
 export async function handleSuperStageLayout(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!remoteOnly(req, res)) return;
+  const layoutSuper = querySuperId(req, res, contextRoot);
+  if (!layoutSuper) return;
   const body = rec(await parseJsonBody(req));
   if (!body) { sendError(res, 400, 'invalid_body', 'a JSON object is expected'); return; }
   let checked: ReturnType<typeof checkRemoteLayout>;
@@ -187,14 +194,16 @@ export async function handleSuperStageLayout(req: IncomingMessage, res: ServerRe
     // (the owner's door applies a view after them, from the same body).
     const patch = checked.view ? { ...checked.patch, view: viewFor(s, checked.view) } : checked.patch;
     applyOwnerLayout(s, patch);
-  });
+  }, layoutSuper);
 }
 
 /** POST /api/agent/super-stage/seen */
 export async function handleSuperStageSeen(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!remoteOnly(req, res)) return;
+  const seenSuper = querySuperId(req, res, contextRoot);
+  if (!seenSuper) return;
   const body = rec(await parseJsonBody(req));
   const marks = ownerSeenMarks(body ?? {});
   if ('error' in marks) { sendError(res, 400, 'invalid_body', marks.error); return; }
-  await remoteWrite(res, contextRoot, (s) => { applyOwnerSeen(s, marks.marks); });
+  await remoteWrite(res, contextRoot, (s) => { applyOwnerSeen(s, marks.marks); }, seenSuper);
 }

@@ -4,8 +4,8 @@
  *
  * Drives a RUNNING dashboard (scratch HOME with fictional projects, `shell: "new"` in its
  * launcher-ui.json) and shoots every screen and overlay the wave touched at 1440/1024/768/390
- * dark plus 1440 light. The 390 shots use a narrow viewport WITHOUT touch emulation (with touch,
- * `useIsMobile` correctly falls back to classic). For each shot it records console errors and
+ * dark plus 1440 light. The 390 shots use a narrow viewport WITHOUT touch emulation (a touch phone
+ * is a device shell: the new shell whatever the switch says, checked once below). For each shot it records console errors and
  * horizontal overflow; for the boards and Project Relations it records whether `.shell-main`
  * scrolls vertically. Prints one JSON report; exit 1 on any error, overflow or failed check.
  *
@@ -85,7 +85,7 @@ async function gotoRail(page, run, page_) {
 }
 
 const RAIL_PAGES = ['tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'knowledge', 'brain', 'settings'];
-const MORE_PAGES = ['council', 'core', 'taxonomy', 'sleep', 'packs', 'announcements', 'about'];
+const MORE_PAGES = ['council', 'core', 'taxonomy', 'sleep', 'packs', 'announcements'];
 const NO_SCROLL = new Set(['tasks', 'roadmap', 'hypotheses', 'relations']);
 
 const browser = await chromium.launch();
@@ -278,16 +278,19 @@ for (const run of RUNS) {
   report.shots.push({ name: 'settings-new-layout', on });
   if (on !== true) report.failures.push(`settings: the New layout row does not read ON (${on})`);
 
-  // AC 6: a phone (narrow + touch) keeps today's UI whatever the switch says.
+  // A phone (narrow + touch) opens the NEW shell whatever the switch says (a device shell: task
+  // hands-free-nin-ayri-telefon-arayuzu-kalkar…, W2; there is no classic phone layout any more).
+  await post({ shell: 'classic' });
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const pp = await phone.newPage();
   await pp.goto(`${BASE}/?vault=${VAULT}&page=tasks`);
   await pp.waitForTimeout(3000);
   const phoneNew = await pp.getByTestId('ns-titlebar').count();
-  await pp.screenshot({ path: join(OUT, 'phone-classic-390-dark.png') });
-  report.shots.push({ name: 'phone-classic', newShellNodes: phoneNew });
-  if (phoneNew !== 0) report.failures.push('phone: the new shell drew on a touch phone');
+  await pp.screenshot({ path: join(OUT, 'phone-new-390-dark.png') });
+  report.shots.push({ name: 'phone-new', newShellNodes: phoneNew });
+  if (phoneNew !== 1) report.failures.push('phone: a touch phone did not open the new shell (with the switch on classic)');
   await phone.close();
+  await post({ shell: 'new' });
 
   // OFF at 1440: the classic shell comes back after a restart (a reload here).
   await post({ shell: 'classic' });

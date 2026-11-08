@@ -149,7 +149,7 @@ function hasArmed(projectRoot: string, taskId: string, step: TaskStep, round: nu
 function runLockFree(contextRoot: string, agent: string, deps: TaskJobDeps): boolean {
   const lock = lockPathFor(contextRoot, agent);
   const holder = lockHolderPid(lock);
-  const side = readRunSidecar(contextRoot, agent);
+  const side = readRunSidecar(contextRoot, agent, '');
   const childAlive = !!side && alive(side.childPgid, deps);
   if (side && childAlive && !alive(side.runnerPid, deps)) return false; // a live orphan
   if (holder === null) return true;
@@ -391,7 +391,7 @@ export function startDueTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): s
         const doerClaim = live.find((x) => x.taskId === c.view.id && x.role === 'doer');
         if (doerClaim && alive(doerClaim.hostPid, deps)) continue;
         const meta = metaFor(projectRoot, c.view.id, home);
-        const side = meta ? readRunSidecar(contextRoot, meta.doer) : null;
+        const side = meta ? readRunSidecar(contextRoot, meta.doer, '') : null;
         if (side && alive(side.childPgid, deps)) continue;
       }
       const runId = claimAndSpawn(contextRoot, c, deps, now);
@@ -505,7 +505,7 @@ export function reconcileTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): 
       if (claim.phase === 'waiting_owner' || claim.phase === 'stalled') continue;
       // active, delivered, orphaned: only a dead host is the reconciler's business.
       if (hostAlive) continue;
-      const side = readRunSidecar(contextRoot, claim.agent);
+      const side = readRunSidecar(contextRoot, claim.agent, '');
       const ours = !!side && (side.runnerPid === claim.hostPid || (claim.childPid !== null && side.childPid === claim.childPid));
       const childAlive = ours && alive(side!.childPgid, deps);
       if (childAlive) {
@@ -640,7 +640,7 @@ export function stopTaskAction(contextRoot: string, idOrSlug: string, deps: Task
   const killGroup = deps.killGroup ?? ((pgid: number) => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* gone */ } });
   let delivered = false;
   for (const claim of claims) {
-    const side = readRunSidecar(contextRoot, claim.agent);
+    const side = readRunSidecar(contextRoot, claim.agent, '');
     const ours = !!side && (side.runnerPid === claim.hostPid || (claim.childPid !== null && side.childPid === claim.childPid));
     if (ours && alive(side!.childPgid, deps)) killGroup(side!.childPgid);
     // Only a pid that is still THIS run's host: a recorded pid may since belong to another process.
@@ -784,7 +784,8 @@ export function sendBackAction(contextRoot: string, idOrSlug: string, text: stri
   }
   armStart(projectRoot, v.id, 'rework', v.round, deps.home);
   setResumeNote(projectRoot, { taskId: v.id, kind: 'sendback', text }, deps.home);
-  setTaskStatus(contextRoot, v.slug, PARENT_BY_KIND.active, { kind: 'owner' }, 'Sent back to the agent.');
+  // The round it sent back, in the same words the reviewer's line uses: the review rounds read it.
+  setTaskStatus(contextRoot, v.slug, PARENT_BY_KIND.active, { kind: 'owner' }, `Review round ${v.round}: sent back by the owner.`);
   closeRowsFor(projectRoot, v.id, ['task-review'], deps.home);
   startDueTaskJobs(contextRoot, deps);
   return { ok: true };
@@ -796,7 +797,12 @@ export function unassignTaskJob(contextRoot: string, slug: string, home?: string
   if (!head) return;
   withTaskFileLock(contextRoot, head.slug, () => {
     updateFrontmatterFields(taskFilePath(contextRoot, head.slug), {
-      agent: null, reviewer: null, agent_state: null, agent_step: null, agent_claimed_machine: null, agent_claimed_at: null, updated_at: today(),
+      agent: null, reviewer: null, agent_state: null, agent_step: null, agent_claimed_machine: null, agent_claimed_at: null,
+      // The job's review and delivery record goes with it: a later assignment starts at round 0.
+      review_round: null, review_cap: null, review_passed: null, deliveries: null,
+      agent_start_at: null, agent_queued_at: null, agent_workspace: null, agent_repo: null,
+      agent_blocked: null, agent_stopped: null,
+      updated_at: today(),
     });
   });
   const projectRoot = dirname(contextRoot);
@@ -925,7 +931,16 @@ export function endTaskJobIfClosed(contextRoot: string, slug: string, deps: Task
     if (!head) return;
     const v = taskJobView(head);
     if (!terminalKind(contextRoot, v.status)) return;
-    if (claimsForTask(dirname(contextRoot), v.id, deps.home).length === 0) return;
+    const projectRoot = dirname(contextRoot);
+    if (claimsForTask(projectRoot, v.id, deps.home).length === 0) {
+      // Nothing runs, but a step may still wait (a queued review, a scheduled start): it ends too,
+      // so the board shows no chip for a job that will never start on a closed task.
+      if (casTask(contextRoot, v.slug, { from: ['scheduled', 'queued'] }, { agent_state: null, agent_claimed_machine: null, updated_at: today() })) {
+        disarmTask(projectRoot, v.id, deps.home);
+        closeRowsFor(projectRoot, v.id, null, deps.home);
+      }
+      return;
+    }
     stopTaskAction(contextRoot, v.id, deps);
   } catch {
     // the deliver/review/settle checks refuse a closed task anyway

@@ -38,6 +38,9 @@ export function VaultLogo({ name, hasLogo, stamp, size = 20, className }: {
   );
 }
 
+/** Mirror of the logo route's limit (`MAX_LOGO_BYTES` in `routes/launcher.ts`). */
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+
 /**
  * The launcher-side SETTER: one hidden file input + the upload mutation, shared by the
  * List cards and the Space card so both surfaces get the identical flow — click "Logo…",
@@ -45,7 +48,7 @@ export function VaultLogo({ name, hasLogo, stamp, size = 20, className }: {
  * every card refreshes. Render `{picker.input}` ONCE per page; call `picker.pick(name)`
  * from any button.
  */
-export function useVaultLogoPicker(onError: (message: string) => void): {
+export function useVaultLogoPicker(onError: (message: string) => void, tooLarge = 'Logo exceeds the 5 MB limit.'): {
   pick: (name: string) => void;
   busy: boolean;
   input: ReactNode;
@@ -66,6 +69,9 @@ export function useVaultLogoPicker(onError: (message: string) => void): {
     e.target.value = '';
     const name = nameRef.current;
     if (!file || !name) return;
+    // Before the upload: the server drops an oversized connection mid-send, which the page
+    // would only see as a network error.
+    if (file.size > MAX_LOGO_BYTES) { onError(tooLarge); return; }
     setLogo.mutate({ name, file }, {
       onError: (err) => onError(err instanceof Error ? err.message : String(err)),
     });
@@ -77,7 +83,7 @@ export function useVaultLogoPicker(onError: (message: string) => void): {
       type="file"
       // The server magic-byte-verifies to exactly these; offering more would only
       // produce a post-pick rejection the accept filter could have prevented.
-      accept="image/png,image/jpeg,image/webp,image/gif"
+      accept="image/png,image/jpeg,image/webp"
       style={{ display: 'none' }}
       aria-hidden="true"
       tabIndex={-1}

@@ -3,6 +3,7 @@
  * the machine-wide `claude` count, and `machineRoom()` — one pure function for the idle-chat
  * park sweep and the information notes of `super state` (it never holds a delegate).
  */
+import { machineHeavySlots } from '../../src/lib/builder-tools.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   countClaudeSessions, machineNotes, machineRoom, parseProcMeminfoSwap, parseSwapUsage, readCapacityFacts, resetCapacityForTests,
@@ -126,13 +127,13 @@ describe('heat in the machine facts (the heat task, AC4)', () => {
   it('injected readers fill heat {thermal, heavyLimit, bag}; none injected = null (no spawn)', async () => {
     resetCapacityForTests();
     const f = await readCapacityFacts({ ...base, thermal: async () => 'serious', bagMode: () => true });
-    expect(f.heat).toEqual({ thermal: 'serious', heavyLimit: 1, bag: true });
+    expect(f.heat).toEqual({ thermal: 'serious', heavyLimit: 2, bag: true });
     resetCapacityForTests();
     const g = await readCapacityFacts({ ...base, thermal: async () => 'fair', bagMode: () => false });
-    expect(g.heat).toEqual({ thermal: 'fair', heavyLimit: 2, bag: false });
+    expect(g.heat).toEqual({ thermal: 'fair', heavyLimit: machineHeavySlots(), bag: false });
     resetCapacityForTests();
     const h = await readCapacityFacts({ ...base, thermal: async () => { throw new Error('x'); }, bagMode: () => { throw new Error('y'); } });
-    expect(h.heat).toEqual({ thermal: null, heavyLimit: 2, bag: false });
+    expect(h.heat).toEqual({ thermal: null, heavyLimit: machineHeavySlots(), bag: false });
     resetCapacityForTests();
     expect((await readCapacityFacts(base)).heat).toBeNull();
     resetCapacityForTests();

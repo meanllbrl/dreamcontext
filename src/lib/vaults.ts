@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -179,7 +179,7 @@ export function touchVault(name: string, home?: string, now: Date = new Date()):
  * Injectable `home` parameter makes this fully testable without touching the
  * real `~/.dreamcontext/vaults.json`.
  */
-export function resolveVaultContextRoot(arg: string, home: string = homedir()): string {
+export function resolveVaultContextRoot(arg: string, home: string = homedir(), opts: { ownAssistant?: boolean } = {}): string {
   // Explicit early refusal: without it the raw-path fallback below would `resolve()` the
   // reserved name against the cwd. The hidden vault is not a peer, not a federation target
   // and not a `--vault` argument.
@@ -191,6 +191,13 @@ export function resolveVaultContextRoot(arg: string, home: string = homedir()): 
   // Try registered-name match first
   const named = vaults.find((v) => v.name === arg);
   const resolved = named ? named.path : resolve(arg);
+
+  // Its path is refused like its name: `--vault ~/.dreamcontext/assistant` is the same vault.
+  const hidden = join(home, '.dreamcontext', 'assistant');
+  if (!opts.ownAssistant && (resolved === hidden || resolved.startsWith(`${hidden}/`)
+    || (existsSync(resolved) && existsSync(hidden) && realpathSync(resolved) === realpathSync(hidden)))) {
+    throw new VaultError(`"${arg}" is the dreamcontext Assistant, not a project vault.`);
+  }
 
   // Require the directory to exist
   if (!existsSync(resolved)) {

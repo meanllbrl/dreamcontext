@@ -262,6 +262,6 @@ describe('tasks assign-agent', () => {
     seedTask('fix-login');
     const out = run(['tasks', 'assign-agent', 'fix-login', 'writer'], projectDir, home);
     expect(out.exitCode).toBe(1);
-    expect(out.stdout).toContain('Approve it on the AI Team page.');
+    expect(out.stdout).toContain('waits for its approval card on the AI Team page');
   });
 });

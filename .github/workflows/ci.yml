@@ -24,7 +24,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.16'
           cache: npm
 
       # A bare CI runner has no git identity or init.defaultBranch, but a normal
@@ -57,6 +57,12 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
+      # tests/unit/drop-remote-media.test.ts draws model text in a real headless Chromium and
+      # counts every request it makes. A dev box has the browser from Playwright's own cache; a
+      # bare runner does not, and the file dies in beforeAll. The version is the lockfile's.
+      - name: Install headless Chromium for the browser unit test
+        run: npx playwright install --with-deps --only-shell chromium
+
       # The integration suite spawns the COMPILED CLI at dist/index.js
       # (tests/integration/*.test.ts and a few unit tests do
       # `const CLI = join(__dirname, '..', '..', 'dist', 'index.js')`), so the CLI
@@ -75,6 +81,8 @@ jobs:
       # Playwright e2e specs under e2e/ are NOT run here.
       - name: Run unit + integration tests
         run: npm test -- run
+      - name: T3 provider layer tests (vendored adapters, vitest.t3.config.ts)
+        run: npm run test:t3
 
   # The same gate on Windows (the desktop app and install.ps1 ship there since PR #437), plus a
   # type-check and the full build (dashboard, then CLI) that the Linux job leaves to the release.
@@ -101,7 +109,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.16'
           cache: npm
 
       - name: Install dependencies
@@ -110,6 +118,9 @@ jobs:
       - name: Install dashboard dependencies
         working-directory: dashboard
         run: npm ci
+
+      - name: Install headless Chromium for the browser unit test
+        run: npx playwright install --only-shell chromium
 
       - name: Type-check the CLI
         run: npx tsc --noEmit -p .

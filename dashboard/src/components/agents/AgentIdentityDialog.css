@@ -243,6 +243,17 @@
   cursor: pointer;
 }
 
+/* A check with a second line of explanation: the box sits on the first line. */
+.aid-check--top {
+  align-items: flex-start;
+}
+.aid-check--top input {
+  margin-top: 3px;
+}
+.aid-hint {
+  color: var(--color-text-secondary);
+}
+
 .aid-error {
   margin: 0;
   padding: var(--space-2) var(--space-3);

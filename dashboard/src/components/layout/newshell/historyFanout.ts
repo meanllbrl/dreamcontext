@@ -20,8 +20,8 @@ export interface FanResult<T extends FanRow> {
   failed: string[];
 }
 
-export function historyPath(q: string, agentRuns: boolean, limit: number, superRows?: 'group' | 'only'): string {
-  return `/agent/chat-sessions?limit=${limit}&q=${encodeURIComponent(q.trim())}${agentRuns ? '&agentRuns=1' : ''}${superRows ? `&super=${superRows}` : ''}`;
+export function historyPath(q: string, agentRuns: boolean, limit: number, superRows?: 'group' | 'only', app?: string): string {
+  return `/agent/chat-sessions?limit=${limit}&q=${encodeURIComponent(q.trim())}${agentRuns ? '&agentRuns=1' : ''}${superRows ? `&super=${superRows}` : ''}${app ? `&app=${encodeURIComponent(app)}` : ''}`;
 }
 
 /** A project's Super Agent as ONE History row: `superCount` marks it, its id is never a session. */

@@ -65,6 +65,7 @@ export function SecretCard({ spec, report }: {
       const res = await api.post<SecretResponse>('/agent/secret', {
         file: spec.file,
         title: spec.title,
+        ...(spec.app ? { app: spec.app } : {}),
         entries: spec.fields.map((f) => ({ key: f.key, value: (values[f.key] ?? '').trim() })),
       });
       // Cleared before anything else can run: from here on the value exists only in the
@@ -80,7 +81,7 @@ export function SecretCard({ spec, report }: {
       setError(err instanceof Error ? err.message : 'The secret could not be written.');
       setPhase('failed');
     }
-  }, [api, filled, phase, report, spec.fields, spec.file, spec.title, values]);
+  }, [api, filled, phase, report, spec.app, spec.fields, spec.file, spec.title, values]);
 
   if (phase === 'saved' && result) {
     return (
@@ -104,7 +105,7 @@ export function SecretCard({ spec, report }: {
 
   return (
     <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
-      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file">{spec.file}</span>} />
+      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file">{spec.app ? `${spec.app} · ${spec.file}` : spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
 
       <div className="chat-secretcard-fields">

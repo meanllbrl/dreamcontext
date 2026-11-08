@@ -177,3 +177,22 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ─── Optional tools (Codex, Antigravity) ─────────────────────────────────────── */
+/* Nothing needs them, so nothing here is ever red or amber: a missing tool is a gray dot. */
+.sysdep-dot--muted {
+  background: var(--color-text-tertiary);
+}
+
+.sysdep-status--quiet {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+
+.sysdep-optional-desc {
+  color: var(--color-text-secondary);
+}
+
+.sysdep-optional-account {
+  padding-left: var(--space-4);
+}

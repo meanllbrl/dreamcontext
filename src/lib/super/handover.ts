@@ -1,6 +1,7 @@
+import { closeAllForTakeback } from './owed.js';
 import { randomUUID } from 'node:crypto';
-import { chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
+import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds, superDecidesPermission } from '../assistant/chat-registry.js';
+import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -107,6 +108,8 @@ export async function enableSuper(
     // never deletes), so its tab does not come back as the owner's.
     const pruned = Object.keys(s.children).filter((sid) => !Object.prototype.hasOwnProperty.call(kept, sid));
     if (pruned.length) s.formerChildren = [...new Set([...(s.formerChildren ?? []), ...pruned])].slice(-MAX_FORMER_CHILDREN);
+    const prunedAdopted = pruned.filter((sid) => s.children[sid].adopted);
+    if (prunedAdopted.length) s.formerAdopted = [...new Set([...(s.formerAdopted ?? []), ...prunedAdopted])].slice(-MAX_FORMER_CHILDREN);
     s.children = kept;
     // Items about a child that is not kept, or that a remote screen holds, are old news.
     for (const q of s.queue) if (q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';
@@ -117,6 +120,7 @@ export async function enableSuper(
     showAgendaCard(s);
     for (const sid of adopt) s.notes[sid] = 'handover';
     s.enabled = true;
+    delete s.released;
     s.away = { since: null, events: 0 };
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
     s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
@@ -144,6 +148,8 @@ function queueWhatItAsks(s: SuperState, sid: string, now: number): void {
     s.queue.push({
       id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
       requestId: id, state: 'pending', createdAt: now,
+      // A Bypass child's residual permission: its new Super decides it first (inbox.ts).
+      ...(pq.isPermission && superDecidesPermission(chat, pq) ? { toSuper: true as const } : {}),
     });
   }
 }
@@ -167,18 +173,33 @@ export function adoptChat(s: SuperState, sid: string, brief: string, now: number
   return card;
 }
 
+/** The children a process still holds as the Super Agent goes off: the ones that become the
+ *  owner's chats. An ended child stays history; a dead one has nothing to come back to. */
+export function releasedAtOff(s: Pick<SuperState, 'children'>, alive: (sid: string) => boolean): string[] {
+  return Object.keys(s.children).filter((sid) => s.children[sid].endedAt === undefined && alive(sid));
+}
+
+const chatAlive = (sid: string): boolean => {
+  const e = getChat(sid);
+  return !!e && activityOf(e) !== 'gone';
+};
+
 export async function disableSuper(contextRoot: string): Promise<SuperState> {
   clearOwnerLease(contextRoot);
   stopSweep(contextRoot);
   // A "New session" turn already running when the owner takes the screen back must not rotate
   // the pane afterwards through the fallback (fresh-session.ts): nobody wants a fresh super now.
-  const recorded = superIndex(contextRoot).session;
+  const recorded = superEntry(contextRoot).session;
   if (recorded) clearFresh(recorded);
   return writeSuper(contextRoot, (s) => {
+    // Read once, at the moment it goes off: a second take-back must not forget a parked chat.
+    if (s.enabled) s.released = releasedAtOff(s, chatAlive);
     s.enabled = false;
     // The super's own question and a "New session" not yet delivered go with the hand-over: the
     // next hand-over must not rotate a session nobody asked to rotate.
-    for (const q of s.queue) if (q.kind === 'ask' || (q.kind === 'fresh' && q.state === 'pending')) q.state = 'done';
+    for (const q of s.queue) if (q.kind === 'ask' || (q.kind === 'fresh' && q.state === 'pending') || (q.kind === 'owed' && q.state === 'pending')) q.state = 'done';
+    // He is in the chat himself: nothing is owed him any more (owed.ts).
+    closeAllForTakeback(s, Date.now());
     for (const sid of Object.keys(s.children)) {
       // In memory, never from disk: a note being delivered right now is already gone from
       // memory, and its persist deletes only the value it delivered (store.ts clearSuperNote).

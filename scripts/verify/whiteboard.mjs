@@ -546,6 +546,9 @@ async function main() {
     /** Where the page's pointer rests between checks: the sidebar, off the canvas. */
     const parkPointer = () => page.mouse.move(8, 990);
 
+    // This script drives the classic rail (`.sidebar-item`, its groups); the new shell is the
+    // default now, so ask for the classic one explicitly.
+    await fetch(`${ORIGIN}/api/launcher/ui-settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shell: 'classic' }) });
     await page.goto(`${ORIGIN}/?vault=proj`, { waitUntil: 'networkidle' });
     await dismissModal();
 

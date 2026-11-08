@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { CardHeader } from './molecules';
 import { InlineTerminal } from './InlineTerminal';
@@ -35,7 +35,7 @@ export function RunCard({ spec, report }: {
    *  a read-only host, where the card still runs but nothing continues. */
   report?: (text: string) => void;
 }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const desktop = isDesktop();
   const [phase, setPhase] = useState<Phase>('idle');
   const [includeOutput, setIncludeOutput] = useState(true);

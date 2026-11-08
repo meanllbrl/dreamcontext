@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { mkdirSync, realpathSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { sendJson, sendError } from '../middleware.js';
+import { ensureTmpGitignored, pruneDrops } from '../../lib/agent-drops.js';
 import { isDesktop } from '../desktop.js';
 import { sanitizeDropFilename } from '../../lib/filename.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
@@ -36,7 +37,6 @@ import {
  */
 
 export const MAX_DROP_BYTES = 25 * 1024 * 1024; // 25 MB
-const DROP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // prune drops older than ~7 days
 
 /** Re-exported for back-compat with callers/tests that import from this route. */
 export type DropImageType = ImageMimeType;
@@ -60,33 +60,6 @@ function decodeFilenameHeader(h: string | string[] | undefined): string {
   const v = Array.isArray(h) ? h[0] : h;
   if (!v) return '';
   try { return decodeURIComponent(v); } catch { return v; }
-}
-
-/**
- * Make the vault's `_dream_context/tmp/` directory git-ignored in EVERY project, so a
- * dropped image is never accidentally committed regardless of the project's own root
- * `.gitignore`. Writes a self-ignoring `tmp/.gitignore` containing `*` (which also
- * ignores the file itself). Idempotent (the content is constant) and best-effort — a
- * write failure must never abort a drop, so errors are swallowed.
- */
-function ensureTmpGitignored(contextRoot: string): void {
-  try {
-    writeFileSync(join(contextRoot, 'tmp', '.gitignore'), '*\n');
-  } catch { /* best-effort: a read-only/locked tmp dir just means drops aren't auto-ignored */ }
-}
-
-/** Delete drops older than the TTL (best-effort; never throws into the request path). */
-function pruneDrops(dir: string): void {
-  try {
-    const now = Date.now();
-    for (const name of readdirSync(dir)) {
-      const p = join(dir, name);
-      try {
-        const st = statSync(p);
-        if (st.isFile() && now - st.mtimeMs > DROP_TTL_MS) unlinkSync(p);
-      } catch { /* a single unstattable/locked entry shouldn't abort the prune */ }
-    }
-  } catch { /* dir missing/unreadable — nothing to prune */ }
 }
 
 /**

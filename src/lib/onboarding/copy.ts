@@ -21,6 +21,8 @@ export const CHECK_COPY: Readonly<Record<CheckId, CheckCopy>> = {
   cli: { title: 'dreamcontext in Terminal', why: 'Lets Claude save what it learns in every project.' },
   claude: { title: 'Claude', why: 'The agent that works in your project.' },
   'claude-auth': { title: 'Claude sign-in', why: 'Connects Claude to your account.' },
+  codex: { title: 'Codex', why: 'A second agent your chats can run on.' },
+  'codex-auth': { title: 'Codex sign-in', why: 'Connects Codex to your account.' },
   git: { title: 'Git', why: "Keeps your project's history and syncs your brain." },
   github: { title: 'GitHub', why: 'Clone your repositories and sync with your team.' },
   gh: { title: 'GitHub tools for Claude', why: 'Lets Claude open pull requests for you.' },
@@ -40,6 +42,8 @@ export const REASON_COPY: Readonly<Record<ReasonCode, string>> = {
   platform: 'Not available on this system yet.',
   symlink: 'That folder points somewhere else. Pick the real folder.',
   'unsafe-path': "That folder's name can't be added automatically.",
+  'wont-start': 'Installed, but it does not start.',
+  'needs-node': 'Needs a newer Node.js on this computer.',
 };
 
 export interface FixCopy {
@@ -64,6 +68,16 @@ export const FIX_COPY: Readonly<Record<FixId, FixCopy>> = {
   'claude-install': { action: 'Install Claude', working: 'Installing Claude', done: 'Claude is installed' },
   'claude-path': { action: 'Make it available in Terminal', working: 'Updating your Terminal setup', done: 'Available in Terminal' },
   'claude-signin': {
+    action: 'Sign in',
+    working: 'Opening your browser',
+    done: 'Signed in',
+    waiting: 'Finish signing in in your browser.',
+  },
+  'codex-install': { action: 'Install Codex', working: 'Installing Codex', done: 'Codex is installed' },
+  'codex-update': { action: 'Update Codex', working: 'Updating Codex', done: 'Codex is up to date' },
+  'antigravity-install': { action: 'Install Antigravity', working: 'Installing Antigravity', done: 'Antigravity is installed' },
+  'antigravity-signin': { action: 'Sign in', working: 'Opening your browser', done: 'Signed in', waiting: 'Finish signing in in your browser.' },
+  'codex-signin': {
     action: 'Sign in',
     working: 'Opening your browser',
     done: 'Signed in',

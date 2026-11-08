@@ -56,6 +56,8 @@ export interface AgentSessionEntry {
   current: string;
   /** ISO timestamp of the last update — prune order only. */
   updated: string;
+  /** Antigravity: the account whose private profile holds this thread. */
+  account?: string;
 }
 
 function mapDir(contextRoot: string): string {
@@ -67,9 +69,12 @@ function readEntry(path: string): AgentSessionEntry | null {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const { current, updated } = raw as { current?: unknown; updated?: unknown };
+    const { current, updated, account } = raw as { current?: unknown; updated?: unknown; account?: unknown };
     if (typeof current !== 'string' || !UUID_RE.test(current)) return null;
-    const entry: AgentSessionEntry = { current, updated: typeof updated === 'string' ? updated : '' };
+    const entry: AgentSessionEntry = {
+      current, updated: typeof updated === 'string' ? updated : '',
+      ...(typeof account === 'string' && /^[a-z0-9][a-z0-9-]{0,39}$/.test(account) ? { account } : {}),
+    };
     return entry;
   } catch {
     return null;
@@ -129,7 +134,7 @@ function writeEntryAtomic(path: string, entry: AgentSessionEntry): void {
  * later interpolated into a shell command / used as a filename by the terminal route).
  * Best-effort: any fs error is swallowed; the map is an optimization, never a gate.
  */
-export function recordAgentSession(contextRoot: string, tabId: string, sessionId: string): void {
+export function recordAgentSession(contextRoot: string, tabId: string, sessionId: string, account?: string): void {
   if (!UUID_RE.test(tabId) || !UUID_RE.test(sessionId)) return;
   try {
     const dir = ensureMapDir(contextRoot);
@@ -137,7 +142,7 @@ export function recordAgentSession(contextRoot: string, tabId: string, sessionId
 
     const path = join(dir, `${tabId}.json`);
     if (existsSync(path) && !lstatSync(path).isFile()) return;
-    writeEntryAtomic(path, { current: sessionId, updated: new Date().toISOString() });
+    writeEntryAtomic(path, { current: sessionId, updated: new Date().toISOString(), ...(account ? { account } : {}) });
     resolveCache.delete(`${contextRoot}\0${tabId}`); // same-process read coherence
 
     // ONE directory pass feeds both the uniqueness sweep and the prune — this runs on
@@ -186,6 +191,12 @@ const RESOLVE_CACHE_MAX = 512;
  * and identity mappings are collapsed to `''` so callers can treat "mapped" as
  * "actually rotated".
  */
+export function resolveAgentSessionAccount(contextRoot: string, tabId: string): string {
+  if (!UUID_RE.test(tabId)) return '';
+  const raw = readEntry(join(mapDir(contextRoot), `${tabId}.json`))?.account;
+  return typeof raw === 'string' ? raw : '';
+}
+
 export function resolveAgentSession(contextRoot: string, tabId: string): string {
   if (!UUID_RE.test(tabId)) return '';
   const path = join(mapDir(contextRoot), `${tabId}.json`);

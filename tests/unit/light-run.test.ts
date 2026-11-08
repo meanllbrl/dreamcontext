@@ -95,8 +95,8 @@ describe('what the light turn is told', () => {
   const at = new Date('2026-10-31T10:00:00.000Z');
   it('keeps the approved prompt byte for byte and adds its block, without the learning directive', () => {
     const m = manifest();
-    const light = composePrompt(m, '/p', at, '/p/o.md', undefined, null, 'one read', null, null, null, true);
-    const full = composePrompt(m, '/p', at, '/p/o.md', undefined, null, 'one read');
+    const light = composePrompt(m, '/p', at, '/p/o.md', undefined, 'one read', null, null, null, true);
+    const full = composePrompt(m, '/p', at, '/p/o.md', undefined, 'one read');
     expect(light).toContain(m.prompt);
     expect(light).toContain(m.soul);
     expect(light).toContain(LIGHT_JOB_BLOCK);

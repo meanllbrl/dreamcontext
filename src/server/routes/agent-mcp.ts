@@ -16,9 +16,17 @@ import {
 import { readProjectMcp } from '../../lib/mcp-project.js';
 import { MCP_NAME_RE, FORBIDDEN_KEYS } from '../../lib/super/lean-mcp.js';
 import {
-  isUsableServerName, type McpHome, type McpOverview, type McpOverviewAccount, type McpOverviewCell,
-  type McpOverviewServer,
+  isUsableServerName, type AntigravityMcpList, type CodexMcpAuth, type CodexMcpList, type CodexMcpRow, type McpHome, type McpOverview,
+  type McpOverviewAccount, type McpOverviewCell, type McpOverviewServer,
 } from '../../lib/mcp-wire.js';
+import { codexArgsEnv, codexAccountDeps, defaultCodexRunner, listCodexAccounts, type CodexRunner } from '../../lib/codex-accounts.js';
+import { spawn } from 'node:child_process';
+import { codexChildEnv, codexCommand } from '../../lib/codex-bin.js';
+import { antigravityInstalled } from '../../lib/antigravity-accounts.js';
+import type { ProbeReport } from '../../lib/antigravity-mcp.js';
+import { INSTANCE_PRIMARY_ID, listInstanceAccounts } from '../../lib/instance-accounts.js';
+import { bridgeNode } from '../../lib/t3-bridge/node-floor.js';
+import { codexStorePlan, planArgv, probeCodexMcp, startCodexConnect, type AppServerOptions, type CodexLiveServer } from '../../lib/codex-mcp.js';
 
 /**
  * Settings → MCP (task mcp-management W2): one overview of every server × every Claude account,
@@ -140,6 +148,168 @@ export function buildOverview(projectRoot: string, home: string = homedir()): Mc
 export async function handleMcpOverview(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
   if (!guard(req, res, contextRoot)) return;
   sendJson(res, 200, buildOverview(projectRootOf(contextRoot)));
+}
+
+// ─── Codex (read only, first version) ──────────────────────────────────────────────────
+
+const CODEX_MCP_TIMEOUT_MS = 15_000;
+
+function codexAuth(v: unknown): CodexMcpAuth {
+  if (v === 'unsupported' || v === 'not_logged_in' || v === 'bearer_token') return v;
+  if (v === 'oauth' || v === 'o_auth') return 'oauth';
+  return 'unknown';
+}
+
+/**
+ * `codex mcp list --json` → rows, WHITELISTED field by field: name, enabled, auth status and
+ * the transport's TYPE. The transport object also holds the command, its args, a cwd and the
+ * env, so it is never spread or passed on. A row with an unusable name is dropped; anything
+ * that is not an array is `null` (the caller reports `failed`).
+ */
+export function parseCodexMcpList(stdout: string): CodexMcpRow[] | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(stdout.trim()); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const rows: CodexMcpRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const o = raw as Record<string, unknown>;
+    if (!isUsableServerName(o.name) || seen.has(o.name)) continue;
+    seen.add(o.name);
+    const t = o.transport && typeof o.transport === 'object' ? (o.transport as Record<string, unknown>).type : undefined;
+    rows.push({
+      name: o.name,
+      enabled: o.enabled === true,
+      authStatus: codexAuth(o.auth_status),
+      transport: t === 'stdio' ? 'stdio' : t === 'streamable_http' || t === 'http' ? 'http' : 'other',
+      status: 'unknown',
+    });
+  }
+  return rows;
+}
+
+let codexMcpRunner: CodexRunner = defaultCodexRunner;
+let codexMcpProbe: (o: AppServerOptions) => Promise<CodexLiveServer[] | null> = probeCodexMcp;
+/** Tests: replace how `codex` is run, and the live session it is asked through. */
+export function setCodexMcpRunnerForTests(run: CodexRunner | null, probe?: (o: AppServerOptions) => Promise<CodexLiveServer[] | null>): void {
+  codexMcpRunner = run ?? defaultCodexRunner;
+  codexMcpProbe = probe ?? probeCodexMcp;
+}
+
+/**
+ * How this Mac starts the Codex that answers for the column: the found binary (a window opened
+ * from Finder has no nvm on its PATH, so a bare `codex` was never found there) and the account a
+ * new chat starts on. Every account reads one config and one MCP sign-in.
+ */
+function codexLaunch(env: NodeJS.ProcessEnv, home: string): { bin: string; pre: string[]; env: NodeJS.ProcessEnv } {
+  const first = listCodexAccounts(home)[0]?.id ?? 'primary';
+  const { env: accountEnv, pre } = codexArgsEnv(first, { home, env });
+  return { bin: codexCommand({ home }), pre, env: codexChildEnv(accountEnv) };
+}
+
+/**
+ * Ask Codex for its servers: its config for what exists, then a live `codex app-server` carrying
+ * the app's stores exactly as a chat does, for how each one really is.
+ */
+export async function readCodexMcp(projectRoot: string, env: NodeJS.ProcessEnv = process.env, home: string = homedir()): Promise<CodexMcpList> {
+  const launch = codexLaunch(env, home);
+  const r = await codexMcpRunner(launch.bin, [...launch.pre, 'mcp', 'list', '--json'], { env: launch.env, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
+  if (!r.spawned) return { state: 'not_installed', servers: [], left: [] };
+  if (r.timedOut || r.code !== 0) return { state: 'failed', servers: [], left: [] };
+  const rows = parseCodexMcpList(r.stdout);
+  if (!rows) return { state: 'failed', servers: [], left: [] };
+  const plan = codexStorePlan({ home, projectRoot, node: codexAccountDeps().node ?? process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: rows.map((x) => x.name), sync: false });
+  for (const s of plan.reached) rows.push({ name: s.name, enabled: true, authStatus: 'unknown', transport: s.transport, status: 'unknown', fromStore: true });
+  const live = await codexMcpProbe({ bin: launch.bin, argv: [...launch.pre, ...planArgv(plan)], env: launch.env, cwd: projectRoot });
+  const byName = new Map((live ?? []).map((s) => [s.name, s]));
+  return {
+    state: 'ok',
+    left: plan.left,
+    servers: rows.map((row) => {
+      const said = byName.get(row.name);
+      if (!row.enabled) return { ...row, status: 'disabled' as const };
+      return said ? { ...row, status: said.status, authStatus: said.authStatus, toolCount: said.toolCount } : row;
+    }),
+  };
+}
+
+/** GET /api/agent/mcp/codex: what a live Codex says about every server it has. No writes. */
+export async function handleMcpCodex(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  sendJson(res, 200, await readCodexMcp(projectRootOf(contextRoot)));
+}
+
+const ANTIGRAVITY_PROBE_LIMIT_MS = 60_000;
+const ANTIGRAVITY_PROBE_KEEP_MS = 5 * 60_000;
+const antigravityProbes = new Map<string, { at: number; list: Promise<AntigravityMcpList> }>();
+
+/** Tests: stands in for the live session. */
+let antigravityProbe: (projectRoot: string, account: string) => Promise<ProbeReport | null> = probeAntigravitySession;
+export function setAntigravityMcpProbeForTests(fn: typeof antigravityProbe | null): void {
+  antigravityProbe = fn ?? probeAntigravitySession;
+  antigravityProbes.clear();
+}
+
+/** A bridge child opens one real session on the account a new chat starts on, and prints its report. */
+function probeAntigravitySession(projectRoot: string, account: string): Promise<ProbeReport | null> {
+  const node = bridgeNode();
+  const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  if (!node || !cli) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const child = spawn(node, [cli, 't3-chat', '--tool', 'antigravity', '--mcp-probe', '--cwd', projectRoot, ...(account === INSTANCE_PRIMARY_ID ? [] : ['--account', account])], { cwd: projectRoot, env: { ...process.env, DREAMCONTEXT_CLI: cli }, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    const timer = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* gone */ } }, ANTIGRAVITY_PROBE_LIMIT_MS);
+    child.stdout.on('data', (c: Buffer) => { if (out.length < 1_000_000) out += c.toString('utf-8'); });
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      try { resolve(JSON.parse(out.trim().split('\n').pop() ?? '') as ProbeReport); } catch { resolve(null); }
+    });
+  });
+}
+
+/** What a live Antigravity session says about every server the app has for this project. */
+export async function readAntigravityMcp(projectRoot: string, home: string = homedir()): Promise<AntigravityMcpList> {
+  if (!antigravityInstalled({ home })) return { state: 'not_installed', servers: [], left: [] };
+  const plan = codexStorePlan({ home, projectRoot, node: process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: [], sync: false });
+  const account = listInstanceAccounts('antigravity', home).find((a) => a.signedIn)?.id;
+  if (!account) return { state: 'signed_out', servers: [], left: plan.left };
+  const report = await antigravityProbe(projectRoot, account);
+  if (!report) return { state: 'failed', servers: [], left: plan.left };
+  return { state: report.state, servers: report.servers, left: plan.left };
+}
+
+/** GET /api/agent/mcp/antigravity: asks a live session, at most once in five minutes (`?fresh=1` asks now). */
+export async function handleMcpAntigravity(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  const root = projectRootOf(contextRoot);
+  const fresh = new URL(req.url ?? '/', 'http://x').searchParams.get('fresh') === '1';
+  const held = antigravityProbes.get(root);
+  if (held && !fresh && Date.now() - held.at < ANTIGRAVITY_PROBE_KEEP_MS) { sendJson(res, 200, await held.list); return; }
+  const list = readAntigravityMcp(root);
+  antigravityProbes.set(root, { at: Date.now(), list });
+  sendJson(res, 200, await list);
+}
+
+/** POST /api/agent/mcp/codex/connect `{name}`: Codex's own sign-in for one server. */
+export async function handleMcpCodexConnect(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  const body = (await parseJsonBody(req)) as { name?: unknown } | null;
+  const name = body?.name;
+  if (!isUsableServerName(name)) { sendError(res, 400, 'bad_name', 'That is not a server.'); return; }
+  const projectRoot = projectRootOf(contextRoot);
+  const home = homedir();
+  const launch = codexLaunch(process.env, home);
+  const listed = await codexMcpRunner(launch.bin, [...launch.pre, 'mcp', 'list', '--json'], { env: launch.env, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
+  const rows = listed.code === 0 ? parseCodexMcpList(listed.stdout) : null;
+  if (!rows) { sendError(res, 503, 'codex_unavailable', 'Codex did not answer.'); return; }
+  const plan = codexStorePlan({ home, projectRoot, node: codexAccountDeps().node ?? process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: rows.map((x) => x.name), sync: false });
+  if (!rows.some((x) => x.name === name) && !plan.reached.some((x) => x.name === name)) { sendError(res, 404, 'not_found', 'Codex has no server by that name.'); return; }
+  const ticket = startCodexConnect({ name, bin: launch.bin, argv: [...launch.pre, ...planArgv(plan)], env: launch.env, cwd: projectRoot });
+  if (ticket === 'busy') { sendError(res, 409, 'busy', 'Another sign-in is running. Finish it first.'); return; }
+  if (!ticket) { sendError(res, 500, 'spawn_failed', 'Codex did not start.'); return; }
+  sendJson(res, 200, ticket);
 }
 
 /** POST /api/agent/mcp/check `{account?}`: probe one account, or every account. */

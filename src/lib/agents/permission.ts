@@ -83,3 +83,32 @@ export function levelBrief(level: AgentAutonomy, headless = false): string {
     '--- END AUTONOMY ---',
   ].join('\n');
 }
+
+/** Claude permission modes, narrowest first (the same order `super/member-crew.ts` ranks by). */
+const MODE_ORDER: Record<string, number> = { dontAsk: 0, plan: 0, default: 1, auto: 2, bypassPermissions: 3 };
+
+/** The narrower of two Claude permission modes; an unknown mode counts as the widest, so it never
+ *  wins over a known one. */
+export function narrowerMode(a: string, b: string): string {
+  return (MODE_ORDER[a] ?? 3) <= (MODE_ORDER[b] ?? 3) ? a : b;
+}
+
+/** The chat mode of `level` (`levelPermissionArgs(level, 'chat')`), as a mode name. */
+export function levelChatMode(level: AgentAutonomy): string {
+  return levelPermissionArgs(level, 'chat')[1];
+}
+
+/**
+ * The mode an agent's CARD conversation runs in (owner 2026-11-07, item 4): the owner's own pane
+ * mode, never wider than the agent's autonomy level. A mid-session switch is allowed only to a
+ * mode this would also give (`cardModeAllowed`).
+ */
+export function cardSessionMode(paneMode: string, level: AgentAutonomy): string {
+  return narrowerMode(paneMode, levelChatMode(level));
+}
+
+/** Whether a card session may switch to `mode`: never past the agent's autonomy level. */
+export function cardModeAllowed(mode: string, level: AgentAutonomy): boolean {
+  return narrowerMode(mode, levelChatMode(level)) === mode;
+}
+

@@ -315,6 +315,9 @@ export type AutomationSlot = 'absent' | 'legacy-call' | 'automation' | 'unreadab
  *  client-supplied filename. */
 export const AUTOMATION_PHOTOS_DIR = 'automations/photos';
 
+/** A tool an automation or agent runs on when it is not Claude. */
+export type RunTool = 'codex' | 'antigravity';
+
 export interface AutomationManifest {
   slug: string;
   id: string;
@@ -493,6 +496,40 @@ export interface AutomationManifest {
    * through `composeRun`; absent on an agent that names none. Hashed when present: it opens tools.
    */
   readTools?: string[];
+  /**
+   * `scope: board` in the agent's frontmatter: limit a home-board agent to its board (the old
+   * `dontAsk` envelope of `board-scope.ts`). Identity, through `composeRun`; absent (false) on
+   * every agent that does not opt in, which then runs under its autonomy level like any member
+   * (owner 2026-11-07: a home board is a presentation surface, never a permission scope).
+   * IS approval-hashed, OMITTED when false and LAST, so every hash that exists keeps its bytes.
+   */
+  boardOnly?: boolean;
+  /**
+   * Other tools this automation may fall back to when every account of its own tool is out of
+   * limit (plan r5 §4e). A SHAPE only in Track T W2: no manifest parser reads it and nothing moves
+   * a run (the fallback policy is `'never'`), so it is never present today. Hashed when present,
+   * so allowing a fallback later re-approves only that automation. The rule that adds the parser
+   * adds it to `ApprovalPayloadFields` / `APPROVAL_DIFF_FIELDS` and the review panel with it.
+   */
+  fallbackTools?: string[];
+  /** The tool it runs on when that is not Claude (Track T W4). Hashed: it decides which vendor
+   *  sees the prompt and which envelope runs it, so a change re-approves. Absent = Claude. */
+  tool?: RunTool;
+  /** The Codex account it is pinned to, unhashed (who pays, not what runs). Absent = chosen per
+   *  run, by the owner's order and `agentThreshold`. Claude runs keep their chooser. */
+  account?: string;
+  /**
+   * The app this automation belongs to (`app:`, dreamcontext-apps). Its run carries that app's
+   * brief. Absent on every automation that is not an app's, so those keep their exact hash:
+   * IS approval-hashed, OMITTED when absent and LAST. Only a scheduled job carries it.
+   */
+  app?: string;
+  /**
+   * App tools this job may run while nobody watches (`app_tools:`, app-araclari plan r3 §4.2), as
+   * `<app>/<tool>`. A changing tool in an unattended run passes only when it is listed here and
+   * this exact manifest is approved on this Mac. Approval-hashed, OMITTED when absent and LAST.
+   */
+  appTools?: string[];
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -542,6 +579,10 @@ export interface AutomationJob {
   /** The `## Job` section, `''` when absent. */
   job: string;
   flow: FlowGraph | null;
+  /** The app it belongs to (`app:`), absent otherwise. Hashed, see `AutomationManifest.app`. */
+  app?: string;
+  /** `app_tools:`, absent otherwise. Hashed, see `AutomationManifest.appTools`. */
+  appTools?: string[];
   /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
   owner: string | null;
   /** When its owner last wrote it (`updated:`), unhashed. */
@@ -583,7 +624,7 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app' | 'telegram';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a
@@ -616,7 +657,18 @@ export interface ThreadEntry {
    *  summary is a summary that was not posted, and rendering an empty block
    *  would put a heading over nothing. */
   summary?: ThreadSummaryRow[];
+  /** A terminal `ok` entry only: the opening line of the document the run PUBLISHED, plain text,
+   *  at most {@link THREAD_RESULT_MAX_CHARS}. The one synced fact that gives a silent run a body
+   *  on another machine or after its cache row was evicted. ABSENT on old entries and on a run
+   *  that published nothing (a gated document stays behind its gate). */
+  result?: string;
+  /** `via: 'app'` only: the app the words came from. A `kind: 'user'` entry with this is NEVER
+   *  the owner's sentence, on any surface, even when he typed it in the app's own chat. */
+  app?: string;
   via: ThreadVia;
+  /** A run post's stamp (plan Y3, Z3, AA3): HMAC(per-run key, id + content hash), written by
+   *  `automations post` from the run's own child. Only the parent runner can verify it. */
+  stamp?: string;
 }
 
 /** One run's thread, as a channel list renders it. */
@@ -731,6 +783,12 @@ export interface AutomationCache {
 export const REVIEW_CHANNELS = ['dashboard', 'cli', 'telegram', 'notification'] as const;
 export type ReviewChannel = (typeof REVIEW_CHANNELS)[number];
 
+/** The channels a NEW verdict or steer may be recorded with. `telegram` is a
+ *  LEGACY value: records written by the retired per-routine Telegram channel still
+ *  parse with it (it stays in {@link REVIEW_CHANNELS}), but no writer can set it. */
+export const SETTABLE_REVIEW_CHANNELS = ['dashboard', 'cli', 'notification'] as const;
+export type SettableReviewChannel = (typeof SETTABLE_REVIEW_CHANNELS)[number];
+
 /** One correction a human gave a pending question (or, on the legacy surface, a
  *  pending card). Kept on the record itself — not only in the resumed
  *  transcript — so every channel can show the trail without reading a session
@@ -753,7 +811,7 @@ export interface QuestionSteer {
 // A question is what a run hands a human when it must ask before going on. It
 // inherits the review card's one load-bearing property — THE ANSWER RESUMES THE
 // SESSION THAT ASKED — and drops the queue around it: the question is delivered
-// where the human already is (their own chat, or Telegram), not onto a board
+// where the human already is (their own chat), not onto a board
 // nobody is standing in front of at 18:00.
 //
 // That property is why a question stores a `sessionId` and NOTHING RESEMBLING A
@@ -769,6 +827,9 @@ export interface QuestionSteer {
 /** Where a question was asked, and therefore where its answer comes back. */
 export const HITL_CHANNELS = ['chat', 'telegram'] as const;
 export type HitlChannel = (typeof HITL_CHANNELS)[number];
+/** Where a NEW question may be asked. `telegram` only parses, from records the
+ *  retired per-routine Telegram channel wrote; nothing can create one. */
+export type SettableHitlChannel = Exclude<HitlChannel, 'telegram'>;
 
 /**
  * WHICH GATE this question belongs to. A SECURITY DISCRIMINATOR, not ergonomics
@@ -873,9 +934,8 @@ export interface AutomationQuestion {
   /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
    *  ledgers elsewhere in the brain, which are scanned newest-first. */
   steers: QuestionSteer[];
-  /** Per-channel handles for a question already rendered somewhere (a Telegram
-   *  message id, say), so a steer edits it in place instead of posting a second
-   *  copy of a question that is still the same question. */
+  /** Per-channel handles for a question already rendered somewhere. Written only by
+   *  the retired per-routine Telegram channel; kept so old records still parse. */
   channelRefs: Record<string, string>;
   createdAt: string;
 }
@@ -957,8 +1017,11 @@ export interface RunSidecar {
   slug: string;
   /** A light job: `automations kill` then moves no schedule watermark. Absent on any other run. */
   light?: true;
-  /** `runLeavesNoSession`: what queues behind this run would have no session to resume. */
+  /** `runLeavesNoSession`: a follow-up to this run has no session to resume. */
   noSession?: true;
+  /** The parallel turn's slot (`runSlotKey`), when it has one: its lock and this record are its
+   *  own files. Absent: the member's one exclusive run (a scheduled fire, a task step). */
+  slot?: string;
   runnerPid: number;
   childPid: number;
   childPgid: number;
@@ -1060,6 +1123,15 @@ export interface ApprovalPayloadFields {
   autonomy: AgentAutonomy;
   /** Hashed because it opens tools in a light job. '' when absent. */
   readTools: string;
+  /** Hashed because it decides which vendor reads the prompt and under which envelope it runs. */
+  tool: string | null;
+  /** Hashed because it decides which app's brief the run is given. '' when it has none. */
+  app: string;
+  /** Hashed because it limits a home-board agent to its board (frontmatter `scope: board`).
+   *  Always present (false when unset), so a reviewer sees a limit appear or go. */
+  boardOnly: boolean;
+  /** Hashed because it lets an unattended run change things through an app. '' when none. */
+  appTools: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1076,6 +1148,15 @@ export const AGENT_CHAT_ENV = 'DREAMCONTEXT_AGENT_CHAT';
  *  text nobody here wrote. What they create is not approved by creating it. */
 export const SUPER_CREW_ENV = 'DREAMCONTEXT_SUPER_CREW';
 
+/** Env var on an AI Team member's OWN Super chat (plan-r10 1), beside `DREAMCONTEXT_AGENT_CHAT`
+ *  (which keeps every owner-only verb refused there): its member slug. `dreamcontext super` lets
+ *  that one process through (`callSuper`); the marker grants nothing by itself, the server's token
+ *  check is the gate. */
+export const MEMBER_SUPER_ENV = 'DREAMCONTEXT_MEMBER_SUPER';
+/** Env var on a member Super's CHILDREN (security r8-2): the member's slug. `insideAgentRun` is true
+ *  for them, so no owner-only verb runs there, and their permission mode never exceeds the member's. */
+export const MEMBER_CREW_ENV = 'DREAMCONTEXT_MEMBER_CREW';
+
 /** True when a create must leave its approval to the owner: an agent's run or conversation, or the
  *  Super Agent's crew. The owner's own Chat keeps "the human who wrote it approved it". */
 export function createNeedsOwner(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -1085,7 +1166,23 @@ export function createNeedsOwner(env: NodeJS.ProcessEnv = process.env): boolean 
 /** True inside anything an agent drives: a run (scheduled, called, a task job) or a conversation
  *  with it. The ONE predicate every owner-only CLI verb asks (autonomy, filing approval, assign). */
 export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined;
+  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined
+    || !!env[MEMBER_CREW_ENV];
+}
+
+/**
+ * The one process a member's own Super chat is (plan-r10 1, critic 1): it carries
+ * `DREAMCONTEXT_MEMBER_SUPER` equal to its `DREAMCONTEXT_AGENT_CHAT`, and neither a run's
+ * `DREAMCONTEXT_AGENT_SELF` nor `DREAMCONTEXT_AUTOMATION_RUN` (an inherited key is still not the
+ * Super). Its slug, or null. Only `dreamcontext super` asks this; every owner-only verb still asks
+ * `insideAgentRun`, which stays true here.
+ */
+export function memberSuperProcess(env: NodeJS.ProcessEnv = process.env): string | null {
+  const slug = env[MEMBER_SUPER_ENV];
+  if (!slug || slug !== env[AGENT_CHAT_ENV]) return null;
+  if (env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) return null;
+  if (env[MEMBER_CREW_ENV]) return null;
+  return slug;
 }
 
 /** Env var naming the per-spawn scratch folder a home-board agent may write. */
@@ -1161,6 +1258,10 @@ export const APPROVAL_DIFF_FIELDS = [
   'soul',
   'autonomy',
   'readTools',
+  'tool',
+  'app',
+  'boardOnly',
+  'appTools',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────
@@ -1191,6 +1292,8 @@ export const PATTERN_LESSONS_HEADING = '### Lessons';
  *  it does so mid-word with no ellipsis — capping here means the user sees a
  *  deliberate end rather than a sentence cut in half. */
 export const NOTIFY_BODY_MAX_CHARS = 240;
+/** A terminal entry's `result` is the banner's line, so it has the banner's cap. */
+export const THREAD_RESULT_MAX_CHARS = NOTIFY_BODY_MAX_CHARS;
 /** Beyond this age a sidecar's recorded PGID may have been recycled by the OS —
  *  `automations kill` requires --force past this window rather than trusting
  *  process-group identity blindly. */

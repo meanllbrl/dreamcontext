@@ -138,6 +138,9 @@ function setupScratch() {
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
     superAgent: true,
   }, null, 2)}\n`);
+  // This script drives the hand-over button, which only the classic shell draws (the new shell,
+  // the default since W3, enters the stage from the drawer's Super Agent row instead).
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), `${JSON.stringify({ view: 'list', shell: 'classic' })}\n`);
   spawnSync('git', ['-C', PROJ, 'init', '-q'], { encoding: 'utf-8' });
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);

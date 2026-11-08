@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { emitInstance, useVault } from '../../../context/VaultContext';
+import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import { openExternalUrl } from '../../../lib/desktop';
+import { readDeviceShell } from '../../../lib/uxMode';
 import type { McpLiveServer } from '../../../lib/mcpWire';
 import { useChatAccountEmail, useMcpLive, type McpHost } from './useMcpLive';
 import {
@@ -27,7 +28,7 @@ export function McpPicker({ session, onClose, inputRef }: {
    *  Enter or Esc anywhere else in the app is never captured (end review). */
   inputRef?: { current: HTMLElement | null };
 }) {
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   const accountEmail = useChatAccountEmail(session);
   const { status, auth } = useMcpLive(session);
   const servers = useMemo(() => sortNeedsYouFirst(status?.servers ?? []), [status]);
@@ -152,9 +153,12 @@ export function McpPicker({ session, onClose, inputRef }: {
         <span className="mcp-picker-keys">
           <kbd>↑↓</kbd> move <kbd>↵</kbd> connect <kbd>esc</kbd> close
         </span>
-        <button type="button" className="mcp-picker-link" onMouseDown={(e) => { e.preventDefault(); manage(); }} onClick={(e) => { if (e.detail === 0) manage(); }}>
-          Manage in Settings
-        </button>
+        {/* A device shell (the phone, the tunnel) has no Settings: no link to them. */}
+        {!readDeviceShell() && (
+          <button type="button" className="mcp-picker-link" onMouseDown={(e) => { e.preventDefault(); manage(); }} onClick={(e) => { if (e.detail === 0) manage(); }}>
+            Manage in Settings
+          </button>
+        )}
       </div>
     </div>
   );

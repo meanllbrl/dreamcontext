@@ -9,6 +9,7 @@ import {
 // pane sizing) — the primitive moved to `termCore.ts`, the import site did not have to.
 export { currentZoom };
 import { copyPreservingUnicode } from '../../lib/clipboard';
+import { chatToolParam } from '../../lib/chatToolBinding';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
 import { webglBudget, type WebglHandle } from './webglBudget';
@@ -146,6 +147,7 @@ export interface Session {
   asking: boolean;      // a question is on screen — Claude is blocked on YOUR answer
   attention: boolean;   // finished / rang the bell since you last looked
   minimized: boolean;   // mirrored from layout state so the idle timer can read it
+  seen: boolean;        // the owner sees it right now (ownerSees.ts): nothing it does is news
   /** Open the terminal into its container once it is in the DOM and visible.
    *
    *  `focus` (default `true`) exists because one window now holds several LIVE projects:
@@ -205,7 +207,7 @@ const WORKING_RE = /esc to interrupt|ctrl\+b to run in background/i;
  * the vault also names this session's alarm source, which is what lets a background project's
  * chip raise the user (see `raiseAskAttention` below). Empty string = no project pinned.
  */
-export function createSession(vault: string, bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false): Session {
+export function createSession(vault: string, bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, accountId = ''): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -256,7 +258,8 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   // restore, it asks the server to `--resume` that exact conversation instead.
   const isShell = kind === 'shell';
   const idParam = isShell ? '' : (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`);
-  const kindParam = isShell ? '&kind=shell' : '';
+  // A Codex conversation's terminal runs `codex` on its account (Track T W4); '' stays Claude's URL.
+  const kindParam = isShell ? '&kind=shell' : `${chatToolParam(claudeId)}${accountId ? `&account=${encodeURIComponent(accountId)}` : ''}`;
   // The model applies ONLY to a Claude agent (`claude --model <id>`); a shell has none, and
   // an empty id means "let Claude Code use its configured default" (no flag). The server
   // re-validates the token before it ever reaches the shell command, so this is a hint.
@@ -294,7 +297,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   const session: Session = {
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
-    busy: false, asking: false, attention: false, minimized: false,
+    busy: false, asking: false, attention: false, minimized: false, seen: false,
     ensureOpen, fitAndResize, applyZoom, sendText, runCommand, focus: () => term.focus(),
     setParkHandler: (fn) => { parkHandler = fn; },
     markFocus,
@@ -441,7 +444,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     session.busy = false;
     session.asking = false;
     // Finished while you weren't looking → flag the bubble's notification badge.
-    if (session.minimized && !session.attention) session.attention = true;
+    if (!session.seen && !session.attention) session.attention = true;
     notify();
   }
 
@@ -464,7 +467,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   // and classify the screen on a short fuse so a question flips the chip to "needs you"
   // fast instead of waiting out the full idle window.
   const bellSub = term.onBell(() => {
-    if (!session.attention) { session.attention = true; notify(); }
+    if (!session.seen && !session.attention) { session.attention = true; notify(); }
     armSettle(200);
   });
 

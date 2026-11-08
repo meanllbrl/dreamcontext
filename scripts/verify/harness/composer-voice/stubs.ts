@@ -29,7 +29,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!path.startsWith('/api/')) return realFetch(input, init);
   if (path.startsWith('/api/agent/voice/dictation')) return json({ installed: true });
   if (path.startsWith('/api/agent/voice/status')) {
-    return json({ pushToTalk: 'Shift+V', pushToTalkMode: 'hold', speech: true, speechRate: 1, key: true });
+    return json({ pushToTalk: params.get('chord') ?? 'Shift+V', pushToTalkMode: 'hold', speech: true, speechRate: 1, key: true });
   }
   if (path.startsWith('/api/agent/voice/tts')) { (w as { __tts: number }).__tts += 1; return new Response(null, { status: 204 }); }
   // `?stt=garbled`: the Mac could not understand the take twice (task sesli-giris-bozuk…), so

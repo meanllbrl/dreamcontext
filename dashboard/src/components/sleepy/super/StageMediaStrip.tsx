@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 
 /**
@@ -37,7 +37,7 @@ export function StageMediaStrip({ items, snapshot, onOpenFile }: {
 }
 
 function StageThumb({ item, onOpenFile }: { item: { ref: string; title?: string }; onOpenFile?: (path: string) => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const [failed, setFailed] = useState(false);
   const name = item.title || item.ref.split('/').pop() || item.ref;
   if (failed) return <span className="super-stage-media-gone" title={item.ref}><span aria-hidden>🖼</span> {name}</span>;

@@ -108,6 +108,9 @@ export interface AutomationSummary {
   /** On the summary so the Edit dialog can prefill straight from the list
    *  rather than fetching the manifest and flashing a default first. */
   effort: 'low' | 'medium' | 'high' | null;
+  /** The tool it runs on, and the Codex account it is pinned to. */
+  tool?: 'claude' | 'codex' | 'antigravity';
+  account?: string | null;
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -292,6 +295,12 @@ export interface AutomationManifestDetail {
   autonomy?: 'ask' | 'balanced' | 'free';
   /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
   readTools?: string[];
+  /** Hashed when named, LAST: the app tools (`<app>/<tool>`) a run may CHANGE things with unattended. */
+  appTools?: string[];
+  tool?: 'claude' | 'codex' | 'antigravity';
+  /** Hashed when true, LAST: `scope: board`, the agent is limited to its home board.
+   *  Absent on an older backend, which means not limited. */
+  boardOnly?: boolean;
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -585,6 +594,9 @@ export interface AutomationDraft {
   job?: string;
   /** The legacy shape's prompt; ignored when `agent` is set. */
   prompt?: string;
+  /** Its tool and pinned Codex account; a changed tool waits for the owner's approval. */
+  tool?: 'claude' | 'codex' | 'antigravity';
+  account?: string;
   mode: AutomationMode;
   /** Every time it fires. Wins over the one-slot `days`/`at`. */
   slots?: ScheduleSlot[];
@@ -649,8 +661,11 @@ export function useDeleteAgent() {
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ ok: true; slug: string; agentKept?: string | null }>(`/automations/${slug}/delete`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['automations'] });
+    onSuccess: (_data, slug) => {
+      // Never re-read the deleted one's own detail (a 404): an open row still watches it, so removing
+      // it from the cache would refetch on the next render. Leave it as is; the row unmounts once the
+      // list comes back without it, and the unwatched entry is collected.
+      queryClient.invalidateQueries({ queryKey: ['automations'], predicate: (q) => q.queryKey[1] !== slug });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
   });
@@ -757,6 +772,7 @@ export interface AutomationQuestion {
    *  so the question can be closed but never resumed. */
   sessionId: string | null;
   kind: 'approval' | 'flow-hitl';
+  /** `telegram` only on records the retired per-routine Telegram channel wrote. */
   channel: 'chat' | 'telegram';
   /** What the human is being asked, in the run's own words. */
   question: string;
@@ -778,7 +794,7 @@ export interface AutomationQuestion {
 /**
  * Every question awaiting an answer, across every automation, oldest first —
  * mirrors `handleAutomationsQuestionsList`. Polled, for the reason the
- * retired review queue was: a question can be answered from Telegram or the
+ * retired review queue was: a question can be answered from a thread or the
  * CLI while this is open, and a stale list would keep offering controls for a
  * question someone already answered elsewhere. The engine's claim lock makes
  * that safe either way, but showing it is better than catching it.
@@ -857,46 +873,6 @@ export function useAnswerQuestion() {
   });
 }
 
-// ─── Per-automation Telegram ────────────────────────────────────────────────
-
-/** What the dashboard needs to answer "is Telegram set up for this
- *  automation, and where does it reply" — mirrors `TelegramConfigView` in
- *  `src/server/routes/automations.ts`. Deliberately has NO token field: the
- *  bot token is a capability (it can resume a `bypassPermissions` session)
- *  and never leaves the server process. */
-export interface TelegramConfigView {
-  configured: boolean;
-  chatId: string | null;
-}
-
-export function useAutomationTelegram(slug: string | null) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['automations', slug, 'telegram'],
-    queryFn: () =>
-      api.get<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`).then((r) => r.telegram),
-    enabled: !!slug,
-    retry: 0,
-  });
-}
-
-/** Set (or replace) one automation's Telegram bot credentials. The response
- *  echoes the same presence-only shape the read hook returns — the token that
- *  was just written is never read back over HTTP. */
-export function useSetAutomationTelegram() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, botToken, chatId }: { slug: string; botToken: string; chatId: string }) =>
-      api
-        .post<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`, { botToken, chatId })
-        .then((r) => r.telegram),
-    onSuccess: (_data, { slug }) => {
-      queryClient.invalidateQueries({ queryKey: ['automations', slug, 'telegram'] });
-    },
-  });
-}
-
 // ─── The #agents channel ───────────────────────────────────────────────────
 //
 // Mirrors `FeedMessage` / `FeedResult` in `src/lib/automations/feed.ts` and the
@@ -933,7 +909,7 @@ export interface FeedMessage {
   /** What the owner typed to call this agent, for a run that is an ASK rather
    *  than a scheduled fire. Renders ABOVE the agent's reply — one exchange,
    *  one message — and is never counted as a reply. */
-  ask: { text: string; at: string } | null;
+  ask: { text: string; at: string; app?: string } | null;
   text: string;
   /** `post` — the agent chose to say this. `result` — it said nothing and this
    *  is its document's opening line. `error` — it failed, and this is why. The
@@ -1000,12 +976,16 @@ export interface AgentFeed {
 /** What one agent is doing right now. Mirrors `AgentActivity` in
  *  `src/server/automation-job.ts`. */
 export interface AgentActivity {
-  /** When the turn holding the agent's run lock began, epoch ms. */
+  /** When the oldest turn in flight began, epoch ms. */
   since: number;
   /** The run whose thread that turn writes into, when the server knows it. */
   runId: string | null;
-  /** Replies waiting behind it, oldest first. */
+  /** Replies waiting behind a turn of their own conversation, oldest first. */
   queued: { entryId: string; runId: string }[];
+  /** Every turn in flight, oldest first: an agent works on several things at once. */
+  runs?: { runId: string | null; since: number }[];
+  /** How many: what a row says. */
+  count?: number;
 }
 
 /** One row of a posted summary — a figure that moved, not prose. Mirrors
@@ -1025,7 +1005,9 @@ export interface ThreadEntry {
   files?: string[];
   /** Figures posted with `--kv`. Absent, never empty. */
   summary?: ThreadSummaryRow[];
-  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
+  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app';
+  /** `via: 'app'`: the app the words came from. Never shown as "You". */
+  app?: string;
 }
 
 /**

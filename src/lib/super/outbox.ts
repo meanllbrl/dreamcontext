@@ -6,7 +6,7 @@ import { activityOf, getChat, onChatChange } from '../assistant/chat-registry.js
 import { noteSuperSend } from './owner-wait.js';
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { sendWindowCommand, tokenOfSession } from '../window-control.js';
-import { superIndex, superRootOfChild, superRootOfSession } from './store.js';
+import { keyOfRef, parseSuperKey, superEntry, superOfChild, superOfSession } from './store.js';
 import { readTail } from './transcript-tail.js';
 import { MAX_READ_BYTES, type SuperState } from './types.js';
 
@@ -205,14 +205,15 @@ export interface OutboxDeps {
 
 const defaultDeps: OutboxDeps = {
   // The index holds only children not ended (store.ts); a succeeded child is ended too.
-  isChild: (root, sid) => superIndex(root).children.has(sid),
+  isChild: (root, sid) => superEntry(root).children.has(sid),
   // A resumed chat sits in `starting` until its first turn: past the grace that reads idle.
   isIdle: (sid) => { const e = getChat(sid); return !!e && activityOf(e) === 'idle'; },
   superToken: (root) => {
-    const s = superIndex(root).session;
+    const s = superEntry(root).session;
     return s ? tokenOfSession(s) : null;
   },
-  transcript: (root, sid) => liveTranscriptPath(root, sid),
+  // A member Super's outbox is keyed by its super key; its children's transcripts are the vault's.
+  transcript: (root, sid) => liveTranscriptPath(parseSuperKey(root).root, sid),
   send: async (token, child, text) => {
     // The Super's words, not the owner's: they answer no wait he owes (owner-wait.ts).
     noteSuperSend(child, text);
@@ -305,9 +306,9 @@ export function armSuperOutbox(): void {
   void recoverWaiting();
   armed = onChatChange(({ entry, from }) => {
     if (entry.status !== 'idle' || from === 'idle') return;
-    const asChild = superRootOfChild(entry.sessionId);
+    const asChild = keyOfRef(superOfChild(entry.sessionId));
     if (asChild) { void pumpOutbox(asChild, entry.sessionId).catch(() => undefined); return; }
-    const asSuper = superRootOfSession(entry.sessionId);
+    const asSuper = keyOfRef(superOfSession(entry.sessionId));
     if (asSuper) void pumpOutbox(asSuper).catch(() => undefined);
   });
 }

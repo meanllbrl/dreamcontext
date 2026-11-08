@@ -1,3 +1,4 @@
+import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -52,6 +53,7 @@ export const TYPE_LABELS: Record<CorpusType, string> = {
   agent: 'agent',
   whiteboard: 'whiteboard',
   core: 'core',
+  app: 'app',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
@@ -358,7 +360,9 @@ export function registerMemoryCommand(program: Command): void {
         const projectRoot = dirname(root);
         const { target: currentTarget } = currentVaultTarget(projectRoot);
         const connectedTargets = resolveConnectedVaults(currentTarget, root);
-        if (connectedTargets.length > 1) {
+        // An app's chat stays in this project: its listed verb runs with no card, and reaching a
+        // peer's brain is what `--connected` raises one for.
+        if (connectedTargets.length > 1 && !(process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-')) {
           recallFederated(root, query, topK, types, minLevel, { ...opts, connected: true }, await ownHits());
           return;
         }

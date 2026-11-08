@@ -1,3 +1,10 @@
+import { handleAgentTools } from './routes/agent-tools.js';
+import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
+import {
+  handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
+  handleCodexAccountsRemove, handleCodexAccountsReorder,
+  instanceAccountsList, instanceAccountsLogin, instanceAccountsRefresh, instanceAccountsRemove, instanceAccountsReorder,
+} from './routes/agent-tool-accounts.js';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { networkInterfaces } from 'node:os';
@@ -15,9 +22,9 @@ import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/
 import { declineAllProposals } from '../lib/assistant/proposals.js';
 import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantGlance, handleAssistantOwnerAnswer, handleAssistantDelegationDismiss, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
-  handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
+  handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantAvatarDelete, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
-  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook, handleAssistantApps, handleAssistantAppOpen, handleAssistantAppDo, handleAssistantAppShot,
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
@@ -28,7 +35,7 @@ import { startSuperInbox } from '../lib/super/inbox.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -60,6 +67,7 @@ import {
   handleLauncherStatus,
   handleLauncherLogo,
   handleLauncherLogoSet,
+  handleLauncherLogoRemove,
   handleLauncherTouch,
   handleLauncherUnregister,
   handleLauncherUpdate,
@@ -95,6 +103,16 @@ import {
   handleRoadmapModel,
 } from './routes/objectives.js';
 import {
+  handleRoadmapPriority,
+  handleRoadmapScoringStart,
+  handleRoadmapScoringStop,
+  handleTaskSuggestionAccept,
+  handleTaskSuggestionDismiss,
+  handleTaskObjectivesMove,
+  handleObjectiveSuggestionAccept,
+  handleObjectiveSuggestionDismiss,
+} from './routes/roadmap-priority.js';
+import {
   handleLabList,
   handleLabShow,
   handleLabSync,
@@ -118,12 +136,17 @@ import {
   handleLabExplorer,
 } from './routes/lab-boards.js';
 import { sweepBoardStaging } from '../lib/lab/boards.js';
+import { removeLegacyTelegramFiles } from '../lib/telegram/legacy.js';
+import { registerTelegramRoutes } from './routes/telegram.js';
+import { startTelegramHub, stopTelegramHub } from './telegram/start.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
   handleAutomationsShow,
   handleAutomationsRunNow,
   handleAutomationsApprove,
+  handleAutomationsReject,
+  handleAutomationsCard,
   handleAutomationsSession,
   handleAutomationsEnable,
   handleAutomationsDisable,
@@ -133,8 +156,6 @@ import {
   handleAutomationsFlow,
   handleAutomationsQuestionsList,
   handleAutomationsQuestionAnswer,
-  handleAutomationsTelegramGet,
-  handleAutomationsTelegramSet,
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
@@ -161,6 +182,8 @@ import {
   handleAgentsAmendmentRevert,
   handleAgentsAmendments,
   handleAgentsApprove,
+  handleAgentsBoardScope,
+  handleAgentsSetEnabled,
   handleAgentsPlace,
   handleAgentsPhotoGet, handleAgentsStage, handleAgentsHistory,
   handleAgentsPhotoUpload,
@@ -194,6 +217,7 @@ import {
   handleWhiteboardPut, handleWhiteboardDelete, handleWhiteboardDefault, handleWhiteboardRename,
   handleWhiteboardPages, handleWhiteboardTrashList, handleWhiteboardRestore,
   handleWhiteboardFilePost, handleWhiteboardFileGet, handleWhiteboardGroupRename,
+  handleWhiteboardGroupOrderGet, handleWhiteboardGroupOrderPut,
 } from './routes/whiteboards.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
@@ -210,17 +234,20 @@ import {
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
+import { handleAgentStats, handleAgentStatsPrice } from './routes/agent-stats.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import { claimOwnedPort } from './owned-ports.js';
 import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList, handleAgentAccountsOwnerOnly, handleAgentAccountsAgentThreshold,
+  handleAgentAccountsRulesGet,
+  handleAgentAccountsRulesSet,
   handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
-  handleMcpOverview, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
+  handleMcpOverview, handleMcpCodex, handleMcpAntigravity, handleMcpCodexConnect, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
   handleMcpServerSave, handleMcpServerRemove, handleMcpServerMove, handleMcpImport,
 } from './routes/agent-mcp.js';
 import {
@@ -229,7 +256,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { handleSuperPhoneAnswer, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
+import { handleSuperPhoneAnswer, handleSuperPhonePermission, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
 import { handleSuperReadGet, handleSuperReadPost } from './routes/super-read.js';
 import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } from './routes/super-remote.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
@@ -286,11 +313,28 @@ import {
 } from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
 import { receiveOwnerKey } from './owner-key.js';
-import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
+import {
+  handleAppsList, handleAppsLaunchWindow, handleAppsRunning, handleAppsEmbedCheck, handleAppSay, handleAppChats, handleAppChatClose, handleAppChatTitle, handleAppLaunch, handleAppStop, handleAppStatus,
+  handleAppLogs, handleAppSnapshot, handleAppCall, handleAppDelete, handleAppIcon, startAppsSweeper,
+  handleAppMcpRequest, handleAppScheduleToggle,
+} from './routes/apps.js';
+import { closeAllGateways, configureGateways } from './apps/gateway.js';
+import {
+  handleSharedList, handleSharedAccept, handleInstallPreview, handleInstall, handleTrashList, handleTrashRestore,
+  handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleUpdateCheck, handleUpdateUndo,
+  handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
+} from './routes/apps-share.js';
+import './apps/gateway-w3.js';
+import { stopAllRuntimes } from '../lib/apps/supervisor.js';
+import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
+import { readLauncherTheme } from './routes/launcher.js';
+import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren, publishDesktopServer } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
+import { startCodexEnsureJob } from './codex-ensure-job.js';
+import { warmLoginPath } from '../lib/tool-finder.js';
 import { startProjectCatchUpJob } from './project-catch-up-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
@@ -333,6 +377,8 @@ export function buildRouter(): Router {
   router.get('/api/handsfree/phone', handleHandsfreePhone);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
+  // Telegram bindings (W2): page-called under /api/telegram, Rust-called under their own prefixes.
+  registerTelegramRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
   router.post('/api/admin/shutdown', handleAdminShutdown);
 
@@ -366,6 +412,10 @@ export function buildRouter(): Router {
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);
   router.post('/api/tasks/:slug/changelog', handleTasksChangelog);
+  // The priority board: accept/dismiss the agent's suggestion, move one objective link.
+  router.post('/api/tasks/:slug/suggestion/accept', handleTaskSuggestionAccept);
+  router.post('/api/tasks/:slug/suggestion/dismiss', handleTaskSuggestionDismiss);
+  router.post('/api/tasks/:slug/objectives/move', handleTaskObjectivesMove);
   // Assign to agent: sets `agent:`, applies the status rule, starts the agent's
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);
@@ -477,6 +527,45 @@ export function buildRouter(): Router {
 
   // Launcher (vault-agnostic): discover candidate vaults, register one, detect
   // tech stack for the quiz, and scaffold a new/existing project (onboarding).
+  // dreamcontext Apps (src/server/routes/apps.ts). launch-window and running are vault-agnostic
+  // (the app runner calls them, VAULT_AGNOSTIC_PREFIXES); the rest act on the request's project.
+  router.get('/api/apps', handleAppsList);
+  router.post('/api/apps/launch-window', handleAppsLaunchWindow);
+  router.get('/api/apps/running', handleAppsRunning);
+  router.post('/api/apps/embed-check', handleAppsEmbedCheck);
+  // Shared apps (src/server/routes/apps-share.ts): the fixed paths first.
+  router.get('/api/apps/shared', handleSharedList);
+  router.post('/api/apps/shared/accept', handleSharedAccept);
+  router.post('/api/apps/install/preview', handleInstallPreview);
+  router.post('/api/apps/install', handleInstall);
+  router.get('/api/apps/trash', handleTrashList);
+  router.post('/api/apps/trash/restore', handleTrashRestore);
+  router.post('/api/apps/:slug/publish/grant', handlePublishGrant);
+  router.get('/api/apps/:slug/store', handleAppStore);
+  router.post('/api/apps/:slug/publish', handlePublish);
+  router.get('/api/apps/:slug/config', handleAppConfigGet);
+  router.post('/api/apps/:slug/config', handleAppConfigSet);
+  router.post('/api/apps/:slug/update/check', handleUpdateCheck);
+  router.post('/api/apps/:slug/update/undo', handleUpdateUndo);
+  router.post('/api/apps/:slug/update', handleUpdateApply);
+  router.post('/api/apps/:slug/auto-update', handleAutoUpdate);
+  router.post('/api/apps/:slug/detach', handleDetach);
+  router.post('/api/apps/:slug/uninstall', handleUninstall);
+  router.post('/api/apps/:slug/launch', handleAppLaunch);
+  router.post('/api/apps/:slug/say', handleAppSay);
+  router.get('/api/apps/:slug/chats', handleAppChats);
+  router.post('/api/apps/:slug/chats/close', handleAppChatClose);
+  router.post('/api/apps/:slug/chats/title', handleAppChatTitle);
+  router.post('/api/apps/:slug/stop', handleAppStop);
+  router.get('/api/apps/:slug/status', handleAppStatus);
+  router.get('/api/apps/:slug/logs', handleAppLogs);
+  router.get('/api/apps/:slug/icon', handleAppIcon);
+  router.post('/api/apps/:slug/snapshot', handleAppSnapshot);
+  router.post('/api/apps/:slug/call', handleAppCall);
+  router.post('/api/apps/:slug/mcp-request', handleAppMcpRequest);
+  router.post('/api/apps/:slug/schedules/:id', handleAppScheduleToggle);
+  router.delete('/api/apps/:slug', handleAppDelete);
+
   router.get('/api/launcher/discover', handleLauncherDiscover);
   router.get('/api/launcher/detect', handleLauncherDetect);
   router.get('/api/launcher/defaults', handleLauncherDefaults);
@@ -495,7 +584,8 @@ export function buildRouter(): Router {
   // The notch inbox: finished chats, automation posts and runs, account notices (notch-inbox.ts).
   wireNotchInbox();
   // The Super Agent's reply while handed over is also a banner a click routes to its stage.
-  setSuperFinishBanner((title, body, link) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link }); });
+  // A member's reply comes with sound (plan r4 D6); main's own stays silent.
+  setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, ...(sound ? { sound } : {}) }); });
   // A question the Super Agent puts to the owner reaches him whatever page the window shows.
   setOwnerQuestionSinks({
     presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
@@ -511,6 +601,7 @@ export function buildRouter(): Router {
   router.post('/api/assistant/profile', handleAssistantProfileSet);
   router.get('/api/assistant/avatar', handleAssistantAvatarGet);
   router.post('/api/assistant/avatar', handleAssistantAvatarSet);
+  router.delete('/api/assistant/avatar', handleAssistantAvatarDelete);
   router.get('/api/assistant/proposals', handleAssistantProposalsList);
   router.post('/api/assistant/proposals/:id', handleAssistantProposalDecide);
   router.post('/api/assistant/windows', handleAssistantWindowRegister);
@@ -542,8 +633,15 @@ export function buildRouter(): Router {
   router.post('/api/super/fresh', handleSuperFresh);
   router.post('/api/super/end', handleSuperEnd);
   router.post('/api/super/seen', handleSuperSeen);
+  router.post('/api/super/owed/drop', handleSuperOwedDrop);
   router.post('/api/super/pad', handleSuperPad);
+  router.post('/api/super/open', handleSuperOpen);
+  router.post('/api/super/member', handleSuperMember);
   router.post('/api/assistant/look', handleAssistantLook);
+  router.post('/api/assistant/apps', handleAssistantApps);
+  router.post('/api/assistant/app-open', handleAssistantAppOpen);
+  router.post('/api/assistant/app-do', handleAssistantAppDo);
+  router.post('/api/assistant/app-shot', handleAssistantAppShot);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
@@ -560,6 +658,7 @@ export function buildRouter(): Router {
   // SET a vault's logo from the launcher (magic-byte-verified raster → assets/logo.<ext>).
   // Mutation; behind the CSRF guard like every launcher POST.
   router.post('/api/launcher/logo', handleLauncherLogoSet);
+  router.post('/api/launcher/logo/remove', handleLauncherLogoRemove);
   router.post('/api/launcher/touch', handleLauncherTouch);
   router.post('/api/launcher/unregister', handleLauncherUnregister);
   router.post('/api/launcher/update', handleLauncherUpdate);
@@ -588,9 +687,14 @@ export function buildRouter(): Router {
   // Model/effort options + the user's CLI defaults, and a session's current model (from its
   // transcript). Vault-agnostic — they read the Claude CLI's own state, not the vault.
   router.get('/api/agent/model-config', handleAgentModelConfig);
+  // The tools a chat can run on (Track T): read from disk, agnostic like model-config.
+  router.get('/api/agent/tools', handleAgentTools);
+  router.post('/api/agent/tool-handoff', handleAgentToolHandoff);
   // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
   // the same reason model-config is: it reads the user's install, not a project.
   router.get('/api/agent/usage-limits', handleAgentUsageLimits);
+  router.get('/api/agent/stats', handleAgentStats);
+  router.post('/api/agent/stats/price', handleAgentStatsPrice);
   // Multi-account. Vault-agnostic for the same reason usage-limits is: these read and write
   // the user's Claude installs, not any project's brain.
   router.get('/api/agent/accounts', handleAgentAccountsList);
@@ -605,10 +709,27 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
   router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
   router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
+  router.get('/api/agent/accounts/rules', handleAgentAccountsRulesGet);
+  router.post('/api/agent/accounts/rules', handleAgentAccountsRulesSet);
+  // Per-tool accounts (Track T W2): Codex's, each route with its Claude twin's guard.
+  router.get('/api/agent/accounts/codex', handleCodexAccountsList);
+  router.post('/api/agent/accounts/codex/login', handleCodexAccountsLogin);
+  router.post('/api/agent/accounts/codex/adopt', handleCodexAccountsAdopt);
+  router.post('/api/agent/accounts/codex/remove', handleCodexAccountsRemove);
+  router.post('/api/agent/accounts/codex/reorder', handleCodexAccountsReorder);
+  router.post('/api/agent/accounts/codex/refresh', handleCodexAccountsRefresh);
+  router.get('/api/agent/accounts/antigravity', instanceAccountsList('antigravity'));
+  router.post('/api/agent/accounts/antigravity/login', instanceAccountsLogin('antigravity'));
+  router.post('/api/agent/accounts/antigravity/remove', instanceAccountsRemove('antigravity'));
+  router.post('/api/agent/accounts/antigravity/reorder', instanceAccountsReorder('antigravity'));
+  router.post('/api/agent/accounts/antigravity/refresh', instanceAccountsRefresh('antigravity'));
   // Settings → MCP (task mcp-management): every server × every Claude account, the probes that
   // fill it, a sign-in per account, and the store edits. Owner window only, reads included.
   // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).
   router.get('/api/agent/mcp/overview', handleMcpOverview);
+  router.get('/api/agent/mcp/codex', handleMcpCodex);
+  router.get('/api/agent/mcp/antigravity', handleMcpAntigravity);
+  router.post('/api/agent/mcp/codex/connect', handleMcpCodexConnect);
   router.post('/api/agent/mcp/check', handleMcpCheck);
   router.post('/api/agent/mcp/connect', handleMcpConnect);
   router.get('/api/agent/mcp/connect/:ticket', handleMcpConnectStatus);
@@ -631,6 +752,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/live-chats', handleAgentLiveChats);
   router.get('/api/agent/super-questions', handleSuperPhoneQuestions);
   router.post('/api/agent/super-answer', handleSuperPhoneAnswer);
+  router.post('/api/agent/super-permission', handleSuperPhonePermission);
   router.get('/api/agent/super-read', handleSuperReadGet);
   router.post('/api/agent/super-read', handleSuperReadPost);
   // The remote screen's Super stage (read and arrange only; the Mac window stays the bridge).
@@ -787,6 +909,10 @@ export function buildRouter(): Router {
 
   // Roadmap computed model (progress, forecast, member tasks, warnings).
   router.get('/api/roadmap', handleRoadmapModel);
+  // The priority board (Lanes / Map): ONE payload, plus the scoring marker.
+  router.get('/api/roadmap/priority', handleRoadmapPriority);
+  router.post('/api/roadmap/scoring/start', handleRoadmapScoringStart);
+  router.post('/api/roadmap/scoring/stop', handleRoadmapScoringStop);
 
   // Objectives — the PO-authored OKR roadmap write path (list + create + edit).
   router.get('/api/objectives', handleObjectivesList);
@@ -795,6 +921,8 @@ export function buildRouter(): Router {
   router.delete('/api/objectives/:slug', handleObjectivesDelete);
   router.post('/api/objectives/:slug/dependencies', handleObjectivesAddDependency);
   router.delete('/api/objectives/:slug/dependencies/:to', handleObjectivesRemoveDependency);
+  router.post('/api/objectives/:slug/suggestion/accept', handleObjectiveSuggestionAccept);
+  router.post('/api/objectives/:slug/suggestion/dismiss', handleObjectiveSuggestionDismiss);
 
   // Lab (analytics insights) — same sync engine the CLI uses. Router.match
   // filters by HTTP METHOD first, so POST /api/lab/sync can never be captured by
@@ -847,6 +975,9 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
+  router.post('/api/agents/:slug/board-scope', handleAgentsBoardScope);
+  // The Ekip list's on/off switch (plan-r10 1d): owner page only, never re-approves.
+  router.post('/api/agents/:slug/enabled', handleAgentsSetEnabled);
   router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);
@@ -906,6 +1037,8 @@ export function buildRouter(): Router {
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);
+  router.post('/api/automations/:slug/reject', handleAutomationsReject);
+  router.get('/api/automations/:slug/card', handleAutomationsCard);
   router.post('/api/automations/:slug/enable', handleAutomationsEnable);
   router.post('/api/automations/:slug/disable', handleAutomationsDisable);
   // Distinct segment-count SHAPES from the bare `/:slug` routes above (see the
@@ -913,7 +1046,7 @@ export function buildRouter(): Router {
   // load-bearing for these, only relative to one another (never ambiguous:
   // each has a unique literal suffix).
   // Agent identity: edit, delete, and the photo. Same distinct-shape note as
-  // `flow`/`telegram` below — each carries a unique literal suffix, so only
+  // `flow` below — each carries a unique literal suffix, so only
   // their order relative to one another would ever matter, and it doesn't.
   // `delete` is a POST on purpose: `index.ts`'s cross-site write guard is
   // written against state-changing POSTs, and reaching for a prettier verb
@@ -923,8 +1056,6 @@ export function buildRouter(): Router {
   router.get('/api/automations/:slug/photo', handleAutomationsPhotoGet);
   router.post('/api/automations/:slug/photo', handleAutomationsPhotoUpload);
   router.get('/api/automations/:slug/flow', handleAutomationsFlow);
-  router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
-  router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`
@@ -968,6 +1099,8 @@ export function buildRouter(): Router {
   router.get('/api/whiteboards/trash', handleWhiteboardTrashList);
   router.post('/api/whiteboards/trash/:id/restore', handleWhiteboardRestore);
   router.post('/api/whiteboards/groups/rename', handleWhiteboardGroupRename);
+  router.get('/api/whiteboards/groups/order', handleWhiteboardGroupOrderGet);
+  router.put('/api/whiteboards/groups/order', handleWhiteboardGroupOrderPut);
   router.get('/api/whiteboards/:slug/rev', handleWhiteboardRev);
   router.post('/api/whiteboards/:slug/files/:id', handleWhiteboardFilePost);
   router.get('/api/whiteboards/:slug/files/:id', handleWhiteboardFileGet);
@@ -1007,7 +1140,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1441,13 +1574,34 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       let stopClaudeUpdate: (() => void) | undefined;
       let stopSelfUpdate: (() => void) | undefined;
       let stopProjectCatchUp: (() => void) | undefined;
+      // dreamcontext App windows find this server through ~/.dreamcontext/desktop-server.json
+      // (desktop/app-runner). Self-gates to the app-owned desktop server on macOS.
+      let unpublishDesktopServer: () => void = () => {};
+      let stopAppsSweeper: () => void = () => {};
+      {
+        const a = server.address();
+        if (a && typeof a === 'object') {
+          unpublishDesktopServer = publishDesktopServer(a.port);
+          // dreamcontext Apps: each app's gateway proxies /__dc/api to THIS server and router.
+          configureGateways({ dashboardPort: a.port, router, theme: readLauncherTheme });
+          stopAppsSweeper = startAppsSweeper();
+        }
+      }
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
         console.log('\n  Shutting down...');
+        unpublishDesktopServer();
+        stopAppsSweeper();
+        stopAllRuntimes();
+        void closeMcpClients().catch(() => {});
+        void closeAllGateways();
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
         stopProjectCatchUp?.();
+        // Telegram: every poll loop stops and lets go of its token's lock NOW, so a relaunch
+        // within the lock's stale window is never deaf.
+        stopTelegramHub();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
@@ -1490,6 +1644,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       startOrphanSweep();
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
+      // The retired per-routine Telegram channel's token files: deleted once, here.
+      try { removeLegacyTelegramFiles(); } catch { /* best-effort */ }
+      // The Telegram hub: one poll per bound bot. Desktop only; never on a CLI server.
+      if (isDesktop()) void startTelegramHub().catch((err) => console.warn(`[telegram] hub failed to start: ${(err as Error).message}`));
       // Task jobs: settle what died and start what is due, now and every minute (C1-3).
       startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
@@ -1506,6 +1664,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // The CLI itself: upgraded from the app (launch + every 6 h), not only from a Claude
       // prompt, then every project refreshed. Self-gates to the app-owned desktop server.
       stopSelfUpdate = startSelfUpdateJob();
+      startCodexEnsureJob();
+      // Asked now, in the background, so no request has to wait for a login shell.
+      void warmLoginPath();
       // Every registered project follows the CLI on disk, however that CLI got there.
       stopProjectCatchUp = startProjectCatchUpJob();
     };

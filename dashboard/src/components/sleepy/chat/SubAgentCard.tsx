@@ -7,7 +7,7 @@ import {
 import { SubAgentReport } from './SubAgentReport';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { peerLogoUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
 import { VERDICT_LABELS, freshExplainer, type Verdict } from '../../../lib/quest';
 import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
@@ -106,7 +106,7 @@ function PartySeal({ outcome }: { outcome: PartyOutcome }) {
 }
 
 export function SubAgentCard({
-  runs: allRuns, party: partyProp, explain = false, onDrillIn, rootRef, highlightRunId, peers = [], conversationId,
+  runs: allRuns, party: partyProp, explain = false, onDrillIn, onStop, rootRef, highlightRunId, peers = [], conversationId,
 }: {
   runs: SubAgentRun[];
   /** The dispatch batch these runs are, from `partyBatches`: its stage and round name the
@@ -117,6 +117,9 @@ export function SubAgentCard({
    *  per chat (the first judged party), so the explanation is said once, not per round. */
   explain?: boolean;
   onDrillIn: (run: SubAgentRun) => void;
+  /** Stop this one sub-agent and leave the rest of the turn running. Given only where the tool can
+   *  (Claude's `stop_task`): a running row then wears a Stop beside it. Absent, no Stop is drawn. */
+  onStop?: (run: SubAgentRun) => void;
   /** The parent conversation's claude id, forwarded to each landed run's {@link SubAgentReport}
    *  so it can fetch that run's own transcript for the report text. Absent for a card
    *  rendered outside a live session — the report cards then stay on whatever the run itself
@@ -133,7 +136,7 @@ export function SubAgentCard({
    *  as the avatar and its NAME on a chip — instead of the generic agent look. */
   peers?: PeerMention[];
 }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // AGENT runs only. Background shells ride the identical `task_*` frames but belong to
   // `BackgroundShellsTray`: this card's whole affordance is drilling into a sidechain
   // transcript, and a shell has none — clicking one used to open a panel that said the
@@ -218,6 +221,7 @@ export function SubAgentCard({
             // report are siblings inside the entry rather than one nested in the other.
             return (
             <div className="chat-subagents-entry" key={run.taskId} data-agent-entry={run.taskId}>
+            <div className="chat-subagents-line">
             <button
               type="button"
               className="chat-subagents-row"
@@ -270,6 +274,16 @@ export function SubAgentCard({
                 </span>
               </span>
             </button>
+            {onStop && run.status === 'running' && (
+              <button
+                type="button"
+                className="chat-bgshells-btn danger chat-subagents-stop"
+                data-subagent-stop={run.taskId}
+                aria-label={`Stop ${name || AGENT_ROLES[role].label}`}
+                onClick={() => onStop(run)}
+              >Stop</button>
+            )}
+            </div>
             {reportIds.has(run.taskId) && conversationId && !foldReports && (
               <SubAgentReport run={run} conversationId={conversationId} peers={peers} onOpenFull={onDrillIn} inRow />
             )}
@@ -348,7 +362,7 @@ export function SubAgentRail({ runs: allRuns, party: partyProp, onJump, onWheel,
   /** Same as {@link SubAgentCard}'s — a peer envoy chip wears its vault's logo and name. */
   peers?: PeerMention[];
 }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const runs = allRuns.filter(isAgentRun);
   const party = resolveParty(runs, partyProp);
   const { running } = summarizeSubAgents(runs);

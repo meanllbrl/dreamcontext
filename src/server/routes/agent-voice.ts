@@ -245,11 +245,6 @@ function readCappedAudio(req: IncomingMessage, res: ServerResponse, max = MAX_ST
  * rather than on a header the client chose, so the answer is about the audio and not about
  * what somebody labelled it.
  */
-export function isWav(buf: Buffer): boolean {
-  return buf.length >= 12
-    && buf.toString('ascii', 0, 4) === 'RIFF'
-    && buf.toString('ascii', 8, 12) === 'WAVE';
-}
 
 // ─── The retry ladder ─────────────────────────────────────────────────────────────
 
@@ -267,68 +262,10 @@ export interface SttGarbled {
   cue?: { mime: 'audio/wav'; b64: string };
 }
 
-/**
- * Transcribe a take, judge it, and retranscribe it ONCE when it is not clean (at most two
- * passes, owner 2026-10-24). Null when whisper did not answer the first pass at all.
- *
- *   • Pass 1 is pinned to the context's primary language when there is one (the fast path,
- *     ~2 s faster than detecting), else `auto`.
- *   • Pass 2: after a LOOP, the same language with no primer at a little temperature; after an
- *     `auto`, out-of-context or weak pass, pinned to the context language; after a weak PINNED
- *     pass, `auto` (the owner may have switched language).
- *   • The better pass wins by `pick`'s sort key; a garbled winner is never sent.
- */
-export async function transcribeWithRetry(
-  wav: Buffer,
-  opts: { cfg: { sttLanguage?: string; sttLanguages?: string[] }; conv: string | null; ui?: unknown; lexicon?: string; install?: WhisperInstall | null },
-): Promise<{
-  winner: Candidate<LocalTranscript>; verdict: Verdict; passes: 1 | 2; ms: number;
-  context: LanguageContext; attempts: Array<Record<string, unknown>>;
-} | null> {
-  return holdLocalModel(() => transcribeWithRetryHeld(wav, opts));
-}
-
-async function transcribeWithRetryHeld(
-  wav: Buffer,
-  opts: { cfg: { sttLanguage?: string; sttLanguages?: string[] }; conv: string | null; ui?: unknown; lexicon?: string; install?: WhisperInstall | null },
-): Promise<{
-  winner: Candidate<LocalTranscript>; verdict: Verdict; passes: 1 | 2; ms: number;
-  context: LanguageContext; attempts: Array<Record<string, unknown>>;
-} | null> {
-  const started = Date.now();
-  const context = contextFor({ conv: opts.conv, uiLang: opts.ui, cfg: opts.cfg, takes: contextTakes() });
-  const first = await transcribeLocal(wav, { language: context.primary ?? 'auto', lexicon: opts.lexicon, install: opts.install });
-  if (!first) return null;
-  const candidates: Array<Candidate<LocalTranscript>> = [{ pass: first, score: score(first, context) }];
-  const s1 = candidates[0].score;
-  if (s1.verdict !== 'clean' && first.text) {
-    // This take may end in "Anlayamadım": render its cue now, alongside pass 2, rather than after
-    // it (the phone never calls /warm, so nothing may have pre-rendered it). Cached; a no-op after.
-    prerenderCue(context.primary ?? normalizeLanguage(opts.ui) ?? 'en');
-    const target = context.primary ?? context.set[0] ?? normalizeLanguage(opts.ui);
-    let second: LocalTranscript | null = null;
-    if (s1.loop) {
-      second = await transcribeLocal(wav, { language: first.language ?? 'auto', lexicon: opts.lexicon, primer: false, temperature: 0.2, install: opts.install });
-    } else if ((!first.forced || !s1.inContext) && target && target !== (first.forced ? first.language : null)) {
-      second = await transcribeLocal(wav, { language: target, lexicon: opts.lexicon, install: opts.install });
-    } else if (first.forced) {
-      second = await transcribeLocal(wav, { language: 'auto', lexicon: opts.lexicon, install: opts.install });
-    }
-    if (second) candidates.push({ pass: second, score: score(second, context) });
-  }
-  const { winner, verdict } = pick(candidates);
-  return {
-    winner,
-    verdict,
-    passes: candidates.length as 1 | 2,
-    ms: Date.now() - started,
-    context,
-    attempts: candidates.map((c) => ({
-      language: c.pass.language, forced: c.pass.forced, verdict: c.score.verdict, reasons: c.score.reasons,
-      logprob: c.score.logprob === null ? null : Number(c.score.logprob.toFixed(3)), ms: c.pass.ms,
-    })),
-  };
-}
+// The ladder and the WAV check live in src/lib/voice/transcribe.ts (W2: the Telegram hub
+// transcribes too); re-exported for this route's importers.
+import { isWav, transcribeWithRetry } from '../../lib/voice/transcribe.js';
+export { isWav, transcribeWithRetry };
 
 // ─── POST /api/agent/voice/stt ────────────────────────────────────────────────
 

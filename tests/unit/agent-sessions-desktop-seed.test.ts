@@ -42,6 +42,11 @@ const DESKTOP = {
 };
 
 describe('desktopSeed (pure)', () => {
+  it('a Codex tab carries its tool, so the remote screen reopens it on Codex', () => {
+    const saved = { sessions: [{ title: 'c', bypass: false, minimized: false, size: 1, sessionId: 'id-1', kind: 'chat', pane: 0, tool: 'codex' }] };
+    expect(desktopSeed(saved as never, { enabled: false, session: null })[0]).toMatchObject({ sessionId: 'id-1', tool: 'codex' });
+  });
+
   it('chat and agent tabs with a conversation, narrowed; never a terminal, an automation or the Super', () => {
     expect(desktopSeed(DESKTOP as never, { enabled: false, session: SUPER })).toEqual([
       { title: 'Plan', sessionId: A, pane: 0, kind: 'chat', bypass: false, active: true },

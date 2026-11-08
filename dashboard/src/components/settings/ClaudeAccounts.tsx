@@ -28,7 +28,10 @@ import './ClaudeAccounts.css';
  * `<configDir>/.claude.json`, written by the CLI, so the numbers here are read WITHOUT
  * switching to the account they describe.
  *
- * ── Both windows are ALWAYS drawn ─────────────────────────────────────────────────────
+ * ── Both windows are ALWAYS drawn (that the account HAS) ──────────────────────────────
+ * Exception, 2026-11-03: an account whose usage data has no 5-hour window at all (the plan its
+ * profile calls "Ultra") draws the weekly row only — see `noSessionWindow`.
+ *
  * Owner, 2026-09-05, looking at two accounts side by side: one drew two bars, the other a
  * sentence saying nothing was cached. Two accounts you cannot compare are the one thing this
  * panel exists to make possible, so every account now draws a 5-hour row and a weekly row.
@@ -73,8 +76,11 @@ import './ClaudeAccounts.css';
 /** Past this, a reading is labelled stale and the panel offers to re-read it on open. */
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
+/** How often an open panel re-reads the accounts that have gone stale. */
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+
 /** How old a reading is, in the shortest form that is still exact enough to act on. */
-function ageLabel(fetchedAtMs: number | null): { text: string; stale: boolean } {
+export function ageLabel(fetchedAtMs: number | null): { text: string; stale: boolean } {
   if (!fetchedAtMs) return { text: 'never read', stale: true };
   const ms = Date.now() - fetchedAtMs;
   const stale = ms > STALE_AFTER_MS;
@@ -101,7 +107,7 @@ function planLabel(tier: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function resetLabel(resetsAt: number): string {
+export function resetLabel(resetsAt: number): string {
   if (!resetsAt) return '';
   const d = new Date(resetsAt);
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -122,7 +128,7 @@ function resetLabel(resetsAt: number): string {
  * Coarse on purpose: the reading it labels is a cached percentage, so minute precision past
  * the first hour would imply an accuracy the number does not have.
  */
-function fmtLeft(ms: number): string {
+export function fmtLeft(ms: number): string {
   const mins = Math.max(0, Math.round(ms / 60_000));
   if (mins < 60) return `${mins}m`;
   const hours = Math.floor(mins / 60);
@@ -148,7 +154,7 @@ function fmtLeft(ms: number): string {
  * time can reveal it. The bar says WHEN it rolled over instead, because "not measured" alone
  * would send the reader looking for a broken probe.
  */
-function Bar({ label, percent, resetsAt, locked, now }: {
+export function Bar({ label, percent, resetsAt, locked, now }: {
   label: string;
   percent: number | null;
   resetsAt: number;
@@ -167,7 +173,11 @@ function Bar({ label, percent, resetsAt, locked, now }: {
         ? 'not measured'
         // The LIFE of the window, not the clock: what a percentage costs depends on how much
         // of its window is still ahead of it.
-        : `${Math.round(pct)}%${resetsAt > now ? ` · ${fmtLeft(resetsAt - now)} left` : ''}`;
+        // A FULL window has no time "left" to spend: "100% · 5h 11m left" read as quota still
+        // to use beside a "limit hit" pill. It says when it comes back instead.
+        : pct >= 100
+          ? `full${resetsAt > now ? ` · back in ${fmtLeft(resetsAt - now)}` : ''}`
+          : `${Math.round(pct)}%${resetsAt > now ? ` · ${fmtLeft(resetsAt - now)} left` : ''}`;
   return (
     <div className="dc-acct-bar">
       <div className="dc-acct-bar-head">
@@ -195,7 +205,11 @@ function Bar({ label, percent, resetsAt, locked, now }: {
   );
 }
 
-export function ClaudeAccounts() {
+/**
+ * `policy={false}` (the Settings window): the limit rules are drawn per tool by `ToolRules`
+ * under the list, so this panel shows the accounts alone. Classic passes nothing.
+ */
+export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
   const api = useApi();
   const qc = useQueryClient();
   const { bus } = useVault();
@@ -208,7 +222,9 @@ export function ClaudeAccounts() {
   const [error, setError] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [adding, setAdding] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  /** Accounts whose re-read is still out. Each row clears on its OWN answer. */
+  const [reading, setReading] = useState<ReadonlySet<string>>(() => new Set());
+  const refreshing = reading.size > 0;
   const [refreshNote, setRefreshNote] = useState('');
   /** Why the last refresh could not move an account, keyed by id. */
   const [probeNotes, setProbeNotes] = useState<Record<string, string>>({});
@@ -234,6 +250,8 @@ export function ClaudeAccounts() {
   const accounts: ClaudeAccountWire[] = order
     ? order.map((id) => serverAccounts.find((a) => a.id === id)).filter((a): a is ClaudeAccountWire => !!a)
     : serverAccounts;
+  // Every account kept for the owner's chats: no routine or background job can start anywhere.
+  const noneOpen = accounts.length > 0 && accounts.every((a) => a.ownerOnly === true);
 
   useEffect(() => {
     if (!order) return;
@@ -293,52 +311,86 @@ export function ClaudeAccounts() {
   }, [addEmail, api, run]);
 
   /**
-   * Ask for fresh numbers. The list route never probes on its own (N spawns per paint), so
-   * without this the readings are only ever as new as the CLI last happened to make them.
+   * Ask for fresh numbers, ONE REQUEST PER ACCOUNT, all at once. Each row updates when its own
+   * answer lands, so one slow account never holds the others on "Refreshing…" (observed
+   * 2026-11-03: the whole list waited 85s on five accounts read one after another). An id
+   * already being read is not asked again.
    */
-  const refreshUsage = useCallback(async () => {
-    setRefreshing(true);
+  const [refreshTotal, setRefreshTotal] = useState(0);
+  const inFlight = useRef<Set<string>>(new Set());
+  const refreshUsage = useCallback(async (ids: string[]) => {
+    const fresh = ids.filter((id) => !inFlight.current.has(id));
+    if (fresh.length === 0) return;
+    const wasIdle = inFlight.current.size === 0;
+    for (const id of fresh) inFlight.current.add(id);
+    setReading(new Set(inFlight.current));
+    // "2 of 5" counts the whole run, also when an automatic re-read joins one already going.
+    setRefreshTotal((t) => (wasIdle ? fresh.length : t + fresh.length));
     setError('');
     setRefreshNote('');
-    try {
-      const res = await api.post<{ refreshed: string[]; failed: { id: string; why: string }[] }>(
-        '/agent/accounts/refresh', {},
-      );
-      refresh();
-      // Per ACCOUNT, not a count: "1 could not be read" leaves you asking which one and why.
-      setProbeNotes(Object.fromEntries(res.failed.map((f) => [f.id, f.why])));
-      setRefreshNote(
-        res.refreshed.length > 0
-          ? `Updated ${res.refreshed.length} account${res.refreshed.length === 1 ? '' : 's'}.`
-          : 'Nothing could be re-read.',
-      );
-    } catch (e) {
-      setError((e as Error)?.message || 'Could not refresh usage.');
-    } finally {
-      setRefreshing(false);
-    }
+    let updated = 0;
+    let failedCount = 0;
+    await Promise.all(fresh.map(async (id) => {
+      try {
+        const res = await api.post<{ refreshed: string[]; failed: { id: string; why: string }[] }>(
+          '/agent/accounts/refresh', { id },
+        );
+        const why = res.failed.find((f) => f.id === id)?.why;
+        // Per ACCOUNT, not a count: "1 could not be read" leaves you asking which one and why.
+        setProbeNotes((prev) => {
+          const { [id]: _dropped, ...rest } = prev;
+          return why ? { ...rest, [id]: why } : rest;
+        });
+        if (why) failedCount += 1; else updated += 1;
+      } catch {
+        failedCount += 1;
+        setProbeNotes((prev) => ({ ...prev, [id]: 'unknown' }));
+      } finally {
+        inFlight.current.delete(id);
+        setReading(new Set(inFlight.current));
+        refresh();
+      }
+    }));
+    setRefreshNote(
+      updated > 0
+        ? `Updated ${updated} account${updated === 1 ? '' : 's'}${failedCount > 0 ? `, ${failedCount} could not be read` : ''}.`
+        : 'Nothing could be re-read.',
+    );
   }, [api, refresh]);
 
   /**
-   * Probe ONCE on open when what we have is stale. The list route stays probe-free — this is
-   * not that route, it is the moment a person opened the panel to read these numbers. Gated
-   * twice so it cannot become a storm: only when the freshest reading is already past
-   * STALE_AFTER_MS, and only once per mount.
+   * The panel keeps ITSELF current while it is open. The list already re-reads the files every
+   * 30s (a chat turn writes its account's usage there); on top of that, any account whose
+   * reading is older than STALE_AFTER_MS is re-read on open and then every AUTO_REFRESH_MS
+   * while the window is visible. Only the stale ones: a fresh reading costs nothing to keep, a
+   * probe costs a spawn.
    */
+  const accountsRef = useRef(serverAccounts);
+  accountsRef.current = serverAccounts;
+  const reReadStale = useCallback(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    const cutoff = Date.now() - STALE_AFTER_MS;
+    const stale = accountsRef.current
+      .filter((a) => a.state === 'ok' && (a.fetchedAtMs ?? 0) < cutoff)
+      .map((a) => a.id);
+    if (stale.length > 0) void refreshUsage(stale);
+  }, [refreshUsage]);
   const autoProbed = useRef(false);
+  const hasAccounts = serverAccounts.length > 0;
   useEffect(() => {
-    if (autoProbed.current || refreshing) return;
-    if (serverAccounts.length === 0) return;
-    // The OLDEST reading decides, not the newest. Gating on the newest let one fresh
-    // account mask every stale one beside it — which is the exact shape of the bug this
-    // was written to fix: the busy account gets re-read constantly by its own traffic
-    // while the quiet one drifts for hours, and the quiet one is the one you came to check.
-    // A missing reading counts as infinitely old.
-    const oldest = Math.min(...serverAccounts.map((a) => a.fetchedAtMs ?? 0));
-    if (Date.now() - oldest <= STALE_AFTER_MS) return;
-    autoProbed.current = true;
-    void refreshUsage();
-  }, [serverAccounts, refreshing, refreshUsage]);
+    if (!hasAccounts) return;
+    if (!autoProbed.current) {
+      autoProbed.current = true;
+      reReadStale();
+    }
+    const timer = setInterval(reReadStale, AUTO_REFRESH_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') reReadStale(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [hasAccounts, reReadStale]);
 
   /**
    * What a probe outcome means for the person reading the row.
@@ -358,7 +410,7 @@ export function ClaudeAccounts() {
       return `This account is signed in, but Claude answered without any usage percentages just now.${tail}`;
     }
     if (why === 'needs-relogin') return 'Signed out — sign in again to read its usage.';
-    if (why === 'stale') return 'That account folder is signed in as a different account, so the reading was discarded.';
+    if (why === 'stale' || why === 'other-account') return 'That account folder is signed in as a different account, so the reading was discarded.';
     return `Its usage could not be re-read just now.${tail}`;
   };
 
@@ -414,6 +466,19 @@ export function ClaudeAccounts() {
         </p>
       ) : (
         <>
+          {noneOpen && (
+            <div className="dc-acct-noneopen" role="alert" data-none-open>
+              <span>{t('accounts.noneOpen')}</span>
+              <button
+                type="button"
+                className="btn btn--sm btn--secondary"
+                disabled={busy !== ''}
+                onClick={() => void run(`only-${accounts[0].id}`, () => api.post('/agent/accounts/owner-only', { id: accounts[0].id, ownerOnly: false }))}
+              >
+                {t('accounts.noneOpen.fix')}
+              </button>
+            </div>
+          )}
           <div className="dc-acct-toolbar">
             <span className="dc-acct-toolbar-note">
               Drag to set the order. A new chat opens on the highest account that has room. A chat
@@ -426,10 +491,10 @@ export function ClaudeAccounts() {
                 type="button"
                 className="btn btn--secondary btn--sm"
                 disabled={refreshing || busy !== ''}
-                onClick={() => void refreshUsage()}
+                onClick={() => void refreshUsage(serverAccounts.map((a) => a.id))}
                 title="Re-read every account's usage from Claude"
               >
-                {refreshing ? 'Refreshing…' : '↻ Refresh usage'}
+                {refreshing ? `Refreshing… ${refreshTotal - reading.size} of ${refreshTotal}` : '↻ Refresh usage'}
               </button>
             </div>
           </div>
@@ -439,11 +504,16 @@ export function ClaudeAccounts() {
               const session = a.limits.find((l) => l.key === 'session');
               const weekly = a.limits.find((l) => l.key === 'weekly');
               const stale = a.state === 'needs-relogin';
+              // Signed in as SOMEONE ELSE: whatever its folder says is that account's usage.
+              const elsewhere = a.state === 'other-account';
+              const blank = stale || elsewhere;
+              const rowReading = reading.has(a.id);
+              const refused = Boolean(a.refusedUntil && a.refusedUntil > now);
               const org = a.organizationName && !UUID_RE.test(a.organizationName) ? a.organizationName : '';
               return (
                 <li
                   key={a.id}
-                  className={`dc-acct${stale ? ' is-stale' : ''}${a.id === startsHereId ? ' is-top' : ''}${dragId === a.id ? ' is-dragging' : ''}`}
+                  className={`dc-acct${blank ? ' is-stale' : ''}${a.id === startsHereId && !refused ? ' is-top' : ''}${dragId === a.id ? ' is-dragging' : ''}`}
                   draggable
                   onDragStart={() => setDragId(a.id)}
                   onDragEnd={() => setDragId(null)}
@@ -456,36 +526,68 @@ export function ClaudeAccounts() {
                     <div className="dc-acct-head">
                       <span className="dc-acct-rank" aria-hidden="true">{i + 1}</span>
                       <span className="dc-acct-who">{a.email || a.id}</span>
-                      {a.tier && <span className="dc-acct-plan">Claude {planLabel(a.tier)}</span>}
-                      {a.id === startsHereId && <span className="dc-acct-tag dc-acct-tag--top">new chats start here</span>}
+                      {/* The plan as the account's OWN profile names it now ("Ultra"); the type
+                          recorded at sign-in ("max") outlived a rename and is only the fallback. */}
+                      {(a.planName || a.tier) && <span className="dc-acct-plan">Claude {a.planName || planLabel(a.tier)}</span>}
+                      {/* Never beside "limit hit": when no account has room the spawn still has to
+                          name one, but a refused account is not where a chat can start. */}
+                      {a.id === startsHereId && !refused && <span className="dc-acct-tag dc-acct-tag--top">new chats start here</span>}
                       {/* The API's own refusal, said in words: the bar beside it can trail it, and
                           "97%" does not say "no chat goes here for another hour". */}
-                      {a.refusedUntil && a.refusedUntil > now && (
+                      {refused && a.refusedUntil && (
                         <span
                           className="dc-acct-tag dc-acct-tag--refused"
                           title={`Claude refused this account on its ${a.refusedWindow === 'weekly' ? 'weekly limit' : a.refusedWindow === 'session' ? '5-hour limit' : 'limit'}. No chat is sent here before ${resetLabel(a.refusedUntil).replace(/^resets /, '')}.`}
                         >
-                          limit hit · back in {fmtLeft(a.refusedUntil - now)}
+                          {/* WHICH limit: "limit hit" over an empty 5-hour bar read as a contradiction
+                              when it was the week that was full. */}
+                          {a.refusedWindow === 'weekly' ? 'weekly limit hit' : a.refusedWindow === 'session' ? '5-hour limit hit' : 'limit hit'} · back in {fmtLeft(a.refusedUntil - now)}
                         </span>
                       )}
                       {a.isPrimary && <span className="dc-acct-tag">this machine</span>}
                       {org && <span className="dc-acct-tag">{org}</span>}
                     </div>
 
+                    {/* Says what it does, with the consequence in sight, on one line of the
+                        account itself: "Only mine" alone left the owner with every account ticked
+                        and no routine able to start (2026-11-03). */}
+                    <div className="dc-acct-onlymine-row">
+                      <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
+                        <input
+                          type="checkbox"
+                          checked={a.ownerOnly === true}
+                          disabled={busy !== ''}
+                          data-only-mine={a.id}
+                          aria-describedby={`only-hint-${a.id}`}
+                          onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
+                        />
+                        <span>{t('accounts.onlyMine')}</span>
+                      </label>
+                      <span className="dc-acct-onlymine-hint" id={`only-hint-${a.id}`}>{t('accounts.onlyMine.hint')}</span>
+                    </div>
+
                     {stale && <p className="dc-acct-warn">Signed out — sign in again to use this account.</p>}
+                    {elsewhere && (
+                      <p className="dc-acct-warn">
+                        {a.isPrimary ? 'This machine' : 'This account folder'} is signed in as {a.signedInAs || 'a different account'} now, so its usage is not this account's and is not shown.
+                      </p>
+                    )}
 
                     {/* BOTH windows, always. See the header note. */}
-                    <div className={`dc-acct-bars${refreshing ? ' is-refreshing' : ''}`}>
-                      <Bar
+                    <div className={`dc-acct-bars${rowReading ? ' is-refreshing' : ''}`}>
+                      {/* An account whose usage data has NO 5-hour window gets no 5-hour row: a
+                          hatched "not measured" track there would claim a limit that does not
+                          exist. Decided by the data (`noSessionWindow`), never by the plan. */}
+                      {!(a.noSessionWindow && !blank) && <Bar
                         label="5-hour session"
-                        percent={stale || !session ? null : session.percent}
+                        percent={blank || !session ? null : session.percent}
                         resetsAt={session?.resetsAt ?? 0}
                         locked={session?.lockedReason}
                         now={now}
-                      />
+                      />}
                       <Bar
                         label="Weekly"
-                        percent={stale || !weekly ? null : weekly.percent}
+                        percent={blank || !weekly ? null : weekly.percent}
                         resetsAt={weekly?.resetsAt ?? 0}
                         locked={weekly?.lockedReason}
                         now={now}
@@ -495,15 +597,15 @@ export function ClaudeAccounts() {
                     {/* WHEN these numbers were read. Without it a two-hour-old 0% and a true
                         0% are the same pixel, which is what sent the owner looking for a bug
                         in a panel that was merely showing an old truth. */}
-                    {!stale && (() => {
+                    {!blank && (() => {
                       const age = ageLabel(a.fetchedAtMs);
                       const why = probeNotes[a.id];
                       return (
                         <>
                           <p className={`dc-acct-age${age.stale ? ' is-stale' : ''}`}>
-                            {refreshing ? 'Reading usage…' : age.text}
+                            {rowReading ? `Reading usage… (${age.text})` : age.text}
                           </p>
-                          {!refreshing && why && (
+                          {!rowReading && why && (
                             <p className="dc-acct-probe-note">
                               {probeExplanation(why, Boolean(a.fetchedAtMs) && Boolean(session || weekly))}
                             </p>
@@ -562,16 +664,6 @@ export function ClaudeAccounts() {
                         {busy === `relogin-${a.id}` ? 'Waiting for the browser…' : 'Sign in again'}
                       </button>
                     )}
-                    <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
-                      <input
-                        type="checkbox"
-                        checked={a.ownerOnly === true}
-                        disabled={busy !== ''}
-                        data-only-mine={a.id}
-                        onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
-                      />
-                      <span>{t('accounts.onlyMine')}</span>
-                    </label>
                     <button
                       type="button"
                       className="btn btn--danger-ghost btn--sm"
@@ -634,6 +726,7 @@ export function ClaudeAccounts() {
             rather than in the panels below, because it is a policy ABOUT this list —
             but it is written in the page's row grammar so it reads as a setting, not
             as another piece of account state. */}
+        {policy && (
         <div className="setting-rows dc-acct-policy">
           <SettingRow
             title="Auto-switch accounts near a limit"
@@ -673,7 +766,8 @@ export function ClaudeAccounts() {
               </span>
             }
           />
-          {agentWaitUntil && agentWaitUntil > now && (
+          {/* With every account closed the warning above says why; a wake time would be a promise. */}
+          {!noneOpen && agentWaitUntil && agentWaitUntil > now && (
             <p className="dc-acct-waiting" data-agent-wait>
               {t('accounts.waiting').replace('{time}', waitWords(agentWaitUntil, locale))}
             </p>
@@ -692,6 +786,7 @@ export function ClaudeAccounts() {
             />
           )}
         </div>
+        )}
 
         {error && <p className="dc-acct-warn">{error}</p>}
       </div>

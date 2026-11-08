@@ -1,8 +1,9 @@
+import { AppIcon } from './AppIcon';
 import { forwardRef, useState } from 'react';
 import { answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { AgentAvatar, dismissNotice, markPostSeen, muteAutomation, openAutomation, openChat } from './InboxList';
 import {
-  accountLine, glanceStatus, handoffPhase,
+  accountLine, glanceStatus, handoffPhase, openAppWindow,
   type AutomationPost, type GlanceChat, type Handoff, type InboxNotice, type RunningAutomation,
 } from './notchModel';
 
@@ -122,6 +123,24 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
               void dismissNotice(item.notice.id);
               onDone();
             }}>Open the chat</button>
+            <button type="button" className="dc-peek__quiet" onClick={() => { void dismissNotice(item.notice.id); onDone(); }}>Dismiss</button>
+          </div>
+        </>
+      )}
+      {item.kind === 'notice' && item.notice.kind === 'app' && (
+        <>
+          <p className="dc-peek__line">
+            <AppIcon key={item.notice.id} vault={item.notice.vault} slug={item.notice.slug} name={item.notice.name} className="dc-peek__app-icon" />
+            <strong>{item.notice.name}</strong><span className="dc-peek__brief"> · {item.notice.vault}</span>
+          </p>
+          {item.notice.body && <p className="dc-peek__text">{item.notice.body}</p>}
+          <div className="dc-glance__actions">
+            <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => {
+              if (item.notice.kind !== 'app') return;
+              void openAppWindow(item.notice.vault, item.notice.slug);
+              void dismissNotice(item.notice.id);
+              onDone();
+            }}>Open</button>
             <button type="button" className="dc-peek__quiet" onClick={() => { void dismissNotice(item.notice.id); onDone(); }}>Dismiss</button>
           </div>
         </>

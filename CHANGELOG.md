@@ -4,7 +4,172 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.5] - 2026-11-08
+
+Patch on 0.41.4: one batch of fixes and small features, built together. Local build; not published.
+
+- **The Super stage keeps its width.** With many live cards open, the middle chat no longer narrows, and the cards you placed yourself stay where you put them.
+- **A picture card is only as wide as its picture.** Extra width goes back to the chat.
+- **A picture chip shows its picture on hover.**
+- **Super card buttons are clearer.** A small "minimize", an X menu that can close a card together with its own card, and no "add" in the Super header.
+- **A team member's click never shows a blank page.**
+- **Approval only for what comes from outside.** Whatever you do on this Mac (a member, a routine, writing instructions) is approved at once, with no card.
+- **A simpler composer.** The branch chip sits beside the plus, and while it works there is one send button.
+- **Routines run on time.** The scheduler no longer stalls under background throttling, and one project no longer holds another's routine back.
+- **A board presents, it does not limit.** A member with a home board runs by its autonomy level; limiting it to the board is now an opt-in.
+- **Agents know the tools of your apps.** Every agent sees the tools of the apps installed on this Mac and takes the answer from the app itself.
+- **The Super's agenda stays on your Mac.** It no longer leaks to a teammate's computer, and sleep and session files are not synced by email.
+- **A job's servers close when the job ends.**
+- **The Super never claims a summary it did not write.** Everything it wants you to see is in its visible text, and there is no thinking box in the Super chat.
+- **The same code is not tested twice.** A passed check leaves a receipt tied to the code.
+
+## [0.41.4] - 2026-11-07
+
+Patch on 0.41.3: the Super keeps every topic, the Super chat stops jumping, and Apps becomes a store. Local build; not published.
+
+- **The Super does not drop a topic.** While you still have a question open, its answers are not held back, and a topic it missed twice shows up on the agenda as "Cevaplanmadı" with a "Gerek yok" button.
+- **No separate "Working" line in the Super chat.** The chat no longer jumps a row between steps; the elapsed time now sits at the end of the quiet steps line.
+- **Apps looks like a store.** "My apps" and "Shared Apps" tabs, shelves led by icons, and a product page that reads the app's README.
+- **Share hands the work to Claude.** No form: one click opens a one-time permission, Claude cleans the files, writes the README and publishes. An app goes public only when you click "Herkese açık paylaş", and that asks once.
+
+## [0.41.3] - 2026-11-06
+
+Patch on 0.41.2: routines, a quieter Super, and approvals where you are. Local build; not published.
+
+- **"+ New routine" on a member's card.** It hands the job to that member's Super to set up; the plain form opens only if the Super cannot take it.
+- **Routines catch up.** A routine that was missed while the Mac slept can be set to run once when it wakes, and the schedule remembers when it last ran.
+- **A Super turn stays quiet.** While it works, its steps show as one calm line. When the answer lands the line goes away, and a faint "adımlar" link under the answer opens them again.
+- **A member's Instructions card reads whole.** One column, the opening line first, and if it is slow to load it says so and offers a retry.
+- **A plainer permission card in Bypass.** It says in one line why it asks and folds the command away. Allow and Deny work from the phone, and agents write long scripts to a file instead of pasting them.
+- **AI Team approvals on the Super screen.** When a team member waits for your yes, the question shows up on the Super screen, not somewhere else.
+
+## [0.41.2] - 2026-11-05
+
+Patch on 0.41.1: the Super screen gets calmer and the Team list gets truthful. Local build; not published.
+
+- **Team rows look like the people they are.** Each member shows their real photo or face, a star marks the one that is the Super Agent, and nothing pretends to be loading when you open the list.
+- **A quieter Super head.** The line telling you that you talk only to the Super Agent is gone. New session and Turn off sit in a small ⋯ menu, and the left menu has a "+ New window".
+- **Routines are clickable.** On a member's card on the Super stage, click a routine row to open it.
+
+## [0.41.1] - 2026-11-05
+
+Patch on 0.41.0: shared apps. An app you built can now go to other people, and an app someone shared can come to you. Local build; not published.
+
+- **Share an app privately or by public link.** On the Apps page, pick who may open it (named GitHub accounts) or make a public link anyone can use. Only the app itself goes out, never your data or your keys.
+- **Install with a clear warning.** Opening a shared app link shows what the app is, who made it and what it will be able to do before anything is installed. It installs with its own settings and its own keys, empty.
+- **Update, or keep your own copy.** When the maker publishes a new version you choose: update, or make your own copy that stays as it is and is yours to change.
+- **Remove and restore.** Removing a shared app moves it to the trash; restore brings it back. If the packages fail to install after an update, you are told, and Undo puts the old ones back.
+
+## [0.41.0] - 2026-11-04
+
+First public release since 0.40.0. It carries every local cut from 0.40.1 to 0.40.7 below: every AI Team member is a Super Agent of its own, with a Team row in the drawer; the Super Agent answers a Bypass child's permissions and its record stays on your Mac; account usage that is right and fast; Codex can ask you a question and Gemini (Antigravity, beta) tool rows are honest; board groups reorder by drag; the design skill comes with every project and the engineering skill is folded into the agents.
+
+## [0.40.7] - 2026-11-04
+
+Patch on 0.40.6: four approved branches in one local build. Nothing limits how many references you can attach to a Super message, board groups reorder by drag, the design skill ships with every project, and the engineering skill is folded into the agents that build and review code. Local build; not published.
+
+- **No limit on references in a Super message.** The "at most 5 references" notice is gone: attach as many files, tasks and notes as you need (a hidden safety ceiling of 100 only guards against a broken message).
+- **Board groups can be reordered.** Drag a group header in the Whiteboards list to a new place, or use the group's ⋯ menu (Move up, Move down). The order is kept with the brain, so another machine sees it too.
+- **The design skill comes with dreamcontext.** It is installed in every project and every AI tool, no longer an optional pack, and `/apps` loads it. A design file you edited is kept on `dreamcontext update`, never overwritten, and named in the update notes.
+- **The engineering skill is retired.** Its rules now live inside the agents that build and review code, so nothing needs installing. `dreamcontext update` removes an installed copy that you never changed and keeps one you edited, telling you which.
+
+## [0.40.6] - 2026-11-04
+
+Patch on 0.40.5. Local build; not published.
+
+- **The open AI Team member is the selected row in the left menu.** Open a member and its own row lights up, not the Team row above it, so you always see who you are looking at.
+- **Every AI Team member's stage keeps its own agenda card.** Each member shows its own agenda on its stage, and the card is never retired to make room for another.
+
+## [0.40.5] - 2026-11-04
+
+Patch on 0.40.4: every approved branch of the last days in one local build. Account usage that is right and fast, a Super chat that uses wide screens, parked chats that stay visible, a calmer Team row and a Codex that can ask you a question, and tool cards that tell the truth on Codex and Gemini. Local build; not published.
+
+- **Account usage is right and quick.** Each account reads its own numbers (a folder signed in as someone else says whose it is and shows none), Refresh re-reads every account at once in seconds with "Reading usage…" per row, and the panel refreshes itself while open. The plan badge is the account's own, so the $200 plan reads Claude Ultra, and an account with no 5-hour limit draws no 5-hour row. A full bar reads "full · back in X" and the refusal names the window.
+- **"Keep for my chats only"** replaces the old label, with what it does always visible beside it. If every account is kept that way, the list warns you and one click opens the top account to routines. A routine that waits for this says so in plain words.
+- **A parked chat stays visible.** It looks like any chat with the composer open, and your first message wakes it and is answered once, with no divider.
+- **The Super chat takes the room on wide screens.** The agenda is no longer mirrored on an empty side, so on a 1800 px window the chat grows from 730 to 848 px.
+- **The Team row lines up with Chat.** A project with no members reads "Set your team" on the same left edge as "Chat", and members hang one level under the Team row, smaller and lighter.
+- **Report pages draw their graphs and tabs on the Super stage.** A dc-graph shows its arrows and dc-tabs switch, in the card and in fullscreen.
+- **Report rules.** A product mockup in a plan report wears the product's real look, and a sequence of more than four steps is a graph, not a row of chips.
+- **A Codex chat can ask you a question** and gets your pick back. Before, the card closed itself and Codex said "sent" into nothing.
+- **A card the chat skipped is told to the agent.** When Codex or Gemini writes a run card the chat has to drop (a command on two lines), the agent now hears what was skipped and why, once, after a clean finish, and fixes it. Never after you pressed Stop, switched account or typed over it.
+- **Gemini (Antigravity) tool rows are honest.** A failed command reads "Couldn't run a command" with the command, not "Tried to ran command". A sub-agent's shell runs in your project, not in a skills folder. A file read that another step's refusal marked as failed says "result unknown" instead of showing the wrong path.
+- **A sharper design skill:** hierarchy, spacing and colour budgets, states and truth, a new product UI page, and phone layout traps.
+
+## [0.40.4] - 2026-11-03
+
+Patch on 0.40.3: the Super Agent's record stays on your Mac, a calmer left drawer and a flatter image viewer. Local build; not published.
+
+- **Your Super Agent stays on your Mac.** A project set up by an older version could commit the Super Agent's record to git, so someone who cloned the repo saw your last question. `dreamcontext update` now adds the missing lines to the brain's `.gitignore`, takes any Super file git still tracks out of its index (the file stays on your disk; commit that removal), and a Super record written on another Mac or in another folder is no longer opened.
+- **Search your projects** from the Projects header in the left drawer.
+- **The drawer opens at its narrowest width** by default, and a collapsed project hides its Team row too.
+- **Every project has its Team row,** also with no members yet: an empty one lets you make the first member.
+- **The image viewer has one solid bar under the picture.** Its buttons no longer cover the image or each other, the name gives way first on a narrow window, only keyboard focus keeps the bar up (a tap wakes it), and the images of a task step through the viewer one by one.
+
+## [0.40.3] - 2026-11-03
+
+Patch on 0.40.2: the Team row in the drawer, a Gemini reply fix and a report-page fix. Local build; not published.
+
+- **The Team row opens in place** under a project, after the chats and New chat, and stays usable with 20 or more members: each member scrolls in its own box, and a member's answer to you is a notification again.
+- **A member's own stage shows its own cards:** Rutinler, Talimatlar and an Üye card that names the member. Its saved card layout comes back, and your gestures on an off member's stage work, so its Üye card opens.
+- **Delete a member in one step.** It removes the member with its routines, all or nothing, keeps a trash copy outside git, and the member leaves the Team list at once. A routine's delete no longer fails with a 404 while its row is open.
+- **A request to a Super Agent shows once in the flow, and its answer once.** After a restart, a turn that closed main's request is still counted as main's work.
+- **A Gemini (Antigravity) reply no longer cuts off or hangs.** The first-word limit never closes a turn that is still starting; a turn the agent never starts answering stops after 90 seconds and says why; a tool server is checked with the agent's own handshake.
+- **A report page no longer squeezes a list of label and text rows** into one letter per line.
+
+## [0.40.2] - 2026-11-02
+
+Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 to 3, the Super Agent's permission fix, app data and several fixes. Local build; not published.
+
+- **The app no longer freezes for minutes** on a Mac whose temp folder holds many old test folders: measuring leftovers is now fast.
+- **Every AI Team member is a Super Agent of its own.** Each member opens on its own stage; one Ekip row per project and a Global ekip row; a New chat menu and Üyeleri yönet. The main Super's request lands in the member's own Super, and the phone can open a member's live Super, write to it and answer its question.
+- **App data lives in the brain**, stays on this Mac, never syncs, and is backed up outside every repo. An app's own assistant writes only in its own data folder and reads no other app's data; a bound AI Team member is not held to that.
+- **A project's right-click menu can remove it from the app** after asking; the folder stays.
+- **A setup chip beside the sleep score shows only real problems.** Codex and Antigravity are optional tools, listed gray and neutral.
+- **A chat picked in History opens in its own window** and the chat area comes forward.
+- **Every picture on a report card opens again** after the viewer closes.
+- **The Super Agent answers the permissions of a child you run in Bypass.** A permission such a child still asks goes to its Super first, which allows or denies it; one it cannot decide, or does not decide in time, comes to you on the screen and on your phone with Allow and Deny. A permission that is no longer asked leaves no card behind.
+- **Switching project keeps the page you are on.** On Whiteboards, the next project opens on Whiteboards; on Chat, on Chat. Before, it opened whatever page you last had in that project.
+
+AI Team:
+
+- **One conversation and one card per member.** Asking a member again continues its conversation; its card counts the jobs ("3 iş") instead of opening a new card each time.
+- **Approval only when it matters.** Your own changes and the Super Agent's need no approval card; a card comes up only for a synced change, a change that widens a member's rights, or a risky change from a background run. A member can be turned on or off without losing its approval.
+- **Review rounds show on the task** and say who they wait on: the reviewer, you, or nobody because it is stuck. A Codex or Antigravity member that cannot run a task step is refused when you assign it.
+- **A project can hold several Super Agents:** the main one plus one per AI Team member, each with its own record, inbox and limits. A member's helpers never run with wider rights than the member, a member cannot read or write another Super's record, and the phone page cannot start a member. The main Super works as before.
+- **A permission from a member's helper always reaches you,** also when the helper works on the main Super's request. Before, it waited on a card nobody saw.
+- **A Super Agent record never comes in from the team.** A brain sync whose update carries one stops before merging, so a teammate's push cannot start a member's Super on your Mac.
+- **On the phone, reading a member's chat marks the member's messages read,** not the main Super's.
+- **Send back on a member's task strip goes to the task you picked.** Text typed for one task no longer carries over when you switch to another.
+
+From 0.40.1:
+
+- **CI is green again.** Linux and Windows runners: the nested-brain guard matches the names git prints off macOS, the bind check finds `lsof`, Codex, Antigravity, apps and the builder start on Windows, and the credential denies match there. No check was loosened.
+- **Settings > Models > Antigravity shows its real state and accounts.** The OpenCode tab is gone.
+- **The Super Agent knows this Mac's tools and models.** A Codex or Antigravity child's card names its model in the picker's own words, never cut.
+- **Every tool's new session gets the whole snapshot.** Peer mail is bounded, a splitter fault is fixed, and Codex and Antigravity no longer show a false "incomplete" warning.
+- **Side-by-side panes keep their width when you focus one.**
+- **The Super Agent weighs a new idea before saying yes.** It checks it against your earlier decisions and the project's patterns, and says where it breaks; a clear task it just does. Super brief revision 27.
+
+## [0.40.0] - 2026-11-02
+
+First public release since 0.36.1. It carries every local cut from 0.36.2 to 0.36.15 below, plus:
+
+- **The app's own CLI starts on a Mac with no global install.** A library the Apps bridge needs was left out of the bundle, so the CLI inside the app stopped at launch.
 - **Projects update themselves.** When the installed CLI or app changes version, every registered project is refreshed on the next app start, with no prompt. A project with a working agent, a sleep or a half-done merge waits its turn; a failure stays on record and is retried. The `Update all` button and the UPDATE tag are gone.
+
+## [0.36.15] - 2026-11-02
+
+Integration cut on top of 0.36.14. Local build; not published.
+
+- **Codex chats know our skills, the project's and Claude's agents.** They are copied to `~/.dreamcontext/codex` in Codex's words and listed through the app-server, with nothing written to `~/.codex`. Claude's agents become roles for `spawn_agent`.
+- **The owner's tool servers reach Codex chats**, and Settings shows what Codex reports.
+- **Antigravity gets a write gate**, a second skills folder that cannot reach `~/.gemini`, a gated Super child, visible sleep turns and a tool-servers column. Proved on a real 1.4.1 agent for one account.
+- **Chats on Codex and Antigravity follow Claude's chat**: sub-agent cards, `/` menu, plan mode and question cards, Develop mode with edit checks, pictures, a message during a turn, Stop and resume, effort and `/compact`. Rows in `docs/tool-parity.md` say per row whether a real turn, a fake agent or only code backs it.
+- **Work outside the chat runs on Codex and Antigravity too**: sleep, automations, AI Team agents, verdict resumes, usage, session ids, `dreamcontext ask` between tools, and Develop builders, goal-skill and council.
+- **App assistant.** An app's window gets its own assistant chat; assistant-written HTML is not drawn, and the app window switches off WebRTC, preconnect and prefetch.
+- **AI Team in place.** A member's history, run and questions open in the Chat pane on the AI Team page.
+- **Fixes.** The read gate no longer starts `automations list` and `show`, which repair `.gitignore`; a pinned test anchor follows `spawnAutoSleep`'s new parameter; the read-only pane test follows the silent member branch.
 
 ## [0.36.1] - 2026-10-29
 

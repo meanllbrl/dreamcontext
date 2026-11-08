@@ -55,8 +55,17 @@ export interface AgentSummary {
   roleLine: string;
   model: string | null;
   effort: AgentEffort | null;
-  /** Its home board, or null. */
+  /** The tool it runs on, and the Codex account it is pinned to. */
+  tool?: 'claude' | 'codex' | 'antigravity';
+  account?: string | null;
+  /** Its home board, or null: where its work shows and its card lives. */
   whiteboard: string | null;
+  /** `scope: board`: limited to its home board by its own file. Optional: an older server sends none. */
+  boardOnly?: boolean;
+  /** Limited to its board right now (its own `scope: board`, or held from before boards stopped limiting). */
+  boardLimited?: boolean;
+  /** The one question an older board agent owes: should it still be limited to its board? */
+  boardQuestion?: boolean;
   shared: boolean;
   /** `reports_to` as written: the agent it reports to, or null (it reports to the owner). The
    *  tree's read rules (a missing manager, a loop) live in `src/lib/agents/tree.ts`. Unhashed. */
@@ -72,6 +81,8 @@ export interface AgentSummary {
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
   approvalReason: string | null;
+  /** Its `call.enabled` (the AI Team on/off switch). Optional: an older server sends none. */
+  enabled?: boolean;
   /** Its creator's login (`machine:<id>`, `unowned`); null on an unstamped file. Optional: an
    *  older server sends none. */
   owner?: string | null;
@@ -128,7 +139,12 @@ export interface AgentIdentityDraft {
   slug?: string;
   model?: string | null;
   effort?: AgentEffort | null;
+  /** A changed tool waits for the owner's approval. */
+  tool?: 'claude' | 'codex' | 'antigravity';
+  account?: string | null;
   whiteboard?: string | null;
+  /** Limit it to its home board (`scope: board`). Meaningless without a board. */
+  boardOnly?: boolean;
   learning?: boolean;
   /** How it works. `''` clears it on an edit. Nothing records a template it started from. */
   soul?: string;
@@ -285,6 +301,17 @@ export function useApproveAgent() {
   });
 }
 
+/** The owner's answer to "Should <agent> still be limited to its board?" (`agents board-scope`). */
+export function useAnswerBoardScope() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, keep }: { slug: string; keep: boolean }) =>
+      api.post<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/board-scope`, { keep }).then((r) => r.agent),
+    onSuccess: (_agent, { slug }) => invalidateAgent(queryClient, slug),
+  });
+}
+
 /** One thing the Super Agent changed in a member (`src/lib/agents/amendments.ts`). */
 export interface AgentAmendment {
   id: string;
@@ -393,13 +420,17 @@ export interface AgentHistorySession {
   title: string;
   startedAt: string;
   lastAt: string;
-  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | 'waiting' | 'stopped' | null;
   durationMs: number | null;
   newestId: string | null;
   unread: boolean;
+  hasDocument?: boolean;
+  claudeId?: string;
+  resumable?: true;
+  elsewhere?: true;
   truncated?: true;
   missing?: true;
-  rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[] }>;
+  rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[]; origin?: 'answer' | 'failure' | 'note' }>;
 }
 
 /** One page of an agent's history, newest activity first. */
@@ -458,7 +489,7 @@ export interface AgentSyncState {
 /** One owner-inbox row — mirrors `InboxRow` (src/lib/owner-inbox.ts). */
 export interface OwnerInboxRow {
   id: string;
-  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
+  kind: 'secret-held' | 'app-data-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
     // Task jobs (AI Team v2 C1): each dies when its task moves on. `ref` is the task slug.
     | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
     | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck';

@@ -171,10 +171,13 @@ describe('New agent on a board presets that board as home', () => {
     expect(readOpenAgentsDetail({ create: true, whiteboard: 7 })).toEqual({ create: true });
   });
 
-  it('the AI Team carries the board into its new-teammate form, and nowhere else', () => {
+  it('"Üyeleri yönet" carries the board into its new-teammate form, and nowhere else (plan-r10 1d)', () => {
+    // The alias page hands the board on with the create flow only; the modal presets it.
     const page = code(read('dashboard/src/pages/AiTeamPage.tsx'));
-    expect(page).toMatch(/setCreating\(\{ start: 'blank', whiteboard: agentsFocus\.whiteboard, title: '' \}\)/);
-    expect(page).toMatch(/whiteboard=\{creating\.whiteboard\}/);
+    expect(page).toMatch(/agentsFocus\.create && agentsFocus\.whiteboard \? \{ whiteboard: agentsFocus\.whiteboard \} : \{\}/);
+    const modal = code(read('dashboard/src/components/aiteam/ManageMembersModal.tsx'));
+    expect(modal).toMatch(/focus\.create \? \{ start: 'blank', \.\.\.\(focus\.whiteboard \? \{ whiteboard: focus\.whiteboard \} : \{\}\) \}/);
+    expect(modal).toMatch(/whiteboard=\{creating\.whiteboard\}/);
   });
 
   it('the dialog starts a new agent on that board, and a plain create stays blank', async () => {

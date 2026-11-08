@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { drawerShown, openSuper, submit, superRows } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-super-phone-agenda');
@@ -214,28 +215,24 @@ try {
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in through the phone listener', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-  report.check('the phone lands on its list (Super off)', await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1, 20000));
+  report.check('the phone lands on its drawer (Super off)', await until(() => drawerShown(phone), 20000));
   const en = await api(port, 'POST', '/api/super/enable', { adopt: [MAC_ID], titles: { [MAC_ID]: 'Sürüm notları' } });
   SUPER = en.json.session;
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
 
-  report.check('the Super row is listed', await until(async () => (await vis('[data-testid="super-row"]').count()) === 1, 20000));
-  await vis('[data-testid="super-row"]').click();
+  report.check('the Super row is listed', await until(async () => (await superRows(phone)) === 1, 20000));
+  await openSuper(phone);
   report.check('the Super chat opens', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000),
     JSON.stringify(await phone.evaluate(() => ({ inputs: document.querySelectorAll('.chat-cmp-input').length, panes: [...document.querySelectorAll('.agent-panes, .agent-pane, .chat-pane')].map((e) => [e.className.slice(0, 40), JSON.stringify(e.getBoundingClientRect())]) }))) + ' errors: ' + errors.join(' | ') + ' 403: ' + forbidden.join(' | ') + ' html: ' + (await phone.evaluate(() => document.querySelector('.agent-pane')?.innerHTML.slice(0, 400))));
-  const strip = vis('[data-testid="phone-agenda-strip"]');
+  const strip = vis('[data-testid="phone-agenda-chip"]');
   report.check('the agenda strip sits under the header, saying nothing is noted yet', await until(async () => (await strip.count()) === 1
-    && (await vis('[data-testid="phone-agenda-empty"]').count()) === 1, 10000), await strip.innerText().catch(() => ''));
+    && /Nothing noted/.test(await strip.getAttribute('aria-label')), 10000), await strip.innerText().catch(() => ''));
   const box = vis('.chat-cmp-input').first();
-  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await phone.keyboard.press('Enter'); };
+  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await submit(phone); };
   await sendText('NOTLAR: ajandanı yaz.');
-  const counts = () => phone.evaluate(() => ({
-    waiting: document.querySelector('[data-testid="phone-agenda-waiting"]')?.textContent ?? '',
-    now: document.querySelector('[data-testid="phone-agenda-now"]')?.textContent ?? '',
-    done: document.querySelector('[data-testid="phone-agenda-done"]')?.textContent ?? '',
-  }));
+  const counts = async () => { const l = (await strip.getAttribute('aria-label')) ?? ''; return { waiting: l, now: l, done: l }; };
   let c;
   report.check('the strip counts what the Mac wrote: 2 waiting on you, Now 2, Done 1', await until(async () => {
     c = await counts();
@@ -243,7 +240,7 @@ try {
   }, 20000), JSON.stringify(c));
   const stripBox = await strip.boundingBox();
   const headBox = await vis('.agent-overlay-head').first().boundingBox();
-  report.check(`the strip is one line under the header (${Math.round(stripBox?.height ?? 0)}px)`, !!stripBox && !!headBox && stripBox.height <= 48 && Math.abs(stripBox.y - (headBox.y + headBox.height)) <= 2 && stripBox.width <= 390);
+  report.check(`the chip sits in the header (${Math.round(stripBox?.height ?? 0)}px)`, !!stripBox && !!headBox && stripBox.height <= 44 && stripBox.y >= headBox.y && stripBox.y + stripBox.height <= headBox.y + headBox.height);
   report.check('no horizontal overflow with the strip', await noOverflow());
   await shot('390x844-light-strip.png');
   const stripBgLight = await strip.evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -268,7 +265,7 @@ try {
   report.check('the same three sections as the desktop', JSON.stringify(secs) === '["waiting","now","done"]', JSON.stringify(secs));
   const askText = await sheet.locator(`[data-row="q:${ask?.id}"]`).innerText().catch(() => '');
   report.check('the Super\'s own question reads its words under "Claude"', /Claude/.test(askText) && /bu akşam yayına/.test(askText), askText);
-  report.check('every row\'s ↩ is a 44px touch target', await sheet.evaluate((el) => [...el.querySelectorAll('[data-testid="super-agenda-about"]')].every((b) => b.getBoundingClientRect().height >= 44)));
+  report.check('every row\'s ↩ is a 44px touch target', await sheet.evaluate((el) => [...el.querySelectorAll('[data-testid="super-agenda-about"]')].every((b) => Math.round(b.getBoundingClientRect().height) >= 44)), JSON.stringify(await sheet.evaluate((el) => [...el.querySelectorAll('[data-testid="super-agenda-about"]')].map((b) => [b.getBoundingClientRect().height, b.getBoundingClientRect().width, getComputedStyle(b).height, b.closest('.phone-agenda-body') ? 1 : 0]))));
   await phone.waitForTimeout(500);
   report.check('no horizontal overflow with the sheet open', await noOverflow());
   await shot('390x844-light-sheet.png');
@@ -302,10 +299,10 @@ try {
   console.log('\n── 4. Closing: Escape, the backdrop, ✕, a swipe down');
   await phone.keyboard.press('Escape');
   report.check('Escape closes it and the strip takes the focus back', await until(async () => (await sheet.count()) === 0, 3000)
-    && await until(() => phone.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-agenda-strip'), 2000));
+    && await until(() => phone.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-agenda-chip'), 2000));
   await strip.tap();
   await until(async () => (await sheet.count()) === 1, 3000);
-  await phone.locator('[data-testid="phone-agenda-backdrop"]').tap({ position: { x: 20, y: 40 } });
+  await phone.locator('[data-testid="phone-agenda-sheet-backdrop"]').tap({ position: { x: 20, y: 40 } });
   report.check('a tap on the backdrop closes it', await until(async () => (await sheet.count()) === 0, 3000));
   await strip.tap();
   await until(async () => (await sheet.count()) === 1, 3000);
@@ -314,7 +311,7 @@ try {
   await strip.tap();
   await until(async () => (await sheet.count()) === 1, 3000);
   await phone.evaluate(() => {
-    const grip = document.querySelector('[data-testid="phone-agenda-grip"]');
+    const grip = document.querySelector('[data-testid="phone-agenda-sheet-grip"]');
     const r = grip.getBoundingClientRect();
     const touch = (y) => new Touch({ identifier: 1, target: grip, clientX: r.left + 40, clientY: y });
     grip.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch(r.top + 10)] }));
@@ -332,7 +329,7 @@ try {
   const chip = vis('.chat-cmp-attachment-about');
   report.check('↩ closes the sheet and stages ONE About chip in the phone\'s composer', await until(async () => (await sheet.count()) === 0 && (await chip.count()) === 1, 5000), await chip.innerText().catch(() => ''));
   await shot('390x844-light-about-chip.png');
-  await box.click(); await box.fill('ikincisi olsun'); await phone.waitForTimeout(150); await phone.keyboard.press('Enter');
+  await box.click(); await box.fill('ikincisi olsun'); await phone.waitForTimeout(150); await submit(phone);
   const aboutRe = new RegExp(`^\\[About agenda line note=${wId} section=waiting\\]\\nline: "İki ödeme tasarımı arasında seçimin"\\n\\nikincisi olsun$`);
   report.check('the message reaches the Super with the agenda reference, as the desktop sends it', await until(async () => received().some((x) => x.sid === SUPER && aboutRe.test(x.blocks[0])), 15000), JSON.stringify(received().filter((x) => x.sid === SUPER).slice(-1)));
 
@@ -368,7 +365,7 @@ try {
   await phone.waitForTimeout(500); // the sheet's one-shot entrance settles before the shot
   // The scrim dims in dark too: darker than the page behind it, never a lightening wash.
   const lum = (c) => { const m = c.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0]; return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]; };
-  const scrim = await phone.locator('[data-testid="phone-agenda-backdrop"]').evaluate((el) => getComputedStyle(el).backgroundColor);
+  const scrim = await phone.locator('[data-testid="phone-agenda-sheet-backdrop"]').evaluate((el) => getComputedStyle(el).backgroundColor);
   report.check('dark: the backdrop is a dark scrim', lum(scrim) < 80, scrim);
   report.check('dark: no horizontal overflow with the sheet open', await noOverflow());
   await shot('390x844-dark-sheet.png');

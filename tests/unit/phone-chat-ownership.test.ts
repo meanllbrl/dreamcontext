@@ -60,6 +60,9 @@ const asWs = (ws: FakeWs) => ws as unknown as import('ws').WebSocket;
 let dir: string;
 let mac: InstanceType<typeof HandsfreeAuth>;
 let killSpy: ReturnType<typeof vi.spyOn>;
+// The chat reads the machine's account register; a test run on a Mac whose accounts need a
+// switch must not move the chat to another child (0.40.5): an empty HOME has no accounts.
+const realHome = process.env.HOME;
 let groupSignals: Array<[number, string]>;
 const flush = () => new Promise((r) => setTimeout(r, 20));
 /** Chat children only (an account probe like `claude auth status` is not a chat spawn). */
@@ -86,6 +89,7 @@ function desktopChat(opts: { prompt?: string } = {}): { ws: FakeWs; child: FakeC
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phone-own-'));
+  process.env.HOME = join(dir, 'home');
   mac = new HandsfreeAuth({ dir });
   mac.store.setPassphrase(await hashPassphrase('a b c d e f'));
   setMacHandsfreeAuthForTests(mac);
@@ -104,6 +108,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;
   for (const c of spawned) c.emit('close', 0);
   killSpy.mockRestore();
   setMacHandsfreeAuthForTests(null);

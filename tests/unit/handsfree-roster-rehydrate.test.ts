@@ -138,6 +138,7 @@ describe('carriedUnrestored', () => {
 describe('D3 seeding: a remote computer opens a project with the Mac window\'s live tabs (hands-free sekmeler W2)', () => {
   it('the Mac tabs become chat roster entries in the same panes, with the Mac tab\'s own bypass', async () => {
     const { seededRoster } = await import('../../dashboard/src/components/handsfree/rosterRehydrate.js');
+    expect(seededRoster([{ title: 'c', sessionId: 'x', pane: 0, kind: 'chat', bypass: false, tool: 'codex' }])[0]!.tool).toBe('codex');
     expect(seededRoster([
       { title: 'Plan', sessionId: 'a', pane: 0, kind: 'chat', bypass: false, active: true },
       { title: 'Build', sessionId: 'b', pane: 1, kind: 'agent', bypass: true },

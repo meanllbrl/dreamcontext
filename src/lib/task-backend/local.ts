@@ -7,7 +7,23 @@ import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
-import { normalizeRice } from '../rice.js';
+import { mergeRice, normalizeRice } from '../rice.js';
+import {
+  SuggestionError,
+  buildSuggestionRecord,
+  normalizePrioritySuggestion,
+  planAccept,
+  planDismiss,
+  planLinkMove,
+  serializePrioritySuggestion,
+  suggestionGaps,
+  suggestionRefusal,
+  taskSuggestionTarget,
+  validatePrioritySuggestion,
+  type ObjectiveLiveness,
+  type RicePart,
+  type SuggestionInput,
+} from '../priority-suggestion.js';
 import { isFiledBy, readFilingApproved, readFilingBasis } from '../filing-basis.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
@@ -27,6 +43,9 @@ import {
   type TaskData,
   type TaskSummary,
   type UpdateFieldsOptions,
+  type ObjectiveLinkMove,
+  type ObjectiveLinkMoveResult,
+  type TaskAcceptResult,
 } from './types.js';
 import type { LocalTaskDescriptor } from './sync-state.js';
 import { fileURLToPath } from 'node:url';
@@ -262,6 +281,11 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     related_feature: (data.related_feature as string) ?? null,
     version: (data.version as string) ?? null,
     rice: normalizeRice(data.rice),
+    // Absent rather than null when there is none, so a task without a suggestion
+    // is the exact object it always was (golden-pinned).
+    ...(normalizePrioritySuggestion(data.priority_suggestion)
+      ? { priority_suggestion: normalizePrioritySuggestion(data.priority_suggestion)! }
+      : {}),
     start_date: (data.start_date as string) ?? null,
     due_date: (data.due_date as string) ?? null,
     objectives: Array.isArray(data.objectives) ? (data.objectives as unknown[]).map(String) : [],
@@ -775,6 +799,137 @@ ${input.why || '(To be defined)'}
     if (substringMatches.length > 1) return { kind: 'ambiguous', candidates: substringMatches };
 
     return { kind: 'none' };
+  }
+
+  // ─── Priority suggestion + link move (one lock, one write) ────────────────
+
+  /**
+   * Compare-and-write under ONE task lock: `fn` gets a FRESH read of the
+   * frontmatter, decides, and returns the updates (or null for "write nothing").
+   * The lock is not reentrant, so nothing inside `fn` may call updateFields.
+   * Throwing inside `fn` writes nothing.
+   */
+  protected lockedMutate<T>(
+    slug: string,
+    fn: (data: Record<string, unknown>) => { updates: Record<string, unknown> | null; result: T },
+    opts: { stampActor?: boolean } = {},
+  ): { result: T; wrote: boolean } {
+    const path = this.requirePath(slug);
+    const out = withTaskFileLock(this.brainRoot(), slug, () => {
+      const { data } = readFrontmatter<Record<string, unknown>>(path);
+      const { updates, result } = fn(data);
+      if (!updates || Object.keys(updates).length === 0) return { result, wrote: false };
+      updateFrontmatterFields(path, opts.stampActor ? { ...updates, ...this.lockedWriteStamp() } : updates);
+      forgetTaskRead(path);
+      return { result, wrote: true };
+    });
+    if (out.wrote) this.afterLockedWrite(slug);
+    return out;
+  }
+
+  /** Extra fields a backend stamps on an owner write (remote backends: the actor). */
+  protected lockedWriteStamp(): Record<string, unknown> {
+    return {};
+  }
+
+  /** Called once after a locked write landed (remote backends queue a push). */
+  protected afterLockedWrite(_slug: string): void {
+    // local: nothing to queue
+  }
+
+  async suggestPriority(
+    slug: string,
+    input: SuggestionInput,
+    liveness: readonly ObjectiveLiveness[],
+    opts: { again?: boolean } = {},
+  ): Promise<TaskData> {
+    const invalid = validatePrioritySuggestion(input, 'task');
+    if (invalid.length > 0) throw new SuggestionError('invalid', invalid.join('; '));
+    if (input.objective !== undefined && !liveness.some((o) => o.slug === input.objective && !o.done)) {
+      throw new SuggestionError('invalid_objective', `Objective "${input.objective}" does not exist or is done.`);
+    }
+    this.lockedMutate(slug, (data) => {
+      const target = taskSuggestionTarget(data);
+      const refusal = suggestionRefusal(target, input, liveness, opts);
+      if (refusal) throw SuggestionError.refusal(refusal, slug);
+      const gaps = suggestionGaps(target, input, liveness);
+      if (gaps.length > 0) throw new SuggestionError('incomplete', gaps.join('; '));
+      // No updated_at: a suggestion is not an edit of the task.
+      const record = buildSuggestionRecord(input, new Date(), { previous: target.priority_suggestion, objectives: liveness });
+      return { updates: { priority_suggestion: serializePrioritySuggestion(record) }, result: null };
+    });
+    return (await this.get(slug))!;
+  }
+
+  async acceptSuggestion(
+    slug: string,
+    at: string,
+    edits: RicePart,
+    liveness: readonly ObjectiveLiveness[],
+  ): Promise<TaskAcceptResult> {
+    const { result } = this.lockedMutate(slug, (data) => {
+      const plan = planAccept(taskSuggestionTarget(data), at, edits, liveness);
+      if (typeof plan === 'string') {
+        throw new SuggestionError(plan, plan === 'suggestion_changed'
+          ? 'The suggestion changed since it was shown. Reload it.'
+          : 'This suggestion was dismissed.');
+      }
+      if (plan.outcome === 'already_applied') return { updates: null, result: plan };
+      const updates: Record<string, unknown> = {};
+      if (plan.rice) updates.rice = mergeRice(null, plan.rice);
+      if (plan.objectives) updates.objectives = plan.objectives;
+      if (plan.rice || plan.objectives) updates.updated_at = today();
+      if (plan.record) updates.priority_suggestion = serializePrioritySuggestion(plan.record);
+      return { updates, result: plan };
+    }, { stampActor: true });
+    return {
+      outcome: result.outcome,
+      task: (await this.get(slug))!,
+      linkDropped: result.linkDropped,
+      filled: result.filled,
+    };
+  }
+
+  async dismissSuggestion(slug: string, at: string): Promise<TaskData> {
+    this.lockedMutate(slug, (data) => {
+      const next = planDismiss(taskSuggestionTarget(data), at);
+      if (next === 'already_dismissed') return { updates: null, result: null };
+      if (next === 'suggestion_changed') {
+        throw new SuggestionError('suggestion_changed', 'The suggestion changed since it was shown. Reload it.');
+      }
+      return { updates: { priority_suggestion: serializePrioritySuggestion(next) }, result: null };
+    });
+    return (await this.get(slug))!;
+  }
+
+  async moveObjectiveLink(
+    slug: string,
+    op: ObjectiveLinkMove,
+    liveness: readonly ObjectiveLiveness[],
+  ): Promise<ObjectiveLinkMoveResult> {
+    const add = op.add ?? null;
+    const remove = op.remove ?? null;
+    if (add !== null) {
+      const known = liveness.find((o) => o.slug === add);
+      if (!known) throw new SuggestionError('invalid_objective', `Objective "${add}" no longer exists.`);
+      if (known.done && !op.undo) throw new SuggestionError('invalid_objective', `Objective "${add}" is done.`);
+    }
+    const { result } = this.lockedMutate(slug, (data) => {
+      const links = Array.isArray(data.objectives)
+        ? (data.objectives as unknown[]).map((s) => String(s).trim()).filter(Boolean)
+        : [];
+      const plan = planLinkMove(links, { remove, add, index: op.index });
+      return {
+        updates: plan.changed ? { objectives: plan.links } : null,
+        result: plan,
+      };
+    }, { stampActor: true });
+    return {
+      task: (await this.get(slug))!,
+      changed: result.changed,
+      note: result.note,
+      undo: { ...result.undo, undo: true },
+    };
   }
 
   async sync(direction: SyncDirection = 'both'): Promise<SyncReport> {

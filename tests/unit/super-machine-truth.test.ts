@@ -161,6 +161,11 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // About and reply links, +380 on 2026-10-24 for one section per message and a choice asked in
     // the card, never only in the text (measured +377), +770 on 2026-10-24 for several references in
     // one message, a section per part (measured +768), +100 on 2026-10-24 for heat limiting heavy steps, +400 on 2026-10-25 for a verify script run once per wave, +100 on 2026-10-29 for a whiteboard opening as `whiteboard`, never `board`, +200 on 2026-10-29 for `open … --present` and the landscape filmstrip (measured 19,769), +700 on 2026-10-29 for the AI Team: §1's team check, §4's team in the prompt, a member's job's real event (measured 20,446).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(22_200);
+    // Kept with super-orchestration-guide.test.ts's ceiling, which has moved on since (24,700 on 2026-11-03).
+    // +450 (plan-r10 Wave 2: every member is a Super) and +500 (the Bypass permission rule), merged in the 0.40.2 cut.
+    // +425 (2026-11-03, rapor-kurali: a product mockup in its real look, a sequence as a dc-graph; measured 24,661).
+    // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger; measured 25,394).
+    // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(25_500);
   });
 });

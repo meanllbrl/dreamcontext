@@ -1,6 +1,10 @@
+import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { listApps } from '../../lib/apps/registry.js';
+import { countFindings } from '../../lib/apps/learn-queue.js';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { promptInput } from '../../lib/prompt.js';
@@ -12,7 +16,7 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { ProgressBar } from '../../lib/progress.js';
 import type { SyncOptions } from '../../lib/task-backend/types.js';
 import { runMigrations } from '../../lib/migration-runner.js';
-import { readSetupConfig, updateSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS, effectiveSpecialist } from '../../lib/setup-config.js';
 import {
   setSleepConfigKey,
   resetSleepConfigKey,
@@ -583,6 +587,7 @@ export function registerSleepCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        openSleepRun(root, state.debt);
         say.success(`Consolidation epoch set: ${state.sleep_started_at}`);
         say.info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
         if (decision.cappedByCatchup) {
@@ -628,6 +633,18 @@ export function registerSleepCommand(program: Command): void {
           }
         }
 
+        // What this project's apps learned (plan-veri K4): a COUNT per app, never the text. A
+        // non-empty list fires sleep-product, which alone reads the text (`apps learn-list`).
+        let appFindings: Array<{ slug: string; count: number }> = [];
+        try {
+          appFindings = listApps(homedir(), dirname(root))
+            .map((a) => ({ slug: a.slug, count: countFindings(homedir(), a.hash) }))
+            .filter((a) => a.count > 0);
+        } catch { appFindings = []; }
+        if (appFindings.length) {
+          say.info(`App findings waiting: app_findings=${appFindings.map((a) => a.slug).join(',')} (${appFindings.map((a) => `${a.slug}: ${a.count}`).join(', ')}). Fire sleep-product.`);
+        }
+
         // The task-filing rules learned from the owner's objections, and the objections no
         // rule rests on yet: sleep-tasks reads the first before it files anything and distils
         // the second into rules. An unreadable rules file or ledger is SAID, never read as
@@ -646,6 +663,7 @@ export function registerSleepCommand(program: Command): void {
             cappedByCatchup: decision.cappedByCatchup,
             migrations: codeNotices,
             automationOutputs,
+            appFindings,
             filingRules: filingRules.json,
           }, null, 2));
         }
@@ -772,6 +790,7 @@ export function registerSleepCommand(program: Command): void {
         return;
       }
       const { previousDebt, epoch, today_, finalState } = doneLock.value;
+      closeSleepRun(root, finalState.debt);
 
       if (epoch && finalState.sessions.length > 0) {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
@@ -1136,11 +1155,12 @@ export function registerSleepCommand(program: Command): void {
 
       console.log(`\n  ${chalk.bold('Specialists')}`);
       for (const name of SLEEP_SPECIALISTS) {
-        const o = cfg?.specialists?.[name];
+        const pinned = cfg?.specialists?.[name];
+        const o = effectiveSpecialist(cfg, name);
         const shipped = readInstalledSpecialistDefaults(projectRoot, name);
         const model = o?.model ?? shipped.model ?? chalk.dim('(package default)');
         const effort = o?.effort ?? shipped.effort ?? chalk.dim('(package default)');
-        const mark = o?.model || o?.effort ? chalk.yellow(' *') : '  ';
+        const mark = pinned?.model || pinned?.effort ? chalk.yellow(' *') : '  ';
         console.log(`   ${mark}${name.padEnd(17)} ${model}  ${chalk.dim('effort')} ${effort}`);
       }
 
@@ -1331,9 +1351,10 @@ export function registerSleepCommand(program: Command): void {
   sleep
     .command('auto-run', { hidden: true })
     .description('INTERNAL: run one background consolidation now (spawned detached by the Stop hook)')
-    .action(async () => {
+    .option('--tool <tool>', 'codex or antigravity: run the cycle on that tool (docs/tool-parity.md)')
+    .action(async (o: { tool?: string }) => {
       const root = ensureContextRoot();
-      const res = await runAutoSleep(root);
+      const res = await runAutoSleep(root, o.tool === 'codex' || o.tool === 'antigravity' ? { tool: o.tool } : {});
       if (!res.started) process.exitCode = 1;
     });
 }

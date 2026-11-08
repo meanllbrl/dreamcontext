@@ -48,6 +48,8 @@ function seedBoard(name: string, texts: string[]): string {
   return slug;
 }
 
+/** A board agent here is `scope: board` (limited to its board), the envelope these tests pin;
+ *  an unscoped board agent's card is covered in board-presentation-scope.test.ts. */
 function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: boolean; learning?: boolean } = {}): AutomationManifest {
   const m = createAutomation(contextRoot, {
     slug: opts.slug ?? 'board-pilot',
@@ -56,7 +58,7 @@ function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: 
     prompt: 'Keep the board tidy.',
     review: 'agent',
     learning: opts.learning ?? false,
-    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board }),
+    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board, boardOnly: true }),
   });
   if (opts.approve !== false) approveAutomation(projectRoot, m, NOW, home);
   return m;

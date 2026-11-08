@@ -12,6 +12,7 @@ import { SubtasksSection } from './detail/SubtasksSection';
 import { CriteriaSection } from './detail/CriteriaSection';
 import { MediaSection } from './detail/MediaSection';
 import { AgentJobRow } from './detail/AgentJobRow';
+import { OpenInMainApp, useEmbed } from '../embed/embedMode';
 import { DeliveriesSection } from './detail/DeliveriesSection';
 import { ReviewRoundsSection } from './detail/ReviewRoundsSection';
 import { HistorySection } from './detail/HistorySection';
@@ -37,6 +38,7 @@ interface TaskDetailPanelProps {
  * never lose an update. The parts live in `detail/`.
  */
 export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: TaskDetailPanelProps) {
+  const embed = useEmbed();
   const { resolved: theme } = useTheme();
   const { t } = useI18n();
   const sm = useStatusModel();
@@ -175,7 +177,8 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
         <div className="detail-grid">
           <div className="detail-main">
             {mutationError && <div className="error-state detail-error">{mutationError}</div>}
-            {job && (task.agent || job.state) && <AgentJobRow task={detail ?? task} detail={job} allTasks={allTasks} />}
+            {job && (task.agent || job.state) && !embed && <AgentJobRow task={detail ?? task} detail={job} allTasks={allTasks} />}
+            {job && (task.agent || job.state) && embed && <OpenInMainApp grant={embed} page="tasks" id={task.slug} />}
             <BodySections
               task={task}
               body={shownBody}
@@ -186,7 +189,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
                 subtasks: parent ? null : subtasksSlot,
                 criteria: <CriteriaSection body={shownBody} onToggle={(i, c) => onToggle('acceptance_criteria', i, c)} />,
                 media: <MediaSection task={task} />,
-                work: job ? <><DeliveriesSection deliveries={job.deliveries} /><ReviewRoundsSection job={job} history={history} /></> : null,
+                work: job ? <><DeliveriesSection deliveries={job.deliveries} /><ReviewRoundsSection job={job} history={history} taskSlug={task.slug} /></> : null,
                 history: <HistorySection history={history} />,
               }}
             />

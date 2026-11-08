@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildConversation, buildRoster, conversationSlugs, filterRoster, messagesOf, openingView, openQuestionOf, overrideFor,
+  buildConversation, buildRoster, conversationSlugs, filterRoster, messagesOf, openQuestionOf, overrideFor,
   plainLine, readTemporaryModels, routineCountLabel, writeTemporaryModel,
   type TeamAgent, type TeamAutomation,
 } from '../../dashboard/src/components/aiteam/teamModel';
@@ -238,13 +238,7 @@ describe('small words', () => {
   });
 });
 
-describe('openingView: a picked teammate opens on its stage (its whole history above the composer)', () => {
-  it('opens the stage, whatever it has said or left unread', () => {
-    for (const status of ['working', 'approval', 'paused', 'idle'] as const) expect(openingView({ status })).toBe('stage');
-  });
-  it('only an open routine question opens the activity, where its answer block lives', () => {
-    expect(openingView({ status: 'needs' })).toBe('activity');
-  });
+describe('the stage view type', () => {
   it('homeHasTurns is gone from the stage view type', async () => {
     const src = (await import('node:fs')).readFileSync('dashboard/src/hooks/useAgents.ts', 'utf-8');
     expect(src).not.toContain('homeHasTurns');

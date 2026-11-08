@@ -1,0 +1,863 @@
+/* ─── Settings window (new layout) ────────────────────────────────────────────
+   A large window over the app (T3 style): a topic menu on the left, one page on the right,
+   each sub-heading one rounded card with no box inside it. Ported from the owner-approved
+   prototype (proto-r19-settings2.css, r31) onto the app's tokens; everything is scoped to
+   `.sw`, so classic Settings is untouched. */
+
+.sw {
+  position: fixed;
+  inset: 0;
+  /* Above the title bar (40) and its menus (60). */
+  z-index: 70;
+}
+
+.sw-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-obsidian) 46%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.sw-win:focus {
+  outline: none;
+}
+
+.sw-win {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(1120px, calc(100vw - 48px));
+  height: min(800px, calc(100vh - 48px));
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  color: var(--color-text);
+}
+
+/* ── The menu ── */
+.sw-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.sw-q {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: 34px;
+  margin: var(--space-3) var(--space-3) 6px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+}
+
+.sw-q:focus-within {
+  border-color: var(--color-accent);
+}
+
+.sw-q input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: 0;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.sw-q input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.sw-q kbd {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.sw-nav {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1) 10px 14px;
+}
+
+.sw-ng {
+  margin: 14px var(--space-2) 5px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+}
+
+.sw-ng--none {
+  height: 0;
+  margin: 10px 0 0;
+}
+
+.sw-ng-wrap:first-child .sw-ng--none {
+  margin: 0;
+}
+
+.sw-ni {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 31px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--space-2);
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sw-ni:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.sw-ni.on {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.sw-ni .sw-ic {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.sw-ni span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sw-ni b {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  font-size: var(--font-size-2xs, 10px);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.sw-ni.dim {
+  opacity: 0.4;
+}
+
+/* ── The page ── */
+.sw-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sw-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: 50px;
+  padding: 0 var(--space-3) 0 28px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sw-crumb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.sw-crumb b {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.sw-crumb i {
+  font-style: normal;
+  margin: 0 3px;
+  opacity: 0.7;
+}
+
+.sw-x {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--space-2);
+  display: grid;
+  place-items: center;
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.sw-x:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.sw-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6) 28px 44px;
+}
+
+.sw-sec {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.sw-sec[hidden] {
+  display: none;
+}
+
+.sw-sec--hit + .sw-sec--hit {
+  margin-top: var(--space-8);
+}
+
+.sw-head {
+  margin-bottom: var(--space-4);
+}
+
+.sw-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sw-title {
+  margin: 0 0 5px;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.sw-desc {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.sw-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-10) 0;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.sw-empty b {
+  color: var(--color-text);
+}
+
+/* ── Cards: every group's rows are one rounded card, its title above it ── */
+.sw .setting-group + .setting-group,
+.sw .setting-group,
+.sw .settings-self-update {
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+.sw .setting-group + .setting-group,
+.sw .setting-group + .settings-self-update,
+.sw .settings-self-update + .setting-group,
+.sw .settings-self-update + .settings-self-update {
+  margin-top: 22px;
+}
+
+.sw .setting-group-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text);
+}
+
+.sw .setting-rows,
+.sw .settings-self-update {
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+
+.sw .settings-self-update {
+  padding: var(--space-4);
+}
+
+/* A wrapper that already holds a group (New layout) is not a second card: no box in a box. */
+.sw .settings-self-update:has(> .setting-group) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.sw .setting-row {
+  min-height: 58px;
+  box-sizing: border-box;
+  justify-content: center;
+  padding: 13px 0;
+}
+
+.sw .setting-row-title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.sw .setting-row-hint {
+  color: var(--color-text-tertiary);
+}
+
+.setting-row-why {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-warning-ink, var(--color-warning));
+}
+
+.sw .setting-row--passive .setting-row-control {
+  opacity: 0.5;
+}
+
+.sw .setting-row.sw-pulse {
+  background: var(--color-accent-soft);
+  border-radius: var(--space-2);
+}
+
+/* A wide component (a table, a list) takes the card's whole width. */
+.sw-wide {
+  padding: var(--space-3) 0;
+  min-width: 0;
+}
+
+/* ── Controls ── */
+.sw-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+}
+
+.sw-seg-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sw-seg-btn:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.sw-seg-btn.on {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+.sw-seg-btn:disabled {
+  cursor: not-allowed;
+}
+
+.sw-seg[aria-disabled='true'] {
+  opacity: 0.5;
+}
+
+.sw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--space-2);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+}
+
+.sw-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+
+.sw-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Text on an accent fill takes the strong accent (accent-strong.test.ts). */
+.sw-btn--accent {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
+}
+
+.sw-btn--accent:hover:not(:disabled) {
+  color: var(--color-accent-text);
+  border-color: var(--color-accent-strong);
+}
+
+.sw-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.sw-confirm > span:not(.sw-confirm-btns) {
+  flex: 1 1 260px;
+  color: var(--color-text-tertiary);
+}
+
+.sw-confirm-btns {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* A row saved somewhere other than its page's scope says so, once. */
+.sw-scope {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  font-size: var(--font-size-2xs, 10px);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* ── Models: tool tabs ── */
+.sw-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sw-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 11px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+}
+
+.sw-tab:hover {
+  color: var(--color-text);
+}
+
+.sw-tab.on {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  border-bottom-color: var(--color-accent);
+}
+
+.sw-tab-mark,
+.sw-mdc-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.sw-tab-mark .mp-mark,
+.sw-mdc-mark .mp-mark {
+  width: 15px;
+  height: 15px;
+}
+
+.sw-state {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* The accounts sit straight in the card: no box inside a box beyond each account. */
+.sw-acc > * {
+  margin: 0;
+}
+
+/* ── One chip per job, the composer's picker behind it ── */
+.sw-mdc {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 var(--space-2) 0 9px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sw-mdc b {
+  font-weight: var(--font-weight-semibold);
+}
+
+.sw-mdc:hover:not(:disabled),
+.sw-mdc[aria-expanded='true'] {
+  border-color: var(--color-border-hover);
+}
+
+.sw-mdc .dim,
+.sw-mdc-car {
+  color: var(--color-text-tertiary);
+}
+
+.sw-mdc.inh b {
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-secondary);
+}
+
+.sw-mdc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sw-reset {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sw-reset:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+/* The picker's popover: portaled to body above the window, anchored by ModelChip. It carries
+   its own surface because the composer's stylesheet anchors the same class to the composer. */
+.sw-popover {
+  position: fixed;
+  z-index: 80;
+}
+
+.sw-popover .chat-cmp-modelmenu.mp {
+  position: static;
+  inset: auto;
+  display: flex;
+  flex-direction: column;
+  width: min(412px, calc(100vw - 16px));
+  max-width: none;
+  max-height: min(460px, calc(100vh - 16px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-lg);
+}
+
+.sw-popover .mp-list {
+  overflow: auto;
+}
+
+.sw-popover .mp-tool[aria-disabled='true'] {
+  opacity: 0.45;
+}
+
+/* ── Limit rules: the spread rule's weights under Details ── */
+.sw-weights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.sw-weights label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.sw-weights input {
+  width: 64px;
+}
+
+/* ── Topic pages (wave 4) ── */
+/* A component that brings its own row list sits in the card, not as a second card in it. */
+.sw .setting-rows .setting-rows {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.sw .setting-row + .setting-rows > .setting-row:first-child {
+  border-top: 1px solid var(--color-border);
+}
+
+.sw-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sw-chipx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.sw-chipx button {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.sw-chipx button:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.sw-addlang {
+  width: auto;
+}
+
+.sw-inl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.sw-ok,
+.sw .mcpm-ok {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-success-subtle);
+  font-size: var(--font-size-xs);
+  color: var(--color-success-ink, var(--color-success));
+  white-space: nowrap;
+}
+
+.sw-btn--danger {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+}
+
+.sw-btn--danger:hover:not(:disabled) {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.sw-av {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  object-fit: cover;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+  font-size: calc(15px * var(--zoom));
+}
+
+.sw-file {
+  cursor: pointer;
+}
+
+.sw-val {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.sw-ta {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  resize: vertical;
+  outline: 0;
+}
+
+.sw-ta:focus {
+  border-color: var(--color-accent);
+}
+
+/* MCP: the matrix scrolls inside its card on a narrow window. */
+.sw .mcpm-scroll {
+  overflow-x: auto;
+}
+
+/* ── Narrow: the menu becomes one scrolling row on top ── */
+@media (max-width: 780px) {
+  .sw-win {
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* The menu scrolls sideways inside its strip; it must never widen the column (the page
+     would then sit centred in that width, off screen). */
+  .sw-side {
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .sw-q {
+    margin: 10px 56px 6px var(--space-3);
+  }
+
+  .sw-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 10px var(--space-2);
+    flex: none;
+    scrollbar-width: none;
+  }
+
+  .sw-ng-wrap {
+    display: contents;
+  }
+
+  .sw-ng {
+    display: none;
+  }
+
+  .sw-ni {
+    width: auto;
+    flex: none;
+  }
+
+  .sw-top {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+  }
+
+  .sw-crumb {
+    display: none;
+  }
+
+  .sw-body {
+    padding: 18px var(--space-4) 32px;
+  }
+
+  .sw .setting-row-head {
+    flex-wrap: wrap;
+  }
+
+  /* A control pair (Whisper model + Install, Talk key + Hold/Press) wraps instead of overflowing. */
+  .sw .setting-row-control {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
+  .sw .setting-row-control .settings-text-input {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

@@ -346,6 +346,22 @@ export function taskAgent(t: Task): string | null {
 export function taskVersion(t: Task): string { return t.version && t.version.trim() ? t.version : 'none'; }
 /** The board's agent filter value: the agent's slug, or `'none'`. */
 export function taskAgentKey(t: Task): string { return taskAgent(t) ?? 'none'; }
+/** The agent that reviews the task's deliveries (its job's reviewer), or null. */
+export function taskReviewer(t: Task): string | null {
+  const job = t.agent_job;
+  const slug = job && typeof job.reviewer === 'string' ? job.reviewer.trim() : '';
+  return slug || null;
+}
+/**
+ * Every agent on the task, the doer first then the reviewer: the board's agent filter matches
+ * either and the filter's counts count both. `['none']` when it has no agent.
+ */
+export function taskAgentKeys(t: Task): string[] {
+  const doer = taskAgent(t);
+  if (!doer) return ['none'];
+  const reviewer = taskReviewer(t);
+  return reviewer && reviewer !== doer ? [doer, reviewer] : [doer];
+}
 
 /** The task's feature slug, or `'none'`. */
 export function taskFeature(t: Task): string { return t.related_feature && t.related_feature.trim() ? t.related_feature : 'none'; }
@@ -500,9 +516,13 @@ function matchField(val: string, fld: FieldFilter | undefined): boolean {
  * assignees tests as the single value `'none'`.
  */
 function matchAssignee(t: Task, fld: FieldFilter | undefined): boolean {
-  if (!fld) return true;
   const vals = taskAssignees(t);
-  const eff = vals.length ? vals : ['none'];
+  return matchAny(vals.length ? vals : ['none'], fld);
+}
+
+/** A many-valued field: `inc` needs ANY value included, `exc` refuses ANY value excluded. */
+function matchAny(eff: readonly string[], fld: FieldFilter | undefined): boolean {
+  if (!fld) return true;
   if (fld.inc.length && !eff.some((v) => fld.inc.includes(v))) return false;
   if (fld.exc.length && eff.some((v) => fld.exc.includes(v))) return false;
   return true;
@@ -580,7 +600,7 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
     if (!matchAssignee(t, f.assignee)) return false;
     if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
     if (!matchField(taskFeature(t), f.feature)) return false;
-    if (!matchField(taskAgentKey(t), f.agent)) return false;
+    if (!matchAny(taskAgentKeys(t), f.agent)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }

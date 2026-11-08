@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
+import { getApp } from '../../lib/apps/registry.js';
+import { APP_SLUG_RE } from '../../lib/apps/bundle.js';
+import { existingRuntime } from '../../lib/apps/supervisor.js';
 import {
   SecretWriteError, normalizeSecretEntries, normalizeSecretFile, secretReceipt, writeEnvSecrets,
 } from '../../lib/env-secrets.js';
@@ -39,7 +43,20 @@ export async function handleAgentSecret(
   // `contextRoot` is <projectRoot>/_dream_context; a .env belongs to the PROJECT, one level
   // up. That is the only place in this file that knows the difference, and the writer is
   // given the project root so its containment check is anchored where the user means.
-  const projectRoot = dirname(contextRoot);
+  let projectRoot = dirname(contextRoot);
+  // A dreamcontext App's secret (dreamcontext-apps plan r19): `app` names an app OF THIS
+  // PROJECT (registry lookup by this project's root, never a path from the body), and its
+  // `.env` lives at the app's own root. Every env-secrets guard below runs unchanged there.
+  let appName: string | null = null;
+  if (body.app !== undefined) {
+    const rec = typeof body.app === 'string' && APP_SLUG_RE.test(body.app) ? getApp(homedir(), projectRoot, body.app) : null;
+    if (!rec) {
+      sendError(res, 404, 'app_not_found', 'That app does not belong to this project.');
+      return;
+    }
+    projectRoot = rec.root;
+    appName = rec.name;
+  }
 
   try {
     const file = normalizeSecretFile(body.file);
@@ -50,7 +67,13 @@ export async function handleAgentSecret(
     // typo away from interpolating a value into the sentence that exists to keep values
     // out — so the surface that HAS the value never gets to write the sentence about it.
     const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
-    sendJson(res, 200, { ...result, receipt: secretReceipt(result, title || undefined) });
+    if (appName !== null && typeof body.app === 'string') {
+      // A new key reaches the running backend through a rolling restart, and the sink learns it.
+      const rec = getApp(homedir(), dirname(contextRoot), body.app);
+      const rt = rec ? existingRuntime(rec.hash) : null;
+      if (rt) { rt.refreshSecrets(); if (rt.state === 'running') void rt.update(); }
+    }
+    sendJson(res, 200, { ...result, ...(appName !== null ? { app: appName } : {}), receipt: secretReceipt(result, title || undefined) });
   } catch (err) {
     if (err instanceof SecretWriteError) {
       // 409 for "the repository says no" (tracked / symlinked / outside the project), 400

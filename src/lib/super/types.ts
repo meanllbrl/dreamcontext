@@ -12,10 +12,29 @@ import type { OwnerWaitKind } from './owner-wait.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
 
+/** The tools a child can run on besides Claude; each is refused with no live write gate. */
+export type SuperChildTool = 'codex' | 'antigravity';
+
 /** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
  *  (Waiting on you / Now / Done / Up next, one per stage); the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda', 'member'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+
+/**
+ * A MEMBER stage's own cards (plan r4 K1): its routines, its instructions (soul + job) and its
+ * settings (on/off, delete). One kind with the sub-type in `ref`, on a member's record only. They
+ * are the owner's: no agent verb opens, moves, resizes or closes one, no sweep closes or retires
+ * one, and a missing one comes back at its default place (`ensureMemberCards`).
+ */
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
+/** First-open defaults (K5, G2): Rutinler large, Talimatlar small, Üye small in Others. */
+export const MEMBER_CARD_DEFAULTS: Readonly<Record<MemberCardRef, { size: ContainerSize; place: ContainerPlace }>> = {
+  routines: { size: 'large', place: 'float' },
+  instructions: { size: 'small', place: 'float' },
+  settings: { size: 'small', place: 'others' },
+};
+export const isMemberCardRef = (r: unknown): r is MemberCardRef => typeof r === 'string' && (MEMBER_CARD_REFS as readonly string[]).includes(r);
 
 /** The agenda card's one ref: there is one agenda per stage (owner 2026-10-22: "a card, not a
  *  column"). The hand-over opens it; the owner reopens it from the centre's head. */
@@ -481,8 +500,11 @@ export interface SuperChild {
   settling?: boolean;
   /** The task this job belongs to (`super brief --task`, `delegate --task`): a slug under state/. */
   task?: string;
-  /** Why the row is `stuck`: an error turn, or a working turn silent past the stale bar. */
+  /** Why the row is `stuck`: an error turn, a working turn silent past the stale bar, or a child
+   *  that never started. */
   stuckReason?: StuckReason;
+  /** Why this child never started, in the server's words; it goes when the row leaves `stuck`. */
+  startError?: string;
   /** The owner waits on this job's result: the super agent started it in the owner's own turn,
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
@@ -490,6 +512,8 @@ export interface SuperChild {
   /** The owner message it answers (`msgRef`, the turn's `<owner-msg ref>`): its awaited=owner
    *  events carry `origin=<ref>`, so the result the super writes links under that message. */
   origin?: string;
+  /** A member Super's child: whose work it does (`delegate --for`, else the issuing turn's). */
+  workOrigin?: SuperWorkOrigin;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -505,6 +529,8 @@ export interface SuperChild {
   /** The MCP servers it was started with (`delegate --mcp`, plan r5 D14): a delegated child
    *  runs lean, with only these; Resume keeps the same set. */
   mcp?: string[];
+  /** The child runs on this tool (Track T W4). Absent = Claude. */
+  tool?: SuperChildTool;
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
@@ -520,6 +546,11 @@ export interface SuperChild {
    *  ms; `seenAt` is the finish key his window showed): the grace of the pictures that result
    *  turned down counts from here (`forChild`). */
   seenMarkedAt?: number;
+  /** Outward actions this child completed that the Super has not told yet (`outwardAction`:
+   *  a push, a publish, a PR, a deploy, an MCP send), written by the server from its frames.
+   *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
+   *  and clears this. At most MAX_SENT. */
+  sent?: string[];
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
@@ -531,7 +562,9 @@ export const MAX_ENDED_CHILDREN = 30;
  *  it): never done, never settled, until he does it (task a-super-child-waiting-on-the-owner-…). */
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
-export const STUCK_REASONS = ['error', 'stale'] as const;
+/** The longest `startError` a record keeps. */
+export const MAX_START_ERROR = 600;
+export const STUCK_REASONS = ['error', 'stale', 'no_start'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /**
@@ -541,7 +574,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * to the owner (`super ask`). `ended` = `super end` closed the child: born `done`, a record of
  * its last brief, never delivered as a turn. `approval`: an AI Team member the super gave a job to
  * is not approved on this machine. The server writes it (never the super agent's words, like a
- * permission) and the owner settles it in AI Team; it closes once the member is approved, turned
+ * permission) and the owner settles it on its card (its stage, "Üyeleri yönet"); it closes once the member is approved, turned
  * off or gone, or by `super queue done`. `fresh`: the owner pressed "New session" — one solo
 `[super fresh]` turn in which the super writes its handoff file, after which its pane rotates into
 a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
@@ -550,8 +583,22 @@ a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
 the moment the card appears in the child's stream; it is the owner's (Waiting on you, the bar)
 from birth, reaches the super as an event that says the child waits on him, stays open
 (`escalated`) after that turn, and closes when his answer reaches the child.
+`automation`: the owner approved or rejected, on its chat card, an automation the Super Agent's
+crew set up (`automation` names it, `decision` says which). The server writes it, never the
+super's words; its `sessionId` is the super's own. Delivered in the next batch with the
+automation's live state and next run, then done.
+`request` (plan-r10 1, Wave 2): a job the project's MAIN Super gave a member Super (`super team ask`),
+written by the server into the MEMBER's queue (never the main Super's words as a user message):
+`text` is the job, `model`/`effort`/`light` ride to the child it opens, `acceptedAt` is the end of
+the turn that carried it, `result` is what the member's `super team done` said. Never pruned while
+open; only `team done` closes it. `reply`: main Super's answer (`super team answer`) to a member's
+question about a request, written into the member's queue; its delivery closes the member's ask
+(`answers` names it). Both are solo: one per turn, never batched with another origin.
+`owed` (owed.ts): a natural turn end left owner debts open (`SuperState.owed`); one solo `[super owed]`
+turn names them (`owed` = their ids). Re-decided at delivery: dropped when none is still open.
+Its `sessionId` is the super's own.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -583,14 +630,25 @@ export interface SuperQueueItem {
   /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
    *  `createdAt`). Born `done`: a record, never delivered as a turn. */
   brief?: string;
-  /** An `approval` item's AI Team member (its agent slug). Its `sessionId` is the super's own. */
+  /** An `approval` item's AI Team member (its agent slug), or an `automation` item's member when
+   *  the owner decided on a MEMBER's approval (then it has no `automation`). Its `sessionId` is the super's own. */
   member?: string;
+  /** An `automation` item's automation slug. */
+  automation?: string;
+  /** An `automation` item's owner decision on the card. */
+  decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
    *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
   wait?: { kind: OwnerWaitKind; id: string; key?: string };
   /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
    *  `sessionId` is the super's own: a team member is not a child. */
   team?: string;
+  /** A team item: what it delivers of the job's posts, fixed when it was queued, so the same post
+   *  never rides two events. `upto` absent: nothing new. Absent on a record from before this. */
+  posts?: { after?: string; upto?: string };
+  /** A team `done` item that is an answer of a job still going, or a late one (`event=answer`):
+   *  it ends nothing, and no ending replaces it. */
+  partial?: true;
   /** A child's `question` shown to the OWNER from birth (owner 2026-10-27): its card is on his
    *  bar at once, with a button that opens the child's chat, while the Super hears it in its next
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
@@ -600,6 +658,90 @@ export interface SuperQueueItem {
    *  task, knowledge, a board; `isReadKind`), so his question card points at them ("To read:
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
   read?: string[];
+  /** A `request`'s job (main Super's words: untrusted for the member) or a `reply`'s answer. */
+  text?: string;
+  /** A `request`'s per-job model, effort and light flag (`team ask --model/--effort/--light`):
+   *  for the child the member opens for it, never the member's own. */
+  model?: string;
+  effort?: string;
+  light?: true;
+  /** A `request`'s result, from the member's `super team done` (then `done`). */
+  result?: string;
+  /** When the turn that carried a `request` ended (epoch ms): it is the member's work from then. */
+  acceptedAt?: number;
+  /** A `reply`: the member's `ask` item it answers. */
+  answers?: string;
+  /** Whose work this item is about (plan-r10 1, owner `wnfvtj`): absent = the owner's (as today). */
+  workOrigin?: SuperWorkOrigin;
+  /** A `permission` of a child the owner runs in Bypass (`permissionGoesToSuper`): the Super
+   *  decides it first (`super allow`), so it is no owner head, notch row or phone card while this
+   *  holds. Escalated (`super queue ask`) or unanswered past SUPER_PERMISSION_GRACE_MS, it loses
+   *  the flag and is the owner's like any permission. Never on another kind. */
+  toSuper?: true;
+  /** A result debt was opened for this item when it reached the Super (owed.ts): never twice. */
+  owedAt?: number;
+  /** An `owed` item's debts (`SuperOwed.id`), fixed when it was queued. */
+  owed?: string[];
+}
+
+/**
+ * Which super a record, a token or a verb belongs to (plan-r10 1): the project's own Super Agent
+ * (`main`, its record unchanged on disk) or an AI Team member's Super (`m:<member slug>`, its record
+ * under `state/.super/members/`). Absent anywhere = `main`, so every older caller is main's.
+ * The parser is `parseSuperId` (store.ts: the member slug is the agent slug charset).
+ */
+export type SuperId = 'main' | `m:${string}`;
+export const MEMBER_SUPER_PREFIX = 'm:';
+
+/**
+ * Whose work a member Super's turn, child or question is (owner `wnfvtj`): the owner's (he typed on
+ * the member's stage), a routine's (a scheduled automation of the member), or main Super's (a
+ * `request` item, `main:<itemId>`). `main:*` work is between the member and main only.
+ */
+export type SuperWorkOrigin = 'owner' | 'routine' | `main:${string}`;
+/** `main:` takes any queue item id (QUEUE_ID_RE's shape): a stricter pattern would let the sanitizer
+ *  drop a real main origin, and an item with no origin is the OWNER's (it would be announced). */
+export const WORK_ORIGIN_RE = /^(owner|routine|main:[a-z0-9-]{1,40})$/;
+export function parseWorkOrigin(raw: unknown): SuperWorkOrigin | null {
+  return typeof raw === 'string' && WORK_ORIGIN_RE.test(raw) ? raw as SuperWorkOrigin : null;
+}
+
+/** A member Super's live children (the owner's brief: at most two at once; more wait in its pool). */
+export const MAX_MEMBER_LIVE_CHILDREN = 2;
+/** The vault-wide ceiling: every super record's live children together (a safety bound). */
+export const MAX_VAULT_LIVE_CHILDREN = 15;
+/** Open `request` items one member's queue may hold (`team ask` answers 429 `member_queue_full`). */
+export const MAX_OPEN_REQUESTS = 20;
+/** The longest `request` text / `reply` text / `result` a record keeps. */
+export const MAX_REQUEST_TEXT = 16_000;
+export const MAX_REQUEST_RESULT = 4_000;
+
+/**
+ * One member as `GET /api/agent/sessions?summary=1` lists it (plan-r10 1, 1f; Wave 3 reads it):
+ * derived on the server from the member's record, counting only `owner` and `routine` work.
+ * `superOnly`: it works only for main Super right now (the Ekip list's "Super için" tag, no count).
+ */
+export interface SuperMemberSummary {
+  slug: string;
+  /** A global member (`~/.dreamcontext/agents/`), Super in this project. */
+  global: boolean;
+  /** The member's `call.enabled`. */
+  enabled: boolean;
+  /** Owner- or routine-origin jobs running now. */
+  ownerWorking: number;
+  /** An owner-facing question is open. */
+  asking: boolean;
+  /** Its one approval card waits (a synced or widening change). */
+  approval: boolean;
+  /** Owner-origin turns he has not read. */
+  unread: number;
+  superOnly: boolean;
+  /** Its newest activity (epoch ms), 0 = never. */
+  lastAt: number;
+  /** Its `request` and `reply` queue items still `pending` (waiting for its Super to be attached):
+   *  the window spawns a cold member's Super when this is above 0 and no live chat holds it
+   *  (plan-r10 1 "Spawning a cold member"). Never an owner-facing count. */
+  pending: number;
 }
 
 /** The cards a question can point at to be read: what carries information, never a picture
@@ -662,6 +804,20 @@ export interface SuperTeamJob {
   /** A stuck its watch concluded itself: the member left the AI Team, or its turn was lost with
    *  the server (no record of an ending, nothing running it). */
   concluded?: TeamJobConclusion;
+  /** The newest post of this job's run the super was given (on the chain's first job): every post
+   *  reaches it once, whichever event carries it. */
+  toldPost?: string;
+  /** When its done or stuck was told: a late post is still watched for `TEAM_TRAIL_MS`. */
+  toldEndAt?: number;
+  /** A follow-up on this job's own conversation: the job it continues (the chain's root). It has
+   *  no card of its own: the member's one card shows the chain. */
+  followUpOf?: string;
+  /** Who wrote the follow-up: `super` when the Super Agent asked the same member again
+   *  (`team ask` continuing its conversation, plan-r10 1b). Absent = the owner wrote it. */
+  by?: 'super';
+  /** A job given to the member's OWN Super (plan-r10 1, Wave 2): the `request` item's id in the
+   *  member's record. Its card and status read that record; no thread holds it. */
+  request?: string;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
@@ -675,6 +831,37 @@ export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
 
 /** Team jobs the record keeps (newest first). */
 export const MAX_TEAM_JOBS = 30;
+
+/**
+ * The record's team list, newest first, cut to MAX_TEAM_JOBS (plan-r10 1b): over the cap the
+ * OLDEST follow-ups go first, then the oldest roots; a member's CURRENT root (its newest job with
+ * no `followUpOf`, the one its card shows) is never dropped. Pure; `team` sorted newest first.
+ */
+export function trimTeamJobs(team: SuperTeamJob[], max: number = MAX_TEAM_JOBS): SuperTeamJob[] {
+  if (team.length <= max) return team;
+  const current = new Set<string>();
+  const seen = new Set<string>();
+  for (const j of team) {
+    // A job whose request in a member's Super is still open is never cut: its `team done` must
+    // find it (plan-r10 1), or main never hears the result.
+    if (j.request && j.open) current.add(j.id);
+    if (j.followUpOf || seen.has(j.member)) continue;
+    seen.add(j.member);
+    current.add(j.id);
+  }
+  const drop = new Set<string>();
+  let over = team.length - max;
+  // Oldest first: follow-ups, then roots that are no longer a member's current one.
+  for (const pass of [(j: SuperTeamJob) => !!j.followUpOf && !current.has(j.id), (j: SuperTeamJob) => !j.followUpOf && !current.has(j.id)]) {
+    for (let i = team.length - 1; i >= 0 && over > 0; i--) {
+      const j = team[i];
+      if (drop.has(j.id) || !pass(j)) continue;
+      drop.add(j.id);
+      over--;
+    }
+  }
+  return team.filter((j) => !drop.has(j.id));
+}
 export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
 
 /**
@@ -698,6 +885,8 @@ export interface SuperPoolItem {
   slug?: string;
   base?: string;
   mcp?: string[];
+  /** The child runs on this tool (Track T W4). Absent = Claude. */
+  tool?: SuperChildTool;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */
@@ -719,6 +908,11 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  /** Children alive when the owner turned the Super Agent off: his chats from then on, whatever
+   *  happens to their process (parked, taken over by a phone). Cleared by the next hand-over. */
+  released?: string[];
+  /** The `formerChildren` that were the owner's adopted chats: a phone's History still lists them. */
+  formerAdopted?: string[];
   containers: SuperContainer[];
   /** Cards drawn together as one tile (2026-10-20). Absent in an older record = none. */
   groups: SuperGroup[];
@@ -746,7 +940,68 @@ export interface SuperState {
   padSeq?: number;
   /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
+  /** A member Super's record (`state/.super/members/<slug>.json`): its member slug. Absent = main. */
+  member?: string;
+  /** Batch ids of a member Super's turns that were main Super's work (`main:*`): the owner's unread
+   *  skips them. A ring of MAX_MAIN_BATCHES beside `ownerBatches`. Absent = none. */
+  mainBatches?: string[];
+  /** What the Super still owes the owner (owed.ts): every open debt, the newest MAX_OWED_CLOSED
+   *  closed ones. Absent = none. */
+  owed?: SuperOwed[];
+  /** The last debt number handed out (`o<owedSeq>`, its `seq`): monotonic. */
+  owedSeq?: number;
+  /** When this record started keeping debts (the first write after the upgrade): an item older
+   *  than this is never owed. Absent = now. */
+  owedSince?: number;
 }
+
+/**
+ * One thing the Super owes the owner (task super-hicbir-konuyu-kacirmaz): his message (`msg`), or
+ * a result he waits on or an outward action of a child (`result`). Opened by the server from
+ * facts only, closed only by evidence: a line-start `<!-- re:<ref> -->` section in a Super text
+ * (`mark`), his own drop (`owner`), or his take-back (`takeback`).
+ */
+export interface SuperOwed {
+  /** `o<seq>`. */
+  id: string;
+  kind: 'msg' | 'result';
+  /** The reference a section closes it with (`msgRef`, the child's origin, or a synthetic one). */
+  ref: string;
+  /** A multi-part message's part refs: a section under any of them closes it too. */
+  parts?: string[];
+  /** Its number (`owedSeq` when opened): a turn end decides only debts at or under its ceiling. */
+  seq: number;
+  at: number;
+  /** A result's queue item, child, team job. */
+  item?: string;
+  child?: string;
+  team?: string;
+  /** What it is about (his words, or the job's line): server-cut, always shown fenced. */
+  gist: string;
+  /** The outward actions of that job (`SuperChild.sent`). */
+  sent?: string[];
+  /** `[super owed]` turns that named it. At OWED_NUDGES it shows on his agenda instead. */
+  nudges: number;
+  /** Left open by an end he stopped (`stop`) or a limit refused (`limit`): shown after OWED_PARK_MS. */
+  parked?: 'stop' | 'limit';
+  parkedAt?: number;
+  closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+}
+export const OWED_ID_RE = /^o[1-9][0-9]{0,8}$/;
+/** Closed debts the record keeps (newest). Every open one is kept up to MAX_OWED_OPEN. */
+export const MAX_OWED_CLOSED = 40;
+/** A hidden ceiling on open debts, so a record cannot grow without bound; never a real limit. */
+export const MAX_OWED_OPEN = 200;
+/** `[super owed]` turns per debt before it is the owner's to see. */
+export const OWED_NUDGES = 2;
+/** A debt parked by his Stop or a limit shows on his agenda after this long with no natural end. */
+export const OWED_PARK_MS = 10 * 60_000;
+export const MAX_OWED_MSG_GIST = 300;
+export const MAX_OWED_RESULT_GIST = 120;
+/** Outward actions one child or debt holds (`SuperChild.sent`, `SuperOwed.sent`). */
+export const MAX_SENT = 8;
+/** One outward action's label (`outwardAction`): fixed words or a sanitized MCP tool name. */
+export const SENT_RE = /^[A-Za-z0-9 _./:-]{1,80}$/;
 
 /**
  * The agenda is a NOTEPAD the super agent writes itself (owner 2026-10-22 19:15: "like a
@@ -802,7 +1057,7 @@ export function cleanPadText(raw: unknown): string {
  * child's, so they never ride in his message: the super reads them fenced from `super state`).
  * `section=` is where the line stood when he wrote. Not `[super `: never an injected turn.
  */
-export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item|owed)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done|unanswered)\]/;
 /** The `line:` a note's About block carries, at most this long. */
 export const MAX_ABOUT_LINE = 200;
 
@@ -830,10 +1085,17 @@ const MSG_REF_SPACE = 2_176_782_336;
  *  message's reference, starting with `<` so the replay drops it. A message with two or more
  *  parts (`aboutHeads`) also lists each part's reference, in order (`partRefs`); with one or
  *  none the block is what it always was, byte for byte. */
-export function ownerMsgBlock(text: string): string {
-  const parts = partRefs(text);
-  return parts.length ? `<owner-msg ref="${msgRef(text)}" parts="${parts.join(' ')}"/>` : `<owner-msg ref="${msgRef(text)}"/>`;
+export function ownerMsgBlock(text: string, opts?: { ref: string; via: 'telegram' }): string {
+  // A Telegram turn (B1): the hub drew the ref (unique even for two identical "evet"s) and it
+  // is the base of the part refs too (E1). `via` sits on the server's own block only.
+  const ref = opts && MSG_REF_RE.test(opts.ref) ? opts.ref : msgRef(text);
+  const via = opts && MSG_REF_RE.test(opts.ref) ? ` via="${opts.via}"` : '';
+  const parts = partRefs(text, opts && MSG_REF_RE.test(opts.ref) ? opts.ref : undefined);
+  return parts.length ? `<owner-msg ref="${ref}" parts="${parts.join(' ')}"${via}/>` : `<owner-msg ref="${ref}"${via}/>`;
 }
+/** The server's Telegram owner block, as `ownerMsgBlock` writes it: `ref` and nothing forged
+ *  about it (the block is the whole text, written by the server, never typed). */
+export const TELEGRAM_OWNER_BLOCK_RE = /^<owner-msg ref="([0-9a-z]{6})"(?: parts="[0-9a-z ]{6,}")? via="telegram"\/>$/;
 /** The owner replies to one message (its ↩): his message opens with this header, then
  *  `quote: "<at most MAX_REPLY_QUOTE characters of it>"`, then his words. `ref=` is a scroll
  *  anchor for the window; the super knows its own words by the quote. Not `[super `. */
@@ -846,21 +1108,26 @@ export const MAX_REPLY_QUOTE = 100;
  * quote is what the page showed him: data, never his instruction. Not `[super `.
  */
 export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
+/** The task a member stage's strip is about (plan-r10 1c): the header alone, no second line. The
+ *  task-slug charset, no 64 cap (slugs reach ~100 characters). Never closes an open ask. */
+export const ABOUT_TASK_RE = /^\[About task ([a-z0-9][a-z0-9-]{0,251})\]/;
 export const MAX_SELECTION_QUOTE = 1000;
 
-/** At most this many references (agenda lines, replied messages) in one owner message; a
- *  header past the fifth is plain text. */
-export const MAX_MESSAGE_REFS = 5;
+/** A hidden technical ceiling on references (agenda lines, replied messages) in one owner
+ *  message, so a malformed or hostile message cannot make the parser walk without bound; a
+ *  header past it is plain text. Owner 2026-11-04: he never sees a limit, so it sits far above
+ *  any real message and no surface ever names it. */
+export const MAX_MESSAGE_REFS = 100;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'owed' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
  * one message). One rule on both sides of the wire: a header counts only at offset 0 or right
  * after a blank line (`\n\n`); a note's header must be followed by its well-formed `line:` JSON
  * line, a reply's and a card's by its `quote:` line; an item's header has no second line; and the block
- * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS. MIRRORED in
+ * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS (hidden). MIRRORED in
  * dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
  */
 export function aboutHeads(text: string): AboutHead[] {
@@ -873,12 +1140,13 @@ export function aboutHeads(text: string): AboutHead[] {
     const s = text.slice(at);
     const a = ABOUT_AGENDA_RE.exec(s);
     const c = a ? null : ABOUT_CARD_RE.exec(s);
-    const r = a || c ? null : REPLY_TO_RE.exec(s);
-    if (!a && !c && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : 'reply';
-    let len = (a ?? c ?? r as RegExpExecArray)[0].length;
+    const t = a || c ? null : ABOUT_TASK_RE.exec(s);
+    const r = a || c || t ? null : REPLY_TO_RE.exec(s);
+    if (!a && !c && !t && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item' | 'owed') : c ? 'card' : t ? 'task' : 'reply';
+    let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item') {
+    if (kind === 'item' || kind === 'owed' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -886,7 +1154,7 @@ export function aboutHeads(text: string): AboutHead[] {
       len += second[0].length;
     }
     if (len < s.length && s[len] !== '\n') continue;
-    out.push({ kind, id: a ? a[2] : (c ?? r as RegExpExecArray)[1], at, end: at + len });
+    out.push({ kind, id: a ? a[2] : (c ?? t ?? r as RegExpExecArray)[1], at, end: at + len });
   }
   return out;
 }
@@ -894,10 +1162,10 @@ export function aboutHeads(text: string): AboutHead[] {
 /** Each part's reference, in order, for a message with two or more parts (`aboutHeads`): the
  *  message reference with `#<i>` hashed again. [] for a message with one part or none, whose
  *  sections the super marks with the message reference as before. MIRRORED in the window. */
-export function partRefs(text: string): string[] {
+export function partRefs(text: string, baseRef?: string): string[] {
   const n = aboutHeads(text).length;
   if (n < 2) return [];
-  const base = msgRef(text);
+  const base = baseRef && /^[0-9a-z]{6}$/.test(baseRef) ? baseRef : msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
 }
 /**
@@ -1120,6 +1388,8 @@ export const MAX_POOL = 30;
 export const MAX_POOL_PROMPT = 16_384;
 export const MAX_POOL_BYTES = 524_288;
 export const MAX_OWNER_BATCHES = 100;
+/** `mainBatches`' ring (a member Super's main-origin turns). */
+export const MAX_MAIN_BATCHES = 100;
 /** `super ask`: at most this many options, each at most this many characters (refused, never cut). */
 export const MAX_ASK_OPTIONS = 4;
 export const MAX_ASK_OPTION = 24;
@@ -1137,6 +1407,8 @@ export const STOPPED_SETTLE_MS = 30_000;
 export const MAX_WAIT_KEY = 300;
 /** How often the stale sweep looks at working rows (plan r4 D17). */
 export const STALE_SWEEP_MS = 60_000;
+/** How long a Bypass child's permission waits on the Super Agent before it goes to the owner. */
+export const SUPER_PERMISSION_GRACE_MS = 3 * 60_000;
 /** At most this many events go in one `[super events]` turn (plan r4 D10). */
 export const MAX_BATCH = 8;
 
@@ -1326,16 +1598,18 @@ export function askSummary(spec: SuperAskSpec): { ownerText: string; options: st
 
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
-  'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
+  'answer', 'allow', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
+  // A member's Super closes main's request; main answers a member's question (plan-r10 1).
+  'team-done', 'team-answer',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
 /** The verbs the WINDOW runs (sent down the super chat's own socket as `super_command`). */
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 // ─── Frames (`_meta` subtypes on the super chat's socket) ──────────────────────
@@ -1349,7 +1623,7 @@ export const SUPER_FRAME_CUE = 'super_cue' as const;
 
 /** The prefixes an injected super turn starts with; history replay renders them as event lines.
  *  `[super event]` stays for a transcript written before plan r4. */
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
 
 /** What a `super_event` frame says about the turn it opened: `batch` since plan r4 (the other
  *  kinds stay for replay of older transcripts). */
@@ -1377,7 +1651,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 24;
+export const SUPER_BRIEF_REV = 33;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -1441,6 +1715,8 @@ export const MAX_READ_BYTES = 256 * 1024;
 /** After a server restart, a recorded child absent from the registry has this long to register
  *  again before it is reported `gone` (D7). */
 export const READOPT_GRACE_MS = 2 * 60_000;
+/** A delegated child that opened no chat by now is reported gone, not left `working`. */
+export const CHILD_ARRIVE_MS = 60_000;
 
 /**
  * The state the window gets (`super_state`): the store's record and the vault it belongs to.

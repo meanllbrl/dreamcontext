@@ -109,6 +109,8 @@ export const HEAT_HOT = ['serious', 'critical'] as const;
 /** GET /api/agent/live-chats — names, never paths. */
 export interface LiveChatWire {
   conversationId: string;
+  /** A tool other than Claude (Track T): a screen adopting this chat must speak to it. */
+  tool?: string;
   /** The registered vault name the child runs in (null when its folder is not registered). */
   vault: string | null;
   title: string | null;
@@ -127,14 +129,24 @@ export interface LiveChatWire {
 export interface LiveChatsWire {
   chats: LiveChatWire[];
   draining: string[];
-  /** A project whose Super Agent is handed over lists ONE row here and none of its chats under
-   *  `chats` (the phone talks to the Super Agent only). Absent when no project is handed over. */
+  /** One row per project handed over to its Super Agent, beside that project's own chats under
+   *  `chats`: the two live together. Absent when no project is handed over. */
   supers?: SuperChatWire[];
+  /** A parked Super session (taken back) of a chosen project: no chat a phone may open, so no
+   *  list offers it. Absent when there is none. */
+  parked?: string[];
 }
 
+/** The work a Super Agent gave out, as the phone is told it: a name (the Mac's job card title, never
+ *  the prompt), a state, no prompt or path. `done`: the Super ended it. `stopped`: not ended, but
+ *  no process runs it (a crash, a park, a Mac restart). Either way its transcript reads. */
+export interface SuperJobWire { conversationId: string; title: string; state: 'working' | 'asking' | 'idle' | 'stopped' | 'done'; startedAt: number }
+
 /** The Super Agent row of a handed-over project. `live` false: the Mac's window is not running
- *  it right now, so the phone cannot open it. */
-export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean }
+ *  it right now, so the phone cannot open it. `jobs`: what it runs and what it just finished.
+ *  `runningIds`: its children that are not ended (a tab holding one is never the owner's row).
+ *  `childIds`: every conversation it owns, for History; an adopted chat it ended is the owner's. */
+export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean; jobs: SuperJobWire[]; runningIds: string[]; childIds: string[] }
 
 // ─── Error codes ────────────────────────────────────────────────────────────
 
@@ -283,6 +295,19 @@ export interface RemoteChild { sessionId: string; row?: string; startedAt: numbe
 export interface RemoteWaiting { id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }
 
 /** GET /api/agent/super-stage, the `super_stage` frame, and the body of every remote stage write. */
+/** A team job with a card on the stage, as a remote screen may see it. */
+export interface RemoteTeamJob {
+  id: string;
+  member: string;
+  runId: string;
+  startedAt: number;
+  status: 'queued' | 'running' | 'asking' | 'done' | 'failed';
+  /** The member's last line for this job, cut to 160 characters. */
+  lastLine: string;
+  sessionId?: string;
+  resumable?: true;
+}
+
 export interface SuperRemoteView {
   vault: string;
   session: string | null;
@@ -296,6 +321,8 @@ export interface SuperRemoteView {
   ownerBatches: string[];
   /** Child names for the agenda (the Mac's card titles). */
   names: Record<string, string>;
+  /** The team cards' jobs. */
+  team?: RemoteTeamJob[];
   /** The queue head the job bar shows, or null. */
   head: { item: string; kind: string; text: string } | null;
   rotating?: true;

@@ -1,4 +1,4 @@
-import type { ChatChange, ChatEntry } from '../../assistant/chat-registry.js';
+import { superDecidesPermission, type ChatChange, type ChatEntry } from '../../assistant/chat-registry.js';
 import { buildAppLink } from '../../app-link.js';
 import type { PushStore } from './push-store.js';
 import type { SendOutcome, PushSubscriptionLike } from './push.js';
@@ -53,6 +53,11 @@ export interface PushNotifierDeps {
   /** The handed-over Super Agent session (pin id) of a project, or null when it is not handed
    *  over. Absent = never handed over. */
   superSession?: (vault: string) => string | null;
+  /** Is this conversation a child of a handed-over Super Agent? Absent = none is. */
+  superChild?: (id: string) => boolean;
+  /** A MEMBER Super's own session (plan r4 D6): its name, and whether the turn now ending is main
+   *  Super's work. Read synchronously at the edge. Absent / null = not a member's session. */
+  memberOf?: (sessionId: string) => { name: string; mainWork: boolean } | null;
   now?: () => number;
 }
 
@@ -76,8 +81,10 @@ export function pushUrl(vault: string, conversationId: string | null): string {
   }
 }
 
-/** The push for one registry change, or null when this change is not one of the three. */
-export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPayload, 'url'> } | null {
+/** The push for one registry change, or null when this change is not one of the three. A member
+ *  Super's turn is titled with the member and says only that it answered (no reply text on the
+ *  lock screen, plan r4 D6). */
+export function pushFor(change: ChatChange, member: { name: string } | null = null): { key: string; payload: Omit<PushPayload, 'url'> } | null {
   const e: ChatEntry = change.entry;
   const base = { vault: e.vault, conversationId: e.conversationId };
   if (e.status === 'asking' && e.pendingQuestion) {
@@ -88,15 +95,18 @@ export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPa
     return { key: `ask:${e.sessionId}:${q.requestId}`, payload: { ...base, kind: 'question', title: 'Claude is asking', body: clip(q.text || 'Claude has a question for you.') } };
   }
   if (e.status === 'idle' && (change.from === 'working' || change.from === 'asking') && e.lastTurn && !e.lastTurn.interrupted) {
+    if (member) return { key: `turn:${e.sessionId}:${e.lastTurn.resultSeq}`, payload: { ...base, kind: 'turn', title: clip(member.name, 80), body: 'Cevap verdi' } };
     return { key: `turn:${e.sessionId}:${e.lastTurn.resultSeq}`, payload: { ...base, kind: 'turn', title: clip(e.title || 'Claude', 80), body: 'Turn finished' } };
   }
   return null;
 }
 
 /** May this chat push while its project's Super Agent is `superSession` (null = not handed over)?
- *  Only the Super's own chat does. */
-export function superAllows(superSession: string | null, e: Pick<ChatEntry, 'sessionId' | 'conversationId'>): boolean {
-  return !superSession || e.sessionId === superSession || e.conversationId === superSession;
+ *  The Super's own chat and the owner's chats do; only the Super's children stay quiet
+ *  (`superChild`: the Super answers them). */
+export function superAllows(superSession: string | null, e: Pick<ChatEntry, 'sessionId' | 'conversationId'>, superChild: (id: string) => boolean): boolean {
+  if (!superSession || e.sessionId === superSession || e.conversationId === superSession) return true;
+  return !superChild(e.sessionId) && !(e.conversationId && superChild(e.conversationId));
 }
 
 /** One line per push that did not land: the push service's host and the device's hash prefix, never
@@ -121,17 +131,23 @@ export class PushNotifier {
   async onChange(change: ChatChange): Promise<number> {
     const exposed = this.d.exposed();
     if (!exposed.length) return 0;
-    const p = pushFor(change);
+    // Read before anything else: the member's next turn may overwrite the origin (plan r4 D6).
+    const member = this.d.memberOf?.(change.entry.sessionId) ?? null;
+    const p = pushFor(change, member);
+    // A member's turn of main Super's work is not his news, on the phone either.
+    if (p && member?.mainWork && p.payload.kind === 'turn') return 0;
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
     const sup = this.d.superSession?.(p.payload.vault) ?? null;
-    if (!superAllows(sup, change.entry)) {
-      // The one exception, as on the laptop (the queue head's permission rings): a permission is
-      // the owner's alone (the Super is refused one) and the phone draws it nowhere (the mirror
-      // strips prompts), so a child would wait on it unseen. It pushes even to a phone showing the
-      // Super's chat (suppressed only by the CHILD's own screen, which the phone never shows),
-      // says where it is answered, and the tap opens the Super's chat, the only one listed then.
+    if (!superAllows(sup, change.entry, this.d.superChild ?? (() => false))) {
+      // The one exception, as on the laptop (the queue head's permission rings): a permission
+      // that waits for the OWNER, so a child would otherwise wait on it unseen. It pushes even to a
+      // phone showing the Super's chat (suppressed only by the CHILD's own screen, which the phone
+      // never shows), and the tap opens the Super's chat, where the phone draws it with Allow and
+      // Deny (GET /api/agent/super-questions). A Bypass child's permission is its Super's to decide
+      // first: no push now; if it falls to the owner, owner-question.ts announces it then.
       if (!sup || p.payload.kind !== 'permission') return 0;
-      return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · answer it on the Mac`) }).done;
+      if (superDecidesPermission(change.entry, change.entry.pendingQuestion)) return 0;
+      return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · allow or deny it on your phone`) }).done;
     }
     return this.deliver(p.key, change.entry.sessionId, p.payload).done;
   }

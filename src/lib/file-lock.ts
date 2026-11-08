@@ -32,12 +32,13 @@ export function acquireFileLock(
   lockPath: string,
   nowMs: number,
   staleMs: number,
-  opts?: { verifyPidLiveness?: boolean },
+  /** `meta`: extra fields the lock file carries for whoever reads who holds it. */
+  opts?: { verifyPidLiveness?: boolean; meta?: Record<string, string> },
 ): boolean {
   mkdirSync(dirname(lockPath), { recursive: true });
   const tryCreate = (): boolean => {
     try {
-      writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: nowMs }) + '\n', { flag: 'wx' });
+      writeFileSync(lockPath, JSON.stringify({ ...opts?.meta, pid: process.pid, at: nowMs }) + '\n', { flag: 'wx' });
       return true;
     } catch {
       return false;
@@ -106,6 +107,28 @@ export async function acquireFileLockWithin(
  */
 export function releaseFileLock(lockPath: string): void {
   try { rmSync(lockPath, { force: true }); } catch { /* already gone */ }
+}
+
+/**
+ * Run `fn` under a short cross-process mutex: a read-modify-write of one JSON or markdown file
+ * that parallel runs share. A synchronous bounded wait, then `fn` anyway when `failOpen` (a run's
+ * own record must not fail for a lock), else a throw. Always released.
+ */
+export function withFileLockSync<T>(lockPath: string, fn: () => T, opts: { waitMs?: number; staleMs?: number; failOpen?: boolean } = {}): T {
+  const staleMs = opts.staleMs ?? 30_000;
+  const deadline = Date.now() + (opts.waitMs ?? 3_000);
+  const attempt = (): boolean => acquireFileLock(lockPath, Date.now(), staleMs, { verifyPidLiveness: true });
+  let held = attempt();
+  while (!held && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    held = attempt();
+  }
+  if (!held && !opts.failOpen) throw new Error(`Busy: another process holds ${lockPath}. Try again in a moment.`);
+  try {
+    return fn();
+  } finally {
+    if (held) releaseFileLock(lockPath);
+  }
 }
 
 /**

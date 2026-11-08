@@ -29,4 +29,11 @@ describe('new-shell Esc', () => {
       expect(handler).toContain(owner);
     }
   });
+
+  it('yields to the Settings window first: it closes itself, the chat behind stays', () => {
+    const handler = surface.slice(surface.lastIndexOf('const onKey', at), at);
+    const settings = handler.indexOf('if (document.body.dataset.settingsWindow) return;');
+    expect(settings).toBeGreaterThan(0);
+    expect(settings).toBeLessThan(handler.indexOf('if (tabDrag.get()) return;'));
+  });
 });

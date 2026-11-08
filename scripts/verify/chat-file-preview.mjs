@@ -263,7 +263,7 @@ async function runTheme(chromium, base, theme, report) {
   ok('a project screenshot opens the viewer', (await vis('.image-viewer').count()) === 1);
   ok('…and actually draws', await until(drawn, 6000));
   ok('…with no failure card in sight', (await page.locator('.image-viewer-fallback').count()) === 0);
-  ok('…and the zoom bar it came for', (await vis('.image-viewer-bar').count()) === 1);
+  ok('…and the zoom bar it came for', (await vis('.image-viewer-zoom').count()) === 1);
   await closeViewer();
 
   // ── 2 — the reported bug: outside the project ─────────────────────────────────────
@@ -283,9 +283,9 @@ async function runTheme(chromium, base, theme, report) {
     (await card.getByRole('button', { name: /Allow access/ }).count()) === 1, cardText);
   ok('the broken `<img>` is gone from the stage', (await page.locator('.image-viewer-img').count()) === 0);
   ok('…and so is the zoom bar for a picture that isn’t there',
-    (await page.locator('.image-viewer-bar').count()) === 0);
+    (await page.locator('.image-viewer-zoom').count()) === 0);
   ok('the OS handoff is still offered beside it',
-    (await vis('.image-viewer-actions .chat-fileactions').count()) === 1);
+    (await vis('.image-viewer-toolbar .chat-fileactions').count()) === 1);
   if (process.env.VERIFY_SHOTS) {
     await page.screenshot({ path: `${process.env.VERIFY_SHOTS}/file-preview-blocked-${theme}.png` });
   }
@@ -300,7 +300,7 @@ async function runTheme(chromium, base, theme, report) {
     await allowBtn.click();
     ok('the picture draws after the grant', await until(drawn, 8000));
     ok('…the card is gone', (await page.locator('.image-viewer-fallback').count()) === 0);
-    ok('…and it is a real viewer again (zoom bar back)', (await vis('.image-viewer-bar').count()) === 1);
+    ok('…and it is a real viewer again (zoom bar back)', (await vis('.image-viewer-zoom').count()) === 1);
     ok('the grant recorded the file the SERVER resolved, and only that file',
       grants().length === 1 && grants()[0] === OUTSIDE_PNG, JSON.stringify(grants()));
   } else {

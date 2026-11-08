@@ -55,6 +55,9 @@
  *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`.
  *                             `title` renames the agent's own tab — applied by
  *                             `AgentSurface.tsx` (`armAgentTitle`), drawn nowhere.
+ *                             `automation` is DERIVED like `agent-thread`: the owner's approval
+ *                             card (`chat/AutomationApprovalCard.tsx`, facts from
+ *                             `GET /api/automations/:slug/card`).
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
@@ -77,7 +80,8 @@ qualify, nothing else does:
 
 - **A diagram** — the shape IS the message: it branches, merges or loops and the reader has
   to hold it whole. \`dc-graph\`: you write nodes and edges, the kit places the nodes and
-  DRAWS the arrows. A straight chain is a sentence, not a diagram.
+  DRAWS the arrows. A 2-4 step chain is a sentence; a longer one (a user journey) is a
+  \`dc-graph\` too, never a row of chips.
 - **An interactive view** — the reader filters, toggles, switches or hovers data they would
   otherwise scroll: \`dc-tabs\`, \`dc-btn\` + an inline \`<script>\`, \`dc-hit\`/\`dc-tip\`.
 - **A deck** — several screens for the fullscreen button: \`<section class="dc-slide">\`s in a
@@ -109,7 +113,8 @@ text.
 
 A node is a NAME — 1-4 words, no sentence, no \`→\` inside it. \`--decision\` is a question,
 \`--ghost\` an exit that is not the point, \`--good|--bad|--warn|--accent\` only when the node
-IS that. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle is fine. Never position
+IS that; mixed tones get a one-line legend. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle
+is fine. Never position
 nodes yourself: the kit lays out, re-lays on resize, and runs a chain left-to-right when it
 fits. The reader gets it as a VIEW, not a picture — centred, drag to pan, pinch or
 ctrl/cmd-wheel to zoom, click a node to light its path and dim the rest — so a ladder with
@@ -122,12 +127,16 @@ one thing = the reader switches; don't stack both.
 
 **Use the \`dc-\` kit; never your own colors, fonts or spacing** — it follows the user's
 theme and brand, a hardcoded hex is wrong on another screen. \`style=\` only for geometry the
-kit has no word for (an SVG path, a bar width). **Tone is MEANING, emphasis is a POINTER:**
+kit has no word for (an SVG path, a bar width). That is your page's rule: a mockup of a real
+product screen copies THAT product's colors, type, radii and frame from its source styles,
+inline, light theme; grey boxes only for a wireframe that was asked for.
+**Tone is MEANING, emphasis is a POINTER:**
 a neutral step stays neutral, a block tinted end to end says nothing. Numbered colors
 (\`dc-bg|f|s1..8\`) are CHART fills, never a surface under words. ONE channel a sentence:
 bold OR highlight OR a tint. Little content takes \`dc-doc--hug\`; a wide table a
 \`dc-table-wrap\`; two columns claim the pair is comparable — dense prose in both is one
-column or a \`dc-table\`.
+column or a \`dc-table\`. A \`dc-kv\` is \`<dt>\`key\`<dd>\`value pairs, or one \`<div>\` per row
+that opens with a \`dc-label\`.
 
 Layout \`dc-doc dc-doc--hug dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4
 dc-rail dc-spacer dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted
@@ -205,8 +214,9 @@ const BRIEFING_REST = `## The rest of the surface
   \`file\`/\`board\` take a \`path\`; \`reveal\` hands a \`path\` to the OS; \`ask\` loads \`text\` into
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
+  \`app-install\` takes a \`repo\` (\`owner/name\`): the Apps page's install sheet, when the hook offers it.
 
-## \`dream-view\` — the nine things HTML must NOT be
+## \`dream-view\` — the ten things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -241,7 +251,8 @@ see the value and it is not in this conversation. \`file\` defaults to \`.env\` 
 Drawn with a ▶ that opens a real terminal here; they type into it, and on exit the card posts
 the exit code and output tail back to you, so carry on from there. Never say "run this in
 your terminal", and never send an interactive command through Bash — it hangs with nobody at
-the keyboard. One line; \`cwd\` is project-relative; \`why\` says what makes it theirs.
+the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use \`&&\`.
+\`cwd\` is project-relative; \`why\` says what makes it theirs.
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
@@ -291,6 +302,13 @@ never a slug or hyphens. Re-send only when the subject truly moves. A name the u
 {"type":"title","text":"Checkout redesign"}
 \`\`\`
 
+**An automation you set up that waits for the owner's yes.** \`automations create\` prints it;
+paste it as is. Name the slug only: the card reads the rest from its file.
+
+\`\`\`dream-view
+{"type":"automation","slug":"daily-digest"}
+\`\`\`
+
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.
 
 \`\`\`dream-view
@@ -314,6 +332,14 @@ const BRIEFING_NATIVE_TOOLS = `## Claude Code's tools vs dreamcontext
 
 No \`dreamcontext window\` (a card, the Assistant): answer a plan request in prose. In a Chat tab with no \`# Mode:\` in force (system prompt or a later mode note): say Plan mode does this and add an \`ask\` button whose text, in the user's language, asks to switch; when they send it, run \`dreamcontext window mode plan\`. Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain, never Claude's own memory files.`;
 
+/** A script inlined into Bash (owner 2026-11-05, Bypass chat): a quoted heredoc holding a
+ *  Playwright `p.$$(".phone")` made Claude Code 2.1.318 ask him even in Bypass ("Dangerous rm
+ *  operation not ruled out — the shell may read this command differently than it was parsed",
+ *  a `safetyCheck` no rule or Bypass skips). A script written to a file and run asks nothing. */
+const BRIEFING_SHELL = `## Scripts
+
+A script over a line or two goes into a file (Write tool), then Bash runs it; never a heredoc or \`python3 -c\`: text Claude Code cannot parse asks the user even in Bypass.`;
+
 /** A dictated message the agent cannot read (task sesli-giris-bozuk…, owner 2026-10-24): retry
  *  the SAME audio once, then ask. The block is server-written from a bound take (agent-chat.ts). */
 const BRIEFING_VOICE_TAKE = `## A dictated message
@@ -335,10 +361,29 @@ ${BRIEFING_WINDOW}
 
 ${BRIEFING_NATIVE_TOOLS}
 
+${BRIEFING_SHELL}
+
 ${BRIEFING_VOICE_TAKE}
 
 ${BRIEFING_PICTURES}
 `;
+
+/**
+ * Added after {@link CHAT_SURFACE_BRIEFING} in an app's own window. That window is a smaller
+ * surface: these objects leave it, so an agent that offered one would hand the owner a dead end.
+ */
+export function appChatBriefing(a: { name: string; slug: string; appRoot: string; dataDir: string; own: boolean }): string {
+  return `## This chat is inside the app "${a.name}"
+
+The app lives at \`${a.appRoot}\`, its data at \`${a.dataDir}\`.
+
+This window does not draw: secret, run, checklist or mcp cards; the \`develop\`, \`task\` and \`knowledge\` buttons; terminal panes, voice, or a file or folder picker; \`dreamcontext window\`. Never offer them here. Anything that needs one belongs in main Chat, and you say so in one line.
+${a.own ? `
+Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps tools\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\` for a tool that reads. A tool that changes something (sends, pays, writes, deletes) runs as \`dreamcontext apps do ${a.slug} <id> --confirm\`: say in one line what it will do first; the card the owner answers is his yes. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
+` : ''}
+Sleep is not offered here: never suggest one.
+`;
+}
 
 /**
  * Added after {@link CHAT_SURFACE_BRIEFING} for a Super Agent's delegated child only (field

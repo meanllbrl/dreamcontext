@@ -1726,6 +1726,39 @@ body{background:#131318;margin:0;padding:20px}`;
       ok(`\u2026and its dc-kv value is not crushed at ${w}px`, g.kv >= 32,
         `value column ${g.kvBox}px, ${g.kv} characters a line`);
     }
+    // ── THE ROW SHAPE: one child per row, a dc-label inline, then the text ─────────────
+    // Agents write `<div class="dc-kv"><div><span class="dc-label">Risk</span> text</div>…`
+    // naturally. Dealt into the key/value grid, every other row landed in the value column
+    // and that column shrank to a letter a line (owner screenshot 2026-11-03). Each such
+    // row must span the pair and read as a line at every width.
+    const ROWS = '<div class="dc-kv">'
+      + '<div><span class="dc-label">Gelir kaybi</span> En cok 1 gunluk kist: gun icinde eklenip cikarilan ogrenci faturalanmaz.</div>'
+      + '<div><span class="dc-label">Bloklayan sart</span> Paddle test ortaminda bir guncelleme en cok bir satir kanitlanmadan canliya cikilmaz.</div>'
+      + '<div><span class="dc-label">2 Aralik faturasi</span> Bugunden gecise kadarki degisiklikler hala ayri satir olur; tam sade fatura Ocak.</div>'
+      + '<div><span class="dc-label">Fatura satir adi</span> Faturayi Paddle basiyor, satir adi urun adindan geliyor ve bu plan sayiyi azaltiyor.</div></div>';
+    for (const w of [1360, 960, 620, 460, 380, 320]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.setContent(`<!doctype html><html lang="tr"><style>${tokens}\n${kitCss}</style>`
+        + `<body><div class="dc-doc">${ROWS}</div></body></html>`);
+      await page.waitForTimeout(80);
+      const per = await page.evaluate(() => Math.min(...[...document.querySelectorAll('.dc-kv > *')].map((el) => {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        const lines = new Set([...r.getClientRects()].filter((x) => x.width > 1).map((x) => Math.round(x.top))).size;
+        return Math.round((el.textContent || '').trim().length / lines);
+      })));
+      ok(`a dc-kv written as label + text rows reads at ${w}px`, per >= 20, `${per} characters a line in its narrowest row`);
+      // The row fix's value-column floor must never reach a pure dt/dd list: hugged to its
+      // content the percentage cannot resolve and the floor came out of the KEY column
+      // (reviewer, 2026-11-03: key 107px -> 11px, the dt text running over the values).
+      await page.setContent(`<!doctype html><html lang="tr"><style>${tokens}\n${kitCss}</style>`
+        + '<body><div class="dc-doc dc-doc--hug"><dl class="dc-kv"><dt>Sure</dt><dd>3 gun</dd>'
+        + '<dt>Durum aciklamasi</dt><dd>Acik</dd></dl></div></body></html>');
+      await page.waitForTimeout(60);
+      const over = await page.evaluate(() => Math.max(...[...document.querySelectorAll('.dc-kv dt')]
+        .map((d) => d.scrollWidth - d.clientWidth)));
+      ok(`\u2026and a hugged dt/dd kv keeps its keys whole at ${w}px`, over <= 1, `a key overflows its column by ${over}px`);
+    }
     await page.setViewportSize({ width: 900, height: 500 });
 
     await page.setContent(`<!doctype html><style>${tokens}\n${kitCss}</style>

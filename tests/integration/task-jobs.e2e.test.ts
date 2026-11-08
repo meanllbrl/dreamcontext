@@ -367,9 +367,9 @@ describe('AC-C1-5 + AC-C1-12: a code task in its worktree, a question, the answe
     const answered = await resumeWithAnswer(contextRoot, q!, 'The SSO one.', 'dashboard');
     expect(answered.status).toBe('ok');
     expect(task('ask').agent_state).toBe('queued');
-    const again = await resumeWithAnswer(contextRoot, q!, 'Another.', 'telegram');
+    const again = await resumeWithAnswer(contextRoot, q!, 'Another.', 'cli');
     expect(again.status).toBe('refused');
-    const talk = await resumeWithMessage(contextRoot, 'scout', 'how is it going?', { surface: 'telegram' });
+    const talk = await resumeWithMessage(contextRoot, 'scout', 'how is it going?', { surface: 'direct' });
     expect(talk.status).toBe('refused');
     tick(m1);
     await until('delivered', () => task('ask').status === 'in_review', 40_000);

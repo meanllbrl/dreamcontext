@@ -4,7 +4,8 @@
  *
  *  - switching windows parks the shown window's panes and keeps every session (none is closed,
  *    none drops out of the roster; parked tabs are never pulled into the window on screen);
- *  - the last window cannot be closed; a closed window's neighbour comes up;
+ *  - the last window stays in the list but empties with no fresh tab; a closed window's
+ *    neighbour comes up, or the Super Agent when no chat is left;
  *  - each window has its own rollup (ring and count) for the drawer;
  *  - save → restore keeps each tab in its window, with ONE pane index across the surface, and a
  *    roster from before windows restores as one window;
@@ -14,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addWindow, adoptWindowOrder, dropWindow, initialWindows, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
+  addWindow, adoptWindowOrder, dropWindow, freshenWindow, freshWindowName, initialWindows, landsOnSuper, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
   rowsByWindow, savePlacement, splitOut, joinInto, switchWindow, unparkPanes, windowOfTab, TAB_CAP,
   type WindowsState, type WinTab,
 } from '../../dashboard/src/components/sleepy/chatWindows.js';
@@ -116,15 +117,63 @@ describe('new, rename, close', () => {
     expect(neighbourOf(state, 'w2')).toBe('main');
   });
 
-  it('closing the last window empties it to a fresh tab, through the one tab-close path, with the in-app confirm', () => {
+  it('with no chat left the Super Agent comes up, only if the project has one', () => {
+    expect(landsOnSuper(0, true)).toBe(true);
+    expect(landsOnSuper(0, false)).toBe(false);
+    expect(landsOnSuper(1, true)).toBe(false);
+  });
+
+  it('closing the last window empties it with NO fresh tab, through the one tab-close path, with the in-app confirm', () => {
     const close = SURFACE.slice(SURFACE.indexOf('const closeChatWindow = useCallback('), SURFACE.indexOf('const runDrawerIntentRef'));
     expect(close).toContain('confirmAction(');
     expect(close).not.toMatch(/window\.confirm|\bconfirm\(/);
     expect(close).toContain("tRef.current('shell.windows.closeRunning.body')");
-    expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);\s+setFreshTabNonce/);
+    expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);/);
+    // A chat opened in its place reads as "it did not close" (the 0.36.8 bug).
+    expect(close).not.toContain('setFreshTabNonce');
+    expect(close).not.toContain('addSession');
+    expect(close).toContain('renameWindow(prev, id, DEFAULT_WINDOW_NAME)');
+    // Both branches land: the check sits before the last-window return.
+    expect(close.indexOf("setSuperView('super')")).toBeLessThan(close.indexOf('now.list.length <= 1'));
     // A minimized chip belongs to no window: no window's close takes it, the last one included.
     expect(close).toContain('!minimizedIdsRef.current.includes(m.id)');
     expect(close).not.toMatch(/st\.list\.length <= 1 \|\|/);
+  });
+});
+
+describe("an empty window starts clean (a closed chat's name never comes back)", () => {
+  const T = 'Chat {n}';
+  it('a name the owner gave an emptied window goes back to a fresh numbered one', () => {
+    const { state } = twoWindows();
+    const out = freshenWindow(state, 'w2', T);
+    expect(out.list.find((w) => w.id === 'w2')!.name).toBe('Chat 2');
+    expect(out.list.find((w) => w.id === 'main')!.name).toBe('Chat');
+  });
+
+  it('a name nobody chose stays, so no row is renumbered under the owner', () => {
+    const { state } = twoWindows();
+    expect(freshenWindow(state, 'main', T)).toBe(state);
+    const numbered = renameWindow(state, 'w2', 'Chat 7');
+    expect(freshenWindow(numbered, 'w2', T)).toBe(numbered);
+    expect(freshenWindow(state, 'nope', T)).toBe(state);
+  });
+
+  it('the fresh name is one no other window carries, localized by the template', () => {
+    const list = [{ id: 'main', name: 'Sohbet' }, { id: 'a', name: 'Sohbet 3' }, { id: 'b', name: 'Ayarlar' }];
+    expect(freshWindowName(list, 'Sohbet {n}', 'b')).toBe('Sohbet 4');
+    expect(freshWindowName(list, 'Sohbet {n}')).toBe('Sohbet 4');
+    expect(freshWindowName([{ id: 'main', name: 'Chat' }], 'Chat {n}')).toBe('Chat 2');
+    const dup: WindowsState = { list: [{ id: 'main', name: 'Chat 2', panes: [], activePaneId: '' }, { id: 'x', name: 'Chat 2', panes: [], activePaneId: '' }], activeId: 'main' };
+    expect(freshenWindow(dup, 'x', T).list.map((w) => w.name)).toEqual(['Chat 2', 'Chat 3']);
+  });
+
+  it('AgentSurface freshens the window before a reused window or a first tab takes the chat, and names new windows the same way', () => {
+    expect(SURFACE).toMatch(/if \(empty\) \{ freshenWindowNow\(empty\.id\); showWindow\(empty\.id\);/);
+    expect(SURFACE).toMatch(/const addSession = useCallback\([^]*?if \(!admitTab\(\)\) return '';\s+freshenShownIfEmptyRef\.current\(\);\s+const s = spawnAndRegister/);
+    expect(SURFACE).toMatch(/const addSplitSession = useCallback\([^]*?if \(!admitTab\(\)\) return;\s+freshenShownIfEmptyRef\.current\(\);\s+const s = spawnAndRegister/);
+    expect(SURFACE).toContain("const name = freshWindowName(cur.list, tRef.current('shell.windows.newName'));");
+    // Before the roster is restored every window reads empty: nothing may be renamed then.
+    expect(SURFACE).toMatch(/const freshenWindowNow = \(id: string\) => \{\s+if \(!windowed \|\| !rosterKnown \|\| windowRows\.get\(id\)\?\.length\) return;/);
   });
 });
 
@@ -238,8 +287,9 @@ describe('the 40-tab ceiling (admitTab)', () => {
       if (!exempt && !before.includes('admitTab()')) unguarded.push(i + 1);
     }
     expect(unguarded).toEqual([]);
-    // Exactly the three the plan names: the restore, Plan→Develop, the Super Agent's own session.
-    expect(SURFACE.match(/admitTab: exempt/g)).toHaveLength(3);
+    // Exactly the four the plans name: the restore, Plan→Develop, the Super Agent's own session,
+    // and an AI Team member's own Super session (plan-r10 Wave 3: a Super is never a tab).
+    expect(SURFACE.match(/admitTab: exempt/g)).toHaveLength(4);
     // `spawnAndRegister` is gated by its callers, and only these two call it.
     expect([...SURFACE.matchAll(/spawnAndRegister\(/g)]).toHaveLength(2);
     for (const fn of ['const addSession = useCallback(', 'const addSplitSession = useCallback(']) {

@@ -3,22 +3,23 @@ import { join } from 'node:path';
 import {
   HEAT_RECHECK_MS,
   HEAVY_DEFAULT_WAIT_S,
-  HEAVY_MACHINE_SLOTS,
   acquireFastSlot,
   acquireHeavy,
   clampHeavyLimit,
   fastSlotPaths,
   heavySlotPaths,
   heavySlotsHeld,
+  machineHeavySlots,
   machineLoad,
   type HeavyHold,
 } from './builder-tools.js';
 import { currentHeavyLimit } from './heat.js';
+import type { WaitParts } from './run-ledger.js';
 import { QUEUE_KEEP_MS, QueuePlace, fastSlotLimit, ordered, readTickets, ticketRow, type QueueLine } from './heavy-queue.js';
 
 /**
  * The heavy lock as `builder heavy` and `builder test` take it, with the one message both print
- * when nothing ran: the heat (one step machine-wide while macOS says very hot, `./heat.ts`), the
+ * when nothing ran: the heat or memory limit (`./heat.ts`), the
  * machine's slots, or this checkout's lock, whichever the wait actually ran out on.
  */
 
@@ -36,7 +37,7 @@ export interface HeavyAcquireOpts {
   heavyLimit?: () => Promise<number>;
   ps: () => string;
   /** This check's place in line. Absent: no queue, the lock is raced as it always was. */
-  job?: { key: string; size: number; label: string; line: QueueLine };
+  job?: { key: string; size: number; label: string; line: QueueLine; shared?: boolean };
   /** A line for the waiter, printed as it starts waiting and every {@link WAIT_NOTE_MS}. */
   note?: (line: string) => void;
   /** Is the machine past its cores right now (tests inject it)? */
@@ -63,34 +64,45 @@ export interface HeavyAcquired {
   waitS: number;
   /** Why nothing ran, when `held` is null. */
   busy: string | null;
+  /** Where the wait went, for the ledger (`waitWhy`). */
+  waits?: WaitParts;
 }
 
 export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyAcquired> {
   const read = o.heavyLimit ?? currentHeavyLimit;
-  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return HEAVY_MACHINE_SLOTS; } };
+  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return machineHeavySlots(); } };
   const first = await safeRead();
   const waitS = o.maxWaitS ?? (first === 1 ? HEAVY_HOT_WAIT_S : HEAVY_DEFAULT_WAIT_S);
   const started = Date.now();
+  let fastMs = 0;
   if (o.job?.line === 'fast' && first > 1) {
     const r = await tryFast(o, o.job, first, waitS);
-    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy };
+    fastMs = Date.now() - started;
+    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy, waits: { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first, fastMs } };
   }
-  const place = o.job ? QueuePlace.enter(heavyQueueDir(o.lockPath), o.job, Date.now()) : null;
+  const queued = Date.now();
+  const shared = o.job?.shared === true;
+  const place = o.job && !shared ? QueuePlace.enter(heavyQueueDir(o.lockPath), o.job, Date.now()) : null;
   const tell = waitNotes(o, place, o.lockPath, 'heavy');
   let entry: number | null = first;
   let lastLimit = first;
   let repoLocked = false;
   let slotPlace: QueuePlace | null = null;
   let slotNotes: (now: number) => void = () => {};
+  const waits: WaitParts = { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first, fastMs };
+  let tick = queued;
   const held = await acquireHeavy(o.cwd, {
     waitMs: Math.max(0, waitS * 1000 - (Date.now() - started)),
     slotDir: o.slotDir,
     repoLock: o.lockPath,
     // The entry reading is the one just taken; later rechecks read afresh.
     limit: async () => { if (entry !== null) { const n = entry; entry = null; return n; } return safeRead(); },
-    onLimit: (n) => { lastLimit = n; },
+    noRepoLock: shared,
+    onLimit: (n) => { lastLimit = n; waits.limit = n; },
     onRepoLock: () => {
       repoLocked = true;
+      tick = Date.now();
+      waits.lockMs = tick - queued;
       if (o.job) {
         slotPlace = QueuePlace.enter(heavySlotQueueDir(o.slotDir), o.job, Date.now());
         slotNotes = waitNotes(o, slotPlace, null, 'heavy slot');
@@ -98,16 +110,26 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
     },
     turn: place ? (now) => { const mine = place.myTurn(now); if (!mine) tell(now); return mine; } : undefined,
     onSlot: () => { slotPlace?.leave(); },
-    slotTurn: o.job ? (now, free) => { if (!slotPlace) return true; const mine = slotPlace.myTurn(now, free); if (!mine) slotNotes(now); return mine; } : undefined,
+    slotTurn: o.job ? (now, free) => {
+      if (free > 0) waits.slotLineMs += now - tick; else waits.slotFullMs += now - tick;
+      tick = now;
+      if (!slotPlace) return true;
+      const mine = slotPlace.myTurn(now, free);
+      if (!mine) slotNotes(now);
+      return mine;
+    } : undefined,
   });
   if (held) {
     place?.leave();
-    return { held, line: 'heavy', waitS, busy: null };
+    return { held, line: 'heavy', waitS, busy: null, waits };
   }
+  // The wait ran out before the lock came: all of it was the lock's.
+  if (!repoLocked) waits.lockMs = Date.now() - queued;
   place?.park(Date.now());
   (slotPlace as QueuePlace | null)?.park(Date.now());
   const why = busyMessage(o, { waitS, lastLimit, repoLocked });
-  return { held: null, line: 'heavy', waitS, busy: place ? `${why}${keptPlace(place)}` : `${why} Run the same command again.` };
+  const kept = place ?? (slotPlace as QueuePlace | null);
+  return { held: null, line: 'heavy', waitS, busy: kept ? `${why}${keptPlace(kept)}` : `${why} Run the same command again.`, waits };
 }
 
 /** `hot`: the Mac turned very hot while waiting, the job goes to the one heavy line. */
@@ -191,7 +213,7 @@ function busyMessage(o: HeavyAcquireOpts, r: { waitS: number; lastLimit: number;
   }
   if (r.lastLimit === 1 && heavySlotsHeld(o.slotDir) >= 1) {
     const slot = heavySlotPaths(o.slotDir).find((p) => heavySlotsHeldAt(p));
-    return `the Mac is very hot (macOS thermal state serious or critical), so this machine runs one heavy step at a time; slot held by ${slot ? holderOf(slot, o.ps) : 'another check'} for ${r.waitS}s; NOTHING ran.`;
+    return `macOS reports critical heat or memory pressure, so this machine runs one heavy step at a time; slot held by ${slot ? holderOf(slot, o.ps) : 'another check'} for ${r.waitS}s; NOTHING ran.`;
   }
   const holders = heavySlotPaths(o.slotDir).filter((p) => existsSync(p)).map((p) => holderOf(p, o.ps)).join(', ');
   return `all ${r.lastLimit} heavy slots of this machine stayed busy for ${r.waitS}s (other checkouts' checks${holders ? `: ${holders}` : ''}); NOTHING ran.`;

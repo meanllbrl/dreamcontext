@@ -14,6 +14,8 @@ export interface InboxNotification {
   link: string | null;
   /** The file the banner fell back to opening, or null. */
   file: string | null;
+  /** The dreamcontext App that posted it: the row draws its icon. */
+  app?: { vault: string; slug: string } | null;
 }
 
 function str(v: unknown): string | null {
@@ -37,7 +39,11 @@ export function normalizeNotifications(payload: unknown): InboxNotification[] {
     const at = str(r.at);
     const title = str(r.title);
     if (!id || !at || !title || Number.isNaN(Date.parse(at))) continue;
-    rows.push({ id, at, title, body: str(r.body) ?? '', link: str(r.link) || null, file: str(r.file) || null });
+    const app = r.app as { vault?: unknown; slug?: unknown } | null | undefined;
+    rows.push({
+      id, at, title, body: str(r.body) ?? '', link: str(r.link) || null, file: str(r.file) || null,
+      ...(typeof app?.vault === 'string' && typeof app.slug === 'string' ? { app: { vault: app.vault, slug: app.slug } } : {}),
+    });
   }
   return rows.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }

@@ -1,3 +1,5 @@
+import { useInAppChat } from '../../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SANDBOX_ALLOW } from '../../../lib/sandboxHtml';
 import { HEIGHT_REQUEST_KEY, resolveChatKitTokens } from '../../sleepy/chat/chatHtmlKit';
@@ -70,13 +72,19 @@ export function HtmlWidget({ elementId, payload, active, size }: WidgetProps) {
   );
 }
 
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+function BoardHtmlFrame(props: Parameters<typeof BoardHtmlFrameLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <BoardHtmlFrameLive {...props} />;
+}
+
 /**
  * The block, fitted to its card (owner, 2026-10-05: content was cut at the bottom, or sat
  * small in a big card). The frame always spans the card's body; a block taller than that is
  * drawn smaller (`fitScale`, down to half size, then it scrolls once the card is active), and
  * a lone root element stretches to the card's height (BOARD_HTML_CSS).
  */
-function BoardHtmlFrame({ html, title }: { html: string; title: string }) {
+function BoardHtmlFrameLive({ html, title }: { html: string; title: string }) {
   const tx = useWbText();
   const theme = useDataTheme();
   const boxRef = useRef<HTMLDivElement | null>(null);

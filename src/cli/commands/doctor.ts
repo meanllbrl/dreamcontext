@@ -7,6 +7,10 @@ import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { CHECK_COPY } from '../../lib/onboarding/copy.js';
+import { antigravityAgentName, antigravityRuntime } from '../../lib/antigravity-accounts.js';
+import { listInstanceAccounts } from '../../lib/instance-accounts.js';
+import { findTool } from '../../lib/tool-finder.js';
+import { bridgeNode, BRIDGE_MIN_NODE_TEXT } from '../../lib/t3-bridge/node-floor.js';
 import type { ReadinessReport } from '../../lib/onboarding/types.js';
 import { createTtyDeps, renderReadiness, type TtyDeps } from '../onboarding-tty.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
@@ -45,7 +49,9 @@ import {
 import { measureSnapshot, type SnapshotMeasurement } from './snapshot.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { strayIdentitySections } from '../../lib/automations/store.js';
-import { resolveBudget, HARNESS_PERSIST_CHAR_LIMIT, HARNESS_PREVIEW_CHARS } from '../../lib/snapshot-budget.js';
+import { resolveBudget, HOOK_OUTPUT_MAX_CHARS, SNAPSHOT_DELIVERY_CHAR_LIMIT, HARNESS_PREVIEW_CHARS } from '../../lib/snapshot-budget.js';
+import { sessionStartPartsInstalled } from '../../lib/hook-delivery.js';
+import { scanContextDelivery } from '../../lib/context-delivery-audit.js';
 import type { NeverEvictSectionId } from '../../lib/snapshot-caps.js';
 
 /**
@@ -1333,11 +1339,9 @@ export function checkCoreFileSizes(root: string): CheckResult[] {
 /**
  * Does the rendered snapshot actually reach the agent?
  *
- * Past HARNESS_PERSIST_CHAR_LIMIT the harness writes the whole snapshot to a
- * file and injects only a blind positional preview — the failure is invisible
- * from the outside, because the snapshot prints fine on the terminal and is
- * absent exactly when the agent needs it. This is what makes it noticeable
- * without measuring by hand.
+ * One hook carries at most HARNESS_PERSIST_CHAR_LIMIT chars, so what a project can receive depends
+ * on whether its settings hold the part hooks: past that, the tail of the snapshot does not arrive.
+ * The failure is invisible from the outside, because the snapshot prints fine on the terminal.
  *
  * Measures with `fireTriggers: false`: rendering the snapshot is the only write
  * in that whole path (a matched contextual reminder consumes one of its finite
@@ -1345,9 +1349,11 @@ export function checkCoreFileSizes(root: string): CheckResult[] {
  */
 export function checkSnapshotSize(root: string): CheckResult[] {
   const NAME = 'Snapshot size';
+  const partsInstalled = sessionStartPartsInstalled(dirname(root));
+  const limit = partsInstalled ? SNAPSHOT_DELIVERY_CHAR_LIMIT : HOOK_OUTPUT_MAX_CHARS;
   let measured: SnapshotMeasurement;
   try {
-    measured = measureSnapshot(root, { fireTriggers: false });
+    measured = measureSnapshot(root, { fireTriggers: false, singleHook: !partsInstalled });
   } catch (err) {
     return [{
       name: NAME,
@@ -1358,25 +1364,35 @@ export function checkSnapshotSize(root: string): CheckResult[] {
 
   const chars = measured.text.length;
   const { neverEvictChars } = measured.budget;
-  const pct = Math.round((chars / HARNESS_PERSIST_CHAR_LIMIT) * 100);
+  const pct = Math.round((chars / limit) * 100);
+  const missingParts: CheckResult[] = partsInstalled ? [] : [{
+    name: NAME,
+    status: 'warn',
+    message:
+      'This project\'s .claude/settings.json has no session-start part hooks, so one hook carries the '
+      + `snapshot and it gets ${withThousands(limit)} chars. Run \`dreamcontext update\`.`,
+    code: 'doctor/snapshot-parts-missing',
+    evidence: { limit },
+    supportedFixes: ['run `dreamcontext update` to install the part hooks'],
+  }];
 
   // BudgetResult does not carry the budget it ran against, so resolve it here
   // exactly as the snapshot does. `null` means the ladder is switched OFF.
   const budgetTokens = resolveBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET);
   const ladderOff = budgetTokens === null;
   const budgetChars = ladderOff
-    ? Math.floor(HARNESS_PERSIST_CHAR_LIMIT * 0.9)
-    : budgetTokens * 4;
+    ? Math.floor(limit * 0.9)
+    : Math.min(budgetTokens * 4, limit);
 
   // The one state the ladder genuinely cannot fix: the pinned tier alone busts
   // the limit, so no amount of demotion helps. Everything else is a warning.
-  if (neverEvictChars > HARNESS_PERSIST_CHAR_LIMIT) {
-    return [{
+  if (neverEvictChars > limit) {
+    return [...missingParts, {
       name: NAME,
       status: 'error',
       message:
         `Never-evict tier is ${withThousands(neverEvictChars)} chars — past the `
-        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit on its own, so the demotion `
+        + `${withThousands(limit)} chars the session hooks can carry on its own, so the demotion `
         + `ladder cannot fix this. The never-evict sections (${Object.keys(NEVER_EVICT_SECTIONS).join(', ')}) `
         + 'are pinned by design; the usual cause is an oversized core/0.soul.md or people/<active>.md, which '
         + 'both render verbatim and must be slimmed by moving content OUT — conditional "when X, do Y" '
@@ -1386,7 +1402,7 @@ export function checkSnapshotSize(root: string): CheckResult[] {
         + 'for an oversized block.',
       code: 'doctor/snapshot-never-evict-overflow',
       subject: { tier: 'never-evict', sections: Object.keys(NEVER_EVICT_SECTIONS) },
-      evidence: { neverEvictChars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT },
+      evidence: { neverEvictChars, harnessLimit: limit },
       supportedFixes: [
         'slim core/0.soul.md — move conditional "when X, do Y" rules into knowledge/patterns',
         'slim people/<active>.md — move anything not about the person out of the constitution',
@@ -1395,23 +1411,22 @@ export function checkSnapshotSize(root: string): CheckResult[] {
     }];
   }
 
-  if (chars > HARNESS_PERSIST_CHAR_LIMIT) {
+  if (chars > limit) {
     // A disabled ladder renders everything at full size by design. Blaming the
     // core files for that would send the user to trim files that are fine.
     const message = ladderOff
       ? `Snapshot renders at ${withThousands(chars)} chars — over the `
-        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit, but DREAMCONTEXT_SNAPSHOT_BUDGET `
+        + `${withThousands(limit)} chars the session hooks can carry, but DREAMCONTEXT_SNAPSHOT_BUDGET `
         + 'is set to off, so the demotion ladder is disabled. Unset it to restore the budgeted render '
         + 'before reading this as core-file bloat.'
       : `Snapshot renders at ${withThousands(chars)} chars — over the `
-        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit. Claude Code persists it to a `
-        + `file and injects only a ${withThousands(HARNESS_PREVIEW_CHARS)}-char blind preview, so the agent `
-        + `starts near-blind. Never-evict tier: ${withThousands(neverEvictChars)} chars. Trim the core `
+        + `${withThousands(limit)} chars the session hooks can carry, so its tail does not reach the agent. `
+        + `Never-evict tier: ${withThousands(neverEvictChars)} chars. Trim the core `
         + 'files flagged above — extract detail to knowledge/.';
-    return [{
+    return [...missingParts, {
       name: NAME, status: 'warn', message,
       code: 'doctor/snapshot-over-harness-limit',
-      evidence: { chars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT, neverEvictChars, ladderOff },
+      evidence: { chars, harnessLimit: limit, neverEvictChars, ladderOff },
       supportedFixes: ladderOff
         ? ['unset DREAMCONTEXT_SNAPSHOT_BUDGET to restore the budgeted render']
         : ['trim the core files flagged by doctor/core-file-ceiling — extract detail to knowledge/'],
@@ -1421,25 +1436,61 @@ export function checkSnapshotSize(root: string): CheckResult[] {
   if (chars > budgetChars) {
     const message = ladderOff
       ? `Snapshot renders at ${withThousands(chars)} chars — ${pct}% of the `
-        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit, with little headroom left. `
+        + `${withThousands(limit)} chars the session hooks can carry, with little headroom left. `
         + '(DREAMCONTEXT_SNAPSHOT_BUDGET is off, so the demotion ladder is disabled.)'
       : `Snapshot renders at ${withThousands(chars)} chars — past the ladder's `
         + `${withThousands(budgetChars)}-char target (${withThousands(budgetTokens)} tok x 4), so sections `
-        + `are already demoting, though it still lands inline under the `
-        + `${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit.`;
-    return [{
+        + 'are already demoting, though it still arrives whole under the '
+        + `${withThousands(limit)} chars the session hooks can carry.`;
+    return [...missingParts, {
       name: NAME, status: 'warn', message,
       code: 'doctor/snapshot-over-budget',
-      evidence: { chars, budgetChars, harnessLimit: HARNESS_PERSIST_CHAR_LIMIT, ladderOff },
+      evidence: { chars, budgetChars, harnessLimit: limit, ladderOff },
     }];
   }
 
-  return [{
+  return [...missingParts, {
     name: NAME,
     status: 'ok',
     message:
       `Snapshot size — ${withThousands(chars)} chars `
-      + `(${pct}% of the ${withThousands(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit)`,
+      + `(${pct}% of the ${withThousands(limit)} chars the session hooks can carry)`,
+  }];
+}
+
+/**
+ * Did the context actually arrive? The size check above is arithmetic; this one reads what the
+ * harness recorded in the project's own recent transcripts, so a limit that moved in a new Claude
+ * Code shows up here the first day, as a count, rather than as an agent that seems to know less.
+ */
+export function checkContextDelivery(root: string): CheckResult[] {
+  const NAME = 'Context delivery';
+  const audit = scanContextDelivery(dirname(root));
+  if (audit.sessions === 0) return [{ name: NAME, status: 'ok', message: 'Context delivery — no recent sessions to read' }];
+  const bad = Object.entries(audit.previews);
+  const missing = audit.missingParts;
+  if (bad.length === 0 && missing === 0) {
+    return [{
+      name: NAME,
+      status: 'ok',
+      message: `Context delivery — whole in the last ${audit.sessions} session(s), ${audit.subagents} sub-agent(s)`,
+    }];
+  }
+  const fell = bad.map(([event, count]) => `${event} ${count}x`).join(', ');
+  const parts = [
+    fell ? `the harness replaced hook output with a ${withThousands(HARNESS_PREVIEW_CHARS)}-char preview (${fell})` : '',
+    missing ? `${missing} session(s) lost a snapshot part` : '',
+  ].filter(Boolean).join('; ');
+  return [{
+    name: NAME,
+    status: 'warn',
+    message:
+      `In the last ${audit.sessions} session(s), ${audit.subagents} sub-agent(s), ${parts}. The agent worked without it. `
+      + 'Run `dreamcontext update`; if this is a new Claude Code, measure the limit again: '
+      + '`node scripts/verify/hook-limit.mjs`, then HARNESS_PERSIST_CHAR_LIMIT.',
+    code: 'doctor/context-preview-fallback',
+    evidence: { ...audit },
+    supportedFixes: ['run `dreamcontext update`', 're-measure HARNESS_PERSIST_CHAR_LIMIT'],
   }];
 }
 
@@ -1548,6 +1599,26 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
  * that is not done is an error, anything else not done is a warning. Codes are
  * `doctor/machine-<id>`; a manual fix travels as the supported fix.
  */
+/**
+ * Antigravity, as far as this machine can say without a chat. The sign-in file proves a sign-in
+ * happened, not that it still works, and nothing here sees whether context reaches the model, so
+ * the row says what it did not check. It is the app's answer too: T3's install record and folders,
+ * never this terminal's PATH alone. Not installed is no fault: the tool is opt-in.
+ */
+export function checkAntigravity(o: { home?: string; node?: string | null; path?: string; loginPath?: (() => string | null) | null } = {}): CheckResult {
+  const name = 'Antigravity';
+  const code = 'doctor/machine-antigravity';
+  const notChecked = 'not checked without a live chat: whether the sign-in still works, and whether context reaches the model';
+  const rt = antigravityRuntime(o.home ? { home: o.home } : {});
+  const onPath = rt.intact === null ? findTool([antigravityAgentName()], { ...(o.home ? { home: o.home } : {}), ...(o.path === undefined ? {} : { path: o.path }), ...(o.loginPath === undefined ? {} : { loginPath: o.loginPath }) }) : null;
+  if (rt.intact === false) return { name, status: 'warn', code, message: 'Antigravity: the install is damaged. Install it again from the model picker.' };
+  if (rt.intact === null && !onPath) return { name, status: 'ok', code, message: 'Antigravity: not installed (optional)' };
+  const label = rt.version ? `Antigravity ${rt.version}` : 'Antigravity';
+  if ((o.node === undefined ? bridgeNode() : o.node) === null) return { name, status: 'warn', code, message: `${label}: needs Node ${BRIDGE_MIN_NODE_TEXT} or newer to run` };
+  if (!listInstanceAccounts('antigravity', o.home).some((a) => a.signedIn)) return { name, status: 'warn', code, message: `${label}: signed out. Sign in from the model picker.` };
+  return { name, status: 'ok', code, message: `${label}: installed, a sign-in is on file; ${notChecked}` };
+}
+
 export function machineToDoctorResults(report: ReadinessReport): CheckResult[] {
   return report.checks
     .filter((c) => c.scopes.includes('machine'))
@@ -1556,7 +1627,7 @@ export function machineToDoctorResults(report: ReadinessReport): CheckResult[] {
       return {
         name: CHECK_COPY[c.id].title,
         status: done ? 'ok' : c.tier === 'required' ? 'error' : 'warn',
-        message: `${CHECK_COPY[c.id].title}: ${done ? 'ready' : c.status}`,
+        message: `${CHECK_COPY[c.id].title}: ${c.status === 'unknown' ? 'not checked' : done ? 'ready' : c.status}`,
         code: `doctor/machine-${c.id}`,
         subject: { check: c.id },
         ...(c.fix?.manual ? { supportedFixes: [c.fix.manual] } : {}),
@@ -1575,14 +1646,16 @@ export async function runDoctorMachine(
 ): Promise<number> {
   const pending = deps.runPendingGitInits();
   const machine = await deps.probe();
+  const antigravity = checkAntigravity();
   if (opts.json) {
-    deps.print(JSON.stringify({ version: 1, machine }, null, 2));
+    deps.print(JSON.stringify({ version: 1, machine, antigravity }, null, 2));
     return machine.ready ? 0 : 1;
   }
   deps.print(header('Doctor: this machine'));
   for (const p of pending) deps.print(`  ${chalk.green('✓')} Set up Git in ${p}`);
   for (const line of renderReadiness(machine)) deps.print(line);
-  const results = machineToDoctorResults(machine);
+  deps.print(`  ${antigravity.status === 'ok' ? chalk.cyan('ℹ') : chalk.yellow('⚠')} ${antigravity.message}`);
+  const results = [...machineToDoctorResults(machine), antigravity];
   const errors = results.filter((r) => r.status === 'error').length;
   const warnings = results.filter((r) => r.status === 'warn').length;
   deps.print('');
@@ -1676,11 +1749,13 @@ export function registerDoctorCommand(program: Command): void {
         ...checkLab(root),
         ...checkRecallTier(root),
         ...checkTheses(root),
+        checkAntigravity(),
 
         // Snapshot health. Core files FIRST so the snapshot-size message's
         // "trim the core files flagged above" points at lines already printed.
         ...checkCoreFileSizes(root),
         ...checkSnapshotSize(root),
+        ...checkContextDelivery(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

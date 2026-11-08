@@ -4,11 +4,14 @@ import { dirname, join, sep } from 'node:path';
 import { getAgent } from './store.js';
 import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
-import { listAutomations, readAutomationCache } from '../automations/store.js';
+import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
+import { readMachineIdentity } from '../machine-id.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
-import { feedCutoffDay, runUnread } from '../automations/feed.js';
-import { superQuietReader } from '../automations/super-quiet.js';
+import { feedCutoffDay, readRunHead, runDocumentPath, runUnread } from '../automations/feed.js';
+import { pendingQuestionOfRun } from '../automations/hitl.js';
+import { ownerQuietReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
+import { runChatSession } from '../automations/run-chat.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
 import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
@@ -22,7 +25,9 @@ import { newTalkLookup, readTalkRawLower, readTalkRows, TALK_MAX_ROWS, transcrip
  *
  * Every run and every talk stays its own Claude session. This module only READS them:
  *  - a RUN session = the thread entries of one `(source slug, runId)`; its rows are the posts
- *    (`agent`) and the owner's words (`user`); `system` entries feed its status and `newestId`;
+ *    (`agent`) and the owner's words (`user`); `system` entries feed its status and `newestId`.
+ *    For the owner a run with no post has one row more, so no run reads as an empty "ran"
+ *    (`bodyRow`);
  *  - a TALK session = one conversation in this machine's index (`agent-sessions.json`), its rows
  *    the user prompts and text replies of its transcript.
  *
@@ -45,6 +50,12 @@ export interface HistoryRow {
   text: string;
   at: string;
   files?: string[];
+  /** An app's words: never read this row as the owner's. */
+  via?: 'app';
+  app?: string;
+  /** A row no entry wrote, the body of a run that posted nothing: `answer` its result, `failure`
+   *  why it ended, `note` what is known of it. */
+  origin?: 'answer' | 'failure' | 'note';
 }
 
 export interface HistorySession {
@@ -54,10 +65,19 @@ export interface HistorySession {
   title: string;
   startedAt: string;
   lastAt: string;
-  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | 'waiting' | 'stopped' | null;
   durationMs: number | null;
   newestId: string | null;
   unread: boolean;
+  /** A run with a published document here (`runDocumentPath`), posted or not. */
+  hasDocument?: boolean;
+  /** The run's Claude session, from this machine's own records (`runChatSession`), never the
+   *  synced cache. Owner audience only; absent when no steps can be opened here. */
+  claudeId?: string;
+  /** A reply can resume that session. */
+  resumable?: true;
+  /** The run started on another machine: nothing here can continue it. */
+  elsewhere?: true;
   truncated?: true;
   missing?: true;
   rows: HistoryRow[];
@@ -82,6 +102,13 @@ export interface ListHistoryOptions {
   isLive?: (id: string) => boolean;
   /** Is a socket holding it right now (a Chat tab in use)? Held talks wait until they end. */
   isHeld?: (id: string) => boolean;
+  /** Is this run among the agent's turns in flight on this machine? Given only by the server: a
+   *  run nothing holds can be said to have stopped only with this in hand. */
+  isRunActive?: (source: string, runId: string) => boolean;
+  /** Does a turn in flight name exactly this run? `isRunActive` also says yes for a turn that names
+   *  no run yet; this one can speak for a finished run, whose resumed turn leaves no entry until
+   *  it ends. */
+  isRunHeld?: (source: string, runId: string) => boolean;
   /** The server marks `hadTurns` the first time it finds a transcript; the CLI never writes. */
   markTurns?: boolean;
   maxSessions?: number;
@@ -119,11 +146,12 @@ function sourcesFor(contextRoot: string, slug: string, audience: HistoryAudience
 
 const dayCache = new Map<string, { mtimeMs: number; size: number; entries: ThreadEntry[] }>();
 
-/** Every entry of a source, by id, plus the ids inside the feed's unread window (the newest
- *  14 calendar days, the feed's own window). */
-function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; windowIds: Set<string> } {
+/** Every entry of a source, by id, the ids inside the feed's unread window (the newest 14 calendar
+ *  days, the feed's own window), and the day file each entry came from: its name says which
+ *  machine wrote it, also for a shared routine whose threads sync with agent sync off. */
+function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; windowIds: Set<string>; fileOf: Map<string, string> } {
   let dir: string;
-  try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], windowIds: new Set() }; }
+  try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], windowIds: new Set(), fileOf: new Map() }; }
   let names: string[];
   try { names = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { names = []; }
   const present = new Set(names.map((n) => join(dir, n)));
@@ -134,6 +162,7 @@ function readSource(contextRoot: string, source: string): { entries: ThreadEntry
   const windowDays = new Set(days.filter((d) => d >= cutoffDay));
   const byId = new Map<string, ThreadEntry>();
   const windowIds = new Set<string>();
+  const fileOf = new Map<string, string>();
   for (const name of names) {
     const path = join(dir, name);
     let st: { mtimeMs: number; size: number };
@@ -149,12 +178,12 @@ function readSource(contextRoot: string, source: string): { entries: ThreadEntry
     }
     const inWindow = windowDays.has(name.slice(0, 10));
     for (const e of hit.entries) {
-      if (!byId.has(e.id)) byId.set(e.id, e);
+      if (!byId.has(e.id)) { byId.set(e.id, e); fileOf.set(e.id, name); }
       if (inWindow) windowIds.add(e.id);
     }
   }
   const entries = [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { entries, windowIds };
+  return { entries, windowIds, fileOf };
 }
 
 // ─── Candidates ─────────────────────────────────────────────────────────────────────
@@ -177,13 +206,96 @@ const TERMINAL: Record<string, HistorySession['status']> = {
   ok: 'ok', replied: 'ok', failed: 'failed', timeout: 'failed', skipped: 'skipped',
 };
 
-function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null): HistorySession['status'] {
-  for (const e of entries) if (e.kind === 'system' && e.event && TERMINAL[e.event]) return TERMINAL[e.event];
-  if (run) {
-    if (run.status === 'ok') return 'ok';
-    if (run.status === 'failed' || run.status === 'timeout') return 'failed';
+/** How long past its own timeout a run started on another machine still reads as running. */
+const ELSEWHERE_GRACE_MS = 10 * 60_000;
+
+/** What a run with no terminal fact can be known to be, beyond its own thread. */
+interface RunFacts {
+  source: string;
+  runId: string;
+  contextRoot: string;
+  isRunActive?: ListHistoryOptions['isRunActive'];
+  isRunHeld?: ListHistoryOptions['isRunHeld'];
+  /** The day file an entry came from. */
+  fileOf: ReadonlyMap<string, string>;
+  home: string;
+  nowMs: number;
+}
+
+const terminalOf = (entries: readonly ThreadEntry[]): ThreadEntry | undefined =>
+  entries.find((e) => e.kind === 'system' && e.event && TERMINAL[e.event]);
+
+/** The file's name, never the ledger: with agent sync off the ledger answers "every entry is
+ *  mine", and a shared routine's thread still arrives from the other machine mid-run. */
+function writtenElsewhere(entry: ThreadEntry, fileOf: ReadonlyMap<string, string>, home: string): boolean {
+  const file = fileOf.get(entry.id) ?? '';
+  return /-[0-9a-f]{12}\.md$/.test(file) && !file.endsWith(`-${readMachineIdentity(home).id}.md`);
+}
+
+function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null, f: RunFacts): HistorySession['status'] {
+  const end = terminalOf(entries);
+  const ended = end ? TERMINAL[end.event!]
+    : run?.status === 'ok' ? 'ok'
+      : run?.status === 'failed' || run?.status === 'timeout' ? 'failed'
+        : null;
+  // A turn after the end (a reply, an answered question) that has not closed: while something
+  // holds it, the run works. Never on the activity alone: it can hold a turn with no run id yet,
+  // and every finished run would read as working.
+  const later = end ? entries.filter((e) => e.id > end.id && (e.kind === 'user' || (e.kind === 'system' && e.event && TERMINAL[e.event]))).pop() : undefined;
+  const reopened = later?.kind === 'user';
+  if ((reopened && f.isRunActive?.(f.source, f.runId)) || (ended && f.isRunHeld?.(f.source, f.runId))) return 'running';
+  if (ended && ended !== 'ok') return ended;
+  // An `asked` entry alone says nothing: question records get pruned, the record is the fact. Above
+  // a clean end: `review: agent` and `automations propose` finish `ok` and still wait on the owner.
+  try {
+    if (pendingQuestionOfRun(f.contextRoot, f.source, f.runId)) return 'waiting';
+  } catch {
+    // an unreadable question store costs this word, never the page
   }
-  return entries.some((e) => e.kind === 'system' && e.event === 'started') ? 'running' : null;
+  if (ended === 'ok') return 'ok';
+  const started = entries.find((e) => e.kind === 'system' && e.event === 'started');
+  if (!f.isRunActive) return started ? 'running' : null;
+  if (f.isRunActive(f.source, f.runId)) return 'running';
+  if (!started) return null;
+  // The record of a question is gone: we do not know how it ended, so we do not say.
+  if (entries.some((e) => e.kind === 'system' && e.event === 'asked')) return null;
+  if (!writtenElsewhere(started, f.fileOf, f.home)) return 'stopped';
+  // Another machine's run: only its own timeout can end the wait from here.
+  let timeoutMinutes = 30;
+  try { timeoutMinutes = getAutomation(f.contextRoot, f.source)?.timeoutMinutes ?? 30; } catch { /* the default */ }
+  return f.nowMs - timeOf(started.at) < timeoutMinutes * 60_000 + ELSEWHERE_GRACE_MS ? 'running' : null;
+}
+
+/**
+ * THE TOTAL RULE: the one row a run with no post gets, for the owner, so a run that happened never
+ * reads as an empty "ran". Null only for a run with no system entry at all, which then has its
+ * owner's words and nothing else that is known. The words a status names are the server's fallback;
+ * the pane draws its own language over `note` rows of a run with that status.
+ */
+function bodyRow(
+  contextRoot: string,
+  entries: readonly ThreadEntry[],
+  run: RunEvent | null,
+  status: HistorySession['status'],
+  lastAt: string,
+): HistoryRow | null {
+  const end = terminalOf(entries);
+  const newest = [...entries].reverse().find((e) => e.kind === 'system');
+  const row = (origin: NonNullable<HistoryRow['origin']>, text: string | null | undefined): HistoryRow | null =>
+    (text ? { id: `body:${origin}`, kind: 'agent', text, at: end?.at ?? lastAt, origin } : null);
+  const answer = (): string | null => end?.result ?? readRunHead(contextRoot, run);
+  // A live turn on a finished run: what the run itself said stays its body.
+  switch (status === 'running' && end ? TERMINAL[end.event!] : status) {
+    case 'failed':
+      return row('failure', end?.text || run?.error || newest?.text || 'The run failed and gave no reason.');
+    case 'ok': return row('answer', answer()) ?? row('note', end?.text || newest?.text || 'Finished.');
+    case 'skipped': return row('note', end?.text || newest?.text);
+    // What the owner must judge stays on screen; the boundary says it waits.
+    case 'waiting': return row('answer', answer()) ?? row('note', 'Waiting for your answer');
+    case 'stopped': return row('note', 'Stopped, no result');
+    case 'running': return row('note', 'Working');
+    default: return row('note', newest?.text);
+  }
 }
 
 /** A run's duration from its own thread (started → its terminal entry), when the run cache — the
@@ -211,7 +323,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const projectRoot = dirname(contextRoot);
   const candidates: Candidate[] = [];
   let unreadCount = 0;
-  const quietOf = superQuietReader(contextRoot);
+  const quietOf = ownerQuietReader(contextRoot);
+  const nowMs = (opts.now ?? new Date()).getTime();
   const agentTitle = (() => {
     try {
       const a = getAgent(contextRoot, slug);
@@ -223,12 +336,14 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const titleOf = (s: string): string => (s === slug ? agentTitle : manifests.find((m) => m.slug === s)?.title ?? s);
 
   for (const source of sourcesFor(contextRoot, slug, opts.audience)) {
-    const { entries, windowIds } = readSource(contextRoot, source);
+    const { entries, windowIds, fileOf } = readSource(contextRoot, source);
     if (entries.length === 0) continue;
     const here = opts.audience === 'agent' ? threadEntriesHere(contextRoot, source, home) : null;
     const watermark = threadReadWatermark(contextRoot, source, home);
     const cache = readAutomationCache(contextRoot, source);
-    const runsByFire = new Map((cache?.history ?? []).map((r) => [r.firedAt, r]));
+    // Newest row per fire: the history is newest first, and a fire can hold two rows (a first
+    // refusal, then the run itself).
+    const runsByFire = new Map([...(cache?.history ?? [])].reverse().map((r) => [r.firedAt, r]));
     const byRun = new Map<string, ThreadEntry[]>();
     for (const e of entries) {
       if (here && !here.has(e.id)) continue;
@@ -255,22 +370,41 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
       candidates.push({
         key, lastMs, lastAt,
         rawLower: () => posts.map((e) => postText(e)).join('\n').toLowerCase(),
-        build: () => ({
-          key, kind: 'run', source, title,
-          startedAt: runEntries[0].at,
-          lastAt,
-          status: runStatus(runEntries, run),
-          durationMs: run?.durationMs ?? threadDuration(runEntries),
-          newestId,
-          unread,
-          rows: posts.map((e) => ({
+        build: () => {
+          const status = runStatus(runEntries, run, { source, runId, contextRoot, isRunActive: opts.isRunActive, isRunHeld: opts.isRunHeld, fileOf, home, nowMs });
+          const rows: HistoryRow[] = posts.map((e) => ({
             id: e.id,
             kind: e.kind === 'user' ? 'user' as const : 'agent' as const,
             text: postText(e),
             at: e.at,
             ...(e.files?.length ? { files: e.files } : {}),
-          })),
-        }),
+            ...(e.via === 'app' ? { via: 'app' as const, ...(e.app ? { app: e.app } : {}) } : {}),
+          }));
+          // Only what it said before it ended counts: an answer to a later reply is not the run's own
+          // result, and the run's sentence stays above that reply.
+          const end = terminalOf(runEntries);
+          if (opts.audience === 'owner' && !posts.some((e) => e.kind === 'agent' && (!end || e.id < end.id))) {
+            const body = bodyRow(contextRoot, runEntries, run, status, lastAt);
+            // In its place: the owner's later words are not answered by what the run said before.
+            const after = end ? posts.findIndex((e) => e.id > end.id) : -1;
+            if (body) rows.splice(after < 0 ? rows.length : after, 0, body);
+          }
+          const chat = opts.audience === 'owner' ? runChatSession(contextRoot, source, runId, home) : null;
+          const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
+          return {
+            key, kind: 'run', source, title,
+            startedAt: runEntries[0].at,
+            lastAt,
+            status,
+            durationMs: run?.durationMs ?? threadDuration(runEntries),
+            newestId,
+            unread,
+            hasDocument: runDocumentPath(contextRoot, run) !== null,
+            ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
+            ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
+            rows,
+          };
+        },
       });
     }
   }
@@ -399,7 +533,7 @@ export interface HistoryHit {
   kind: 'run' | 'talk';
   title: string;
   at: string;
-  who: 'owner' | 'agent';
+  who: 'owner' | 'app' | 'agent';
   text: string;
 }
 
@@ -427,7 +561,7 @@ export function searchAgentHistory(
     if (!s) continue;
     for (const r of [...s.rows].reverse()) {
       if (q && !r.text.toLowerCase().includes(q)) continue;
-      hits.push({ key: s.key, kind: s.kind, title: s.title, at: r.at, who: r.kind === 'user' ? 'owner' : 'agent', text: r.text });
+      hits.push({ key: s.key, kind: s.kind, title: s.title, at: r.at, who: r.kind === 'user' ? (r.via === 'app' ? 'app' : 'owner') : 'agent', text: r.text });
     }
     if (hits.length >= limit) {
       const more = candidates.slice(i + 1).some((d) => below(d, cur));

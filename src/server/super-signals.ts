@@ -1,6 +1,6 @@
 import { signalsOf, type SuperSignal } from '../lib/super/signals.js';
 import { applySignal } from '../lib/super/proactive.js';
-import { readSuperState, superRootOfChild } from '../lib/super/store.js';
+import { keyOfRef, readSuperState, superOfChild } from '../lib/super/store.js';
 import { noteChildBrowserCall, superSanitizeOpts, writeSuper } from '../lib/super/inbox.js';
 import { validateSuperWebUrl } from '../lib/super/web-url.js';
 import { ownedLoopbackPorts } from './owned-ports.js';
@@ -36,7 +36,7 @@ export function createSuperSignalObserver(chatRegistryId: string, browserServer:
   };
   return {
     observe(frame) {
-      const root = superRootOfChild(chatRegistryId);
+      const root = keyOfRef(superOfChild(chatRegistryId));
       if (!root) return;
       const raw = signalsOf(frame, browserServer);
       if (!raw.length) return;

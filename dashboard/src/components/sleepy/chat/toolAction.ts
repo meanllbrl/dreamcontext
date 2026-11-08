@@ -107,6 +107,12 @@ const BASH_VERBS: Readonly<Record<string, { done: string; running: string; kind:
   return table;
 })();
 
+/** A past-tense first word (`Ran`, `Wrote`), back to the verb it came from (`run`, `write`): a
+ *  failed step reads "Tried to run …", never "Tried to ran …" (Antigravity titles say "Ran command"). */
+const BASE_OF_DONE: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(BASH_VERBS).map(([base, v]) => [v.done.toLowerCase(), base]),
+);
+
 function inputStr(input: unknown, key: string): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const v = (input as Record<string, unknown>)[key];
@@ -202,7 +208,11 @@ function bashAction(input: unknown, status: Status): Omit<ToolAction, 'ellipsis'
     const [first, ...rest] = description.split(/\s+/);
     const known = own(BASH_VERBS, first.toLowerCase());
     const tail = rest.length ? ` ${rest.join(' ')}` : '';
-    if (status === 'error') return { verb: `Tried to ${lowerFirst(description)}`, subject: null, kind: known?.kind ?? 'run', quiet: false };
+    if (status === 'error') {
+      const base = own(BASE_OF_DONE, first.toLowerCase());
+      const said = base ? `${base}${tail}` : lowerFirst(description);
+      return { verb: `Tried to ${said}`, subject: null, kind: known?.kind ?? (base ? own(BASH_VERBS, base)?.kind : undefined) ?? 'run', quiet: false };
+    }
     if (!known) return { verb: description, subject: null, kind: 'run', quiet: false };
     return { verb: `${status === 'running' ? known.running : known.done}${tail}`, subject: null, kind: known.kind, quiet: false };
   }

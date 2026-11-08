@@ -19,7 +19,8 @@ interface ProjectPickerProps {
   rows: readonly PickerRow[];
   onPick: (name: string) => void;
   onClose: () => void;
-  onNewProject: () => void;
+  /** Absent on a device shell: it administers no projects. */
+  onNewProject?: () => void;
 }
 
 /**
@@ -103,10 +104,12 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
           </button>
         ))}
       </div>
+      {onNewProject && (
       <button type="button" className="ns-menu-row ns-picker-new" data-testid="ns-picker-new-project" onClick={onNewProject}>
         <span className="ns-menu-logo ns-picker-new-mark" aria-hidden="true">+</span>
         <span className="ns-menu-label">{t('shell.drawer.newProject')}</span>
       </button>
+      )}
     </div>
   );
 }

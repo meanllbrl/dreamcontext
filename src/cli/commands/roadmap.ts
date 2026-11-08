@@ -15,10 +15,14 @@ import {
   removeDependency,
   getObjective,
   listObjectives,
+  suggestObjective,
   ObjectiveError,
   OBJECTIVE_STATUSES,
   type ObjectiveStatus,
 } from '../../lib/objectives-store.js';
+import { SuggestionError, type SuggestionInput } from '../../lib/priority-suggestion.js';
+import { objectiveLiveness, scoringWork, stopScoring, touchScoring } from '../../lib/scoring-work.js';
+import { agentGuardRefuses } from '../../lib/owner-guard-cli.js';
 import {
   buildRoadmapModel,
   transitiveDependents,
@@ -206,6 +210,40 @@ export function registerRoadmapCommand(program: Command): void {
       success(`Board written: ${relPosix(dirname(root), path)}`);
     });
 
+  roadmap
+    .command('unscored')
+    .description('What still needs RICE values or an objective link: the scoring agent\'s one payload (the board\'s "Score N")')
+    .option('--json', 'Emit the scoring work as JSON')
+    .option('--again', 'Include items whose suggestion the owner dismissed and "no objective fits" verdicts')
+    .option('--done', 'The scoring pass is finished: release the board\'s "Scoring…" button')
+    .action((opts: { json?: boolean; again?: boolean; done?: boolean }, cmd: Command) => {
+      const root = ensureContextRoot();
+      // The parent `roadmap` also takes --json: read it from either level.
+      opts = { ...opts, json: !!(opts.json || cmd.optsWithGlobals().json) };
+      if (opts.done) {
+        stopScoring(root);
+        if (opts.json) console.log(JSON.stringify({ done: true }));
+        else success('Scoring pass closed.');
+        return;
+      }
+      const work = scoringWork(root, { again: !!opts.again });
+      if (opts.json) {
+        console.log(JSON.stringify(work, null, 2));
+        return;
+      }
+      console.log(header(`Scoring work: ${work.count} item(s), ${work.pending} suggestion(s) waiting for the owner`));
+      for (const it of work.items) {
+        const needs = [
+          it.missing.length > 0 ? `RICE ${it.missing.join('/')}` : null,
+          it.needs_link ? 'objective link' : null,
+        ].filter(Boolean).join(' + ');
+        console.log(`  ${it.kind === 'objective' ? '◆' : '•'} ${it.slug} — needs ${needs}${it.dismissed ? chalk.dim(' (dismissed before)') : ''}`);
+      }
+      if (work.items.length > 0) {
+        console.log(chalk.dim('\n  Suggest: dreamcontext tasks suggest <slug> … | dreamcontext roadmap objective suggest <slug> …'));
+      }
+    });
+
   const objective = roadmap
     .command('objective')
     .description('Manage objectives (create/list/show/edit/delete/depend)');
@@ -292,26 +330,79 @@ export function registerRoadmapCommand(program: Command): void {
   objective
     .command('edit')
     .argument('<slug>', 'Objective slug')
-    .description('Update an objective (title / target / feature / manual status override)')
+    .description('Update an objective (title / target / feature / manual status override / RICE)')
     .option('--title <title>', 'New title')
     .option('--target <date>', 'New target date (YYYY-MM-DD), or "clear"')
     .option('--feature <slug>', 'Backing feature slug, or "clear"')
     .option('--status <status>', `Manual override: ${OBJECTIVE_STATUSES.join('|')}, or "clear" (back to computed)`)
-    .action((slug: string, opts: { title?: string; target?: string; feature?: string; status?: string }) => {
-      if (opts.title === undefined && opts.target === undefined && opts.feature === undefined && opts.status === undefined) {
-        error('Nothing to change — pass --title, --target, --feature, or --status.');
+    .option('--reach <n>', 'RICE reach (integer 1–10), or "clear"')
+    .option('--impact <n>', 'RICE impact (integer 1–5), or "clear"')
+    .option('--confidence <n>', 'RICE confidence (25, 50, 75, 100), or "clear"')
+    .option('--effort <n>', 'Effort in weeks (> 0, ≤ 52; also drives the forecast), or "clear"')
+    .option('--owner', 'The owner asked for this change in the conversation (needed to change an existing RICE value from an agent session)')
+    .action((slug: string, opts: {
+      title?: string; target?: string; feature?: string; status?: string;
+      reach?: string; impact?: string; confidence?: string; effort?: string; owner?: boolean;
+    }) => {
+      const rice = { reach: opts.reach, impact: opts.impact, confidence: opts.confidence, effort: opts.effort };
+      const anyRice = Object.values(rice).some((v) => v !== undefined);
+      if (opts.title === undefined && opts.target === undefined && opts.feature === undefined && opts.status === undefined && !anyRice) {
+        error('Nothing to change — pass --title, --target, --feature, --status, --reach, --impact, --confidence, or --effort.');
         process.exitCode = 1;
         return;
       }
       try {
+        const root = ensureContextRoot();
+        const current = getObjective(root, slug);
+        if (!current) throw new ObjectiveError(`Objective not found: ${slug}`);
+        if (anyRice && agentGuardRefuses(current, rice, false, !!opts.owner)) {
+          error(`Refused (owner_scored): ${slug} already has an owner value for a field you are changing. Use \`dreamcontext roadmap objective suggest ${slug} …\` for the empty fields, or --owner only when the owner asked for this change.`);
+          process.exitCode = 1;
+          return;
+        }
         const patch: Parameters<typeof updateObjective>[2] = {};
         if (opts.title !== undefined) patch.title = opts.title;
         if (opts.target !== undefined) patch.target_date = opts.target === 'clear' ? null : opts.target;
         if (opts.feature !== undefined) patch.feature = opts.feature === 'clear' ? null : opts.feature;
         if (opts.status !== undefined) patch.status = opts.status === 'clear' ? null : (opts.status as ObjectiveStatus);
-        updateObjective(ensureContextRoot(), slug, patch);
-        success(`Objective updated: ${slug}`);
+        for (const k of ['reach', 'impact', 'confidence', 'effort'] as const) {
+          const v = rice[k];
+          if (v !== undefined) patch[k] = v === 'clear' ? null : parseNum(v, `--${k}`);
+        }
+        const o = updateObjective(root, slug, patch);
+        success(`Objective updated: ${slug}${anyRice ? ` — RICE score: ${o.score ?? '— (incomplete)'}` : ''}`);
       } catch (err) {
+        handleObjectiveError(err);
+      }
+    });
+
+  objective
+    .command('suggest')
+    .argument('<slug>', 'Objective slug')
+    .description('Suggest RICE values for the EMPTY fields of an objective; the owner accepts, edits or dismisses it on the Roadmap')
+    .option('--reach <n>', 'Suggested reach (integer 1–10)')
+    .option('--impact <n>', 'Suggested impact (integer 1–5)')
+    .option('--confidence <n>', 'Suggested confidence (25, 50, 75, 100)')
+    .option('--effort <n>', 'Suggested effort in weeks (> 0, ≤ 52)')
+    .option('--why <text>', 'One sentence: why these values (required, ≤ 280 chars)')
+    .option('--again', 'Re-suggest after the owner dismissed the last suggestion (only when asked to re-score)')
+    .action((slug: string, opts: { reach?: string; impact?: string; confidence?: string; effort?: string; why?: string; again?: boolean }) => {
+      const root = ensureContextRoot();
+      const input: SuggestionInput = { why: opts.why };
+      for (const k of ['reach', 'impact', 'confidence', 'effort'] as const) {
+        if (opts[k] !== undefined) input[k] = Number(opts[k]);
+      }
+      try {
+        const liveness = objectiveLiveness(buildRoadmapModel(root));
+        suggestObjective(root, slug, input, liveness, { again: !!opts.again });
+        touchScoring(root);
+        success(`Suggestion stored on ${slug} — the owner accepts or dismisses it on the Roadmap.`);
+      } catch (err) {
+        if (err instanceof SuggestionError) {
+          error(err.message);
+          process.exitCode = 1;
+          return;
+        }
         handleObjectiveError(err);
       }
     });

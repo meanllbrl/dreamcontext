@@ -69,6 +69,7 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     learning: m.learning,
     pattern: m.pattern,
     whiteboard: m.whiteboard ?? null,
+    ...(m.boardOnly ? { boardOnly: true } : {}),
     shared: m.shared,
     // A legacy file holds no team placement: it stays a root until it is split.
     reportsTo: null,
@@ -77,6 +78,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
     face: null,
     owner: m.owner ?? null,
+    ...(m.tool ? { tool: m.tool } : {}),
+    ...(m.tool && m.account ? { account: m.account } : {}),
     updated: null,
     call: isCall
       ? {
@@ -113,6 +116,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     outputInstructions: m.outputInstructions,
     job: '',
     flow: m.flow ?? null,
+    ...(m.app ? { app: m.app } : {}),
+    ...(m.appTools?.length ? { appTools: m.appTools } : {}),
     owner: m.owner ?? null,
     updated: null,
     path: m.path,
@@ -147,6 +152,8 @@ export function composeRun(
     learning: agent.learning,
     pattern: agent.pattern,
     whiteboard: agent.whiteboard,
+    // Only when set, so a composed target stays field for field what it was.
+    ...(agent.whiteboard && agent.boardOnly ? { boardOnly: true } : {}),
     agent: agent.slug,
     agentTitle: agent.title,
     // Only a level other than the default rides the target, so a composed target stays field for
@@ -154,6 +161,9 @@ export function composeRun(
     ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
     // Only when named, so a target without any stays field for field what it was.
     ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
+    // Only off Claude, so a composed target stays field for field what it was.
+    ...(agent.tool ? { tool: agent.tool } : {}),
+    ...(agent.tool && agent.account ? { account: agent.account } : {}),
     // Unhashed; carried only when stamped, so an unstamped pair composes as before.
     ...(agent.owner ? { owner: agent.owner } : {}),
   };
@@ -175,6 +185,8 @@ export function composeRun(
       outputInstructions: job.outputInstructions,
       flow: job.flow ?? null,
       job: job.job,
+      ...(job.app ? { app: job.app } : {}),
+      ...(job.appTools?.length ? { appTools: job.appTools } : {}),
       ...identity,
       // A routine answers to its own owner too, when that is someone else (`foreignOwner`).
       ...(job.owner && job.owner !== agent.owner ? { jobOwner: job.owner } : {}),

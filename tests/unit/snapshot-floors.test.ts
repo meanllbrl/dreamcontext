@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 
 import { generateSnapshot, measureSnapshot } from '../../src/cli/commands/snapshot.js';
 import {
-  HARNESS_PERSIST_CHAR_LIMIT,
+  SNAPSHOT_DELIVERY_CHAR_LIMIT,
   HARNESS_PREVIEW_CHARS,
   OVERSIZED_SNAPSHOT_DIRECTIVE,
 } from '../../src/lib/snapshot-budget.js';
@@ -618,8 +618,8 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
 
     // The acceptance criterion itself: it lands inline, in full, with room to
     // spare — this is the promise that was broken at 74KB/100KB.
-    expect(text.length).toBeLessThan(HARNESS_PERSIST_CHAR_LIMIT);
-    expect(HARNESS_PERSIST_CHAR_LIMIT - text.length).toBeGreaterThan(1_000);
+    expect(text.length).toBeLessThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
+    expect(SNAPSHOT_DELIVERY_CHAR_LIMIT - text.length).toBeGreaterThan(1_000);
   });
 
   it('renders the soul VERBATIM, however deep the ladder goes (constitution)', () => {
@@ -1195,12 +1195,12 @@ describe('fixture #1 variant — a backlog far larger than any name budget', () 
 
 describe('fixture #2 — the unfittable vault warns inside the preview window (AC4)', () => {
   it('prepends the banner after the H1, naming the oversized core file', () => {
-    const vault = buildVault(join(base, 'unfittable'), { soul: incompressibleSoul(500) });
-    const soulChars = incompressibleSoul(500).length;
+    const vault = buildVault(join(base, 'unfittable'), { soul: incompressibleSoul(1_000) });
+    const soulChars = incompressibleSoul(1_000).length;
 
     const text = withBudget(undefined, () => generateSnapshot(vault.ctxRoot));
 
-    expect(text.length).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(text.length).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const preview = text.slice(0, HARNESS_PREVIEW_CHARS);
     // Byte-identical to the shipped constant — this is the one instruction the
@@ -1221,14 +1221,14 @@ describe('fixture #2 — the unfittable vault warns inside the preview window (A
     // soul does and the banner must name `people/<slug>.md` rather than blame the
     // renderer. This is what puts `people/*.md` in `auditCoreFileSizes`: the
     // audited path set is the banner's only source of file names.
-    const bigUser = preferenceUser(500, 250);
+    const bigUser = preferenceUser(1_000, 250);
     const vault = buildVault(join(base, 'unfittable-user'), {
       soul: constitutionSoul(),
       user: bigUser,
     });
 
     const text = withBudget(undefined, () => generateSnapshot(vault.ctxRoot));
-    expect(text.length).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(text.length).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const preview = text.slice(0, HARNESS_PREVIEW_CHARS);
     expect(preview).toContain(OVERSIZED_SNAPSHOT_DIRECTIVE);
@@ -1261,7 +1261,7 @@ describe('fixture #3 — over the ladder target but still inline (B7 band)', () 
     for (let step = 0; step < 14 && lo <= hi; step++) {
       const mid = Math.floor((lo + hi) / 2);
       const length = measure(mid);
-      if (length > LADDER_TARGET_CHARS && length <= HARNESS_PERSIST_CHAR_LIMIT) {
+      if (length > LADDER_TARGET_CHARS && length <= SNAPSHOT_DELIVERY_CHAR_LIMIT) {
         return { headings: mid, length };
       }
       if (length <= LADDER_TARGET_CHARS) lo = mid + 1;
@@ -1276,9 +1276,9 @@ describe('fixture #3 — over the ladder target but still inline (B7 band)', () 
 
     expect(
       length,
-      `could not land in the 18,001-20,000 band (got ${length} chars at ${headings} headings)`,
+      `could not land between the ladder target and the delivery limit (got ${length} chars at ${headings} headings)`,
     ).toBeGreaterThan(LADDER_TARGET_CHARS);
-    expect(length).toBeLessThanOrEqual(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(length).toBeLessThanOrEqual(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const { text, budget } = withBudget(undefined, () => measureSnapshot(vault.ctxRoot));
     expect(budget.overBudget).toBe(true);
@@ -1371,7 +1371,7 @@ describe('demotion ranks', () => {
   const EXPECTED_DEMOTABLE_IDS = [
     'bookmarks', 'changelog', 'connected-projects', 'extended-core', 'features',
     'knowledge-index', 'lab', 'memory', 'objectives', 'people-roster', 'releases',
-    'tasks', 'theses', 'warm-knowledge',
+    'tasks', 'theses', 'warm-knowledge', 'apps',
   ];
 
   it('covers exactly the demotable sections, with unique ranks above any array index', () => {

@@ -3,10 +3,11 @@
  * Idle chats parked under machine load — end-to-end (task idle-chats-are-parked-…).
  *
  *   P1  two chats; the one the owner is NOT looking at goes idle -> the sweep parks it: its
- *       `claude` process exits, its tab reads "parked" and shows the parked card;
+ *       `claude` process exits, and nothing says so: its tab reads "ready" and its pane is the
+ *       same conversation with the composer open (owner 2026-11-03: no parked screen);
  *   P2  the tab the owner is looking at (focused, idle too) is never parked;
- *   P3  Resume reopens the SAME conversation (`--resume <same id>`), its history is back in
- *       the pane, and the new process takes the next turn;
+ *   P3  the first message typed into it resumes the SAME conversation (`--resume <same id>`)
+ *       exactly once, is answered exactly once, and the history stays in the pane;
  *   P4  a BUSY chat (a long turn) is never parked while its turn runs.
  *
  *   npm run build && node scripts/verify/chat-park.mjs            # Chromium + WebKit
@@ -158,7 +159,7 @@ async function run(browserType, name, base) {
   const browser = await browserType.launch();
   const consoleErrors = [];
   try {
-    const page = await browser.newPage({ viewport: { width: 1400, height: 950 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 200)));
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 200)); });
     const vis = (sel) => page.locator(`${sel}:visible`);
@@ -203,25 +204,31 @@ async function run(browserType, name, base) {
     report.check(`${name}: P1 the idle, unfocused chat A was parked (its claude exited)`, parkedA, JSON.stringify(spawnLog()));
     const tabA = page.locator('[role="tab"]').filter({ hasText: /./ }).first();
     const titleA = await tabA.getAttribute('title');
-    report.check(`${name}: P1 tab A reads "parked"`, /— parked$/.test(titleA ?? ''), titleA ?? '(no tab)');
+    report.check(`${name}: P1 tab A never reads "parked" or "saved"`, !/parked|saved/.test(titleA ?? '') && !!titleA, titleA ?? '(no tab)');
     report.check(`${name}: P2 the focused chat B is still running`, !!pidB && !spawnLog().exits.includes(pidB), JSON.stringify(spawnLog()));
-    await page.screenshot({ path: join(SHOTS, `${name}-1-parked-tab.png`) });
 
-    // Resume: open A's tab, see the parked card, click Resume.
+    // Open A: the same conversation, composer open, no parked card, no Resume button.
     await tabA.click();
-    report.check(`${name}: P1 A shows the parked card`, await until(async () => (await vis('.agent-pane-ended-title').innerText().catch(() => '')).includes('Parked'), 5000),
-      await vis('.agent-pane-ended-title').innerText().catch(() => '(none)'));
+    report.check(`${name}: P1 A shows its conversation`, await until(async () => (await paneText()).includes(`ECHO alpha pid=${pidA}`), 10000), await paneText());
+    report.check(`${name}: P1 no parked card and no Resume button`,
+      (await vis('.agent-pane-ended').count()) === 0 && (await vis('.agent-pane-reconnect').count()) === 0);
+    report.check(`${name}: P1 the composer is open`, (await vis('.chat-cmp-input').count()) > 0);
     await page.waitForTimeout(800);
-    await page.screenshot({ path: join(SHOTS, `${name}-2-parked-card.png`) });
+    await page.screenshot({ path: join(SHOTS, `${name}-2-parked-chat.png`) });
     const spawnsBefore = spawnLog().spawns.length;
-    await vis('.agent-pane-reconnect').first().click();
-    report.check(`${name}: P3 Resume spawns claude again for the SAME conversation`,
-      await until(async () => spawnLog().spawns.slice(spawnsBefore).some((s) => s.sid === sidA), 15000), JSON.stringify(spawnLog()));
-    report.check(`${name}: P3 the history is back in the pane`, await until(async () => (await paneText()).includes(`ECHO alpha pid=${pidA}`), 15000));
     await send('charlie');
-    report.check(`${name}: P3 the resumed chat takes the next turn`, await until(async () => /ECHO charlie pid=\d+/.test(await paneText()), 15000));
-    const pidA2 = /ECHO charlie pid=(\d+)/.exec(await paneText())?.[1];
-    report.check(`${name}: P3 tab A no longer reads parked`, !/— parked$/.test((await tabA.getAttribute('title')) ?? ''));
+    report.check(`${name}: P3 the first message resumes the SAME conversation`,
+      await until(async () => spawnLog().spawns.slice(spawnsBefore).some((s) => s.sid === sidA), 15000), JSON.stringify(spawnLog()));
+    report.check(`${name}: P3 the message is answered`, await until(async () => /ECHO charlie pid=\d+/.test(await paneText()), 15000), await paneText());
+    await page.waitForTimeout(2500);
+    const text = await paneText();
+    const resumes = spawnLog().spawns.slice(spawnsBefore).filter((s) => s.sid === sidA).length;
+    report.check(`${name}: P3 resumed once, answered once`,
+      resumes === 1 && (text.match(/ECHO charlie pid=/g) ?? []).length === 1, `resumes=${resumes} answers=${(text.match(/ECHO charlie pid=/g) ?? []).length}`);
+    report.check(`${name}: P3 the history is still there, with no "resumed" divider`,
+      text.includes(`ECHO alpha pid=${pidA}`) && !/resumed/.test(text), text);
+    const pidA2 = /ECHO charlie pid=(\d+)/.exec(text)?.[1];
+    report.note(`proof: parked pid ${pidA} exited; first message after park -> ${resumes} resume of ${sidA} (pid ${pidA2}), 1 answer`);
     await page.screenshot({ path: join(SHOTS, `${name}-3-resumed.png`) });
 
     // P4: a busy chat is never parked. Leave A running a long turn and focus B.

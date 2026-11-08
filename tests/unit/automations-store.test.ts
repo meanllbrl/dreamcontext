@@ -1383,6 +1383,25 @@ describe('bound automations through the automation store', () => {
     expect(() => storeForBound.updateAutomation(boundCtx, 'scout', { job: 'Post it.' })).toThrow(/picks an agent/);
   });
 
+  it('a catch-up edit is written to the file and leaves the approval hash alone (split and unsplit)', async () => {
+    const { approveAutomation, checkApproval, manifestHash } = await import('../../src/lib/automations/registry.js');
+    const home = join(boundProj, 'home-catchup');
+    mkdirSync(home, { recursive: true });
+    storeForBound.createAutomation(boundCtx, { slug: 'legacy-cu', title: 'Legacy CU', prompt: 'Do it.', days: 'daily', at: '09:00' });
+    for (const slug of ['scout-daily', 'legacy-cu']) {
+      const before = storeForBound.getRunTarget(boundCtx, slug, 'automation')!;
+      approveAutomation(boundProj, before, new Date('2026-10-12T09:00:00Z'), home);
+      const after = storeForBound.updateAutomation(boundCtx, slug, { catchupHours: 48 });
+      expect(after.catchupHours).toBe(48);
+      expect(readFileSync(after.path, 'utf-8')).toMatch(/^catchup_hours: 48$/m);
+      expect(manifestHash(after)).toBe(manifestHash(before));
+      expect(checkApproval(boundProj, after, home, 'run').approved).toBe(true);
+    }
+    expect(() => storeForBound.updateAutomation(boundCtx, 'legacy-cu', { catchupHours: 0 })).toThrow(/catchup_hours/);
+    expect(() => storeForBound.updateAutomation(boundCtx, 'legacy-cu', { catchupHours: 169 })).toThrow(/catchup_hours/);
+    expect(() => storeForBound.updateAutomation(boundCtx, 'scout', { catchupHours: 24 })).toThrow(/only call/);
+  });
+
   it('a job edit changes the approval hash, so the automation is blocked until approved again', async () => {
     const { approveAutomation, checkApproval, manifestHash } = await import('../../src/lib/automations/registry.js');
     const home = join(boundProj, 'home');

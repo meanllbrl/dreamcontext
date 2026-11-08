@@ -117,3 +117,20 @@ describe('launcher-ui.json', () => {
     expect(client.DRAWER_WIDTH_MAX).toBe(DRAWER_WIDTH_MAX);
   });
 });
+
+describe('the drawer width default (owner 2026-11-03)', () => {
+  it('a drawer nobody sized opens at its narrowest allowed width', () => {
+    expect(client.DRAWER_WIDTH_DEFAULT).toBe(client.DRAWER_WIDTH_MIN);
+    expect(client.drawerWidthOf(null)).toBe(client.DRAWER_WIDTH_MIN);
+    expect(client.drawerWidthOf(undefined)).toBe(client.DRAWER_WIDTH_MIN);
+  });
+  it('a width the owner dragged is his and is kept', () => {
+    expect(client.drawerWidthOf(340)).toBe(340);
+    expect(client.drawerWidthOf(client.DRAWER_WIDTH_MAX)).toBe(client.DRAWER_WIDTH_MAX);
+  });
+  it('the window reads its width through drawerWidthOf, with no other fallback', () => {
+    const chrome = readFileSync(join(__dirname, '../../dashboard/src/components/layout/WindowChrome.tsx'), 'utf-8');
+    expect(chrome).toContain('useState(() => drawerWidthOf(readLayoutPrefs().drawerWidth))');
+    expect(chrome).not.toMatch(/drawerWidth \?\? \d+/);
+  });
+});

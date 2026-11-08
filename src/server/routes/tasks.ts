@@ -1,4 +1,6 @@
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { getApp } from '../../lib/apps/registry.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
@@ -561,6 +563,9 @@ export async function handleTasksCreate(
     sendError(res, 400, filing.code, filing.message);
     return;
   }
+  // A dreamcontext App's write (the gateway stamps `x-dc-app`; a client's copy is dropped there).
+  // A label only, never a permission: checked against this project's app registry.
+  const appFiler = appFromHeader(req, contextRoot);
 
   // The SAME filing bar the CLI enforces — this route creates tasks without
   // going through the CLI at all, so without this call it would be the hole in
@@ -604,7 +609,7 @@ export async function handleTasksCreate(
       ...(customFields ? { custom_fields: customFields } : {}),
       // The parent link and the filing stamp ride the create itself: written under the same
       // lock as the file, so no reader ever sees a sub-task without its parent.
-      local_fields: { ...(parent ? { parent_task: parent.slug } : {}), ...filingFields(filing) },
+      local_fields: { ...(parent ? { parent_task: parent.slug } : {}), ...filingFields(filing), ...(appFiler ? { filed_via: `app:${appFiler}` } : {}) },
       variant: 'dashboard',
     });
   } catch (err) {
@@ -1490,7 +1495,8 @@ export async function handleTasksUpdate(
   if (unassigning) unassignTaskJob(contextRoot, slug);
   // Who moved it (C1-13): a status changed from the dashboard is the owner's.
   if (typeof updates.status === 'string' && updates.status !== existing.status) {
-    await recordStatusChange(backend, slug, { to: updates.status, who: { kind: 'owner' }, defs: loadStatuses(contextRoot) });
+    const viaApp = appFromHeader(req, contextRoot);
+    await recordStatusChange(backend, slug, { to: updates.status, who: viaApp ? { kind: 'app', slug: viaApp } : { kind: 'owner' }, defs: loadStatuses(contextRoot) });
     // A task its owner closed ends its agent's job (a live run is stopped, nothing reopens it).
     endTaskJobIfClosed(contextRoot, slug);
     task = (await backend.get(slug)) ?? task;
@@ -1660,6 +1666,7 @@ const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 403 | 404 | 409> = 
   no_repo: 409,
   unknown_reviewer: 404,
   reviewer_is_agent: 400,
+  tool_unsupported: 409,
 };
 
 /**
@@ -1727,5 +1734,16 @@ export async function handleTasksAssignAgent(
   } catch (err) {
     console.error('[tasks] assign-agent failed', err);
     sendError(res, 500, 'assign_failed', 'Failed to assign the task.');
+  }
+}
+
+/** The registered app named by the gateway's `x-dc-app` header, or null. */
+function appFromHeader(req: IncomingMessage, contextRoot: string): string | null {
+  const v = req.headers['x-dc-app'];
+  if (typeof v !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(v)) return null;
+  try {
+    return getApp(homedir(), dirname(contextRoot), v) ? v : null;
+  } catch {
+    return null;
   }
 }

@@ -2,6 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { dirname, join } from 'node:path';
 import { lastMainChainContext } from './context-watch.js';
 import { findTranscriptBySessionId, isSafeSessionId } from './transcript-locate.js';
+import { agentSessionId } from './session-id.js';
 
 /**
  * The goal-skill live run file — WRITER side.
@@ -285,7 +286,7 @@ export function applyGoalLiveEvent(prev: GoalLiveState | null, ev: GoalLiveEvent
  * back to the `solo` file rather than writing outside `tmp/`.
  */
 export function goalLiveSessionId(env: NodeJS.ProcessEnv = process.env): string | null {
-  const raw = (env.CLAUDE_CODE_SESSION_ID ?? '').trim();
+  const raw = agentSessionId(env) ?? '';
   return isSafeSessionId(raw) ? raw : null;
 }
 

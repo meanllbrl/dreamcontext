@@ -14,7 +14,10 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
 import { readSuperState } from '../../lib/super/store.js';
-import { superSanitizeOpts } from '../../lib/super/inbox.js';
+import { memberSummaries, memberSuperSessions } from '../../lib/super/member-summary.js';
+import type { SuperMemberSummary } from '../../lib/super/types.js';
+import { backgroundBusy, superSanitizeOpts } from '../../lib/super/inbox.js';
+import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../lib/super/types.js';
 import { parkedSince } from '../chat-park.js';
@@ -97,6 +100,12 @@ export interface SavedMeta {
    * but never grant one anything its own approval does not.
    */
   agent?: string;
+  /**
+   * Present only alongside `kind: 'chat'` — the tool this conversation runs on when it is not
+   * Claude (Track T: `codex`), so the tab reopens on the same tool and resumes its own thread.
+   * Absent = Claude, which every roster written before this field already means.
+   */
+  tool?: 'codex' | 'antigravity';
   /**
    * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
    *
@@ -323,6 +332,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.mode as ChatMode)
     : undefined;
   const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
+  const tool = kind === 'chat' && (o.tool === 'codex' || o.tool === 'antigravity') ? o.tool : undefined;
   // What the chat was running on: chat only, like `mode`, and each through its spawn gate.
   const model = kind === 'chat' && typeof o.model === 'string' ? sanitizeModel(o.model) : '';
   const effort = kind === 'chat' && typeof o.effort === 'string' && EFFORT_LEVELS.includes(o.effort) ? o.effort : '';
@@ -343,6 +353,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(automation ? { automation } : {}),
     ...(mode ? { mode } : {}),
     ...(agent ? { agent } : {}),
+    ...(tool ? { tool } : {}),
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
     ...(o.titleByAgent === true ? { titleByAgent: true } : {}),
@@ -750,14 +761,18 @@ export async function handleAgentSessionsGet(
   // window's (D3): read-only, narrowed, never written.
   if (phone && new URL(_req.url ?? '/', 'http://x').searchParams.get('of') === 'desktop') {
     // An unreadable record may be a handed-over project: the seed fails closed (nothing).
-    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState) });
+    const memberSessions = await memberSuperSessions(contextRoot, superSanitizeOpts()).catch(() => new Set<string>());
+    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState).filter((t) => !memberSessions.has(t.sessionId)) });
     return;
   }
   const saved = readSurface(contextRoot, phone);
   // The new shell's drawer polls a project it has not mounted (D7): counts only, never the
   // tab bodies or the drafts (up to 1 MB a project), so a poll stays a few bytes.
   if (new URL(_req.url ?? '/', 'http://x').searchParams.get('summary') === '1') {
-    sendJson(res, 200, rosterSummary(saved, superUnread ? emptySuperState() : superState));
+    // A member's own Super and its children are never the owner's tabs; each member's Ekip facts ride along.
+    const memberSessions = await memberSuperSessions(contextRoot, superSanitizeOpts()).catch(() => new Set<string>());
+    const members = await memberSummaries(contextRoot, { ...superSanitizeOpts(), home }).catch(() => []);
+    sendJson(res, 200, { ...rosterSummary(saved, superUnread ? emptySuperState() : superState, childRunsNow, memberSessions), members });
     return;
   }
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
@@ -773,7 +788,7 @@ export async function handleAgentSessionsGet(
 
 /** One Mac window tab as a remote screen seeds it: never a path, a mode, an agent or an
  *  automation. */
-export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true }
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' | 'antigravity' }
 
 /**
  * The Mac window's tabs a remote screen may seed from (`GET /api/agent/sessions?of=desktop` on a
@@ -787,7 +802,7 @@ export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: {
   for (const m of saved.sessions) {
     const kind = m.kind ?? 'agent';
     if ((kind !== 'agent' && kind !== 'chat') || !m.sessionId || m.sessionId === superState.session || m.mode === 'super') continue;
-    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}) });
+    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}), ...(m.tool ? { tool: m.tool } : {}) });
   }
   return out;
 }
@@ -803,19 +818,32 @@ export interface RosterSummary {
   /** The drawer's Super Agent row for a project not mounted: children at work, a question waiting. */
   superWorking: number;
   superAsking: boolean;
+  /** Each AI Team member's owner-facing facts (plan-r10 1; the route adds them). */
+  members?: SuperMemberSummary[];
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue'>>): RosterSummary {
+/** Does a process run this child now? A row can outlive its process, so the record alone is not
+ *  the drawer's count (the window's `workingChildren` asks its live chats the same question). */
+function childRunsNow(sid: string): boolean {
+  const e = getChat(sid);
+  if (!e) return false;
+  const act = activityOf(e);
+  return act !== 'gone' && (act !== 'idle' || backgroundBusy(e));
+}
+
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released'>>, runsNow: (sid: string) => boolean = childRunsNow, memberSessions: ReadonlySet<string> = new Set()): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
   // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
   // stay in the roster; only this count leaves them out).
   const former = new Set(superState.formerChildren ?? []);
-  const isSupers = (id: string) => id === superState.session || !!superState.children?.[id] || former.has(id);
+  const released = new Set(superState.enabled ? [] : superState.released ?? []);
+  const isSupers = (id: string) => id === superState.session || (!!superState.children?.[id] && !released.has(id)) || former.has(id) || memberSessions.has(id);
   const own = settled.sessions.filter((m) => !m.sessionId || !isSupers(m.sessionId));
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
   // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).
   const superAsking = (superState.queue ?? []).some((q) => q.state !== 'done' && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true && !q.team)));
-  const superWorking = Object.values(superState.children ?? {}).filter((c) => c.endedAt === undefined && c.row === 'working').length;
+  // Off, nothing works for the Super Agent (the window's `superRowMarks` says the same).
+  const superWorking = !superState.enabled ? 0 : Object.entries(superState.children ?? {}).filter(([sid, c]) => c.endedAt === undefined && c.row === 'working' && runsNow(sid)).length;
   return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking };
 }
 

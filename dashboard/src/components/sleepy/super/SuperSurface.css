@@ -164,10 +164,12 @@
    the name never wraps, it is cut with an ellipsis only after the subtitle has given way. */
 .super-centre-name { font-weight: 700; color: var(--color-text); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-centre-head > img { flex: none; }
-/* "Yeni oturum" (task super-agent-devrini-…): the head's last item, pushed right. On a narrow
-   centre the sub line goes first, then the button keeps only its glyph (label in aria/title). */
+/* The head (owner 2026-11-05 and 2026-11-07, less text): the name, then pushed right the ⋯ menu
+   (Add a card, New session, Turn off). Nothing in it wraps or gives way but the name. */
 .super-centre-clip { container-type: inline-size; container-name: super-centre; }
-.super-fresh { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-head-more { margin-left: auto; position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-head-more .super-icon-btn { width: 28px; height: 28px; flex: none; }
+.super-head-more .super-icon-btn[aria-expanded='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-fresh-btn {
   display: inline-flex;
   align-items: center;
@@ -188,18 +190,9 @@
 .super-fresh-btn:hover:not([aria-disabled='true']) { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg)); border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); color: var(--color-text); }
 .super-fresh-btn:active:not([aria-disabled='true']) { transform: scale(0.97); }
 .super-fresh-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.super-fresh-btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .super-fresh-glyph { flex: none; }
-.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-/* The subtitle takes only what the name and the buttons leave (basis 0), so it shrinks first; it
-   goes before it is a stub, earlier when Agenda shares the row. Then both buttons keep only their
-   glyph (the word stays in aria-label and title). */
-@container super-centre (max-width: 479px) {
-  .super-centre-sub { display: none; }
-}
-@container super-centre (max-width: 559px) {
-  .super-centre-head:has(.super-agenda-open) .super-centre-sub { display: none; }
-}
+/* The Agenda and Others buttons (the head's own when those cards are off the stage) keep only
+   their glyph on a narrow centre; the word stays in aria-label and title. */
 @container super-centre (max-width: 399px) {
   .super-fresh-btn { padding: 0 var(--space-1); }
   .super-fresh-btn-label { display: none; }
@@ -208,10 +201,36 @@
   .super-centre-head:has(.super-agenda-open) .super-fresh-btn { padding: 0 var(--space-1); }
   .super-centre-head:has(.super-agenda-open) .super-fresh-btn-label { display: none; }
 }
+.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* The ⋯ menu: the card size menu's frame, opened under its button, right-aligned, over the chat (an
+   open menu's step; the stage and the dock both define the scale, 30 is only a fallback). */
+.super-size-menu.super-head-menu { top: calc(100% + 6px); right: 0; z-index: var(--sz-card-open, 30); min-width: 184px; gap: 2px; padding: var(--space-1); }
+.super-head-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-head-menu-item:hover:not([aria-disabled='true']),
+.super-head-menu-item:focus-visible { background: var(--color-bg-tertiary); outline: none; }
+.super-head-menu-item[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.super-head-menu-item--off { color: var(--color-error-ink); }
+.super-head-menu-item--off:hover,
+.super-head-menu-item--off:focus-visible { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.super-head-menu-glyph { flex: none; }
+.super-head-menu-rule { height: 1px; margin: var(--space-1) 0; background: var(--color-border); }
 
-.super-centre-sub,
 .super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.super-centre-sub { flex: 1 1 0; text-align: right; }
 .super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .super-card-large-note { flex: 1 1 auto; }
 .super-slot {
@@ -444,6 +463,34 @@
 }
 .super-icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-icon-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+/* A glyph people do not read on sight (owner 2026-11-07, the minimise arrows): on hover and on
+   focus the button grows into a pill and its word slides out beside the glyph. */
+.super-icon-btn--caption {
+  width: auto;
+  min-width: 24px;
+  padding: 0 4px;
+  gap: 0;
+  transition: background 120ms ease-out, color 120ms ease-out, gap 160ms ease-out, padding 160ms ease-out;
+}
+.super-icon-btn--caption > svg { flex: none; }
+.super-icon-btn-caption {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 24px;
+  opacity: 0;
+  transition: max-width 160ms ease-out, opacity 120ms ease-out;
+}
+.super-icon-btn--caption:hover,
+.super-icon-btn--caption:focus-visible { gap: 4px; padding: 0 8px 0 4px; background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-icon-btn--caption:hover > .super-icon-btn-caption,
+.super-icon-btn--caption:focus-visible > .super-icon-btn-caption { max-width: 120px; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .super-icon-btn--caption,
+  .super-icon-btn-caption { transition: none; }
+}
 
 /* The agent card: the child at a glance (O10). */
 .super-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; min-width: 0; min-height: 0; flex: 1 1 auto; }
@@ -628,7 +675,7 @@
 }
 .super-tile[data-kind='working'] .super-tile-corners { opacity: 0.85; }
 .super-tile[data-kind='asking'] .super-tile-corners { opacity: 0.9; }
-.super-tile-top { display: flex; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+.super-tile-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 20px; min-width: 0; }
 .super-tile-kind {
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
@@ -694,20 +741,39 @@
 /* A chat tile's title reads whole (owner 2026-10-21): up to three lines, its doing-line one. */
 .super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
 .super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }
+/* The model a child runs on is never cut (owner 2026-11-02): too wide for the row, the chip
+   wraps onto its own line of the card (the tile's top row and the card's tags both wrap), and if
+   the name and level still do not fit, the level drops under the name. */
 .super-tile-model {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-1);
   flex: 0 1 auto;
   min-width: 0;
-  height: 18px;
+  max-width: 100%;
+  min-height: 18px;
   padding: 0 6px;
-  border-radius: var(--radius-full);
+  border-radius: 9px;
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   line-height: 18px;
+}
+/* A Codex or Antigravity child: the tool's mark before its model, as the model picker draws it. */
+.super-tile-model .mp-mark {
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+.super-tile-model-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.super-tile-model-level {
+  flex: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .super-tile-line {
   font-size: var(--font-size-xs);
@@ -1084,6 +1150,36 @@
   justify-content: center;
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* ── The owner's add menu: the board's palette, over every card on the stage ── */
+.super-surface .super-add-menu { z-index: var(--sz-panel); overflow-y: auto; }
+.super-add-menu .wb-picker,
+.super-add-menu .wb-picker-list { flex: 1 1 auto; min-height: 0; }
+.super-add-menu .wb-palette-item:active,
+.super-add-menu .wb-picker-row:active,
+.super-add-menu .wb-palette-btn:active:not(:disabled) { transform: scale(0.98); }
+.super-add-menu .wb-palette-btn:hover:not(:disabled) { opacity: 0.9; }
+.super-add-menu .wb-palette-btn:focus-visible,
+.super-add-menu .wb-palette-back:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-add-menu .wb-palette-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.super-add-menu .wb-picker-error { padding: var(--space-1) var(--space-2); }
+
+/* A card that landed in Others: one line the owner can read, whatever it sits over. */
+.super-add-note {
+  position: absolute;
+  z-index: var(--sz-queue);
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
   pointer-events: none;
 }
 
@@ -1488,6 +1584,10 @@
 /* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
    rows are buttons and it scrolls; the card around it is still the grab handle. */
 .super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }
+/* A member's own card is live from medium up too (plan r4 G2; owner 2026-11-05: a routine row on
+   the floating Rutinler card did nothing): its body below the head takes the pointer, the head
+   stays the grab handle. A small tile keeps `data-inert` and stays one handle. */
+.super-card-frame[data-where='float'][data-kind='member'] .super-card-large:not([data-inert]) > .super-card-large-body { pointer-events: auto; }
 
 /* A live page's card (owner 2026-10-22): one tree in every state, so its frame never reloads.
    Shown, the page fills the body; hidden (a 1×1 tile, parked) it keeps its last size, unseen. */
@@ -1741,7 +1841,9 @@
   line-height: 1.4;
 }
 
-/* A tight presentation's rail: one line per live job; a job that asks stays unmistakable. */
+/* A tight presentation's rail: one line per live job; a job that asks stays unmistakable. The
+   tile has no buttons: it is one, and a click opens it. */
+.super-card-frame[data-mini='true'] { cursor: pointer; }
 .super-card-frame[data-mini='true'] .super-mini-job {
   display: flex;
   flex-direction: row;
@@ -1763,3 +1865,105 @@
 .super-mini-job[data-kind='asking'] .super-mini-job-dot { background: var(--color-error); box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-error) 25%, transparent); }
 .super-mini-job[data-kind='saved'] .super-mini-job-dot,
 .super-mini-job[data-kind='ended'] .super-mini-job-dot { background: var(--color-text-tertiary); }
+
+/* A team job's card, large: its session, then the composer or the sentence that says why not. */
+.super-team-job { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+.super-team-job-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.super-team-job-closed { margin: 0; padding: var(--space-2, 8px) var(--space-3, 12px); color: var(--color-text-secondary); font-size: 13px; }
+.super-team-job-reply { display: flex; align-items: flex-end; gap: var(--space-2, 8px); padding: var(--space-2, 8px) var(--space-3, 12px); }
+.super-team-job-reply textarea { flex: 1; min-width: 0; resize: none; font: inherit; color: inherit; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px); padding: var(--space-2, 8px); }
+/* The transcript's "the Super runs this chat" line belongs to a child: this card has its own foot. */
+.super-team-job .super-readonly-line { display: none; }
+
+/* ── The Super Agent's tool steps as one quiet line (SuperStepsLine, owner 2026-11-06 A) ──
+   One fixed 24px line, live or landed, so a long turn never makes the transcript jump. Grey on
+   purpose: the answer under it is the one heavy thing on screen. */
+.super-steps { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); max-width: 100%; }
+.super-steps-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-steps-line:hover { border-color: var(--color-border-hover); color: var(--color-text-secondary); }
+.super-steps-line:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* Live: no chip, just the ring and the step in hand. */
+.super-steps[data-live] .super-steps-line { background: transparent; padding: 0 2px; font-size: var(--font-size-sm); font-weight: 400; }
+.super-steps[data-open]:not([data-live]) .super-steps-line { background: transparent; border-color: var(--color-border); }
+.super-steps-ring {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  /* A closed ring that breathes (the Super surface's status motion; nothing here rotates).
+     Its base style is the resting look, so a paused or removed animation shows a plain ring. */
+  border: 2px solid var(--color-accent);
+  animation: var(--dc-motion-status-name, super-dot-breathe) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.super-steps[data-waiting] .super-steps-ring { animation: none; border-color: var(--color-warning); }
+.super-steps-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
+.super-steps-count { flex: none; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+/* The turn's clock at the end of the live line (owner 2026-11-07): it replaces the Working pill. */
+.super-steps-time { flex: none; font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+/* The live line before any step (SuperLiveLine): same shape, nothing to open. */
+.super-steps-line--static { cursor: default; }
+.super-steps-line--static:hover { border-color: transparent; color: var(--color-text-tertiary); }
+.super-steps-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-steps-failed { flex: none; color: var(--color-error-ink); }
+.super-steps-caret { flex: none; font-size: 9px; }
+.super-steps-errors { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+/* Open: the plain Chat's rows, without their card frames, beside a thin rule. */
+.super-steps-rows { width: 100%; border-left: 2px solid var(--color-border); padding-left: var(--space-3); }
+.super-steps-rows .chat-toolcard {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.super-steps-rows .chat-toolcard + .chat-toolcard { margin-top: 0; }
+.super-steps-rows .chat-toolcard:hover { background: var(--color-bg-tertiary); }
+.super-steps-rows .chat-toolcard[data-status='error'] { background: var(--color-error-subtle, transparent); }
+@media (prefers-reduced-motion: reduce) { .super-steps-ring { animation: none; } }
+/* A landed turn's steps, put away behind its answer (owner 2026-11-06): a faint link just above
+   the answer, on hover only. Absolute, so showing it never moves the transcript; it sits on the
+   row's edge, so the pointer can travel from the answer onto it without losing the hover. */
+.super-steps-link {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 2;
+  height: 18px;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.chat-msg-assistant-row:hover > .super-steps-link,
+.super-steps-link:focus-visible,
+.super-steps-link[data-open] { opacity: 0.8; pointer-events: auto; }
+.super-steps-link:hover { opacity: 1; color: var(--color-text-secondary); text-decoration: underline; }
+.super-steps-link:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+@media (hover: none) {
+  .chat-msg-assistant-row:focus-within > .super-steps-link { opacity: 0.8; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .super-steps-link { transition: none; } }

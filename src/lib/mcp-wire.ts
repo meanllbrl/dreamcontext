@@ -122,6 +122,53 @@ export interface McpOverview {
   projectRoot: string;
 }
 
+/** What `codex mcp list --json` says about one server, whitelisted (`parseCodexMcpList`). */
+export const CODEX_MCP_AUTH = ['unsupported', 'not_logged_in', 'bearer_token', 'oauth', 'unknown'] as const;
+export type CodexMcpAuth = (typeof CODEX_MCP_AUTH)[number];
+
+/**
+ * One server a Codex session has: its own config's, or one of the app's stores on Codex's launch.
+ * These fields and nothing else: the CLI's transport object carries the command, its arguments
+ * and its env, so none of it crosses the wire. `status` is what a live `codex app-server` said;
+ * `unknown` = that session gave no answer, so only the config was read.
+ */
+export interface CodexMcpRow {
+  name: string;
+  enabled: boolean;
+  authStatus: CodexMcpAuth;
+  transport: 'stdio' | 'http' | 'other';
+  status: McpLiveStatus;
+  toolCount?: number;
+  /** One of the app's stores, not Codex's own config. */
+  fromStore?: boolean;
+}
+
+/** Why a stored server cannot reach Codex. */
+export const CODEX_MCP_LEFT_REASONS = ['name', 'variable', 'transport'] as const;
+export type CodexMcpLeftReason = (typeof CODEX_MCP_LEFT_REASONS)[number];
+export interface CodexMcpLeft { name: string; why: CodexMcpLeftReason }
+
+/** GET /api/agent/mcp/codex. Every Codex account shares one config and one sign-in, so this is one column. */
+export interface CodexMcpList {
+  /** `ok` = read; `not_installed` = no codex CLI; `failed` = it ran but gave no list. */
+  state: 'ok' | 'not_installed' | 'failed';
+  servers: CodexMcpRow[];
+  /** Stored servers that do not reach Codex, each with why. */
+  left: CodexMcpLeft[];
+}
+
+/** One server as a live Antigravity session reports it: a name, a status and a count. */
+export interface AntigravityMcpRow { name: string; status: McpLiveStatus; toolCount?: number }
+
+/** GET /api/agent/mcp/antigravity. A session is opened to ask, so the answer is kept a few minutes. */
+export interface AntigravityMcpList {
+  /** `ok` = a live session answered; `not_installed`; `signed_out`; `failed` = it did not answer. */
+  state: 'ok' | 'not_installed' | 'signed_out' | 'failed';
+  servers: AntigravityMcpRow[];
+  /** Stored servers that do not reach it, each with why. */
+  left: CodexMcpLeft[];
+}
+
 /** Control characters, by code point: a name carrying one is not a name. */
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 

@@ -57,7 +57,10 @@ describe('the chrome wiring (source)', () => {
   });
   it('⌘1-9 pick projectOrder[i] through addTab, and the new shell mounts no ProjectSwitcher', () => {
     expect(chrome).toContain('projectOrderRef.current[Number(e.key) - 1]');
-    const newBranch = chrome.slice(chrome.indexOf('if (newShell) {\n    return ('), chrome.indexOf('  return (\n    <ChromeContext.Provider value={chrome}>\n      <ChromeSlotsProvider value={chromeSlots}>\n      <div className="window-chrome" data-remote'));
+    // End anchor follows the classic return: c3976680 moved data-remote/data-touch to the new shell, f67d3671 added <SelectionBar />.
+    const classicStart = chrome.indexOf('  return (\n    <ChromeContext.Provider value={chrome}>\n      <SelectionBar />\n      <ChromeSlotsProvider value={chromeSlots}>\n      <div className="window-chrome">');
+    expect(classicStart).toBeGreaterThan(0);
+    const newBranch = chrome.slice(chrome.indexOf('if (newShell) {\n    return ('), classicStart);
     expect(newBranch).not.toContain('<ProjectSwitcher');
     expect(newBranch).toContain('<TitleBar');
   });

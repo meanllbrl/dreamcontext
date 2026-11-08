@@ -1,10 +1,32 @@
 import { execFile } from 'node:child_process';
-import { promises as fsp, readFileSync } from 'node:fs';
+import { promises as fsp, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { git } from './worktrees.js';
 import { diskUsage, rustTargets } from './disk-leftovers.js';
 import { listVaults, vaultsFilePath } from '../vaults.js';
+import { MEMBER_SUPER_DIR, okMember, superIdOfMember, superRecordPath } from './store.js';
+import type { SuperId } from './types.js';
+
+/** Every super record path of a vault: main's, then each member Super's (plan-r10 1). A members
+ *  folder that is a link, or unreadable, adds none (never followed). */
+function superRecordPaths(root: string): Array<{ id: SuperId; path: string }> {
+  const out: Array<{ id: SuperId; path: string }> = [{ id: 'main', path: superRecordPath(root, 'main') }];
+  try {
+    for (const rel of [join('state', '.super'), MEMBER_SUPER_DIR]) {
+      const st = lstatSync(join(root, rel));
+      if (st.isSymbolicLink() || !st.isDirectory()) return out;
+    }
+    for (const name of readdirSync(join(root, MEMBER_SUPER_DIR)).sort()) {
+      if (!name.endsWith('.json') || name.endsWith('.read-marks.json')) continue;
+      const slug = name.slice(0, -'.json'.length);
+      if (!okMember(slug)) continue;
+      const id = superIdOfMember(slug);
+      out.push({ id, path: superRecordPath(root, id) });
+    }
+  } catch { /* no members folder: main's only */ }
+  return out;
+}
 
 /**
  * `super clean`'s sweep of `~/.claude-worktrees/` (CPU RCA K1, 2026-10-29: 122 GB in 211 folders,
@@ -270,13 +292,20 @@ export function readSuperRecords(ownContextRoot: string, home: string = homedir(
   for (const v of listVaults(home)) roots.set(resolve(v.path, '_dream_context'), v.name);
   const records: Array<{ vault: string; state: RawState; own: boolean }> = [];
   for (const [root, vault] of roots) {
-    let raw: string;
-    try { raw = readFileSync(join(root, 'state', '.super-agent.json'), 'utf-8'); } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt(`${vault}: its Super Agent record cannot be read`);
-      continue;
+    // Main's record and every member Super's: a member's child holds its worktree as much as main's.
+    for (const { id, path } of superRecordPaths(root)) {
+      const whose = id === 'main' ? 'its Super Agent record' : `the Super record of ${id.slice(2)}`;
+      let raw: string;
+      try {
+        if (lstatSync(path).isSymbolicLink()) { doubt(`${vault}: ${whose} is a link`); continue; }
+        raw = readFileSync(path, 'utf-8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt(`${vault}: ${whose} cannot be read`);
+        continue;
+      }
+      try { records.push({ vault, state: JSON.parse(raw) as RawState, own: root === resolve(ownContextRoot) }); }
+      catch { doubt(`${vault}: ${whose} does not parse`); }
     }
-    try { records.push({ vault, state: JSON.parse(raw) as RawState, own: root === resolve(ownContextRoot) }); }
-    catch { doubt(`${vault}: its Super Agent record does not parse`); }
   }
   return { records, warnings, unsure };
 }

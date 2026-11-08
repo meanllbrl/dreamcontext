@@ -12,7 +12,7 @@ import {
   toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
+  turnHasVisibleProgress, nextStickToBottom, nextComposerFolded, COMPOSER_FOLD_DISTANCE, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, isDispatchedAgent, isBackgroundShell, isHeadlessAgentShell, looksLikeHeadlessClaude,
   bashCommandFor, runDurationMs, formatModelName, runMetaChips,
@@ -1124,6 +1124,11 @@ describe('turnHasVisibleProgress', () => {
     expect(turnHasVisibleProgress([{ kind: 'thinking', text: 'hm', done: false }])).toBe(true);
   });
 
+  it('never counts thinking where it is not drawn (the Super view), so its Thinking line stays', () => {
+    expect(turnHasVisibleProgress([user, { kind: 'thinking', text: 'hm', done: false }], 0, false)).toBe(false);
+    expect(turnHasVisibleProgress([{ kind: 'text', text: '', done: false }], 0, false)).toBe(true);
+  });
+
   it('sees a running tool card', () => {
     expect(turnHasVisibleProgress([{ kind: 'tool', status: 'running' }])).toBe(true);
     expect(turnHasVisibleProgress([{ kind: 'tool', status: 'error' }])).toBe(false);
@@ -1157,6 +1162,35 @@ describe('scroll intent', () => {
     expect(touchIntent(24)).toBe('up');
     expect(touchIntent(-24)).toBe('down');
     expect(touchIntent(0)).toBeNull();
+  });
+});
+
+// ─── nextComposerFolded (the phone's composer follows the scroll) ─────────────────
+
+describe('nextComposerFolded', () => {
+  const away = (distance: number) => ({ scrollTop: 2000 - 500 - distance, scrollHeight: 2000, clientHeight: 500 });
+
+  it('stays open at the bottom, folded or not before', () => {
+    expect(nextComposerFolded(false, true, away(0))).toBe(false);
+    expect(nextComposerFolded(true, true, away(0))).toBe(false);
+  });
+
+  it('folds once the reader is far enough up', () => {
+    expect(nextComposerFolded(false, false, away(COMPOSER_FOLD_DISTANCE))).toBe(true);
+  });
+
+  it('holds its state in the band between, so the fold cannot flicker', () => {
+    expect(nextComposerFolded(false, false, away(COMPOSER_FOLD_DISTANCE - 1))).toBe(false);
+    expect(nextComposerFolded(true, false, away(BOTTOM_SLACK + 1))).toBe(true);
+  });
+
+  it('keeps its state on a scroller that cannot be measured', () => {
+    expect(nextComposerFolded(true, true, { scrollTop: 0, scrollHeight: 0, clientHeight: 0 })).toBe(true);
+  });
+
+  it('clears what folding gives back, or the view would land at the bottom and reopen', () => {
+    const composerDelta = 96;
+    expect(COMPOSER_FOLD_DISTANCE - composerDelta).toBeGreaterThan(BOTTOM_SLACK);
   });
 });
 

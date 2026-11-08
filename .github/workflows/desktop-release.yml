@@ -127,7 +127,7 @@ jobs:
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '20'
+          node-version: '22.16'
           cache: npm
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
@@ -234,6 +234,12 @@ jobs:
           codesign -d --verbose=2 "$APP" 2>&1 | grep -q 'flags=0x10000(runtime)'
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose=4 "$APP" 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID'
+          # The dreamcontext Apps runner ships as a sidecar (bundle.externalBin): it must be
+          # in the bundle, Developer ID signed with the hardened runtime like the shell.
+          RUNNER="$APP/Contents/MacOS/app-runner"
+          test -x "$RUNNER"
+          codesign --verify --strict --verbose=2 "$RUNNER"
+          codesign -d --verbose=2 "$RUNNER" 2>&1 | grep -q 'flags=0x10000(runtime)'
           echo "✓ Developer ID, hardened runtime, notarized, stapled"
 
       - name: Sign, notarize and staple the DMG
@@ -293,6 +299,7 @@ jobs:
           TMP="$(mktemp -d)"
           tar -xzf "$OUT/$ASSET" -C "$TMP"
           test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop"
+          test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/app-runner"
           if [ "$DRY_RUN" = true ]; then echo "✓ dry run: the update payload extracts (not Developer ID signed)"; exit 0; fi
           codesign --verify --deep --strict "$TMP/dreamcontext-beta.app"
           codesign -d --verbose=2 "$TMP/dreamcontext-beta.app" 2>&1 | grep -q "^TeamIdentifier=$APPLE_TEAM_ID$"
@@ -368,7 +375,7 @@ jobs:
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '20'
+          node-version: '22.16'
           cache: npm
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable

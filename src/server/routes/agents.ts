@@ -1,11 +1,14 @@
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
-import { AmendmentRefused, listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
+import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
 import { placement } from '../../lib/agents/active.js';
 import { GLOBAL_REGISTRY_KEY, globalAgentExists, hasProjectMember } from '../../lib/agents/scope.js';
 import { composeRun } from '../../lib/agents/compose.js';
@@ -20,9 +23,9 @@ import {
   listAgents,
   listAgentTargets,
   removeAgent,
+  setAgentCallEnabled,
   setAgentPlacement,
   updateAgent,
-  withRestamp,
 } from '../../lib/agents/store.js';
 import {
   DEFAULT_CALL_SETTINGS,
@@ -31,7 +34,7 @@ import {
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
 import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
-import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto, runChildAlive } from '../../lib/automations/store.js';
 import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
@@ -40,14 +43,16 @@ import { lastTalkAt } from '../../lib/agents/history.js';
 import { listAgentHistory } from '../../lib/agents/history.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
-import { agentActivity } from '../automation-job.js';
+import { agentActivity, runIsActive, type AgentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { findLiveChat } from './agent-chat-live.js';
+import { deleteMember, planMemberDelete } from '../member-delete.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
   approveAutomation,
+  changedApprovalFields,
   checkApproval,
   registerProject,
   renderApprovalReview,
@@ -65,6 +70,7 @@ import {
   type AutomationManifest,
   type EffortLevel,
 } from '../../lib/automations/types.js';
+import { agentBoardView, answerBoardScope } from '../../lib/agents/board-question.js';
 import {
   isPreviewTruncation,
   receivePhoto,
@@ -101,7 +107,16 @@ export interface AgentSummary {
   roleLine: string;
   model: string | null;
   effort: EffortLevel | null;
+  tool: 'claude' | 'codex' | 'antigravity';
+  account: string | null;
   whiteboard: string | null;
+  /** `scope: board`: limited to its home board by its own file. */
+  boardOnly: boolean;
+  /** Limited to its board right now (its `scope: board`, or held from before boards stopped
+   *  limiting until the owner answers `boardQuestion`). */
+  boardLimited: boolean;
+  /** The one question this older board agent owes the owner: should it still be limited? */
+  boardQuestion: boolean;
   shared: boolean;
   /** `reports_to` as written (the dashboard's tree applies the read rules). Unhashed. */
   reportsTo: string | null;
@@ -113,6 +128,8 @@ export interface AgentSummary {
   face: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
+  /** Its `call.enabled` (the AI Team on/off switch). */
+  enabled: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
   approvalReason: string | null;
   /** Its creator's login (`machine:<id>`, `unowned`), null on an unstamped file (B1-3). */
@@ -195,7 +212,11 @@ export function summarizeAgent(
     roleLine: roleLineOf(target.prompt),
     model: target.model,
     effort: target.effort,
+    tool: target.tool ?? 'claude',
+    account: target.account ?? null,
     whiteboard: target.whiteboard ?? null,
+    boardOnly: target.boardOnly === true,
+    ...boardFacts(contextRoot, target, readOnly, home),
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
@@ -204,6 +225,7 @@ export function summarizeAgent(
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
     approvalReason: toRun.approved || readOnly ? null : toRun.reason,
+    enabled: target.enabled,
     owner,
     ownerLabel: owner ? ownerLabel(owner) : null,
     readOnly,
@@ -374,6 +396,9 @@ export async function handleAgentsShow(
     learning: target.learning,
     pattern: parsePattern(agent?.pattern ?? target.pattern),
     review: renderApprovalReview(approvalFields(target)),
+    // The fields the one approval card names (a synced or waiting change, plan-r10 1e); null when
+    // nothing waits or this Mac never stamped it with field hashes.
+    changedFields: changedApprovalFields(dirname(contextRoot), target),
   });
 }
 
@@ -385,6 +410,7 @@ export async function handleAgentsCreate(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates an agent approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -411,6 +437,7 @@ export async function handleAgentsCreate(
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
       whiteboard: readWhiteboard(body.whiteboard) ?? null,
+      ...(body.boardOnly === true ? { boardOnly: true } : {}),
       ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
     };
     if (body.scope === 'global') {
@@ -476,6 +503,7 @@ export async function handleLauncherGlobalAgentsCreate(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates a teammate approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -518,6 +546,7 @@ export async function handleAgentsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'edits an agent and re-approves it')) return;
   if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
@@ -544,8 +573,17 @@ export async function handleAgentsUpdate(
     if (body.model !== undefined) patch.model = str(body.model) ?? null;
     const effort = readEffort(body.effort);
     if (effort !== undefined) patch.effort = effort;
+    if (body.tool !== undefined) {
+      if (body.tool !== null && body.tool !== '' && body.tool !== 'claude' && body.tool !== 'codex' && body.tool !== 'antigravity') throw new AutomationError('Invalid tool: Claude, Codex or Antigravity.');
+      patch.tool = body.tool === 'codex' || body.tool === 'antigravity' ? body.tool : null;
+    }
+    if (body.account !== undefined) {
+      if (body.account !== null && body.account !== '' && !(typeof body.account === 'string' && isCodexAccountId(body.account))) throw new AutomationError('Invalid account.');
+      patch.account = (body.account as string) || null;
+    }
     const whiteboard = readWhiteboard(body.whiteboard);
     if (whiteboard !== undefined) patch.whiteboard = whiteboard;
+    if (typeof body.boardOnly === 'boolean') patch.boardOnly = body.boardOnly;
     if (typeof body.learning === 'boolean') patch.learning = body.learning;
     // No preview-truncation guard: the dialog always loads the full soul from
     // GET detail, and the summary's excerpt is never a form source. '' clears.
@@ -553,10 +591,72 @@ export async function handleAgentsUpdate(
     if (soul !== undefined) patch.soul = soul;
     const autonomy = readAutonomy(body.autonomy);
     if (autonomy !== undefined) patch.autonomy = autonomy;
-    if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), params.slug, patch);
+    if (Object.keys(patch).length > 0) {
+      // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
+      // another tool included: stamped (`consent`) and traced, so he can take it back. Only what
+      // was approved as it stood before the save is stamped (`withRestamp`): a teammate's change
+      // waiting for its card stays waiting.
+      ownerEdit(contextRoot, params.slug, patch, { consent: true, why: 'edited on the AI Team page' });
+    }
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
+  }
+}
+
+/**
+ * POST /api/agents/:slug/enabled {enabled} — the Ekip list's on/off switch (plan-r10 1d): the
+ * member's `call.enabled` and nothing else, so it stays exactly as approved. The owner's page only
+ * (an agent never turns a member back on, plan-r10 1e), never a teammate's member (`not_owner`). A
+ * global member's switch writes the global manifest: off in every project.
+ */
+export async function handleAgentsSetEnabled(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'turns a member on or off')) return;
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
+  const agent = isSafeAutomationSlug(params.slug) ? getAgent(contextRoot, params.slug) : null;
+  if (!agent) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  if (refuseNotOwner(res, { slug: agent.slug, owner: agent.owner, title: agent.title })) return;
+  const body = await parseJsonBody(req);
+  if (!body || typeof body.enabled !== 'boolean') {
+    sendError(res, 400, 'bad_body', 'Expected { enabled: true | false }.');
+    return;
+  }
+  try {
+    setAgentCallEnabled(contextRoot, params.slug, body.enabled);
+    // Turned off from the Super Agent's approval card (its Decline): the super hears the NO.
+    if (body.enabled === false) await tellSuperMember(contextRoot, body.sessionId, params.slug, 'rejected');
+    // Turned off: its live member Super stops (plan-r10 1, security r8-3), its keys die. Only a
+    // member that has a Super record here; a pending request then waits and main hears it once.
+    if (body.enabled === false) {
+      const { listMemberSupers } = await import('../../lib/super/store.js');
+      if ((await listMemberSupers(contextRoot)).includes(params.slug)) {
+        const { stopMemberSuper } = await import('./super.js');
+        await stopMemberSuper(contextRoot, params.slug).catch((err: unknown) => console.warn(`[super] ${params.slug}: its Super did not stop: ${(err as Error).message}`));
+      }
+    }
+    sendSummary(res, contextRoot, params.slug);
+  } catch (err) {
+    sendWriteError(res, err, 'enable_failed', 'Failed to switch the member.');
+  }
+}
+
+/** Queue an owner's decision on a member's approval for the Super Agent, when the card he used
+ *  sits in its chat (`sessionId` is the super's or a child's session). Never throws: the decision
+ *  itself is written either way. */
+async function tellSuperMember(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
+  try {
+    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision, Date.now(), 'member');
+  } catch {
+    return false;
   }
 }
 
@@ -616,6 +716,39 @@ export async function handleAgentsDelete(
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
     return;
   }
+  // The member's own delete from its stage (plan r4 R4, F2-F5): `{ withRoutines: true }` removes
+  // every routine that runs as it too (in every project for a global member), all or nothing,
+  // with a trash copy; `dryRun` answers the plan the dialog shows and changes nothing. Mac only,
+  // from the owner's own page. Without the flag the old 409 `agent_in_use` stands.
+  const body = (await parseJsonBody(req)) ?? {};
+  if (body.withRoutines === true) {
+    if (refuseUnlessOwnerPage(req, res, 'deletes a member')) return;
+    if (isPhoneSocket(req)) { sendError(res, 403, 'phone_unavailable', 'A member is deleted on the Mac itself.'); return; }
+    try {
+      if (body.dryRun === true) {
+        const plan = await planMemberDelete(contextRoot, params.slug);
+        if (!plan) { sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`); return; }
+        sendJson(res, 200, { ok: true, plan });
+        return;
+      }
+      const { stopMemberSuper } = await import('./super.js');
+      const { retireMemberSuper } = await import('../../lib/super/inbox.js');
+      const out = await deleteMember(contextRoot, params.slug, { stopSuper: stopMemberSuper, retireSuper: (root, slug) => retireMemberSuper(root, slug) });
+      if (!out) { sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`); return; }
+      if (out.plan.blockers.length) {
+        sendJson(res, 409, { error: out.plan.blockers.includes('read_only') ? 'read_only' : 'member_working', message: 'The member cannot be deleted right now.', plan: out.plan });
+        return;
+      }
+      if (!out.ok) {
+        sendJson(res, 500, { error: 'delete_incomplete', message: `Not everything could be deleted: ${out.left.join(', ')}.`, left: out.left, trash: out.trash });
+        return;
+      }
+      sendJson(res, 200, { ok: true, slug: params.slug, routines: out.plan.routines, trash: out.trash });
+    } catch (err) {
+      sendWriteError(res, err, 'delete_failed', 'Failed to delete the member.');
+    }
+    return;
+  }
   try {
     const result = removeAgent(contextRoot, params.slug);
     if (!result.removed) {
@@ -640,6 +773,7 @@ export async function handleAgentsApprove(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'approves an agent')) return;
   if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const target = agentTarget(contextRoot, params.slug);
   if (!target) {
@@ -647,14 +781,50 @@ export async function handleAgentsApprove(
     return;
   }
   try {
+    const body = (await parseJsonBody(req)) ?? {};
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
     approveAutomation(projectRoot, target, new Date());
     settleApprovalQuestions(contextRoot, params.slug);
+    // Approved on the Super Agent's own card: it hears the decision as an event.
+    await tellSuperMember(contextRoot, body.sessionId, params.slug, 'approved');
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'approve_failed', 'Failed to approve the agent.');
   }
+}
+
+/**
+ * POST /api/agents/:slug/board-scope {keep: boolean} — the owner's answer to "Should <title> still
+ * be limited to its board?" (`agents/board-question.ts`). Owner page only, like approve: keep writes
+ * `scope: board` by his own edit, lift opens its held approvals on this Mac.
+ */
+export async function handleAgentsBoardScope(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'answers whether an agent stays on its board')) return;
+  try {
+    const body = (await parseJsonBody(req)) ?? {};
+    if (typeof body.keep !== 'boolean') {
+      sendError(res, 400, 'bad_board_scope', 'Body must be { keep: true | false }.');
+      return;
+    }
+    answerBoardScope(contextRoot, params.slug, body.keep);
+    settleApprovalQuestions(contextRoot, params.slug);
+    sendSummary(res, contextRoot, params.slug);
+  } catch (err) {
+    sendWriteError(res, err, 'board_scope_failed', 'Failed to record the answer.');
+  }
+}
+
+/** The board facts of one member for the AI Team: limited now, and the question it owes. A
+ *  teammate's read-only member owes this Mac nothing. */
+function boardFacts(contextRoot: string, target: AutomationManifest, readOnly: boolean, home?: string): { boardLimited: boolean; boardQuestion: boolean } {
+  const view = agentBoardView(contextRoot, target.slug, target, home);
+  return { boardLimited: view.limited, boardQuestion: !readOnly && view.question };
 }
 
 /** GET /api/agents/:slug/amendments — what the Super Agent changed in this member, newest first,
@@ -674,11 +844,12 @@ export async function handleAgentsAmendments(
 
 /** POST /api/agents/:slug/amendments/:id/revert — the owner takes a change back. */
 export async function handleAgentsAmendmentRevert(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'takes back a change')) return;
   if (!isSafeAutomationSlug(params.slug)) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
     return;
@@ -902,6 +1073,12 @@ export async function handleAgentsHistory(
     const url = new URL(req.url || '/', 'http://localhost');
     const before = url.searchParams.get('before');
     const exclude = sanitizeUuid(url.searchParams.get('exclude')) || null;
+    // One look per source: a page asks about several of its runs.
+    const activity = new Map<string, AgentActivity | null>();
+    const activityOf = (source: string): AgentActivity | null => {
+      if (!activity.has(source)) activity.set(source, agentActivity(contextRoot, source));
+      return activity.get(source) ?? null;
+    };
     const page = listAgentHistory(contextRoot, params.slug, {
       audience: 'owner',
       before: before && before.length <= 512 ? before : null,
@@ -909,6 +1086,8 @@ export async function handleAgentsHistory(
       markTurns: true,
       isLive: (id) => findLiveChat(id) !== null,
       isHeld: (id) => !!findLiveChat(id)?.holder?.(),
+      isRunActive: (source, runId) => runIsActive(activityOf(source), runId) || runChildAlive(contextRoot, source, runId),
+      isRunHeld: (source, runId) => !!activityOf(source)?.runs?.some((r) => r.runId === runId),
     });
     sendJson(res, 200, page);
   } catch (err) {

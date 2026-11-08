@@ -10,7 +10,7 @@ import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type SortKey,
   PRIO_ORDER, SORT_LABEL, URG_ORDER,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
-  dimGet, levelLabel, prioColor, taskAgentKey, taskAssignees, taskFeature, taskVersion, urgColor,
+  dimGet, levelLabel, prioColor, taskAgentKeys, taskAssignees, taskFeature, taskVersion, urgColor,
   activeFilterCount,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
@@ -33,7 +33,8 @@ interface BoardToolbarProps {
   releasedVersions: string[];
   openMenu: MenuKey;
   setOpenMenu: (m: MenuKey) => void;
-  onNewTask: () => void;
+  /** Absent in an embedded screen: a task is made in the main app. */
+  onNewTask?: () => void;
   /** Open the "Author with agent" composer. Offered only when {@link agentReady}. */
   onAuthorWithAgent: () => void;
   /** Desktop + Agents-enabled: reveals the "Author with agent" path in the New-task split
@@ -105,7 +106,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const featureValues = Array.from(new Set([...featureOptions.map((o) => o.slug), ...allTasks.map(taskFeature).filter((v) => v !== 'none')]));
   const featureLabelOf = (v: string) => (v === 'none' ? 'No feature' : featureName.get(v) ?? v);
   // Agents: the roster plus any slug a task names that is no longer on it.
-  const agentValues = Array.from(new Set([...(agents ?? []).map((a) => a.slug), ...allTasks.map(taskAgentKey).filter((v) => v !== 'none')]));
+  // A reviewer counts as on the task too (the filter matches the doer or the reviewer).
+  const agentValues = Array.from(new Set([...(agents ?? []).map((a) => a.slug), ...allTasks.flatMap(taskAgentKeys).filter((v) => v !== 'none')]));
   const agentLabelOf = (v: string) => (v === 'none' ? 'No agent' : findAgent(agents, v)?.title ?? v);
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
@@ -118,7 +120,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       .map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
     if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     if (key === 'feature') return [...featureValues, 'none'].map((v) => ({ value: v, label: featureLabelOf(v), color: null, count: allTasks.filter((t) => taskFeature(t) === v).length }));
-    if (key === 'agent') return [...agentValues, 'none'].map((v) => ({ value: v, label: agentLabelOf(v), color: null, count: allTasks.filter((t) => taskAgentKey(t) === v).length }));
+    if (key === 'agent') return [...agentValues, 'none'].map((v) => ({ value: v, label: agentLabelOf(v), color: null, count: allTasks.filter((t) => taskAgentKeys(t).includes(v)).length }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
 
@@ -451,7 +453,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* new task — plain button on web; a split button on desktop where an agent can author.
           The primary click always opens the manual form (least surprise, A1); the caret reveals
           the "Author with agent" power path alongside it. */}
-      {agentReady ? (
+      {!onNewTask ? null : agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
             <button type="button" onClick={onNewTask} className="bd-btnreset bd-chip" data-testid="new-task" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>+ New Task</button>
@@ -461,7 +463,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
           </div>
           {openMenu === 'newtask' && (
             <div className="bd-pop" role="menu" style={{ ...popBase, right: 0, width: 246 }}>
-              <button type="button" className="bd-btnreset bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, width: '100%', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <button type="button" className="bd-btnreset bd-row" onClick={() => { setOpenMenu(null); onNewTask?.(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, width: '100%', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Blank form</span>

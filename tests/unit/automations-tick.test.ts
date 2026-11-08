@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
+import { PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
 import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
@@ -386,6 +386,22 @@ describe('tickAll', () => {
     expect(hb.lastTickDurationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('stamps "last tick completed" at the END of the tick, not its start', async () => {
+    registerProject(projectRoot, home);
+    makeDue('eod-digest');
+    const slow = vi.fn(async (_c: string, slug: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return fakeOutcome(slug, 'ok');
+    }) as unknown as typeof runAutomation;
+
+    await tickAll({ now: NOW, home, runImpl: slow });
+
+    const hb = readDispatcherHeartbeat(home);
+    expect(hb.lastTickDurationMs).toBeGreaterThanOrEqual(30);
+    expect(hb.lastTickCompletedAt).toBe(new Date(NOW.getTime() + hb.lastTickDurationMs!).toISOString());
+    expect(hb.lastTickCompletedAt).not.toBe(hb.lastTickStartedAt);
+  });
+
   it('writes both heartbeat timestamps when there IS work to do, too', async () => {
     registerProject(projectRoot, home);
     makeDue('eod-digest');
@@ -434,6 +450,84 @@ describe('tickAll', () => {
     } finally {
       rmSync(projectB, { recursive: true, force: true });
     }
+  });
+
+  it('one project\'s long run does not hold another project\'s routine (projects tick concurrently)', async () => {
+    const projectB = mkdtempSync(join(tmpdir(), 'dc-automations-tick-b-'));
+    mkdirSync(join(projectB, '_dream_context'), { recursive: true });
+    try {
+      registerProject(projectRoot, home);
+      registerProject(projectB, home);
+      makeDue('slow-one');
+      createAutomation(join(projectB, '_dream_context'), { slug: 'quick-one', title: 'Quick', days: 'daily', at: '18:00', prompt: 'Say hi.' });
+      const events: string[] = [];
+      let quickStarted: () => void = () => {};
+      const quickHasStarted = new Promise<void>((r) => { quickStarted = r; });
+      const runImpl = vi.fn(async (_c: string, slug: string) => {
+        events.push(`start ${slug}`);
+        if (slug === 'quick-one') quickStarted();
+        // The slow run only ends once the other project's run has begun, or after 400ms when
+        // the tick (wrongly) waits for it first.
+        if (slug === 'slow-one') await Promise.race([quickHasStarted, new Promise((r) => setTimeout(r, 400))]);
+        events.push(`end ${slug}`);
+        return fakeOutcome(slug, 'ok');
+      }) as unknown as typeof runAutomation;
+
+      await tickAll({ now: NOW, home, runImpl });
+
+      expect(events.indexOf('start quick-one')).toBeLessThan(events.indexOf('end slow-one'));
+    } finally {
+      rmSync(projectB, { recursive: true, force: true });
+    }
+  });
+
+  it(`never ticks more than ${PROJECT_CONCURRENCY} projects at once`, async () => {
+    const extra: string[] = [];
+    try {
+      registerProject(projectRoot, home);
+      makeDue('p0');
+      for (let i = 1; i <= PROJECT_CONCURRENCY + 2; i++) {
+        const root = mkdtempSync(join(tmpdir(), 'dc-automations-tick-b-'));
+        extra.push(root);
+        mkdirSync(join(root, '_dream_context'), { recursive: true });
+        createAutomation(join(root, '_dream_context'), { slug: `p${i}`, title: `P${i}`, days: 'daily', at: '18:00', prompt: 'Say hi.' });
+        registerProject(root, home);
+      }
+      const concurrency = { current: 0, max: 0 };
+      const runImpl = vi.fn(async (_c: string, slug: string) => {
+        concurrency.current += 1;
+        concurrency.max = Math.max(concurrency.max, concurrency.current);
+        await new Promise((r) => setTimeout(r, 30));
+        concurrency.current -= 1;
+        return fakeOutcome(slug, 'ok');
+      }) as unknown as typeof runAutomation;
+
+      const result = await tickAll({ now: NOW, home, runImpl });
+
+      expect(result.projects).toHaveLength(PROJECT_CONCURRENCY + 3);
+      expect(runImpl).toHaveBeenCalledTimes(PROJECT_CONCURRENCY + 3);
+      expect(concurrency.max).toBe(PROJECT_CONCURRENCY);
+    } finally {
+      for (const r of extra) rmSync(r, { recursive: true, force: true });
+    }
+  });
+
+  it('a run reads a clock that moves, so its duration is real (no more "Timed out after 0s")', async () => {
+    registerProject(projectRoot, home);
+    makeDue('eod-digest');
+    let seen: [number, number] | null = null;
+    const runImpl = vi.fn(async (_c: string, slug: string, o: { now?: () => Date }) => {
+      const a = o.now!().getTime();
+      await new Promise((r) => setTimeout(r, 40));
+      seen = [a, o.now!().getTime()];
+      return fakeOutcome(slug, 'ok');
+    }) as unknown as typeof runAutomation;
+
+    await tickAll({ now: NOW, home, runImpl });
+
+    expect(seen).not.toBeNull();
+    expect(seen![0]).toBeGreaterThanOrEqual(NOW.getTime());
+    expect(seen![1] - seen![0]).toBeGreaterThanOrEqual(30);
   });
 
   it('rotates the dispatcher log once it exceeds LOG_ROTATE_BYTES', async () => {

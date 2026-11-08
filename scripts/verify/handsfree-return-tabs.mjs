@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { drawerShown, newChat } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-return-tabs');
@@ -195,11 +196,11 @@ try {
   phone.on('pageerror', (e) => errors.push(`phone pageerror: ${String(e).slice(0, 200)}`));
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('the phone signs in and lands in the project', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
-  report.check('the phone opens on the Sohbetler list', await until(async () => (await phone.locator('[data-testid="phone-list"]:visible').count()) === 1, 25000));
+  report.check('the phone opens with the drawer open', await until(() => drawerShown(phone), 25000));
   await phone.waitForTimeout(2500);
   await dismiss(phone);
   const before = spawns().length;
-  await phone.locator('[data-testid="list-new"]').click();
+  await newChat(phone, 'proj');
   report.check('"New chat" on the phone starts one chat on the Mac', await until(() => spawns().length === before + 1, 15000), JSON.stringify(spawns().slice(before)));
   const PHONE = spawns()[before]?.sid;
   report.check('the phone\'s roster holds it', await until(() => rosterIds(PHONE_ROSTER).includes(PHONE), 10000), JSON.stringify(rosterOf(PHONE_ROSTER)));

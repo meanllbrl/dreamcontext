@@ -13,8 +13,8 @@
  *       half / compare / review / spotlight layouts): at each, the head is 40 px tall, the name
  *       is ONE line, nothing in the head leaves it or overlaps a neighbour, and the head does not
  *       scroll sideways;
- *   H2  the subtitle gives way first (shown wide, hidden narrow); New session keeps its glyph and
- *       an aria-label when its word is gone;
+ *   H2  no subtitle at any width, and the head's ⋯ (New session, Turn off) keeps an aria-label
+ *       (owner 2026-11-05: less text in the head);
  *   H3  the same at a 390 px phone viewport, and every child card's head on the stage;
  *   Screenshots of the head at each width into OUT (default tmp/super-head/).
  */
@@ -194,8 +194,9 @@ function measureHead(head) {
   const lines = (el) => { if (!el) return 0; const range = document.createRange(); range.selectNodeContents(el); return new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size; };
   const name = head.querySelector('.super-centre-name, .super-card-large-title, .super-card-title');
   const sub = head.querySelector('.super-centre-sub');
-  const fresh = head.querySelector('[data-testid="super-fresh-btn"]');
-  const label = fresh?.querySelector('.super-fresh-btn-label');
+  // New session and Turn off live in the ⋯ menu (owner 2026-11-05): the head shows ⋯ (Add a card is in it since 2026-11-07).
+  const fresh = head.querySelector('[data-testid="super-head-more"]');
+  const label = head.querySelector('[data-testid="super-fresh-btn"]');
   return {
     height: Math.round(box.height), width: Math.round(box.width),
     nameLines: lines(name), nameClipped: name ? name.scrollWidth > name.clientWidth + 1 : false,
@@ -231,7 +232,7 @@ async function run(engineName, base) {
   await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
   ok(tag('the handover arranged the stage'), await until(page, async () => reports().some((r) => r.kind === 'handover'), 90000));
   const centre = page.getByTestId('super-centre');
-  ok(tag('the centre head is drawn'), await until(page, async () => (await centre.locator('.super-centre-head .super-fresh-btn').count()) === 1, 20000));
+  ok(tag('the centre head is drawn'), await until(page, async () => (await centre.locator('.super-centre-head [data-testid="super-head-more"]').count()) === 1, 20000));
   await page.waitForTimeout(1500);
 
   console.log(`── ${engineName}: the centre at every card width`);
@@ -245,11 +246,8 @@ async function run(engineName, base) {
   }
   const wide = seen[0];
   const narrow = seen[seen.length - 1];
-  ok(tag('H2 wide: the whole name, the subtitle and New session with its word'), wide.subShown && wide.freshLabel && !wide.nameClipped, JSON.stringify(wide));
-  ok(tag('H2 narrow: the subtitle is gone, New session is its glyph with an aria-label'), !narrow.subShown && !narrow.freshLabel && !!narrow.freshAria, JSON.stringify(narrow));
-  const firstNoSub = seen.find((s) => !s.subShown)?.w ?? 0;
-  const firstClip = seen.find((s) => s.nameClipped)?.w ?? 0;
-  ok(tag('H2 the subtitle goes before the name is cut'), firstNoSub >= firstClip, JSON.stringify(seen.map(({ w, subShown, freshLabel, nameClipped }) => ({ w, subShown, freshLabel, nameClipped }))));
+  ok(tag('H2 wide: the whole name, no subtitle, no worded New session, ⋯ with an aria-label'), !wide.subShown && !wide.freshLabel && !!wide.freshAria && !wide.nameClipped, JSON.stringify(wide));
+  ok(tag('H2 narrow: still no subtitle, ⋯ with an aria-label'), !narrow.subShown && !narrow.freshLabel && !!narrow.freshAria, JSON.stringify(narrow));
   await centre.evaluate((el) => { el.style.removeProperty('width'); });
 
   console.log(`── ${engineName}: phone 390 px, and the child cards`);

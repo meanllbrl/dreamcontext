@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { TG_SENTINEL_CHAR, parseTelegramClaim, stripTgPrefix } from '../../../lib/chatProtocol';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHandover';
@@ -11,7 +12,7 @@ import { enterSends } from '../../../lib/enterKey';
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
  * docked directly above the composer, each editable and removable until it goes out.
  *
- * What lands here, since 07-29: only what the user CHOSE to hold — the composer's ⇡. ⏎ steers
+ * What lands here, since 07-29: only what the user CHOSE to hold — the composer's ⌥⏎ (once its ⇡ disc). ⏎ steers
  * into the running turn instead (Composer.tsx's `commit`), which is what the terminal's own
  * readline does and what this strip's first cut got wrong: every ⏎ came here and waited out
  * the whole turn, so a correction meant for the next tool call arrived after the last one.
@@ -62,7 +63,7 @@ function QueuedRow({
         ? { label: t('super.reply.toCard'), text: split.about.quote, reply: true }
       : agendaAboutStrip(split.about, [], () => '', {
         about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
       });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -179,6 +180,15 @@ function whenLabel(paused: boolean, total: number, owed: number): string {
   return ` · ${owed} at the first opening, the rest when this turn ends`;
 }
 
+/** A queued Telegram turn shows its body; an edit keeps the sentinel pair in front, so the turn is
+ *  still routed back to Telegram and an unchanged Save is no change at all. */
+export function keepTelegramRef(original: string, edited: string): string {
+  const claim = parseTelegramClaim(original);
+  // Emptied: nothing left to send, so the row goes (an empty body never keeps a ref alive).
+  if (!edited.trim()) return edited;
+  return claim.ref ? `${TG_SENTINEL_CHAR}${claim.ref}${TG_SENTINEL_CHAR}${edited}` : edited;
+}
+
 export function QueuedMessages({ session }: { session: ChatSession }) {
   const conv = session.getModel();
   const paused = !!conv.queuePaused;
@@ -248,11 +258,11 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
           <QueuedRow
             key={q.id}
             index={i}
-            text={q.text}
+            text={stripTgPrefix(q.text)}
             superSid={session.mode === 'super' || session.superMirror ? session.claudeId : null}
             sendNowTitle={sendNowTitle}
             onSendNow={() => session.sendQueuedNow(q.id)}
-            onSave={(next) => session.editQueued(q.id, next)}
+            onSave={(next) => session.editQueued(q.id, keepTelegramRef(q.text, next))}
             onRemove={() => session.removeQueued(q.id)}
           />
         ))}

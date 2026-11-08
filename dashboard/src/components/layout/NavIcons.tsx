@@ -141,6 +141,14 @@ function BrainIcon() {
 
 /** Sleep cycle — a crescent moon with two drifting z's. The moon alone was a filled
     silhouette that read as Insights' old bulb at 14px; the z's say SLEEP, not "night". */
+function StatsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h16" /><path d="M7 16v-5M12 16V6M17 16v-8" />
+    </svg>
+  );
+}
+
 function SleepIcon() {
   return (
     <Svg>
@@ -188,48 +196,12 @@ function LabIcon() {
   );
 }
 
-/** About — "What is this?": a question mark in a circle. */
-function AboutIcon() {
-  return (
-    <Svg>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.5-2.7 2.5" />
-      <circle cx="11.9" cy="16.6" r="0.7" fill="currentColor" stroke="none" />
-    </Svg>
-  );
-}
-
 /** Announcements — a megaphone: what's new, said out loud. */
 function AnnouncementsIcon() {
   return (
     <Svg>
       <path d="M3 11 21 6v12L3 14z" />
       <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
-    </Svg>
-  );
-}
-
-/** AI Team — two AI teammates side by side: a rounded head with an antenna and two eyes each,
- *  over its shoulders.
- *
- * THE PAGE IS A ROSTER OF AI MEMBERS who work together (owner pick "A3", 2026-10-22). Two equal
- * heads say "a team of peers"; the antenna and the two eyes say they are agents, and the eyes
- * are Sleepy's two-eye mark, the brand's own face. The old glyph's speech tail is gone: Chat and
- * Council already say "talk", and the rail read three bubbles in a row. Never a clock, gear or
- * lightning: none of those is what a user comes here to find. */
-function AiTeamIcon() {
-  return (
-    <Svg>
-      <rect x="2.5" y="5.5" width="8" height="7.5" rx="2.5" />
-      <path d="M6.5 5.5V3.2" />
-      <circle cx="5.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <circle cx="7.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <path d="M2.5 20.5a4 4 0 0 1 8 0" />
-      <rect x="13.5" y="5.5" width="8" height="7.5" rx="2.5" />
-      <path d="M17.5 5.5V3.2" />
-      <circle cx="16.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <circle cx="18.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <path d="M13.5 20.5a4 4 0 0 1 8 0" />
     </Svg>
   );
 }
@@ -244,6 +216,18 @@ function WhiteboardsIcon() {
       <line x1="16.5" y1="7" x2="18" y2="7" />
       <line x1="8" y1="16" x2="6" y2="21" />
       <line x1="16" y1="16" x2="18" y2="21" />
+    </Svg>
+  );
+}
+
+/** Apps: a window with its own title bar and a tile grid inside, an app of this project. */
+function AppsIcon() {
+  return (
+    <Svg>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="3" y1="8" x2="21" y2="8" />
+      <rect x="6.5" y="11" width="4" height="3.5" rx="0.8" />
+      <rect x="13.5" y="11" width="4" height="3.5" rx="0.8" />
     </Svg>
   );
 }
@@ -291,18 +275,18 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,
   lab: LabIcon,
-  automations: AiTeamIcon,
   whiteboards: WhiteboardsIcon,
+  apps: AppsIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,
   taxonomy: TaxonomyIcon,
   brain: BrainIcon,
   sleep: SleepIcon,
+  stats: StatsIcon,
   announcements: AnnouncementsIcon,
   packs: PacksIcon,
   settings: SettingsIcon,
-  about: AboutIcon,
 };
 
 /** Render the custom nav icon for a page, or null if none is mapped. */

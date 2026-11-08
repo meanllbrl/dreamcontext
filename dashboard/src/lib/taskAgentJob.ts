@@ -112,37 +112,150 @@ export function instantToLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export type RoundResult = 'passed' | 'sent-back' | 'reviewing' | 'owner';
+/**
+ * What came of a delivered round: passed, sent back by the reviewer, sent back by the owner,
+ * failed at the review cap, stuck (no usable verdict), being reviewed now, or waiting on the
+ * owner (no reviewer agent).
+ */
+export type RoundResult = 'passed' | 'sent-back' | 'owner-sent-back' | 'failed' | 'stuck' | 'reviewing' | 'owner';
 
 export interface ReviewRound {
   round: number;
   deliveredAt: string;
   by: string;
   result: RoundResult;
+  /** Who decided it, as the task's changelog names them (the reviewer's title), or null. */
+  who: string | null;
+  /** The reviewer's findings the changelog carries (its first 300 characters), or null. */
+  findings: string | null;
 }
 
-const SENT_BACK = /^Review round (\d+): sent back/;
+/** `Review round N: sent back|passed|failed|stuck (<reviewer>)[: <findings>]`, the host's lines. */
+const REVIEWER_LINE = /^Review round (\d+): (sent back|passed|failed|stuck)(?: \(([^)]*)\))?(?:[:.]\s*(.*))?$/;
+/** `Review round N: sent back by the owner.`, the owner's send-back. */
+const OWNER_LINE = /^Review round (\d+): sent back by the owner\b/;
+const RESULT_OF: Record<string, RoundResult> = { 'sent back': 'sent-back', passed: 'passed', failed: 'failed', stuck: 'stuck' };
 
 /**
- * One row per delivered round, newest first: passed (the reviewer passed it), sent back (the
- * reviewer's status change names that round), reviewing (the current round, review step), or
- * owner (delivered with no reviewer agent: the owner reviews).
+ * One row per delivered round, newest first, from the task's history: the reviewer's own lines
+ * (sent back with its findings, passed, failed at the cap, stuck) and the owner's send-back, the
+ * newest line of a round deciding it. A round with no line falls back to the job itself: the
+ * current round passed, stuck, being reviewed, or the owner's (no reviewer agent).
  */
 export function reviewRounds(job: AgentJob | null | undefined, deliveries: readonly AgentJobDelivery[], history: readonly StatusHistoryRow[]): ReviewRound[] {
-  const sentBack = new Set<number>();
+  const decided = new Map<number, { result: RoundResult; who: string | null; findings: string | null }>();
+  // History is newest first: the first line for a round is its latest word.
   for (const h of history) {
-    const m = h.by?.startsWith('reviewer:') && h.reason ? SENT_BACK.exec(h.reason) : null;
-    if (m) sentBack.add(Number(m[1]));
+    if (!h.reason) continue;
+    if (h.by === 'owner') {
+      const m = OWNER_LINE.exec(h.reason);
+      if (m && !decided.has(Number(m[1]))) decided.set(Number(m[1]), { result: 'owner-sent-back', who: null, findings: null });
+      continue;
+    }
+    if (!h.by?.startsWith('reviewer:')) continue;
+    const m = REVIEWER_LINE.exec(h.reason);
+    if (!m || decided.has(Number(m[1]))) continue;
+    const rest = (m[4] ?? '').trim();
+    decided.set(Number(m[1]), {
+      result: RESULT_OF[m[2]],
+      who: m[3]?.trim() || null,
+      findings: (m[2] === 'sent back' || m[2] === 'failed') && rest ? rest : null,
+    });
   }
   const latest = new Map<number, AgentJobDelivery>();
   for (const d of deliveries) latest.set(d.round, d);
   return [...latest.values()].sort((a, b) => b.round - a.round).map((d) => {
+    const current = !!job && d.round === job.round;
+    const line = decided.get(d.round);
+    // A decided round is over (a rework delivers the next round), so its line is final.
     let result: RoundResult = 'owner';
-    if (sentBack.has(d.round)) result = 'sent-back';
-    else if (job && d.round === job.round && job.reviewPassed) result = 'passed';
-    else if (job && d.round === job.round && job.step === 'review') result = 'reviewing';
-    return { round: d.round, deliveredAt: d.at, by: d.by, result };
+    if (line) result = line.result;
+    else if (current && job!.reviewPassed) result = 'passed';
+    else if (current && job!.state === 'stuck') result = 'stuck';
+    else if (current && job!.step === 'review') result = 'reviewing';
+    return { round: d.round, deliveredAt: d.at, by: d.by, result, who: line?.who ?? null, findings: line?.findings ?? null };
   });
+}
+
+/**
+ * Who the job waits on, in one line (mockup r8-11), from its state and step:
+ *  - `reviewer`: the reviewer is on it (queued or running); nothing is needed from the owner;
+ *  - `doer`: the doer is on it (work, rework, plan, queued or running); nothing from the owner;
+ *  - `owner`: it is the owner's turn (a delivery to approve, a plan, a question);
+ *  - `stuck`: it stopped and needs the owner (stuck at the cap, blocked, stopped, stalled).
+ * Null when there is no job or it has not started (scheduled says its own time).
+ */
+export type JobWaitKey = 'reviewer' | 'doer' | 'owner' | 'stuck';
+
+export function jobWaitKey(job: Pick<AgentJob, 'state' | 'step'> | null | undefined): JobWaitKey | null {
+  if (!job?.state) return null;
+  switch (job.state) {
+    case 'queued':
+    case 'starting':
+    case 'running':
+      return job.step === 'review' ? 'reviewer' : 'doer';
+    case 'delivered':
+    case 'waiting_owner':
+      return 'owner';
+    case 'stuck':
+    case 'blocked':
+    case 'stopped':
+    case 'stalled':
+      return 'stuck';
+    default:
+      return null;
+  }
+}
+
+export interface JobWaitLine {
+  key: JobWaitKey;
+  /** The bold half: "İnceleyici çalışıyor", "Senin onayında", "Takıldı". */
+  label: string;
+  /** "tur 2/5" once a round was delivered, else ''. */
+  round: string;
+  /** The quiet half: "senden bir şey beklemiyor" while an agent works, else ''. */
+  hint: string;
+}
+
+/** The job line in words. `name` is the doer's name (the doer's line names it). */
+export function jobWaitLine(job: AgentJob | null | undefined, t: Translate, name: string): JobWaitLine | null {
+  const key = jobWaitKey(job);
+  if (!key || !job) return null;
+  const label = key === 'reviewer'
+    ? tr(t, 'tasks.job.wait.reviewer', 'Reviewer at work')
+    : key === 'doer'
+      ? tr(t, 'tasks.job.wait.doer', '{name} is working', { name })
+      : key === 'owner'
+        ? tr(t, 'tasks.job.wait.owner', 'Waiting for your approval')
+        : tr(t, 'tasks.job.wait.stuck', 'Stuck');
+  // The round on the line is the one in play: the review's round, the rework's next one.
+  const shown = job.step === 'rework' ? job.round + 1 : job.round;
+  const round = shown > 0 && job.cap > 0 ? tr(t, 'tasks.job.wait.round', 'round {round}/{cap}', { round: String(shown), cap: String(job.cap) }) : '';
+  const hint = key === 'reviewer' || key === 'doer' ? tr(t, 'tasks.job.wait.notYou', 'nothing needed from you') : '';
+  return { key, label, round, hint };
+}
+
+/**
+ * Whether a task step can run on each tool: mirrors `HEADLESS_ENVELOPES['task-step']`
+ * (`src/lib/t3-bridge/headless-envelope.ts`), pinned by a drift test. `null` = Claude only today.
+ */
+export const TASK_STEP_TOOL_MODES: Readonly<Record<'codex' | 'antigravity', string | null>> = { codex: null, antigravity: null };
+
+/** The member's tool when a task step cannot run on it (it would be refused at assignment), else null. */
+export function taskToolBlocked(agent: { tool?: 'claude' | 'codex' | 'antigravity' } | null | undefined): 'codex' | 'antigravity' | null {
+  const tool = agent?.tool;
+  if (tool !== 'codex' && tool !== 'antigravity') return null;
+  return TASK_STEP_TOOL_MODES[tool] === null ? tool : null;
+}
+
+/**
+ * The member is waiting on the one approval card: its approval does not match what it is now
+ * (a synced or authority-widening change, or never approved here), read from the fields the
+ * server already sends. A teammate's read-only member never is.
+ */
+export function waitsOnApprovalCard(a: { approvedToRun: boolean; approvalReason: string | null; readOnly?: boolean }): boolean {
+  if (a.approvedToRun || a.readOnly) return false;
+  return a.approvalReason === 'manifest-changed' || a.approvalReason === 'payload-format-changed' || a.approvalReason === 'never-approved';
 }
 
 /** Who made a status change, in words. `nameOf` turns an agent slug into its name. */

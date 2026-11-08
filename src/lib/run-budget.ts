@@ -38,7 +38,7 @@ export type HeavyKind = BudgetKind | 'check';
  * files decide, heavy-queue.ts counts the tests that reach them),
  * 1 for a `look.mjs` glance. Absent = unknown, and heavy-queue.ts reads unknown as long.
  */
-export interface HeavyStep { kind: HeavyKind; target: string; scoped?: number; related?: string[] }
+export interface HeavyStep { kind: HeavyKind; target: string; scoped?: number; related?: string[]; /** A `tsc` without --noEmit writes files. */ emits?: boolean }
 
 /** `builder heavy`'s exit code for a refusal. Not 75: running it again will not help. */
 export const HEAVY_OVER_BUDGET_EXIT = 77;
@@ -63,7 +63,7 @@ function namesTests(args: string): boolean {
     if (FILTER_FLAG.test(w)) return true;
     if (w.startsWith('-') || w === 'run') return false;
     // After a flag a word is its value, unless it reads as a path: `--runInBand tests/a.test.ts`.
-    return !VALUE_FLAG.test(words[i - 1] ?? '') || (/[/.]/.test(w) && !/^--(?:config|outputFile|root|dir|shard)$/.test(words[i - 1]));
+    return !VALUE_FLAG.test(words[i - 1] ?? '') || (/[/.]/.test(w) && !/^(?:-c|--config|--outputFile|--root|--dir|--shard)$/.test(words[i - 1]));
   });
 }
 
@@ -93,6 +93,8 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
     // build:cli and build:dashboard stay two limits.
     if (inner) return { ...inner, target: inner.kind === 'build' ? npm[1] : inner.target };
   }
+  // `tsup && vitest run` builds, whatever else it does.
+  if (npm && /&&/.test(scripts[npm[1]] ?? '') && scripts[npm[1]].split('&&').some((part) => stepOfSegment(part, {})?.kind === 'build')) return { kind: 'build', target: npm[1] };
   if (npm && /^verify[:-]/.test(npm[1])) return { kind: 'browser', target: npm[1] };
   const verify = /^node\s+(?:\.\/)?(scripts\/verify\/\S+\.m?js)\b/.exec(s);
   // `--build` is a whole dashboard build before the glance: that is no glance.
@@ -104,11 +106,11 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
   const testScript = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?t(?:est)?(?:\s+--)?(\s.*)?$/.exec(s);
   const runner = /^(?:npx\s+)?(?:vitest|jest)(\s.*)?$/.exec(s);
   if (testScript || runner) {
-    const config = /--config[ =](\S+)/.exec(s)?.[1];
+    const config = /(?:--config|\s-c)[ =](\S+)/.exec(s)?.[1];
     const args = (testScript ?? runner)![1] ?? '';
     return namesTests(args) ? { kind: 'check', target: 'tests', ...namedFiles(args) } : { kind: 'suite', target: config ? `suite ${config}` : 'suite' };
   }
-  if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc' };
+  if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc', ...(/\s--noEmit\b/.test(s) ? {} : { emits: true }) };
   return null;
 }
 
@@ -183,6 +185,19 @@ export function directHeavy(command: string): HeavyKind | null {
 
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `builder heavy` line the hook offers for a check run straight. A trailing `| tail -N`
+ * hides the check's exit code, so that run could never keep a receipt (lib/check-receipt.ts):
+ * it becomes `--tail N` on the check alone.
+ */
+export function heavySuggestion(command: string): string {
+  const tailed = /^([\s\S]*?)\s*\|\s*tail\s+(?:-n\s*)?-?(\d+)\s*$/.exec(command.trim());
+  if (tailed && !/[|;\n]|&&|\|\|/.test(tailed[1].replace(/\s+2>&1$/, '').replace(/^cd\s+\S+\s+&&\s+/, ''))) {
+    return `dreamcontext builder heavy --tail ${tailed[2]} -- ${shellQuote(tailed[1].replace(/\s+2>&1$/, ''))}`;
+  }
+  return `dreamcontext builder heavy -- ${shellQuote(command)}`;
+}
 
 /** This repo's package.json scripts; none when it cannot be read. */
 export function packageScripts(cwd: string): Record<string, string> {

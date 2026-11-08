@@ -179,6 +179,7 @@ function defaultLiveLatest(): string | null {
   let latest: string | null = null;
   try {
     const raw = execFileSync('npm', ['view', 'dreamcontext', 'version'], {
+      env: { ...process.env, PATH: pathWithNode() },
       timeout: 5_000,
       encoding: 'utf-8',
     });

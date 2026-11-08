@@ -53,7 +53,8 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
     // K7 (jarvis plan r9): every desktop chat once local dictation is installed, the Assistant
     // always; or the hands-free phone with the Mac's dictation installed (its takes are transcribed
     // on the Mac: task the-hands-free-phone-sends-a-voice-message…), still in the same one flag.
-    expect(composer).toMatch(/const voiceEnabled = \(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice;/);
+    // An app's frame has no mic: `!inAppFrame &&` leads the same one expression.
+    expect(composer).toMatch(/const voiceEnabled = !inAppFrame && \(\(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice\);/);
   });
 
   it('renders NOTHING mic-related unless that flag is true', () => {

@@ -392,8 +392,14 @@ describe('cloneLinkedRepo — S1 (RCE guard, gates BEFORE any git)', () => {
   it('S1c (transport argv): the REAL git.clone argv carries `--` and protocol.ext.allow=never, with the canonical url', async () => {
     seedEntry('api', 'acme/api');
     // No gitModule injection → real git.clone runs, execFileSync is mocked to capture argv.
-    const dest = await cloneLinkedRepo(projectRoot, 'api', { confirmed: true, home, resolveToken: resolveTokenOk });
-    const spy = execFileSync as unknown as ReturnType<typeof vi.fn>;
+    // The setup files reach git.js through the Super store before this file's vi.mock applies,
+    // so the cached git.js holds the REAL execFileSync: load a fresh module graph under the mock.
+    vi.resetModules();
+    const freshGit = await import('../../src/lib/git-sync/git.js');
+    const freshLinked = await import('../../src/lib/linked-repos.js');
+    const freshCp = await import('node:child_process');
+    const dest = await freshLinked.cloneLinkedRepo(projectRoot, 'api', { confirmed: true, home, resolveToken: resolveTokenOk });
+    const spy = freshCp.execFileSync as unknown as ReturnType<typeof vi.fn>;
     expect(spy).toHaveBeenCalled();
     const [bin, argv] = spy.mock.calls[spy.mock.calls.length - 1];
     expect(bin).toBe('git');
@@ -405,7 +411,7 @@ describe('cloneLinkedRepo — S1 (RCE guard, gates BEFORE any git)', () => {
     expect((argv as string[])[dd + 1]).toBe('https://github.com/acme/api.git');
     expect((argv as string[])[dd + 2]).toBe(dest);
     // Transport constant is exported and correct.
-    expect(git.SAFE_TRANSPORT_ARGS).toEqual(['-c', 'protocol.ext.allow=never']);
+    expect(freshGit.SAFE_TRANSPORT_ARGS).toEqual(['-c', 'protocol.ext.allow=never']);
   });
 
   it('refuses without confirmation (before any git) and refuses when no token resolves', async () => {

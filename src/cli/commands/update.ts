@@ -24,7 +24,12 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
+import { designFileIsUnchanged, isDesignSkillPath } from '../../lib/core-design-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
+import { adoptLocalPending } from '../../lib/automations/adopt-local.js';
+import { pruneRetiredPacks } from '../../lib/retired-packs.js';
+import { ensureCodex } from '../ensure-codex.js';
+import { refreshStaleDispatcher, type RefreshDispatcherResult } from '../../lib/automations/launchd.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
@@ -152,12 +157,25 @@ export async function pruneStaleFiles(
 
   // Partition by old-manifest version. Heuristic (pre-manifest) files are never
   // deleted — they may be user-authored files adopted by the legacy bootstrap.
+  function editedDesignFile(p: string): boolean {
+    return isDesignSkillPath(p) && !designFileIsUnchanged(join(projectRoot, p), oldManifest.files[p]?.baselineSha);
+  }
   const heuristic = candidates.filter(
     (p) => oldManifest.files[p]?.version === PRE_MANIFEST_VERSION,
   );
   const owned = candidates.filter(
-    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION,
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && !editedDesignFile(p),
   );
+  // A design file a later release dropped is deleted only if nobody edited it; an edited one is
+  // someone's work, kept and tracked like the heuristic files above (and `upgrade` runs --yes).
+  const editedDesign = candidates.filter(
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION && editedDesignFile(p),
+  );
+  if (editedDesign.length > 0) {
+    console.log();
+    warn(`${editedDesign.length} design skill file(s) no longer ship but were edited, not removed:`);
+    for (const p of editedDesign) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
+  }
 
   if (heuristic.length > 0) {
     console.log();
@@ -208,6 +226,22 @@ export async function pruneStaleFiles(
   }
   // keep = everything NOT actually deleted (all heuristic + any owned that failed to delete).
   return { removed, keep: candidates.filter((c) => !removed.includes(c)) };
+}
+
+/** One line, only when there is something to say: a current or absent scheduler is silent. */
+function reportDispatcherRefresh(r: RefreshDispatcherResult): void {
+  if (r.action === 'refreshed') {
+    info('Routine scheduler refreshed: it now runs at normal priority.');
+    for (const w of r.warnings) warn(w);
+    return;
+  }
+  if (r.reason === 'tick-running') {
+    info(chalk.dim('Routine scheduler is out of date but busy right now; run `dreamcontext automations install` once it is idle.'));
+  } else if (r.reason === 'mismatch') {
+    warn(`Routine scheduler is out of date and runs a different dreamcontext (${r.detail ?? 'unknown'}); run \`dreamcontext automations install\` from the one you want it to use.`);
+  } else if (r.reason === 'failed') {
+    warn(`Routine scheduler could not be refreshed${r.detail ? `: ${r.detail}` : ''}. Run \`dreamcontext automations install\`.`);
+  }
 }
 
 export function registerUpdateCommand(program: Command): void {
@@ -281,7 +315,9 @@ export function registerUpdateCommand(program: Command): void {
           }
         } else if (opts.packsOnly && !opts.coreOnly) {
           for (const [path, entry] of Object.entries(oldManifest.files)) {
-            if (entry.kind === 'core' || entry.kind === 'agent' || entry.kind === 'hook') {
+            // The design skill was a pack before it became core: an older manifest lists it as
+            // 'pack-skill', and a packs-only run neither reinstalls it nor may offer it for deletion.
+            if (entry.kind === 'core' || entry.kind === 'agent' || entry.kind === 'hook' || isDesignSkillPath(path)) {
               newManifest.files[path] = entry;
             }
           }
@@ -329,6 +365,12 @@ export function registerUpdateCommand(program: Command): void {
           info(chalk.dim('No installed packs detected.'));
         }
 
+        // Retired packs first: they decide per file by content (ours goes, an edited file
+        // stays untracked), and take their entries out of both manifests so the generic
+        // prune below never offers a file the user edited.
+        const retired = pruneRetiredPacks(projectRoot, oldManifest, newManifest, loadCatalog()?.packsDir ?? null);
+        for (const note of retired.notes) info(note);
+
         // Diff vs. old to prune stale files BEFORE persisting the new manifest.
         const pruneResult = await pruneStaleFiles(
           projectRoot,
@@ -362,6 +404,13 @@ export function registerUpdateCommand(program: Command): void {
         let newSetupVersion: string | null = null;
         if (!opts.packsOnly) {
           newSetupVersion = migrateThenStampSetupVersion(projectRoot).stamped;
+          // Once per project: members and routines this Mac made that waited under the old rule are
+          // approved; anything that came by git keeps its one card (adopt-local.ts).
+          const contextRoot = join(projectRoot, '_dream_context');
+          if (existsSync(contextRoot)) {
+            const { adopted } = adoptLocalPending(contextRoot);
+            if (adopted.length > 0) info(`Approved on this Mac (made here, it waited under the old rule): ${adopted.join(', ')}.`);
+          }
         }
 
         // Print relay-able summary always (covers packs-only too).
@@ -369,13 +418,17 @@ export function registerUpdateCommand(program: Command): void {
           platforms,
           installedCount: installed.length,
           packs,
-          removed: pruneResult.removed,
+          removed: [...retired.removed, ...pruneResult.removed],
           setupVersion: newSetupVersion,
           rootInstructions,
         });
         console.log();
         console.log(miniBox(summary.split('\n'), { color: 'green' }));
         console.log();
+        if (!opts.packsOnly) await ensureCodex();
+        // The scheduler is machine-wide and its plist only changes on a re-bootstrap: an older
+        // release's plist keeps every routine under macOS background throttling until refreshed.
+        if (!opts.packsOnly) reportDispatcherRefresh(await refreshStaleDispatcher());
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();

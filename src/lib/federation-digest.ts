@@ -139,7 +139,7 @@ export function computeDigest(
     // `shared` defaults false, and a manifest body IS the prompt a
     // bypassPermissions session runs. Same exclusion as the cross-vault serving
     // path in federation-recall.ts — the two must not drift.
-    .filter((doc) => doc.type !== 'automation' && doc.type !== 'agent')
+    .filter((doc) => doc.type !== 'automation' && doc.type !== 'agent' && doc.type !== 'app')
     // Watermark: only docs changed since the last sync. Undated docs INCLUDE.
     .filter((doc) => {
       if (!doc.updatedAt) return true; // undefined updatedAt → include (safer)

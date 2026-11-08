@@ -1,7 +1,8 @@
 /**
  * The new shell's gate (task codex-tarzi-yeni-kabuk W1, D2): settled ONCE per window from the
- * server, then frozen; classic whatever the switch says on the phone, on Mac mode's tunnel, and
- * when the server cannot answer. The layout writes are server-only and debounced.
+ * server, then frozen; classic when the server cannot answer. A device shell (the phone, Mac
+ * mode's tunnel) opens the new shell whatever the switch says, with no server read, and keeps
+ * its layout in memory only. The layout writes are server-only and debounced.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
@@ -80,17 +81,34 @@ describe('shell gate', () => {
     hang.mockRestore();
   });
 
-  it('classic on the phone, without asking the server', async () => {
-    env.stored = { shell: 'new' };
+  it('the new shell on a phone, without asking the server, whatever the switch says', async () => {
+    env.stored = { shell: 'classic' };
     env.mobile = true;
-    expect(await ux.settleShellMode()).toBe('classic');
+    expect(await ux.settleShellMode()).toBe('new');
+    expect(ux.readDeviceShell()).toBe(true);
     expect(env.gets).toBe(0);
   });
 
-  it('classic on Mac mode\'s tunnel (the Mac phone surface, a remote computer included)', async () => {
-    env.stored = { shell: 'new' };
+  it('the new shell on Mac mode\'s tunnel (the Mac phone surface, a remote computer included)', async () => {
+    env.stored = { shell: 'classic' };
     env.macPhone = true;
+    expect(await ux.settleShellMode()).toBe('new');
+    expect(env.gets).toBe(0);
+  });
+
+  it('a device shell is read once and frozen: a phone that rotates wide keeps it', async () => {
+    env.mobile = true;
+    expect(ux.readDeviceShell()).toBe(true);
+    env.mobile = false;
+    expect(ux.readDeviceShell()).toBe(true);
+    ux.resetShellModeForTests();
+    expect(ux.readDeviceShell()).toBe(false);
+  });
+
+  it('a Mac window is no device shell: the stored switch decides', async () => {
+    env.stored = { shell: 'classic' };
     expect(await ux.settleShellMode()).toBe('classic');
+    expect(ux.readDeviceShell()).toBe(false);
   });
 
   it('no provider (notch, viewer, inbox, checklist windows) reads classic', () => {
@@ -120,5 +138,25 @@ describe('the Settings switch and the layout writes', () => {
     expect(env.posts).toEqual([{ lastVault: 'globex', drawerOpen: false }]);
     expect(env.posts[0]).not.toHaveProperty('shell');
     expect(prefs.readLayoutPrefs().lastVault).toBe('globex');
+  });
+
+  it('a device shell keeps its layout in memory: no POST, no beacon, nothing read', async () => {
+    vi.useFakeTimers();
+    env.macPhone = true;
+    expect(await ux.settleShellMode()).toBe('new');
+    const beacons: unknown[] = [];
+    // Node 21+ has a getter-only `navigator` on globalThis: redefine it, and put it back after.
+    const hadNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { value: { sendBeacon: (...a: unknown[]) => { beacons.push(a); return true; } }, configurable: true, writable: true });
+    const listeners: Array<() => void> = [];
+    (globalThis as any).addEventListener = (ev: string, fn: () => void) => { if (ev === 'pagehide') listeners.push(fn); };
+    prefs.writeLayoutPrefs({ lastVault: 'acme', drawerExpanded: ['acme'], projectOrder: ['acme', 'globex'], drawerWidth: 300 });
+    await vi.advanceTimersByTimeAsync(prefs.LAYOUT_WRITE_DEBOUNCE_MS + 10);
+    for (const fn of listeners) fn();
+    expect(env.posts).toEqual([]);
+    expect(beacons).toEqual([]);
+    expect(env.gets).toBe(0);
+    expect(prefs.readLayoutPrefs()).toMatchObject({ lastVault: 'acme', drawerExpanded: ['acme'], drawerWidth: 300 });
+    if (hadNavigator) Object.defineProperty(globalThis, 'navigator', hadNavigator); else delete (globalThis as any).navigator;
   });
 });

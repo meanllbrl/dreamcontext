@@ -1,20 +1,20 @@
+import { useInAppChat } from '../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
-import { SANDBOX_ALLOW, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
-import { SELECTION_BRIDGE } from '../../lib/textSelection';
+import { SANDBOX_ALLOW } from '../../lib/sandboxHtml';
 import { frameEscSpent, useFrameSelection } from '../sleepy/chat/SelectionBar';
-import { pageDefaultCss } from '../../lib/pageDefaultCss';
+import { buildReportSrcdoc } from '../../lib/reportSrcdoc';
 import {
-  CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
+  CHAT_HTML_SANDBOX, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
   readHeightMessage, resolveChatKitTokens,
 } from '../sleepy/chat/chatHtmlKit';
 import { useProjectHtml } from '../appLink/DocumentReader';
-import { LINK_GUARD } from '../../lib/htmlLocalAssets';
 import { fileNameOf } from '../appLink/viewerPaths';
 import { WEB_WIDGET_SANDBOX } from '../whiteboard/widgets/WebWidget';
-import { ZOOM_BRIDGE, readZoomMessage } from './frameZoomBridge';
+import { readZoomMessage } from './frameZoomBridge';
 import { gestureScale, usePanZoom, type Size, type View } from './usePanZoom';
 import { DeviceSwitch } from './DeviceSwitch';
 import { deviceFit, useWebDevice } from '../../lib/webDevice';
@@ -33,6 +33,12 @@ const MAX_SCALE = 4;
 const STEP = 1.25;
 const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+export function FrameViewer(props: Parameters<typeof FrameViewerLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <FrameViewerLive {...props} />;
+}
+
 /**
  * A web page full screen, to be READ (owner 2026-10-22: "I cannot look at these closely"):
  * opened fitted to the screen's width, zoomed by pinch (two pointers, or the trackpad), ctrl/cmd
@@ -50,7 +56,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * Portalled to `<body>` like ImageViewer (a fixed child of a transformed card would be trapped in
  * it), and its stage is a pinch OWNER: a whiteboard mounted behind it never takes its pinch.
  */
-export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSubject; deviceKey?: string; onClose: () => void }) {
+function FrameViewerLive({ subject, deviceKey, onClose }: { subject: FrameSubject; deviceKey?: string; onClose: () => void }) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -243,7 +249,8 @@ export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSub
 }
 
 /** A project page in the chat's strict sandbox (no network, no navigation), with the height
- *  bridge (its own height) and the zoom bridge (its wheel and pinch in Click mode). */
+ *  bridge (its own height), the zoom bridge (its wheel and pinch in Click mode) and the kit's
+ *  runtime (a dc-graph is laid out and drawn, a dc-tabs switches), as on its card. */
 function HtmlFrame({ path, frameRef, onHeightRequest }: {
   path: string; frameRef: React.MutableRefObject<HTMLIFrameElement | null>; onHeightRequest: () => void;
 }) {
@@ -255,9 +262,7 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
   const loads = useRef(0);
   const html = state.html;
   const srcDoc = useMemo(
-    () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
-    })),
+    () => (html === null ? null : buildReportSrcdoc(html, resolveChatKitTokens(), theme)),
     [html, theme],
   );
   useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);

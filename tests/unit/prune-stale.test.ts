@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, realpathSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pruneStaleFiles } from '../../src/cli/commands/update.js';
+import { designFileSha } from '../../src/lib/core-design-skill.js';
 import {
   emptyManifest,
   writeManifest,
@@ -72,6 +73,22 @@ describe('pruneStaleFiles — partition + keep contract', () => {
     expect(existsSync(join(tmp, WATCHLIST))).toBe(true);
     expect(removed).not.toContain(WATCHLIST);
     expect(keep).toContain(WATCHLIST);
+  });
+
+  it('a design file a release dropped is deleted only when untouched; an edited one is kept', async () => {
+    const untouched = '.claude/skills/design/old-a.md';
+    const edited = '.claude/skills/design/old-b.md';
+    const old = emptyManifest();
+    touch(tmp, untouched, 'shipped a\n');
+    touch(tmp, edited, 'owner rewrote this\n');
+    old.files[untouched] = { version: '0.41.0', kind: 'core', baselineSha: designFileSha('shipped a\n') };
+    old.files[edited] = { version: '0.41.0', kind: 'core', baselineSha: designFileSha('shipped b\n') };
+
+    const { removed, keep } = await pruneStaleFiles(tmp, old, emptyManifest(), false, true);
+
+    expect(removed).toEqual([untouched]);
+    expect(existsSync(join(tmp, edited))).toBe(true);
+    expect(keep).toContain(edited);
   });
 
   it('T6: deletes a concrete-version owned candidate (yes:true)', async () => {

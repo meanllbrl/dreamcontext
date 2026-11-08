@@ -8,11 +8,14 @@ import { splitReplyMark, type ReplySection } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor, isStageChat } from '../../lib/chatAgentBinding';
+import { appChatParam } from '../../lib/chatAppBinding';
+import { chatToolFor, chatToolParam, type ChatTool } from '../../lib/chatToolBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
-  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent, settledToolUseIds, parseTelegramClaim, TG_REF_SHAPE, TG_SENTINEL_CHAR,
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
+import { isHubVerb, planHubAnswer, runHtmlSnapshot } from '../../lib/hubCommands';
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
@@ -22,10 +25,10 @@ import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
-import { readSuperDigest, type SuperDigestWire } from '../../lib/superTypes';
+import { readSuperDigest, type SuperDigestWire, type SuperId } from '../../lib/superTypes';
 import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
-import { openExternalUrl } from '../../lib/desktop';
+import { isDesktop as isDesktopShell, openExternalUrl } from '../../lib/desktop';
 import type { McpConnectState, McpLiveServer } from '../../lib/mcpWire';
 import { clearRefused } from './chat/mcpRows';
 
@@ -100,6 +103,11 @@ export interface ChatUserItem {
    *  stage held as the phone joined, not a new open. */
   stageMedia?: Array<{ ref: string; title?: string }>;
   stageSnapshot?: true;
+  /** A Telegram turn (W3, plan C1/E1): its ref, from the history item, the live `owner_echo` or
+   *  a resubmitted text's leading sentinel pair. Every ref resolver reads `it.ref ?? msgRef(text)`,
+   *  so the Super's `re:<ref>` answer links under this message. `text` never holds the sentinel. */
+  ref?: string;
+  source?: 'telegram';
 }
 export interface ChatTextItem {
   kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
@@ -181,6 +189,11 @@ export interface PendingPermission {
   description?: string;
   suggestions?: unknown[];
   toolUseId?: string;
+  /** The CLI's own reason for asking (`decision_reason`) and its kind (`decision_reason_type`). */
+  decisionReason?: string;
+  decisionReasonType?: string;
+  /** The CLI refuses an "always allow" for this request (`suppress_always_allow_rule`). */
+  suppressAlwaysAllow?: boolean;
 }
 export interface PendingQuestion {
   kind: 'question';
@@ -210,7 +223,7 @@ export interface PendingPlan {
  *  non-empty. */
 export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
 
-/** One message the user DELIBERATELY held back (the composer's ⇡) rather than handing to the
+/** One message the user DELIBERATELY held back (the composer's ⌥⏎, once its ⇡ disc) rather than handing to the
  *  running turn — kept client-side and sent, in order, as each turn settles. Note this is no
  *  longer where ⏎-while-busy lands: that steers into the turn in flight, and the queue is for
  *  the other intent, "not this turn, the next one". Re-exported from chatQueue.ts (which owns
@@ -238,7 +251,9 @@ export function parkGraceOf(asked: unknown): number {
 /** The window sends `focus` at most this often per chat (the server's grace is 2 min). */
 export const FOCUS_FRAME_THROTTLE_MS = 30_000;
 
-export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown> }) =>
+/** `superId`: the super a Super verb is for, set only when its frame names a member's
+ *  (`m:<slug>`); absent = main, and main's command is exactly `{ verb, args }` as before. */
+export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown>; superId?: SuperId }) =>
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>;
 
 /** Runs one Super Agent verb only the window can run (`delegate`, `answer`) — sent down the
@@ -414,7 +429,7 @@ export interface ConversationModel {
   accountSwitch?: {
     switched: boolean;
     reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted' | 'come_home'
-      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
+      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'resumed_at_reset';
     accountId: string;
     fromAccountId?: string;
     email?: string;
@@ -507,6 +522,10 @@ export interface ChatSession {
    *  Turning it OFF fires the subscribers once, so a pane that held its renders while hidden
    *  (chat/hiddenRenderGate.ts) catches up before it paints. */
   minimized: boolean;
+  /** The owner sees it right now (ownerSees.ts): nothing it does is news. */
+  seen: boolean;
+  /** An app's conversation, in whichever pane: its text draws no remote media. */
+  appChat?: boolean;
   capabilities: string[];
   model: string;
   effort: string;
@@ -543,6 +562,9 @@ export interface ChatSession {
    *  for plain Claude. Read at spawn from `chatAgentFor(claudeId)`, so it follows the
    *  conversation through every respawn; readonly for the reason `mode` is. */
   readonly agent: string;
+  /** The tool this conversation runs on: `''` = Claude, `codex` = Codex through the T3 bridge.
+   *  Read at spawn from `chatToolFor(claudeId)`; readonly for the reason `mode` is. */
+  readonly tool: ChatTool;
   /** This pane shows the Super Agent's conversation although its mode is not `super`: the
    *  hands-free phone's mirror (AgentSurface `openSuperOnPhone`). Client-only, never sent. */
   readonly superMirror: boolean;
@@ -625,14 +647,14 @@ export interface ChatSession {
   /** Whether {@link steer} would land right now, for callers that must decide BEFORE they
    *  have text to send (labelling ⏎, enabling a row's "Send now"). */
   canSteer: () => boolean;
-  /** Park a message for the NEXT turn — the composer's ⇡ button, deliberately distinct from
+  /** Park a message for the NEXT turn — the composer's ⌥⏎ (once its ⇡ button), deliberately distinct from
    *  ⏎ now that ⏎ steers. Appends to `conv.queued`; `maybeFlushQueue` sends it when the
    *  in-flight turn settles. Whitespace-only text is ignored, exactly as `send` ignores it.
    *
    *  `steerWhenPossible` marks a row that is here only because {@link steer} refused — it
    *  still wants the first opening rather than the end of the turn, and `maybeFlushQueue`
    *  gives it one as soon as there is one. Callers falling back from a refused steer should
-   *  always pass it; the ⇡ button never does. */
+   *  always pass it; ⌥⏎ never does. */
   enqueue: (text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }) => void;
   /** Hold the queue as Stop does (a no-op when it is empty). For a respawn carrying over the
    *  rows of a session whose queue the user had paused: the rows come along, the pause too. */
@@ -699,6 +721,9 @@ export interface ChatSession {
   /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
    *  uses it for the owner-activity lease; the text itself never leaves the window. */
   setDraftListener: (fn: ((text: string) => void) | null) => void;
+  /** The stage's header for the owner's next message (`[About task <slug>]` while a member's
+   *  task strip is up); null = none. */
+  setAboutHeader?: (fn: ((text: string) => string) | null) => void;
   /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt).
    *  FALSE when the answer could not be written (the socket is not open): the card stays, and
    *  the caller says so instead of reporting an answer nobody received. TRUE after a write,
@@ -791,6 +816,8 @@ export interface ChatSession {
    *  (contract C7); a no-op if no preceding user item exists (e.g. the very first turn,
    *  or the assistant item id is unknown). */
   retry: (assistantItemId: string) => Promise<void>;
+  /** A saved transcript with no process behind it: nothing here can be rewound or resent. */
+  savedOnly?: true;
   /** Session-scoped "Always allow this session" (state 6's permission card checkbox):
    *  every future permission request for this EXACT tool name auto-allows without ever
    *  pushing a card. Client-side only — no protocol change. Never applies to an
@@ -857,6 +884,9 @@ export interface HistoryEntry {
   trigger?: 'manual' | 'auto';
   preTokens?: number;
   postTokens?: number;
+  /** A user entry written by the Telegram hub (`<owner-msg … via="telegram"/>`, plan B2). */
+  source?: 'telegram';
+  ref?: string;
 }
 
 /** The index of the last compaction card `match` accepts, or -1. */
@@ -874,7 +904,8 @@ export function historyChatItem(h: HistoryEntry, idStr: string): ChatItem | null
   const at = typeof h.at === 'number' && h.at > 0 ? h.at : 0;
   const endAt = typeof h.endAt === 'number' && h.endAt > 0 ? h.endAt : at;
   if (h.kind === 'user' && typeof h.text === 'string') {
-    return { kind: 'user', id: idStr, text: h.text, ts: at, uuid: h.uuid };
+    const telegram = h.source === 'telegram' && typeof h.ref === 'string' && TG_REF_SHAPE.test(h.ref);
+    return { kind: 'user', id: idStr, text: h.text, ts: at, uuid: h.uuid, ...(telegram ? { ref: h.ref, source: 'telegram' as const } : {}) };
   }
   if (h.kind === 'text' && typeof h.text === 'string') {
     return { kind: 'text', id: idStr, index: -1, text: h.text, done: true, ts: at };
@@ -989,6 +1020,26 @@ export function mergeReplay(transcript: ChatItem[], live: ChatItem[]): { history
   return { history: transcript, kept };
 }
 
+/** A member Super's `delegate` frame carries `crewTicket` (opaque, the server's): the window binds
+ *  it to the child's id before spawning it, and the child's connection takes it as `crewTicket`. */
+const crewTickets = new Map<string, string>();
+const MAX_CREW_TICKET = 512;
+
+/** Bind a delegate's crew ticket to the child about to be spawned. Anything not a non-empty
+ *  string (main's frames carry none) binds nothing. */
+export function bindCrewTicket(claudeId: string, ticket: unknown): void {
+  if (!claudeId || typeof ticket !== 'string' || !ticket || ticket.length > MAX_CREW_TICKET) return;
+  crewTickets.set(claudeId, ticket);
+}
+
+/** The child's `&crewTicket=` query, or '' (no ticket bound). Taken: the binding dies here. */
+export function takeCrewTicketParam(claudeId: string): string {
+  const ticket = crewTickets.get(claudeId);
+  if (ticket === undefined) return '';
+  crewTickets.delete(claudeId);
+  return `&crewTicket=${encodeURIComponent(ticket)}`;
+}
+
 // ─── Session factory ────────────────────────────────────────────────────────────────
 
 let chatSessionSeq = 0;
@@ -1079,6 +1130,14 @@ export function createChatSession(
   const stageParam = agent && isStageChat(claudeId) ? '&stage=1' : '';
   // On BOTH URLs too: a reconnect that respawns a lean child must respawn it lean.
   const leanParam = leanMcpParam(leanMcp);
+  // A member Super's delegated child: the server's crew ticket for it (taken once, at spawn), on
+  // BOTH URLs like `lean`. '' for every other chat, so their URLs are unchanged byte-for-byte.
+  const crewParam = takeCrewTicketParam(claudeId);
+  // The tool this conversation runs on (Track T), on BOTH URLs: a reconnect that respawns a Codex
+  // pane must respawn it on Codex. '' for Claude, so a Claude URL is unchanged byte-for-byte.
+  const toolParam = chatToolParam(claudeId);
+  // An app's conversation, on BOTH URLs: a reconnect goes through the app gate again.
+  const appParam = appChatParam(claudeId);
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -1088,7 +1147,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${crewParam}${toolParam}${appParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -1097,7 +1156,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${crewParam}${toolParam}${appParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
@@ -1318,7 +1377,7 @@ export function createChatSession(
     // running before any frame arrives, so the working indicator, the dock chip and the
     // "don't inject into a busy session" guards must all see it (a spawn with no prompt
     // stays idle — it is genuinely waiting for the user).
-    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false,
+    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false, seen: false,
     get agentsWorking() { return teammatesWorking || agentRunRunning(conv.subAgents); },
     superChild: false,
     capabilities: [],
@@ -1326,6 +1385,7 @@ export function createChatSession(
     effort,
     mode,
     agent,
+    tool: chatToolFor(claudeId),
     superMirror,
     accountId,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
@@ -1378,6 +1438,7 @@ export function createChatSession(
       session.superChild = childAlarm.child;
     },
     setDraftListener: (fn) => { draftListener = fn; },
+    setAboutHeader: (fn) => { aboutHeader = fn; },
     interrupt,
     bargeInSpeech,
     armSpoken: (text: string) => { spokenNext = text.trim() || null; },
@@ -1452,6 +1513,17 @@ export function createChatSession(
    * drift on which edge counts: a plan landing while a question is open must not chime a
    * second time, and vice versa — it is one interruption, not two.
    */
+  /** Drop every PERMISSION card whose `toolUseId` is in `ids`: its tool already has a result,
+   *  so the CLI no longer waits on it. A question or plan card carries no tool_use id and is
+   *  never dropped here. */
+  function dropSettledPermissions(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const pending = conv.pending.filter((p) => !(p.kind === 'permission' && !!p.toolUseId && ids.includes(p.toolUseId)));
+    if (pending.length === conv.pending.length) return;
+    conv = { ...conv, pending };
+    session.asking = conv.pending.length > 0;
+  }
+
   function pushAsk(others: PendingItem[], entry: PendingQuestion | PendingPlan): void {
     const hadAskBefore = conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan');
     conv = { ...conv, pending: [...others, entry] };
@@ -1571,6 +1643,10 @@ export function createChatSession(
       }
       case 'account-active': {
         conv = { ...conv, activeAccountId: ev.accountId };
+        return;
+      }
+      case 'app-chat': {
+        session.appChat = true;
         return;
       }
       case 'slash-commands': {
@@ -1937,7 +2013,23 @@ export function createChatSession(
         conv = { ...conv, subAgents: [...reconciled, ...adopted] };
         return;
       }
+      case 'request-cancelled': {
+        // The CLI withdrew the request (its stdin closed: "Stream closed"): whatever card it
+        // drew is dead, of any kind, and answering it would write into nothing.
+        if (!conv.pending.some((p) => p.requestId === ev.requestId)) return;
+        conv = { ...conv, pending: conv.pending.filter((p) => p.requestId !== ev.requestId) };
+        session.asking = conv.pending.length > 0;
+        return;
+      }
+      case 'tool-uses-settled': {
+        dropSettledPermissions(ev.toolUseIds);
+        return;
+      }
       case 'tool-result': {
+        // A permission card whose tool already got its result is a ghost: the CLI gave up on
+        // the request (e.g. 'Stream closed') and told the model. Every id the frame answered
+        // counts (parallel tools share one frame), a sub-agent's result included.
+        dropSettledPermissions(settledToolUseIds(ev));
         // The card half is skipped for a SUB-AGENT's result (its tool_use was never carded —
         // see the `assistant-tool-use` note). Load-bearing that this skips the whole block and
         // not just the update arm: the `else` below MATERIALIZES a card for an unknown
@@ -2009,7 +2101,9 @@ export function createChatSession(
         // third interactive shape — one this parser didn't recognize — and it is exempt for
         // the same reason they are: the CLI asked for a person, so a remembered click on an
         // earlier prompt for the same tool name must not answer on their behalf.
-        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction) {
+        // Nor a request the CLI marked `suppress_always_allow_rule` (a safety check it runs even
+        // in Bypass): an earlier tick on another Bash card must not answer it unseen.
+        if (sessionAllow.has(ev.toolName) && !ev.requiresInteraction && !ev.suppressAlwaysAllow) {
           answer(ev.requestId, { behavior: 'allow', updatedInput: ev.input });
           return;
         }
@@ -2017,6 +2111,9 @@ export function createChatSession(
         const entry: PendingPermission = {
           kind: 'permission', requestId: ev.requestId, toolName: ev.toolName, displayName: ev.displayName,
           input: ev.input, description: ev.description, suggestions: ev.suggestions, toolUseId: ev.toolUseId,
+          ...(ev.decisionReason ? { decisionReason: ev.decisionReason } : {}),
+          ...(ev.decisionReasonType ? { decisionReasonType: ev.decisionReasonType } : {}),
+          ...(ev.suppressAlwaysAllow ? { suppressAlwaysAllow: true } : {}),
         };
         conv = { ...conv, pending: [...pending, entry] };
         session.asking = conv.pending.length > 0;
@@ -2056,9 +2153,9 @@ export function createChatSession(
         closeOpenBlocks();
         // The turn is over, so a trailing partial chunk will never be closed by more text.
         speech?.flushTurn();
-        // Finished while minimized (not looking at it) -> flag the dock's attention badge,
+        // Finished while the owner was not looking -> flag the dock's attention badge,
         // mirroring agentSession.ts's onSettle (no chime here — only a fresh question chimes).
-        if (session.minimized && !session.attention) session.attention = true;
+        if (!session.seen && !session.attention) session.attention = true;
         return;
       }
       case 'prompt-echo': {
@@ -2405,6 +2502,8 @@ export function createChatSession(
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // Nor is a window verb: the surface runs it and the answer goes back up the socket.
     if (ev.kind === 'window-command') { void runWindowCommand(ev); return; }
+    // The Telegram hub's verbs: their own subtype and result frame (W1 contract A2, B3).
+    if (ev.kind === 'hub-command') { void runHubCommand(ev); return; }
     if (ev.kind === 'park-request') { runPark(ev); return; }
     // The Super Agent's window-side verbs, the same way (their own subtype and result frame).
     if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
@@ -2441,7 +2540,10 @@ export function createChatSession(
     // The owner typed on the Super Agent's other surface: their bubble here too, in order.
     if (ev.kind === 'owner-echo') {
       applyAndNotify(() => {
-        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        const item: ChatUserItem = {
+          kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now(),
+          ...(ev.ref && ev.source === 'telegram' ? { ref: ev.ref, source: 'telegram' as const } : {}),
+        };
         conv = { ...conv, items: [...conv.items, item] };
       });
       return;
@@ -2531,10 +2633,14 @@ export function createChatSession(
     };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
+    // The frame carried the text as it came (a resubmitted Telegram turn keeps its sentinel pair,
+    // so the server honours its ref again, E1); the bubble shows the body and keeps the ref.
+    const claim = parseTelegramClaim(clean);
     applyAndNotify(() => {
       const item: ChatUserItem = {
-        kind: 'user', id: nextItemId(), text: clean, ts: Date.now(),
+        kind: 'user', id: nextItemId(), text: claim.body.trim() || clean, ts: Date.now(),
         ...(opts.steered ? { steered: true as const } : {}),
+        ...(claim.ref ? { ref: claim.ref, source: 'telegram' as const } : {}),
       };
       conv = {
         ...conv,
@@ -2561,9 +2667,19 @@ export function createChatSession(
     try { return ownerWordsHook(clean) === true; } catch { return false; }
   }
 
+  /** What the stage wants on top of the owner's next message (a member's task strip:
+   *  `[About task <slug>]`, plan-r10 1c); null = nothing. Read at the send, so the strip in view
+   *  at that moment decides. */
+  let aboutHeader: ((text: string) => string) | null = null;
+  function withAbout(text: string): string {
+    // A resubmitted Telegram turn keeps its sentinel pair in front: nothing is put before it.
+    if (!aboutHeader || text.startsWith(TG_SENTINEL_CHAR)) return text;
+    try { return aboutHeader(text); } catch { return text; }
+  }
+
   function send(text: string): boolean {
     if (ownerWordsTaken(text)) return true;
-    return writeUser(text, { steered: false });
+    return writeUser(withAbout(text), { steered: false });
   }
 
   /**
@@ -2580,7 +2696,7 @@ export function createChatSession(
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(text, { steered: true });
+    return writeUser(withAbout(text), { steered: true });
   }
 
   /**
@@ -2849,6 +2965,11 @@ export function createChatSession(
   function setWindowHandler(fn: WindowCommandHandler | null): void { windowHandler = fn; }
   async function runWindowCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
     let out: Awaited<ReturnType<WindowCommandHandler>>;
+    // A hub verb never arrives as a window verb: one that does is ignored (contract A2).
+    if (isHubVerb(cmd.verb)) {
+      sendControl({ type: 'window_command_result', id: cmd.id, ok: false, error: 'unknown_verb' });
+      return;
+    }
     try {
       out = windowHandler ? await windowHandler({ verb: cmd.verb, args: cmd.args }) : { ok: false, error: 'no_window' };
     } catch (err) {
@@ -2857,6 +2978,31 @@ export function createChatSession(
     sendControl(out.ok
       ? { type: 'window_command_result', id: cmd.id, ok: true, result: out.result ?? null }
       : { type: 'window_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
+  // ── The Telegram hub's verbs (hub_command, src/lib/telegram/contract.ts) ────────────
+  /** `answer_pending` answers only a card pending on THIS chat, through the same `answer` the Mac
+   *  card calls; `html_snapshot` hands the server's page to the shell's sealed renderer. */
+  async function runHubCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+    let result: { ok: true; [k: string]: unknown } | { ok: false; error: string; [k: string]: unknown };
+    try {
+      if (cmd.verb === 'answer_pending') {
+        const plan = planHubAnswer(cmd.args, conv.pending);
+        if (!plan.ok) result = { ok: false, error: plan.error };
+        else {
+          const written = answer(plan.requestId, { behavior: plan.behavior, updatedInput: plan.updatedInput, message: plan.message });
+          result = written ? { ok: true } : { ok: false, error: 'offline' };
+        }
+      } else if (cmd.verb === 'html_snapshot') {
+        const invoke = isDesktopShell() ? (await import('@tauri-apps/api/core')).invoke as (c: string, a: Record<string, unknown>) => Promise<unknown> : null;
+        result = await runHtmlSnapshot(cmd.args, invoke);
+      } else {
+        result = { ok: false, error: 'unsupported' };
+      }
+    } catch (err) {
+      result = { ok: false, error: err instanceof Error ? err.message.slice(0, 200) : 'failed' };
+    }
+    sendControl({ type: 'hub_command_result', id: cmd.id, result });
   }
 
   // ── Parking under load (src/server/chat-park.ts) ──────────────────────────────────
@@ -2919,10 +3065,12 @@ export function createChatSession(
       try { fn(signal); } catch (err) { console.warn('[chat] super listener failed:', err); }
     }
   }
-  async function runSuperCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+  async function runSuperCommand(cmd: { id: string; verb: string; args: Record<string, unknown>; superId?: SuperId }): Promise<void> {
     let out: Awaited<ReturnType<SuperCommandHandler>>;
     try {
-      out = superHandler ? await superHandler({ verb: cmd.verb, args: cmd.args }) : { ok: false, error: 'no_window' };
+      // A member's frame names its super; main's carries none and goes on as `{ verb, args }`.
+      const forSuper = cmd.superId && cmd.superId !== 'main' ? { superId: cmd.superId } : {};
+      out = superHandler ? await superHandler({ verb: cmd.verb, args: cmd.args, ...forSuper }) : { ok: false, error: 'no_window' };
     } catch (err) {
       out = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -3150,7 +3298,9 @@ export function createChatSession(
 
   async function fetchTranscriptHistory(): Promise<HistoryEntry[]> {
     try {
-      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
+      const r = await api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`);
+      // Set before the items enter the model: an image must not paint ahead of the socket's word.
+      if (r?.appChat) session.appChat = true;
       return Array.isArray(r?.items) ? r.items : [];
     } catch { return []; }
   }
@@ -3197,9 +3347,10 @@ export function createChatSession(
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const r = await Promise.race([
-          api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`),
+          api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), CONNECT_TIMEOUT_MS); }),
         ]);
+        if (r?.appChat) session.appChat = true;
         entries = Array.isArray(r?.items) ? r.items : [];
       } catch { entries = null; } finally { clearTimeout(timer); }
       if (disposed || gen !== replayGen) return;

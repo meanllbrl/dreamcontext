@@ -15,7 +15,7 @@ import { SIGNED_OUT_FOR_MS, readSignedOut } from '../claude-signed-out.js';
 import { sandboxHasIdentity } from '../claude-account-sandbox.js';
 import { probeAccountUsage, type ProbeOutcome } from '../claude-usage-probe.js';
 import {
-  EMPTY_USAGE_LIMITS, readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse,
+  EMPTY_USAGE_LIMITS, otherAccountSignedIn, readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse,
 } from '../claude-usage.js';
 
 /**
@@ -99,15 +99,49 @@ function cachedUsage(dir: string): UsageLimitsResponse {
   }
 }
 
-/** Accounts that cannot serve: no credential in the sandbox, or recorded signed out. */
+/**
+ * Accounts that cannot serve: no credential in the sandbox, recorded signed out, or a folder
+ * signed in as ANOTHER account (a chat there would bill that other account under this name).
+ */
 export function signedOutAccounts(accounts: readonly ClaudeAccount[], home: string, now: number): Set<string> {
   const recorded = readSignedOut(home, now);
   const out = new Set<string>();
   for (const a of accounts) {
     if (recorded[a.id] !== undefined) { out.add(a.id); continue; }
     try { if (!sandboxHasIdentity(a.configDir ?? home, home)) out.add(a.id); } catch { /* unknown: not proven out */ }
+    if (otherAccountSignedIn(a.configDir ?? home, home) !== null) out.add(a.id);
   }
   return out;
+}
+
+/**
+ * Where a new chat opens when no account is under the switch threshold, or the preferred one
+ * cannot serve. Owner, 2026-11-03: "new chats start here" sat on an account at 100% with a
+ * standing refusal while another row still had room. Best first, the owner's order inside a tier:
+ *   1. not refused, and its reading does not put it past the threshold;
+ *   2. not refused, and no open window is FULL (92% still serves a chat; 100% does not);
+ *   3. not refused;
+ *   4. refused: the one that comes back soonest.
+ * Signed-out accounts are never picked while a signed-in one exists. Null when none is signed in.
+ */
+export function standbyAccount(
+  accounts: readonly ClaudeAccount[],
+  out: ReadonlySet<string>,
+  rejectedUntil: Readonly<Record<string, { until: number }>>,
+  read: (dir: string) => UsageLimitsResponse,
+  home: string,
+  now: number,
+): ClaudeAccount | null {
+  const live = accounts.filter((a) => !out.has(a.id));
+  const free = live.filter((a) => !(rejectedUntil[a.id] && rejectedUntil[a.id]!.until > now));
+  const reading = (a: ClaudeAccount): UsageLimitsResponse => {
+    try { return read(a.configDir ?? home); } catch { return EMPTY_USAGE_LIMITS; }
+  };
+  return free.find((a) => !provenPastThreshold(reading(a), SWITCH_THRESHOLD_PERCENT, now))
+    ?? free.find((a) => !provenPastThreshold(reading(a), 100, now))
+    ?? free[0]
+    ?? [...live].sort((a, b) => (rejectedUntil[a.id]?.until ?? 0) - (rejectedUntil[b.id]?.until ?? 0))[0]
+    ?? null;
 }
 
 /** The account the run used before auto-switch reached automations: never throws. */
@@ -178,16 +212,24 @@ export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
     // no credential in its sandbox, or a turn on it was refused for sign-in. A new chat never
     // opens there while a signed-in account exists, whatever auto-switch says.
     const out = deps.signedOut ?? signedOutAccounts(accounts, home, now);
+    const read = deps.readUsage ?? cachedUsage;
     // Where to go when the preferred account is signed out and nothing better is proven: the
-    // first signed-in one in the owner's order (one with no standing refusal first).
-    const next = out.has(preferred.id)
-      ? accounts.find((a) => !out.has(a.id) && !rejectedUntil[a.id]) ?? accounts.find((a) => !out.has(a.id)) ?? null
-      : null;
-    const orFallback = (): AutomationAccount => (next ? toAccount(next, home) : fallback);
-    if (next && !autoSwitchEnabled(home)) return orFallback();
+    // best signed-in standby (`standbyAccount`), never simply the first one in the list.
+    const next = out.has(preferred.id) ? standbyAccount(accounts, out, rejectedUntil, read, home, now) : null;
+    if (next && !autoSwitchEnabled(home)) return toAccount(next, home);
     for (const id of out) rejectedUntil[id] = { until: now + SIGNED_OUT_FOR_MS };
     if (!autoSwitchEnabled(home)) return fallback;
-    const read = deps.readUsage ?? cachedUsage;
+    // No winner under the threshold. The preferred account stays while it can still SERVE (no
+    // blind pick onto an account nothing current vouches for); only when it cannot, refused or
+    // a window proven full, does the best standby take over (owner, 2026-11-03: "new chats
+    // start here" on an account at 100% with a standing refusal).
+    const orFallback = (): AutomationAccount => {
+      if (next) return toAccount(next, home);
+      const refused = (rejectedUntil[preferred.id]?.until ?? 0) > now;
+      if (!refused && !provenPastThreshold(read(dirOf(preferred)), 100, now)) return fallback;
+      const standby = standbyAccount(accounts, out, rejectedUntil, read, home, now);
+      return standby ? toAccount(standby, home) : fallback;
+    };
     const sequential = switchStrategyFor(home) === 'sequential';
     if (!rejectedUntil[preferred.id]) {
       const cached = read(dirOf(preferred));
@@ -296,7 +338,9 @@ async function decide(deps: PickDeps): Promise<AutomationAccount> {
 // second chooser. Nothing left: the start waits until the earliest window reset or refusal end.
 // Owner-typed messages never pass through here: a person at the keyboard decides for themself.
 
-export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number };
+/** `noneOpen`: every account is kept for the owner's own chats, so nothing can start until one is
+ *  opened to routines again (no reset will fix that, and the reason must say so). */
+export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number; noneOpen?: true };
 
 /** When nothing at all says when an account frees up (every one is "Only mine" or signed out). */
 const UNKNOWN_WAIT_MS = 30 * 60_000;
@@ -348,6 +392,9 @@ export async function protectedAutomationAccount(deps: PickDeps & { threshold?: 
         continue;
       }
       if (await serves(a.configDir ?? home)) return { account: toAccount(a, home) };
+    }
+    if (c.accounts.every((a) => a.ownerOnly)) {
+      return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS, noneOpen: true };
     }
   }
   return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS };

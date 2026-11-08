@@ -26,10 +26,17 @@ pub(crate) fn node_can_disable_sigusr1((major, minor, _): (u32, u32, u32)) -> bo
 
 /// The app's own server, port included. The capability's remote scope allows every loopback
 /// port, and a card or a redirect can put another one in a window.
-fn is_app_page(url: &Url, port: u16) -> bool {
+pub(crate) fn is_app_page(url: &Url, port: u16) -> bool {
     url.scheme() == "http"
         && matches!(url.host_str(), Some("127.0.0.1") | Some("localhost"))
         && url.port() == Some(port)
+}
+
+/// The app's own server by its literal address only. The server listens on 127.0.0.1, so a
+/// `localhost` page could resolve to `[::1]:<port>`, which another local process may hold; the
+/// commands that act in the owner's name (Telegram confirms, the sealed snapshot) accept no such page.
+pub(crate) fn is_own_server_page(url: &Url, port: u16) -> bool {
+    url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(port)
 }
 
 #[tauri::command]
@@ -57,6 +64,15 @@ mod tests {
         assert!(!page("http://127.0.0.1:5173/"));
         assert!(!page("https://127.0.0.1:4173/"));
         assert!(!page("http://evil.test:4173/"));
+    }
+
+    #[test]
+    fn the_owner_commands_accept_the_literal_loopback_only() {
+        let own = |u: &str| is_own_server_page(&Url::parse(u).unwrap(), 4173);
+        assert!(own("http://127.0.0.1:4173/?vault=x"));
+        assert!(!own("http://localhost:4173/"));
+        assert!(!own("http://[::1]:4173/"));
+        assert!(!own("http://127.0.0.1:5173/"));
     }
 
     #[test]

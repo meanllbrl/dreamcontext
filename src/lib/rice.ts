@@ -124,3 +124,28 @@ export function mergeRice(existing: RiceFields | null, patch: RiceInput): RiceFi
 
   return { ...base, score: computeRiceScore(base) };
 }
+
+/**
+ * Priority bands (Now / Next / Later) per level, fixed for every project.
+ * Tasks: Now ≥ 20, Next 8 to < 20, Later < 8. Objectives: Now ≥ 5, Next 2 to < 5,
+ * Later < 2. Objectives differ because their effort is real weeks that also drive
+ * the forecast, so R×I×C/100 (max 50) over several weeks of effort can never reach
+ * the task thresholds. Mirrored in dashboard/src/components/roadmap/priorityModel.ts
+ * (drift-tested).
+ */
+export const PRIORITY_BANDS = {
+  task: { now: 20, next: 8 },
+  objective: { now: 5, next: 2 },
+} as const;
+
+export type PriorityLevel = keyof typeof PRIORITY_BANDS;
+export type PriorityBand = 'now' | 'next' | 'later';
+
+/** The band a score falls in at `level`; null when there is no score. */
+export function priorityBand(level: PriorityLevel, score: number | null | undefined): PriorityBand | null {
+  if (score === null || score === undefined || !Number.isFinite(score)) return null;
+  const t = PRIORITY_BANDS[level];
+  if (score >= t.now) return 'now';
+  if (score >= t.next) return 'next';
+  return 'later';
+}

@@ -17,6 +17,7 @@ import { loadStatuses } from '../overrides.js';
 import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
 import { parseWhiteboard, serializeWhiteboard, type Whiteboard } from '../whiteboards/format.js';
 import { mergeElements, stripTombstones } from '../whiteboards/merge.js';
+import { mergeGroupOrderJson } from '../whiteboards/group-order.js';
 import { parkConflictCopy } from '../agents/agent-sync.js';
 import { WhiteboardCorruptError } from '../whiteboards/errors.js';
 import {
@@ -50,6 +51,8 @@ export type MergeClass =
   | 'task-objections-json'
   /** `whiteboards/<slug>/<slug>.excalidraw.md` — element-level merge (whiteboard D13). */
   | 'whiteboard-md'
+  /** `whiteboards/.groups.json`: the explorer's group order, ours first (mergeGroupOrderJson). */
+  | 'whiteboard-group-order'
   /** `lab/boards/*.md`: union of cards by id (mergeLabBoard). `lab/blocks/*.md` stays on the prose path. */
   | 'lab-board'
   /** `agents/*.md`, `automations/*.md` (AI Team v2 B1-8): never blended. Same id: the owner's copy
@@ -83,6 +86,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
   if (/^whiteboards\/([^/]+)\/\1\.excalidraw\.md$/.test(norm)) return 'whiteboard-md';
+  if (norm === 'whiteboards/.groups.json') return 'whiteboard-group-order';
   if (/^lab\/boards\/[^/]+\.md$/.test(norm)) return 'lab-board';
   if (/^agents\/\.active\/[a-z0-9][a-z0-9-]*\.json$/.test(norm)) return 'agent-active';
   if (/^(?:agents|automations)\/[a-z0-9][a-z0-9-]*\.md$/.test(norm)) return 'agent-manifest';
@@ -811,6 +815,9 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         break;
       case 'task-objections-json':
         mergedContent = mergeTaskObjectionsJson(base, ours, theirs).merged;
+        break;
+      case 'whiteboard-group-order':
+        mergedContent = mergeGroupOrderJson(base, ours, theirs);
         break;
       case 'task-md': {
         const taskResult = mergeTaskMd(base, ours, theirs, { statuses: statusSet() });

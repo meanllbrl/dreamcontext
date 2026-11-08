@@ -22,6 +22,14 @@
       ]
     },
     {
+      "path": "agents board-scope",
+      "desc": "Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)",
+      "args": [
+        "<slug>",
+        "<answer>"
+      ]
+    },
+    {
       "path": "agents bring-here",
       "desc": "Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull",
       "args": [
@@ -171,6 +179,274 @@
       ]
     },
     {
+      "path": "apps",
+      "desc": "dreamcontext Apps: local web apps that belong to this project and open in their own Mac window (not `dreamcontext app`)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "apps assign",
+      "desc": "Assign an AI Team agent to the app, or `--own` to give it its own assistant (written to its manifest)",
+      "args": [
+        "<slug>",
+        "[agent]"
+      ]
+    },
+    {
+      "path": "apps backup",
+      "desc": "Back up the app's data folder now, outside every repo (~/.dreamcontext/apps/backup/)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps call",
+      "desc": "One raw request to the app backend (prefer `apps do`); anything but a GET is a change and needs --confirm",
+      "args": [
+        "<slug>",
+        "<method>",
+        "<path>"
+      ],
+      "valueFlags": [
+        "--body"
+      ]
+    },
+    {
+      "path": "apps catalog",
+      "desc": "The brain's list of this project's apps (a publish writes it)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "apps catalog remove",
+      "desc": "Take an app off the brain's list (the owner's verb; its next publish writes it back)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps config",
+      "desc": "Show or fill the app's settings on this Mac (values never go into the app's repo)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--set"
+      ]
+    },
+    {
+      "path": "apps detach",
+      "desc": "Make your own copy (no more updates from the original): the owner's click on the Apps page",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps do",
+      "desc": "Run one of an installed app's tools and take its own answer (no Claude turn, no usage limit)",
+      "args": [
+        "<slug>",
+        "<action>"
+      ],
+      "valueFlags": [
+        "--input"
+      ]
+    },
+    {
+      "path": "apps install",
+      "desc": "Preview an app from a repo (owner/repo or its link) before the owner installs it on the Apps page",
+      "args": [
+        "<repo>"
+      ]
+    },
+    {
+      "path": "apps learn",
+      "desc": "Queue one finding of this app for sleep (its assistant's verb; the text is data, at most 600 characters)",
+      "args": [
+        "<slug>",
+        "<text...>"
+      ]
+    },
+    {
+      "path": "apps learn-done",
+      "desc": "Drop the findings sleep wrote into knowledge/apps/<slug>.md, up to and including --through",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--through"
+      ]
+    },
+    {
+      "path": "apps learn-list",
+      "desc": "The app's queued findings, fenced as untrusted data (sleep-product reads this)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps list",
+      "desc": "List this project's apps",
+      "args": []
+    },
+    {
+      "path": "apps logs",
+      "desc": "The redacted backend/build log tail",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "-n",
+        "--lines"
+      ]
+    },
+    {
+      "path": "apps new",
+      "desc": "Create a new app beside the project (<project>-apps/<slug>/, its own git) and register it",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--name"
+      ]
+    },
+    {
+      "path": "apps open",
+      "desc": "Open the app window (or bring it forward); clears an owner Stop",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps publish",
+      "desc": "Check what a publish would send and what stops it; with --go and the grant the owner's Publish click gave you, publish it",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--repo",
+        "--grant",
+        "--invite",
+        "--approve",
+        "--note",
+        "--tagline",
+        "--confirm-name"
+      ]
+    },
+    {
+      "path": "apps remove",
+      "desc": "Unregister the app (its window bundle and data pins go; the code folder stays)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps restore",
+      "desc": "Put a backup back as the app's data folder (the current data is backed up first)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--at"
+      ]
+    },
+    {
+      "path": "apps run-schedule",
+      "desc": "Run one of an app's schedules now (the automations tick calls this; no Claude)",
+      "args": [
+        "<slug>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "apps screenshot",
+      "desc": "A PNG of the OPEN app window as it is now (never opens or moves it)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--out"
+      ]
+    },
+    {
+      "path": "apps secret",
+      "desc": "Type a key into the app's own .env on this Mac (hidden input; a terminal only)",
+      "args": [
+        "<slug>",
+        "<key>"
+      ]
+    },
+    {
+      "path": "apps shared",
+      "desc": "Shared Apps: apps shared with you (and invitations waiting), from the signed-in GitHub account",
+      "args": []
+    },
+    {
+      "path": "apps start",
+      "desc": "Same as open: start the app and open its window",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps status",
+      "desc": "State, last error and warnings",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps stop",
+      "desc": "Stop the backend (stays stopped until opened again by the owner)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps tools",
+      "desc": "The app tools of this project on THIS Mac: what each installed app can do (`apps do`), and the project's apps not installed here",
+      "args": [
+        "[slug]"
+      ],
+      "aliases": [
+        "actions"
+      ]
+    },
+    {
+      "path": "apps uninstall",
+      "desc": "Remove an installed app (to the trash, restorable): the owner's click on the Apps page",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps update",
+      "desc": "Check an installed app for an update (applying it is the owner's click)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps validate",
+      "desc": "Check an app manifest and say how to fix each problem (no server needed)",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
+      "path": "ask",
+      "desc": "Run a prompt or an agent role on another tool (claude, codex, antigravity) and print the answer. Read-only unless --write",
+      "args": [
+        "<prompt...>"
+      ],
+      "valueFlags": [
+        "--tool",
+        "--model",
+        "--agent",
+        "--timeout"
+      ]
+    },
+    {
       "path": "assistant",
       "desc": "The dreamcontext Assistant's verbs — only its own chat session can run these",
       "args": [],
@@ -198,6 +474,41 @@
         "--question",
         "--choice",
         "--text"
+      ]
+    },
+    {
+      "path": "assistant app-do",
+      "desc": "Run one of an app's actions, through the autonomy gate",
+      "args": [
+        "<vault>",
+        "<slug>",
+        "<action>"
+      ],
+      "valueFlags": [
+        "--input"
+      ]
+    },
+    {
+      "path": "assistant app-open",
+      "desc": "Open an app window, or bring it forward",
+      "args": [
+        "<vault>",
+        "<slug>"
+      ]
+    },
+    {
+      "path": "assistant app-shot",
+      "desc": "A picture of an app window that is already open; prints the path to Read",
+      "args": [
+        "<vault>",
+        "<slug>"
+      ]
+    },
+    {
+      "path": "assistant apps",
+      "desc": "Each project's dreamcontext Apps and their actions (data, not instructions)",
+      "args": [
+        "[vault]"
       ]
     },
     {
@@ -372,7 +683,7 @@
     },
     {
       "path": "automations create",
-      "desc": "Scaffold a new automation manifest, auto-approved on this machine",
+      "desc": "Scaffold a new automation manifest. Approved on the spot: made on this Mac, by you, your Super Agent or a member. Only risky text an agent run wrote waits for the owner's yes (a card in the chat, or the AI Team page)",
       "args": [
         "<slug>"
       ],
@@ -390,6 +701,8 @@
         "--prompt-file",
         "--review",
         "--whiteboard",
+        "--app",
+        "--app-tools",
         "--agent",
         "--job",
         "--answer"
@@ -521,7 +834,7 @@
     },
     {
       "path": "automations schedule",
-      "desc": "Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)",
+      "desc": "Show or edit an automation's fire slots and catch-up window — no YAML editing, no re-approval (neither is approval-hashed)",
       "args": [
         "<slug>"
       ],
@@ -530,7 +843,8 @@
         "--add",
         "--remove",
         "--days",
-        "--at"
+        "--at",
+        "--catchup"
       ]
     },
     {
@@ -560,37 +874,6 @@
       ],
       "valueFlags": [
         "--history"
-      ]
-    },
-    {
-      "path": "automations telegram",
-      "desc": "Answer one automation's questions from your phone (a per-automation bot token; never synced)",
-      "args": [],
-      "group": true
-    },
-    {
-      "path": "automations telegram off",
-      "desc": "Forget this automation's bot token and stop its channel",
-      "args": [
-        "<slug>"
-      ]
-    },
-    {
-      "path": "automations telegram setup",
-      "desc": "Point a Telegram bot at this automation so its questions reach you where you already are",
-      "args": [
-        "<slug>"
-      ],
-      "valueFlags": [
-        "--token",
-        "--chat"
-      ]
-    },
-    {
-      "path": "automations telegram test",
-      "desc": "Post this automation's waiting question now and report what its bot can see",
-      "args": [
-        "<slug>"
       ]
     },
     {
@@ -742,13 +1025,14 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's 2 heavy slots (every repo together; 1 while macOS says the Mac is very hot), smaller first (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit, nothing ran)",
+      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit, nothing ran)",
       "args": [
         "<command...>"
       ],
       "valueFlags": [
         "--max-wait",
-        "--because"
+        "--because",
+        "--tail"
       ]
     },
     {
@@ -862,6 +1146,14 @@
       "valueFlags": [
         "--lanes",
         "--max-wait"
+      ]
+    },
+    {
+      "path": "builder why",
+      "desc": "Why each recent check of this repo waited, one line per wait: this checkout's lock, full slots, or others ahead in the slot line",
+      "args": [],
+      "valueFlags": [
+        "--last"
       ]
     },
     {
@@ -1622,49 +1914,106 @@
       "group": true
     },
     {
+      "path": "hook app-bash-gate",
+      "desc": "Classify a Bash command of an app assistant (called by its per-chat PreToolUse hook)",
+      "args": [
+        "<gateFile>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
+      "path": "hook app-write-gate",
+      "desc": "Gate a file tool call of an app chat: writes only in its data folder, never another app's data (called by its per-chat PreToolUse hook)",
+      "args": [
+        "<gateFile>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
       "path": "hook ensure-dashboard",
       "desc": "Windows only: open the web dashboard if it is not already running (called by Claude Code SessionStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook post-tool-use",
       "desc": "Auto-format + type-check after Edit/Write on JS/TS files (called by Claude Code PostToolUse hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook pre-compact",
       "desc": "Save sleep state before context compaction (called by Claude Code PreCompact hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook pre-tool-use",
       "desc": "Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook refresh-asset-drift",
       "desc": "Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook session-start",
       "desc": "Analyze previous session + output context snapshot (called by Claude Code SessionStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
+      "path": "hook session-start-part",
+      "desc": "Print one later piece of the context snapshot (runs beside session-start)",
+      "args": [
+        "<n>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook stop",
       "desc": "Record session metadata (called by Claude Code Stop hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook subagent-start",
       "desc": "Inject context briefing into sub-agents (called by Claude Code SubagentStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook user-prompt-submit",
       "desc": "Inject sleep debt reminder on every user message (called by Claude Code UserPromptSubmit hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "init",
@@ -1678,6 +2027,14 @@
         "--priority",
         "--platforms",
         "--multi-product"
+      ]
+    },
+    {
+      "path": "install",
+      "desc": "Opt this project in to the brain for another tool's own terminal sessions (writes that tool's hook file and instructions block)",
+      "args": [],
+      "valueFlags": [
+        "--tool"
       ]
     },
     {
@@ -2494,6 +2851,36 @@
       "args": []
     },
     {
+      "path": "mcp",
+      "desc": "The brain as an MCP server (started by a bridge tool)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "mcp http-relay",
+      "desc": "Serve one HTTP server of an MCP store file over stdio",
+      "args": [
+        "<file>",
+        "<name>"
+      ]
+    },
+    {
+      "path": "mcp lean-exec",
+      "desc": "Start one server of a lean MCP subset file, with stdio passed through",
+      "args": [
+        "<file>",
+        "<name>"
+      ]
+    },
+    {
+      "path": "mcp serve",
+      "desc": "Serve this project's brain over stdio MCP: recall and an allowlisted set of verbs, confined to the vault",
+      "args": [],
+      "valueFlags": [
+        "--root"
+      ]
+    },
+    {
       "path": "memory",
       "desc": "Search and explore the project corpus (knowledge, features, tasks, memory)",
       "args": [],
@@ -2646,6 +3033,7 @@
       ],
       "valueFlags": [
         "--model",
+        "--tool",
         "--timeout"
       ]
     },
@@ -2676,7 +3064,8 @@
         "[message...]"
       ],
       "valueFlags": [
-        "--model"
+        "--model",
+        "--tool"
       ]
     },
     {
@@ -2691,6 +3080,7 @@
         "--kind",
         "--thread",
         "--model",
+        "--tool",
         "--timeout"
       ]
     },
@@ -2892,7 +3282,7 @@
     },
     {
       "path": "roadmap objective edit",
-      "desc": "Update an objective (title / target / feature / manual status override)",
+      "desc": "Update an objective (title / target / feature / manual status override / RICE)",
       "args": [
         "<slug>"
       ],
@@ -2900,7 +3290,11 @@
         "--title",
         "--target",
         "--feature",
-        "--status"
+        "--status",
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort"
       ]
     },
     {
@@ -2930,12 +3324,31 @@
       ]
     },
     {
+      "path": "roadmap objective suggest",
+      "desc": "Suggest RICE values for the EMPTY fields of an objective; the owner accepts, edits or dismisses it on the Roadmap",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort",
+        "--why"
+      ]
+    },
+    {
       "path": "roadmap objective undepend",
       "desc": "Remove a dependency edge",
       "args": [
         "<slug>",
         "<on>"
       ]
+    },
+    {
+      "path": "roadmap unscored",
+      "desc": "What still needs RICE values or an objective link: the scoring agent's one payload (the board's \"Score N\")",
+      "args": []
     },
     {
       "path": "setup",
@@ -2993,7 +3406,10 @@
     {
       "path": "sleep auto-run",
       "desc": "INTERNAL: run one background consolidation now (spawned detached by the Stop hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--tool"
+      ]
     },
     {
       "path": "sleep config",
@@ -3149,6 +3565,17 @@
       ]
     },
     {
+      "path": "super allow",
+      "desc": "Answer a permission request of a child the owner runs in Bypass (a [super events] permission line): allow it, or --deny it. Inside its own worktree or the project and covered by its brief: allow. Outside, push, publish, merge or unsure: `super queue ask <item> \"<why>\"` hands it to the owner. A child not in Bypass: the owner's alone",
+      "args": [
+        "<child>",
+        "<requestId>"
+      ],
+      "valueFlags": [
+        "--why"
+      ]
+    },
+    {
       "path": "super answer",
       "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
       "args": [
@@ -3173,7 +3600,8 @@
         "--header",
         "--option",
         "--options",
-        "--show"
+        "--show",
+        "--for"
       ]
     },
     {
@@ -3212,6 +3640,7 @@
         "--succeeds",
         "--note",
         "--origin",
+        "--for",
         "--brief",
         "--mode",
         "--model",
@@ -3220,7 +3649,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3361,7 +3791,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3394,7 +3825,7 @@
     },
     {
       "path": "super queue ask",
-      "desc": "Escalate a child's question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him",
+      "desc": "Escalate a child's question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child's permission you will not decide goes to him too, shown as the child's own request (your words never caption it: say why in your turn)",
       "args": [
         "<item>",
         "<text>"
@@ -3405,7 +3836,7 @@
     },
     {
       "path": "super queue done",
-      "desc": "Mark an item handled (never a permission)",
+      "desc": "Mark an item handled (never a permission: answer one with `super allow`)",
       "args": [
         "<item>"
       ]
@@ -3434,7 +3865,8 @@
       "valueFlags": [
         "--mode",
         "--model",
-        "--effort"
+        "--effort",
+        "--origin"
       ]
     },
     {
@@ -3443,6 +3875,9 @@
       "args": [
         "<child>",
         "<text>"
+      ],
+      "valueFlags": [
+        "--origin"
       ]
     },
     {
@@ -3473,7 +3908,7 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake: only its prompt, soul or a routine's job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page. Refused: `amend_needs_owner` (the text adds an address, a command, a secret path or a hidden character), `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `amend_unapproved`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake: only its prompt, soul or a routine's job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
       "args": [
         "<member>"
       ],
@@ -3486,8 +3921,16 @@
       ]
     },
     {
+      "path": "super team answer",
+      "desc": "The project's Super Agent only: answer a member's question about a job you gave it (an item in your queue). The answer reaches the member's Super as an event, never as the owner's words. When you cannot answer it, ask the owner with your own `super ask`. Refused from a member's Super (`main_only`)",
+      "args": [
+        "<item>",
+        "<text>"
+      ]
+    },
+    {
       "path": "super team ask",
-      "desc": "Give an AI Team member a job: it lands in the member's own thread and runs on its own approval and queue, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine's global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)",
+      "desc": "Give an AI Team member a job: it lands in the member's own thread and starts now in its own session on its own approval, beside whatever else the member is doing, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine's global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A member takes any number of jobs at once; only the general limit of live jobs (say_at_limit) and the heavy-step queue bound them",
       "args": [
         "<member>",
         "<job>"
@@ -3497,6 +3940,14 @@
         "--model",
         "--effort",
         "--origin"
+      ]
+    },
+    {
+      "path": "super team done",
+      "desc": "A member's Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project's Super Agent has no requests)",
+      "args": [
+        "<item>",
+        "<result>"
       ]
     },
     {
@@ -3534,6 +3985,53 @@
       "desc": "Remove a child's worktree; refuses one that is dirty or unmerged",
       "args": [
         "<child>"
+      ]
+    },
+    {
+      "path": "t3-account",
+      "desc": "Prepare an account, sign it in or read its limits, through T3 (used by the server)",
+      "args": [
+        "<action>"
+      ],
+      "valueFlags": [
+        "--account",
+        "--tool",
+        "--in",
+        "--out"
+      ]
+    },
+    {
+      "path": "t3-chat",
+      "desc": "Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)",
+      "args": [],
+      "valueFlags": [
+        "--tool",
+        "--cwd",
+        "--model",
+        "--effort",
+        "--mode",
+        "--pane",
+        "--resume",
+        "--briefing-file",
+        "--extra-root",
+        "--account",
+        "--carry",
+        "--mcp-config"
+      ]
+    },
+    {
+      "path": "t3-run",
+      "desc": "Run one headless turn on Codex or Antigravity; prints one JSON document (used by automations, sleep, AI Team)",
+      "args": [],
+      "valueFlags": [
+        "--surface",
+        "--prompt",
+        "--tool",
+        "--model",
+        "--effort",
+        "--account",
+        "--resume",
+        "--extra-root"
       ]
     },
     {
@@ -3927,6 +4425,21 @@
       "path": "tasks statuses",
       "desc": "List this project's task statuses (shipped + declared in overrides/task.md) with kind, order and remote mapping",
       "args": []
+    },
+    {
+      "path": "tasks suggest",
+      "desc": "Suggest RICE values and/or an objective link for a task; the owner accepts, edits or dismisses it on the Roadmap. Never overwrites owner values.",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort",
+        "--objective",
+        "--why"
+      ]
     },
     {
       "path": "tasks sync",

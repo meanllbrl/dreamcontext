@@ -48,7 +48,7 @@ describe('webBudget', () => {
   it('the surface asks the budget only for what is on screen, and only while visible', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     expect(src).toMatch(/const webOnScreen = props\.visible/);
-    expect(src).toMatch(/keptWebIds\(lru, webOnScreen, /);
+    expect(src).toMatch(/keptWebIds\(lru, heldOnScreen, /);
     // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen,
     // nor a filmstrip thumb or a card behind a narrow sheet's tab (presentation layouts).
     expect(src).toMatch(/cp\.where === 'others' \|\| cp\.where === 'thumb' \|\| cp\.where === 'tab' \|\| full\?\.id === c\.id\) return false/);
@@ -58,7 +58,7 @@ describe('webBudget', () => {
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // Past the budget a web container is a title + Load placeholder, never an iframe.
     expect(container).toMatch(/const frame = p\.webLive && p\.viewReady;/);
-    expect(container).toMatch(/\{frame\s*\n\s*\? <div className="super-card-view super-card-view--web"><WebWidget/);
+    expect(container).toMatch(/\{frame\s*\n\s*\? <div className=\{`super-card-view super-card-view--web\$\{oneLine[^}]*\}`\}><WebWidget/);
     expect(container).toMatch(/\{p\.viewReady && !p\.webLive && !tile && !p\.parked && <WebPlaceholder/);
   });
 
@@ -82,7 +82,7 @@ describe('webBudget', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     // Off the stage: Others, or behind a narrow sheet's tab.
     expect(src).toMatch(/const off = !placed \|\| placed\.where === 'others' \|\| placed\.where === 'tab';/);
-    expect(src).toMatch(/const parkedAt = !ghost && off && liveWeb\.has\(c\.id\) && isLivePage\(c\)/);
+    expect(src).toMatch(/const parkedAt = !ghost && off && liveWeb\.has\(c\.id\)\n/);
     expect(src).toMatch(/parked=\{parked\}/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // A web card is ONE tree in every state (tile, float, large, parked): a page from a server

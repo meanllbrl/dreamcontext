@@ -1,3 +1,5 @@
+import { useInAppChat } from '../../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
@@ -39,7 +41,13 @@ export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 export { DESKTOP_WIDTH, desktopScale } from '../../../lib/webDevice';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop, device, onPageFit }: WidgetProps & {
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+export function WebWidget(props: Parameters<typeof WebWidgetLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <WebWidgetLive {...props} />;
+}
+
+function WebWidgetLive({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop, device, onPageFit }: WidgetProps & {
   /** A project page reports its own width (lib/pageFit.ts). */
   onPageFit?: (width: number) => void;
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers

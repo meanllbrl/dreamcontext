@@ -106,6 +106,15 @@ describe('Launcher decisions', () => {
     expect(remainingSetupCount(undefined)).toBe(0);
   });
 
+  it('never counts Codex in "N left": it is optional (owner 2026-11-03)', () => {
+    const codexMissing = report([
+      ...READY.checks,
+      check('codex', 'missing', { tier: 'optional', scopes: ['machine'] }),
+      check('codex-auth', 'blocked', { tier: 'optional', scopes: ['machine'] }),
+    ]);
+    expect(remainingSetupCount(codexMissing)).toBe(0);
+  });
+
   it('opens at the project step when ready or when the machine cannot be read', () => {
     expect(entryStage(READY, false)).toBe('project');
     expect(entryStage(notReady, false)).toBe('machine');

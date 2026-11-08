@@ -41,14 +41,15 @@ const sideOf = (p: StagePlan, r: Rect) => (r.x + r.width / 2 < p.width / 2 ? 'L'
 
 /** Centred across; down the stage it starts under the job bar's band and runs to the bottom
  *  margin, or stops above the bottom band when that band holds something (owner 2026-10-21). */
-function expectCentred(p: StagePlan, banded = p.narrow || p.order.length === 0) {
+function expectCentred(p: StagePlan, banded = p.order.length === 0) {
   const left = p.centre.x;
   const right = p.width - (p.centre.x + p.centre.width);
   const top = p.centre.y;
   const bottom = p.height - (p.centre.y + p.centre.height);
   expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
-  // Float (owner 2026-10-25): the centre runs margin to margin; a narrow or empty stage keeps its bands.
-  expect(top).toBeCloseTo(banded ? STAGE.MARGIN + STAGE.BAND : STAGE.MARGIN, 6);
+  // Float (owner 2026-10-25, 2026-11-01): the centre runs margin to margin at any width; only an
+  // empty stage keeps the bottom band, for its hint.
+  expect(top).toBeCloseTo(STAGE.MARGIN, 6);
   expect(bottom).toBeCloseTo(banded ? STAGE.MARGIN + STAGE.BAND : STAGE.MARGIN, 6);
 }
 
@@ -202,11 +203,11 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
 });
 
 describe('the centre takes the larger share and never moves (stage v2, 2026-10-20)', () => {
-  it('56% of the stage (within its floor and ceiling), centred, whatever opens or closes', () => {
+  it('its width from the stage alone (56%, or two columns a side on a wide stage, owner 2026-11-06), centred, whatever opens or closes', () => {
     for (const s of STAGES) for (let n = 0; n <= MAX_FLOAT; n++) {
       const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 2 ? 'square' : 'tall')), FLOAT, s);
       expect(p.centre.width, `${n} cards at ${s.width}`).toBeCloseTo(preferredCentre(s.width), 6);
-      expect(p.centre.width / s.width).toBeGreaterThanOrEqual(0.55);
+      expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN);
       expectCentred(p);
     }
   });
@@ -496,7 +497,8 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
     expect(p.othersRect.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.x + p.dock.width).toBeLessThanOrEqual(p.othersRect.x);
-    expectCentred(p, true);
+    expect(p.centre.y).toBeCloseTo(STAGE.MARGIN + STAGE.BAND, 6);
+    expect(p.height - p.centre.y - p.centre.height).toBeCloseTo(STAGE.MARGIN + STAGE.BAND, 6);
   });
 
   it('the centre takes the height while the bottom band is empty, its width unchanged (owner 2026-10-21)', () => {
@@ -637,10 +639,10 @@ describe('a phone-width stage is the chat, edge to edge (owner 2026-10-31)', () 
     expect(p.cards.a.where).toBe('sheet');
   });
 
-  it('a tablet-width narrow stage and the desktop stage are untouched', () => {
+  it('a tablet-width narrow stage and the desktop stage keep their margins', () => {
     expect(planStage([], FLOAT, { width: 800, height: 700 }, {}).phone).toBe(false);
     const d = planStage([], FLOAT, STAGES[1], {});
     expect(d.phone).toBe(false);
-    expect(d.centre.y).toBe(STAGE.MARGIN + STAGE.BAND);
+    expect(d.centre.y).toBe(STAGE.MARGIN);
   });
 });

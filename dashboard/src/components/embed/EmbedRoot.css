@@ -1,0 +1,79 @@
+.embed-root {
+  height: 100vh;
+  min-height: 0;
+  overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.embed-root[data-embed='chat'],
+.embed-root[data-embed='team'] {
+  overflow: hidden;
+}
+
+/* The Chat pane fills its frame; a narrow frame keeps its strip and composer. */
+.embed-root[data-embed='chat'] .agent-chat-pane-host {
+  height: 100%;
+}
+
+/* The chat embed draws no roster and no side panel: its conversation takes the whole frame. */
+.embed-root[data-embed='chat'] .aiteam {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* One row the height of the frame: the messages scroll, the box never leaves it. */
+.embed-root[data-embed='chat'] .aiteam,
+.embed-root[data-embed='team'] .aiteam {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* A short frame spends its height on the messages, not on the header and the gutters. */
+@media (max-height: 460px) {
+  .embed-root .aiteam-convo-head {
+    min-height: 0;
+    padding-block: var(--space-1);
+  }
+  .embed-root .aiteam-convo-role {
+    display: none;
+  }
+  .embed-root .aiteam-scroll {
+    padding-block: var(--space-2);
+  }
+  .embed-root .aiteam-composer {
+    padding-bottom: var(--space-2);
+  }
+}
+
+/* These boards keep their own inner scrollers, which a short frame squeezes shut and cuts off. A
+   board is as tall as the frame, with a floor, and the frame scrolls it. Matches `dc.mountEmbed`.
+   A board sizes itself `calc(100dvh - var(--header-height) - 2 * var(--space-4))` for the app shell;
+   a frame has no header, so this value turns that sum into `max(560px, 100dvh)`. The wrapper has
+   its height inline: !important. */
+.embed-root[data-embed='tasks'],
+.embed-root[data-embed='roadmap'] {
+  --header-height: calc(100dvh - max(560px, 100dvh) - 2 * var(--space-4));
+}
+.embed-root[data-embed='tasks'] > *,
+.embed-root[data-embed='roadmap'] > * {
+  height: max(100%, 560px) !important;
+}
+
+/* The variable above is for the boards. The full-page task reads it as the header it sits under,
+   and a frame has none. */
+.embed-root .detail-overlay--fullscreen {
+  top: 0;
+}
+
+.embed-empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+}
+
+.embed-open-main {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

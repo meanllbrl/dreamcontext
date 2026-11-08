@@ -368,7 +368,7 @@ describe('agentActivity — whether an agent is working, asked of its run lock',
       slug: 'digest', runnerPid: process.pid, childPid: process.pid, childPgid: process.pid,
       fireAt: RUN, startedAt: new Date(at).toISOString(), timeoutAt: new Date(at + 60_000).toISOString(),
     });
-    expect(agentActivity(contextRoot, 'digest')).toEqual({ since: at, runId: RUN, queued: [] });
+    expect(agentActivity(contextRoot, 'digest')).toEqual({ since: at, runId: RUN, queued: [], runs: [{ runId: RUN, since: at }], count: 1 });
     // Another agent is not working because this one is.
     expect(agentActivity(contextRoot, 'watcher')).toBeNull();
   });

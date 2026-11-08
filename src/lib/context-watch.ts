@@ -32,7 +32,7 @@ import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
 import { superHandoffCommand, superHandoffContext, superNudgeLine } from './super/handoff-task.js';
-import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK } from './super/handoff-file.js';
+import { SUPER_HANDOFF_TASK, superHandoffFileOf } from './super/handoff-file.js';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -199,6 +199,9 @@ export interface HookInputLike {
   session_id?: unknown;
   agent_id?: unknown;
   agent_type?: unknown;
+  /** A tool with no Claude transcript (the T3 bridge: Codex's `usedTokens`) hands its main
+   *  chain's context in directly; the transcript is then not read. */
+  context_tokens?: unknown;
 }
 
 /**
@@ -584,12 +587,16 @@ export function maybeNudge(
     const cfg = resolveHandoffFor(contextRoot, projectRoot, tab);
     if (!cfg.enabled) return null;
 
-    const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
-    if (!path) return null;
-    const records = tailRecords(path);
-    if (!isMainChainHookInput(input, records)) return null;
-
-    const ctx = lastMainChainContextFrom(records);
+    let ctx: number | null;
+    if (typeof input.context_tokens === 'number' && Number.isFinite(input.context_tokens)) {
+      ctx = input.context_tokens > 0 ? input.context_tokens : null;
+    } else {
+      const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
+      if (!path) return null;
+      const records = tailRecords(path);
+      if (!isMainChainHookInput(input, records)) return null;
+      ctx = lastMainChainContextFrom(records);
+    }
     if (ctx === null) return null;
 
     const sessionId = typeof input.session_id === 'string' ? input.session_id : '';
@@ -634,6 +641,9 @@ export interface HandoffRecord {
   kind?: 'super';
   actedAt?: string;
   consumedAt?: string;
+  /** The fresh session that took the handoff, stamped with `consumedAt`. Stats reads its context
+   *  size and later turns from the ledger, so the record never has to carry them. */
+  toSession?: string;
 }
 
 /** The record key: the PANE if there is one, else the conversation, else a manual stamp. */
@@ -680,6 +690,7 @@ export function readHandoffRecord(contextRoot: string, key: string): HandoffReco
     ...(parsed.kind === 'super' ? { kind: 'super' as const } : {}),
     ...(typeof parsed.actedAt === 'string' ? { actedAt: parsed.actedAt } : {}),
     ...(typeof parsed.consumedAt === 'string' ? { consumedAt: parsed.consumedAt } : {}),
+    ...(typeof parsed.toSession === 'string' ? { toSession: parsed.toSession } : {}),
   };
 }
 
@@ -747,13 +758,14 @@ export function superFallbackRecord(pane: string, fromSession: string, contextTo
   };
 }
 
-const SUPER_FILE = `_dream_context/${SUPER_HANDOFF_REL.split('\\').join('/')}`;
+/** The super handoff file a record names: main's, or a member Super's own (plan-r10 1). */
+const superFileOf = (record: Pick<HandoffRecord, 'task'>): string => superHandoffFileOf(record.task);
 
 /** The user frame that continues a rotated pane: the task's, or the Super Agent's own. */
 export function handoffContinuePrompt(record: Pick<HandoffRecord, 'task' | 'title' | 'kind'>, opts: { fallback?: boolean } = {}): string {
   if (record.kind === 'super') {
     return `Handoff: you are the Super Agent's fresh session, on the same stage with the same children, pool and cards. `
-      + `Read ${SUPER_FILE} first (its top entry is the handoff`
+      + `Read ${superFileOf(record)} first (its top entry is the handoff`
       + (opts.fallback ? '; the previous session wrote none this time, so it may be older than the latest work — rebuild from `super state` where it is' : '')
       + '), run `dreamcontext super state`, then tell the owner in one short sentence that you are back and what runs.';
   }
@@ -833,7 +845,7 @@ export function renderHandoffBanner(record: HandoffRecord): string {
   if (record.kind === 'super') {
     return [
       `>> HANDOFF: you are the Super Agent's fresh session, continuing from a session${size}.`,
-      `Read ${SUPER_FILE} — its top entry is the handoff — then run \`dreamcontext super state\`, before anything else.`,
+      `Read ${superFileOf(record)} — its top entry is the handoff — then run \`dreamcontext super state\`, before anything else.`,
     ].join('\n');
   }
   return [

@@ -1,20 +1,19 @@
-// AC21-AC22: the phone opens on the Sohbetler list — every chat of the project, Açık (this phone's
-// tabs and the Mac's running chats, each once, waiting first) and Kapalı (past chats), with a
-// search and Tümü / Açık / Kapalı chips; a tap opens, adopts or resumes. The rules are plain
-// functions (phoneList.ts); the wiring is checked against the source like the other phone tests
-// (root vitest runs under plain Node). The live list is scripts/verify/handsfree-mobile.mjs.
+// AC21-AC22, kept by hands-free W2: the phone's Sohbetler list is gone (the new shell's drawer
+// switches chats, History lists past ones), but its rules live on: every open chat once, waiting
+// first (`openRows`, the drawer's rows); Turkish-aware search folding mirrored on the Mac and used
+// by History's highlight; a chat closed here is no live row while it exits; the window's ONE
+// back mark. Rules are plain functions; the wiring is checked against the source like the other
+// phone tests (root vitest runs under plain Node). The live phone is scripts/verify/handsfree-mobile.mjs.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  ageLabel, chatLastTs, chatSearchText, closedRows, foldCase, highlight, listTap, listView, openMatches, openRows, queryTokens,
-} from '../../dashboard/src/components/sleepy/phoneList.js';
+import { foldCase, highlight, openRows, queryTokens } from '../../dashboard/src/components/sleepy/phoneList.js';
 import { foldCase as serverFoldCase, matchSnippet } from '../../src/lib/transcript-sessions.js';
 import { liveChatUpdatedAt } from '../../src/server/routes/agent-chat.js';
 import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 import { CLOSED_TTL_MS, markClosed, recentlyClosed } from '../../dashboard/src/components/sleepy/phoneClosed.js';
+import { deviceChatsOf } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import type { LiveChatWire } from '../../dashboard/src/components/handsfree/macContract.js';
-import type { PastSession } from '../../dashboard/src/components/sleepy/ChatHistoryPicker.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -23,8 +22,6 @@ const code = (p: string) => readFileSync(join(ROOT, p), 'utf-8').replace(/\/\*[\
 const tab = (id: string, kind: string, claudeId?: string): StackTab => ({ id, paneId: 'p1', title: `T ${id}`, info: { kind, label: kind } as unknown as StackTab['info'], claudeId, attention: false });
 const live = (conversationId: string, state: LiveChatWire['state'], vault: string | null = 'proj'): LiveChatWire =>
   ({ conversationId, vault, title: `L ${conversationId}`, busy: state === 'working', state, lastLine: `line ${conversationId}`, updatedAt: null });
-const past = (id: string, extra: Partial<PastSession> = {}): PastSession =>
-  ({ id, title: `P ${id}`, preview: `prev ${id}`, updatedAt: 1, startedAt: null, sizeBytes: 1, gitBranch: '', ...extra });
 
 describe('openRows (AC21)', () => {
   it('every open chat once, waiting first, then working, then the rest; tabs before the Mac within a rank', () => {
@@ -41,38 +38,10 @@ describe('openRows (AC21)', () => {
   });
 });
 
-describe('closedRows (AC21, AC18 rule)', () => {
-  it('a past chat open here, running on the Mac or draining is not closed; the match snippet wins over the preview', () => {
-    const rows = closedRows({
-      past: [past('open-here'), past('running'), past('draining'), past('old', { match: '…the push token…' }), past('older')],
-      live: [live('running', 'idle')], draining: ['draining'], openClaudeIds: ['open-here'],
-    });
-    expect(rows.map((r) => r.id)).toEqual(['old', 'older']);
-    expect(rows[0].line).toBe('…the push token…');
-    expect(rows[1].line).toBe('prev older');
-    // A hit that only repeats the title shows the last message instead.
-    expect(closedRows({ past: [past('t', { title: 'zebra plan', match: 'zebra plan' })], live: [], openClaudeIds: [] })[0].line).toBe('prev t');
-  });
-});
-
-describe('listView: chips and counts (AC21-AC22)', () => {
-  it('Tümü holds both, Açık only open, Kapalı only closed; counts follow the Mac\'s total minus what is not closed', () => {
-    const base = { open: [1, 2], closed: ['x'], closedTotal: 9, closedDropped: 2 };
-    expect(listView({ ...base, filter: 'all' })).toEqual({ open: [1, 2], closed: ['x'], counts: { all: 9, open: 2, closed: 7 } });
-    expect(listView({ ...base, filter: 'open' }).closed).toEqual([]);
-    expect(listView({ ...base, filter: 'closed' }).open).toEqual([]);
-    // Never fewer than what is on screen.
-    expect(listView({ open: [], closed: ['a', 'b'], closedTotal: 0, closedDropped: 0, filter: 'all' }).counts.closed).toBe(2);
-  });
-});
-
-describe('search on the phone (AC22)', () => {
-  it('tokens AND across title, last line and loaded text, case-insensitive', () => {
-    const tk = queryTokens('  Push   TOKEN ');
-    expect(tk).toEqual(['push', 'token']);
-    expect(openMatches(tk, 'Push notes', 'the token expired')).toBe(true);
-    expect(openMatches(tk, 'Push notes', 'nothing')).toBe(false);
-    expect(openMatches([], 'anything')).toBe(true);
+describe('search folding, shared by History and the Mac (AC22)', () => {
+  it('tokens are folded, split on whitespace, empties dropped', () => {
+    expect(queryTokens('  Push   TOKEN ')).toEqual(['push', 'token']);
+    expect(queryTokens('   ')).toEqual([]);
   });
   it('highlight marks every hit, keeps the rest, escapes regex characters', () => {
     expect(highlight('Fix the push PUSH', ['push'])).toEqual([
@@ -86,8 +55,6 @@ describe('search on the phone (AC22)', () => {
     expect(foldCase('İstanbul IŞIK ılık')).toBe('istanbul işik ilik');
     for (const s of ['İstanbul', 'IŞIK', 'Ünlü Çağrı', 'emoji 🚀 İ']) expect(foldCase(s)).toHaveLength(s.length);
     expect(queryTokens('İŞ  listesi')).toEqual(['iş', 'listesi']);
-    expect(openMatches(queryTokens('istanbul'), 'İstanbul planı')).toBe(true);
-    expect(openMatches(queryTokens('ışık'), 'IŞIK ayarı')).toBe(true);
     expect(highlight('Yeni İstanbul planı', queryTokens('istanbul'))).toEqual([
       { text: 'Yeni ', hit: false }, { text: 'İstanbul', hit: true }, { text: ' planı', hit: false },
     ]);
@@ -99,19 +66,6 @@ describe('search on the phone (AC22)', () => {
     // Every İ before the hit used to push the window right by one: the hit must sit where it is.
     expect(matchSnippet(['İİİİ İstanbul hedef'], 'hedef', 3)).toBe('…ul hedef');
     expect(matchSnippet(['İş listesi'], 'iş')).toBe('İş listesi');
-  });
-  it('a loaded conversation is searchable (history + live, messages and answers) and dated by its newest item', () => {
-    const m = { history: [{ kind: 'user', id: 'h', text: 'old ask', ts: 5 }], items: [{ kind: 'text', id: 't', index: 0, text: 'new answer', done: true, ts: 9 }, { kind: 'thinking', id: 'k', index: 1, text: 'hidden', done: true, ts: 0 }] } as never;
-    expect(chatSearchText(m)).toBe('old ask\nnew answer\n');
-    expect(chatLastTs(m)).toBe(9);
-    expect(chatLastTs({ items: [], history: [] })).toBeNull();
-  });
-  it('ageLabel reads now / m / h / d', () => {
-    const now = 1_000_000_000;
-    expect(ageLabel(now, now)).toBe('now');
-    expect(ageLabel(now - 5 * 60_000, now)).toBe('5m');
-    expect(ageLabel(now - 3 * 3_600_000, now)).toBe('3h');
-    expect(ageLabel(now - 2 * 86_400_000, now)).toBe('2d');
   });
 });
 
@@ -130,113 +84,45 @@ describe('a chat closed here is not a Mac row while it exits', () => {
     expect(openRows({ tabs: [], live: [live('gone-1', 'idle')], draining: recentlyClosed(1_001), vault: 'proj' })).toEqual([]);
     expect(recentlyClosed(1_000 + CLOSED_TTL_MS + 1)).not.toContain('gone-1');
   });
-});
 
-describe('listTap (AC21)', () => {
-  it('a tab opens, a Mac chat is adopted (never resumed), a closed chat resumes', () => {
-    const [t, m] = openRows({ tabs: [tab('a', 'ready')], live: [live('m', 'idle')], vault: 'proj' });
-    expect(listTap(t)).toEqual({ select: { paneId: 'p1', id: 'a' } });
-    expect('adopt' in listTap(m)).toBe(true);
-    const [c] = closedRows({ past: [past('z')], live: [], openClaudeIds: [] });
-    expect(listTap(c)).toEqual({ resume: c.past });
+  it('the device shell\'s rows drop it, and History hides it while it exits', () => {
+    const d = deviceChatsOf({ activeVault: 'proj', projects: ['proj'], tabsByVault: {}, live: { chats: [live('gone-2', 'idle')], draining: [] }, tunnel: true, liveAnswered: true, closed: ['gone-2'] });
+    expect(d.rows).toEqual([]);
+    expect(d.hiddenIds.has('gone-2')).toBe(true);
   });
 });
 
-describe('the list is the Mac phone\'s home (AC21)', () => {
+describe('the phone is the new shell (hands-free W2)', () => {
+  const chrome = code('dashboard/src/components/layout/WindowChrome.tsx');
   const surface = code('dashboard/src/components/sleepy/AgentSurface.tsx');
-  const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
-  const server = code('src/lib/transcript-sessions.ts');
-
-  it('starts on the list; every open path goes to the chat; the chat\'s ‹ and the back gesture come back', () => {
-    expect(surface).toMatch(/useState<'list' \| 'chat'>\('list'\)/);
-    expect(surface).toMatch(/\{macPhone && expanded && phoneView === 'list' && \(\s*<PhoneChatList/);
-    for (const call of ['selectTab\\(paneId, sid\\)', 'adoptLiveChat\\(chat\\)', 'resumePastSession\\(past\\)', 'addSession\\(claudeKind\\)']) {
-      expect(surface).toMatch(new RegExp(`${call}; setPhoneView\\('chat'\\)`));
-    }
-    expect(surface).toMatch(/window\.history\.pushState\(\{ phoneChat: mark \}, ''\);\s*const onPop = \(\) => setPhoneView\('list'\)/);
-    expect(surface).toMatch(/data-testid="chat-back"/);
-  });
 
   it('only this visit\'s history entry is unwound, and a marker left by a reload is cleared (review r1 M1)', () => {
+    // The back mark is the window's now (one for every project, hands-free W2): the same rule.
+    const chrome = code('dashboard/src/components/layout/WindowChrome.tsx');
     // Unwinding ANY phoneChat entry stepped out of the app after a reload: the old entry kept its state.
-    expect(surface).not.toMatch(/if \(window\.history\.state\?\.phoneChat\) window\.history\.back\(\)/);
-    expect(surface).toMatch(/if \(window\.history\.state\?\.phoneChat === mark\) window\.history\.back\(\)/);
-    expect(surface).toMatch(/if \(macPhone && window\.history\.state\?\.phoneChat\) window\.history\.replaceState\(null, ''\)/);
-    expect(surface).toMatch(/phoneChatMark\.current && window\.history\.state\?\.phoneChat === phoneChatMark\.current\) window\.history\.back\(\)/);
+    expect(chrome).not.toMatch(/if \(window\.history\.state\?\.phoneChat\) window\.history\.back\(\)/);
+    expect(chrome).toMatch(/if \(top\?\.phoneChat === mark\) window\.history\.back\(\)/);
+    // Under a sheet going in the same commit, the mark's step waits for the sheet's: WebKit drops a second immediate back.
+    expect(chrome).toMatch(/else if \(top\?\.phoneSheet\) \{\s*window\.addEventListener\('popstate', \(\) => \{\s*if \(window\.history\.state\?\.phoneChat === mark\) window\.history\.back\(\);\s*\}, \{ once: true \}\);/);
+    expect(chrome).toMatch(/if \(isMobile && window\.history\.state\?\.phoneChat\) window\.history\.replaceState\(null, ''\)/);
+    expect(surface).not.toContain('history.state?.phoneChat');
   });
 
-  it('the chat under the list is inert while the list is up, and focus moves with the view (review r1 M2)', () => {
-    expect(list).toMatch(/for \(const c of covered\) c\.setAttribute\('inert', ''\)/);
-    expect(list).toMatch(/return \(\) => \{ for \(const c of covered\) c\.removeAttribute\('inert'\); \}/);
-    expect(list).toMatch(/<h1 className="mlist-h" tabIndex=\{-1\}>/);
-    expect(surface).toMatch(/querySelector<HTMLElement>\('\[data-testid="chat-back"\]'\)\?\.focus/);
+  it('the list, its stack and its drawer are gone; nothing mounts them', () => {
+    for (const f of ['PhoneChatList.tsx', 'PhoneChatStack.tsx', 'MobileSessionDrawer.tsx', 'usePhoneHome.ts']) {
+      expect(existsSync(join(ROOT, 'dashboard/src/components/sleepy', f)), f).toBe(false);
+    }
+    expect(existsSync(join(ROOT, 'dashboard/src/components/layout/PhoneBar.tsx'))).toBe(false);
+    expect(surface).not.toMatch(/PhoneChatList|PhoneChatStack|MobileSessionDrawer|phoneView|phoneNav/);
   });
 
-  it('a closed row cannot be resumed twice by a double tap (review r1 C1)', () => {
-    expect(list).toMatch(/if \('adopt' in d\) \{ onAdopt\(d\.adopt\); return; \}\s*if \(tapping\.current\) return;/);
-    // r2 F1: open rows are never held by the guard, and a stalled re-check times out into a resume.
-    expect(list).toMatch(/setTimeout\(\(\) => reject\(new Error\('timeout'\)\), RECHECK_TIMEOUT_MS\)/);
-    // r3: a later tap or leaving the list supersedes a re-check in flight; its late answer does nothing.
-    expect(list).toMatch(/const seq = \+\+tapSeq\.current;\s*const d = listTap\(row\);/);
-    expect(list).toMatch(/useEffect\(\(\) => \(\) => \{ tapSeq\.current\+\+; \}, \[\]\)/);
-    expect(list).toMatch(/if \(seq !== tapSeq\.current\) return;\s*const r = pastTap/);
-    expect(list).toMatch(/if \(seq !== tapSeq\.current\) return;\s*onResume\(d\.resume\);/);
-    expect(list).toMatch(/tapping\.current = true;[\s\S]*?finally \{\s*tapping\.current = false;/);
-    expect(list).toMatch(/disabled=\{pendingId !== null\}/);
+  it('the list\'s duties moved to the tunnel drawer\'s foot: the notification opt-in and the connection log', () => {
+    expect(chrome).toMatch(/\{\.\.\.\(tunnel \? \{ foot: <PhoneDrawerFoot \/> \} : \{\}\)\}/);
+    expect(code('dashboard/src/components/layout/newshell/ChatDrawer.tsx')).toMatch(/\{p\.foot && <div className="ns-dr-foot" data-testid="drawer-foot">\{p\.foot\}<\/div>\}/);
   });
 
-  it('chips and the clear button are 44px targets (review r1 M3)', () => {
-    const css = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/MobileChat.css'), 'utf-8');
-    // r2 F2: both chip rows (projects and filters) keep 8px below, so the hit area is not clipped.
-    expect(css).toMatch(/\.mlist-projects,\s*\.mlist-chips \{[^}]*padding: var\(--space-2\) var\(--space-3\);/);
-    expect(css).toMatch(/\.mlist-chip::after,\s*\.mlist-clear::after \{ content: ''; position: absolute; inset: calc\(-1 \* var\(--space-1\) - 2px\) 0; \}/);
-  });
-
-  it('a long title and a long badge truncate the title, never push ＋ off a 320px screen', () => {
-    const css = code('dashboard/src/components/sleepy/MobileChat.css');
-    const rule = (src: string, sel: string) => {
-      const at = src.indexOf(`\n${sel} {`);
-      expect(at, sel).toBeGreaterThan(-1);
-      return src.slice(at, src.indexOf('}', at));
-    };
-    // The head row: [mark] [title] [badge] [＋].
-    // (A handed-over project's list has no ＋: its chats are the Super's.)
-    expect(list).toMatch(/<div className="mlist-head">\s*<HandsfreeMark [^>]*className="mlist-mark" \/>\s*<h1 className="mlist-h"[^>]*>[^<]*<\/h1>\s*<PhoneChip \/>\s*\{!superHere && \(\s*<button className="mchat-head-btn" onClick=\{onNewChat\}/);
-    const title = rule(css, '.mlist-h');
-    for (const decl of [/flex: 1 1 auto;/, /min-width: 0;/, /white-space: nowrap;/, /overflow: hidden;/, /text-overflow: ellipsis;/]) expect(title).toMatch(decl);
-    // Everything else in the row keeps its size.
-    expect(rule(css, '.mchat-head-btn')).toMatch(/flex: 0 0 auto;/);
-    expect(rule(code('dashboard/src/components/handsfree/liveBadge.css'), '.dc-hf-chip')).toMatch(/flex-shrink: 0;/);
-    expect(code('dashboard/src/components/brand/handsfreeMark.css')).toMatch(/\.hfm \{[^}]*flex: none;/);
-  });
-
-  it('a notification tap opens that chat past the list; on the list no chat counts as on screen', () => {
-    expect(surface).toMatch(/OPEN_SESSION_EVENT, \(detail\) => \{\s*if \(!detail\?\.claudeId\) return;\s*setPhoneView\('chat'\);/);
-    expect(surface).toMatch(/isMacPhoneSurface\(\) && phoneView === 'chat' \? \(mobileActive\?\.id \?\? ''\) : ''/);
-  });
-
-  it('the drawer stays off the Mac phone; the list carries its duties', () => {
-    expect(surface).toMatch(/\{isMobile && !macPhone && \(\s*<MobileSessionDrawer/);
-    expect(list).toContain('<PushOptIn />');
-    // One list over every chosen project (W3): a row of another project opens there.
-    expect(list).toMatch(/void chrome\.addTab\(r\.vault\);/);
-    expect(list).toMatch(/onClick=\{onExitToDashboard\}/);
-  });
-
-  it('closed chats are searched on the Mac; a closed tap re-asks the Mac and adopts a chat that turned live', () => {
-    // Every chosen project's closed chats, each searched on the Mac (usePhoneHome.ts, W3).
-    expect(code('dashboard/src/components/sleepy/usePhoneHome.ts')).toMatch(/new ApiClient\(p\)\.get<ChatSessionsResponse>\(`\/agent\/chat-sessions\?limit=\$\{PAST_LIMIT\}&q=\$\{encodeURIComponent\(q\)\}`\)/);
-    expect(list).toMatch(/usePhoneHome\(\{ vault, tabs, active, q: dq \}\)/);
-    expect(list).toMatch(/const r = pastTap\(d\.resume\.id, fresh\.chats\);\s*if \('adopt' in r\) \{ onAdopt\(r\.adopt\); return; \}/);
-    expect(server).toMatch(/tokens\.length \? \{ \.\.\.rest, match, matchIn: TIERS\[tier\] \} : rest/);
-  });
-});
-
-describe('a chat closed on the phone', () => {
-  it('is never hidden from Kapalı by the close window: only its Mac row is (a search finds it at once)', () => {
-    const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
-    expect(list).toMatch(/if \(r\.kind === 'closed' \|\| r\.kind === 'super'\) return true;/);
-    expect(list).toMatch(/if \(r\.row\.kind === 'mac' && justClosed\.has\(r\.row\.id\)\) return false;/);
-    expect(list).not.toMatch(/kind === 'closed'\) return !justClosed/);
+  it('past chats are searched on the Mac and listed by History, never by the phone itself', () => {
+    expect(code('src/lib/transcript-sessions.ts')).toMatch(/tokens\.length \? \{ \.\.\.rest, match, matchIn: TIERS\[tier\] \} : rest/);
+    expect(code('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toMatch(/import \{ highlight, queryTokens \} from '\.\/phoneList';/);
   });
 });

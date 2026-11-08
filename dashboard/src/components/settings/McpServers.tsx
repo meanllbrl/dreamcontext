@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { openExternalUrl } from '../../lib/desktop';
 import type {
-  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome,
+  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome, AntigravityMcpList, AntigravityMcpRow, CodexMcpList, CodexMcpRow, CodexMcpLeftReason,
 } from '../../lib/mcpWire';
 import { McpServerForm, type McpFormInitial } from './McpServerForm';
 import './McpServers.css';
@@ -24,6 +24,8 @@ import './McpServers.css';
 
 const CLAUDE_AI_CONNECTORS_URL = 'https://claude.ai/settings/connectors';
 const STALE_MS = 10 * 60_000;
+/** The sign-in ticket of a Codex server (codex-mcp.ts). */
+const CODEX_ACCOUNT = 'codex';
 
 interface ConnectTicketWire {
   id: string;
@@ -71,7 +73,14 @@ function cellLabel(c: McpOverviewCell | undefined): string {
 
 interface Row { key: string; name: string; home: McpHome; transport: string; server?: McpOverviewServer }
 
-export function McpServers() {
+/**
+ * `codex` (the Settings window): one read-only Codex column beside the Claude accounts, a
+ * "Found in Codex" group for servers only Codex has, and an All / Claude / Codex filter. Every
+ * Codex account shares one config and one MCP sign-in, so the column is one fact: what a live
+ * Codex carrying the app's stores reports. A server needing sign-in gets Codex's own Connect.
+ * Classic passes nothing and is unchanged.
+ */
+export function McpServers({ codex = false }: { codex?: boolean } = {}) {
   const api = useApi();
   const [data, setData] = useState<McpOverview | null>(null);
   const [error, setError] = useState('');
@@ -83,6 +92,21 @@ export function McpServers() {
   const [fallback, setFallback] = useState<{ name: string; email: string } | null>(null);
   const openedUrl = useRef<string | null>(null);
   const autoChecked = useRef(false);
+  const [codexList, setCodexList] = useState<CodexMcpList | null>(null);
+  const [agyList, setAgyList] = useState<AntigravityMcpList | null>(null);
+  const [filter, setFilter] = useState<'all' | 'claude' | 'codex'>('all');
+  const loadCodex = useCallback(async () => {
+    if (!codex) return;
+    try { setCodexList(await api.get<CodexMcpList>('/agent/mcp/codex')); }
+    catch { setCodexList({ state: 'failed', servers: [], left: [] }); }
+  }, [api, codex]);
+  useEffect(() => { void loadCodex(); }, [loadCodex]);
+  const loadAgy = useCallback(async (fresh = false) => {
+    if (!codex) return;
+    try { setAgyList(await api.get<AntigravityMcpList>(`/agent/mcp/antigravity${fresh ? '?fresh=1' : ''}`)); }
+    catch { setAgyList({ state: 'failed', servers: [], left: [] }); }
+  }, [api, codex]);
+  useEffect(() => { void loadAgy(); }, [loadAgy]);
 
   const load = useCallback(async () => {
     setError('');
@@ -93,10 +117,12 @@ export function McpServers() {
   const check = useCallback(async (account?: string) => {
     setChecking(account ?? '*');
     setError('');
-    try { setData(await api.post<McpOverview>('/agent/mcp/check', account ? { account } : {})); }
-    catch (e) { setError((e as Error).message || 'The check did not finish.'); }
+    try {
+      const [next] = await Promise.all([api.post<McpOverview>('/agent/mcp/check', account ? { account } : {}), account ? null : loadCodex()]);
+      setData(next);
+    } catch (e) { setError((e as Error).message || 'The check did not finish.'); }
     finally { setChecking(null); }
-  }, [api]);
+  }, [api, loadCodex]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -116,16 +142,16 @@ export function McpServers() {
       void api.get<ConnectTicketWire>(`/agent/mcp/connect/${ticket.id}`).then((next) => {
         if (next.url && openedUrl.current !== next.url) { openedUrl.current = next.url; void openExternalUrl(next.url); }
         setTicket(next);
-        if (next.state === 'connected') { setNote(`${next.name} is connected on ${emailOf(data?.accounts ?? [], next.accountId)}.`); void load(); }
+        if (next.state === 'connected') { setNote(`${next.name} is connected on ${next.accountId === CODEX_ACCOUNT ? 'Codex' : emailOf(data?.accounts ?? [], next.accountId)}.`); void load(); void loadCodex(); }
         if (next.state === 'timeout' || next.state === 'failed') {
           const row = rowsOf(data).find((r) => r.name === next.name);
-          if (row?.home === 'claudeai') setFallback({ name: next.name, email: emailOf(data?.accounts ?? [], next.accountId) });
+          if (row?.home === 'claudeai' && next.accountId !== CODEX_ACCOUNT) setFallback({ name: next.name, email: emailOf(data?.accounts ?? [], next.accountId) });
           else setError(`${next.name}: the sign-in didn't complete. Try again.`);
         }
       }).catch(() => { /* the next tick asks again */ });
     }, 1500);
     return () => clearInterval(t);
-  }, [ticket, api, data, load]);
+  }, [ticket, api, data, load, loadCodex]);
 
   const connect = async (account: string, name: string) => {
     setMenu(null);
@@ -136,10 +162,19 @@ export function McpServers() {
     catch (e) { setError((e as Error).message || 'Could not start the sign-in.'); }
   };
 
+  const connectCodex = async (name: string) => {
+    setMenu(null);
+    setError('');
+    setFallback(null);
+    openedUrl.current = null;
+    try { setTicket(await api.post<ConnectTicketWire>('/agent/mcp/codex/connect', { name })); }
+    catch (e) { setError((e as Error).message || 'Could not start the sign-in.'); }
+  };
+
   const act = async (path: string, body: unknown, done: string) => {
     setMenu(null);
     setError('');
-    try { await api.post(path, body); setNote(done); await load(); }
+    try { await api.post(path, body); setNote(done); await load(); void loadCodex(); }
     catch (e) { setError((e as Error).message || 'That did not work.'); }
   };
 
@@ -148,15 +183,62 @@ export function McpServers() {
   }
 
   const rows = rowsOf(data);
-  const accounts = data.accounts;
+  const showCodex = codex && filter !== 'claude';
+  const accounts = codex && filter === 'codex' ? [] : data.accounts;
+  const codexServers = codexList?.state === 'ok' ? codexList.servers : [];
+  const codexOnly = showCodex ? codexServers.filter((c) => !rows.some((r) => r.name === c.name)) : [];
+  const showAgy = codex && filter === 'all';
+  const extraCols = (showCodex ? 1 : 0) + (showAgy ? 1 : 0);
+  /** A live session's answer, or why there is none: never a dash standing for "nobody asked". */
+  const agyCell = (r: Row) => {
+    if (r.home === 'claudeai') return <span className="mcpm-muted" data-agy="claude-only" title="A claude.ai connector belongs to your claude.ai account.">Claude only</span>;
+    if (agyList === null) return <span className="mcpm-muted" data-agy="asking" title="A live session is being asked.">…</span>;
+    if (agyList.state !== 'ok') return <span className="mcpm-muted" data-agy={agyList.state}>{AGY_STATE[agyList.state]}</span>;
+    const hit = agyList.servers.find((c) => c.name === r.name);
+    if (hit) return hit.status === 'needs-auth'
+      ? <span className="mcpm-muted" data-agy="needs-auth" title="Antigravity has no sign-in for a tool server here, so this one stays out of its chats. A server that takes a key in its headers works.">Sign-in not available</span>
+      : <span className="mcpm-dot" data-agy={hit.status} data-status={hit.status === 'unknown' ? 'unchecked' : hit.status} title={`Antigravity: ${agyLabel(hit)}`} aria-label={`Antigravity: ${agyLabel(hit)}`} />;
+    const left = agyList.left.find((l) => l.name === r.name);
+    if (left) return <span className="mcpm-muted" data-agy="left" title={leftReason(left.why)}>Can&apos;t reach Antigravity</span>;
+    return <span className="mcpm-muted" data-agy="absent" title="Only this app's own servers reach Antigravity.">Not sent</span>;
+  };
+  const codexDot = (c: CodexMcpRow) => (
+    c.enabled
+      ? <span className="mcpm-dot" data-codex={c.status} data-status={c.status === 'unknown' ? 'unchecked' : c.status} title={`Codex: ${codexLabel(c)}`} aria-label={`Codex: ${codexLabel(c)}`} />
+      : <span className="mcpm-muted" data-codex="off">Off</span>
+  );
+  const codexCell = (r: Row) => {
+    if (r.home === 'claudeai') return <span className="mcpm-muted" data-codex="claude-only" title="A claude.ai connector belongs to your claude.ai account, so Codex cannot use it.">Claude only</span>;
+    if (codexList === null) return <span className="mcpm-muted">…</span>;
+    if (codexList.state !== 'ok') return <span className="mcpm-muted" data-codex={codexList.state}>{codexList.state === 'not_installed' ? 'Codex not found' : 'No answer'}</span>;
+    const hit = codexServers.find((c) => c.name === r.name);
+    if (hit) return codexDot(hit);
+    const left = codexList.left.find((l) => l.name === r.name);
+    if (left) return <span className="mcpm-muted" data-codex="left" title={leftReason(left.why)}>Can&apos;t reach Codex</span>;
+    return <span className="mcpm-muted" data-codex="absent" title={r.home === 'team' ? "A repo's .mcp.json is approved by Claude Code, so it does not reach Codex." : undefined}>Not in Codex</span>;
+  };
+  const codexConnect = (name: string) => (
+    showCodex && codexServers.find((c) => c.name === name)?.status === 'needs-auth' && (
+      <button type="button" className="btn btn--primary btn--sm" data-codex-connect={name} disabled={!!ticket && (ticket.state === 'opening' || ticket.state === 'waiting')} onClick={() => { void connectCodex(name); }}>Connect Codex</button>
+    )
+  );
   const newest = Math.max(0, ...accounts.map((a) => a.checkedAt ?? 0));
 
   return (
     <div className="mcpm">
       <p className="mcpm-lede">Every server, every account, side by side. Each dot is what that account&apos;s live session reports.</p>
       <div className="mcpm-toolbar">
+        {codex && (
+          <span className="sw-seg" role="radiogroup" aria-label="Show">
+            {(['all', 'claude', 'codex'] as const).map((f) => (
+              <button key={f} type="button" role="radio" aria-checked={filter === f} className={`sw-seg-btn${filter === f ? ' on' : ''}`} onClick={() => setFilter(f)} data-mcp-filter={f}>
+                {f === 'all' ? 'All' : f === 'claude' ? 'Claude Code' : 'Codex'}
+              </button>
+            ))}
+          </span>
+        )}
         <button type="button" className="btn btn--secondary btn--sm" onClick={() => setForm({ mode: 'add', scope: 'computer' })}>+ Add server</button>
-        <button type="button" className="btn btn--secondary btn--sm" disabled={!!checking} onClick={() => { void check(); }}>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={!!checking} onClick={() => { void check(); void loadAgy(true); }}>
           {checking === '*' ? 'Checking every account…' : 'Check all accounts'}
         </button>
         <span className="mcpm-muted mcpm-toolbar-when">{checking ? 'checking…' : ago(newest || undefined)}</span>
@@ -171,7 +253,7 @@ export function McpServers() {
       {note && <p className="mcpm-note" role="status">{note}</p>}
       {ticket && (ticket.state === 'opening' || ticket.state === 'waiting') && (
         <p className="mcpm-note" role="status">
-          Signing in to <strong>{ticket.name}</strong> as <strong>{emailOf(accounts, ticket.accountId)}</strong>
+          Signing in to <strong>{ticket.name}</strong> as <strong>{ticket.accountId === CODEX_ACCOUNT ? 'Codex' : emailOf(accounts, ticket.accountId)}</strong>
           {ticket.host ? <> — finish on {ticket.host} in your browser.</> : '…'}
           <button type="button" className="mcpm-link" onClick={() => { void api.del(`/agent/mcp/connect/${ticket.id}`); setTicket(null); }}>Cancel</button>
         </p>
@@ -191,7 +273,7 @@ export function McpServers() {
         <McpServerForm
           initial={form}
           onCancel={() => setForm(null)}
-          onSaved={(next, message) => { setForm(null); setData(next); setNote(message); }}
+          onSaved={(next, message) => { setForm(null); setData(next); setNote(message); void loadCodex(); }}
         />
       )}
 
@@ -202,6 +284,8 @@ export function McpServers() {
               <th scope="col">Server</th>
               <th scope="col">Lives in</th>
               {accounts.map((a) => <th scope="col" key={a.id} className="mcpm-acc" title={ago(a.checkedAt)}>{a.label}</th>)}
+              {showCodex && <th scope="col" className="mcpm-acc" title="Every Codex account shares one MCP config.">Codex</th>}
+              {showAgy && <th scope="col" className="mcpm-acc" title="Asked of a live session, at most once in five minutes.">Antigravity</th>}
               <th scope="col" aria-label="Actions" />
             </tr>
           </thead>
@@ -212,7 +296,7 @@ export function McpServers() {
               if (!groupRows.length && !outside.length) return null;
               return (
                 <Fragment key={g.home}>
-                  <tr className="mcpm-group"><th colSpan={accounts.length + 3} scope="colgroup">{g.title} <span>· {g.sub}</span></th></tr>
+                  <tr className="mcpm-group"><th colSpan={accounts.length + 3 + extraCols} scope="colgroup"><span className="mcpm-group-title">{g.title} <span>· {g.sub}</span></span></th></tr>
                   {groupRows.map((r) => {
                     const cells = data.cells[r.key] ?? {};
                     const needing = accounts.filter((a) => cells[a.id]?.status === 'needs-auth');
@@ -236,7 +320,10 @@ export function McpServers() {
                             </td>
                           );
                         })}
+                        {showCodex && <td className="mcpm-cell mcpm-cell--codex">{codexCell(r)}</td>}
+                        {showAgy && <td className="mcpm-cell mcpm-cell--agy">{agyCell(r)}</td>}
                         <td className="mcpm-actions">
+                          {r.home !== 'claudeai' && codexConnect(r.name)}
                           {needing.length > 0 && (
                             <span className="mcpm-menu-wrap">
                               <button
@@ -301,6 +388,8 @@ export function McpServers() {
                       </td>
                       <td><code className="mcpm-chip">outside</code></td>
                       {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent">—</span></td>)}
+                      {showCodex && <td className="mcpm-cell"><span className="mcpm-absent">—</span></td>}
+                      {showAgy && <td className="mcpm-cell"><span className="mcpm-absent">—</span></td>}
                       <td className="mcpm-actions">
                         {o.reason === 'removed-in-app' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} is back.`); }}>Import again</button>}
                         {o.reason === 'differs' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} now follows Claude Code again.`); }}>Use Claude Code&apos;s</button>}
@@ -315,6 +404,24 @@ export function McpServers() {
                 </Fragment>
               );
             })}
+            {codexOnly.length > 0 && (
+              <Fragment key="codex-only">
+                <tr className="mcpm-group"><th colSpan={accounts.length + 3 + extraCols} scope="colgroup"><span className="mcpm-group-title">Found in Codex <span>· set up in Codex itself</span></span></th></tr>
+                {codexOnly.map((c) => (
+                  <tr key={`codex|${c.name}`} className="mcpm-row" data-codex-only={c.name}>
+                    <td>
+                      <span className="mcpm-name">{c.name}</span>
+                      <span className="mcpm-sub">{c.transport}</span>
+                    </td>
+                    <td><code className="mcpm-chip">codex</code></td>
+                    {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent" title="not on this account">—</span></td>)}
+                    <td className="mcpm-cell mcpm-cell--codex">{codexDot(c)}</td>
+                    {showAgy && <td className="mcpm-cell"><span className="mcpm-muted" data-agy="codex-own" title="This server is in Codex's own config, which Antigravity does not read.">Codex only</span></td>}
+                    <td className="mcpm-actions">{codexConnect(c.name)}</td>
+                  </tr>
+                ))}
+              </Fragment>
+            )}
           </tbody>
         </table>
       </div>
@@ -338,6 +445,34 @@ function rowsOf(data: McpOverview | null): Row[] {
     rows.push({ key: `${l.name}|${l.home}`, name: l.name, home: l.home, transport: l.transport });
   }
   return rows;
+}
+
+const AGY_STATE: Record<Exclude<AntigravityMcpList['state'], 'ok'>, string> = {
+  not_installed: 'Antigravity not installed',
+  signed_out: 'Sign in to Antigravity',
+  failed: 'No answer',
+};
+
+function agyLabel(c: AntigravityMcpRow): string {
+  if (c.status === 'connected') return `connected, ${c.toolCount ?? 0} tool${c.toolCount === 1 ? '' : 's'}`;
+  return c.status === 'failed' ? 'did not start, so it stays out of chats' : c.status;
+}
+
+function codexLabel(c: CodexMcpRow): string {
+  switch (c.status) {
+    case 'connected': return `connected${c.toolCount ? ` · ${c.toolCount} tool${c.toolCount === 1 ? '' : 's'}` : ''}`;
+    case 'needs-auth': return 'needs its own sign-in on Codex';
+    case 'failed': return 'did not start, no tools';
+    default: return 'Codex gave no answer';
+  }
+}
+
+function leftReason(why: CodexMcpLeftReason): string {
+  switch (why) {
+    case 'variable': return 'It uses a ${VAR} reference, which only Claude Code fills in.';
+    case 'transport': return 'Codex speaks stdio and streamable HTTP only.';
+    default: return 'Codex cannot address a name with these characters.';
+  }
 }
 
 function emailOf(accounts: McpOverviewAccount[], id: string): string {

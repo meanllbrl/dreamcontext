@@ -103,7 +103,7 @@
   display: none;
 }
 
-/* Pin the "What is this?" entry to the bottom of the rail. */
+/* Pin the footer rows to the bottom of the rail. */
 .sidebar-footer {
   margin-top: auto;
   padding-top: var(--space-3);
@@ -275,7 +275,7 @@
 }
 
 /* ─── First-run nudge ─────────────────────────────────────────────────────── */
-/* Until the user opens "What is this?" once, the entry stands out and gently
+/* Until the user opens it once, the GitHub sync row stands out and gently
    bounces to invite the first click. The prominent styling (accent fill + dot)
    is motion-independent, so it stays discoverable under prefers-reduced-motion
    even though the global reduced-motion guard freezes the bounce. */
@@ -498,6 +498,11 @@
   gap: 2px;
 }
 
+/* The classic rail's Team: its members hang from the row's chevron (TeamList.css). */
+.ns-team-sec:has(> .sidebar-item) {
+  --ns-team-in: var(--space-3);
+}
+
 .sidebar-item {
   position: relative;
   display: flex;
@@ -552,7 +557,7 @@
  * carries news. It is compliant because it (a) never touches accent or warning,
  * (b) always LOSES to active/unread (see the override below, which is unchanged),
  * and (c) is spent as a TINTED SURFACE, not a fill — the 10/22/55 mix is the
- * `chat-msg-user-bubble` recipe pulled down for chrome.
+ * tinted-surface recipe pulled down for chrome.
  *
  * The default is a var() FALLBACK, never a declaration on this element — declaring
  * `--nav-hue` here would win over the group's inherited value and every badge would
@@ -774,42 +779,4 @@
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
   pointer-events: none;
-}
-
-/* ── Phone: the rail is an off-canvas drawer ─────────────────────────────────────────────
-   Fixed, so it takes no width from the page; slid out of view until the bar's menu opens
-   it. Same layer as the chat's own session drawer (over the page, under a modal). */
-.sidebar.sidebar--phone {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 1200;
-  width: min(296px, 84vw);
-  height: auto;
-  padding: calc(var(--space-2) + env(safe-area-inset-top, 0px)) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-  transform: translateX(-100%);
-  visibility: hidden;
-  transition: transform 220ms ease-out, visibility 0s linear 220ms;
-  box-shadow: none;
-}
-.sidebar.sidebar--phone[data-open] {
-  transform: translateX(0);
-  visibility: visible;
-  transition: transform 220ms ease-out;
-  box-shadow: var(--shadow-xl);
-}
-.sidebar--phone .sidebar-item { min-height: var(--space-11); }
-.sidebar-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 1199;
-  background: color-mix(in oklch, var(--color-obsidian) 32%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 220ms ease-out;
-}
-.sidebar-scrim[data-open] { opacity: 1; pointer-events: auto; }
-@media (prefers-reduced-motion: reduce) {
-  .sidebar.sidebar--phone, .sidebar.sidebar--phone[data-open], .sidebar-scrim { transition: none; }
 }

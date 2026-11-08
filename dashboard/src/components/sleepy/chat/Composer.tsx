@@ -1,3 +1,4 @@
+import { useEmbed } from '../../embed/embedMode';
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { McpPicker } from './McpPicker';
 import { asMcpHost } from './useMcpLive';
@@ -6,7 +7,7 @@ import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/vo
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
-  parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
+  parseHotkey, matchesHotkey, releasesHotkey, isHeldChordRepeat, hotkeyLabel, isLatchKey, effectiveMode,
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
 import { onSpeechMuted } from '../../../lib/voice/audioFocus';
@@ -22,16 +23,16 @@ import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTal
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId, useInstanceEvent } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { enterSends } from '../../../lib/enterKey';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phoneAttach';
-import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
+import { googleAccountLabel, useAgentSessionStats, useClaudeAccounts, useToolAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
+  effortLabel, effortsForModel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
   mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer,
@@ -61,9 +62,11 @@ import {
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
+import { usePicturePeek } from './PicturePeek';
 import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
-import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
+import { ComposerModelPicker } from './model-picker/ComposerModelPicker';
+import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick, type ToolPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { ConcentricRings } from './UsageRings';
 import type { ComposerHost } from './composerHost';
@@ -134,7 +137,7 @@ import { useStageCards } from '../super/stageCards';
  *             running and the CLI folds it in at its next tool boundary (07-29 — the first cut
  *             held it back until the turn settled, which on a long turn made ⏎ useless for the
  *             correction it exists for). "Not this turn, the next one" is still available, as
- *             its own ⇡ button, and lands as an editable row in the strip above
+ *             ⌥⏎ (once the ⇡ disc, gone 2026-11-07), and lands as an editable row in the strip above
  *             (QueuedMessages.tsx). The queue lives on the session model, not here, so it
  *             survives minimize/restore and drains where the busy edge is observed.
  *   HISTORY — ↑/↓ walk this conversation's own past prompts (`promptHistory`, newest first,
@@ -204,9 +207,6 @@ function Chevron() {
   );
 }
 
-/** Set once the mode menu has been opened; the trigger's first-run ring reads it. */
-const MODE_MENU_SEEN_KEY = 'dreamcontext.chat.modeMenuSeen';
-
 // ── Memoized pieces: a keystroke re-renders the field row, not the whole card ─────────
 //
 // Every key is a `setDraft`, and the composer is ~2k lines of render: the toolbar, the
@@ -257,13 +257,12 @@ function PageChipName({ name }: { name: string }) {
 }
 
 /** The leading mode + permission trigger (the mascot is the costly part of it). */
-const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, seen, open, onToggle }: {
+const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, open, onToggle }: {
   mode: ChatMode;
   agent: string;
   agentName: string;
   hasPhoto: boolean;
   permissionMode: 'auto' | 'bypass';
-  seen: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -273,7 +272,7 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
       <button
         type="button"
         {...{ [MENU_TRIGGER_ATTR]: '' }}
-        className={`chat-cmp-modeltrigger chat-cmp-modetrigger${seen ? '' : ' is-unseen'}`}
+        className="chat-cmp-modeltrigger chat-cmp-modetrigger"
         onClick={onToggle}
         title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version} · Permission: ${permissionMode}`}
         aria-haspopup="menu"
@@ -303,6 +302,8 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
 const AttachButton = memo(function AttachButton({ onPick }: {
   onPick: (kind: 'files' | 'folders', close: () => void) => void;
 }) {
+  // An app's frame has no native picker: a dropped file still lands.
+  if (useEmbed()) return null;
   return (
     <Popover
       align="left"
@@ -386,7 +387,7 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
         aria-expanded={open}
       >
         <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
-        <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
+        {effortValue && <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>}
         <Chevron />
       </button>
     </div>
@@ -455,19 +456,27 @@ const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, op
   );
 });
 
+/** Instance-bus event: `{text}` seeds an empty, visible composer (see the listener below). */
+export const COMPOSER_PREFILL_EVENT = 'dc-composer-prefill';
+
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
-  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
+  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false, checkoutChip,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
-  idlePlaceholder, unavailable,
+  idlePlaceholder, unavailable, sendVia,
   showModel = true,
   modelMenu,
   activeAccountId = '', onAccountChange, superView = false, onRefJump,
-  contextHandoff, onContextHandoffChange,
+  contextHandoff, onContextHandoffChange, folded = false, onFieldTap,
 }: {
   session: ComposerHost;
+  /** Phone: the reader has scrolled up, so an empty composer folds to one row. */
+  folded?: boolean;
+  /** Phone: a tap on the text field, which takes the transcript to its end. A tap and not focus:
+   *  the app also focuses this field itself, and that must never move the reader. */
+  onFieldTap?: () => void;
   model: string;
   effort: string;
   modelConfig: ModelConfig;
@@ -551,6 +560,8 @@ export function Composer({
   agent?: string;
   /** The mode menu's Agent section. Absent = no section (see ModeMenu). */
   onAgentPick?: (agent: ChatAgentPick | null) => void;
+  /** Claude / Codex in the model menu (Track T W1). Absent = no tool choice on this composer. */
+  toolPick?: ToolPick;
   /**
    * OVERRIDE for "Set as default" — not the thing that makes the button work.
    *
@@ -570,6 +581,9 @@ export function Composer({
   /** The pinned shelf has an open row docked to this card's top edge, so the card squares its
    *  top corners and the two read as one object. Off until the shelf exists. */
   shelved?: boolean;
+  /** The pane's checkout chip (`CheckoutChips`), drawn in the bottom row right after the `+`.
+   *  Absent where the pane has no shelf (a peer panel, a bare surface). */
+  checkoutChip?: ReactNode;
   /**
    * WHO the `@` menu offers, supplied by the caller instead of fetched.
    *
@@ -606,6 +620,8 @@ export function Composer({
    * menu that never opens.
    */
   idlePlaceholder?: string;
+  /** A host's own delivery: nothing reaches the session. False = refused, the box keeps it all. */
+  sendVia?: (message: string) => boolean;
   /**
    * The field is DOWN for a reason of the surface's own, and this is the sentence that says
    * which. Present ⇒ the field and Send are disabled and the placeholder is `reason`.
@@ -655,7 +671,7 @@ export function Composer({
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
   // whichever chip the user last touched.
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const { t } = useI18n();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.
@@ -684,6 +700,17 @@ export function Composer({
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
   }, [draft, session]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // A page asked this project's Chat to start with a ready message (the Apps page's empty state
+  // seeds `/apps `). Only an EMPTY, visible composer takes it: never over a half-typed draft.
+  useInstanceEvent<{ text?: unknown; accepted?: boolean }>(COMPOSER_PREFILL_EVENT, (detail) => {
+    if (shelved || !detail || typeof detail.text !== 'string' || detail.accepted || draft.trim()) return;
+    // Visible means on screen: a composer of a tab that is not showing would swallow the ask.
+    if (!taRef.current || taRef.current.getClientRects().length === 0) return;
+    detail.accepted = true;
+    setDraft(detail.text);
+    session.syncDraft(detail.text);
+  });
 
   // ── Caret after a PROGRAMMATIC draft replacement ─────────────────────────────────
   //
@@ -812,9 +839,6 @@ export function Composer({
   // share a bucket (a file staged in one reappearing in the other).
   const convId = session.scratchId || session.claudeId;
   const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
-  /** `refused` as last seen: a NEW refusal (a sixth ↩) shows the max notice, a remount does not. */
-  const refusedSeenRef = useRef(readScratch(convId).refused ?? 0);
-  const [maxNotice, setMaxNotice] = useState(0);
   /** Why the last Attach files…/folders… opened nothing (null: it opened, or was cancelled). */
   const [pickNotice, setPickNotice] = useState<string | null>(null);
   /** The Super dock's page chip, drawn in the toolbar: every other attachment is a chip IN the
@@ -822,13 +846,7 @@ export function Composer({
   const pageChip = attachments.find((a) => a.kind === 'page');
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
-    refusedSeenRef.current = readScratch(convId).refused ?? 0;
-    return subscribeScratch(convId, (next) => {
-      setAttachments(next.attachments);
-      const refused = next.refused ?? 0;
-      if (refused > refusedSeenRef.current) setMaxNotice((n) => n + 1);
-      refusedSeenRef.current = refused;
-    });
+    return subscribeScratch(convId, (next) => setAttachments(next.attachments));
   }, [convId]);
 
   // ── Inline reference chips (the Super view, owner 2026-10-24; pictures everywhere, 10-27) ──
@@ -978,17 +996,29 @@ export function Composer({
       }
     }
   };
+  /** A picture chip under the pointer shows the picture itself (owner 2026-11-07): the same
+   *  hover card as a sent chip. The chip is drawn in the mirror BEHIND the textarea, so the
+   *  pointer is hit-tested against its marks, like a click; never while its popover is open. */
+  const picPeek = usePicturePeek();
+  const peekRefAt = (x: number, y: number) => {
+    if (!hlRef.current || refPop) { picPeek.hide(); return; }
+    for (const m of Array.from(hlRef.current.querySelectorAll<HTMLElement>('mark.chat-cmp-hl-img[data-ref-id]'))) {
+      for (const r of Array.from(m.getClientRects())) {
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        const att = attachments.find((a) => a.id === m.dataset.refId);
+        if (att?.kind === 'image' && att.url) { picPeek.show(att.id, att.url, { left: r.left, top: r.top, right: r.right, bottom: r.bottom }); return; }
+        picPeek.hide();
+        return;
+      }
+    }
+    picPeek.hide();
+  };
   // Not past this many milliseconds: each notice says its sentence, then goes.
   useEffect(() => {
     if (!pickNotice) return;
     const id = window.setTimeout(() => setPickNotice(null), 6000);
     return () => window.clearTimeout(id);
   }, [pickNotice]);
-  useEffect(() => {
-    if (!maxNotice) return;
-    const id = window.setTimeout(() => setMaxNotice(0), 3000);
-    return () => window.clearTimeout(id);
-  }, [maxNotice]);
 
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
@@ -1041,7 +1071,6 @@ export function Composer({
       lastCaretRef.current = rec.caret;
       pendingCaret.current = { pos: rec.caret };
       if (r.flash.length) flashRef(r.flash[0]);
-      if (r.max) setMaxNotice((n) => n + 1);
       return;
     }
     let addedFile = false;
@@ -1471,24 +1500,51 @@ export function Composer({
   // One 60s poll shared by every pane on the same account (see useUsageLimits); `usageLimits`
   // drops any cap whose source is missing, stale or describing a window that has already
   // rolled over — so an absent cap draws NO bar rather than an empty one.
-  const usageRes = useUsageLimits(connected, activeAccountId).data ?? null;
+  // A Codex pane spends a CODEX account (Track T W2): its chip lists Codex accounts and its bars
+  // are that account's 5-hour and weekly windows. Claude's two reads are off for it.
+  const isCodex = session.tool === 'codex' || session.tool === 'antigravity';
+  const claudeUsageRes = useUsageLimits(connected && !isCodex, activeAccountId).data ?? null;
+  const codexRes = useToolAccounts(session.tool === 'antigravity' ? 'antigravity' : 'codex', connected && isCodex).data ?? null;
+  const usageRes = useMemo(() => {
+    if (!isCodex) return claudeUsageRes;
+    // Only THIS pane's account: another account's bars would read as this chat's room.
+    const acct = codexRes?.accounts.find((a) => a.id === activeAccountId);
+    if (!acct) return null;
+    // A Free/Go plan has only a monthly window: drawn as its own bar (T3's first monthly window).
+    const month = acct.windows.find((w) => w.kind === 'monthly' && w.resetsAt);
+    const monthly = month ? [{ key: 'monthly' as const, percent: Math.round(month.usedPercent), resetsAt: Date.parse(month.resetsAt!) }] : [];
+    return { limits: [...acct.limits, ...monthly], fetchedAtMs: acct.fetchedAtMs };
+  }, [isCodex, claudeUsageRes, codexRes, activeAccountId]);
   // The connected accounts, fetched HERE for the same reason the usage limits are: they are
   // machine-global, one shared cache entry serves every pane, and threading them down through
   // three layers would buy nothing. `sessionPercent` comes off each account's OWN cached
   // reading — which is what makes a NON-ACTIVE account's usage visible without switching to
   // it. An account with nothing cached carries `null`, drawn as "—" and never as 0%, because
   // 0% would read as "plenty left" about a number we do not have.
-  const accountsRes = useClaudeAccounts(connected).data ?? null;
+  const accountsRes = useClaudeAccounts(connected && !isCodex).data ?? null;
   const accounts = useMemo<AccountOption[]>(
-    () => (accountsRes?.accounts ?? []).map((a) => ({
-      id: a.id,
-      email: a.email,
-      organizationName: a.organizationName,
-      preferred: a.preferred,
-      state: a.state,
-      sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
-    })),
-    [accountsRes],
+    () => (isCodex
+      ? (codexRes?.accounts ?? []).map((a) => ({
+        id: a.id,
+        email: a.email || (session.tool === 'antigravity' ? googleAccountLabel(a, t) : a.isPrimary ? '~/.codex' : a.id),
+        organizationName: session.tool === 'antigravity' ? 'Google' : a.planType ? `ChatGPT ${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)}` : 'ChatGPT',
+        preferred: a.preferred,
+        state: a.state,
+        sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+      }))
+      : (accountsRes?.accounts ?? []).map((a) => ({
+        id: a.id,
+        email: a.email,
+        organizationName: a.organizationName,
+        preferred: a.preferred,
+        state: a.state,
+        ...(a.signedInAs ? { signedInAs: a.signedInAs } : {}),
+        sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+        ...(a.noSessionWindow
+          ? { noSessionWindow: true, weeklyPercent: a.limits.find((l) => l.key === 'weekly')?.percent ?? null }
+          : {}),
+      }))),
+    [isCodex, session.tool, codexRes, accountsRes, t],
   );
   // Re-derived when a reading changes or every 30 s (the staleness check reads the clock),
   // not on every keystroke — the open usage panel is memoized on these.
@@ -1592,7 +1648,8 @@ export function Composer({
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
-   *  `queue` — the ⇡ button: hold for the NEXT turn whatever is happening now. */
+   *  `queue` — hold for the NEXT turn whatever is happening now. ⌥⏎ while a turn runs; its
+   *  ⇡ disc left the toolbar (owner 2026-11-07). */
   type SubmitMode = 'auto' | 'queue';
 
   // ── Assistant mode: push-to-talk ──────────────────────────────────────────────────
@@ -1607,7 +1664,8 @@ export function Composer({
   // routes), so the few lines below that differ ask `phoneVoice`. Read aloud stays the Assistant's.
   const dictationReady = useDictationReady(isDesktop() && mode !== 'assistant');
   const phoneVoice = usePhoneDictation();
-  const voiceEnabled = (isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice;
+  const inAppFrame = !!useEmbed();
+  const voiceEnabled = !inAppFrame && ((isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice);
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -1864,6 +1922,8 @@ export function Composer({
   // as a physical press sends `keyup` milliseconds after `keydown`, and without the window
   // that release would end the take instantly, every time.
   const lastFlipRef = useRef(0);
+  /** This composer took the press and its base key is still down, so its repeats are ours. */
+  const chordClaimedRef = useRef(false);
   // ── ONE composer answers the chord, not every mounted one ───────────────────────────
   //
   // A chat pane never unmounts while its session lives — AgentSurface portals EVERY live
@@ -1893,7 +1953,13 @@ export function Composer({
     };
 
     const down = (e: KeyboardEvent) => {
-      if (e.repeat) return;
+      // A held chord's repeats: nothing to start, but each would still type into the field.
+      if (e.repeat) {
+        if (isHeldChordRepeat(e, chord, chordClaimedRef.current, () => ownsPushToTalk(rootRef.current))) e.preventDefault();
+        return;
+      }
+      // A fresh press: a claim whose keyup never came (the window lost focus) ends here.
+      if (e.code === chord.code) chordClaimedRef.current = false;
       // A latch key arrives with no modifiers of its own, so it is matched on the code alone;
       // an ordinary chord must match EXACTLY, or it would fire inside somebody else's binding.
       const hit = latch ? e.code === chord.code : matchesHotkey(e, chord);
@@ -1903,11 +1969,13 @@ export function Composer({
       // should behave as it does everywhere else in the app.
       if (!ownsPushToTalk(rootRef.current)) return;
       e.preventDefault();
+      chordClaimedRef.current = true;
       if (mode === 'toggle') flip();
       else startTake();
     };
 
     const up = (e: KeyboardEvent) => {
+      if (e.code === chord.code) chordClaimedRef.current = false;
       // The release is NOT ownership-checked the way the press is, and that asymmetry is
       // deliberate: a take that started here must be closeable even if the owner clicked into
       // another pane while still holding the key. `endTake` is a no-op when nothing is
@@ -2028,9 +2096,9 @@ export function Composer({
     //                 surface was missing — ⏎ used to park the message until the whole turn
     //                 settled, which on a long turn is the difference between a ten-second
     //                 correction and a five-minute one.
-    //   any,   ⇡     → QUEUE: held as an editable row above (QueuedMessages.tsx) and sent when
-    //                 this turn settles. The other intent, kept as its own button precisely
-    //                 because it is no longer what ⏎ does.
+    //   any,   queue → held as an editable row above (QueuedMessages.tsx) and sent when this
+    //                 turn settles. ⌥⏎ asks for it (its disc left, owner 2026-11-07); a refused
+    //                 steer lands here too.
     //
     // The steer can refuse (a card is open, the process is gone, the socket shut) and then the
     // message falls back into the queue — the one thing that must never happen is ⏎ eating the
@@ -2062,13 +2130,14 @@ export function Composer({
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
     };
+    if (sendVia) { if (sendVia(message)) sent(); return; }
     // A remote screen's tab whose chat the Mac's window holds (hands-free sekmeler W2, D3): the
     // first send takes the chat, then sends, once. A take that fails leaves the text here.
     if (session.takenOver && session.takeBack) {
       void session.takeBack().then((ok: boolean) => {
         if (!ok) return;
         // The same three deliveries as any send, now that the chat is here: a turn the Mac was
-        // running is steered (or queued), a ⇡ queues, an idle chat starts a turn.
+        // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
         if (mode === 'queue') session.enqueue(message);
         else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
         else if (session.send(message) === false) return;
@@ -2124,17 +2193,6 @@ export function Composer({
   // useAnchoredMenu.ts for why these are not `Popover`s (the Attach menu still is: it clamps
   // to its trigger rather than spanning the card).
   const menu = useAnchoredMenu();
-  // The mode trigger asks to be opened ONCE (owner, 2026-10-12): it carries a soft ring until
-  // the menu has been opened on this machine, then never again. Remembered globally, not per
-  // chat or per vault: "you have seen what this button holds" is a fact about the person.
-  const [modeMenuSeen, setModeMenuSeen] = useState(() => {
-    try { return localStorage.getItem(MODE_MENU_SEEN_KEY) === '1'; } catch { return true; }
-  });
-  useEffect(() => {
-    if (menu.open !== 'mode' || modeMenuSeen) return;
-    setModeMenuSeen(true);
-    try { localStorage.setItem(MODE_MENU_SEEN_KEY, '1'); } catch { /* no storage: seen for this session only */ }
-  }, [menu.open, modeMenuSeen]);
   // "Saved as default" is a receipt, so it is only ever shown for a write that HAPPENED. Any
   // subsequent model/effort change clears it: a receipt next to a value you have since
   // changed is a false one.
@@ -2157,8 +2215,11 @@ export function Composer({
     const at = { model, effort: effortValue };
     // The Super Agent keeps its own default (plan r4 D12): "Set as default" there writes it, not the chat's.
     const write = mode === 'super'
-      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort })
-      : patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort, superTool: '' })
+      : session.tool === 'codex'
+        // Codex's pair is its own: Claude's default stays what it was for a Claude chat.
+        ? patchAgentSettings({ chatDefaultTool: 'codex', codexDefaultModel: at.model, codexDefaultEffort: at.effort })
+        : patchAgentSettings({ chatDefaultTool: '', chatDefaultModel: at.model, chatDefaultEffort: at.effort });
     void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 
@@ -2197,17 +2258,27 @@ export function Composer({
   const newShell = useIsNewShell();
   const newChatsLine = () => {
     const s = readAgentSettings();
-    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
-    const value = [m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
+    const codex = mode !== 'super' && s.chatDefaultTool === 'codex';
+    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : codex ? [s.codexDefaultModel, s.codexDefaultEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
+    const value = [codex ? 'Codex' : '', m ? (codex ? m : modelLabelFor(modelConfig, m)) : t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
     return t('shell.composer.newChats').replace('{value}', value);
   };
+  /** Who this box talks to: the agent, else the tool this chat runs on. */
+  const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : session.tool === 'antigravity' ? 'Antigravity' : 'Claude';
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
-    <div className="chat-cmp" ref={rootRef} data-chips={hlSegments.some((x) => x.kind === 'ref') ? '' : undefined}>
+    <div
+      className="chat-cmp"
+      ref={rootRef}
+      data-chips={hlSegments.some((x) => x.kind === 'ref') ? '' : undefined}
+      // An open menu hangs off this composer and something typed is about to be sent: neither
+      // folds out from under the finger, whatever the transcript behind them does.
+      data-folded={folded && menu.open === null && !hasSendableContent && !quote ? '' : undefined}
+    >
       {/* Anchored to `.chat-cmp`, NOT to the row it belongs to: the card clips its own
           overflow (safe for the toolbar's menus, which are portaled — this one is not), so
           a menu opening upward out of the textarea would be cut off at the card's edge. */}
@@ -2288,20 +2359,37 @@ export function Composer({
       )}
       {menu.open === 'model' && showModel && (
         <div ref={menu.menuRef}>
-          <MemoModelMenu
+          {toolPick && !modelMenu ? (
+            <ComposerModelPicker
+              pick={toolPick}
+              model={model}
+              effort={effortValue}
+              onModelChange={stableModelChange}
+              onEffortChange={stableEffortChange}
+              accounts={accounts}
+              activeAccountId={activeAccountId}
+              onAccountChange={onAccountChange ? stableAccountChange : undefined}
+              newChatsLine={newChatsLine()}
+              // A Codex pane still on Claude's fallback list has no Codex model to save.
+              onSetDefault={session.tool === 'antigravity' || (session.tool && !modelConfig.isToolList) ? undefined : stableSaveDefault}
+              savedDefault={savedDefault}
+              close={menu.close}
+            />
+          ) : <MemoModelMenu
             config={modelConfig}
             model={model}
             effort={effortValue}
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
-            onSetDefault={stableSaveDefault}
+            // A Codex pane still on Claude's fallback list has no Codex model to save.
+            onSetDefault={session.tool === 'antigravity' || (session.tool && !modelConfig.isToolList) ? undefined : stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
             defaultLine={newShell && !modelMenu?.foot && !onSetModelDefault ? newChatsLine() : undefined}
-          />
+          />}
         </div>
       )}
       {menu.open === 'usage' && (
@@ -2385,6 +2473,7 @@ export function Composer({
               {MIRROR_TAIL}
             </div>
           )}
+          {picPeek.node}
           {refPop && (() => {
             const att = attachments.find((a) => a.id === refPop.id);
             return att ? (
@@ -2425,7 +2514,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${speaker} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${speaker}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -2488,10 +2577,13 @@ export function Composer({
             }}
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
-            onClick={(e) => openRefAt(e.clientX, e.clientY)}
+            onClick={(e) => { onFieldTap?.(); picPeek.hide(); openRefAt(e.clientX, e.clientY); }}
+            onMouseMove={(e) => peekRefAt(e.clientX, e.clientY)}
+            onMouseLeave={picPeek.hide}
             aria-describedby={srRefs.length ? srListId : undefined}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              picPeek.hide();
               // The `@` arm sits FIRST and returns: the two menus are mutually exclusive by
               // construction (the caret is in at most one token), so order is about intent,
               // not conflict — an open picker owns ↑/↓/⏎ before anything else claims them.
@@ -2560,8 +2652,15 @@ export function Composer({
                 e.preventDefault();
                 return;
               }
-              // ⏎ sends on a computer; on a phone it is a new line and only the button sends.
               const n = e.nativeEvent;
+              // ⌥⏎ while a turn runs: hold it for the NEXT turn. The keyboard home of the queue
+              // since its disc left the toolbar (owner 2026-11-07), so "not this turn, the next
+              // one" is still one gesture away.
+              if (e.key === 'Enter' && e.altKey && busy && !(n.isComposing || composingRef.current)) {
+                e.preventDefault(); submit('queue');
+                return;
+              }
+              // ⏎ sends on a computer; on a phone it is a new line and only the button sends.
               if (enterSends({ key: e.key, shiftKey: e.shiftKey, keyCode: n.keyCode, isComposing: n.isComposing || composingRef.current })) {
                 e.preventDefault(); submit();
               }
@@ -2574,7 +2673,6 @@ export function Composer({
         {/* Below the field row, not in it: reached by Tab, it shows on a line of its own and
             never squeezes the textarea its mirror is aligned to. */}
         <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />
-        {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
         {pickNotice && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-pick-notice">{pickNotice}</div>}
         {/* The hands-free phone's one status line for its chips ("2 photos · 1 uploading…"): under
             the text, never above it. */}
@@ -2593,7 +2691,6 @@ export function Composer({
             agentName={agentName}
             hasPhoto={!!agentSummary?.hasPhoto}
             permissionMode={permissionMode}
-            seen={modeMenuSeen}
             open={menu.open === 'mode'}
             onToggle={toggleMode}
           />
@@ -2609,6 +2706,9 @@ export function Composer({
           ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
           : <AttachButton onPick={stablePick} />
         )}
+        {/* The checkout chip (`main`, a worktree), right after the `+` (owner 2026-11-07): the
+            shelf row it stood on alone above the composer is gone. Supplied by the pane. */}
+        {checkoutChip}
         {pageChip && <PageChip page={pageChip} convId={convId} />}
 
         <div className="chat-cmp-spacer" />
@@ -2672,7 +2772,7 @@ export function Composer({
             className="chat-cmp-compact-btn"
             onClick={runCompact}
             disabled={!canCompose}
-            title="Ask Claude to compact the conversation"
+            title={`Ask ${speaker} to compact the conversation`}
           >
             <span aria-hidden>⚠</span>
             <span className="chat-cmp-compact-label">/compact</span>
@@ -2684,7 +2784,8 @@ export function Composer({
         {showModel && (
           <ModelTrigger
             modelLabel={modelLabel}
-            effortValue={effortValue}
+            // A model with no effort levels (Haiku 4.5) names none.
+            effortValue={effortsForModel(modelConfig, model).length ? effortValue : ''}
             disabled={!canCompose}
             open={menu.open === 'model'}
             onToggle={toggleModel}
@@ -2695,13 +2796,10 @@ export function Composer({
         {/* Round icon buttons, sized to sit level with the model/effort text beside them —
             a label would only repeat what ⏎ already does.
 
-            While a turn runs, up to THREE are offered, because all three actions are live and
-            they are genuinely different asks: Stop ends the turn, ⇡ holds the message for the
-            next one, ↑ hands it to this one. ⏎ maps to ↑, so the pointer path and the keyboard
-            path agree — and ⇡ exists precisely because ⏎ no longer queues, which would
-            otherwise have left "not this turn, the next one" with no way to say it at all.
-            Both text buttons appear only once there is something to send, so an idle-handed
-            Stop stays the single obvious control. */}
+            While a turn runs, TWO: Stop ends the turn, ↑ hands the message to it (⏎ maps to ↑).
+            "Not this turn, the next one" is ⌥⏎; its own disc left because a phone did not fit
+            three (owner 2026-11-07). Send appears only once there is something to send, so an
+            idle-handed Stop stays the single obvious control. */}
         {/* THE VOICE LINE: two to four words, one line, cut with an ellipsis — never a sentence
             (owner, 2026-10-21: the long ones overflowed the narrow composer). What it does not
             say, the mic's `title` does. It sits LEFT of the mic on purpose: its width changes
@@ -2796,20 +2894,9 @@ export function Composer({
             <span aria-hidden>■</span>
           </button>
         )}
-        {busy && hasSendableContent && (
-          <button
-            type="button"
-            className="chat-cmp-send is-queue"
-            disabled={!canCompose || awaitingUpload}
-            onClick={() => submit('queue')}
-            title="Queue for the next turn — held above, editable until it goes"
-            aria-label="Queue for the next turn"
-          >
-            {/* A DASHED up arrow for the queue: the same gesture as Send, deferred — and
-                monochrome, like every other glyph on this surface. */}
-            <span aria-hidden>⇡</span>
-          </button>
-        )}
+        {/* Two discs while a turn runs, Stop and Send: the hollow queue disc between them left
+            (owner 2026-11-07, "on a phone it does not fit"). ⏎ and ↑ steer into the turn and
+            fall back to the queue when the steer is refused, so nothing typed is lost. */}
         {(!busy || hasSendableContent) && (
           <button
             type="button"
@@ -2821,7 +2908,7 @@ export function Composer({
             disabled={!canCompose || !hasSendableContent || awaitingUpload}
             onClick={() => submit('auto')}
             title={awaitingUpload ? 'Attaching the pasted image…'
-              : busy ? 'Send into the running turn (⏎) — picked up at the next step'
+              : busy ? 'Send into the running turn (⏎), picked up at the next step · ⌥⏎ holds it for the next turn'
                 : 'Send (⏎)'}
             aria-label={busy ? 'Send into the running turn' : 'Send'}
           >

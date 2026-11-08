@@ -1,6 +1,7 @@
 import { defineConfig } from 'tsup';
 import { chmodSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
 
 /**
  * The version to stamp INTO the bundle, read from package.json at build time.
@@ -34,9 +35,14 @@ function versionToStamp(): string {
 }
 
 export default defineConfig({
-  entry: ['src/cli/index.ts'],
+  // The CLI, and the T3 bridge child (Effect + the vendored provider layer), which only
+  // `dreamcontext t3-chat` loads, so the CLI every hook starts stays as small as before. The
+  // Claude engine's child is its own bundle: it needs the Agent SDK, which a packaged app lacks.
+  entry: { index: 'src/cli/index.ts', 't3-bridge': 'src/lib/t3-bridge/main.ts', 't3-bridge-claude': 'src/lib/t3-bridge/main-claude.ts' },
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
+  // Keep `node:` on builtins: `node:sea` (T3's HostProcess) has no bare-name form.
+  removeNodeProtocol: false,
   clean: true,
   splitting: false,
   // esbuild substitutes this expression with the literal version, so the
@@ -61,6 +67,10 @@ export default defineConfig({
   // (e.g. nanoid) would fail with ERR_MODULE_NOT_FOUND at runtime. All 7 deps
   // are pure JS and bundle cleanly.
   noExternal: [
+    // The dreamcontext Apps MCP bridge (src/lib/apps/mcp-bridge.ts): pure JS, bundled.
+    '@modelcontextprotocol/sdk',
+    // The MCP SDK imports zod (v3, v4, v4-mini): left external, the .app's CLI dies at load.
+    /^zod(\/|$)/,
     'commander',
     'chalk',
     'gray-matter',
@@ -74,7 +84,21 @@ export default defineConfig({
     // Pure-JS fractional indices for whiteboard elements (Excalidraw's own ordering scheme) —
     // every whiteboard write imports it, so leaving it external crashes the .app's CLI at load.
     'fractional-indexing',
+    // T3 Code's provider layer (src/vendor/t3) and what it imports: Effect and the markdown
+    // helpers T3's shared package uses. Loaded only by `dreamcontext t3-chat` (a dynamic import).
+    /^effect(\/|$)/,
+    /^@effect\//,
+    'diff',
+    // T3's Antigravity install unpacks a release zip: pure JS, and the .app has no node_modules.
+    'yauzl',
+    'yaml',
+    'unified',
+    /^remark-/,
+    /^mdast-/,
+    /^micromark/,
   ],
+  // `@t3tools/*` and `effect-codex-app-server/*` resolve into src/vendor/t3 (scripts/t3-aliases.mjs).
+  esbuildPlugins: [t3EsbuildPlugin],
   // node-pty is a NATIVE module — it cannot be bundled. It's an optionalDependency,
   // loaded via dynamic import() with graceful degradation (the agent terminal falls
   // back to "Open in Terminal"). Kept external so tsup never tries to inline the .node.
@@ -90,6 +114,9 @@ export default defineConfig({
     // to dist/git-sync/ so credentials.ts's runtime path resolution (relative to
     // its own bundled import.meta.url, i.e. dist/) finds it — see credentials.ts.
     cpSync('src/lib/git-sync/askpass.cjs', 'dist/git-sync/askpass.cjs');
+    // The dreamcontext App SDK is served as a file (`/__dc/sdk.js`) and copied into new apps
+    // (`lib/dc.mjs`), never bundled: src/server/apps/gateway-w3.ts resolves dist/apps/dc.mjs.
+    cpSync('src/lib/apps/sdk/dc.mjs', 'dist/apps/dc.mjs');
     // cpSync preserves the SOURCE mode — enforce the executable bit instead of
     // inheriting it. git execs GIT_ASKPASS directly; a non-executable helper
     // fails every authenticated fetch/push with a bare "Permission denied".

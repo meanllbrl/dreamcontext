@@ -114,9 +114,26 @@ describe('findOrphanChecks: only this repo\'s parentless checkers', () => {
 
 describe('heavySpawnPlan', () => {
   it('argv as given; one argument holding a whole line goes through the shell', () => {
-    expect(heavySpawnPlan(['npx', 'tsc', '--noEmit'])).toEqual({ file: 'npx', args: ['tsc', '--noEmit'], shell: false });
-    expect(heavySpawnPlan(['npx tsc --noEmit'])).toEqual({ file: 'npx tsc --noEmit', args: [], shell: true });
+    expect(heavySpawnPlan(['npx', 'tsc', '--noEmit'], 'darwin')).toEqual({ file: 'npx', args: ['tsc', '--noEmit'], shell: false });
+    expect(heavySpawnPlan(['npx tsc --noEmit'], 'darwin')).toEqual({ file: 'npx tsc --noEmit', args: [], shell: true });
     expect(heavySpawnPlan([])).toBeNull();
+  });
+  it('on Windows a bare npm/npx is found on PATH and its .cmd runs through cmd.exe, every part escaped', () => {
+    const NPM = 'C:\\Program Files\\nodejs\\npm.cmd';
+    const NPX = 'C:\\Program Files\\nodejs\\npx.cmd';
+    const o = { path: 'C:\\Windows\\System32;C:\\Program Files\\nodejs', env: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, isFile: (p: string) => p === NPM || p === NPX || p === 'C:\\Windows\\System32\\git.exe' };
+    const npm = heavySpawnPlan(['npm', 'run', 'build'], 'win32', o)!;
+    expect(npm).toMatchObject({ file: 'C:\\Windows\\system32\\cmd.exe', shell: false, windowsVerbatimArguments: true });
+    expect(npm.args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+    expect(npm.args[3]).toContain('npm.cmd');
+    // An argument with a space, a quote or a cmd metacharacter can never become cmd syntax.
+    const npx = heavySpawnPlan(['npx', 'vitest', 'run', 'C:\\a b\\x & calc %PATH%.test.ts'], 'win32', o)!;
+    expect(npx.args[3]).not.toMatch(/[^^]&|[^^]%/);
+    // An .exe runs directly; a name not on PATH is spawned as written and fails as such.
+    expect(heavySpawnPlan(['git', 'status'], 'win32', o)).toEqual({ file: 'C:\\Windows\\System32\\git.exe', args: ['status'], shell: false });
+    expect(heavySpawnPlan(['nope', 'x'], 'win32', o)).toEqual({ file: 'nope', args: ['x'], shell: false });
+    // A whole line handed as one argument still goes to the shell, as written.
+    expect(heavySpawnPlan(['npx tsc --noEmit'], 'win32', o)).toEqual({ file: 'npx tsc --noEmit', args: [], shell: true });
   });
 });
 

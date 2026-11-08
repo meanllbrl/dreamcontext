@@ -35,6 +35,28 @@ export interface ChatHistoryItem {
   trigger?: 'manual' | 'auto';
   preTokens?: number;
   postTokens?: number;
+  /** A `user` item the Telegram hub injected (B2): its server block said `via="telegram"`, and
+   *  `ref` is that block's ref, the one the Super's `re:` answer names. */
+  source?: 'telegram';
+  ref?: string;
+}
+
+/** The server's Telegram owner block (`ownerMsgBlock(text, {ref, via})`), a whole text block.
+ *  Only the block the server wrote counts: a text that merely contains the words is the owner's. */
+const TELEGRAM_BLOCK_RE = /^<owner-msg ref="([0-9a-z]{6})"(?: parts="[0-9a-z ]{6,}")? via="telegram"\/>$/;
+
+/** The Telegram ref of an owner turn's blocks, or null: the trailing server block, never the
+ *  first text block (the owner's own words come first, C4). */
+export function telegramRefOfBlocks(blocks: readonly unknown[]): string | null {
+  let found: string | null = null;
+  for (let i = 1; i < blocks.length; i++) {
+    const b = blocks[i];
+    const t = typeof b === 'string' ? b : b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' ? (b as { text?: unknown }).text : null;
+    if (typeof t !== 'string') continue;
+    const m = TELEGRAM_BLOCK_RE.exec(t.trim());
+    if (m) { found = m[1]; break; }
+  }
+  return found;
 }
 
 /** A transcript row's own `timestamp`, as epoch ms, or undefined. Never 0: that is no time. */
@@ -214,7 +236,8 @@ function parseAll(raw: string, opts: TranscriptHistoryOptions): ChatHistoryItem[
         ? p.map((b) => (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : ''))
         : [];
       const text = blocks.map((t) => t.trim()).filter((t) => t && !t.startsWith('<')).join('\n').trim();
-      if (text) items.push({ kind: 'user', ...(typeof obj.uuid === 'string' ? { uuid: obj.uuid } : {}), text, ...when });
+      const tgRef = Array.isArray(p) ? telegramRefOfBlocks(p) : null;
+      if (text) items.push({ kind: 'user', ...(typeof obj.uuid === 'string' ? { uuid: obj.uuid } : {}), text, ...when, ...(tgRef ? { source: 'telegram' as const, ref: tgRef } : {}) });
       continue;
     }
 
@@ -242,7 +265,8 @@ function parseAll(raw: string, opts: TranscriptHistoryOptions): ChatHistoryItem[
         }
       }
       const text = userPromptOf(obj);
-      if (text) items.push({ kind: 'user', uuid, text, ...when });
+      const tgRef = Array.isArray(content) ? telegramRefOfBlocks(content) : null;
+      if (text) items.push({ kind: 'user', uuid, text, ...when, ...(tgRef ? { source: 'telegram' as const, ref: tgRef } : {}) });
       continue;
     }
 

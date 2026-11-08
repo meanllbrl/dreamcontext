@@ -4,6 +4,7 @@ import type { ChatSession, PendingQuestion } from '../chatSession';
 import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { surveyDraftKey } from '../chat/surveyDrafts';
+import { RemotePermission } from './SuperPermissionCard';
 import {
   askPendingOf, askQuestionsOf, cardState, childQuestionOf, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
   type AskRef,
@@ -50,6 +51,23 @@ function OpenQuestion({ item, superSession, child, remote, reads }: {
   child: ChatSession | undefined;
   remote?: SuperRemoteQuestions;
   /** Its report cards on the stage ("To read: <card> →"). */
+  reads?: SurveyRead[];
+}) {
+  // A child's permission that waits for him, on a surface without the child's socket (the
+  // hands-free phone): Allow / Deny through the Mac window. On the laptop the child's own tab and
+  // the bar answer it: nothing is drawn here.
+  if (item.kind === 'permission') {
+    const perm = remote?.permissionOf?.(item.id) ?? null;
+    return perm && remote?.answerPermission ? <RemotePermission item={item} perm={perm} answer={remote.answerPermission} /> : null;
+  }
+  return <OpenAsk item={item} superSession={superSession} child={child} remote={remote} reads={reads} />;
+}
+
+function OpenAsk({ item, superSession, child, remote, reads }: {
+  item: SuperQueueItem;
+  superSession: ChatSession;
+  child: ChatSession | undefined;
+  remote?: SuperRemoteQuestions;
   reads?: SurveyRead[];
 }) {
   // A child's pending question is what its card is: follow it.

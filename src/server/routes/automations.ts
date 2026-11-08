@@ -1,10 +1,15 @@
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { deleteRoutine } from '../member-delete.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
-import { ownerLabel } from '../../lib/agents/owner.js';
+import { refuseUnlessOwnerPage } from '../owner-page.js';
+import { approvalCardFacts, staleApprovalBlock } from '../../lib/automations/approval-card.js';
+import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
+import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
 import { globalAgentExists } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
 import {
@@ -28,19 +33,23 @@ import {
   isSafeAutomationSlug,
   automationPath,
   getRunTarget,
-} from '../../lib/automations/store.js';
-import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
+  pathOccupied,
+  readManifestParts, runAccountIdOk, approveMadeHere } from '../../lib/automations/store.js';
+import { getAgent, removeAgent } from '../../lib/agents/store.js';
+import { ownerEdit } from '../../lib/agents/amendments.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { runLeavesNoSession, wouldStickToSession } from '../../lib/automations/light-run.js';
-import { readRunSidecar } from '../../lib/automations/store.js';
+import { listRunSidecars } from '../../lib/automations/store.js';
+import type { AppRunBrief } from '../../lib/apps/brief.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
   approvalFields,
-  checkApproval,
+  changedApprovalFields,
+  checkApproval, getApproval,
   renderApprovalReview,
   approveAutomation,
   listRegisteredProjects,
@@ -63,7 +72,7 @@ import {
 } from '../../lib/automations/notifier.js';
 import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
-import { allPendingQuestions, claimQuestion, pendingQuestion, settleApprovalQuestions } from '../../lib/automations/hitl.js';
+import { allPendingQuestions, claimQuestion, pendingQuestion, pendingQuestionOfRun, settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { approvalQuestionTarget, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
@@ -71,9 +80,12 @@ import { buildFeed, readRunAnswer, threadReplies, threadRootId } from '../../lib
 import {
   announceTurn, appendThreadEntry, listThreadRuns, markThreadRead, newThreadEntryId, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
-import { latestBoundSession, readAutomationSession } from '../../lib/automations/session-registry.js';
+import { latestBoundSession, sessionForRun } from '../../lib/automations/session-registry.js';
+import { offerableSession, phoneRunItems } from '../../lib/automations/run-chat.js';
+import { isPhoneSocket } from '../phone-origin.js';
+import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
+import { noteTeamFollowUp } from '../../lib/super/team.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
-import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import { expandBoardRefs } from '../../lib/whiteboards/board-refs.js';
@@ -82,6 +94,9 @@ import {
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
   agentActivity,
   agentActivities,
+  freshFireAt,
+  liveTurnCount,
+  runIsActive,
 } from '../automation-job.js';
 
 /** The feed's hard ceiling. A channel is read from the bottom: a window past
@@ -108,6 +123,7 @@ import {
   type RunKind,
   type ScheduleSlot,
   type SpawnModelOverride,
+  type ThreadEntry,
   type Weekday,
   THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
@@ -206,6 +222,9 @@ interface AutomationSummary {
    *  from the LIST — opening it must not have to fetch the manifest first, or
    *  the form flashes a default effort the owner never chose. */
   effort: AutomationManifest['effort'];
+  /** Which tool it runs on, and the Codex account it is pinned to (null = chosen per run). */
+  tool: 'claude' | 'codex' | 'antigravity';
+  account: string | null;
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -271,14 +290,17 @@ interface AutomationCacheSummary {
   outputPath: string | null;
 }
 
-function cacheSummary(cache: AutomationCache | null): AutomationCacheSummary | null {
+function cacheSummary(cache: AutomationCache | null, approvedNow: boolean): AutomationCacheSummary | null {
   if (!cache) return null;
+  // A refusal for want of the approval it has now is history, not this automation's state: the
+  // card would read "blocked" and print the old error under an approved agent (owner 2026-11-01).
+  const stale = staleApprovalBlock(cache, approvedNow);
   return {
-    status: cache.status,
+    status: stale ? null : cache.status,
     lastRunAt: cache.lastRunAt,
     lastFireAt: cache.lastFireAt,
     durationMs: cache.durationMs,
-    error: cache.error,
+    error: stale ? null : cache.error,
     outputPath: cache.outputPath,
   };
 }
@@ -308,11 +330,13 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     face: faceOf(m.slug, m.path ? parseFace(readManifestFrontmatter(m.path)?.data.face) : null),
     model: m.model,
     effort: m.effort,
+    tool: m.tool ?? 'claude',
+    account: m.account ?? null,
     timeoutMinutes: m.timeoutMinutes,
     catchupHours: m.catchupHours,
     approved: approval.approved,
     approvalReason: approval.approved ? null : approval.reason,
-    cache: cacheSummary(readAutomationCache(contextRoot, m.slug)),
+    cache: cacheSummary(readAutomationCache(contextRoot, m.slug), approval.approved),
     review: m.review,
     whiteboard: m.whiteboard ?? null,
     // Live-computed from the question store, NOT from `cache.status`, for the
@@ -340,33 +364,6 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
  * should see what a teammate's automation is asking; they just get no button
  * that resumes a conversation this machine never had.
  */
-/**
- * A question's session id, but only when opening it would actually reach that
- * conversation. Two independent gates, both of which must hold:
- *
- *  - MACHINE-LOCAL BINDING TO THIS SLUG — a question record lives inside the
- *    brain and is kept out of git only by a best-effort `.gitignore` line, so a
- *    pulled-in one must never hand this client a resumable `bypassPermissions`
- *    uuid. The WS resume gate does not cover this source (it scans
- *    `automations/cache/*.json` only), so the check happens before the field
- *    goes on the wire — and it is `readAutomationSession(slug, …)`, not the
- *    gate's slug-agnostic `isAutomationBoundSession`. See `attention.ts`'s
- *    `locallyBound` for why discarding the slug admits a confused-deputy.
- *  - A TRANSCRIPT ON DISK — `--resume` against a missing transcript does not
- *    fail; it fresh-pins an empty conversation under the same uuid, which would
- *    open a blank chat claiming to be the run. See `attention.ts`'s
- *    `hasTranscript`.
- *
- * Withholding is not the same as having no question: the words still render, so
- * the reader sees what is being asked. They just get no button that cannot work.
- */
-function offerableSession(slug: string, sessionId: string | null): string | null {
-  if (!sessionId) return null;
-  if (readAutomationSession(slug, sessionId) === null) return null;
-  if (findTranscriptBySessionId([sessionId]) === null) return null;
-  return sessionId;
-}
-
 function summarizeQuestion(q: AutomationQuestion | null): PendingQuestionSummary | null {
   if (!q) return null;
   return {
@@ -382,7 +379,7 @@ function summarizeQuestion(q: AutomationQuestion | null): PendingQuestionSummary
 
 /** GET /api/automations — list every automation with its approval + cache state. */
 export async function handleAutomationsList(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
@@ -390,7 +387,8 @@ export async function handleAutomationsList(
   try {
     const projectRoot = dirname(contextRoot);
     const automations = listAutomations(contextRoot).map((m) => summarize(projectRoot, contextRoot, m));
-    sendJson(res, 200, { automations });
+    // An absolute path of this Mac stays home.
+    sendJson(res, 200, { automations: isPhoneSocket(req) ? automations.map((a) => (a.cache ? { ...a, cache: { ...a.cache, outputPath: null } } : a)) : automations });
   } catch {
     sendError(res, 500, 'list_failed', 'Failed to read automations.');
   }
@@ -415,9 +413,16 @@ export async function handleAutomationsRunStatus(
   }
 }
 
+/** The run cache for a phone: its output paths are absolute paths of this Mac. */
+function phoneCache(cache: ReturnType<typeof readAutomationCache>): ReturnType<typeof readAutomationCache> {
+  if (!cache) return cache;
+  const history = Array.isArray(cache.history) ? cache.history.map((e) => ({ ...e, outputPath: null })) : cache.history;
+  return { ...cache, history, ...('outputPath' in cache ? { outputPath: null } : {}) } as typeof cache;
+}
+
 /** GET /api/automations/:slug — full manifest + approval state + cache (incl. run history). */
 export async function handleAutomationsShow(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
@@ -477,6 +482,14 @@ export async function handleAutomationsShow(
         autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
         // Hashed when named: the review shows what a light job of it may call.
         readTools: manifest.readTools ?? [],
+        // Hashed off Claude: which vendor reads the prompt.
+        tool: manifest.tool ?? 'claude',
+        // Hashed when set: which app's brief the run gets.
+        app: manifest.app ?? '',
+        // Hashed when true, LAST: `scope: board`, limited to its home board.
+        boardOnly: manifest.boardOnly === true,
+        // Hashed when named, LAST: the app tools a run may change things with while nobody watches.
+        appTools: manifest.appTools ?? [],
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -496,7 +509,9 @@ export async function handleAutomationsShow(
       // Every hashed field as the `field: value` lines the CLI's approve prints (the same
       // renderer the agent profile's review uses): what Approve grants, in one readable block.
       review: renderApprovalReview(approvalFields(manifest)),
-      cache: readAutomationCache(contextRoot, manifest.slug),
+      // The fields the one approval card names (plan-r10 1e); null when nothing waits.
+      changedFields: changedApprovalFields(dirname(contextRoot), manifest),
+      cache: isPhoneSocket(req) ? phoneCache(readAutomationCache(contextRoot, manifest.slug)) : readAutomationCache(contextRoot, manifest.slug),
     });
   } catch {
     sendError(res, 500, 'show_failed', 'Failed to read the automation.');
@@ -544,7 +559,11 @@ export async function handleAutomationsSession(
     // A missing transcript is a normal state, not an error: claude writes one
     // only once a session has produced a turn, and a run that never reached a
     // session has no id at all. The client renders the difference.
-    const digest = resolved.transcriptPath ? readSessionDigest(resolved.transcriptPath) : null;
+    // The cache is synced: its id opens a transcript only when this machine bound it to this slug.
+    const sessionId = offerableSession(manifest.slug, resolved.sessionId);
+    const transcriptPath = sessionId ? resolved.transcriptPath : null;
+    const digest = transcriptPath ? readSessionDigest(transcriptPath) : null;
+    const phone = isPhoneSocket(req);
     sendJson(res, 200, {
       session: {
         runNumber: resolved.runNumber,
@@ -554,10 +573,11 @@ export async function handleAutomationsSession(
         costUsd: resolved.event.costUsd,
         numTurns: resolved.event.numTurns,
         permissionDenials: resolved.event.permissionDenials,
-        outputPath: resolved.event.outputPath,
-        sessionId: resolved.sessionId,
-        transcriptPath: resolved.transcriptPath,
-        items: digest?.items ?? [],
+        // An absolute path of this Mac: a phone reads the document through the thread.
+        outputPath: phone ? null : resolved.event.outputPath,
+        sessionId,
+        transcriptPath: phone ? null : transcriptPath,
+        items: phone ? phoneRunItems(digest?.items ?? []) : digest?.items ?? [],
         toolCounts: digest?.toolCounts ?? {},
         toolCalls: digest?.toolCalls ?? 0,
         toolErrors: digest?.toolErrors ?? 0,
@@ -600,8 +620,83 @@ export async function handleAutomationsRunNow(
  * stands right now (the same primitive the CLI's `approve -y` calls after the
  * human reviews every hashed field; rendering that diff is a dashboard-side
  * concern against the fields already exposed by `GET /api/automations/:slug`).
+ *
+ * The OWNER's page only (`refuseUnlessOwnerPage`): an agent that set an automation up
+ * must not grant it by calling this route the way the CLI's `approve` already refuses it.
+ *
+ * Body (all optional, sent by the chat card): `enable: true` turns a disabled automation on
+ * with the same yes (the card's "Approve and turn on"; `enabled` is not hashed, so the grant
+ * stands), and `sessionId` names the chat the card sits in, so a Super Agent hears the decision
+ * as an event. Answers the card's facts and `told: true` when a super event was queued.
  */
 export async function handleAutomationsApprove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'approves an automation')) return;
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    if (refuseNotOwner(res, manifest)) return;
+    const body = (await parseJsonBody(req)) ?? {};
+    const projectRoot = dirname(contextRoot);
+    registerProject(projectRoot);
+    const entry = approveAutomation(projectRoot, manifest, new Date());
+    settleApprovalQuestions(contextRoot, manifest.slug);
+    const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
+    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
+    sendJson(res, 200, { slug: manifest.slug, approval: entry, card: approvalCardFacts(projectRoot, after), told });
+  } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
+    sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/reject — the owner's NO on an automation's approval card. Any
+ * approval it had here is withdrawn, and it is turned off (`enabled` is not hashed), so it neither runs nor asks again
+ * on every fire. The file stays: deleting is the AI Team page's explicit step, never a side
+ * effect of a tap. The owner's page only, like approving: the decision is reported to the Super
+ * Agent in his name.
+ */
+export async function handleAutomationsReject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'rejects an automation')) return;
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    if (refuseNotOwner(res, manifest)) return;
+    const body = (await parseJsonBody(req)) ?? {};
+    // A NO takes back a yes given earlier too: an approval left standing would let any session's
+    // `automations enable` run it on the grant he just withdrew.
+    revokeApproval(dirname(contextRoot), manifest.slug);
+    const after = manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, false) : manifest;
+    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'rejected');
+    sendJson(res, 200, { slug: manifest.slug, card: approvalCardFacts(dirname(contextRoot), after), told });
+  } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
+    sendError(res, 500, 'reject_failed', 'Failed to reject the automation.');
+  }
+}
+
+/**
+ * GET /api/automations/:slug/card — what the chat's approval card shows (`approvalCardFacts`):
+ * read from the manifest, never from the block the agent wrote. `owned: false` for a
+ * teammate's automation, which is read-only here (no buttons).
+ */
+export async function handleAutomationsCard(
   _req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
@@ -613,14 +708,20 @@ export async function handleAutomationsApprove(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
-    if (refuseNotOwner(res, manifest)) return;
-    const projectRoot = dirname(contextRoot);
-    const entry = approveAutomation(projectRoot, manifest, new Date());
-    settleApprovalQuestions(contextRoot, manifest.slug);
-    sendJson(res, 200, { slug: manifest.slug, approval: entry });
-  } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-    sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
+    sendJson(res, 200, { card: approvalCardFacts(dirname(contextRoot), manifest), owned: foreignOwner(manifest) === null });
+  } catch {
+    sendError(res, 500, 'card_failed', 'Failed to read the automation.');
+  }
+}
+
+/** Queue the decision for the Super Agent when the card sits in its chat (or a child's). */
+async function tellSuper(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
+  try {
+    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision);
+  } catch {
+    // The decision itself is written; a super that cannot hear it reads it from `show`.
+    return false;
   }
 }
 
@@ -751,7 +852,7 @@ const APPROVAL_DECISIONS = { approve: true, yes: true, reject: false, no: false 
  *  - `'flow-hitl'` — an already-approved run stopped mid-flight to ask a
  *    question ABOUT ITS OWN WORK, not about whether to trust it, so free text
  *    is the correct and only shape of answer. `resumeWithAnswer` is the one
- *    path every channel (HTTP, CLI, Telegram) uses for this, and it re-checks
+ *    path every channel (HTTP, CLI) uses for this, and it re-checks
  *    the kind itself before touching anything — this route's branch is a
  *    nicer early exit for the wrong kind, not the defense. Do not fold this
  *    branch back into the one above: the two kinds disagree about whether
@@ -793,6 +894,8 @@ export async function handleAutomationsQuestionAnswer(
         );
         return;
       }
+      // Approving is the owner's, from his page: the run that asked must not answer itself.
+      if (APPROVAL_DECISIONS[decision] && refuseUnlessOwnerPage(req, res, 'approves an automation')) return;
       // Only APPROVING needs the manifest. A reject must close the question even
       // when its agent or automation is gone, or nothing could ever clear it.
       if (APPROVAL_DECISIONS[decision] && !manifest) {
@@ -880,85 +983,6 @@ export async function handleAutomationsQuestionAnswer(
   }
 }
 
-// ─── Per-automation Telegram config ─────────────────────────────────────────
-
-/** What the dashboard needs to answer "is Telegram set up for this
- *  automation, and where does it reply" — never the bot token itself, the
- *  same shape discipline `GET /api/lab/credentials` uses for lab secrets. */
-interface TelegramConfigView {
-  configured: boolean;
-  chatId: string | null;
-}
-
-function telegramView(cfg: ReturnType<typeof readTelegramConfigForSlug>): TelegramConfigView {
-  return cfg ? { configured: true, chatId: cfg.chatId } : { configured: false, chatId: null };
-}
-
-/** GET /api/automations/:slug/telegram — presence + chat id only. The bot
- *  token is a capability (it can resume a `bypassPermissions` session) and
- *  never leaves this process. */
-export async function handleAutomationsTelegramGet(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    if (!getAutomation(contextRoot, params.slug)) {
-      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
-      return;
-    }
-    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
-  } catch {
-    sendError(res, 500, 'telegram_status_failed', 'Failed to read the Telegram configuration.');
-  }
-}
-
-/**
- * POST /api/automations/:slug/telegram — set (or replace) this automation's
- * bot credentials. Body is `{ botToken: string, chatId: string }`; both are
- * required non-empty strings. The response echoes the same presence-only
- * shape the GET route returns — the token that was just written is never
- * read back over HTTP.
- *
- * The `offset` (getUpdates cursor) is carried over from any existing config
- * rather than reset to 0: re-saving the same bot must not replay updates it
- * already processed. A genuinely new bot (no prior config) starts at 0.
- */
-export async function handleAutomationsTelegramSet(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    const target = getAutomation(contextRoot, params.slug);
-    if (!target) {
-      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
-      return;
-    }
-    if (refuseNotOwner(res, target)) return;
-    const body = await parseJsonBody(req);
-    const botToken = typeof body?.botToken === 'string' ? body.botToken.trim() : '';
-    const chatId = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
-    if (!botToken || !chatId) {
-      sendError(res, 400, 'invalid_body', 'Request body must be { botToken, chatId } with non-empty strings.');
-      return;
-    }
-    const existing = readTelegramConfigForSlug(params.slug);
-    writeTelegramConfigForSlug(params.slug, { botToken, chatId, offset: existing?.offset ?? 0 });
-    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
-  } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-    if (err instanceof AutomationError) {
-      sendError(res, 400, 'telegram_rejected', err.message);
-      return;
-    }
-    console.error('[automations] telegram set failed:', err);
-    sendError(res, 500, 'telegram_failed', 'Failed to store the Telegram configuration.');
-  }
-}
-
 // ─── Queue (machine-local, deferred fires) ──────────────────────────────────
 
 /**
@@ -984,11 +1008,16 @@ export async function handleAutomationsQueue(
 }
 
 export async function handleAutomationsEnable(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  // A member's slot is turned back on by the owner only, in the app (plan-r10 1e): an agent that
+  // reaches this route must not reopen a member he switched off.
+  let member = false;
+  try { member = getAgent(contextRoot, params.slug) !== null; } catch { member = false; }
+  if (member && refuseUnlessOwnerPage(req, res, 'turns a member back on')) return;
   await setEnabled(res, params, contextRoot, true);
 }
 
@@ -1048,6 +1077,19 @@ function readMode(v: unknown): AutomationMode | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v === 'string' && (AUTOMATION_MODES as readonly string[]).includes(v)) return v as AutomationMode;
   throw new AutomationError(`Invalid mode — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+}
+
+/** The tool and account a save asks for. Absent stays; `''` or null is Claude / no pin. */
+function readToolChoice(body: Record<string, unknown>): { tool: 'codex' | 'antigravity' | null | undefined; account: string | null | undefined } {
+  const t = body.tool;
+  if (t !== undefined && t !== null && t !== '' && t !== 'claude' && t !== 'codex' && t !== 'antigravity') throw new AutomationError('Invalid tool: Claude, Codex or Antigravity.');
+  const a = body.account;
+  const accountTool = t === 'antigravity' ? 'antigravity' : 'codex';
+  if (a !== undefined && a !== null && a !== '' && !(typeof a === 'string' && runAccountIdOk(accountTool, a))) throw new AutomationError('Invalid account.');
+  return {
+    tool: t === undefined ? undefined : t === 'codex' || t === 'antigravity' ? t : null,
+    account: a === undefined ? undefined : (a as string) || null,
+  };
 }
 
 function readEffort(v: unknown): EffortLevel | null | undefined {
@@ -1124,7 +1166,8 @@ function slugifyTitle(title: string): string {
 function approveHere(contextRoot: string, manifest: AutomationManifest): void {
   const projectRoot = dirname(contextRoot);
   registerProject(projectRoot);
-  approveAutomation(projectRoot, manifest, new Date());
+  // The agent an unsplit file also is gets the same stamp: one file, one approval (`approveMadeHere`).
+  approveMadeHere(contextRoot, manifest, new Date());
 }
 
 /**
@@ -1132,14 +1175,17 @@ function approveHere(contextRoot: string, manifest: AutomationManifest): void {
  * seen. The Automations dialog never shows the agent's `## Soul`, so a target
  * that was NOT approved before this write (a teammate's synced soul edit made it
  * `manifest-changed`) and now carries a soul is left unapproved: the owner goes
- * through the review, which renders the `soul:` line. Without a soul, or when
- * the target was approved before the write, it stamps exactly as before.
+ * through the review, which renders the `soul:` line. Since plan-r10 1e the same holds
+ * for ANY field a sync moved: only a target approved before the write is stamped.
  * Returns whether it stamped.
  */
 function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest | null, after: AutomationManifest): boolean {
+  // Only what was approved as it stood before this save is stamped again (plan-r10 1e): a target
+  // that was NOT approved (a teammate's synced change, of any field, or one waiting on the owner's
+  // card) is never stamped by a later local save, soul or not. The owner settles it on the one
+  // card, which names the fields that moved. Everything else this save wrote is his: it stamps.
   const wasApproved = before !== null && checkApproval(dirname(contextRoot), before, undefined, 'run').approved;
-  const hasSoul = typeof after.soul === 'string' && after.soul.trim() !== '';
-  if (!wasApproved && hasSoul) return false;
+  if (!wasApproved) return false;
   approveHere(contextRoot, after);
   return true;
 }
@@ -1151,16 +1197,32 @@ export async function handleAutomationsCreate(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates an automation approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
     return;
   }
+  await createFromBody(res, contextRoot, body);
+}
+
+/**
+ * The create behind `POST /api/automations` and the app gateway's `/__dc/automations`. `app` is
+ * a PARAMETER and never read from the body: the gateway stamps its own slug, and the dashboard
+ * route has no way to name one.
+ */
+export async function createFromBody(
+  res: ServerResponse,
+  contextRoot: string,
+  body: Record<string, unknown>,
+  app?: string,
+): Promise<void> {
+  const appField = app ? { app } : {};
   try {
     const title = (str(body.title) ?? '').trim();
     if (!title) throw new AutomationError('Give the agent a name.');
     if (body.agent !== undefined) {
-      await createBoundFromBody(res, contextRoot, body, title);
+      await createBoundFromBody(res, contextRoot, body, title, appField);
       return;
     }
     const prompt = (str(body.prompt) ?? '').trim();
@@ -1201,9 +1263,11 @@ export async function handleAutomationsCreate(
       slots: readSlots(body.slots),
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
+      ...(!whiteboard && readToolChoice(body).tool ? { tool: readToolChoice(body).tool!, account: readToolChoice(body).account ?? null } : {}),
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       prompt,
       whiteboard,
+      ...appField,
     });
     // Same ordering as the CLI's create: the flow is derived and written
     // BEFORE approval, so the hash granted covers the exact manifest on disk.
@@ -1236,6 +1300,7 @@ async function createBoundFromBody(
   contextRoot: string,
   body: Record<string, unknown>,
   title: string,
+  appField: { app?: string } = {},
 ): Promise<void> {
   const agentSlug = typeof body.agent === 'string' ? body.agent.trim() : '';
   if (!isSafeAutomationSlug(agentSlug)) throw new AutomationError('Pick the agent this automation runs as.');
@@ -1270,6 +1335,7 @@ async function createBoundFromBody(
     at: str(body.at) ?? '09:00',
     slots: readSlots(body.slots),
     timeoutMinutes: readTimeout(body.timeoutMinutes),
+    ...appField,
   }, { approve: { now: new Date() } });
   sendJson(res, 200, { automation: summarize(projectRoot, contextRoot, manifest) });
 }
@@ -1298,6 +1364,7 @@ export async function handleAutomationsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'edits an automation and re-approves it')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -1322,6 +1389,7 @@ export async function handleAutomationsUpdate(
     }
     const model = body.model === undefined ? undefined : (str(body.model) ?? null);
     const effort = readEffort(body.effort);
+    const { tool, account } = readToolChoice(body);
     // `job` is the automation's own `## Job`: absent leaves it, null or blank removes it. The
     // store refuses it for anything but an automation that picks an agent.
     if (body.job !== undefined && body.job !== null && typeof body.job !== 'string') {
@@ -1331,12 +1399,15 @@ export async function handleAutomationsUpdate(
     const job = body.job === undefined ? undefined : str(body.job) ?? null;
     // Refused before the identity half is written and re-stamped (`updateSplitTarget`).
     checkReviewPatch(str(body.review));
+    // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
+    // another tool included. Only a target approved as it stood before the save is stamped
+    // (`approveUnlessUnseenSoul`): a teammate's change waiting for its card stays waiting.
     // Read BEFORE any write: whether the target was approved decides whether this
     // save may approve a soul the dialog never showed (see approveUnlessUnseenSoul).
     const before = getRunTarget(contextRoot, params.slug, 'automation');
     const agentSlug = current.runKind === 'agent' ? current.slug : boundAgentOf(contextRoot, params.slug);
     if (agentSlug) {
-      const { manifest, stamped } = updateSplitTarget(contextRoot, current, agentSlug, body, { model, effort, prompt: str(body.prompt), job }, before);
+      const { manifest, stamped } = updateSplitTarget(contextRoot, current, agentSlug, body, { model, effort, prompt: str(body.prompt), job, tool, account }, before);
       sendJson(res, 200, {
         automation: summarize(dirname(contextRoot), contextRoot, manifest),
         ...(stamped ? {} : { needsApproval: true }),
@@ -1351,6 +1422,8 @@ export async function handleAutomationsUpdate(
       at: str(body.at),
       model,
       effort,
+      ...(tool !== undefined ? { tool } : {}),
+      ...(account !== undefined ? { account } : {}),
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
       review: str(body.review) as UpdateAutomationInput['review'],
@@ -1392,6 +1465,8 @@ function updateSplitTarget(
     effort: EffortLevel | null | undefined;
     prompt: string | undefined;
     job: string | null | undefined;
+    tool: 'codex' | 'antigravity' | null | undefined;
+    account: string | null | undefined;
   },
   /** The automation target as read before this save, or null. */
   before: AutomationManifest | null,
@@ -1405,13 +1480,17 @@ function updateSplitTarget(
   if (identityIn.prompt !== undefined) identity.prompt = identityIn.prompt;
   if (identityIn.model !== undefined) identity.model = identityIn.model;
   if (identityIn.effort !== undefined) identity.effort = identityIn.effort;
+  if (identityIn.tool !== undefined) identity.tool = identityIn.tool;
+  if (identityIn.account !== undefined) identity.account = identityIn.account;
   if (current.runKind === 'agent' && str(body.title) !== undefined) identity.title = str(body.title);
-  if (Object.keys(identity).length > 0) withRestamp(contextRoot, projectRoot, agentSlug, identity);
+  // The owner's own edit: stamped as before and traced (`agents amendments`), so he can take it back.
+  // His save is his consent, a new tool included (`consent`): this is an owner-page route.
+  if (Object.keys(identity).length > 0) ownerEdit(contextRoot, agentSlug, identity, { consent: true, why: 'edited in the automation dialog' });
 
   if (current.runKind === 'agent') {
     const target = getRunTarget(contextRoot, current.slug, 'agent');
     if (!target) throw new AutomationError(`Agent not found: ${current.slug}`);
-    return { manifest: target, stamped: true };
+    return { manifest: target, stamped: checkApproval(projectRoot, target, undefined, 'run').approved };
   }
   const manifest = updateAutomation(contextRoot, current.slug, {
     title: str(body.title),
@@ -1463,27 +1542,19 @@ export async function handleAutomationsDelete(
       return;
     }
     const boundTo = boundAgentOf(contextRoot, params.slug);
-    removeAutomation(contextRoot, params.slug);
+    // Remove + revoke, the one helper the member delete uses too (plan r4 F2). A split
+    // automation: only ITS record goes; its agent stays, its own approval untouched. A registry
+    // that could not be rewritten must not turn a completed delete into an error the user would
+    // retry against a slug that no longer exists (the manifest, the part that runs, is gone).
+    let refused = false;
+    deleteRoutine(contextRoot, params.slug, (err) => {
+      if (sendIfNotOwner(res, err)) { refused = true; return; }
+      console.error('[automations] delete: could not revoke approval', err);
+    });
+    if (refused) return;
     if (boundTo) {
-      // A split automation: only ITS record goes. Its agent stays, with its own
-      // approval untouched, and nothing is re-stamped.
-      try {
-        revokeApproval(dirname(contextRoot), params.slug);
-      } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-        console.error('[automations] delete: could not revoke approval', err);
-      }
       sendJson(res, 200, { ok: true, slug: params.slug, agentKept: getAgent(contextRoot, boundTo) ? boundTo : null });
       return;
-    }
-    try {
-      revokeApproval(dirname(contextRoot), params.slug);
-    } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-      // The manifest is already gone, which is the part that matters — a
-      // registry that could not be rewritten must not turn a completed delete
-      // into an error the user would retry against a slug that no longer exists.
-      console.error('[automations] delete: could not revoke approval', err);
     }
     sendJson(res, 200, { ok: true, slug: params.slug });
   } catch (err) {
@@ -1648,9 +1719,10 @@ export function sendPhotoFile(res: ServerResponse, abs: string | null): void {
 /** The extensions this route will hand back, and as what. Derived from the
  *  same magic-byte allow-list the upload uses, so the two can never disagree
  *  about which types exist. */
-const PHOTO_CONTENT_TYPE: Record<string, string> = Object.fromEntries(
-  Object.entries(EXT_BY_IMAGE_TYPE).map(([mime, ext]) => [ext, mime]),
-);
+const PHOTO_CONTENT_TYPE: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(EXT_BY_IMAGE_TYPE).map(([mime, ext]) => [ext, mime])),
+  '.jpeg': 'image/jpeg',
+};
 
 /**
  * Stream a request body with a PER-CHUNK cap — the same shape as
@@ -2090,31 +2162,96 @@ export async function handleAutomationsThreadRead(
   }
 }
 
-/** A run in flight that leaves no session (`runLeavesNoSession`): nothing can queue behind it. */
-function onOneOffJob(contextRoot: string, manifest: AutomationManifest, busy: ReturnType<typeof currentAutomationJob>): boolean {
-  return (busy?.status === 'running' && runLeavesNoSession(manifest, busy.override))
-    || readRunSidecar(contextRoot, manifest.slug)?.noSession === true;
+/** This run is in flight and leaves no session (`runLeavesNoSession`): nothing can follow it. */
+function onOneOffJob(contextRoot: string, manifest: AutomationManifest, runId: string): boolean {
+  return runningAutomationJobs(contextRoot).some((j) => j.slug === manifest.slug && j.runId === runId && runLeavesNoSession(manifest, j.override))
+    || listRunSidecars(contextRoot, manifest.slug).some((s) => s.fireAt === runId && s.noSession === true);
 }
 
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
  *  member a job while the owner has handed the Chat screen over (`super team ask`). */
-export type SayVia = 'dashboard' | 'assistant' | 'super';
+/** `telegram`: the owner wrote from the member's own bot (W2, plan "Members"). */
+export type SayVia = 'dashboard' | 'assistant' | 'super' | 'telegram';
+
+/**
+ * An app asking one of its project's agents to do something. Reaches `sayFromApp` only from the
+ * server's own paths (`/__dc/team/say`, `POST /api/apps/:slug/say`), never from a say body.
+ */
+export function sayFromApp(
+  contextRoot: string,
+  input: { slug: string; text: string; app: AppRunBrief },
+): SayResult {
+  const slug = input.slug.trim();
+  const text = input.text.trim();
+  if (!slug || !text) return sayRefusal(400, 'bad_say', 'Body must be { member, text }.');
+  if (text.length > SAY_MAX_CHARS) return sayRefusal(400, 'say_too_long', `Keep it under ${SAY_MAX_CHARS} characters.`);
+  try {
+    // The agent's CALL target, never `memberCallState`: that reads the slot, where a same-named
+    // automation stands in front of the agent, and an app must not fire a scheduled job.
+    const manifest = getRunTarget(contextRoot, slug, 'agent');
+    if (!manifest) return sayRefusal(404, 'not_found', `There is no agent "${slug}" in this project.`);
+    if (isUnsplitScheduled(contextRoot, slug)) {
+      return sayRefusal(409, 'say_unsplit', `${manifest.title} is one scheduled job, not a member an app can call. Make it a team member first.`);
+    }
+    if (!manifest.enabled) return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
+    const verdict = checkApproval(dirname(contextRoot), manifest, undefined, 'run');
+    if (!verdict.approved && verdict.reason === 'not_owner') {
+      return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here.`);
+    }
+    if (!verdict.approved) {
+      return sayRefusal(409, 'say_unapproved', `${manifest.title} is not approved to run on this machine yet. Approve it on the AI Team page, then ask again.`);
+    }
+    // ── synchronous from here to the job start, as in `sayToAgent` ──
+    // Always a fresh run in its own session, beside whatever the agent is doing: a bound session
+    // is the owner's conversation, not the app's. Its `runId` is this request's alone.
+    const full = atLiveLimit();
+    if (full) return full;
+    const fireAt = freshFireAt(contextRoot, slug);
+    const runId = fireAt.toISOString();
+    const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: displayText(contextRoot, text), via: 'app', app: input.app.slug, now: fireAt });
+    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, target: 'agent', app: input.app });
+    return { ok: true, status: 200, body: { job: { ...job, kind: 'run' }, started, runId, entryId: ask.id, slug } };
+  } catch (err) {
+    if (err instanceof AutomationError) return sayRefusal(400, 'say_refused', err.message);
+    throw err;
+  }
+}
+
+/** A legacy file that is its own scheduled job: its agent has no call target of its own. */
+function isUnsplitScheduled(contextRoot: string, slug: string): boolean {
+  const path = automationPath(contextRoot, slug);
+  if (!pathOccupied(path)) return false;
+  try {
+    const parts = readManifestParts(path);
+    return parts.kind === 'legacy' && parts.legacy.mode !== 'call';
+  } catch {
+    return false;
+  }
+}
 
 export type SayResult =
   | { ok: true; status: 200; body: Record<string, unknown> }
-  | { ok: false; status: 400 | 403 | 404 | 409; code: string; message: string };
+  | { ok: false; status: 400 | 403 | 404 | 409 | 429; code: string; message: string };
 
-const sayRefusal = (status: 400 | 403 | 404 | 409, code: string, message: string): SayResult =>
+const sayRefusal = (status: 400 | 403 | 404 | 409 | 429, code: string, message: string): SayResult =>
   ({ ok: false, status, code, message });
+
+/** The one bound on parallel work, machine-wide and never per member: refused before anything
+ *  reaches a thread. Null while there is room. */
+function atLiveLimit(): SayResult | null {
+  return liveTurnCount() >= MAX_LIVE_CHILDREN
+    ? sayRefusal(429, 'say_at_limit', `${MAX_LIVE_CHILDREN} jobs are already running. Try again when one finishes.`)
+    : null;
+}
 
 /**
  * Call ONE agent by name: the body of `POST /threads/say`, shared with the Assistant's
  * `agent` verb so both keep the same refusals in the same order (disabled, then
- * unapproved, then busy). `via` is the thread entry's provenance; `board` is the
+ * unapproved). A member at work is no refusal: this is a new question in its own session. `via` is the thread entry's provenance; `board` is the
  * whiteboard the message came from, checked to exist and passed on to the run.
  *
- * SYNCHRONOUS ON PURPOSE: the busy check, the thread write and the job start must not
- * be split by an `await` (see `handleAutomationsSay`). An `AutomationError` becomes a
+ * SYNCHRONOUS ON PURPOSE: the thread write and the job start must not be split by an
+ * `await` (see `handleAutomationsSay`). An `AutomationError` becomes a
  * `400 say_refused`; anything else throws to the caller.
  */
 export function sayToAgent(
@@ -2165,78 +2302,20 @@ export function sayToAgent(
     const boardOpt = board ? { board } : {};
     const overrideOpt = input.override ? { override: input.override } : {};
     // ── synchronous from here to the job start ──
-    // Per AGENT: only a second run of THIS agent is refused — it would write into the same
-    // thread and resume the same session. Another agent's run is no reason to wait.
-    //
-    // A message to an agent that is WORKING is not refused any more: it is written into the
-    // thread of the run in flight and queued behind it, exactly as a reply typed in that
-    // thread is. The owner talks to a busy agent the way they would to a busy colleague, and
-    // the words land where the work is. Only when nothing names that run (the moment before
-    // a first run's child spawns) is it still refused.
-    const busy = currentAutomationJob(contextRoot, slug);
-    const working = agentActivity(contextRoot, slug);
-    if (busy?.status === 'running' || working) {
-      // A run that leaves no session has nothing to queue behind: a reply would wait for it and
-      // then find no conversation. Said now, the same way as any member too busy to take it.
-      // So is a job that may not enter the session it would queue into.
-      if (onOneOffJob(contextRoot, manifest, busy) || wouldStickToSession(manifest, input.override)) {
-        return sayRefusal(409, 'say_busy', `${manifest.title} is on a one-off job or cannot take this one in its session. Try again when it finishes.`);
-      }
-      const liveRun = working?.runId
-        ?? (busy?.status === 'running' ? busy.runId : null)
-        ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
-        ?? null;
-      if (!liveRun || pendingQuestion(contextRoot, slug)?.kind === 'approval') {
-        return sayRefusal(409, 'say_busy', `${manifest.title} is still running. Try again when it finishes.`);
-      }
-      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text: shown, via });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id, ...boardOpt, ...overrideOpt });
-      return {
-        ok: true, status: 200,
-        body: {
-          job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
-          started: true, runId: liveRun, entryId: entry.id, slug, mode: manifest.mode, queued: true,
-        },
-      };
-    }
-    const fireAt = new Date();
+    // Every new message is its own job: its own run id, its own session, started now, however
+    // much this member is already doing, a scheduled member too (it reads its recent thread). A
+    // follow-up in an existing conversation is a reply (`POST /:slug/thread/reply`), and only
+    // that queues, behind its own conversation.
+    const full = atLiveLimit();
+    if (full) return full;
+    const fireAt = freshFireAt(contextRoot, slug);
     const runId = fireAt.toISOString();
-
-    // A SCHEDULED agent that has already run on this machine is TALKED TO, not re-run:
-    // @mentioning it resumes the session its last run left behind, which is the whole
-    // promise of the channel. A `call` agent — and a `sched` one with nothing bound here
-    // yet — falls through to the run path below, because there is no conversation to
-    // continue.
-    //
-    // The ask is still written FIRST and is still `ordered[0]`, so the feed's own
-    // ask/answer grouping is untouched; only what the ask STARTS changes. The reply gets
-    // this FRESH runId rather than the run it resumes, so the exchange is its own message
-    // with the human's words at its head.
-    //
-    // No `pendingQuestion` pre-check here, deliberately: `resumeWithMessage` owns that
-    // guard, and its refusal reaches the channel within seconds as a `system:failed`
-    // entry carrying its own sentence. A second copy of the check here would drift from
-    // the one that actually decides.
-    if (manifest.mode === 'sched' && latestBoundSession(slug) && !wouldStickToSession(manifest, input.override)) {
-      const entry = appendThreadEntry(contextRoot, slug, {
-        runId, kind: 'user', text: shown, via, now: fireAt,
-      });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, {
-        runId, text, entryId: entry.id, ...boardOpt, ...overrideOpt,
-      });
-      return {
-        ok: true, status: 200,
-        body: { job: { id: replyJob.id, status: replyJob.status, kind: 'reply' }, started: true, runId, entryId: entry.id, slug, mode: 'sched' },
-      };
-    }
 
     const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt, ...overrideOpt });
-    // Unreachable given the busy check above (nothing can interleave between
-    // them), and handled anyway: the ask is already on disk at this point, so
-    // a job that was NOT started would leave it in the channel with nothing
-    // coming. Belt and braces, because the cost of being wrong is a message
-    // that reads "running" for ever.
+    // Unreachable (an ask always starts), and handled anyway: the ask is already on
+    // disk at this point, so a job that was NOT started would leave it in the channel
+    // with nothing coming, and that message would read "running" for ever.
     if (!started) {
       appendThreadEntry(contextRoot, slug, {
         runId, kind: 'system', event: 'skipped', via,
@@ -2273,10 +2352,9 @@ export function sayToAgent(
  * reaches this message's spawn only, and is never written to the manifest, so the approved
  * envelope of every scheduled fire stays exactly what was approved.
  *
- * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
- * write and the job start run as one synchronous block (`sayToAgent`), so nothing
- * can slip a second job in between and leave a question in the channel that
- * nothing is answering. The ask is written FIRST so it is the run's opening
+ * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The thread write and the job
+ * start run as one synchronous block (`sayToAgent`), so a question can never sit in
+ * the channel with nothing answering it. The ask is written FIRST so it is the run's opening
  * entry — the feed keys the exchange on that, and it is also what makes the
  * message appear the instant the composer's request returns instead of on the
  * next poll.
@@ -2306,6 +2384,94 @@ export async function handleAutomationsSay(
   } catch {
     sendError(res, 500, 'say_failed', 'Failed to send that to the channel.');
   }
+}
+
+/**
+ * Continue ONE run's own conversation: the body of `POST /:slug/thread/reply`, shared with the
+ * Super Agent's `team ask` (plan-r10 1b) so both keep the same refusals in the same order.
+ *
+ *  - `via` is stamped on the thread entry: Super's words are never filed as the owner's;
+ *  - it checks the machine-wide live limit (`atLiveLimit`, 429 `say_at_limit`), the owner's reply
+ *    included (a deliberate change: the reply route never asked it);
+ *  - it never ANSWERS a question on purpose: a caller that must not answer (Super) checks the run
+ *    has none pending before it calls (`answers` says whether this reply did).
+ *
+ * SYNCHRONOUS ON PURPOSE, like `sayToAgent`: the thread write and the job start are one block.
+ */
+export function replyToAgent(
+  contextRoot: string,
+  input: {
+    slug: string; runId: string; text: string; via: SayVia; board?: string | null;
+    override?: SpawnModelOverride | null;
+  },
+): SayResult {
+  const slug = input.slug;
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) return sayRefusal(404, 'not_found', `Automation not found: ${slug}`);
+  const verdict = checkApproval(dirname(contextRoot), manifest, undefined, 'run');
+  if (!verdict.approved && verdict.reason === 'not_owner') {
+    return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here.`);
+  }
+  if (!manifest.enabled) return sayRefusal(409, 'reply_disabled', `${manifest.title} is turned off. Turn it on to reply.`);
+  if (!verdict.approved) return sayRefusal(409, 'reply_unapproved', `${manifest.title} is not approved on this machine yet. Approve it, then reply again.`);
+  const text = input.text.replace(/\0/g, '').trim();
+  if (!text) return sayRefusal(400, 'bad_text', 'A reply needs something to say.');
+  if (text.length > THREAD_TEXT_MAX_CHARS) return sayRefusal(400, 'bad_text', `Keep it under ${THREAD_TEXT_MAX_CHARS} characters.`);
+
+  // `runId` becomes BOTH a thread grouping key and a `DREAMCONTEXT_AUTOMATION_RUN` env
+  // value on a bypassPermissions child, so it is validated for shape AND for identity.
+  const runId = input.runId.trim();
+  const parsed = new Date(runId);
+  if (!runId || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== runId) {
+    return sayRefusal(400, 'bad_run', 'That run id is not a timestamp this channel wrote.');
+  }
+  // THIS RUN'S OWN CONVERSATION, and this is a correctness rule rather than a convenience
+  // one: an agent has several conversations at once, so the reply reaches the session of
+  // the run it was typed under (`sessionForRun`), and the words can never be filed under one
+  // thread while reaching another. An older run that names no session, and is not in flight,
+  // has nothing to continue.
+  const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
+  if (newest !== runId && !sessionForRun(contextRoot, slug, runId, undefined, false) && !runIsActive(agentActivity(contextRoot, slug), runId)) {
+    return sayRefusal(409, 'stale_run', 'This conversation moved on. Reply on the newest run.');
+  }
+  // THE MACHINE-LOCAL BINDING IS THE AUTHORITY. Null means no run on THIS machine ever
+  // produced a session, so nothing here could carry the reply — and a reply that will
+  // never execute must not be left in the channel looking delivered.
+  // A run in flight is the exception: it is about to bind the session this reply queues for.
+  if (onOneOffJob(contextRoot, manifest, runId)) {
+    return sayRefusal(409, 'say_busy', `${manifest.title} is on a one-off job. Try again when it finishes.`);
+  }
+  if (!latestBoundSession(slug) && !agentActivity(contextRoot, slug)) {
+    return sayRefusal(409, 'not_bound', `${manifest.title} has no session to talk to yet. It needs one finished run on this machine first.`);
+  }
+  // A pending `flow-hitl` question is NOT a refusal: the reply is its answer
+  // (`startAutomationReplyJob` routes it through `resumeWithAnswer`). Only the
+  // manifest-diff `approval` ask still refuses, because it takes a decision, not prose.
+  if (pendingQuestion(contextRoot, slug)?.kind === 'approval') {
+    return sayRefusal(409, 'question_pending', `${manifest.title} is waiting for you to approve its changes, so answer that first.`);
+  }
+  // No up-front "still running" refusal either: the job WAITS for this conversation and
+  // delivers the reply the moment the turn ahead of it ends.
+  const full = atLiveLimit();
+  if (full) return full;
+
+  const superWords = input.via === 'super';
+  // An answer to a question its run waits on is that job's own turn, already watched. Super's
+  // words never answer one (`noAnswer`).
+  const answers = !superWords && pendingQuestionOfRun(contextRoot, slug, runId) !== null;
+  // ── synchronous from here to the job start ──
+  // The thread stores what a human reads; the resume re-expands the raw text fresh.
+  const entry = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: displayText(contextRoot, text), via: input.via });
+  const job = startAutomationReplyJob(contextRoot, slug, {
+    runId, text, entryId: entry.id, ...(input.board ? { board: input.board } : {}),
+    ...(input.override ? { override: input.override } : {}),
+    // Super's words are never the owner's answer, not even to a question asked while they wait.
+    ...(superWords ? { noAnswer: true } : {}),
+  });
+  return {
+    ok: true, status: 200,
+    body: { entry, job: { id: job.id, status: job.status, kind: 'reply', phase: job.phase }, answers, runId, entryId: entry.id, slug, queued: job.phase === 'waiting' },
+  };
 }
 
 /**
@@ -2374,65 +2540,21 @@ export async function handleAutomationsThreadReply(
       return;
     }
 
-    // `runId` becomes BOTH a thread grouping key and a `DREAMCONTEXT_AUTOMATION_RUN` env
-    // value on a bypassPermissions child, so it is validated for shape AND for identity.
     const runId = typeof body?.runId === 'string' ? body.runId.trim() : '';
-    const parsed = new Date(runId);
-    if (!runId || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== runId) {
-      sendError(res, 400, 'bad_run', 'That run id is not a timestamp this channel wrote.');
-      return;
-    }
-    // NEWEST RUN ONLY, and this is a correctness rule rather than a convenience one:
-    // `latestBoundSession` below resolves the LATEST session for the slug regardless of
-    // which run the caller names. Accepting an older run would file the human's words
-    // under that run's thread while they actually reached a different conversation — a
-    // thread that lies about which exchange it is. The UI only ever offers Reply on the
-    // newest run, so in practice this fires when a scheduled fire or someone's @mention
-    // opened a newer run while the panel was sitting open.
-    const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
-    if (newest !== runId) {
-      sendError(res, 409, 'stale_run', 'This conversation moved on. Reply on the newest run.');
-      return;
-    }
-
-    // THE MACHINE-LOCAL BINDING IS THE AUTHORITY. Null means no run on THIS machine ever
-    // produced a session, so nothing here could carry the reply — and a reply that will
-    // never execute must not be left in the channel looking delivered.
-    // A run in flight is the exception: it is about to bind the session this reply queues for.
-    if (onOneOffJob(contextRoot, manifest, currentAutomationJob(contextRoot, slug))) {
-      sendError(res, 409, 'say_busy', `${manifest.title} is on a one-off job. Try again when it finishes.`);
-      return;
-    }
-    if (!latestBoundSession(slug) && !agentActivity(contextRoot, slug)) {
-      sendError(
-        res, 409, 'not_bound',
-        `${manifest.title} has no session to talk to yet. It needs one finished run on this machine first.`,
-      );
-      return;
-    }
-    // A pending `flow-hitl` question is NOT a refusal any more: the reply is its answer
-    // (`startAutomationReplyJob` routes it through `resumeWithAnswer`). Only the
-    // manifest-diff `approval` ask still refuses, because it takes a decision, not prose.
-    if (pendingQuestion(contextRoot, slug)?.kind === 'approval') {
-      sendError(
-        res, 409, 'question_pending',
-        `${manifest.title} is waiting for you to approve its changes, so answer that first.`,
-      );
-      return;
-    }
-    // No up-front "still running" refusal either: the job WAITS for the run lock and
-    // delivers the reply the moment the turn ahead of it ends. Refusing here only moved
-    // the failure from the channel to a toast; the message never needed to fail.
-
-    // The thread stores what a human reads; the resume re-expands the raw text fresh.
-    const entry = appendThreadEntry(contextRoot, slug, {
-      runId, kind: 'user', text: displayText(contextRoot, text), via: 'dashboard',
-    });
-    const job = startAutomationReplyJob(contextRoot, slug, {
-      runId, text, entryId: entry.id, ...(board ? { board } : {}),
+    const r = replyToAgent(contextRoot, {
+      slug, runId, text, via: 'dashboard',
+      ...(board ? { board } : {}),
       ...(picked.override ? { override: picked.override } : {}),
     });
-    sendJson(res, 202, { entry, job: { id: job.id, status: job.status } });
+    if (!r.ok) {
+      sendError(res, r.status, r.code, r.message);
+      return;
+    }
+    const out = r.body as { entry: ThreadEntry; job: { id: string; status: string }; answers: boolean };
+    // The owner's own words on a team job's run: the Super Agent hears them (route-only; Super's
+    // own follow-up is recorded once by `team-ask`).
+    if (!out.answers) noteTeamFollowUp(contextRoot, { member: slug, runId, entryId: out.entry.id, jobId: out.job.id, text: out.entry.text });
+    sendJson(res, 202, { entry: out.entry, job: { id: out.job.id, status: out.job.status } });
   } catch (err) {
     if (err instanceof AutomationError) {
       sendError(res, 400, 'reply_refused', err.message);

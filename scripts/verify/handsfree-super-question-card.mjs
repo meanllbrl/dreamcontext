@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, devices } from 'playwright';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { openSuper, submit, superRows } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(tmpdir(), `dc-verify-hf-super-card-${process.pid}`);
@@ -145,6 +146,9 @@ function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
   rmSync(OUT, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), OUT]) mkdirSync(d, { recursive: true });
+  // The Mac's window hands over with the CLASSIC shell's Super tab (the new shell's desktop has no
+  // such button); the phone is a device shell and opens the new shell whatever this says.
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'classic' }));
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off', superAgent: true,
@@ -181,7 +185,7 @@ async function say(page, text) {
   const input = page.locator('.chat-cmp-input:visible').first();
   await input.click();
   await input.fill(text);
-  await page.keyboard.press('Enter');
+  await submit(page);
 }
 const result = (r) => r?.json?.result ?? r?.json ?? {};
 
@@ -236,14 +240,14 @@ async function main() {
     await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     ok('the phone signed in through the phone listener', await until(phone, async () => phone.url().includes('vault=acme-app'), 25000), phone.url());
     for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-    ok('the phone lists ONE row, the Super Agent', await until(phone, async () => (await phone.locator('[data-testid="super-row"]:visible').count()) === 1, 25000));
-    await phone.locator('[data-testid="super-row"]:visible').click();
+    ok('the phone lists ONE row, the Super Agent', await until(phone, async () => (await superRows(phone, 'acme-app')) === 1, 25000));
+    await openSuper(phone, 'acme-app');
     ok('the Super Agent\'s chat opens on the phone', await until(phone, async () => (await phone.locator('.chat-cmp-input:visible').count()) > 0, 15000));
 
     console.log('\n── 2. the child asks four questions; the Super escalates them (queue ask)');
     await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().click();
     await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().fill(`GO-CHILDASK ${child}`);
-    await page.keyboard.press('Enter');
+    await submit(page);
     ok('the child asked (AskUserQuestion, 4 questions)', await until(page, async () => frames().some((f) => f.role === 'child' && f.blocks[0] === 'ASK-Q'), 30000));
     ok('the super agent escalated it (queue ask, exit 0)', await until(page, async () => reports().some((r) => r.kind === 'escalated' && r.esc?.status === 0), 60000), JSON.stringify(reports().slice(-3)));
     const esc = reports().find((r) => r.kind === 'escalated')?.esc;

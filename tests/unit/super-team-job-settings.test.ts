@@ -3,7 +3,7 @@
  * the two spawns are doubled (no test here starts a claude):
  *
  *  - the settings are that job's: the member's file does not move, its approval stands, its next
- *    job runs on what it had, and a job queued behind a busy member keeps its own;
+ *    job runs on what it had, and a job beside a busy member keeps its own;
  *  - a bad name is refused before anything starts or reaches the thread, with the choices;
  *  - no flag at all is today's call, byte for byte; global agents take the same flags;
  *  - the record and the card carry what the job ran on.
@@ -53,7 +53,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAgent, getAgent } from '../../src/lib/agents/store.js';
 import { approveAutomation, canonicalApprovalPayload, checkApproval } from '../../src/lib/automations/registry.js';
@@ -67,6 +67,11 @@ let dir: string;
 let root: string;
 let token = '';
 const SUPER = 'sup-1';
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-team-settings-')));
@@ -137,59 +142,60 @@ describe('--model / --effort belong to one job', () => {
     expect((await readSuperState(root)).team[0]).toMatchObject({ model: 'opus', effort: 'high' });
   });
 
-  it('a job queued behind a busy member keeps its own settings, and the run ahead keeps its', async () => {
+  it('a job beside a busy member keeps its own settings, and the run ahead keeps its', async () => {
     desk();
     let release = () => {};
     spawns.holdRun = new Promise<void>((d) => { release = d; });
     await ask({ member: 'desk', text: 'the long one' });
     await until(() => spawns.runs.length === 1);
-    const q = await ask({ member: 'desk', text: 'the queued one', model: 'sonnet', effort: 'low' });
+    // plan-r10 1b: asking the same member again continues its one conversation. Desk has its own
+    // model, so a one-job model does not stick to the session (`wouldStickToSession` false): the
+    // second ask is a follow-up on the running root, and it carries ITS settings to that turn only.
+    const q = await ask({ member: 'desk', text: 'the second one', model: 'sonnet', effort: 'low' });
     expect(q.status).toBe(200);
+    expect(q.json.result).toMatchObject({ continued: true, model: 'sonnet', effort: 'low' });
     await until(() => spawns.replies.length === 1);
     expect(spawns.replies[0].override).toEqual({ model: 'sonnet', effort: 'low', oneJob: true });
     expect(spawns.runs[0].override).toBeNull();
-    const l = await ask({ member: 'desk', text: 'a queued light one', light: true });
+    // A light job never continues a conversation: a fresh run, on the same card.
+    const l = await ask({ member: 'desk', text: 'a light one', light: true });
     expect(l.status).toBe(200);
-    await until(() => spawns.replies.length === 2);
-    expect(spawns.replies[1].override).toMatchObject({ light: true });
+    await until(() => spawns.runs.length === 2);
+    expect(spawns.runs[1].override).toMatchObject({ light: true });
     release();
     await settle();
-    await ask({ member: 'desk', text: 'after them' });
-    await until(() => spawns.runs.length === 2);
-    expect(spawns.runs[1].override).toBeNull();
   });
 
-  it('nothing queues behind a run that leaves no session: said busy, nothing recorded', async () => {
+  it('a run that leaves no session holds nothing up: the next jobs start beside it', async () => {
     desk();
     let release = () => {};
     spawns.holdRun = new Promise<void>((d) => { release = d; });
     await ask({ member: 'desk', text: 'one read', light: true });
     await until(() => spawns.runs.length === 1);
     for (const next of [{ text: 'a full one' }, { text: 'another read', light: true }]) {
-      const r = await ask({ member: 'desk', ...next });
-      expect(r.status).toBe(409);
-      expect(r.json.error).toBe('say_busy');
+      expect((await ask({ member: 'desk', ...next })).status).toBe(200);
     }
-    expect((await readSuperState(root)).team).toHaveLength(1);
+    await until(() => spawns.runs.length === 3);
+    expect((await readSuperState(root)).team).toHaveLength(3);
     expect(spawns.replies).toEqual([]);
     release();
     await settle();
-    expect((await ask({ member: 'desk', text: 'now the full one' })).status).toBe(200);
   });
 
-  it('on a member with no model, a job\'s model never enters a live session: said busy, not queued', async () => {
+  it('on a member with no model, a job with its own model is a fresh run, never a live session', async () => {
     createAgent(root, { slug: 'bare', title: 'Bare', prompt: 'go' } as Parameters<typeof createAgent>[1], { approve: { now: new Date() } });
     let release = () => {};
     spawns.holdRun = new Promise<void>((d) => { release = d; });
     await ask({ member: 'bare', text: 'the long one' });
     await until(() => spawns.runs.length === 1);
     for (const next of [{ model: 'haiku' }, { light: true }]) {
-      expect((await ask({ member: 'bare', text: 'x', ...next })).json.error).toBe('say_busy');
+      expect((await ask({ member: 'bare', text: 'x', ...next })).status).toBe(200);
     }
-    expect((await ask({ member: 'bare', text: 'plain follow-up' })).status).toBe(200);
-    await until(() => spawns.replies.length === 1);
-    expect(spawns.replies[0].override).toBeNull();
+    expect((await ask({ member: 'bare', text: 'plain' })).status).toBe(200);
+    await until(() => spawns.runs.length === 4);
+    expect(spawns.replies).toEqual([]);
     release();
+    await settle();
   });
 
   it('with no flag the say path gets no override at all', async () => {

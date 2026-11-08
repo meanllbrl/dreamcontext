@@ -379,6 +379,13 @@ describe('the kit diagram engine', () => {
     expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-edge, \.dc-flow-arrow \{ display: none; \}/);
   });
 
+  it('a dc-kv survives the label + text row shape: such a row spans the pair, the value column has a floor', () => {
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-kv > :has\(> \.dc-label\):not\(dt\):not\(dd\) \{ grid-column: 1 \/ -1;/);
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-kv:has\(> :not\(dt\):not\(dd\)\) \{ grid-template-columns: minmax\(0, auto\) minmax\(min\(16ch, 100%\), 1fr\); \}/);
+    // A pure dt/dd list keeps the zero floor: hugged to its content it would crush the KEY.
+    expect(CHAT_HTML_KIT_CSS).toMatch(/\.dc-kv \{ display: grid; grid-template-columns: minmax\(0, auto\) minmax\(0, 1fr\);/);
+  });
+
   /**
    * A DIAGRAM IS A VIEW, NOT A PICTURE (owner, 2026-09-13, with a screenshot: "bu görünüm
    * interaktif değil yaklaştırılamıyor merkezde değil … tıklanamıyor iç içe yazılar var").

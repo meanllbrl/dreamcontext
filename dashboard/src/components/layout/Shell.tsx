@@ -2,18 +2,20 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
-import { useVault, emitInstance } from '../../context/VaultContext';
+import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
-import { useIsMobile } from '../../hooks/useIsMobile';
-import { PhoneBar } from './PhoneBar';
 import { publishPage } from '../../lib/pageContext';
-import { useIsNewShell } from '../../lib/uxMode';
+import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
+import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
+import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
+import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
+import { SettingsWindow, type SettingsWindowFocus } from '../settings/window/SettingsWindow';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards', 'relations'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'announcements', 'whiteboards', 'relations', 'stats', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
 
@@ -25,7 +27,9 @@ const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
  * "tasks", silently losing everyone else's remembered page).
  */
 function readStoredPage(vault: string | null, instanceId: string, newShell = false): Page {
-  const valid = (p: string) => (VALID_PAGES as readonly string[]).includes(p) && (newShell || !NEW_SHELL_ONLY_PAGES.includes(p as Page));
+  const valid = (p: string) => (VALID_PAGES as readonly string[]).includes(p) && (newShell || !NEW_SHELL_ONLY_PAGES.includes(p as Page))
+    // A device shell has no Settings or Project Relations: a stored or linked one lands on Tasks.
+    && !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p as Page));
   if (typeof window === 'undefined') return 'tasks';
   // A `/lab/<slug>` deep link (multi-page insights — funnel overview/detail) must land on
   // the Lab page regardless of the remembered page. There is exactly one URL for the whole
@@ -53,6 +57,16 @@ function readStoredPage(vault: string | null, instanceId: string, newShell = fal
     return stored as Page;
   }
   return 'tasks';
+}
+
+/**
+ * The new shell has no Settings page: Settings is a window over the page behind. A stored or
+ * `?page=settings` value lands on Tasks with the window open.
+ */
+function initialPage(vault: string | null, instanceId: string, newShell: boolean): { page: Page; settings: boolean } {
+  const page = readStoredPage(vault, instanceId, newShell);
+  if (newShell && page === 'settings') return { page: 'tasks', settings: true };
+  return { page, settings: false };
 }
 
 export type NavOrigin = 'chat' | 'rail' | 'other';
@@ -84,7 +98,20 @@ interface ShellProps {
 export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProps) {
   const { vault, instanceId, isActive, bus } = useVault();
   const newShell = useIsNewShell();
-  const [activePage, setActivePage] = useState<Page>(() => readStoredPage(vault, instanceId, newShell));
+  const [initial] = useState(() => initialPage(vault, instanceId, newShell));
+  const [activePage, setActivePage] = useState<Page>(initial.page);
+  // The new shell's Settings window: open over the page, which stays exactly as it was.
+  const [settingsWindow, setSettingsWindow] = useState<SettingsWindowFocus | null>(
+    () => (initial.settings ? { focusId: null, nonce: 0 } : null),
+  );
+  const closeSettingsWindow = useCallback(() => setSettingsWindow(null), []);
+  // A remembered 'settings' (the classic page someone left on before switching layouts) opens
+  // the window once; it is then remembered as the page behind, or it would reopen every launch.
+  useEffect(() => {
+    if (newShell && initial.settings && readScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY) === 'settings') {
+      writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, initial.page);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the stored value read at mount
   const [origin, setOrigin] = useState<NavOrigin>('other');
   // The new shell's ← → in the title bar: this project's own page history.
   const historyRef = useRef<{ stack: Page[]; at: number }>({ stack: [activePage], at: 0 });
@@ -93,22 +120,9 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [nonce, setNonce] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  // The phone (a narrow viewport AND a finger): one top bar, the rail as a drawer, no window
-  // chrome. `body[data-phone]` lets every page's CSS key off ONE attribute.
-  const phone = useIsMobile();
-  const [phoneNavOpen, setPhoneNavOpen] = useState(false);
-  useLayoutEffect(() => {
-    if (!phone) { setPhoneNavOpen(false); return undefined; }
-    document.body.dataset.phone = 'true';
-    return () => { delete document.body.dataset.phone; };
-  }, [phone]);
-  useEffect(() => {
-    if (!phoneNavOpen) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPhoneNavOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [phoneNavOpen]);
-  const closePhoneNav = useCallback(() => setPhoneNavOpen(false), []);
+  // A phone is always a device shell (lib/uxMode.ts), so it is never here in the classic shell:
+  // a classic-frozen tablet that rotates narrow keeps its Header and the desktop layout. The
+  // phone layer's `body[data-phone]` is the window's (WindowChrome).
 
   // ⌘K / Ctrl-K toggles the global command palette from anywhere (including over the
   // expanded agent overlay — the agent host only grabs ⌘D/⌘T/⌘W, never ⌘K). Gated on
@@ -118,6 +132,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isActive) return;
+      // The Settings window has its own search: ⌘K does not open the palette under it.
+      if (document.body.dataset.settingsWindow) return;
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((o) => !o);
@@ -163,6 +179,15 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   useRailGlide(shellRef, glideRef, sidebarCollapsed);
 
   const navigate = useCallback((page: Page, id: string | null, from: NavOrigin = 'other') => {
+    // A device shell never shows Settings or Project Relations, whoever asks (a chat's link, the
+    // setup notice): it drives another machine's project set.
+    if (newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(page)) return;
+    // New shell: Settings opens as a window. The page behind, its history and its stored
+    // value stay, and no `dreamcontext-navigate` goes out (that would collapse an expanded chat).
+    if (newShell && page === 'settings') {
+      setSettingsWindow((prev) => ({ focusId: id, nonce: (prev?.nonce ?? 0) + 1 }));
+      return;
+    }
     setActivePage(page);
     setOrigin(from);
     const h = historyRef.current;
@@ -179,7 +204,55 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     // mounted project would hear another project's navigation and react to it.
     emitInstance(bus, 'dreamcontext-navigate', { page });
     writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault]);
+  }, [bus, vault, newShell]);
+
+  // ⌘U opens Stats from anywhere, as in T3 Code.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isActive || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'u') return;
+      if (document.body.dataset.settingsWindow) return;
+      e.preventDefault();
+      navigate('stats', null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isActive, navigate]);
+
+  // Switching project keeps the page (owner 2026-11-03, lib/projectSwitchPage.ts): the project
+  // on screen publishes its page and whether Chat is open; the one coming on screen follows once.
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
+  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
+  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
+  const chatRetriesRef = useRef<number[]>([]);
+  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
+  useInstanceEvent('dreamcontext-navigate', stopChatRetries);
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const arrived = isActive && !wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    // Only the owner's own switch carries the page: a link, a start or a drawer row lands itself.
+    if (!arrived || !vault || !takeProjectSwitch(vault)) return undefined;
+    const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
+      (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
+    if (plan.navigate) navigate(plan.navigate, null);
+    // Closing the chat with a navigate signal no page reads as its own (Lab clears its open funnel
+    // on `page: 'lab'`); the agent surface collapses on any.
+    if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    if (plan.chat !== true) return undefined;
+    // A project mounted by this switch has no chat surface listening yet: ask until it opens.
+    openAgentSurface(bus);
+    if (chatOpenRef.current) return undefined;
+    chatRetriesRef.current = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
+      if (!chatOpenRef.current) openAgentSurface(bus);
+    }, ms));
+    return stopChatRetries;
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
+  useEffect(() => {
+    if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });
+  }, [isActive, activePage, chatOpen]);
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {
@@ -245,21 +318,23 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
           onClose={closePalette}
           onNavigate={navigate}
         />
+        {isActive && settingsWindow && (
+          <SettingsWindow open focus={settingsWindow} onClose={closeSettingsWindow} />
+        )}
       </div>
     );
   }
 
   return (
-    <div className="shell" ref={shellRef} data-phone={phone ? 'true' : undefined}>
-      {phone && isActive && <PhoneBar page={activePage} menuOpen={phoneNavOpen} onMenu={() => setPhoneNavOpen((o) => !o)} />}
-      {!phone && <Header
+    <div className="shell" ref={shellRef}>
+      <Header
         onNavigate={handleSidebarNavigate}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={onToggleSidebar}
         onOpenSearch={() => setPaletteOpen(true)}
-      />}
+      />
       <div className="shell-body">
-        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} phone={phone ? { open: phoneNavOpen, onClose: closePhoneNav } : undefined} />
+        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
         <main className="shell-main">
           {children(nav)}

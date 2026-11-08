@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Hands-free: the phone's Açık list holds only what the Mac runs, and opening the phone starts
+ * Hands-free: the phone's drawer lists only what the Mac runs, and opening the phone starts
  * nothing on the Mac.
  *
  *   npm run build && node scripts/verify/handsfree-phone-restore.mjs [--local]
@@ -16,10 +16,10 @@
  * signed in through Mac mode's real quick tunnel with the one-time QR link. `--local`: the main
  * listener dressed as the phone surface (no tunnel); the client code under test is the same.
  *
- * CHECKS: no spawn while the phone opens; the Mac still runs exactly the one chat; Açık reads 1
- * and lists only it; both stopped chats are under Kapalı; a Kapalı tap still resumes one (one
- * spawn, then); the stored roster no longer holds the stopped chats. Then the Mac does not answer
- * live-chats: nothing starts, and a save keeps the stored tabs it could not judge.
+ * CHECKS (new shell, W2): no spawn while the phone opens; the Mac still runs exactly the one chat;
+ * the drawer lists only it; both stopped chats are in History; a History pick still resumes one
+ * (one spawn, then); the stored roster no longer holds the other stopped chat. Then the Mac does
+ * not answer live-chats: nothing starts by itself, the stored tabs are kept.
  *
  * `DC_CLI=<dist/index.js>` runs another build (the pre-fix one must fail the spawn checks).
  * FAILURE POLICY: collect, don't fail fast; exit 0 iff every check passed.
@@ -113,7 +113,7 @@ function setupScratch() {
   cli(['init', '-y', '--name', 'proj', '--description', 'A scratch project for the phone restore check']);
   const r = cli(['vaults', 'add', 'proj', PROJ]);
   if (r.status !== 0) throw new Error(`vaults add: ${r.stderr || r.stdout}`);
-  // Each stored chat has a transcript (the old ones from yesterday), so Kapalı can list it.
+  // Each stored chat has a transcript (the old ones from yesterday), so History can list it.
   const yesterday = Date.now() - 22 * 3600_000;
   for (const [i, id] of [OLD1, OLD2, LIVE].entries()) {
     const ts = new Date(yesterday + i * 60_000).toISOString();
@@ -250,7 +250,7 @@ try {
   phone.on('pageerror', (e) => errors.push(`pageerror: ${String(e).slice(0, 200)}`));
   await phone.goto(entry, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in, landed in the project', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
-  report.check('the phone opens on the Sohbetler list', await until(async () => (await phone.locator('[data-testid="phone-list"]:visible').count()) === 1, 25000));
+  report.check('the phone opens with the drawer open', await until(async () => (await phone.locator('[data-testid="chat-drawer"]:visible').count()) === 1, 25000));
   // The restore runs once the roster arrives; give it ample time to spawn, if it were going to.
   await phone.waitForTimeout(6000);
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
@@ -259,33 +259,24 @@ try {
   report.check('opening the phone started NO claude on the Mac', after.length === 0, JSON.stringify(after.map((s) => TITLES[s.sid] ?? s.sid)));
   report.check('the Mac still runs exactly the one chat', JSON.stringify(await liveIds(port)) === JSON.stringify([LIVE]), JSON.stringify(await liveIds(port)));
 
-  const view = () => phone.evaluate(() => {
-    const el = document.querySelector('[data-testid="phone-list"]');
-    // A tab row's data-id is its tab, not its conversation: rows are told apart by their title.
-    const rows = (sel) => [...(el?.querySelectorAll(sel) ?? [])].map((r) => ({ id: r.getAttribute('data-id'), kind: r.getAttribute('data-kind'), text: (r.textContent ?? '').replace(/\s+/g, ' ').trim() }));
-    return {
-      open: rows('[data-testid="list-tab-row"], [data-testid="mac-live-row"]'),
-      past: rows('[data-testid="past-row"]'),
-      chip: (el?.querySelector('[data-testid="list-filter-open"]')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
-    };
-  });
-  let v = await view();
-  report.check(`Açık holds only the running chat (${v.chip})`, await until(async () => {
-    v = await view();
-    return v.open.length === 1 && v.open[0].text.includes(TITLES[LIVE]) && /\b1\b/.test(v.chip);
-  }, 10000), JSON.stringify(v));
-  report.check('both stopped chats are under Kapalı, the running one is not', await until(async () => {
-    v = await view();
-    const past = v.past.map((p) => p.id);
-    return past.includes(OLD1) && past.includes(OLD2) && !past.includes(LIVE);
+  /** The drawer's chat rows of proj, by title (a stopped chat is History's, never a row). */
+  const rowTitles = () => phone.locator('[data-drawer-project="proj"] [data-testid="drawer-chat-row"] .ns-dr-t').allTextContents();
+  let v = await rowTitles();
+  report.check('the drawer holds only the running chat', await until(async () => {
+    v = await rowTitles();
+    return v.length === 1 && v[0].includes(TITLES[LIVE]);
   }, 15000), JSON.stringify(v));
-  await phone.screenshot({ path: join(SHOTS, '390x844-list.png') });
+  await phone.screenshot({ path: join(SHOTS, '390x844-drawer.png') });
 
   // The stored roster forgets the stopped chats once the phone saves its tabs (it does on any change).
   const rosterFile = join(PROJ, '_dream_context', 'state', LOCAL ? '.agent-sessions.json' : '.agent-sessions.phone.json');
-  // A Kapalı tap still resumes a stopped chat: one spawn, for that chat only.
-  await phone.locator(`[data-testid="past-row"][data-id="${OLD1}"]`).click();
-  report.check('a Kapalı tap resumes that chat: exactly one spawn, for it', await until(() => {
+  // Both stopped chats are in History; a pick still resumes one: one spawn, for that chat only.
+  await phone.getByTestId('drawer-history').click();
+  const hist = await until(async () => (await phone.locator('.chp-row', { hasText: TITLES[OLD1] }).count()) > 0 && (await phone.locator('.chp-row', { hasText: TITLES[OLD2] }).count()) > 0, 20000);
+  report.check('both stopped chats are in History', hist, JSON.stringify(await phone.locator('.chp-row').allTextContents().catch(() => [])));
+  await phone.screenshot({ path: join(SHOTS, '390x844-history.png') });
+  await phone.locator('.chp-row', { hasText: TITLES[OLD1] }).first().click();
+  report.check('a History pick resumes that chat: exactly one spawn, for it', await until(() => {
     const s = spawns().slice(before);
     return s.length === 1 && s[0].sid === OLD1 && s[0].resume;
   }, 15000), JSON.stringify(spawns().slice(before)));
@@ -313,18 +304,15 @@ try {
   const before2 = spawns().length;
   const phone2 = await ctx.newPage();
   await phone2.goto(home, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  report.check('Mac unreachable: the phone opens on the list', await until(async () => (await phone2.locator('[data-testid="phone-list"]:visible').count()) === 1, 25000));
+  report.check('Mac unreachable: the phone opens with the drawer open', await until(async () => (await phone2.locator('[data-testid="chat-drawer"]:visible').count()) === 1, 25000));
   await phone2.waitForTimeout(5000);
   for (let i = 0; i < 3; i++) { const x = phone2.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone2.waitForTimeout(300); }
   report.check('Mac unreachable: opening the phone started NO claude', spawns().length === before2, JSON.stringify(spawns().slice(before2)));
-  await phone2.locator('[data-testid="list-new"]').click();
-  report.check('Mac unreachable: "New chat" still opens one chat', await until(() => spawns().length === before2 + 1, 15000), JSON.stringify(spawns().slice(before2)));
-  const fresh = spawns()[before2]?.sid;
+  // New chat waits for nothing: every chosen project starts chats, Super or not.
+  report.check('Mac unreachable: New chat stays on offer', (await phone2.locator('[data-testid="drawer-new-window"]:visible').count()) === 1);
   let stored2 = null;
-  report.check('Mac unreachable: the save keeps the stored tabs it could not judge, beside the new chat', await until(() => {
-    try { stored2 = JSON.parse(readFileSync(rosterFile, 'utf-8')).sessions.map((m) => m.sessionId); } catch { stored2 = null; }
-    return !!stored2 && !!fresh && stored2.includes(fresh) && stored2.includes(LIVE) && stored2.includes(OLD1);
-  }, 10000), JSON.stringify({ stored2, fresh }));
+  try { stored2 = JSON.parse(readFileSync(rosterFile, 'utf-8')).sessions.map((m) => m.sessionId); } catch { stored2 = null; }
+  report.check('Mac unreachable: the stored tabs it could not judge are kept', !!stored2 && stored2.includes(LIVE) && stored2.includes(OLD1), JSON.stringify(stored2));
   await phone2.screenshot({ path: join(SHOTS, '390x844-mac-unreachable.png') });
   console.log(`\n  screenshots: ${SHOTS}`);
 } catch (err) {

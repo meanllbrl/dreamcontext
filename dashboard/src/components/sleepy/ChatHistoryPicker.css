@@ -330,7 +330,8 @@
   cursor: pointer;
 }
 .chp-super-back:hover { color: var(--color-text); }
-.chp-row-tag--super {
+.chp-row-tag--super,
+.chp-row-tag--tool {
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
   text-transform: none;

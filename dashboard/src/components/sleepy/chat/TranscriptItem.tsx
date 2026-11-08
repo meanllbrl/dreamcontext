@@ -1,9 +1,10 @@
 import { memo, useMemo, useRef, useState } from 'react';
+import { TelegramTurnCard } from '../../telegram/TelegramTurnCard';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { SelectionItemContext } from './SelectionBar';
 import { agentFileUrl, type ApiClient } from '../../../api/client';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
   inlineMediaKind, inlineRuns, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
@@ -12,6 +13,7 @@ import { parseChatActions, type ChatAction, type ChatSegment } from './chatActio
 import type { ReplyHead } from './replyLinks';
 import { ActionRow } from './ActionRow';
 import { PictureChip } from './ComposerRefLayer';
+import { chipThumbFor } from './picturePeekBox';
 import { GLYPH_IMAGE, refLabel } from './composerRefs';
 import { cardGlyph } from '../../../lib/cardMention';
 import { useStageCards } from '../super/stageCards';
@@ -74,7 +76,7 @@ function grantFile(api: ApiClient, path: string): Promise<boolean> {
  * image icon.
  */
 function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const api = useApi();
   const [failed, setFailed] = useState(false);
   // Why the OS opener refused, if it did. The chip promised "still opens" and used to break
@@ -168,6 +170,7 @@ function UserMessage({
         : about?.kind === 'card' ? <ReplyStrip label={t('super.reply.toCard')} quotes={[about.quote]} />
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
       {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
+      {(() => { const content = (<>
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}
@@ -185,6 +188,9 @@ function UserMessage({
         : text && (inlineRuns(text)
           ? <div className="chat-msg-user-bubble"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
           : <div className="chat-msg-user-bubble">{text}</div>)}
+      </>);
+      // A message from Telegram is a collapsible card (W3); its answer links under it by ref.
+      return item.source === 'telegram' ? <TelegramTurnCard text={text || item.text} ts={item.ts}>{content}</TelegramTurnCard> : content; })()}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
           its next tool boundary — so the tool calls rendered just below it were decided
@@ -198,7 +204,7 @@ function UserMessage({
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
-          {session && (
+          {session && !session.savedOnly && (
             <IconButton label="Edit — rewind to before this message" onClick={() => setConfirming(true)}>✎</IconButton>
           )}
           {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
@@ -226,7 +232,7 @@ function UserMessage({
  * opens it large, on a card brings the card into view. Text with neither is returned as it is.
  */
 function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const runs = inlineRuns(text);
   if (!runs) return <>{text}</>;
   return (
@@ -236,18 +242,24 @@ function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: 
         ? <span key={i}>{r.text}</span>
         // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
         : r.kind === 'card' ? <SentCardChip key={i} id={r.id} title={r.title} />
-        : (
+        : (() => {
+          // A picture shows itself (and on hover, larger); a clip or another file its icon and name.
+          const thumb = chipThumbFor(r.path);
+          return (
           <PictureChip
             // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
             key={i}
             sent
-            img={agentFileUrl(vault, r.path, { raw: true })}
+            peek={thumb.picture}
+            img={thumb.picture ? agentFileUrl(vault, r.path, { raw: true }) : undefined}
+            icon={thumb.picture ? undefined : thumb.icon}
             lead={GLYPH_IMAGE}
             rest={`\u00A0${r.label}`}
             title={r.path.split('/').pop()}
             onOpen={onOpenFile ? () => onOpenFile(r.path) : undefined}
           />
-        )))}
+          );
+        })()))}
     </span>
   );
 }
@@ -427,8 +439,14 @@ function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefine
 
 function AssistantMessage({
   item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, report, readOnly, replyGroup, replyHeads, onReplyTarget,
+  stepsKey, stepsOpen = false, onToggleSteps,
 }: {
   item: ChatTextItem;
+  /** A Super answer whose turn's steps were put away (owner 2026-11-06): a faint "steps" link
+   *  shows on hover and opens them. The key names the run in ChatPane's open set. */
+  stepsKey?: string;
+  stepsOpen?: boolean;
+  onToggleSteps?: (key: string) => void;
   /** A SECTIONED Super reply's heads (ChatPane's replyHeadsById): present, the answer is parsed
    *  with its section starts and every part opens with the chip of the message it answers. */
   replyHeads?: ReplyHead[];
@@ -463,6 +481,7 @@ function AssistantMessage({
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const { t } = useI18n();
 
   // What the answer asked the view to render (buttons, boards, rendered HTML, insight
   // cards, checklists) versus what it asked it to READ. Re-derived per token while
@@ -536,6 +555,18 @@ function AssistantMessage({
   return (
     <SelectionItemContext.Provider value={item.id}>
     <div className="chat-msg-assistant-row" data-done={item.done} data-item-id={item.id} data-reply-grp={replyGroup} tabIndex={-1}>
+      {stepsKey && onToggleSteps && (
+        <button
+          type="button"
+          className="super-steps-link"
+          data-open={stepsOpen || undefined}
+          aria-expanded={stepsOpen}
+          onClick={() => onToggleSteps(stepsKey)}
+          data-testid="super-steps-link"
+        >
+          {t(stepsOpen ? 'super.steps.hide' : 'super.steps.show')}
+        </button>
+      )}
       {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
           a card sits between the paragraph that introduces it and the one that says what to
           notice — which is how the answer was written and, before 2026-08-27, not how it
@@ -583,7 +614,7 @@ function AssistantMessage({
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
           {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
-          {session && (
+          {session && !session.savedOnly && (
             <IconButton label="Retry — resend the preceding message" onClick={() => setConfirming(true)}>⟳</IconButton>
           )}
         </HoverActions>
@@ -692,8 +723,12 @@ interface StepStretch {
 
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, report, onQuote, readOnly = false,
-  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget,
+  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget, stepsKey, stepsOpen, onToggleSteps,
 }: StepStretch & {
+  /** A Super answer whose turn's steps were put away: see `AssistantMessage`. */
+  stepsKey?: string;
+  stepsOpen?: boolean;
+  onToggleSteps?: (key: string) => void;
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
    *  (SlideOver's `mode:'subagent'`), which has no session of its own to mutate. */
@@ -749,6 +784,9 @@ function ItemViewInner({
           replyGroup={replyGroup}
           replyHeads={replyHeads}
           onReplyTarget={onReplyTarget}
+          stepsKey={stepsKey}
+          stepsOpen={stepsOpen}
+          onToggleSteps={onToggleSteps}
         />
       );
     // Step lines: where they sit in their speaker's stretch is decided by the transcript

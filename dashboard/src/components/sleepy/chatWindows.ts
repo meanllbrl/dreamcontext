@@ -146,6 +146,48 @@ export function addWindow(
   return { state: { list, activeId: id }, id };
 }
 
+/** `template`'s name for window number `n` ("Chat {n}" → "Chat 3"). */
+function numbered(template: string, n: number): string {
+  return template.replace('{n}', String(n));
+}
+
+/**
+ * The numbered name ("Chat 3") a window gets when it starts empty: one the other windows do not
+ * already carry. `own` = an existing window starting over (it is already counted); without it,
+ * the name of a window about to be added. `template` is the localized "Chat {n}".
+ */
+export function freshWindowName(list: readonly { id: string; name: string }[], template: string, own?: string): string {
+  const taken = new Set(list.filter((w) => w.id !== own).map((w) => w.name));
+  for (let n = own ? list.length : list.length + 1; ; n++) {
+    const name = numbered(template, n);
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** A name nobody chose: the first window's "Chat", or a numbered "Chat 3". */
+function isDefaultWindowName(name: string, template: string): boolean {
+  if (name === DEFAULT_WINDOW_NAME) return true;
+  const [head, tail = ''] = template.split('{n}');
+  return name.length > head.length + tail.length && name.startsWith(head) && name.endsWith(tail)
+    && /^\d+$/.test(name.slice(head.length, name.length - tail.length));
+}
+
+/**
+ * An empty window taking its next chat starts clean: a name the owner gave it goes back to a fresh
+ * numbered one. An empty window has no row in the drawer, so that name is one the owner can no
+ * longer see, and keeping it brought a closed chat's name back on a brand-new chat (owner, 0.36.9).
+ * A name nobody chose stays as it is, unless another window carries it too. Same state when the
+ * window is unknown or nothing changes.
+ */
+export function freshenWindow(state: WindowsState, id: string, template: string): WindowsState {
+  const w = state.list.find((x) => x.id === id);
+  if (!w) return state;
+  const shared = state.list.some((x) => x.id !== id && x.name === w.name);
+  if (isDefaultWindowName(w.name, template) && !shared) return state;
+  const name = freshWindowName(state.list, template, id);
+  return w.name === name ? state : { ...state, list: state.list.map((x) => (x.id === id ? { ...x, name } : x)) };
+}
+
 export function renameWindow(state: WindowsState, id: string, raw: string): WindowsState {
   const name = cleanWindowName(raw);
   if (!name) return state;
@@ -182,6 +224,11 @@ export function adoptWindowOrder(state: WindowsState, saved: readonly { id: stri
 export function dropWindow(state: WindowsState, id: string): WindowsState {
   if (state.list.length <= 1 || state.activeId === id) return state;
   return { ...state, list: state.list.filter((w) => w.id !== id) };
+}
+
+/** After a window closes: with no chat left in the project, its Super Agent comes up (if any). */
+export function landsOnSuper(chatsLeft: number, superEnabled: boolean): boolean {
+  return chatsLeft === 0 && superEnabled;
 }
 
 /** The window to show when `id` closes: the one after it, else the one before. */
@@ -383,4 +430,20 @@ export function rowsByWindow<R extends { id: string; claudeId?: string }>(state:
     out.get(win)?.push(r);
   }
   return out;
+}
+
+/**
+ * Where a chat picked in History opens (owner 2026-11-03): in its OWN window, never in the one
+ * already holding other chats. A chat that already has a tab brings that tab's window forward
+ * (`focus`); a window on screen with no chat in it takes it (`here`), so does any other empty
+ * window (`reuse`, never a pile of empty windows); otherwise a new window opens (`new`). A Super
+ * Agent session never reaches this rule: its own door (`openInSuperWindow`) runs first.
+ */
+export type HistoryPickPlan = { kind: 'focus' } | { kind: 'here' } | { kind: 'reuse'; windowId: string } | { kind: 'new' };
+
+export function historyPickPlan(state: WindowsState, hasTab: boolean, chatsIn: (windowId: string) => number): HistoryPickPlan {
+  if (hasTab) return { kind: 'focus' };
+  if (chatsIn(state.activeId) === 0) return { kind: 'here' };
+  const empty = state.list.find((w) => w.id !== state.activeId && chatsIn(w.id) === 0);
+  return empty ? { kind: 'reuse', windowId: empty.id } : { kind: 'new' };
 }

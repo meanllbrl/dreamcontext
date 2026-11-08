@@ -1,0 +1,170 @@
+/* The add palette and its pickers: the board's, and the Super stage's add menu, which may open
+   with no board mounted (so this cannot live in WhiteboardCanvas.css). */
+.wb-palette {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-height: 380px;
+  padding: var(--space-1);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.wb-palette-heading {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wb-palette-item,
+.wb-palette-back,
+.wb-picker-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-palette-item:hover,
+.wb-palette-item:focus-visible,
+.wb-palette-back:hover,
+.wb-picker-row:hover,
+.wb-picker-row:focus-visible {
+  background: var(--color-bg-tertiary);
+  outline: none;
+}
+
+.wb-palette-back {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.wb-palette-sep {
+  margin: var(--space-1) 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.wb-palette-btn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+}
+
+.wb-picker-search {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wb-picker-search:focus {
+  border-color: var(--color-border-focus);
+  outline: none;
+}
+
+.wb-picker-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.wb-picker-row {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.wb-picker-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A page row's type (MD / PDF / HTML), before its title. */
+.wb-picker-type {
+  display: inline-block;
+  margin-right: var(--space-2);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  vertical-align: 1px;
+}
+
+.wb-picker-row-meta {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-picker-empty {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--color-text-tertiary);
+}
+
+.wb-picker-error {
+  margin: 0;
+  padding: 0 var(--space-1);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-xs);
+}
+
+.wb-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* An agent picker row: its face, then the name and a note, side by side. */
+.wb-picker-row.has-face {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.wb-picker-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}

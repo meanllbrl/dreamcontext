@@ -1,11 +1,12 @@
 import {
   useCallback, useLayoutEffect, useMemo, useRef,
-  type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
-} from 'react';
+  type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
 // global, but which modules a route loads is not, so every parse path imports it for itself.
 import '../../lib/markdownMark';
+import { dropRemoteMedia } from '../lab/blocks/safeMarkdown';
+import { useInAppChat } from '../sleepy/chat/appChatContext';
 import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
 import { useMermaidRender } from '../../lib/mermaidRender';
@@ -52,6 +53,8 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // (a `<video>` rebuilt per frame re-fetches the clip per frame).
   // Wikilinks become anchors BEFORE the split: the fence-aware pass needs the whole text to know
   // which lines are inside a code block (see lib/wikilinks.ts).
+  // Every chat text passes here: an app's conversation draws no remote media, whatever the path.
+  const stripRemote = useInAppChat();
   const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(content)), [content]);
 
   // Sanitize before the HTML reaches the document. marked output for normal markdown
@@ -63,14 +66,20 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
     const cache = htmlCache.current;
     const hit = cache.get(block);
     if (hit !== undefined) return hit;
-    const html = DOMPurify.sanitize(renderMarkdownBlock(block), SANITIZE_CONFIG);
+    const clean = DOMPurify.sanitize(renderMarkdownBlock(block), SANITIZE_CONFIG);
+    const html = stripRemote ? dropRemoteMedia(clean) : clean;
     if (cache.size >= HTML_CACHE_MAX) cache.delete(cache.keys().next().value as string);
     cache.set(block, html);
     return html;
-  }, []);
+  }, [stripRemote]);
+  // What was cached under the other setting is not this text's HTML.
+  const cachedFor = useRef(stripRemote);
+  const flippedStrip = cachedFor.current !== stripRemote;
+  if (flippedStrip) { cachedFor.current = stripRemote; htmlCache.current.clear(); }
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const blockState = useRef<MarkdownBlockState>(emptyBlockState());
+  if (flippedStrip) blockState.current = emptyBlockState();
 
   // A LAYOUT effect, not a passive one: the content must be in the DOM before the browser
   // paints (no flash of empty message), and before the decorating passes that run in the
@@ -117,7 +126,8 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // Both passes stay keyed to the message text: they are marker-guarded (`data-highlighted`,
   // `.mermaid-rendered`), so re-running them over an unchanged subtree is a walk and nothing
   // more, and keying them narrower risks a re-rendered block being left undecorated.
-  useMermaidRender(bodyRef, content, resolved, 'md-mmd');
+  // Mermaid draws its labels itself, past every filter: in an app's chat a fence stays code.
+  useMermaidRender(bodyRef, stripRemote ? null : content, resolved, 'md-mmd');
   useCodeHighlight(bodyRef, content);
 
   const fmEntries = frontmatter

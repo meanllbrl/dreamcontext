@@ -1,3 +1,5 @@
+import { useInAppChat } from '../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SANDBOX_GRANT, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
 import { resolveKitTokens } from './labHtmlKit';
@@ -107,7 +109,13 @@ function clampHeightForMode(px: number, mode: 'card' | 'page'): number {
     : Math.min(PAGE_MAX_HEIGHT, Math.max(PAGE_MIN_HEIGHT, rounded));
 }
 
-export function LabAppFrame({
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+export function LabAppFrame(props: Parameters<typeof LabAppFrameLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <LabAppFrameLive {...props} />;
+}
+
+function LabAppFrameLive({
   slug, spec, pageId, params, datasets, mode, title, onNavigate, onToast,
 }: LabAppFrameProps) {
   const theme = useDataTheme();

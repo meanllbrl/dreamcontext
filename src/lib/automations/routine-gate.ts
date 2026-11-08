@@ -31,7 +31,8 @@ export type RoutineGate =
 export function ownerInTurn(contextRoot: string, slug: string, runId: string | undefined): boolean {
   if (!runId) return false;
   try {
-    return readThreadRun(contextRoot, slug, runId).some((e) => e.kind === 'user');
+    // An app's message is not the owner in the turn, whoever typed it.
+    return readThreadRun(contextRoot, slug, runId).some((e) => e.kind === 'user' && e.via !== 'app');
   } catch {
     return false;
   }

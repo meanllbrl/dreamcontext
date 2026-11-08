@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { TEST_TMP_PREFIXES } from './test-tmp-prefixes.js';
 
 /**
@@ -44,12 +44,20 @@ export function isOurTestTmp(name: string): boolean {
  * directory once per call: asked about a worktree and its `target/` together, it prints only the
  * worktree, so the inner path measured 0 (BSD du prints both). Disjoint paths mean the same on both.
  */
-function disjointRounds(paths: readonly string[]): string[][] {
+export function disjointRounds(paths: readonly string[]): string[][] {
   const unique = [...new Set(paths)];
-  const inside = (p: string, dir: string) => p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+  // A path's depth is how many of the other paths are its ancestors, found by walking up its own
+  // parents: linear in the paths. Comparing every pair froze the server for minutes once $TMPDIR
+  // held tens of thousands of old test folders (each pair built a string and flattened it).
+  const trim = (p: string) => (p.length > 1 && p.endsWith(sep) ? p.slice(0, -1) : p);
+  const known = new Set(unique.map(trim));
   const rounds: string[][] = [];
   for (const p of unique) {
-    const depth = unique.filter((q) => q !== p && inside(p, q)).length;
+    let depth = 0;
+    for (let d = dirname(trim(p)); ; d = dirname(d)) {
+      if (known.has(d)) depth++;
+      if (dirname(d) === d) break;
+    }
     (rounds[depth] ??= []).push(p);
   }
   return rounds.filter(Boolean);

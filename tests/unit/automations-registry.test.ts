@@ -342,6 +342,10 @@ describe('approvalFields', () => {
       soul: '',
       autonomy: 'balanced',
       readTools: '',
+      tool: null,
+      app: '',
+      boardOnly: false,
+      appTools: '',
     });
   });
 
@@ -358,20 +362,20 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul/autonomy/readTools, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul/autonomy/readTools/tool/app/boardOnly, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
-      'whiteboard', 'job', 'soul', 'autonomy', 'readTools',
+      'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(14);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(18);
   });
 
-  it('keeps `flow`, `whiteboard`, `job`, `soul`, `autonomy` then `readTools` LAST — the position is what preserves every legacy hash', () => {
+  it('keeps `flow`, `whiteboard`, `job`, `soul`, `autonomy`, `readTools` then `tool` LAST — the position is what preserves every legacy hash', () => {
     // `canonicalApprovalPayload` appends `flow`, then `whiteboard`, then `job`, to
     // the end of its literal, and JSON.stringify emits keys in insertion order.
     // Any other position would shift the serialization of the fields around it
     // and re-block every already-approved automation on upgrade.
-    expect(APPROVAL_DIFF_FIELDS.slice(-6)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools']);
+    expect(APPROVAL_DIFF_FIELDS.slice(-10)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools']);
   });
 });
 
@@ -751,7 +755,8 @@ describe('approveAutomation / getApproval / revokeApproval', () => {
   it('approveAutomation records hash, timestamp, and the current payload version', () => {
     const m = makeManifest();
     const entry = approveAutomation(PROJECT_A, m, NOW, home);
-    expect(entry).toEqual({ manifestSha256: manifestHash(m), approvedAt: NOW.toISOString(), payloadVersion: 'automation-approval/v1' });
+    // `fieldHashes` is machine-local display data for the one approval card (plan-r10 1e), outside the hash.
+    expect(entry).toEqual({ manifestSha256: manifestHash(m), approvedAt: NOW.toISOString(), payloadVersion: 'automation-approval/v1', fieldHashes: expect.any(Object) });
     expect(getApproval(PROJECT_A, m.slug, home)).toEqual(entry);
   });
 

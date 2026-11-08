@@ -19,7 +19,7 @@ function rule(css: string, selector: string): string {
   return css.slice(at, css.indexOf('}', at));
 }
 
-describe('Brain Search and the phone sidebar use tokens, not raw colours', () => {
+describe('Brain Search uses tokens, not raw colours', () => {
   it('BrainSearch.css carries no colour literal', () => {
     const lines = strip(readFileSync(join(SRC, 'components', 'search', 'BrainSearch.css'), 'utf-8')).split('\n');
     expect(lines.map((l, i) => `${i + 1}: ${l.trim()}`).filter((l) => RAW.test(l))).toEqual([]);
@@ -29,14 +29,5 @@ describe('Brain Search and the phone sidebar use tokens, not raw colours', () =>
     const css = strip(readFileSync(join(SRC, 'components', 'search', 'BrainSearch.css'), 'utf-8'));
     expect(rule(css, '.bsearch-intel--on')).toContain('color-mix(in oklch, var(--color-accent) 60%, transparent)');
     expect(rule(css, '.bsearch-intel--on::after')).toContain('color-mix(in oklch, var(--color-accent) 16%, transparent)');
-  });
-
-  it('the phone drawer uses the shadow token and a token-based scrim', () => {
-    const css = strip(readFileSync(join(SRC, 'components', 'layout', 'Sidebar.css'), 'utf-8'));
-    const drawer = rule(css, '.sidebar.sidebar--phone[data-open]');
-    const scrim = rule(css, '.sidebar-scrim');
-    expect(drawer).toContain('box-shadow: var(--shadow-xl);');
-    expect(scrim).toContain('background: color-mix(in oklch, var(--color-obsidian) 32%, transparent);');
-    expect(RAW.test(drawer) || RAW.test(scrim)).toBe(false);
   });
 });

@@ -1,3 +1,10 @@
+import { appChatRefusal } from '../../lib/apps/chat-store.js';
+import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
+import { codexTerminalEnv } from '../../lib/codex-accounts.js';
+import { codexAwarePath, codexCommand } from '../../lib/codex-bin.js';
+import { isScriptSafePath } from '../../lib/t3-bridge/spawn.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { isAssistantVault } from '../../lib/assistant/home.js';
@@ -13,7 +20,7 @@ import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
-import { modelAlias, modelOptionsFrom } from '../../lib/model-list.js';
+import { LEGACY_MODEL_OPTIONS, modelOptionsFrom, modelPickerId } from '../../lib/model-list.js';
 import { priceForModelId, SMALL_WINDOW_MODEL, type TokenPrice } from '../../lib/model-facts.js';
 import { foldJsonl } from '../../lib/jsonl-fold.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
@@ -712,12 +719,19 @@ export function attachAgentTerminal(server: Server): void {
     // touch the shell command string, so a non-UUID is dropped and neither can inject.
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
+    // An app's conversation runs only in its envelope, which only Chat applies (plan r9, D4).
+    if (appChatRefusal(sessionId) || appChatRefusal(resumeId) || appChatRefusal(resolveAgentSession(join(projectRoot, '_dream_context'), resumeId))) { rejectUpgrade(socket, 403); return; }
     // Model chosen in the composer bar (`claude --model <id>`). Strictly sanitized to a
     // whitelist charset before it can touch the shell command, so a hostile value is
     // dropped rather than injected. Empty → no flag (Claude Code's own default).
     const model = sanitizeModel(url.searchParams.get('model'));
     // Reasoning effort (`claude --effort <level>`) — whitelist-gated to the documented set.
     const effort = sanitizeEffort(url.searchParams.get('effort'));
+    // Which tool an agent terminal runs (Track T W4). Absent = `claude`, unchanged.
+    const accountParam = url.searchParams.get('account') ?? '';
+    const codexOpt = kind === 'agent' && sanitizeTool(url.searchParams.get('tool')) === 'codex'
+      ? { codex: { account: isCodexAccountId(accountParam) ? accountParam : '' } }
+      : {};
     // An INITIAL prompt to submit automatically (the "Run sleep agent" consolidation, task
     // delegation, task curation). Passed to `claude` as a positional argument
     // (`claude … "<prompt>"`), which starts the interactive TUI with that first message already
@@ -749,7 +763,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt, execCommand, execCwd);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt, execCommand, execCwd, codexOpt);
       });
     })();
   });
@@ -799,7 +813,7 @@ interface ModelOpt { id: string; label: string; }
  *  Widened here rather than on `ModelOpt` so `buildStaticModelConfig` — which knows nothing
  *  about pricing and is cached for the server's lifetime — stays untouched. */
 interface PricedModelOpt extends ModelOpt { priceIn: number }
-interface ModelConfig { models: PricedModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
+interface ModelConfig { models: PricedModelOpt[]; legacyModels: PricedModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
 
 // Only the STATIC parts are cached for the server's lifetime: the model list (from the CLI's
 // `.claude.json` cache) and the effort levels (parsed from `claude --help`, an expensive spawn).
@@ -832,12 +846,13 @@ async function buildModelConfig(): Promise<ModelConfig> {
   const defaultEffort = typeof settings.effortLevel === 'string' && efforts.includes(settings.effortLevel)
     ? settings.effortLevel
     : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
-  const defaultModel = modelAlias(String(settings.model ?? 'opus')) || 'opus';
+  const defaultModel = modelPickerId(String(settings.model ?? 'opus')) || 'opus';
   // Priced HERE, not in the cached static build: `priceForModel` is the same function the
   // per-session cost estimate runs on, so the menu's "$5/M in" and the toolbar's "$12.12"
   // can never disagree about what a model costs.
   const priced: PricedModelOpt[] = models.map((m) => ({ ...m, priceIn: priceForModel(m.id).in }));
-  return { models: priced, efforts, defaultModel, defaultEffort };
+  const legacyModels = LEGACY_MODEL_OPTIONS.map((m) => ({ ...m, priceIn: priceForModel(m.id).in }));
+  return { models: priced, legacyModels, efforts, defaultModel, defaultEffort };
 }
 
 /** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */
@@ -873,7 +888,7 @@ export function latestTranscriptModel(raw: string): string | null {
     // `<synthetic>` marks a locally-generated reply (a `/effort` echo, a "Please run /login"
     // notice) — no model ran it, and reporting it made the composer's picker read
     // "<synthetic>" instead of the model the session is actually on.
-    if (typeof model === 'string' && model && model !== '<synthetic>') return modelAlias(model);
+    if (typeof model === 'string' && model && model !== '<synthetic>') return modelPickerId(model);
   }
   return null;
 }
@@ -900,7 +915,7 @@ export async function handleAgentSessionModel(
   // immediately instead of reading as the CLI default until the first flush.
   const folded = await transcriptFoldFor(contextRoot, id, req);
   if (folded === REFUSED) { sendJson(res, 200, { model: null }); return; }
-  const fromTranscript = folded !== null && folded.latestModel !== null ? modelAlias(folded.latestModel) : null;
+  const fromTranscript = folded !== null && folded.latestModel !== null ? modelPickerId(folded.latestModel) : null;
   sendJson(res, 200, { model: fromTranscript ?? liveSpawnModels.get(id) ?? null });
 }
 
@@ -1077,7 +1092,7 @@ export async function foldedSessionStats(path: string): Promise<SessionStats> {
 export async function foldedTranscriptModel(path: string): Promise<string | null> {
   try {
     const s = await foldJsonl(path, 'transcript', newTranscriptFold, foldTranscriptRow);
-    return s.latestModel !== null ? modelAlias(s.latestModel) : null;
+    return s.latestModel !== null ? modelPickerId(s.latestModel) : null;
   } catch { return null; }
 }
 
@@ -1129,6 +1144,24 @@ export function agentExecLine(flags: string, promptArg: string, mcpRefs: readonl
   return `exec claude${flags}${promptArg}${mcp}`;
 }
 
+/**
+ * The Codex terminal (Track T W4): the owner's own interactive `codex`, on the pane's account.
+ * The sandbox is always workspace-write with approvals on request: `bypass` is a Claude setting
+ * and never widens this. Tokens are gated by the caller; the thread id is `CODEX_THREAD_RE`'s.
+ */
+export function codexExecLine(o: { model: string; effort: string; resume: string; signedInFile: boolean; promptArg: string; bin?: string }): string {
+  const flags = [
+    ...(o.signedInFile ? [`-c 'cli_auth_credentials_store="file"'`] : []),
+    ...(o.model ? [`-m ${o.model}`] : []),
+    ...(o.effort ? [`-c 'model_reasoning_effort="${o.effort}"'`] : []),
+    '-s workspace-write',
+    '-a on-request',
+  ];
+  // The found Codex; a path that cannot sit in the script stays the bare name the login shell resolves.
+  const bin = o.bin && isScriptSafePath(o.bin) ? `"${o.bin}"` : 'codex';
+  return `exec ${bin} ${flags.join(' ')}${o.resume ? ` resume ${o.resume}` : ''}${o.promptArg}`;
+}
+
 export function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
@@ -1144,7 +1177,7 @@ export function startPtySession(
   deferPrompt = false,
   execCommand = '',
   execCwd = '',
-  opts: { home?: string } = {},
+  opts: { home?: string; codex?: { account: string } } = {},
 ): void {
   const spawnCwd = kind === 'exec' && execCwd ? execCwd : projectRoot;
   const shell = process.env.SHELL || '/bin/zsh';
@@ -1302,11 +1335,18 @@ export function startPtySession(
   // The MCP stores every account shares (task mcp-management), named by env variable so the
   // `-c` string never carries HOME's text; the prompt operand sits BEFORE the variadic flag.
   const storeMcp = kind === 'agent' ? storeFileRefs(mcpStoreFiles({ home: opts.home, projectRoot }).files) : { refs: [], env: {} };
+  const codexEnv = opts.codex ? codexTerminalEnv(opts.codex.account) : null;
+  // Only this project's own thread, and only one no pane holds (`bridgeResumeTarget`).
+  const codexResume = opts.codex
+    ? bridgeResumeTarget({ tool: 'codex', mapped: mappedId, resumeId, projectRoot, held: new Set() })
+    : '';
   const shellArgs = kind === 'shell'
     ? ['-il']
     : kind === 'exec'
       ? execShellArgs(shell, execCommand)
-      : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
+      : opts.codex
+        ? ['-ilc', codexExecLine({ model, effort, resume: codexResume, signedInFile: !!codexEnv?.pre.length, promptArg, bin: codexCommand() }), ...(promptArg ? [submitPrompt] : [])]
+        : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
   // on every rotation — the other half of the resume-staleness fix above. ONLY when
@@ -1329,7 +1369,7 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env } as Record<string, string>,
+      env: { ...process.env, PATH: opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

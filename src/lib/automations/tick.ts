@@ -5,19 +5,21 @@
  * must stay cheap when nothing is due, because a long-running tick eats the
  * NEXT `StartInterval` firing (macOS `man launchd.plist`: a job still running
  * at the next scheduled interval simply misses it — there is no queueing).
- * That is also why due automations run SEQUENTIALLY within a project: it
- * serializes everything, and correctness under a missed/coalesced interval is
- * entirely the watermark + `catchup_hours` model's job, not this file's.
+ * Due automations run SEQUENTIALLY within a project, and projects run
+ * CONCURRENTLY: one project's slow run must never hold another project's
+ * routines until its timeout ends. Correctness under a missed/coalesced
+ * interval is entirely the watermark + `catchup_hours` model's job, not this
+ * file's.
  *
  * Two layers, deliberately split:
  *  - `tickProject` — ONE project's manifests → dueness → sequential runs.
  *    No registry, no heartbeat, no log rotation — a narrow, directly testable
  *    unit that only touches the project's own `_dream_context/automations/`.
- *  - `tickAll` — iterates every machine-registered project, wrapping the
+ *  - `tickAll` — ticks every machine-registered project at once, wrapping the
  *    dispatcher heartbeat (`recordTickStarted`/`recordTickCompleted`) and log
  *    rotation around the whole pass. A project whose `_dream_context/` is
- *    missing (moved/deleted since it registered) is warned about and skipped
- *    — never abandons the rest of the loop.
+ *    missing (moved/deleted since it registered) is warned about and skipped,
+ *    and one project's failure never abandons the rest.
  *
  * "Ships fully disabled" lives here as much as anywhere: an empty registry
  * (the fresh-machine state) must be a SILENT no-op that reads only the
@@ -47,12 +49,14 @@
  */
 
 import { existsSync } from 'node:fs';
+import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
@@ -60,20 +64,18 @@ import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
-import { pollTelegram, type PollResult } from './telegram.js';
-
-/** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
- *  null and it returns without a single network call, which is the state every
- *  machine is in until someone runs `automations telegram setup`. */
-const defaultPollTelegram = (contextRoot: string, home?: string): Promise<PollResult> =>
-  pollTelegram(contextRoot, home);
-
+import { telegramAwayTick } from '../telegram/away.js';
 /** `_dream_context/` sits directly under a registered project root — the same
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
  *  exact registered-root → context-root derivation. */
 const CONTEXT_DIR_NAME = '_dream_context';
 
+/** How many projects tick at once (see `tickAll`). */
+export const PROJECT_CONCURRENCY = 3;
+
 export interface TickOptions {
+  /** False skips the Telegram away duties (tests of the routine loop). Default: on. */
+  telegramAway?: boolean;
   /** Business "now" for dueness math and both heartbeat timestamps — a single
    *  fixed value (not a clock function), so one tick sees one consistent time
    *  across every project and automation it considers. Defaults to `new Date()`. */
@@ -87,12 +89,11 @@ export interface TickOptions {
   /** Injectable so tests never spawn a real `claude`. Defaults to the real
    *  `runAutomation`. */
   runImpl?: typeof runAutomation;
-  /** Injectable so NO test in this repo can reach api.telegram.org. Defaults
-   *  to the real poller, which is itself a no-op when Telegram is unconfigured
-   *  (the overwhelmingly common case). */
-  pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
   /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
   taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
+  /** The clock each RUN reads: starts at `now` and moves with the wall clock, so a run's start,
+   *  end and duration are real. Defaults to that; `tickAll` passes one shared clock. */
+  clock?: () => Date;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -184,8 +185,19 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const now = opts.now ?? new Date();
   const logFn = opts.log ?? (() => {});
   const runImpl = opts.runImpl ?? runAutomation;
+  // The member bots' routine messages (plan Z2): collected here and awaited after this project's
+  // loop, outside every run lock, so a slow send never delays the next due routine.
+  const deferred: Array<() => Promise<void>> = [];
+  const collect = (send: () => Promise<void>): void => { deferred.push(send); };
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
+  // Before this, a run read the fixed `now` as its clock: every run looked 0s long and a timeout
+  // read "Timed out after 0s" in the owner's thread.
+  const wallStart = Date.now();
+  const clock = opts.clock ?? ((): Date => new Date(now.getTime() + (Date.now() - wallStart)));
 
+  // Once per project: what this Mac made that waited under the old rule is approved before the
+  // sweep below closes its questions (adopt-local.ts). Never throws.
+  adoptLocalPending(contextRoot, { home: opts.home, now });
   const manifests = listAutomations(contextRoot);
   // A question the page's approve left open would hold this slug's fires forever: see `settleApprovalQuestions`.
   // Housekeeping: a failure here is logged and never stops this project's fires or the next one's.
@@ -269,7 +281,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${fire.slug} draining a queued fire (fired ${fire.firedAt}) — running`);
     const outcome = await runImpl(contextRoot, fire.slug, {
-      now: () => now,
+      onDeferredSend: collect,
+      now: clock,
       fireAt: new Date(firedAtMs),
       home: opts.home,
       log: logFn,
@@ -321,7 +334,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
-      now: () => now,
+      onDeferredSend: collect,
+      now: clock,
       fireAt: due.fireAt ?? now,
       home: opts.home,
       log: logFn,
@@ -332,37 +346,12 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }
 
-  // AFTER the runs, so a card a run just proposed is posted and answerable in
-  // this same pass rather than waiting five minutes for the next one.
-  //
-  // This lives in the tick — not in the server, not in a daemon — because that
-  // is the only process guaranteed to be alive when an automation fires. The
-  // whole reason a person needs Telegram is that they are not at the Mac; a
-  // channel that only drains while the app is open would work exactly when it
-  // is least needed. A verdict therefore lands within one tick, which is the
-  // right latency for a scheduler and the wrong one for a chat — the server
-  // polls faster while it happens to be up.
-  const poll = opts.pollTelegram ?? defaultPollTelegram;
-  try {
-    const result = await poll(contextRoot, opts.home);
-    if (result.processed > 0) logFn(`[automations] telegram: ${result.processed} update(s) handled`);
-    if (result.unauthorized > 0) {
-      // Never acted on, always said: a bot being messaged by someone who is not
-      // you is worth knowing about, even though the gate already dropped it.
-      logFn(`[automations] telegram: ${result.unauthorized} update(s) dropped from an unauthorized chat`);
-    }
-  } catch (err) {
-    // Telegram is a CHANNEL, not the gate. A broken token, a network blip or a
-    // rate limit must never stop automations from running or cards from being
-    // answerable everywhere else.
-    logFn(`[automations] telegram polling failed (automations are unaffected): ${(err as Error).message}`);
-  }
-
+  for (const send of deferred) await send().catch((err) => logFn(`[telegram] a routine message failed: ${(err as Error)?.message ?? err}`));
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };
 }
 
 /**
- * Tick every project registered on this machine, sequentially. An empty
+ * Tick every project registered on this machine, concurrently (see the loop below). An empty
  * registry is a SILENT no-op (no log lines beyond what the heartbeat write
  * itself requires, no automations dir ever read) — the "ships fully
  * disabled" guarantee for a fresh machine. Heartbeat timestamps are written
@@ -378,23 +367,60 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   recordTickStarted(now, home);
   rotateLogIfLarge(home);
 
+  // dreamcontext Apps' own schedules go FIRST and never wait (src/lib/apps/schedule.ts): the
+  // agent runs below are slow, and an app's schedule spawns no Claude.
+  try {
+    for (const r of tickApps({ home, now })) logFn(`[apps] ${r.slug}/${r.id}: ${r.action}`);
+  } catch (err) {
+    logFn(`[apps] schedule tick failed: ${(err as Error).message}`);
+  }
+
   const projectRoots = listRegisteredProjects(home);
   const missing: string[] = [];
-  const projects: TickProjectResult[] = [];
-
+  const present: string[] = [];
   for (const projectRoot of projectRoots) {
-    const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
-    if (!existsSync(contextRoot)) {
+    if (!existsSync(join(projectRoot, CONTEXT_DIR_NAME))) {
       missing.push(projectRoot);
       logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
       continue;
     }
-    const result = await tickProject(projectRoot, { ...opts, now });
-    projects.push(result);
+    present.push(projectRoot);
+  }
+  const roots = present;
+
+  // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
+  // hold every other project's routines until it ends. Inside a project the runs stay in order.
+  // A runner's clock advances from the tick's `now`, so a run's start, end and duration are real
+  // even though every dueness question in this pass is asked at the same fixed `now`.
+  // At most PROJECT_CONCURRENCY at once: every start probes the same accounts before any run has
+  // spent anything, so an unbounded fan-out at a shared fire time overshoots the account
+  // threshold and lands a burst of claude trees on the busy Mac this exists to spare.
+  const clock = (): Date => new Date(now.getTime() + (Date.now() - wallStart));
+  const results: Array<TickProjectResult | null> = roots.map(() => null);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < roots.length) {
+      const i = next++;
+      try {
+        results[i] = await tickProject(roots[i], { ...opts, now, clock });
+      } catch (err) {
+        logFn(`[automations] tick failed for ${roots[i]}: ${(err as Error)?.message ?? String(err)}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROJECT_CONCURRENCY, roots.length) }, worker));
+  const projects = results.filter((r): r is TickProjectResult => r !== null);
+  // Telegram while the app is quit (W2 lane B): one "ulaşılamıyor" per message, power restored
+  // once after a dead server. Never polls the manager; works on a machine with no routines.
+  // A test run with no injected home never reaches the real ~/.dreamcontext's bots.
+  if (opts.telegramAway !== false && (home !== undefined || !process.env.VITEST)) {
+    try { await telegramAwayTick({ home, log: logFn }); } catch (err) { logFn(`[telegram] away tick failed: ${(err as Error)?.message ?? err}`); }
   }
 
   const durationMs = Date.now() - wallStart;
-  recordTickCompleted(now, durationMs, home);
+  // The completion moment, not the start: `now` is when the tick BEGAN, so
+  // stamping it here made "last tick completed" always equal "last tick started".
+  recordTickCompleted(new Date(now.getTime() + durationMs), durationMs, home);
 
   return { projects, missing, startedAt: now.toISOString(), durationMs };
 }

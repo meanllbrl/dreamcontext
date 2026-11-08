@@ -206,7 +206,7 @@ describe('the model chip (owner 2026-10-21)', () => {
 
   it('the tile reads the live session first, then the record', () => {
     const card = read(`${SUPER}/AgentCard.tsx`);
-    expect(card).toMatch(/if \(session\?\.model\) return modelChip\(session\.model, session\.effort \|\| stored\?\.effort\);\n\s*return modelChip\(stored\?\.model, stored\?\.effort\);/);
+    expect(card).toMatch(/if \(session\?\.model\) return modelChip\(session\.model, session\.effort \|\| child\?\.effort, tool\);\n\s*return modelChip\(child\?\.model, child\?\.effort, tool\);/);
   });
 });
 

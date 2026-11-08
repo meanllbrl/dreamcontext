@@ -93,6 +93,8 @@ export function refusalView(err: AssignAgentError, agentName: string, t: Transla
       return line('tasks.assignReviewerIsAgent', 'An agent cannot review its own work. Pick another reviewer.');
     case 'not_owner':
       return line('tasks.assignNotOwner', '{name} belongs to a teammate. Only its owner gives it tasks.');
+    case 'tool_unsupported':
+      return line('tasks.assignToolRefused', '{name} cannot take a task: {reason}', { name: agentName, reason: err.message });
     default:
       return line('tasks.assignFailed', "Couldn't assign the task. {reason}", {
         reason: tr(t, 'tasks.assignTryAgain', 'Try again in a moment.'),

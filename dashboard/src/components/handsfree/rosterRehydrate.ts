@@ -107,10 +107,10 @@ export function mergeStoredRoster<O extends OpenTabLike, S extends SavedTabLike>
 }
 
 /** A roster entry a seed opens (the surface's `SavedMeta` shape, kind chat). */
-export interface SeedMeta { title: string; bypass: boolean; minimized: boolean; size: number; sessionId: string; kind: 'chat'; pane: number; active?: boolean }
+export interface SeedMeta { title: string; bypass: boolean; minimized: boolean; size: number; sessionId: string; kind: 'chat'; pane: number; active?: boolean; tool?: 'codex' | 'antigravity' }
 
 /** A Mac window tab as `GET /api/agent/sessions?of=desktop` gives it (agent-sessions.ts). */
-export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true }
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' | 'antigravity' }
 
 /** The Mac window's tabs as roster entries a restore opens (D3): chats, in their panes, with the
  *  Mac tab's own bypass (a respawn never takes the remote's default). */
@@ -119,6 +119,6 @@ export function seededRoster(tabs: readonly DesktopSeedTab[]): SeedMeta[] {
     .filter((x) => x && typeof x.sessionId === 'string' && typeof x.title === 'string')
     .map((x) => ({
       title: x.title, bypass: x.bypass === true, minimized: false, size: 1, sessionId: x.sessionId, kind: 'chat' as const,
-      pane: typeof x.pane === 'number' ? x.pane : 0, ...(x.active ? { active: true } : {}),
+      pane: typeof x.pane === 'number' ? x.pane : 0, ...(x.active ? { active: true } : {}), ...(x.tool === 'codex' || x.tool === 'antigravity' ? { tool: x.tool } : {}),
     }));
 }

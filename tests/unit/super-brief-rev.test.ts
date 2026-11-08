@@ -171,4 +171,38 @@ describe('superBriefState', () => {
       expect(t).toContain('a group card alone is not showing.');
     }
   });
+
+  it('rev 25 (2026-11-01): the one line comes FIRST, `super ask` is the last act of the turn', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(25);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('your one line FIRST');
+      expect(t).toContain('as the LAST act of the turn, with no text after it');
+      expect(t).toContain('(but the line before');
+    }
+  });
+
+  it('rev 26 (2026-11-02): a new idea from the owner is weighed before agreeing, a clear task is just done', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(26);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('weigh it before you agree or start');
+      expect(t).toContain('Never agree by reflex, never argue by reflex');
+    }
+  });
+
+  it('rev 27 (2026-11-02, the 0.40.1 cut): the tool-and-model line and the weigh-first rule ship together under one revision', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(27);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('`## Tools on this Mac`');
+      expect(t).toContain('weigh it before you agree or start');
+    }
+  });
+
+  it('rev 32 (2026-11-07): what he asked for is written in text, never only thought; a gap he reports is never blamed on his screen; a question he did not understand is explained and reworded', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(32);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('He sees your text, never your thinking');
+      expect(t).toContain('never blame his screen.');
+      expect(t).toContain('ask a reworded card with what was missing, never the same card.');
+    }
+  });
 });

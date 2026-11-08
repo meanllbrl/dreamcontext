@@ -1,11 +1,10 @@
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { constants } from 'node:os';
 import {
   HEAVY_DEFAULT_WAIT_S,
   HEAVY_LOCK_BUSY_EXIT,
-  HEAVY_MACHINE_SLOTS,
   TASK_ID_RE,
   classifyBuilderResult,
   findOrphanChecks,
@@ -19,6 +18,7 @@ import {
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
 import { HEAVY_HOT_WAIT_S, acquireHeavyReporting, queueReport } from '../../lib/heavy-acquire.js';
+import { describeHit, dropReceipt, findReceipt, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
@@ -26,7 +26,7 @@ import {
   recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
-import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, summarize, type LedgerMark } from '../../lib/run-ledger.js';
+import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -40,6 +40,8 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
  *   heavy -- <cmd>  runs <cmd> in its line (lib/heavy-queue.ts): a short check through a fast
  *                   slot, the rest holding the repo's heavy lock, smaller first. Exits with
  *                   <cmd>'s code, or 75 when the wait ran out, nothing ran and the place is kept.
+ *                   A check that passed on this exact code prints its receipt and does not run
+ *                   (lib/check-receipt.ts); --fresh runs it anyway, --tail N shows its last lines.
  *   queue           who holds the lock and who waits, in order.
  *   report <file> <TaskId>  did that builder finish? reported (exit 0) | unfinished | stopped |
  *                   missing (exit 3), with the line that decided it.
@@ -149,6 +151,19 @@ export function builderLane(deps: BuilderDeps, opts: { from?: string; to?: strin
     : 'review-router, then builder review-pick');
 }
 
+/** `why`: this repo's last waits, one line each, every run and no run alike. */
+export function builderWhy(deps: BuilderDeps, opts: { last?: string }): number {
+  const n = opts.last === undefined ? 20 : Number(opts.last);
+  if (!Number.isInteger(n) || n <= 0) {
+    deps.printErr(`builder why: --last must be a whole number, got "${opts.last}"`);
+    return 2;
+  }
+  const waits = waitRows(readLedger(ledgerPath(deps.cwd())));
+  if (waits.length === 0) deps.print('builder why: no wait on record in this repo');
+  for (const r of waits.slice(-n)) deps.print(waitWhy(r));
+  return 0;
+}
+
 export function builderBudget(deps: BuilderDeps): void {
   const cwd = deps.cwd();
   const file = readBudget(budgetPath(cwd));
@@ -193,7 +208,24 @@ export function builderMark(deps: BuilderDeps, what: string): number {
   return 0;
 }
 
-export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string; because?: string }): Promise<number> {
+/** How long the output may keep draining after the check exited (a leftover process holds it). */
+const EXIT_DRAIN_MS = 2000;
+
+/** Lines of a receipt's stored log printed on a hit when no --tail was given. */
+const RECEIPT_TAIL_LINES = 15;
+
+/** A green receipt for this command on this code, printed; true when it stands in for the run. */
+function printReceipt(deps: BuilderDeps, plan: ReceiptPlan, tail: number | undefined): boolean {
+  const state = receiptState(plan);
+  const hit = state ? findReceipt(plan, state) : null;
+  if (!hit) return false;
+  deps.printErr(`builder heavy: ${describeHit(hit)}`);
+  const lines = logTail(hit.receipt.log, tail ?? RECEIPT_TAIL_LINES);
+  if (lines) deps.print(lines);
+  return true;
+}
+
+export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string; because?: string; fresh?: boolean; tail?: string }): Promise<number> {
   const plan = heavySpawnPlan(argv);
   if (!plan) {
     deps.printErr('builder heavy: give the command after --, e.g. dreamcontext builder heavy -- npx tsc --noEmit');
@@ -208,8 +240,18 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     deps.printErr('builder heavy: --because needs a real reason (10 characters or more); it stays in the trail. NOTHING ran.');
     return 2;
   }
+  const tail = opts.tail == null ? undefined : Number(opts.tail);
+  if (tail !== undefined && (!Number.isInteger(tail) || tail <= 0)) {
+    deps.printErr(`builder heavy: --tail must be a whole number of lines, got "${opts.tail}"`);
+    return 2;
+  }
   const command = argv.join(' ');
   const step = heavyStep(command, packageScripts(deps.cwd()));
+  // The receipt comes first: a check that already passed on this code costs no queue and no budget.
+  const planned = step && step.kind !== 'browser' ? planShellReceipt(deps.cwd(), command, packageScripts(deps.cwd())) : null;
+  const receiptPlan = planned && 'plan' in planned ? planned.plan : null;
+  if (planned && 'skip' in planned) deps.printErr(`builder heavy: no receipt for this run (${planned.skip}); it runs every time`);
+  if (receiptPlan && !opts.fresh && printReceipt(deps, receiptPlan, tail)) return 0;
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
   const target = step?.target ?? '';
   const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
@@ -232,36 +274,73 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     return HEAVY_OVER_BUDGET_EXIT;
   }
   const started = Date.now();
-  const { held, busy, line } = await acquireHeavyReporting({
+  const { held, busy, line, waits } = await acquireHeavyReporting({
     cwd: deps.cwd(), lockPath: heavyLockPath(deps.cwd()), slotDir: deps.heavySlotDir?.() ?? heavySlotDir(),
     maxWaitS, heavyLimit: deps.heavyLimit, ps: deps.ps, machineBusy: deps.machineBusy,
-    job: { key: jobKey(deps.cwd(), command), size: pick.size, label, line: pick.line },
+    job: { key: jobKey(deps.cwd(), command), size: pick.size, label, line: pick.line, shared: pick.shared },
     note: (l) => deps.printErr(`builder heavy: ${l}`),
   });
   if (!held) {
     const gaveUp = Date.now();
-    recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null });
+    recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null, waits });
     deps.printErr(`builder heavy: ${busy}`);
     return HEAVY_LOCK_BUSY_EXIT;
   }
+  // Queued behind the same check from another session: its receipt may be there now.
+  if (receiptPlan && !opts.fresh && printReceipt(deps, receiptPlan, tail)) { held.release(); return 0; }
+  const before = receiptPlan ? receiptState(receiptPlan) : null;
   const ran = Date.now();
+  recordLedgerStart(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, waits });
   deps.printErr(`builder heavy: ${line} line (${pick.why}), waited ${Math.round((ran - started) / 1000)}s`);
   if (kind && scope) {
     if (over) deps.printErr(`builder heavy: over the limit (${over}), run on purpose: ${opts.because}`);
     recordStart(budget, scope, kind, target, Date.now(), over ? { command, reason: opts.because! } : undefined);
   }
+  // The output is kept (it is the receipt's log) and shown as it comes, or its last --tail lines.
+  const logPath = before && receiptPlan ? scratchLog(receiptPlan.toplevel) : null;
+  let logFd: number | null = null;
+  try { logFd = logPath ? openSync(logPath, 'w') : null; } catch { logFd = null; }
+  const kept: string[] = [];
+  let partial = '';
+  const take = (chunk: Buffer, to: NodeJS.WriteStream) => {
+    if (logFd !== null) { try { writeSync(logFd, chunk); } catch { /* the log is a nicety */ } }
+    if (tail === undefined) { to.write(chunk); return; }
+    const parts = (partial + chunk.toString('utf-8')).split('\n');
+    partial = parts.pop() ?? '';
+    kept.push(...parts);
+    if (kept.length > tail) kept.splice(0, kept.length - tail);
+  };
   return new Promise<number>((resolveExit) => {
-    const child = spawn(plan.file, plan.args, { stdio: 'inherit', shell: plan.shell });
+    const child = spawn(plan.file, plan.args, { cwd: deps.cwd(), stdio: ['inherit', 'pipe', 'pipe'], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
+    child.stdout?.on('data', (c: Buffer) => take(c, process.stdout));
+    child.stderr?.on('data', (c: Buffer) => take(c, process.stderr));
     const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); };
     const onTerm = forward('SIGTERM');
     const onInt = forward('SIGINT');
     process.on('SIGTERM', onTerm);
     process.on('SIGINT', onInt);
+    let finished = false;
+    let grace: NodeJS.Timeout | null = null;
     const done = (code: number) => {
+      if (finished) return;
+      finished = true;
+      if (grace) clearTimeout(grace);
       process.off('SIGTERM', onTerm);
       process.off('SIGINT', onInt);
+      if (tail !== undefined) {
+        if (partial) kept.push(partial);
+        const shown = kept.slice(-tail);
+        if (shown.length) deps.print(shown.join('\n'));
+      }
+      if (logFd !== null) { try { closeSync(logFd); } catch { /* closed */ } }
+      if (code === 0 && receiptPlan && before) {
+        const r = writeReceipt(receiptPlan, before, { exit: code, ms: Date.now() - ran, fresh: opts.fresh, log: logPath ?? undefined });
+        deps.printErr(r ? `builder heavy: green, receipt kept: the same check on the same code will not run again${opts.fresh ? ' (--fresh run recorded)' : ''}` : 'builder heavy: green, but no receipt (the code changed while it ran, or the receipt could not be written)');
+      }
+      if (code !== 0 && receiptPlan && before) dropReceipt(receiptPlan, before);
+      if (logPath) rmSync(logPath, { force: true });
       if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
-      recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: code });
+      recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: code, waits });
       held.release();
       resolveExit(code);
     };
@@ -269,7 +348,14 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
       deps.printErr(`builder heavy: could not start "${plan.file}": ${err.message}`);
       done(127);
     });
-    child.on('exit', (code, signal) => done(code ?? (signal ? 128 + (constants.signals[signal] ?? 0) : 1)));
+    const codeOf = (code: number | null, signal: NodeJS.Signals | null) => code ?? (signal ? 128 + (constants.signals[signal] ?? 0) : 1);
+    // 'close' drains the output, so the log and the tail are whole. A process the check left
+    // running can hold the pipes open forever, so 'exit' gives them a short grace and then ends:
+    // the lock must never be held by a check that is over.
+    child.on('close', (code, signal) => done(codeOf(code, signal)));
+    child.on('exit', (code, signal) => {
+      grace = setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); done(codeOf(code, signal)); }, EXIT_DRAIN_MS);
+    });
   });
 }
 
@@ -289,8 +375,10 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .argument('<command...>', 'The check to run, after --')
     .option('--max-wait <seconds>', `How long to stand in line (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
     .option('--because <reason>', 'Run past the repeat limit, once per run and command; the reason stays in `builder budget`')
-    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), smaller first (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
-    .action(async (command: string[], opts: { maxWait?: string; because?: string }) => {
+    .option('--fresh', 'Run it even when a green receipt for the same code exists (the run is recorded)')
+    .option('--tail <lines>', 'Show only the last N lines of its output (instead of piping to tail, which hides the exit code)')
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
+    .action(async (command: string[], opts: { maxWait?: string; because?: string; fresh?: boolean; tail?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });
 
@@ -340,6 +428,12 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .action(() => {
       for (const l of queueReport(heavyLockPath(deps.cwd()), deps.heavySlotDir?.() ?? heavySlotDir(), deps.ps)) deps.print(l);
     });
+
+  cmd
+    .command('why')
+    .description("Why each recent check of this repo waited, one line per wait: this checkout's lock, full slots, or others ahead in the slot line")
+    .option('--last <n>', 'how many waits (default 20)')
+    .action((opts: { last?: string }) => { process.exitCode = builderWhy(deps, opts); });
 
   cmd
     .command('mark')

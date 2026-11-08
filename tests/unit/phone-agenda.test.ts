@@ -22,6 +22,9 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
 }));
 
 const { PhoneAgenda, digestToNotepadInput, phoneEventContext } = await import('../../dashboard/src/components/sleepy/super/PhoneAgenda.js');
+// The transcript pulls in the whole chat pane; the chip and its counts need none of it.
+vi.mock('../../dashboard/src/components/sleepy/super/ChildTranscript.js', () => ({ ChildTranscript: () => null, useChildHistory: () => ({}) }));
+const { PhoneSuperJobs, jobCounts, lastOutput } = await import('../../dashboard/src/components/sleepy/super/PhoneSuperJobs.js');
 const { groupSuperEventTurns, superEventText, superNotepad } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
 const { openJobRow } = await import('../../dashboard/src/components/sleepy/super/superJobsStore.js');
 const { readSuperDigest } = await import('../../dashboard/src/lib/superTypes.js');
@@ -61,7 +64,58 @@ function record(over: Partial<SuperState> = {}): SuperState {
 }
 /** What the phone holds: the frame as it crossed the wire. */
 const wire = (s: SuperState) => readSuperDigest(JSON.parse(superDigestFrame(superDigest(s))))!;
-const strip = (s: SuperState | null) => renderToStaticMarkup(createElement(PhoneAgenda as never, { digest: s ? wire(s) : null, onWriteAbout: () => {} } as never));
+const strip = (s: SuperState | null) => renderToStaticMarkup(createElement(PhoneAgenda as never, { digest: s ? wire(s) : null, onWriteAbout: () => {}, onScreen: true } as never));
+
+const { SuperAgenda } = await import('../../dashboard/src/components/sleepy/super/SuperAgenda.js');
+const { superUnanswered, agendaAboutBlock } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
+
+describe('Cevaplanmadı: what the Super left unanswered (task super-hicbir-konuyu-kacirmaz)', () => {
+  const owed = [
+    { id: 'o1', kind: 'msg' as const, ref: 'abc123', seq: 1, at: 1, gist: 'Is the pricing page live?', nudges: 2 },
+    { id: 'o2', kind: 'result' as const, ref: 'def456', seq: 2, at: 2, gist: 'Pricing card: deploy', nudges: 1 },
+    { id: 'o3', kind: 'msg' as const, ref: 'ghi789', seq: 3, at: 3, gist: 'Stopped one', nudges: 0, parked: 'stop' as const, parkedAt: 1000 },
+    { id: 'o4', kind: 'msg' as const, ref: 'jkl012', seq: 4, at: 4, gist: 'closed', nudges: 2, closed: { at: 5, by: 'mark' as const } },
+  ];
+  it('the digest carries the open debts end to end, and a frame survives the wire intact', () => {
+    const d = superDigest(record({ owed } as never));
+    expect(d.owed.map((x) => x.id)).toEqual(['o1', 'o2', 'o3']);
+    const back = readSuperDigest(JSON.parse(superDigestFrame(d)))!;
+    expect(back.owed).toEqual(d.owed);
+    const { state } = digestToNotepadInput(back, 'Claude');
+    expect(state.owed!.map((x) => x.id)).toEqual(['o1', 'o2', 'o3']);
+  });
+  it('rows: nudged twice, or parked past ten minutes; one row each with a write-about header', () => {
+    expect(superUnanswered({ owed }, 2000).map((r) => r.owed)).toEqual(['o1']);
+    expect(superUnanswered({ owed }, 1000 + 10 * 60_000).map((r) => r.owed)).toEqual(['o1', 'o3']);
+    expect(agendaAboutBlock(superUnanswered({ owed }, 2000)[0])).toBe('[About agenda line owed=o1 section=unanswered]');
+  });
+  const look = { live: () => null, titleFor: (c: string) => c, superTitle: 'Claude' };
+  const draw = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(SuperAgenda as never, {
+    state: { queue: [], pad: [], owed }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {}, ...extra,
+  } as never));
+  it('the desktop draws the section above Waiting with "Gerek yok"; the phone draws it read only', () => {
+    const desk = draw({ onDropOwed: () => {} });
+    expect(desk).toContain('data-testid="super-agenda-section-unanswered"');
+    expect(desk.indexOf('super-agenda-section-unanswered')).toBeLessThan(desk.indexOf('super-agenda-section-waiting'));
+    expect(desk).toContain('data-testid="super-agenda-owed-drop"');
+    expect(desk).toContain('Is the pricing page live?');
+    const phone = draw({});
+    expect(phone).toContain('data-testid="super-agenda-section-unanswered"');
+    expect(phone).not.toContain('super-agenda-owed-drop');
+    // The phone's own agenda passes no drop door.
+    expect(read('dashboard/src/components/sleepy/super/PhoneAgenda.tsx')).not.toContain('onDropOwed');
+    // The small card (its counts tile) never reads "0 waiting" while one is unanswered.
+    const tile = renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [], owed }, look, variant: 'tile', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never));
+    const waitingTile = tile.slice(tile.indexOf('super-agenda-tile-waiting'));
+    expect(/class="super-agenda-tile-v">(\d+)</.exec(waitingTile)?.[1], tile).toBe('2'); // o1 nudged twice, o3 parked long ago
+        // The phone chip counts it too: one unanswered line alone is never "nothing noted".
+    const only = { ...record({ queue: [], pad: [] }), owed: [owed[0]] } as never;
+    expect(strip(only)).toMatch(/data-testid="phone-agenda-chip"[^>]*data-waiting="true"/);
+    expect(strip(only)).toMatch(/data-testid="phone-agenda-waiting"[^>]*>(<[^>]*>)*1</);
+        // Nothing unanswered: no section at all.
+    expect(renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [] }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never))).not.toContain('unanswered');
+  });
+});
 
 describe('the phone agenda is the desktop notepad', () => {
   it('digestToNotepadInput: text is ownerText, names are the Mac card titles, the Super is "Claude"', () => {
@@ -105,48 +159,49 @@ describe('the phone agenda is the desktop notepad', () => {
     expect(phone.waiting.filter((r) => r.note).map((r) => [r.note, !!r.stale])).toEqual([['n3', false], ['n4', true]]);
   });
 
-  it('the strip counts what the sheet holds; an empty agenda says so; no digest, no strip', () => {
+  it('the chip counts what waits on the owner with the pink mark, else what is going on; no digest, no chip', () => {
     const html = strip(record());
-    expect(html).toContain('data-testid="phone-agenda-strip"');
+    expect(html).toContain('data-testid="phone-agenda-chip"');
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('data-waiting="true"');
-    // t() returns the key in this test: the counts are the strings' {n}.
-    expect(html).toMatch(/data-testid="phone-agenda-now">super\.phoneAgenda\.now</);
+    expect(html).toContain('phone-chip-dot');
+    // The label names every count, so a count on the chip is never a bare number to a reader.
+    expect(html).toMatch(/aria-label="super\.phoneAgenda\.strip: super\.phoneAgenda\.waiting · super\.phoneAgenda\.now · super\.phoneAgenda\.done"/);
     expect(html).not.toContain('phone-agenda-sheet');
+    const nowOnly = record().pad.filter((n) => n.section === 'now');
+    const quiet = strip(record({ queue: [], pad: nowOnly }));
+    expect(quiet).toContain(`data-testid="phone-agenda-now">${nowOnly.length}<`);
+    expect(quiet).not.toContain('data-waiting');
     const empty = strip(record({ queue: [], pad: [] }));
-    expect(empty).toContain('data-testid="phone-agenda-empty"');
-    expect(empty).not.toContain('data-waiting');
+    expect(empty).toContain('aria-label="super.phoneAgenda.strip: super.phoneAgenda.empty"');
     expect(strip(null)).toBe('');
   });
 });
 
-describe('event turns on the phone fold from the digest', () => {
-  const user = (id: string, text: string) => ({ kind: 'user', id, text });
-  const text = (id: string) => ({ kind: 'text', id, text: 'reply' });
-  const batch = (b: string) => superEventText('batch', 'c1', { batch: b, items: [{ item: 'q-1', child: 'c1', kind: 'done' }] });
-  const items = [user('e1', batch('b-1')), text('t1'), user('e2', batch('b-2')), text('t2')];
+describe('the agents chip', () => {
+  const job = (state: string, id = state) => ({ conversationId: id, title: id, state, startedAt: 1 });
+  const chip = (jobs: unknown[]) => renderToStaticMarkup(createElement(PhoneSuperJobs as never, { jobs, onScreen: true } as never));
 
-  it('a later digest with a new batch re-folds (a new key), a new note does not (same key)', () => {
-    const first = phoneEventContext(wire(record({ ownerBatches: [] })));
-    expect(groupSuperEventTurns(items, { ownerBatches: first.ctx.ownerBatches, expanded: new Set() }).kept.map((i) => i.id)).toEqual(['e1', 'e2']);
-    const second = phoneEventContext(wire(record({ ownerBatches: ['b-2'] })));
-    expect(second.key).not.toBe(first.key);
-    expect(groupSuperEventTurns(items, { ownerBatches: second.ctx.ownerBatches, expanded: new Set() }).kept.map((i) => i.id)).toEqual(['e1', 'e2', 't2']);
-    expect(phoneEventContext(wire(record({ ownerBatches: [], pad: [] }))).key).toBe(first.key);
+  it('counts what has a process behind it, marks what waits, and leaves when there is nothing', () => {
+    expect(jobCounts([job('working'), job('idle'), job('asking'), job('stopped'), job('done')] as never)).toEqual({ running: 3, asking: 1 });
+    const html = chip([job('asking'), job('done')]);
+    expect(html).toContain('data-testid="phone-agents-chip"');
+    expect(html).toContain('data-waiting="true"');
+    expect(html).toContain('phone-chip-dot');
+    expect(chip([job('done')])).toMatch(/data-testid="phone-agents-count">0</);
+    expect(chip([job('done')])).not.toContain('phone-chip-dot');
+    expect(chip([])).toBe('');
   });
 
-  it('a new child name moves the key and the title', () => {
-    const before = phoneEventContext(wire(record()));
-    const after = phoneEventContext(wire(record({ children: { ...record().children, c3: { sessionId: 'c3', brief: 'New job', adopted: false, startedAt: 3 } } })));
-    expect(after.key).not.toBe(before.key);
-    expect(before.ctx.titleFor('c3')).toBe('c3');
-    expect(before.ctx.titleFor('a1b2c3d4-e5f6-4000-8000-000000000000')).toBe('a1b2c3d4');
-    expect(after.ctx.titleFor('c3')).toBe('New job');
-  });
-
-  it('a child\'s name on an event line opens nothing on the phone and throws nothing', () => {
-    expect(() => openJobRow('c:c1')).not.toThrow();
+  it('the last output is its last words, never a tool call or the owner, and a long one keeps its end', () => {
+    expect(lastOutput([])).toBeNull();
+    expect(lastOutput([{ kind: 'user', text: 'do it' }, { kind: 'tool', name: 'Bash' }] as never)).toBeNull();
+    expect(lastOutput([{ kind: 'text', text: ' first ' }, { kind: 'text', text: 'çıktı ' }, { kind: 'tool', name: 'Bash' }, { kind: 'text', text: '  ' }] as never)).toBe('çıktı');
+    const long = lastOutput([{ kind: 'text', text: `${'a'.repeat(700)} son söz` }] as never)!;
+    expect(long.startsWith('…')).toBe(true);
+    expect(long.endsWith('son söz')).toBe(true);
+    expect(long.length).toBeLessThanOrEqual(601);
   });
 });
 
@@ -154,10 +209,13 @@ describe('the wiring', () => {
   const surface = read('dashboard/src/components/sleepy/AgentSurface.tsx');
   const pane = read('dashboard/src/components/sleepy/ChatPane.tsx');
 
-  it('the strip mounts only on the phone\'s Super mirror chat, under the header', () => {
-    expect(surface).toMatch(/if \(!macPhone \|\| !expanded \|\| phoneView !== 'chat' \|\| !mobileActive\) return undefined;/);
+  it('the chips mount only on the phone\'s Super mirror chat, in the header, and nothing stands under it', () => {
+    // On the Chat page, kept while the drawer covers it (the digest is not dropped on every peek).
+    expect(surface).toMatch(/if \(!macPhone \|\| !expanded \|\| !mobileActive\) return undefined;/);
     expect(surface).toMatch(/\(s as ChatSession\)\.superMirror \? s as ChatSession : undefined/);
-    expect(surface).toMatch(/<\/div>\n\s*\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} \/>\}\n\s*(?:\{macPhone && isMobile[^\n]*\n\s*)?\{body\}/);
+    // (Wave 3: a member's mirror shows its face and name before the chips; the chips' gate is the same.)
+    expect(surface).toMatch(/data-testid="chat-head-title"[\s\S]{0,1200}\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*\{phoneSuperChat && <PhoneSuperJobs jobs=\{phoneJobs\} onScreen=\{phoneSheetsOn\} \/>\}\n\s*<button\n\s*className="mchat-head-btn"/);
+    expect(surface).toMatch(/<\/div>\n\s*(?:\{macPhone && [^\n]*\n\s*)?\{body\}/);
   });
 
   it('a ↩ on the phone writes the About chip into the phone\'s own composer, the desktop\'s into its Super chat', () => {

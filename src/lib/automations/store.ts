@@ -1,5 +1,8 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { isCodexAccountId } from '../t3-bridge/accounts.js';
+import { isInstanceAccountId } from '../instance-accounts.js';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { withFileLockSync } from '../file-lock.js';
 import matter from 'gray-matter';
 import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
@@ -80,8 +83,7 @@ import {
   type RunSidecar,
   type Schedule,
   type ScheduleSlot,
-  type Weekday,
-} from './types.js';
+  type Weekday, type RunTool } from './types.js';
 
 /**
  * Automations store — mirrors `src/lib/lab/store.ts`. Manifests are FLAT at
@@ -110,14 +112,28 @@ export function automationPath(contextRoot: string, slug: string): string {
 export function automationCachePath(contextRoot: string, slug: string): string {
   return memberSidePath(contextRoot, slug, join('cache', `${slug}.json`));
 }
-/** Per-slug run lock (owned/acquired by `file-lock.ts`, not this module). Per project for a
- *  global agent too: a run in one project never waits for one in another. */
+/** Per-slug EXCLUSIVE run lock (owned/acquired by `file-lock.ts`, not this module): what keeps a
+ *  scheduled fire or a task step from overlapping itself. A person's ask does not take it: each ask
+ *  and each conversation holds its own slot (`slotLockPath`). Per project for a global agent too:
+ *  a run in one project never waits for one in another. */
 export function lockPathFor(contextRoot: string, slug: string): string {
   return memberSidePath(contextRoot, slug, join('cache', `.${slug}.lock`));
 }
-/** Machine-local in-flight-child record — never brain-synced. */
-export function sidecarPathFor(contextRoot: string, slug: string): string {
-  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.run.json`));
+/** Machine-local in-flight-child record — never brain-synced. With a `slot`: that turn's own. */
+export function sidecarPathFor(contextRoot: string, slug: string, slot?: string): string {
+  return memberSidePath(contextRoot, slug, join('cache', slot ? `.${slug}.slot-${slot}.run.json` : `.${slug}.run.json`));
+}
+/** The slot of one parallel turn: a fresh run (`run:<fireAt>`) or a conversation (`session:<id>`). */
+export function runSlotKey(conversation: string): string {
+  return createHash('sha1').update(conversation).digest('hex').slice(0, 16);
+}
+/** One parallel turn's lock. Named under `cache/`, so the `*.lock` ignore rule covers it. */
+export function slotLockPath(contextRoot: string, slug: string, slot: string): string {
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.slot-${slot}.lock`));
+}
+/** The short mutex around one read-modify-write of this member's shared files. */
+export function memberMutexPath(contextRoot: string, slug: string, name: 'record' | 'lesson'): string {
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.${name}.lock`));
 }
 
 /** `isSafeAutomationSlug` lives in `../agents/slot.ts` (the approval registry
@@ -190,6 +206,18 @@ export function strOrNull(v: unknown): string | null {
  *  direction is "omit `--effort` and let `claude` pick its own default",
  *  never "guess a level"; strict rejection of a bad value lives only in
  *  `validateAutomationForWrite`, the write-time path. */
+/** `tool` / `account` from a file: anything but a real Codex or Antigravity choice reads as Claude. */
+export function toolFieldsOf(data: Record<string, unknown>): { tool?: RunTool; account?: string } {
+  if (data.tool !== 'codex' && data.tool !== 'antigravity') return {};
+  const account = typeof data.account === 'string' && runAccountIdOk(data.tool, data.account) ? data.account : '';
+  return { tool: data.tool, ...(account ? { account } : {}) };
+}
+
+/** An account id `tool` could hold (its first account is never pinned by id). */
+export function runAccountIdOk(tool: RunTool, id: string): boolean {
+  return tool === 'codex' ? isCodexAccountId(id) : isInstanceAccountId(id);
+}
+
 export function parseEffort(v: unknown): EffortLevel | null {
   return typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v) ? (v as EffortLevel) : null;
 }
@@ -664,6 +692,8 @@ export function readManifestParts(filePath: string): ManifestParts {
       outputInstructions: legacy.outputInstructions,
       job: extractSection(content, JOB_HEADING),
       flow: legacy.flow,
+      ...(legacy.app ? { app: legacy.app } : {}),
+      ...(legacy.appTools?.length ? { appTools: legacy.appTools } : {}),
       owner: parseOwner(data.owner),
       updated: typeof data.updated === 'string' && data.updated.trim() ? data.updated.trim() : null,
       path: legacy.path,
@@ -719,6 +749,7 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     scheduleError: parsedSchedule.error,
     model: strOrNull(data.model),
     effort: parseEffort(data.effort),
+    ...toolFieldsOf(data),
     timeoutMinutes: numberOrDefault(data.timeout_minutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
     catchupHours: numberOrDefault(data.catchup_hours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     outputDir: strOrNull(output?.dir),
@@ -766,6 +797,14 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     // slug: dropping a bad value would silently unscope the agent, keeping it
     // means the spawn path refuses it (no such board) and fails closed.
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
+    // `scope: board` beside a home board (a legacy file is its own agent); absent otherwise, so
+    // every other file reads field for field as before and keeps its hash.
+    ...(typeof data.scope === 'string' && data.scope.trim().toLowerCase() === 'board' && typeof data.whiteboard === 'string' && data.whiteboard.trim() ? { boardOnly: true } : {}),
+    // Only when set, so a file that is no app's reads field for field as before and keeps its hash.
+    ...(typeof data.app === 'string' && data.app.trim() ? { app: data.app.trim() } : {}),
+    // Only when set and non-empty, for the same hash reason. Kept as written (a bad entry simply
+    // names no tool the gate will match): dropping one would change what the owner approved.
+    ...(appToolsOf(data.app_tools).length ? { appTools: appToolsOf(data.app_tools) } : {}),
     // Every file read here is an AUTOMATION run target, exactly as before the
     // agent split; a legacy manifest is its own agent and has no `## Job`. Only
     // the store composes an agent's call target (with real bindings and a
@@ -868,8 +907,7 @@ export interface RecordLessonInput {
 /**
  * Append a lesson (and/or rewrite the playbook) in the automation's own
  * manifest, LIFO, every cap enforced. Read-modify-write of one slug's own
- * file: no cross-slug shared state, so no lock is needed here (contrast the
- * shared-JSON write paths that do take one).
+ * file, under that member's lesson mutex: its parallel turns share the file.
  *
  * Never touches frontmatter, so it can never change an approval-hashed field —
  * a run recording what it learned must never be able to block itself.
@@ -886,17 +924,22 @@ export function recordLesson(contextRoot: string, slug: string, input: RecordLes
     if (!target) throw new AutomationError(`No such automation: ${slug}`);
     return target;
   }
-  const parts = readManifestParts(path);
-  if (parts.kind === 'bound') {
+  const bound = readManifestParts(path);
+  if (bound.kind === 'bound') {
     // The pattern is identity: every automation of one agent teaches the same agent.
-    recordAgentLesson(contextRoot, parts.job.agent, input);
+    recordAgentLesson(contextRoot, bound.job.agent, input);
     return readAutomationFile(path);
   }
-  assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
-  writeLessonToFile(path, effectivePattern(contextRoot, slug, parts.legacy.pattern), input);
-  const after = readAutomationFile(path);
-  adoptIfSyncing(contextRoot, slug, after.pattern);
-  return after;
+  // Two parallel turns can each learn something: the file is read inside the lock.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'lesson'), () => {
+    const parts = readManifestParts(path);
+    if (parts.kind !== 'legacy') throw new AutomationError(`No such automation: ${slug}`);
+    assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
+    writeLessonToFile(path, effectivePattern(contextRoot, slug, parts.legacy.pattern), input);
+    const after = readAutomationFile(path);
+    adoptIfSyncing(contextRoot, slug, after.pattern);
+    return after;
+  });
 }
 
 /**
@@ -1164,6 +1207,16 @@ export function recordRun(
   e: RunEvent,
   opts?: { advanceWatermark?: boolean; coalesceRepeat?: boolean },
 ): AutomationCache {
+  // Parallel turns of one member finish side by side, and a run's own record must not fail.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'record'), () => recordRunUnlocked(contextRoot, slug, e, opts), { failOpen: true });
+}
+
+function recordRunUnlocked(
+  contextRoot: string,
+  slug: string,
+  e: RunEvent,
+  opts?: { advanceWatermark?: boolean; coalesceRepeat?: boolean },
+): AutomationCache {
   const existing = readAutomationCache(contextRoot, slug);
   const advance = opts?.advanceWatermark !== false;
   const prior = existing?.history ?? [];
@@ -1178,7 +1231,8 @@ export function recordRun(
   const cache: AutomationCache = {
     slug,
     lastRunAt: e.startedAt,
-    lastFireAt: advance ? e.firedAt : (existing?.lastFireAt ?? null),
+    // Never backwards: a parallel turn fired earlier can end after a later fire's record.
+    lastFireAt: advance && (!existing?.lastFireAt || e.firedAt >= existing.lastFireAt) ? e.firedAt : (existing?.lastFireAt ?? null),
     status: e.status,
     durationMs: e.durationMs,
     outputPath: e.outputPath,
@@ -1193,7 +1247,7 @@ export function recordRun(
 // ─── Run sidecar (machine-local, content-validated on read) ────────────────
 
 export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar): void {
-  const path = sidecarPathFor(contextRoot, slug);
+  const path = sidecarPathFor(contextRoot, slug, s.slot);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', 'utf-8');
@@ -1214,8 +1268,14 @@ export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar
  * truncated, or planted sidecar must be INERT — never a lethal negative-PID
  * kill target — so every field is checked before a single one is trusted.
  */
-export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | null {
-  const path = sidecarPathFor(contextRoot, slug);
+export function readRunSidecar(contextRoot: string, slug: string, slot?: string): RunSidecar | null {
+  // `slot` names one record exactly ('' the exclusive one); none reads what this member runs now.
+  if (slot === undefined) return parseRunSidecar(sidecarPathFor(contextRoot, slug), slug) ?? listRunSidecars(contextRoot, slug)[0] ?? null;
+  return parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
+}
+
+/** `slot` comes from the file's NAME, never its content: a kill's lock cross-check follows it. */
+function parseRunSidecar(path: string, slug: string, slot?: string): RunSidecar | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
@@ -1241,6 +1301,7 @@ export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | 
       ...(r.target === 'agent' ? { target: 'agent' as const } : {}),
       ...(r.light === true ? { light: true as const } : {}),
       ...(r.noSession === true ? { noSession: true as const } : {}),
+      ...(slot ? { slot } : {}),
     };
   } catch {
     return null;
@@ -1248,19 +1309,97 @@ export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | 
 }
 
 /** Idempotent — safe to call whether or not a sidecar exists. */
-export function clearRunSidecar(contextRoot: string, slug: string): void {
+export function clearRunSidecar(contextRoot: string, slug: string, slot?: string): void {
   try {
-    unlinkSync(sidecarPathFor(contextRoot, slug));
+    unlinkSync(sidecarPathFor(contextRoot, slug, slot));
   } catch {
     // already gone
   }
 }
 
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code !== 'ESRCH';
+  }
+}
+
+/** This member's slot files, by kind. */
+function slotFiles(contextRoot: string, slug: string): { locks: string[]; sidecars: string[] } {
+  const dir = dirname(sidecarPathFor(contextRoot, slug));
+  let names: string[] = [];
+  try { names = readdirSync(dir); } catch { names = []; }
+  const pick = (end: string): string[] => names.flatMap((n) => {
+    const m = n.startsWith(`.${slug}.slot-`) && n.endsWith(end) ? n.slice(`.${slug}.slot-`.length, -end.length) : '';
+    return /^[a-f0-9]{16}$/.test(m) ? [m] : [];
+  });
+  return { locks: pick('.lock'), sidecars: pick('.run.json') };
+}
+
+/** Is a child of this run still alive? Its runner may be gone: an orphan still works and posts. */
+export function runChildAlive(contextRoot: string, slug: string, runId: string): boolean {
+  return listRunSidecars(contextRoot, slug).some((s) => s.fireAt === runId && pidAlive(s.childPgid));
+}
+
+/** Every in-flight child of this member, the exclusive one and each parallel turn's, newest first. */
+export function listRunSidecars(contextRoot: string, slug: string): RunSidecar[] {
+  const all = ['', ...slotFiles(contextRoot, slug).sidecars]
+    .flatMap((slot) => parseRunSidecar(sidecarPathFor(contextRoot, slug, slot || undefined), slug, slot || undefined) ?? []);
+  return all.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** One parallel turn holding its slot. */
+export interface RunSlot { slot: string; pid: number; at: number; run: string | null }
+
+/**
+ * The parallel turns of this member that hold their slot now, oldest first. Asked of the files, so
+ * it sees every process's turns. Each key's death: a slot whose holder is gone is removed here
+ * (its lock, and its record unless a live child still needs it for `automations kill`).
+ */
+export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
+  const out: RunSlot[] = [];
+  const { locks, sidecars } = slotFiles(contextRoot, slug);
+  for (const slot of locks) {
+    const path = slotLockPath(contextRoot, slug, slot);
+    let info: { pid?: unknown; at?: unknown; run?: unknown };
+    try { info = JSON.parse(readFileSync(path, 'utf-8')) as typeof info; } catch { continue; }
+    if (typeof info.pid !== 'number' || typeof info.at !== 'number') continue;
+    if (pidAlive(info.pid)) {
+      out.push({ slot, pid: info.pid, at: info.at, run: typeof info.run === 'string' ? info.run : null });
+      continue;
+    }
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
+    if (side && pidAlive(side.childPgid)) continue;
+    try { unlinkSync(path); } catch { /* raced */ }
+  }
+  // A record its lock left behind: nothing runs it any more.
+  const held = new Set(locks);
+  for (const slot of sidecars) {
+    if (held.has(slot)) continue;
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
+    if (!side || (!pidAlive(side.runnerPid) && !pidAlive(side.childPgid))) clearRunSidecar(contextRoot, slug, slot);
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
 // ─── Create / edit ──────────────────────────────────────────────────────────
+
+/** `<app slug>/<tool id>`: what `app_tools:` lists. */
+export const APP_TOOL_REF_RE = /^[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/;
+
+/** `app_tools:` as written: strings only, at most 20, trimmed. */
+export function appToolsOf(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, 20) : [];
+}
 
 export interface CreateAutomationInput {
   slug: string;
   title: string;
+  /** Runs on Codex or Antigravity, optionally pinned to one of its accounts (Track T W4). */
+  tool?: RunTool;
+  account?: string | null;
   /** The agent this automation runs as. Omitted ⇒ an unsplit (legacy-format)
    *  manifest that is its own agent, exactly as every create wrote before the
    *  agent split. Given ⇒ a split automation file (`agent: <slug>`) carrying
@@ -1320,6 +1459,13 @@ export interface CreateAutomationInput {
    *  on-disk state. Cannot be combined with `outputDir`: a home-board agent's
    *  writable output folder is always `automations/output/<slug>/`. */
   whiteboard?: string | null;
+  /** `scope: board`: limit the home-board agent to its board. Needs `whiteboard`. */
+  boardOnly?: boolean;
+  /** The app this scheduled job belongs to (dreamcontext-apps). Set by the gateway or the
+   *  owner's `--app`, never by a page. */
+  /** `<app>/<tool>` refs an unattended run may use to change things (app-araclari §4.2). */
+  appTools?: string[];
+  app?: string;
 }
 
 /**
@@ -1344,6 +1490,15 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   const mode = i.mode ?? 'sched';
   if (!(AUTOMATION_MODES as readonly string[]).includes(mode)) {
     throw new AutomationError(`Invalid mode "${mode}" — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+  }
+  if (i.appTools !== undefined) {
+    for (const t of i.appTools) if (!APP_TOOL_REF_RE.test(t)) throw new AutomationError(`Invalid app tool "${t}": write it as <app>/<tool>, e.g. yuk-izleme/notify-test.`);
+    if (i.appTools.length > 20) throw new AutomationError('At most 20 app tools per automation.');
+  }
+  if (i.app !== undefined) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(i.app)) throw new AutomationError(`Invalid app "${i.app}": it must be an app slug.`);
+    // A call target has no job half to keep it on (`legacyPair`).
+    if (mode !== 'sched') throw new AutomationError('An app automation runs on a schedule. To call a member from an app, use dc.team.ask.');
   }
   // An on-call agent HAS no schedule, so there is nothing to validate — and
   // demanding a placeholder one would put a lie in the manifest that `list`,
@@ -1382,6 +1537,9 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   // disk; this stops one from being created that way.
   if (i.review !== undefined && !(REVIEW_MODES as readonly string[]).includes(i.review)) {
     throw new AutomationError(`Invalid review mode "${i.review}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
+  }
+  if (i.boardOnly && !i.whiteboard) {
+    throw new AutomationError('Only an agent with a home board can be limited to it: give it --whiteboard <board> too.');
   }
   if (i.whiteboard !== undefined && i.whiteboard !== null) {
     if (!isValidWhiteboardSlug(i.whiteboard)) {
@@ -1516,9 +1674,24 @@ export function createAutomation(
     const projectRoot = dirname(contextRoot);
     const agentTarget = created.agent === slug && i.agent !== undefined ? getRunTarget(contextRoot, slug, 'agent') : null;
     if (agentTarget) approvePair(projectRoot, created, agentTarget, opts.approve.now, opts.approve.home);
-    else approveAutomation(projectRoot, created, opts.approve.now, opts.approve.home);
+    else approveMadeHere(contextRoot, created, opts.approve.now, opts.approve.home);
   }
   return created;
+}
+
+/**
+ * Approve an automation this Mac just wrote, AND the agent its own file is (an unsplit manifest is
+ * both a job and an agent's call target, read from the same file). Without the second stamp the
+ * owner's own new routine asked "boards and tasks can't run it until you approve it" (owner
+ * 2026-11-07: nothing made here asks). The agent goes first: its approval may drop the legacy
+ * record, which the automation's own approval then writes back. A same-slug pair (a separate agent
+ * file) is `approvePair`'s; any other agent is untouched.
+ */
+export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string): void {
+  const projectRoot = dirname(contextRoot);
+  const call = m.runKind === 'agent' ? null : getRunTarget(contextRoot, m.slug, 'agent');
+  if (call && call.path === m.path) approveAutomation(projectRoot, call, now, home);
+  approveAutomation(projectRoot, m, now, home);
 }
 
 /** The body every new manifest's `## Output instructions` starts with. */
@@ -1564,6 +1737,8 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     shared: i.shared ?? false,
     notify: i.notify ?? true,
     review: i.review ?? 'off',
+    ...(i.app ? { app: i.app } : {}),
+    ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
   };
   const job = i.job?.trim();
   const body = [
@@ -1615,6 +1790,8 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     schedule: serializeSchedule(schedule),
     model: i.model ?? null,
     effort: i.effort ?? null,
+    // Only off Claude, so an ordinary manifest is unchanged.
+    ...(i.tool ? { tool: i.tool, ...(i.account ? { account: i.account } : {}) } : {}),
     timeout_minutes: numberOrDefault(i.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
     catchup_hours: numberOrDefault(i.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     output: { dir: i.outputDir ?? null },
@@ -1625,6 +1802,9 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     // Written ONLY when set, so an ordinary agent's manifest carries no
     // `whiteboard` key at all, exactly as before this field existed.
     ...(i.whiteboard ? { whiteboard: i.whiteboard } : {}),
+    ...(i.whiteboard && i.boardOnly ? { scope: 'board' } : {}),
+    ...(i.app ? { app: i.app } : {}),
+    ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
   };
 
   const body = [
@@ -1655,6 +1835,9 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
  * edited from a surface that only knows its title keeps every slot.
  */
 export interface UpdateAutomationInput {
+  /** null = back to Claude. A changed tool is never re-approved quietly. */
+  tool?: RunTool | null;
+  account?: string | null;
   title?: string;
   mode?: AutomationMode;
   /** Replaces the whole schedule with these slots. Wins over `days`/`at`. */
@@ -1666,6 +1849,9 @@ export interface UpdateAutomationInput {
   model?: string | null;
   effort?: EffortLevel | null;
   timeoutMinutes?: number;
+  /** How many hours after a missed slot the run may still fire (1-168). NOT
+   *  approval-hashed: changing it never re-blocks an approved automation. */
+  catchupHours?: number;
   enabled?: boolean;
   /** `null` clears the photo (back to initials); `undefined` leaves it. */
   photo?: string | null;
@@ -1809,6 +1995,7 @@ function updateLegacyManifest(
     model: patch.model === undefined ? manifest.model : patch.model,
     effort: patch.effort === undefined ? manifest.effort : patch.effort,
     timeoutMinutes: patch.timeoutMinutes,
+    catchupHours: patch.catchupHours,
     photo: patch.photo === undefined ? manifest.photo : patch.photo,
   });
 
@@ -1816,8 +2003,16 @@ function updateLegacyManifest(
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.model !== undefined) fields.model = patch.model;
   if (patch.effort !== undefined) fields.effort = patch.effort;
+  if (patch.tool !== undefined) fields.tool = patch.tool;
+  if (patch.tool !== undefined || patch.account !== undefined) {
+    const stays = patch.tool === undefined ? manifest.tool : patch.tool;
+    fields.account = stays ? (patch.account === undefined ? manifest.account ?? null : patch.account) : null;
+  }
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
+  }
+  if (patch.catchupHours !== undefined) {
+    fields.catchup_hours = numberOrDefault(patch.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS);
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.photo !== undefined) fields.photo = patch.photo;
@@ -1871,6 +2066,7 @@ function updateBoundAutomation(
     mode: 'sched',
     slots: (nextSchedule ?? job.schedule ?? { slots: [{ kind: 'weekly', days: 'daily', at: '09:00' }] }).slots,
     timeoutMinutes: patch.timeoutMinutes,
+    catchupHours: patch.catchupHours,
   });
 
   const identity: AgentIdentityPatchInput = {};
@@ -1884,6 +2080,9 @@ function updateBoundAutomation(
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
+  }
+  if (patch.catchupHours !== undefined) {
+    fields.catchup_hours = numberOrDefault(patch.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS);
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.review !== undefined) fields.review = patch.review;
@@ -1908,6 +2107,7 @@ function updateAgentOnlyTarget(contextRoot: string, slug: string, patch: UpdateA
     patch.days !== undefined ||
     patch.at !== undefined ||
     patch.timeoutMinutes !== undefined ||
+    patch.catchupHours !== undefined ||
     patch.enabled !== undefined ||
     patch.review !== undefined;
   if (schedulish) {
@@ -1990,6 +2190,8 @@ export function removeAutomation(contextRoot: string, slug: string, opts?: { pur
     automationCachePath(contextRoot, slug),
     lockPathFor(contextRoot, slug),
     sidecarPathFor(contextRoot, slug),
+    ...slotFiles(contextRoot, slug).locks.map((slot) => slotLockPath(contextRoot, slug, slot)),
+    ...slotFiles(contextRoot, slug).sidecars.map((slot) => sidecarPathFor(contextRoot, slug, slot)),
     ...(photo ? [photo] : []),
   ]) {
     try {

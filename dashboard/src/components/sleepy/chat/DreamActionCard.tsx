@@ -2,6 +2,7 @@ import { toolResultText, toolResultLineCount, type ToolSubject } from './chatEnt
 import { Duration } from './atoms';
 import { ToolHeader, TerminalBlock } from './molecules';
 import { describeDreamAction, dreamActionPhrase, dreamOutcome, type DreamAction } from './dreamCommand';
+import { useI18n } from '../../../context/I18nContext';
 import type { ToolAction } from './toolAction';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type { ChatToolItem } from '../chatSession';
@@ -45,12 +46,34 @@ export function DreamActionCard({
   /** The Super answer group it belongs to (a thin line beside it). */
   replyGroup?: string;
 }) {
+  const { t } = useI18n();
   const command = commandOf(item);
   const result = item.result !== undefined ? toolResultText(item.result) : undefined;
 
   // The card is titled by the FIRST action (the one the agent set out to do); the rest are
   // counted on the row and listed in full when it opens.
   const primary = actions[0];
+  // A member's answer to the Super Agent (plan r4 E3): one quiet line and the answer as a quote,
+  // never the command and its JSON; those stay behind "ayrıntı".
+  const doneText = actions.length === 1 && primary.path === 'super team done' && item.status !== 'error' ? primary.args[1]?.trim() : '';
+  if (doneText) {
+    return (
+      <div className="chat-step super-answer" data-testid="super-team-done" data-actor={actor} data-open={open || undefined}>
+        <div className="super-answer-line">
+          <span className="super-answer-dot" aria-hidden />
+          <span>{t('superStage.member.answeredSuper')}</span>
+          <button type="button" className="super-answer-more" aria-expanded={open} onClick={onToggle} data-testid="super-team-done-more">
+            {t('superStage.member.detail')} ›
+          </button>
+        </div>
+        <div className="super-answer-quote" data-testid="super-answer-quote">
+          <div className="super-answer-quote-head"><span aria-hidden>↩</span><span>{t('superStage.member.toSuper')}</span></div>
+          <p className="super-answer-quote-text">{doneText}</p>
+        </div>
+        {open && <div className="chat-toolcard-body"><TerminalBlock command={command} output={result} /></div>}
+      </div>
+    );
+  }
   const view = describeDreamAction(primary);
   const outcome = dreamOutcome(result, primary.domain);
 
@@ -70,6 +93,8 @@ export function DreamActionCard({
 
   const subtitle = subtitleFor({
     view, outcome, status: item.status, extra: actions.length - 1, lines: toolResultLineCount(item.result),
+    // `apps do` closes on the app's own words ("Ziyaret Sayacı › Say hello (reads)"): that line, not the slug pair.
+    outcomeFirst: primary.path === 'apps do',
   });
 
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
@@ -169,17 +194,18 @@ function sameAction(actions: DreamAction[]): boolean {
  * description, because a finished `Task created` explaining "Create a new task" spends a line
  * on nothing. A read that returned output says how much.
  */
-function subtitleFor({ view, outcome, status, extra, lines }: {
+function subtitleFor({ view, outcome, status, extra, lines, outcomeFirst = false }: {
   view: ReturnType<typeof describeDreamAction>;
   outcome: ReturnType<typeof dreamOutcome>;
   status: ChatToolItem['status'];
   extra: number;
   lines: number | null;
+  outcomeFirst?: boolean;
 }): React.ReactNode {
   const more = extra > 0 ? `+${extra} more` : null;
   let note: React.ReactNode = null;
 
-  if (outcome && outcome.tone !== 'ok') {
+  if (outcome && (outcome.tone !== 'ok' || outcomeFirst)) {
     note = <span className="chat-dreamcard-note" data-tone={outcome.tone}>{outcome.text}</span>;
   } else if (view.detail) {
     note = `→ ${view.detail}`;

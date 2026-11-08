@@ -125,3 +125,31 @@ describe('mergeRice', () => {
     expect(mergeRice(existing, { reach: null })).toBeNull();
   });
 });
+
+import { PRIORITY_BANDS, priorityBand } from '../../src/lib/rice.js';
+
+describe('priority bands (fixed per level)', () => {
+  it('tasks: 20 is Now, 8 is Next, below 8 is Later', () => {
+    expect(PRIORITY_BANDS.task).toEqual({ now: 20, next: 8 });
+    expect(priorityBand('task', 20)).toBe('now');
+    expect(priorityBand('task', 19.99)).toBe('next');
+    expect(priorityBand('task', 8)).toBe('next');
+    expect(priorityBand('task', 7.99)).toBe('later');
+  });
+  it('objectives: 5 is Now, 2 is Next, below 2 is Later', () => {
+    expect(PRIORITY_BANDS.objective).toEqual({ now: 5, next: 2 });
+    expect(priorityBand('objective', 5)).toBe('now');
+    expect(priorityBand('objective', 4.99)).toBe('next');
+    expect(priorityBand('objective', 2)).toBe('next');
+    expect(priorityBand('objective', 1.99)).toBe('later');
+  });
+  it('the worked example I=5, E=4, R=7, C=75 scores 6.56 and lands in Now', () => {
+    const s = computeRiceScore({ reach: 7, impact: 5, confidence: 75, effort: 4 });
+    expect(s).toBe(6.56);
+    expect(priorityBand('objective', s)).toBe('now');
+  });
+  it('no score has no band', () => {
+    expect(priorityBand('task', null)).toBeNull();
+    expect(priorityBand('objective', undefined)).toBeNull();
+  });
+});

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
-import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
@@ -11,8 +11,10 @@ import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
 import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
 import { BrowserCard } from './BrowserCard';
+import { useStageMenu } from './useStageMenu';
+import { cardPlaceKey } from './cardMenuModel';
 import type { StageCue } from './useStageCues';
-import { targetPath } from '../../whiteboard/pagePopupModel';
+import { targetPath, knowledgePath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
@@ -185,7 +187,7 @@ export interface SuperContainerProps extends SuperCardActions {
   childTranscript?: (claudeId: string) => ReactNode;
   /** `team`, shown large: its member's conversation (AgentStage's AgentConversation), a render
    *  prop for the same reason. */
-  teamConversation?: (member: string) => ReactNode;
+  teamConversation?: (card: TeamCard) => ReactNode;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
@@ -204,6 +206,9 @@ export interface SuperContainerProps extends SuperCardActions {
   onPressResize?: (e: PointerEvent<HTMLElement>, id: string) => void;
   /** `agenda`: the super's agenda as this card draws it (SuperAgenda), the counts tile or the list. */
   agenda?: (variant: 'tile' | 'full', wide: boolean) => ReactNode;
+  /** `member`: a member stage's own card body (plan r4 K2: Rutinler, Talimatlar, Üye), a render
+   *  prop from the Chat surface; a small card is its summary tile, medium and up the live body. */
+  member?: (ref: MemberCardRef, variant: 'tile' | 'full') => ReactNode;
   /** A web page shown big in a presentation (spotlight, review, a filmstrip's big card): laid
    *  out at a desktop width and scaled to the card (plan-r2 D8). */
   desktopViewport?: boolean;
@@ -246,6 +251,15 @@ export function SuperContainer(props: SuperContainerProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [closeAsk]);
+  // The menu belongs to the card where it opened: minimised, resized, sent to Others or off the
+  // stage, it closes instead of floating over whatever the card became (cardMenuModel.ts).
+  const placeKey = cardPlaceKey(plan, props.parked);
+  const openedAt = useRef(placeKey);
+  useEffect(() => {
+    if (openedAt.current === placeKey) return;
+    openedAt.current = placeKey;
+    setCloseAsk(false);
+  }, [placeKey]);
   const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
@@ -268,7 +282,8 @@ export function SuperContainer(props: SuperContainerProps) {
   const small = drawnSize === 'small';
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
-  const closeBtn = c.kind === 'agenda'
+  // A member's own card is never closed by anyone (plan r4 K3): no close control at all.
+  const closeBtn = c.kind === 'member' ? null : c.kind === 'agenda'
     ? <IconButton icon="corner" label={t('super.agenda.minimize')} onClick={onCloseClick} testId="super-agenda-minimize" />
     : props.remote ? null : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
   // What only the Mac can show: drawn as a placeholder, never loaded from here.
@@ -279,6 +294,8 @@ export function SuperContainer(props: SuperContainerProps) {
     // The agenda's list is live on its card (its rows are the buttons): a click between them is
     // no "show side by side". Its counts tile opens like any card.
     if (c.kind === 'agenda' && !small && drawnSize !== 'medium') return;
+    // A member card's body is live from medium up (plan r4 G2): a click in it is its own.
+    if (c.kind === 'member' && !small) return;
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -316,9 +333,9 @@ export function SuperContainer(props: SuperContainerProps) {
         ...(plan.hidden ? { visibility: 'hidden' as const } : {}),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
-      onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target)) props.onPress(e, c.id); } : undefined}
+      onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target) && !onControl(c, e.target)) props.onPress(e, c.id); } : undefined}
       onClick={thumb ? () => props.onSelectThumb?.(c.id)
-        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !inFullscreen(e.target)) openCard(); } : undefined}
+        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !onControl(c, e.target) && !inFullscreen(e.target)) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -337,7 +354,9 @@ export function SuperContainer(props: SuperContainerProps) {
       </div>
       <span className="super-drop-ring" aria-hidden />
       {props.cue && <span className="super-card-glint" aria-hidden />}
-      {!thumb && <div className="super-card-actions">
+      {/* A rail's mini tile (a status dot, owner 2026-11-07) draws no buttons: on hover they
+          covered it. The whole tile is the button; a click opens the card, its name is the tooltip. */}
+      {!thumb && !plan.mini && <div className="super-card-actions">
         {floating ? (
           <>
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
@@ -358,7 +377,7 @@ export function SuperContainer(props: SuperContainerProps) {
           <>
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
-            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
+            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" caption />
             {closeBtn}
           </>
         )}
@@ -379,7 +398,7 @@ export function SuperContainer(props: SuperContainerProps) {
           onClose={() => setMenu(null)}
         />
       )}
-      {floating && props.onPressResize && (
+      {floating && !plan.mini && props.onPressResize && (
         <button
           type="button"
           className="super-card-resize"
@@ -403,6 +422,12 @@ export function SuperContainer(props: SuperContainerProps) {
             onClick={() => { setCloseAsk(false); props.onKeepRunning(c.id); props.onToOthers(c.id); }}>
             {t('super.close.toOthers')}
           </button>
+          {!floating && (
+            <button type="button" className="super-close-choice-btn" data-testid="super-close-minimize"
+              onClick={() => { setCloseAsk(false); props.onMinimize(c.id); }}>
+              {t('super.card.minimize')}
+            </button>
+          )}
         </div>
       )}
       {props.endPending && !closeAsk && (
@@ -413,6 +438,13 @@ export function SuperContainer(props: SuperContainerProps) {
       )}
     </div>
   );
+}
+
+/** A press on a live control inside a member card's body (a switch, a field, a link): the
+ *  control's, never the card's drag or "show side by side" (plan r4 G2). */
+function onControl(c: Container, target: EventTarget): boolean {
+  if (c.kind !== 'member' || !(target instanceof Element)) return false;
+  return !!target.closest('input, textarea, select, label, a, button, [role="switch"], [contenteditable="true"]');
 }
 
 /** A press inside what is full screen now (a floating clip's own player): the player's, never the
@@ -443,21 +475,28 @@ const ICONS: Record<IconName, ReactNode> = {
   more: <><circle cx="4" cy="8" r="0.9" /><circle cx="8" cy="8" r="0.9" /><circle cx="12" cy="8" r="0.9" /></>,
 };
 
-export function IconButton({ icon, label, onClick, testId, expanded }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean }) {
+/**
+ * A glyph button of the stage. `caption`: a glyph people do not read on sight (owner 2026-11-07,
+ * the minimise arrows) grows on hover and focus to show its word beside the glyph; the word is
+ * then the button's name, so it carries no second tooltip.
+ */
+export function IconButton({ icon, label, onClick, testId, expanded, menu, caption }: { icon: IconName; label: string; onClick: () => void; testId?: string; expanded?: boolean; menu?: boolean; caption?: boolean }) {
   return (
     <button
       type="button"
-      className="super-icon-btn"
+      className={caption ? 'super-icon-btn super-icon-btn--caption' : 'super-icon-btn'}
       data-testid={testId}
+      aria-haspopup={menu ? 'menu' : undefined}
       aria-expanded={expanded}
       aria-label={label}
-      title={label}
+      title={caption ? undefined : label}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         {ICONS[icon]}
       </svg>
+      {caption && <span className="super-icon-btn-caption" aria-hidden>{label}</span>}
     </button>
   );
 }
@@ -495,6 +534,15 @@ function FloatBody(p: BodyProps): ReactNode {
     return (
       <div className="super-card-body super-mini-job" data-inert="true" data-kind={p.asksOwner ? 'asking' : p.status?.kind} title={p.title}>
         <span className="super-mini-job-dot" aria-hidden="true" />
+      </div>
+    );
+  }
+  if (c.kind === 'member') {
+    const full = size !== 'small';
+    return (
+      <div className="super-card-body super-card-large" data-inert={full ? undefined : 'true'} data-member-card={c.ref}>
+        <CardHead kind={c.kind} title={p.title} />
+        <div className="super-card-large-body">{p.member?.(c.ref as MemberCardRef, full ? 'full' : 'tile')}</div>
       </div>
     );
   }
@@ -540,34 +588,8 @@ function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onClose }: {
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
-  // The card re-renders on every push while its agent works: the menu takes focus ONCE, when it
-  // opens, and reads the latest close through a ref (a new arrow each render must not re-run it).
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    const items = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
-    (ref.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]:not(:disabled)') ?? items()[0])?.focus();
-    const onClose = () => closeRef.current();
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const list = items();
-      if (!list.length) return;
-      e.preventDefault();
-      const at = list.indexOf(document.activeElement as HTMLButtonElement);
-      const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
-      list[(at + step + list.length) % list.length].focus();
-    };
-    // Outside the menu closes it; its own card's toggle toggles it (closing here would reopen it).
-    const toggle = ref.current?.parentElement?.querySelector('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]') ?? null;
-    const onDown = (e: globalThis.PointerEvent) => {
-      const el = e.target as Node | null;
-      if (!ref.current?.contains(el) && !(toggle && el && toggle.contains(el))) onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    window.addEventListener('pointerdown', onDown, true);
-    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('pointerdown', onDown, true); };
-  }, []);
+  // Outside the menu closes it; its own card's toggle toggles it.
+  useStageMenu(ref, () => onClose(), () => ref.current?.parentElement?.querySelector('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]') ?? null);
   return (
     <div ref={ref} className="super-size-menu" role="menu" aria-label={t('super.size.label')} data-testid="super-card-size"
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
@@ -639,8 +661,8 @@ function LargeBody(p: BodyProps): ReactNode {
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
           : c.kind === 'team' && p.team
-            // The member's conversation, the AI Team page's own pane: read and written to here.
-            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team.job.member) ?? viewFor(p) : null)
+            // The job's own session, the way a child's card shows one.
+            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team) ?? viewFor(p) : null)
           : zoomsInPlace(c)
             // A picture or a live browser zooms where it is (owner 2026-10-22); a page does in WebCardBody.
             ? <ZoomPane key={c.id}>{viewFor(p)}</ZoomPane>
@@ -663,7 +685,7 @@ const KEEP_DEFAULT = { w: 960, h: 640 };
  * A live page (a site, a dev server) gets the bar (Reload, Clear cache, Inspect) and its picks go
  * to the composer. A project page is read by the board's reader with its zoom bridge in EVERY
  * state (the pane reads it only while interactive), so its srcdoc never changes and the frame
- * never reloads; it is never parked (webBudget: a project file holds a frame only on screen).
+ * never reloads, and it is parked like a live page.
  */
 function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const c = p.container;
@@ -700,7 +722,7 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const desktop = desktopRef.current;
   const frame = p.webLive && p.viewReady;
   const oneLine = frame && (p.plan.where === 'present' || p.plan.where === 'half' || p.plan.where === 'float');
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const onPageFit = useCallback((width: number) => setPageFit(pageFitKey(vault, c.ref), width), [vault, c.ref]);
   return (
     <div className={p.large ? 'super-card-large' : tile ? 'super-card-body' : 'super-card-body super-card-large'}
@@ -749,6 +771,7 @@ function viewFor(p: BodyProps): ReactNode {
   const c = p.container;
   // The agenda reads the pushed record only (no fetch, no layout of its own): it draws at once.
   if (c.kind === 'agenda') return p.agenda?.('full', false) ?? null;
+  if (c.kind === 'member') return p.member?.(c.ref as MemberCardRef, 'full') ?? null;
   if (!p.viewReady) return null;
   const size = widgetSize(p.plan);
   switch (c.kind) {
@@ -759,7 +782,9 @@ function viewFor(p: BodyProps): ReactNode {
       // Large (side by side, presented, a sheet): the page itself, read the way a whiteboard's
       // page popup reads it, so a task shows its criteria and to-dos and a note its body
       // (owner 2026-10-20: the widget showed a title and two chips over an empty card).
-      const path = targetPath({ kind: c.kind, ref: c.ref });
+      // A knowledge slug the server took may hold a dot (`archive/2.memory-2026-08`): no page ref,
+      // but its file is still known.
+      const path = targetPath({ kind: c.kind, ref: c.ref }) ?? (c.kind === 'knowledge' ? knowledgePath(c.ref) : null);
       if (path) {
         return (
           <div className="super-card-view super-card-view--page">

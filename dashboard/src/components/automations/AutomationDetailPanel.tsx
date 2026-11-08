@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AutomationPattern, AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
 import {
-  useApproveAutomation,
   useAutomation,
   useAutomationFlow,
   useAutomationSession,
 } from '../../hooks/useAutomations';
 import { openAutomationRunChat, openTrainChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { useVault } from '../../context/VaultContext';
+import { useI18n } from '../../context/I18nContext';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { AutomationFlowCanvas } from './AutomationFlowCanvas';
@@ -314,7 +314,7 @@ function RunHandoff({
 export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onToast, onEdit }: Props) {
   const detail = useAutomation(summary.slug);
   const flowResp = useAutomationFlow(summary.slug);
-  const approve = useApproveAutomation();
+  const { t } = useI18n();
   const { bus } = useVault();
   const overlayId = useOverlayId('automation-detail-panel');
   /** Which run's session is open, 1-based newest-first. Null = the history list. */
@@ -411,12 +411,6 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
     handleRunOpened();
   };
 
-  const handleApprove = () => {
-    approve.mutate(summary.slug, {
-      onSuccess: () => onToast(`"${summary.slug}" approved — it will run on this machine.`),
-      onError: (err) => onToast(`Approval failed — ${(err as Error).message}`),
-    });
-  };
 
   // D-A path 3 (never-approved) is the only one with review-then-approve UI
   // below — its copy still points there. Paths 2's two reasons (manifest-
@@ -617,19 +611,27 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           )}
                         </div>
                       </div>
-                      {/* Hashed: where this agent may write. A home board narrows a
-                          run to that one board; adding, removing or moving it changes
-                          what the approval covers, so it is printed like the rest. */}
+                      {/* Hashed: the home board shows the agent's work; `boardOnly`
+                          (scope: board) is what narrows a run to that one board.
+                          Both change what the approval covers, so both are printed. */}
                       <div className="adp-review-row">
                         <span className="adp-review-label">whiteboard</span>
                         <span className="adp-review-value">
                           {automation.whiteboard ? (
-                            <>{automation.whiteboard}: its runs can change only this board</>
+                            automation.boardOnly
+                              ? <>{automation.whiteboard}: its runs can change only this board</>
+                              : <>{automation.whiteboard}: its board shows its work</>
                           ) : (
                             <em>none</em>
                           )}
                         </span>
                       </div>
+                      {automation.boardOnly && (
+                        <div className="adp-review-row" data-review-board-only>
+                          <span className="adp-review-label">board only</span>
+                          <span>yes: limited to its board</span>
+                        </div>
+                      )}
                       {/* The pattern belongs IN the review, not after it. This
                           is the moment a human decides whether to admit a
                           self-written notes file into a bypassPermissions run;
@@ -670,10 +672,23 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           so it must be read here; a synced soul is otherwise approved
                           blind. Empty is not hashed, so there is nothing to review. */}
                       {/* Hashed when named: what a light job of this agent may call. */}
+                      {/* Hashed off Claude: which vendor reads this prompt. */}
+                      {automation.tool === 'codex' && (
+                        <div className="adp-review-row" data-review-tool>
+                          <span className="adp-review-label">tool</span>
+                          <span>Codex (OpenAI reads this prompt)</span>
+                        </div>
+                      )}
                       {!!automation.readTools?.length && (
                         <div className="adp-review-row" data-review-read-tools>
                           <span className="adp-review-label">read tools</span>
                           <span>{automation.readTools.join(', ')}</span>
+                        </div>
+                      )}
+                      {!!automation.appTools?.length && (
+                        <div className="adp-review-row" data-review-app-tools>
+                          <span className="adp-review-label">app tools that change things</span>
+                          <span>{automation.appTools.join(', ')}</span>
                         </div>
                       )}
                       {automation.soul && (
@@ -701,9 +716,10 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                         </div>
                       </div>
                     )}
-                    <button className="adp-approve-btn" onClick={handleApprove} disabled={approve.isPending}>
-                      {approve.isPending ? 'Approving…' : `Approve — this will run on this machine`}
-                    </button>
+                    {/* No Approve here any more (plan-r10 1e): a routine made on this Mac stamps
+                        itself; one that still waits (an agent's widening routine, a synced change)
+                        waits for its ONE card on the AI Team page, named here. */}
+                    <p className="adp-warn-sub" data-approval-waits>{t('agents.approval.waitsCard')}</p>
                   </>
                 )}
 

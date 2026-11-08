@@ -132,8 +132,8 @@ export function useAgentsChannelHost(
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const focusTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<ChannelNote | null>(null);
-  // A HINT, not a refusal: a message to a working agent is written into the thread of the
-  // run in flight and read when that turn ends. The note says where it goes.
+  // A HINT, not a refusal: a message to a working agent is a new job in its own session and
+  // starts now. The note says so.
   const busyNote = (target: ComposerAgent): ChannelNote => ({
     kind: 'hint',
     text: tRef.current('agents.busy').replace('{name}', target.title),
@@ -256,9 +256,9 @@ export function useAgentsChannelHost(
  * ITS OWN SCRATCH BUCKET, per slug. `claudeId: ''` means "no conversation to measure", and
  * `composerScratch` keys attachments by that id — so an unnamed bucket here would pool this
  * panel's staged files with the channel's, which is the collision the
- * channel already had to name its own bucket to escape. Per SLUG rather than per run: a thread
- * panel is re-opened on the newest run constantly, and a file staged a second before that
- * happens belongs to the agent you are talking to, not to the run id that was on screen.
+ * channel already had to name its own bucket to escape. Per RUN: an agent has several
+ * conversations at once and a reply goes to the session of its run, so a half-written reply must
+ * not follow the reader into another thread. A host with no run (`runId: ''`) stays per slug.
  */
 /**
  * Every thread scratch bucket this app run has minted.
@@ -327,10 +327,10 @@ interface ThreadBucket {
  * and it is not put on the AI Team page's revoke list: whoever minted it owns its death, through
  * {@link dropThreadBucket}. Without one, the per-slug page bucket as before.
  */
-function threadBucket(slug: string, ownId: string | undefined): ThreadBucket {
-  return ownId
-    ? { scratchId: ownId, drafts: ownBucketDrafts, draftKey: ownId }
-    : { scratchId: threadScratchId(slug), drafts: threadDrafts, draftKey: slug };
+function threadBucket(slug: string, runId: string, ownId: string | undefined): ThreadBucket {
+  if (ownId) return { scratchId: ownId, drafts: ownBucketDrafts, draftKey: ownId };
+  const key = runId ? `${slug}::${runId}` : slug;
+  return { scratchId: threadScratchId(key), drafts: threadDrafts, draftKey: key };
 }
 
 /**
@@ -360,7 +360,7 @@ export function useAgentThreadHost(
   // Chosen ONCE: the host is stable for the panel's life and the panel remounts when the slug
   // changes, so the bucket cannot go stale under itself. A lazy initialiser rather than a
   // `useMemo` because minting the page bucket registers it, which must not repeat per render.
-  const [bucket] = useState(() => threadBucket(target.slug, opts?.scratchId));
+  const [bucket] = useState(() => threadBucket(target.slug, target.runId, opts?.scratchId));
   const draft = useRef(bucket.drafts.get(bucket.draftKey) ?? '');
   const lastSent = useRef('');
   const epoch = useRef(0);

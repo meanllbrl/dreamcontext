@@ -1,4 +1,5 @@
-import { useVault } from '../../../context/VaultContext';
+import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
+import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
@@ -9,6 +10,7 @@ import { SecretCard } from './SecretCard';
 import { RunCard } from './RunCard';
 import { McpCard } from './McpCard';
 import { AgentThreadCard } from './AgentThreadCard';
+import { AutomationApprovalCard } from './AutomationApprovalCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -106,6 +108,11 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
   session?: ChatSession;
   placeKey?: string;
 }) {
+  const embed = useEmbed();
+  // These cards act on the machine or a window an app's frame does not have.
+  if (embed && (view.type === 'secret' || view.type === 'run' || view.type === 'mcp' || view.type === 'checklist')) {
+    return <p className="chat-view-notice"><OpenInMainApp grant={embed} page="settings" /></p>;
+  }
   switch (view.type) {
     case 'insight':
       return <InsightView spec={view} />;
@@ -130,6 +137,11 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // into this conversation's turn, which is what the two cards above use theirs for.
     case 'agent-thread':
       return <AgentThreadCard spec={view} />;
+    // DERIVED too: the owner's yes or no on an automation the agent may not approve itself. It
+    // takes the session to name its chat (a Super Agent hears the decision as an event) and the
+    // report, so any other chat's agent reads the decision as the next message.
+    case 'automation':
+      return <AutomationApprovalCard spec={view} session={session} report={report} />;
     // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is
     // the whole point of it — drawn here as well, it would scroll away exactly like the inline
     // card it exists to replace. `PinShelf` collects them. Their `notices` still render above,
@@ -177,7 +189,7 @@ function PendingViewPill() {
  */
 function ChecklistCard({ spec, conversationId }: { spec: ChecklistViewSpec; conversationId: string }) {
   const desktop = isDesktop();
-  const { vault: activeVault } = useVault();
+  const { vault: activeVault } = useVaultId();
   const vault = desktop ? activeVault : null;
   const itemCount = spec.items.length;
 

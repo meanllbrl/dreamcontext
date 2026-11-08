@@ -2,11 +2,12 @@
  * Snapshot token budget — the demotion ladder.
  *
  * The SessionStart snapshot grows linearly with project age (decisions, tasks,
- * features, knowledge). Past the harness's hook-output limit the ENTIRE
- * snapshot gets persisted to a file with only a ~2KB blind preview injected —
+ * features, knowledge). Past the harness's hook-output limit a hook's ENTIRE
+ * output gets persisted to a file with only a ~2KB blind preview injected —
  * the worst possible cut: positional, uncurated, and it silently drops
  * warnings and the whole knowledge index. (Measured live on this repo at
- * 79.2KB / ~20K tokens.)
+ * 79.2KB / ~20K tokens.) lib/hook-delivery.ts cuts what is left after this
+ * ladder into pieces under that limit.
  *
  * This module enforces a token budget the right way: sections DEMOTE through
  * progressively cheaper curated renders — full body → summaries → one-line
@@ -17,7 +18,7 @@
  * `neverEvict` is for content that is BINDING no matter the pressure: the H1,
  * the linked-repo paths, an active task-format override, contextual reminders.
  * It is deliberately NOT a dumping ground for "big things nobody wrote a rung
- * for" — that is how the tier grew to ~37KB on a 20,000-char limit and made
+ * for" — that is how the tier grew to ~37KB and made
  * the ladder unwinnable by construction. Inventory sections (core-file index,
  * releases, connected projects, bookmarks) carry ladders instead, because
  * every rung of theirs still names each item by path.
@@ -43,12 +44,11 @@
  * snapshot stays honestly over budget rather than blinding the agent.
  *
  * ── Two bands, two signals ─────────────────────────────────────────────────
- * Over the token budget but still under HARNESS_PERSIST_CHAR_LIMIT, the
- * snapshot is complete and lands inline: the loud `_Budget note:` footer says
- * the ladder is exhausted and makes NO claim about being cut. Only past the
- * harness limit does the caller prepend `renderOverBudgetBanner()` — inside
- * the preview window — because only there is the agent actually reading a
- * positional slice.
+ * Over the token budget but still under what the hooks can carry, the snapshot
+ * is complete and lands inline: the loud `_Budget note:` footer says the ladder
+ * is exhausted and makes NO claim about being cut. Only past that does the
+ * caller prepend `renderOverBudgetBanner()`, at the top of the first part,
+ * because only there does the agent actually lose the tail.
  *
  * Everything demoted stays reachable: the file paths are still printed, the
  * docs are still in the recall corpus, and the UserPromptSubmit recall hook
@@ -87,6 +87,14 @@ export interface BudgetSection {
   /** Identity/warning tier — never demoted regardless of budget pressure. */
   neverEvict?: boolean;
   /**
+   * The render a section falls to when the ladder is exhausted AND the snapshot would still not
+   * arrive whole (`applyBudget`'s `deliveryChars`), the last such section first. Allowed on a never-evict section: past that
+   * point the choice is no longer "full or pointer" but "pointer or a tail cut off unseen", and a
+   * pointer that names the command reaching the content beats losing everything after it.
+   * The soul and the active person never get one: a constitution renders verbatim or not at all.
+   */
+  lastResort?: BudgetRung;
+  /**
    * Demotion priority — LOWER demotes first. Defaults to the section's array
    * index, so a section that sets nothing behaves exactly as it did before
    * ranks existed. Order sections cheapest-loss first, NOT in reading order.
@@ -106,28 +114,66 @@ export function estimateTokens(s: string): number {
 }
 
 /**
- * Measured on Claude Code 2.1.216: hook stdout past 20,000 CHARS is persisted
- * to a tool-results file and only the first 2,000 chars reach the agent as a
- * blind positional preview. The budget default targets comfortably below the
- * persist limit (4,500 tok ≈ 18K chars) so the snapshot lands inline in full.
+ * THE harness limit, and the one place it lives. Measured 2026-11-01 on Claude Code 2.1.316 with
+ * real headless turns (`node scripts/verify/hook-limit.mjs` measures it again; 2.1.216 was 20,000,
+ * so a new Claude Code can move it):
+ *   - one hook's output past exactly 10,000 CHARS (not bytes: 9,990 Turkish chars land whole;
+ *     10,000 lands, 10,001 does not) becomes a file and a ~2,000-char preview nobody reads;
+ *   - the same on SessionStart, UserPromptSubmit and SubagentStart, plain stdout and JSON
+ *     additionalContext alike;
+ *   - it is per HOOK, not per event: six hooks of 9,900 chars on one SessionStart all landed whole;
+ *   - several hooks on one event reach the model in the order they FINISH.
  */
-export const HARNESS_PERSIST_CHAR_LIMIT = 20_000;
+export const HARNESS_PERSIST_CHAR_LIMIT = 10_000;
 export const HARNESS_PREVIEW_CHARS = 2_000;
+
+/** What one of our hooks may print: under the limit, by more than a trailing newline. */
+export const HOOK_OUTPUT_MAX_CHARS = 9_800;
+
+/** SessionStart hooks that carry the snapshot (lib/hook-delivery.ts, HOOK_SPECS). */
+export const SESSION_START_PARTS = 3;
+
+/** The snapshot the part hooks can carry, with room for uneven cuts and each part's frame. */
+export const SNAPSHOT_DELIVERY_CHAR_LIMIT = SESSION_START_PARTS * (HOOK_OUTPUT_MAX_CHARS - 300);
+
+/** The snapshot in a project whose settings predate the part hooks: one hook, under the limit. */
+export const SINGLE_HOOK_BUDGET_TOKENS = 2_300;
 
 export const DEFAULT_SNAPSHOT_BUDGET_TOKENS = 4_500;
 
 /**
  * The SubagentStart briefing's ladder budget. Every sub-agent pays for the
- * briefing before its first tool call, and a briefing past the harness persist
- * limit reaches the agent as a 2,000-char positional preview, so the feature
- * list and knowledge index it is told to check first were never seen. 2,900
- * tokens is 11,600 chars at `estimateTokens`, which leaves room for the budget
- * note `applyBudget` appends AFTER deciding fit, under the hard total below.
+ * briefing before its first tool call, and a briefing past the harness limit
+ * reaches the agent as a 2,000-char positional preview, so the feature list and
+ * knowledge index it is told to check first were never seen. 2,200 tokens is
+ * 8,800 chars at `estimateTokens`, which leaves room for the budget note
+ * `applyBudget` appends AFTER deciding fit, under the hard total below.
  */
-export const SUBAGENT_BRIEFING_BUDGET_TOKENS = 2_900;
+export const SUBAGENT_BRIEFING_BUDGET_TOKENS = 2_200;
 
-/** Hard cap on the whole briefing, budget note included. What tests assert. */
-export const SUBAGENT_BRIEFING_MAX_CHARS = 12_000;
+/** Hard cap on the briefing, budget note included, with room for the hook's own brain-path line. */
+export const SUBAGENT_BRIEFING_MAX_CHARS = HOOK_OUTPUT_MAX_CHARS - 300;
+
+/** Codex has no such per-hook limit: its briefing keeps these (lib/t3-bridge/context.ts splits). */
+export const CODEX_SUBAGENT_BRIEFING_BUDGET_TOKENS = 2_900;
+export const CODEX_SUBAGENT_BRIEFING_MAX_CHARS = 12_000;
+
+/**
+ * What the session-start hook prints beside the snapshot (the sleep line, an Eco handoff banner,
+ * a team-merge note, the brain-path line) rides the same parts, so the snapshot aims under the
+ * carrier by this much.
+ */
+export const HOOK_EXTRAS_RESERVE_CHARS = 2_500;
+
+/**
+ * The size a snapshot must get under to arrive whole, for every tool. A Codex or Antigravity chat
+ * has no per-hook limit (the bridge splits Codex's entries and puts Antigravity's in the message),
+ * but it gets the SAME snapshot Claude's parts carry: one brain, one text, whichever tool opens it.
+ * `singleHook`: a Claude project whose settings predate the part hooks, one hook carries it all.
+ */
+export function snapshotFitChars(singleHook = false): number {
+  return singleHook ? HOOK_OUTPUT_MAX_CHARS - 1_500 : SNAPSHOT_DELIVERY_CHAR_LIMIT - HOOK_EXTRAS_RESERVE_CHARS;
+}
 
 /**
  * Resolve the active budget from DREAMCONTEXT_SNAPSHOT_BUDGET:
@@ -146,6 +192,22 @@ export function resolveBudget(env: string | undefined): number | null {
 }
 
 /**
+ * Per-tool ceiling on the SessionStart snapshot (Track T W3). Claude has none: its budget is
+ * exactly {@link resolveBudget}. A bridge tool (Codex) is never unbounded — `off` or a number above
+ * the ceiling still caps at it — because its context arrives as app context the model re-reads
+ * after every compaction. Codex truncates each app-context ENTRY at 4,000 bytes, not the sum, so
+ * this ceiling does not make the snapshot fit one entry: the bridge splits it (fitCodexContext).
+ */
+export const TOOL_SNAPSHOT_CEILING_TOKENS: Readonly<Record<string, number>> = { codex: DEFAULT_SNAPSHOT_BUDGET_TOKENS };
+
+export function resolveBudgetForTool(env: string | undefined, tool: string | undefined): number | null {
+  const base = resolveBudget(env);
+  const ceiling = tool ? TOOL_SNAPSHOT_CEILING_TOKENS[tool] : undefined;
+  if (ceiling === undefined) return base;
+  return base === null ? ceiling : Math.min(base, ceiling);
+}
+
+/**
  * Resolve the sub-agent briefing budget from DREAMCONTEXT_SNAPSHOT_BUDGET.
  *
  * The one escape hatch is shared: `0` / `off` / `false` lifts BOTH budgets, so
@@ -153,12 +215,12 @@ export function resolveBudget(env: string | undefined): number | null {
  * here: it is calibrated for the SessionStart snapshot (4,500-token default),
  * and reusing it would silently resize every sub-agent's briefing.
  */
-export function resolveSubagentBriefingBudget(env: string | undefined): number | null {
+export function resolveSubagentBriefingBudget(env: string | undefined, tool?: string): number | null {
   if (env !== undefined) {
     const v = env.trim().toLowerCase();
     if (v === '0' || v === 'off' || v === 'false') return null;
   }
-  return SUBAGENT_BRIEFING_BUDGET_TOKENS;
+  return tool === 'codex' ? CODEX_SUBAGENT_BRIEFING_BUDGET_TOKENS : SUBAGENT_BRIEFING_BUDGET_TOKENS;
 }
 
 /**
@@ -191,7 +253,12 @@ export interface BudgetResult {
   neverEvictChars: number;
   /** Demoted sections sitting at their deepest allowed rung (array order). */
   flooredSectionIds: string[];
+  /** Sections taken to their {@link BudgetSection.lastResort} render so the snapshot arrives whole (array order). */
+  lastResortIds: string[];
 }
+
+/** Room the budget note takes after the delivery fit decides; the fit aims under the limit by this much. */
+const FOOTER_RESERVE_CHARS = 900;
 
 /**
  * Apply the budget. Sections are demoted in WAVES: first every demotable
@@ -207,6 +274,7 @@ export function applyBudget(
   sections: BudgetSection[],
   budgetTokens: number | null,
   footer: BudgetFooterOptions = {},
+  delivery: { deliveryChars?: number } = {},
 ): BudgetResult {
   // Resolved rungs, keyed by `${id}:${level}`. Keying by id alone would serve
   // rung 1's text for every deeper rung and silently freeze the ladder.
@@ -245,6 +313,7 @@ export function applyBudget(
       overBudget: false,
       neverEvictChars,
       flooredSectionIds: [],
+      lastResortIds: [],
     };
   }
 
@@ -267,6 +336,30 @@ export function applyBudget(
     }
   }
 
+  // The delivery fit: the ladder is exhausted and what is left would not arrive whole. Sections
+  // with a last-resort render fall to it from the END of the snapshot backward (the text the cut
+  // would have taken first), until the text fits what carries it.
+  // Without this the carrier cuts the TAIL, and the tail is whatever renders last, not what
+  // matters least (measured 2026-11-02: 14 KB of pending peer mail pushed a 49 KB snapshot past
+  // the hooks, and Objectives onward never reached the agent).
+  const lastResort = new Map<string, string>();
+  const fitChars = delivery.deliveryChars;
+  if (fitChars !== undefined && estimateTokens(text) > budgetTokens) {
+    const renderAll = (): string =>
+      sections
+        .map((s) => lastResort.get(s.id) ?? ((levels.get(s.id) ?? 0) === 0 ? s.text : rungText(s, levels.get(s.id)!)))
+        .filter((t) => t.trim() !== '')
+        .join('\n');
+    const candidates = sections.filter((s) => s.lastResort !== undefined).reverse();
+    for (const s of candidates) {
+      if (text.length + FOOTER_RESERVE_CHARS <= fitChars) break;
+      const rung = s.lastResort!;
+      lastResort.set(s.id, typeof rung === 'function' ? rung() : rung);
+      text = renderAll();
+    }
+  }
+  const lastResortIds = sections.filter((s) => lastResort.has(s.id)).map((s) => s.id);
+
   // Both lists are built in array order so the footer reads top-to-bottom like
   // the document. A section is "floored" only once it has actually been taken
   // to its deepest allowed rung — one nobody touched has spare capacity, not a
@@ -287,9 +380,10 @@ export function applyBudget(
   const overBudget = preFooterTokens > budgetTokens;
 
   if (overBudget) {
-    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens, footer);
-  } else if (demoted.length > 0) {
-    text += renderFittedFooter(demoted, footer);
+    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens, footer, lastResortIds);
+  } else if (demoted.length > 0 || lastResortIds.length > 0) {
+    text += renderFittedFooter([...demoted, ...lastResortIds.map((id) => ({ id }))], footer);
+    if (lastResortIds.length > 0) text += `\n${pointersNote(lastResortIds)}_`;
   }
 
   return {
@@ -299,7 +393,13 @@ export function applyBudget(
     overBudget,
     neverEvictChars,
     flooredSectionIds,
+    lastResortIds,
   };
+}
+
+/** Names the sections the delivery fit took to their pointer render. */
+function pointersNote(ids: string[]): string {
+  return `Shown as pointers so the rest arrives whole: ${ids.join(', ')} (each names the command that prints it in full).`;
 }
 
 /**
@@ -337,6 +437,7 @@ function renderExhaustedFooter(
   tokens: number,
   budgetTokens: number,
   opts: BudgetFooterOptions = {},
+  lastResortIds: string[] = [],
 ): string {
   // When every demoted section is also at its floor — the usual exhausted state
   // — one list tells the whole story. The old footer printed the same ids
@@ -372,6 +473,9 @@ function renderExhaustedFooter(
     '\n\n---',
     `_Budget note: the demotion ladder is EXHAUSTED and the ${opts.subject ?? 'snapshot'} is still over budget (${tokens} tok vs ${budgetTokens} tok).`,
     inventory,
+    ...(lastResortIds.length > 0
+      ? [pointersNote(lastResortIds)]
+      : []),
     ...tail,
   ].join('\n');
 }
@@ -395,6 +499,8 @@ export interface OverBudgetBannerInput {
   chars: number;
   /** The ladder's char target (budget tokens × 4). */
   budgetChars: number;
+  /** The limit the render is over, as the diagnosis names it. */
+  limitLabel: string;
   /** Chars held by the never-evict tier. */
   neverEvictChars: number;
   /** Ids of the never-evict sections, for the diagnosis. */
@@ -416,10 +522,10 @@ export interface OverBudgetBannerInput {
 
 /**
  * The loud banner for the one band that actually loses content: the rendered
- * snapshot is past HARNESS_PERSIST_CHAR_LIMIT, so the harness will persist it
- * and inject a positional slice. Two lines, both blockquotes, meant to be
- * placed immediately after the H1 so they land INSIDE the preview window —
- * a warning at the end of a file the agent never receives is not a warning.
+ * snapshot is past what the session-start hooks can carry, so its tail will not
+ * arrive. Two lines, both blockquotes, meant to be placed immediately after the
+ * H1 so they land in the part that always arrives — a warning at the end of a
+ * file the agent never receives is not a warning.
  */
 export function renderOverBudgetBanner(input: OverBudgetBannerInput): string {
   const n = (value: number): string => value.toLocaleString('en-US');
@@ -444,7 +550,7 @@ export function renderOverBudgetBanner(input: OverBudgetBannerInput): string {
 
   const diagnosis =
     `> ⚠️ CONTEXT IS INCOMPLETE — the snapshot is ${n(input.chars)} chars: past the ladder's `
-    + `${n(input.budgetChars)}-char target and over the ${n(HARNESS_PERSIST_CHAR_LIMIT)}-char harness limit. `
+    + `${n(input.budgetChars)}-char target and over the ${input.limitLabel}. `
     + `${neverEvict} ${floored} ${fix} \`dreamcontext doctor\` reports this on every run.`;
 
   return `${OVERSIZED_SNAPSHOT_DIRECTIVE}\n${diagnosis}`;

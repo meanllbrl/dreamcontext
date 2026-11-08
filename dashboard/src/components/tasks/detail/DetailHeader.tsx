@@ -4,6 +4,7 @@ import { useApproveFiling, useObjectToTask, useStatusModel } from '../../../hook
 import { useI18n } from '../../../context/I18nContext';
 import { canApprove, canObject, filingView, objectionResultLine, shortDate } from '../../../lib/taskObjection';
 import { GiveToAgentMenu } from './GiveToAgentMenu';
+import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
 import { ObjectionDialog } from './ObjectionDialog';
 import './ObjectionDialog.css';
 
@@ -158,6 +159,7 @@ export function DetailHeader({
   onRename: (name: string) => void;
   onError: (msg: string) => void;
 }) {
+  const embed = useEmbed();
   const [objecting, setObjecting] = useState(false);
   const objectRef = useRef<HTMLButtonElement | null>(null);
   // Focus goes back to the button that opened the dialog (it is gone once the objection applied).
@@ -179,7 +181,7 @@ export function DetailHeader({
         </div>
         <h2
           className="detail-title"
-          contentEditable
+          contentEditable={!embed}
           suppressContentEditableWarning
           spellCheck={false}
           role="textbox"
@@ -199,7 +201,7 @@ export function DetailHeader({
         </h2>
       </div>
       <div className="detail-header-actions">
-        <GiveToAgentMenu task={task} onError={onError} />
+        {!embed && <GiveToAgentMenu task={task} onError={onError} />}
         <button
           type="button"
           className="detail-icon-btn"
@@ -217,11 +219,16 @@ export function DetailHeader({
       </div>
       {/* Its own full-width line under the title row, so a narrow drawer never squeezes it
           beside the header's buttons. */}
-      <div className="detail-filing">
-        <FilingRow task={task} onObject={() => setObjecting(true)} buttonRef={objectRef} />
-        <ObjectionBox task={task} />
-      </div>
-      {objecting && <ObjectionDialog task={task} allTasks={allTasks} onClose={closeDialog} />}
+      {/* Approving, objecting, finishing: the owner's, so an app's window links out instead. */}
+      {embed ? (
+        <div className="detail-filing"><OpenInMainApp grant={embed} page="tasks" id={task.slug} /></div>
+      ) : (
+        <div className="detail-filing">
+          <FilingRow task={task} onObject={() => setObjecting(true)} buttonRef={objectRef} />
+          <ObjectionBox task={task} />
+        </div>
+      )}
+      {objecting && !embed && <ObjectionDialog task={task} allTasks={allTasks} onClose={closeDialog} />}
     </div>
   );
 }

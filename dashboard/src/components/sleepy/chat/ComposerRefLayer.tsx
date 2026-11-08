@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { mentionSegments, type PeerMention } from '../../../lib/agentComposer';
@@ -9,6 +9,7 @@ import { formatFileSize } from '../../../lib/phoneAttach';
 import { cardGlyph } from '../../../lib/cardMention';
 import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refTokenId } from './composerRefs';
 import type { Attachment } from './composerScratch';
+import { rectOf, usePicturePeek } from './PicturePeek';
 
 /**
  * The Super composer's inline reference chips, drawn (owner 2026-10-24: several references in one
@@ -80,7 +81,7 @@ export function chipIcon(att: Pick<Attachment, 'kind' | 'cardKind'>): string {
  * textarea paints them); a sent bubble draws it with `sent` (the words visible, a click opens
  * the picture). `lead` is the glyph's text (the thumbnail's room), `rest` everything after it.
  */
-export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, title, onOpen, testId }: {
+export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, title, onOpen, testId, peek }: {
   img?: string;
   /** No thumbnail (a file, a folder, an element with no picture): its kind's icon in the room. */
   icon?: string;
@@ -93,23 +94,43 @@ export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, 
   title?: string;
   onOpen?: () => void;
   testId?: string;
+  /** A sent picture: hovering or focusing the chip shows the picture itself (owner 2026-11-07). */
+  peek?: boolean;
 }) {
+  // A thumbnail that will not load (gone from disk, refused) shows the picture icon, never a
+  // broken image.
+  const [broken, setBroken] = useState<string | null>(null);
+  const shownImg = img && broken !== img ? img : undefined;
+  const shownIcon = shownImg ? undefined : icon ?? (img ? '🖼' : undefined);
+  const card = usePicturePeek();
+  const canPeek = !!(sent && peek && shownImg);
+  const peekNow = (e: { currentTarget: Element }) => { if (canPeek) card.show(shownImg!, shownImg!, rectOf(e.currentTarget)); };
   return (
     <mark
       className={`chat-cmp-hl-ref chat-cmp-hl-img${flash ? ' is-flash' : ''}${sent ? ' is-sent' : ''}`}
       data-ref-id={refId}
       data-state={state}
       data-testid={testId ?? (sent ? 'chat-msg-picture' : 'chat-cmp-hl-img')}
-      title={title}
+      // The card shows the picture; a native tooltip on top of it would only cover it.
+      title={canPeek ? undefined : title}
+      aria-label={canPeek ? title : undefined}
       {...(sent && onOpen ? {
         role: 'button',
         tabIndex: 0,
-        onClick: onOpen,
-        onKeyDown: (e: ReactKeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } },
+        onClick: () => { card.hide(); onOpen(); },
+        onKeyDown: (e: ReactKeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.hide(); onOpen(); } },
       } : {})}
+      {...(canPeek ? { onMouseEnter: peekNow, onFocus: peekNow, onMouseLeave: card.hide, onBlur: card.hide } : {})}
     >
-      <span className="chat-cmp-hl-thumb" data-icon={!img && icon ? icon : undefined} style={img ? { backgroundImage: `url("${img}")` } : undefined}>{lead}</span>
+      {/* The picture is an <img> in the glyph's blank room, not a CSS background on it: WebKit
+          (the Mac app) never paints a background image on that inline run, so the thumbnail
+          read as an empty grey box there (measured 2026-11-07; Chromium painted it). */}
+      <span className="chat-cmp-hl-thumb" data-icon={shownIcon}>
+        {shownImg && <img className="chat-cmp-hl-thumb-img" src={shownImg} alt="" draggable={false} onError={() => setBroken(shownImg)} />}
+        {lead}
+      </span>
       {rest}
+      {card.node}
     </mark>
   );
 }

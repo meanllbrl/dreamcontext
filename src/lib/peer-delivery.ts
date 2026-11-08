@@ -3,6 +3,9 @@ import { dirname } from 'node:path';
 import { claudeAwarePath, claudeDirectCommand } from './claude-path.js';
 import { treeKillRealChild } from './proc.js';
 import { SPAWNED_ENV } from './session-origin.js';
+import { codexModelOf, codexRunArgs, envelopeMode, envelopeRefusal, type HeadlessTool } from './t3-bridge/headless-envelope.js';
+import { bridgeNode } from './t3-bridge/node-floor.js';
+import { envTextTool } from './tool-text.js';
 import { listConnections } from './connections.js';
 import { currentVaultTarget } from './federation-recall.js';
 import { resolveVaultContextRoot, VaultError } from './vaults.js';
@@ -228,9 +231,20 @@ interface HeadlessJson {
 export function runPeerHeadless(
   peer: PeerTarget,
   prompt: string,
-  opts: { timeoutMs?: number; model?: string; effort?: string; home?: string } = {},
+  opts: { timeoutMs?: number; model?: string; effort?: string; home?: string; tool?: HeadlessTool | null } = {},
 ): Promise<LiveRunResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
+  // On Codex or Antigravity the peer turn is `t3-run --surface peer` (headless-envelope.ts):
+  // the prompt is one execve argument, no shell, and a Claude model name never goes along.
+  const onTool = opts.tool ?? null;
+  const node = onTool ? bridgeNode() : null;
+  const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  if (onTool && envelopeRefusal('peer', onTool)) {
+    return Promise.resolve({ ok: false, reply: '', sessionId: null, error: envelopeRefusal('peer', onTool) });
+  }
+  if (onTool && (!node || !cli)) {
+    return Promise.resolve({ ok: false, reply: '', sessionId: null, error: `${onTool === 'antigravity' ? 'Antigravity' : 'Codex'} needs Node 22.16 or newer on this Mac.` });
+  }
   const argv = [
     '-p', '"$0"',
     '--output-format', 'json',
@@ -243,9 +257,11 @@ export function runPeerHeadless(
 
   return new Promise<LiveRunResult>((resolve) => {
     // Windows: no login shell, so the prompt rides as a plain argv element to claude itself.
-    const direct = process.platform === 'win32'
-      ? claudeDirectCommand(['-p', prompt, ...argv.slice(2)])
-      : null;
+    const direct = onTool && node
+      ? { file: node, args: [cli, ...codexRunArgs({ surface: 'peer', prompt, ...(onTool === 'antigravity' ? { tool: 'antigravity' as const } : {}), model: codexModelOf(opts.model), effort: opts.effort ?? null })] }
+      : process.platform === 'win32'
+        ? claudeDirectCommand(['-p', prompt, ...argv.slice(2)])
+        : null;
     const child = spawn(direct ? direct.file : shell, direct ? direct.args : ['-ilc', script, prompt], {
       cwd: peer.projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -352,6 +368,9 @@ export interface SendOptions {
   timeoutMs?: number;
   model?: string;
   home?: string;
+  /** The tool the peer turn runs on. Absent = the tool this command runs under (a Codex or
+   *  Antigravity chat's own), else Claude. */
+  tool?: HeadlessTool | 'claude';
 }
 
 /**
@@ -394,9 +413,14 @@ export async function sendToPeer(
   }
 
   // 3. Wake the peer.
+  // The caller's tool, when that tool runs the peer surface: an Antigravity chat's peer turn goes
+  // to Claude (narrower than Antigravity's write bridge, headless-envelope.ts `peer`).
+  const callerTool = envTextTool();
+  const tool = opts.tool === 'claude' ? null : opts.tool ?? (callerTool && envelopeMode('peer', callerTool) ? callerTool : null);
   const run = await runPeerHeadless(peer, buildDeliveryPrompt(msg), {
     timeoutMs: opts.timeoutMs,
     model: opts.model,
+    tool,
   });
   if (run.sessionId) {
     updateMessage(peer.contextRoot, msg.id, { sessionId: run.sessionId });

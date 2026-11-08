@@ -25,11 +25,17 @@ const FIX_CHECK: Readonly<Record<FixId, CheckId>> = {
   'claude-install': 'claude',
   'claude-path': 'claude',
   'claude-signin': 'claude-auth',
+  'codex-install': 'codex',
+  'codex-update': 'codex',
+  'codex-signin': 'codex-auth',
   'git-install': 'git',
   'gh-install': 'gh',
   'github-signin': 'github',
   'gh-signin': 'gh',
   'pty-install': 'terminal',
+  // No row of its own: what can block these is the Node they run on.
+  'antigravity-install': 'node',
+  'antigravity-signin': 'node',
 };
 
 function isFixId(v: unknown): v is FixId {
