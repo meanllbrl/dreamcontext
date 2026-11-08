@@ -4842,7 +4842,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // Telegram's "Super'i aç" reaches this window as `hub_command super_handover` (N5, P4): the
   // same hand-over, adopting nothing; a full tab bar or a flight in progress says why.
   useEffect(() => {
-    setHubHandover(async () => {
+    if (!vault) return undefined;
+    return setHubHandover(vault, async () => {
       if (flightRunRef.current?.run.active || superBusyRef.current) return { ok: false, error: 'reversing', reason: 'reversing' };
       const cur = superStateRef.current;
       if (cur?.enabled && cur.session) return { ok: true, sessionId: cur.session };
@@ -4850,15 +4851,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const open = sessionListRef.current.filter((m) => !isSuperSession(m, superSession)).length;
       if (!(superSession && sessionListRef.current.some((m) => m.claudeId === superSession)) && open >= TAB_CAP) return { ok: false, error: 'tab_cap', reason: 'tab_cap' };
       const session = await handOver({ adoptNone: true });
-      return session ? { ok: true, sessionId: session } : { ok: false, error: 'super_off', reason: 'super_off' };
+      // A reverse queued while the request was out takes it back: not "opened".
+      const now = superStateRef.current;
+      return session && now?.enabled !== false ? { ok: true, sessionId: session } : { ok: false, error: 'super_off', reason: 'super_off' };
     });
-    return () => setHubHandover(null);
-  }, [handOver]);
-  // Telegram pictures of the stage's insight cards (`hub_command render_card`, plan T4).
+  }, [handOver, vault]);
+  // Telegram pictures of THIS project's stage insight cards (`hub_command render_card`, plan T4).
   useEffect(() => {
-    setHubCardRenderer(async (args) => renderCardFromDom(args));
-    return () => setHubCardRenderer(null);
-  }, []);
+    if (!vault) return undefined;
+    return setHubCardRenderer(vault, async (args) => renderCardFromDom(args, hostRef.current));
+  }, [vault]);
 
   const takeBack = useCallback(async (focusSid?: string) => {
     const live = flightRunRef.current;

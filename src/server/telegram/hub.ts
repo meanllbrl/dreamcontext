@@ -522,8 +522,9 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** Markdown → one or more Telegram messages. */
-  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }): Promise<void> {
-    const blocks = this.answerExtras ? 'hub' : 'mac';
+  /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
+   *  answer paths call `answerExtras`); every other caller (members, notices) keeps "Mac'te" lines. */
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac'): Promise<void> {
     for (const html of toTelegramMessages(redactSecrets(md), { blocks })) {
       const sent = await this.send(ab, html);
       if (reply && Number.isSafeInteger(sent?.message_id)) this.noteReply(ab, sent.message_id, { ref: reply.ref, quote: reply.quote ?? md, from: 'super' });
@@ -554,7 +555,7 @@ export class TelegramHub implements TelegramHubApi {
       await this.reply(ab, LINES.unknownCommand);
       return 'accepted';
     }
-    if (text && this.interceptText && await this.interceptText(ab, text)) return 'accepted';
+    if (text && this.interceptText && await this.interceptText(ab, msg)) return 'accepted';
     return this.onOwnerMessage(ab, Number(u.update_id), msg);
   }
 
@@ -640,11 +641,14 @@ export class TelegramHub implements TelegramHubApi {
   turnPrefix: ((ab: ActiveBinding, msg: Obj) => string) | null = null;
   answerExtras: ((ab: ActiveBinding, text: string, sessionId: string) => Promise<void>) | null = null;
   /** A text that answers the hub itself (a rich ask's "Not ekle", W5): never a turn. */
-  interceptText: ((ab: ActiveBinding, text: string) => Promise<boolean>) | null = null;
+  interceptText: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
   /** A prompt richer than one single-select question (multi-select, several questions, M3). */
   richQuestion: ((ab: ActiveBinding, sessionId: string, q: PendingQuestion) => Promise<boolean>) | null = null;
   /** "Bu projede Super kapalı" with a Super'i aç button (N5). */
   superOff: ((ab: ActiveBinding) => Promise<void>) | null = null;
+
+  /** The answer paths leave the blocks to `answerExtras` only when it is wired. */
+  private extrasMode(): 'hub' | 'mac' { return this.answerExtras ? 'hub' : 'mac'; }
 
   /** The live Telegram turn of a Super chat (its ref), or null. */
   telegramTurnOf(sessionId: string): string | null {
@@ -869,7 +873,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab || ab.disabled || ab.target !== 'super') return;
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
-      if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }); await this.answerExtras?.(ab, all, sessionId); }
+      if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode()); await this.answerExtras?.(ab, all, sessionId); }
       return;
     }
     const sections = splitReplySections(text);
@@ -877,7 +881,7 @@ export class TelegramHub implements TelegramHubApi {
     for (const s of sections) {
       const hit = s.refs.find((r) => this.routable(ab!, r));
       if (!hit || !s.text.trim()) continue;
-      await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text });
+      await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode());
       await this.answerExtras?.(ab, s.text, sessionId);
       const t = this.turns.get(hit);
       if (t) t.answered = true;
@@ -887,7 +891,7 @@ export class TelegramHub implements TelegramHubApi {
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     const inputs = this.turnInputs.get(sessionId);
     const tgTurn = [...this.turns.values()].some((t) => t.sessionId === sessionId);
-    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }); await this.answerExtras?.(ab, text, sessionId); }
+    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode()); await this.answerExtras?.(ab, text, sessionId); }
   }
 
   // ── Buttons (plan "Button integrity") ──
@@ -998,7 +1002,9 @@ export class TelegramHub implements TelegramHubApi {
       return;
     }
     const qs = q.questions ?? [];
-    if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8) {
+    // Option previews are pictures: the rich path (W5) sends them before the buttons.
+    const previews = !!this.richQuestion && qs.some((x) => x.options.some((o) => typeof o.preview === 'string' && o.preview.trim()));
+    if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8 && !previews) {
       const labels = qs[0].options.map((o) => o.label);
       await this.sendButtons(ab, `${prefix}❓ ${escapeHtml(redactSecrets(qs[0].question))}`, labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
       return;

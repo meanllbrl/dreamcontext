@@ -145,6 +145,46 @@ describe('stage presentations (L1, L2, N1)', () => {
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
   });
 
+  it('a picture Telegram would refuse (an 11 MB photo) goes as its text line beside the album, never silence', async () => {
+    writeFileSync(join(project, 'big.png'), Buffer.concat([PNG, Buffer.alloc(11 * 1024 * 1024)]));
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    const big = { id: 'image-big', kind: 'image', ref: 'big.png', shape: 'square', place: 'main', title: 'Büyük' };
+    await writeState({ containers: [...images, big], view: { mode: 'present', cards: ['image-a', 'image-big', 'image-b'], layout: 'grid' } });
+    present(['image-a']);
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Büyük (Mac'te)"))).toBe(true));
+    const album = tg.calls.find((c) => c.method === 'sendMediaGroup')!;
+    expect(JSON.parse(String(album.params.media))).toHaveLength(2);
+  });
+
+  it('a failed album send leaves every card as a text line under the head', async () => {
+    tg.failing.set('sendMediaGroup', 400);
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: images, view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' } });
+    present(['image-a']);
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Karşılaştırma: Resim A · Resim B') && t.includes("Resim A (Mac'te)") && t.includes("Resim B (Mac'te)"))).toBe(true));
+  });
+
+  it('Telegram-only hands-free from this bot: no dead "Telefon linkini aç" button, a line says why', async () => {
+    session = { on: true, url: null, channel: 'telegram', via: true };
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
+    noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Telefon linki kapalı'))).toBe(true));
+    expect(tg.sent().some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Telefon linkini aç'))).toBe(false);
+  });
+
   it('an owner arrangement on the Mac sends nothing; outside a Telegram turn with streaming off nothing either', async () => {
     const { h } = chat();
     superWindow();
@@ -258,6 +298,14 @@ describe('answers: blocks, late results (M1, M5, N7, S1, T3)', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(2));
     const { body } = parseTelegramPrefix(sent[1]);
     expect(body).toMatch(/^\[Reply to message ref=[0-9a-z]{6} from=super\]\nquote: "Üç seçenek var: A, B, C\."\n\nB olsun$/);
+  });
+});
+
+describe('member posts keep their blocks as lines (no hub drawing there)', () => {
+  it('a dream-html block in a non-answer send stays a "Mac\'te" line', async () => {
+    const ab = [...hub.active.values()][0];
+    await hub.sendMarkdown(ab, 'Rapor hazır\n```dream-html\n<div class="dc-card"><h2>Haftalık</h2></div>\n```');
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Mac'te: Haftalık"))).toBe(true));
   });
 });
 

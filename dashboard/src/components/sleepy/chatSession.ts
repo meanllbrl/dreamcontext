@@ -3001,9 +3001,9 @@ export function createChatSession(
         if (ws.readyState !== WebSocket.OPEN) result = { ok: false, error: 'offline' };
         else { interrupt(); result = { ok: true }; }
       } else if (cmd.verb === 'super_handover') {
-        result = await runHubHandover(cmd.args);
+        result = await runHubHandover(vault, cmd.args);
       } else if (cmd.verb === 'render_card') {
-        result = await runHubRenderCard(cmd.args);
+        result = await runHubRenderCard(vault, cmd.args);
       } else {
         result = { ok: false, error: 'unsupported' };
       }

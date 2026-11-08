@@ -23,14 +23,21 @@ function fail(reason: Extract<RenderCardResult, { ok: false }>['reason']): HubRe
   return { ok: false, error: reason, reason };
 }
 
-export function renderCardFromDom(args: unknown, doc: Document = document): HubResult {
+/** `scope` = the asking project's own surface (never the whole document: one window holds every
+ *  open project, and container ids repeat across them). */
+export function renderCardFromDom(args: unknown, scope: ParentNode | null): HubResult {
   const target = (args as { target?: unknown } | null)?.target as { kind?: unknown; id?: unknown } | undefined;
   if (!target || target.kind !== 'container' || typeof target.id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(target.id)) return fail('unsupported');
-  const el = doc.querySelector<HTMLElement>(`[data-container-id="${target.id}"]`);
+  if (!scope) return fail('not_mounted');
+  const el = scope.querySelector<HTMLElement>(`.super-card-frame[data-container-id="${target.id}"]`);
   if (!el) return fail('not_mounted');
   if (el.dataset.kind !== 'insight') return fail('unsupported');
+  const doc = el.ownerDocument;
   const rect = el.getBoundingClientRect();
   if (rect.width < 1 || rect.height < 1) return fail('hidden');
+  // A card still landing (opacity 0), parked in a strip or not visible draws nothing true.
+  const cs = getComputedStyle(el);
+  if (el.classList.contains('super-card-frame--pending') || el.closest('[data-strip-hidden]') || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return fail('hidden');
   const html = doc.documentElement;
   const theme = html.dataset.theme === 'dark' ? 'dark' : 'light';
 
@@ -53,13 +60,18 @@ export function renderCardFromDom(args: unknown, doc: Document = document): HubR
   });
   if (frames.length !== liveFrames.length) return fail('unsupported');
   for (const s of Array.from(clone.querySelectorAll('script'))) s.remove();
+  // The card at the picture's origin: no stage position, no transient motion state.
+  clone.style.left = '0px';
+  clone.style.top = '0px';
+  clone.style.removeProperty('transform');
+  clone.classList.remove('super-card-frame--pending');
   for (const node of [clone, ...Array.from(clone.querySelectorAll('*'))]) {
     for (const a of Array.from(node.attributes)) {
       if (/^on/i.test(a.name) || a.name === 'data-cue') node.removeAttribute(a.name);
     }
   }
   // Placeholders exactly as the server expects them (no attribute other than data-dc-frame).
-  let body = clone.outerHTML.replace(/<iframe data-dc-frame="(\d+)"><\/iframe>/g, '<iframe data-dc-frame="$1"></iframe>');
+  let body = clone.outerHTML;
   if (body.length > MAX_BODY) return fail('too_large');
   const zoomRaw = Number.parseFloat(getComputedStyle(html).getPropertyValue('--zoom'));
   const root: RenderCardRoot = {

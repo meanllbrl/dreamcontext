@@ -130,6 +130,10 @@ describe('insight seal (S1, S3, T4)', () => {
       expect(sealInsight({ result: ok(body), labHtml: lab({}), appCss: '' }), body).toBeNull();
     }
   });
+  it('a <title> outside <svg> (raw text to the parser) is refused; inside <svg> it is fine', () => {
+    expect(scanInsightBody('<div><title><b title="</title><img src=x onerror=alert(1)>"></b></title></div>')).toBeNull();
+    expect(scanInsightBody('<svg><title>Gelir</title><path d="M0 0"/></svg>')).toBeTruthy();
+  });
   it('prose that looks like code passes; the scan is on tags, not text', () => {
     expect(scanInsightBody('<div>{ onClose = noop } srcdoc</div>')).toBeTruthy();
   });
@@ -188,6 +192,9 @@ describe('presentations: only the Super\'s own arrangement (L1)', () => {
     const view = { mode: 'present' as const, cards: ['image-c', 'image-a', 'image-b'], layout: 'filmstrip' as const };
     expect(presentedCards({ ...s, containers: cards, view }, ev)).toEqual({ cards: [cards[2], cards[0], cards[1]], layout: 'filmstrip' });
     expect(presentedCards({ ...s, containers: cards, view: { ...view, by: 'owner' } }, ev)).toBeNull();
+    // The Super's own `open` while the owner's presentation stays on screen is still the Super's.
+    const open = [{ ...ev[0], verb: 'open' as const, ids: ['image-b'] }];
+    expect(presentedCards({ ...s, containers: cards, view: { ...view, by: 'owner' } }, open)).toEqual({ cards: [cards[1]], layout: 'spotlight' });
   });
 });
 
@@ -256,12 +263,19 @@ describe('native headers and answers mirror the Mac (N6, P3, P5)', () => {
 describe('window seams for super_handover and render_card (N5, T4)', () => {
   it('a hand-over that adopts anything is refused; no surface → no_window; no stage → not_mounted', async () => {
     const hc = await import('../../dashboard/src/lib/hubCommands');
-    expect(await hc.runHubHandover({ adopt: ['x'] })).toMatchObject({ ok: false, error: 'bad_args' });
-    expect(await hc.runHubHandover({ adopt: [] })).toMatchObject({ ok: false, error: 'no_window' });
-    hc.setHubHandover(async () => ({ ok: true, sessionId: 's' }));
-    expect(await hc.runHubHandover({ adopt: [] })).toEqual({ ok: true, sessionId: 's' });
-    hc.setHubHandover(null);
-    expect(await hc.runHubRenderCard({ target: { kind: 'container', id: 'insight-1' } })).toMatchObject({ ok: false, error: 'not_mounted' });
+    expect(await hc.runHubHandover('a', { adopt: ['x'] })).toMatchObject({ ok: false, error: 'bad_args' });
+    expect(await hc.runHubHandover('a', { adopt: [] })).toMatchObject({ ok: false, error: 'no_window' });
+    // Per project: B's command never runs A's surface; A's cleanup never clears B's.
+    const offA = hc.setHubHandover('a', async () => ({ ok: true, sessionId: 'sa' }));
+    const offB = hc.setHubHandover('b', async () => ({ ok: true, sessionId: 'sb' }));
+    expect(await hc.runHubHandover('b', { adopt: [] })).toEqual({ ok: true, sessionId: 'sb' });
+    offA();
+    expect(await hc.runHubHandover('b', { adopt: [] })).toEqual({ ok: true, sessionId: 'sb' });
+    expect(await hc.runHubHandover('a', { adopt: [] })).toMatchObject({ ok: false, error: 'no_window' });
+    offB();
+    const offR = hc.setHubCardRenderer('a', async () => ({ ok: true }));
+    expect(await hc.runHubRenderCard('b', { target: { kind: 'container', id: 'n1' } })).toMatchObject({ ok: false, error: 'not_mounted' });
+    offR();
   });
   it('the insight frame carries its slug for the server (data-dc-insight), and the three callers pass it', () => {
     const body = readFileSync('dashboard/src/components/lab/HtmlInsightBody.tsx', 'utf8');

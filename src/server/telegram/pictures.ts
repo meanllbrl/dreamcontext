@@ -44,7 +44,39 @@ export const snapshotPage: Snapshotter = async (sessionId, page, width) => {
 export function caption(text: string): string {
   const safe = escapeHtml(redactSecrets(text));
   if (safe.length <= 1000) return safe;
-  return `${Array.from(safe.slice(0, 990).replace(/&[a-z#0-9]*$/i, '')).join('')}…`;
+  // Cut on code points first (never half a surrogate pair), then never inside an entity.
+  let out = '';
+  for (const cp of Array.from(safe)) { if (out.length + cp.length > 990) break; out += cp; }
+  return `${out.replace(/&[a-z#0-9]*$/i, '')}…`;
+}
+
+/** Telegram's limits: a photo ≤10 MB, one request ≤50 MB (the transport's upload fence). */
+export const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+export const REQUEST_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Can Telegram take this item in its form? (A larger photo fails `sendPhoto`.) */
+export function fitsTelegram(item: MediaItem): boolean {
+  return item.file.data.length <= (item.kind === 'photo' ? PHOTO_MAX_BYTES : REQUEST_MAX_BYTES);
+}
+
+/**
+ * THE way pictures leave (one place for every caller: presentations, dream-html, previews):
+ * items Telegram would refuse are left out first, then one photo/clip or one album of 2-10
+ * within the request fence. Returns the items that did NOT go, so the caller sends their text
+ * lines (a refused send leaves every item unsent, never silence).
+ */
+export async function sendPictures(ab: ActiveBinding, items: MediaItem[], captionHtml?: string): Promise<{ sent: MediaItem[]; unsent: MediaItem[] }> {
+  const fit: MediaItem[] = [];
+  const unsent: MediaItem[] = [];
+  let total = 0;
+  for (const it of items) {
+    if (it.kind === 'document' || !fitsTelegram(it) || fit.length >= 10 || total + it.file.data.length > REQUEST_MAX_BYTES) { unsent.push(it); continue; }
+    fit.push(it);
+    total += it.file.data.length;
+  }
+  if (!fit.length) return { sent: [], unsent };
+  const ok = fit.length === 1 ? !!(await sendMedia(ab, fit[0], captionHtml)) : await sendAlbum(ab, fit, captionHtml);
+  return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
 }
 
 const METHOD: Record<MediaKind, string> = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' };

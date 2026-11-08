@@ -17,7 +17,7 @@ import { escapeHtml, fenceTitle } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
 import { agentUrlButton, cleanTitle } from '../../lib/telegram/urls.js';
 import { neutraliseHeaders } from '../../lib/telegram/inbound.js';
-import { pngFile, sendAlbum, sendMedia, type Snapshotter } from './pictures.js';
+import { pngFile, sendPictures, type Snapshotter } from './pictures.js';
 import { secretPending } from './present.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
@@ -86,9 +86,9 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
       const pngs = plan?.ok ? await deps.snapshot(sessionId, plan.page, plan.width) : null;
       if (pngs?.length) {
         const items = pngs.map((p, i) => ({ kind: 'photo' as const, file: pngFile(`kart-${i + 1}`, p), title }));
-        if (items.length === 1) await sendMedia(ab, items[0]);
-        else if (!(await sendAlbum(ab, items))) await sendMedia(ab, items[0]);
-        if (pngs.length > 3) await hub.reply(ab, "devamı Mac'te");
+        const { sent } = await sendPictures(ab, items);
+        if (!sent.length) await hub.reply(ab, `Bu kart Mac'te: ${title}`);
+        else if (pngs.length > 3) await hub.reply(ab, "devamı Mac'te");
       } else {
         await hub.reply(ab, `Bu kart Mac'te: ${title}`);
       }

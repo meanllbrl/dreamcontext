@@ -11,7 +11,7 @@ import { onAskButton, sendAnswerBlocks } from './blocks.js';
 import { wireCommands, type CommandsDeps } from './commands.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { snapshotPage, type Snapshotter } from './pictures.js';
-import { wirePresenter, type PresenterDeps } from './present.js';
+import { wirePresenter, type PhoneLink, type PresenterDeps } from './present.js';
 import { richQuestionsOf, wireRichAsks } from './rich-asks.js';
 import { insightRenderer } from './insight-render.js';
 
@@ -40,14 +40,18 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
     try { const u = s.status().url; return u ? new URL(u) : null; } catch { return null; }
   };
   const tunnelHost = () => liveUrl()?.hostname ?? null;
-  /** Telegram + link hands-free started by THIS bot: its bare origin (never a login token). */
-  const phoneOrigin = (ab: ActiveBinding): string | null => {
+  /** Telegram + link hands-free started by THIS bot: its bare origin (never a login token); any
+   *  other running hands-free says why there is no link; off = a tap can start one. */
+  const phoneLink = (ab: ActiveBinding): PhoneLink => {
     const s = deps.session?.();
-    if (!s?.isOn() || s.channel !== 'full' || s.startedVia?.scope !== ab.scope || s.startedVia?.target !== ab.target) return null;
-    return liveUrl()?.origin ?? null;
+    if (!s?.isOn()) return 'off';
+    const mine = s.startedVia?.scope === ab.scope && s.startedVia?.target === ab.target;
+    if (mine && s.channel === 'telegram') return { why: 'telegram-only' };
+    const origin = mine && s.channel === 'full' ? liveUrl()?.origin : null;
+    return origin ? { origin } : { why: 'other' };
   };
 
-  const offPresenter = wirePresenter(hub, { snapshot, phoneOrigin, tunnelHost, settleMs: deps.settleMs, renderInsight: deps.renderInsight ?? insightRenderer(snapshot), isGitIgnored: deps.isGitIgnored });
+  const offPresenter = wirePresenter(hub, { snapshot, phoneLink, tunnelHost, settleMs: deps.settleMs, renderInsight: deps.renderInsight ?? insightRenderer(snapshot), isGitIgnored: deps.isGitIgnored });
   const offCommands = wireCommands(hub, deps.commands);
   const rich = wireRichAsks(hub, { snapshot });
   setRichAsks(rich);
@@ -55,7 +59,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
   const prevExtras = hub.answerExtras;
   hub.answerExtras = (ab, text, sid) => sendAnswerBlocks(hub, ab, text, sid, { snapshot, tunnelHost });
   const prevIntercept = hub.interceptText;
-  hub.interceptText = async (ab, text) => rich.takeNote(ab, text) || (prevIntercept ? prevIntercept(ab, text) : false);
+  hub.interceptText = async (ab, msg) => (await rich.takeNote(ab, msg)) || (prevIntercept ? prevIntercept(ab, msg) : false);
   const prevRich = hub.richQuestion;
   hub.richQuestion = async (ab, sid, q) => (!q.isPermission && await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { sessionId: sid }))
     || (prevRich ? prevRich(ab, sid, q) : false);

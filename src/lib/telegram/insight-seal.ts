@@ -77,6 +77,9 @@ export function scanInsightBody(raw: string): ScanResult | null {
   }
   if (s.includes('<!') || /<!--/.test(s)) return null;
   const placeholders: number[] = [];
+  // `title` is raw text (RCDATA) to the HTML parser outside <svg>: a quoted `</title>` inside an
+  // attribute would end it there and turn the rest into live markup. Only inside an open <svg>.
+  let svgDepth = 0;
   let i = 0;
   while (i < s.length) {
     const lt = s.indexOf('<', i);
@@ -88,6 +91,7 @@ export function scanInsightBody(raw: string): ScanResult | null {
     const end = END_TAG.exec(s);
     if (end) {
       if (!ALLOWED.has(end[1].toLowerCase())) return null;
+      if (end[1].toLowerCase() === 'svg') svgDepth = Math.max(0, svgDepth - 1);
       i = END_TAG.lastIndex;
       continue;
     }
@@ -96,7 +100,9 @@ export function scanInsightBody(raw: string): ScanResult | null {
     if (!st) return null;
     const tag = st[1].toLowerCase();
     if (!ALLOWED.has(tag)) return null;
+    if (tag === 'title' && svgDepth === 0) return null;
     for (const a of st[2].matchAll(ATTR)) if (!attrOk(tag, a[1], a[2])) return null;
+    if (tag === 'svg' && !st[0].endsWith('/>')) svgDepth += 1;
     i = START_TAG.lastIndex;
   }
   return { ok: true, body: s, placeholders };

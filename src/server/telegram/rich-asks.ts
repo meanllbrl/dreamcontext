@@ -26,7 +26,8 @@ import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { cardOut } from './cards.js';
-import { pngFile, sendAlbum, sendMedia, type MediaItem, type Snapshotter } from './pictures.js';
+import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import { secretPending } from './present.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
@@ -50,10 +51,18 @@ interface RichAsk {
   /** message id per question, and its HTML text. */
   messages: { messageId: number; html: string }[];
   noteFor: number | null;
+  /** When "Not ekle" was tapped: the capture dies after NOTE_TTL_MS (as /gundem's Yaz). */
+  noteAt: number;
   done: boolean;
 }
 
 export const MAX_QUESTIONS = 4;
+/** A "Not ekle" capture lives this long. */
+export const NOTE_TTL_MS = 5 * 60 * 1000;
+/** A note as one line of the owner's own words: headers neutralised, sentinels out, no newline. */
+export function noteText(text: string): string {
+  return cleanOwnerText(text).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2000);
+}
 export const MAX_OPTIONS = 8;
 
 /** Can this ask go to Telegram as buttons? (Every question has 1-8 options, at most 4 questions.) */
@@ -83,7 +92,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   }
 
   /** Previews (option markup → pictures) and the ask's `--show` cards, before the buttons. */
-  async function sendPictures(ab: ActiveBinding, sessionId: string, questions: readonly RichQuestion[], itemId: string | null): Promise<void> {
+  async function sendAskPictures(ab: ActiveBinding, sessionId: string, questions: readonly RichQuestion[], itemId: string | null): Promise<void> {
     const items: MediaItem[] = [];
     for (const q of questions) {
       for (const o of q.options) {
@@ -105,18 +114,18 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
       }
     }
     const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
-    if (items.length === 1) await sendMedia(ab, items[0], caption);
-    else if (items.length > 1 && !(await sendAlbum(ab, items, caption))) await sendMedia(ab, items[0], caption);
+    const { unsent } = await sendPictures(ab, items, caption);
+    if (unsent.length) await hub.reply(ab, `Önizlemeler Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
   }
 
   /** Sends a rich ask. False = it does not fit (the caller says "Mac'te seni bekliyor"). */
   async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; sessionId: string; itemId?: string }): Promise<boolean> {
     if (!richAskFits(questions)) return false;
     const pictures = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secretPending(opts.sessionId);
-    if (pictures) await sendPictures(ab, opts.sessionId, questions, opts.itemId ?? null).catch(() => {});
+    if (pictures) await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null).catch(() => {});
     const a: RichAsk = {
       id: randomBytes(6).toString('hex'), key: ab.key, target, questions,
-      picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], noteFor: null, done: false,
+      picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], noteFor: null, noteAt: 0, done: false,
     };
     asks.set(a.id, a);
     if (asks.size > 200) asks.delete(asks.keys().next().value as string);
@@ -128,7 +137,8 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   async function submit(ab: ActiveBinding, a: RichAsk, unclear: boolean): Promise<string | null> {
     const selections = Object.fromEntries(a.questions.map((q, i) => [q.question, [...a.picks[i]]]));
     const picked = buildQuestionPicks(a.questions, selections);
-    const notes = Object.fromEntries(a.questions.map((q, i) => [q.question, a.notes[i]]).filter(([q, n]) => n && (unclear || picked[q as string])));
+    // Every note goes, picked or not, as the Mac's buildQuestionAnswer carries them.
+    const notes = Object.fromEntries(a.questions.map((q, i) => [q.question, a.notes[i]]).filter(([, n]) => !!n));
     if (!unclear && !Object.keys(picked).length) return 'Önce bir seçenek seç.';
     const typed = a.notes.filter(Boolean);
     const t = a.target;
@@ -169,21 +179,25 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     if (idx < n) {
       const label = q.options[idx].label;
       const set = a.picks[qi];
+      if (!q.multiSelect && set.has(label) && set.size === 1) return `✓ ${cleanTitle(label, 40)}`; // nothing to redraw
       if (q.multiSelect) { if (set.has(label)) set.delete(label); else set.add(label); } else { set.clear(); set.add(label); }
       await redraw(ab, a, qi, messageId);
       return `✓ ${cleanTitle(label, 40)}`;
     }
     if (idx === n) {
       a.noteFor = qi;
-      await hub.reply(ab, 'Notunu yaz; sonraki mesajın bu sorunun notu olacak.');
+      a.noteAt = hub.now();
+      await hub.reply(ab, 'Notunu yaz (5 dk); sonraki mesajın bu sorunun notu olacak.');
       return 'Not ekle';
     }
     const isLast = qi === a.questions.length - 1;
     if (!isLast || (idx !== n + 1 && idx !== n + 2)) return LINES.stale;
     a.done = true;
-    const out = await submit(ab, a, idx === n + 2).catch(() => LINES.stale);
-    if (out === 'Önce bir seçenek seç.') a.done = false;
-    else asks.delete(a.id);
+    const out = await submit(ab, a, idx === n + 2).catch(() => null);
+    // Only a delivered answer (or an ask that no longer exists) ends it: a failed send can be
+    // tapped again with the same picks.
+    if (out === LINES.stale || (typeof out === 'string' && out.startsWith('✓')) || (typeof out === 'string' && out.startsWith('↺'))) asks.delete(a.id);
+    else a.done = false;
     return out;
   }
 
@@ -192,12 +206,32 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     await hub.reissueButtons(ab, messageId, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
   }
 
-  /** The owner's next text after "Not ekle": that question's note, never a turn. */
-  function takeNote(ab: ActiveBinding, text: string): boolean {
+  /** Is the request behind this ask still open where it lives? */
+  async function stillOpen(ab: ActiveBinding, a: RichAsk): Promise<boolean> {
+    const t = a.target;
+    if (t.kind === 'pending') return pendingStillOpen(t.sessionId, t.requestId);
+    if (!ab.contextRoot) return false;
+    const s = await readSuperState(ab.contextRoot).catch(() => null);
+    const id = t.kind === 'super-ask' ? t.item.id : t.item;
+    return !!s?.queue.some((q) => q.id === id && q.state !== 'done');
+  }
+
+  /**
+   * The owner's next text after "Not ekle": that question's note, never a turn, but only his own
+   * typed words (a forwarded, quoted or reply-to-external message is someone else's text: it goes
+   * the normal turn path, quoted), only within 5 minutes, only while the ask is still open. A
+   * capture that no longer applies lets the text through as a turn.
+   */
+  async function takeNote(ab: ActiveBinding, msg: Obj): Promise<boolean> {
+    const text = typeof msg.text === 'string' ? msg.text : '';
     for (const a of asks.values()) {
       if (a.key !== ab.key || a.noteFor === null || a.done) continue;
-      a.notes[a.noteFor] = text.slice(0, 2000);
+      const qi = a.noteFor;
       a.noteFor = null;
+      if (msg.forward_origin || msg.forward_from || msg.quote || msg.external_reply || !text.trim()) return false;
+      if (hub.now() - a.noteAt > NOTE_TTL_MS || !(await stillOpen(ab, a))) { asks.delete(a.id); return false; }
+      a.notes[qi] = noteText(text);
+      await hub.reply(ab, `✓ Not kaydedildi: «${cleanTitle(a.notes[qi], 80)}». Göndermek için Gönder.`);
       return true;
     }
     return false;
