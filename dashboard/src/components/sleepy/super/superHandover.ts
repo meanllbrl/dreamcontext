@@ -808,8 +808,9 @@ function replyQuote(text: string): string {
  * sent or shown (its reference is hashed from it); `quoteText` what the quote reads (his own
  * words, without the block his message opened with), by default the same.
  */
-export function replyAboutBlock(refText: string, from: 'super' | 'owner', quoteText: string = refText): string {
-  return `[Reply to message ref=${msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(replyQuote(quoteText))}`;
+export function replyAboutBlock(refText: string, from: 'super' | 'owner', quoteText: string = refText, ref?: string): string {
+  // `ref`: the item's own (a Telegram turn's, plan C1/D3); else its words hashed.
+  return `[Reply to message ref=${ref ?? msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(replyQuote(quoteText))}`;
 }
 
 /**
@@ -825,8 +826,8 @@ export function selectionQuote(text: string): string {
 }
 
 /** A reply about one passage of a message: its usual header, the passage as the quote. */
-export function replySelectionBlock(refText: string, from: 'super' | 'owner', selection: string): string {
-  return `[Reply to message ref=${msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(selectionQuote(selection))}`;
+export function replySelectionBlock(refText: string, from: 'super' | 'owner', selection: string, ref?: string): string {
+  return `[Reply to message ref=${ref ?? msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(selectionQuote(selection))}`;
 }
 
 /** The block for a passage of a stage card, or null for an id no header can carry. */

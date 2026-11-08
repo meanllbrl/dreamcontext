@@ -12,9 +12,10 @@ import { appChatParam } from '../../lib/chatAppBinding';
 import { chatToolFor, chatToolParam, type ChatTool } from '../../lib/chatToolBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
-  parseChatLine, buildQuestionAnswer, isUrgentChatEvent, settledToolUseIds,
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent, settledToolUseIds, parseTelegramClaim, TG_REF_SHAPE, TG_SENTINEL_CHAR,
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
+import { isHubVerb, planHubAnswer, runHtmlSnapshot } from '../../lib/hubCommands';
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
@@ -27,7 +28,7 @@ import { createChildAlarmGate } from './super/childAlarm';
 import { readSuperDigest, type SuperDigestWire, type SuperId } from '../../lib/superTypes';
 import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
-import { openExternalUrl } from '../../lib/desktop';
+import { isDesktop as isDesktopShell, openExternalUrl } from '../../lib/desktop';
 import type { McpConnectState, McpLiveServer } from '../../lib/mcpWire';
 import { clearRefused } from './chat/mcpRows';
 
@@ -102,6 +103,11 @@ export interface ChatUserItem {
    *  stage held as the phone joined, not a new open. */
   stageMedia?: Array<{ ref: string; title?: string }>;
   stageSnapshot?: true;
+  /** A Telegram turn (W3, plan C1/E1): its ref, from the history item, the live `owner_echo` or
+   *  a resubmitted text's leading sentinel pair. Every ref resolver reads `it.ref ?? msgRef(text)`,
+   *  so the Super's `re:<ref>` answer links under this message. `text` never holds the sentinel. */
+  ref?: string;
+  source?: 'telegram';
 }
 export interface ChatTextItem {
   kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
@@ -878,6 +884,9 @@ export interface HistoryEntry {
   trigger?: 'manual' | 'auto';
   preTokens?: number;
   postTokens?: number;
+  /** A user entry written by the Telegram hub (`<owner-msg … via="telegram"/>`, plan B2). */
+  source?: 'telegram';
+  ref?: string;
 }
 
 /** The index of the last compaction card `match` accepts, or -1. */
@@ -895,7 +904,8 @@ export function historyChatItem(h: HistoryEntry, idStr: string): ChatItem | null
   const at = typeof h.at === 'number' && h.at > 0 ? h.at : 0;
   const endAt = typeof h.endAt === 'number' && h.endAt > 0 ? h.endAt : at;
   if (h.kind === 'user' && typeof h.text === 'string') {
-    return { kind: 'user', id: idStr, text: h.text, ts: at, uuid: h.uuid };
+    const telegram = h.source === 'telegram' && typeof h.ref === 'string' && TG_REF_SHAPE.test(h.ref);
+    return { kind: 'user', id: idStr, text: h.text, ts: at, uuid: h.uuid, ...(telegram ? { ref: h.ref, source: 'telegram' as const } : {}) };
   }
   if (h.kind === 'text' && typeof h.text === 'string') {
     return { kind: 'text', id: idStr, index: -1, text: h.text, done: true, ts: at };
@@ -2492,6 +2502,8 @@ export function createChatSession(
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // Nor is a window verb: the surface runs it and the answer goes back up the socket.
     if (ev.kind === 'window-command') { void runWindowCommand(ev); return; }
+    // The Telegram hub's verbs: their own subtype and result frame (W1 contract A2, B3).
+    if (ev.kind === 'hub-command') { void runHubCommand(ev); return; }
     if (ev.kind === 'park-request') { runPark(ev); return; }
     // The Super Agent's window-side verbs, the same way (their own subtype and result frame).
     if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
@@ -2528,7 +2540,10 @@ export function createChatSession(
     // The owner typed on the Super Agent's other surface: their bubble here too, in order.
     if (ev.kind === 'owner-echo') {
       applyAndNotify(() => {
-        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        const item: ChatUserItem = {
+          kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now(),
+          ...(ev.ref && ev.source === 'telegram' ? { ref: ev.ref, source: 'telegram' as const } : {}),
+        };
         conv = { ...conv, items: [...conv.items, item] };
       });
       return;
@@ -2618,10 +2633,14 @@ export function createChatSession(
     };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
+    // The frame carried the text as it came (a resubmitted Telegram turn keeps its sentinel pair,
+    // so the server honours its ref again, E1); the bubble shows the body and keeps the ref.
+    const claim = parseTelegramClaim(clean);
     applyAndNotify(() => {
       const item: ChatUserItem = {
-        kind: 'user', id: nextItemId(), text: clean, ts: Date.now(),
+        kind: 'user', id: nextItemId(), text: claim.body.trim() || clean, ts: Date.now(),
         ...(opts.steered ? { steered: true as const } : {}),
+        ...(claim.ref ? { ref: claim.ref, source: 'telegram' as const } : {}),
       };
       conv = {
         ...conv,
@@ -2659,7 +2678,8 @@ export function createChatSession(
 
   function send(text: string): boolean {
     if (ownerWordsTaken(text)) return true;
-    return writeUser(withAbout(text), { steered: false });
+    // A resubmitted Telegram turn keeps its sentinel pair in front: nothing is put before it.
+    return writeUser(text.startsWith(TG_SENTINEL_CHAR) ? text : withAbout(text), { steered: false });
   }
 
   /**
@@ -2676,7 +2696,7 @@ export function createChatSession(
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(withAbout(text), { steered: true });
+    return writeUser(text.startsWith(TG_SENTINEL_CHAR) ? text : withAbout(text), { steered: true });
   }
 
   /**
@@ -2945,6 +2965,11 @@ export function createChatSession(
   function setWindowHandler(fn: WindowCommandHandler | null): void { windowHandler = fn; }
   async function runWindowCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
     let out: Awaited<ReturnType<WindowCommandHandler>>;
+    // A hub verb never arrives as a window verb: one that does is ignored (contract A2).
+    if (isHubVerb(cmd.verb)) {
+      sendControl({ type: 'window_command_result', id: cmd.id, ok: false, error: 'unknown_verb' });
+      return;
+    }
     try {
       out = windowHandler ? await windowHandler({ verb: cmd.verb, args: cmd.args }) : { ok: false, error: 'no_window' };
     } catch (err) {
@@ -2953,6 +2978,31 @@ export function createChatSession(
     sendControl(out.ok
       ? { type: 'window_command_result', id: cmd.id, ok: true, result: out.result ?? null }
       : { type: 'window_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
+  // ── The Telegram hub's verbs (hub_command, src/lib/telegram/contract.ts) ────────────
+  /** `answer_pending` answers only a card pending on THIS chat, through the same `answer` the Mac
+   *  card calls; `html_snapshot` hands the server's page to the shell's sealed renderer. */
+  async function runHubCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+    let result: { ok: true; [k: string]: unknown } | { ok: false; error: string; [k: string]: unknown };
+    try {
+      if (cmd.verb === 'answer_pending') {
+        const plan = planHubAnswer(cmd.args, conv.pending);
+        if (!plan.ok) result = { ok: false, error: plan.error };
+        else {
+          const written = answer(plan.requestId, { behavior: plan.behavior, updatedInput: plan.updatedInput, message: plan.message });
+          result = written ? { ok: true } : { ok: false, error: 'offline' };
+        }
+      } else if (cmd.verb === 'html_snapshot') {
+        const invoke = isDesktopShell() ? (await import('@tauri-apps/api/core')).invoke as (c: string, a: Record<string, unknown>) => Promise<unknown> : null;
+        result = await runHtmlSnapshot(cmd.args, invoke);
+      } else {
+        result = { ok: false, error: 'unsupported' };
+      }
+    } catch (err) {
+      result = { ok: false, error: err instanceof Error ? err.message.slice(0, 200) : 'failed' };
+    }
+    sendControl({ type: 'hub_command_result', id: cmd.id, result });
   }
 
   // ── Parking under load (src/server/chat-park.ts) ──────────────────────────────────

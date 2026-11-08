@@ -396,7 +396,10 @@ export type ChatEvent =
   | { kind: 'super-cue'; verb: string; ids: string[] }
   /** The owner's words typed on ANOTHER surface of the same Super Agent chat (the phone's mirror,
    *  or the window when the phone watches): drawn as the owner's own bubble. */
-  | { kind: 'owner-echo'; text: string }
+  | { kind: 'owner-echo'; text: string; ref?: string; source?: 'telegram' }
+  /** A verb only the Telegram hub sends (`hub_command`, W1 contract A2/B3): never a window verb,
+   *  answered with its own `hub_command_result` frame. */
+  | { kind: 'hub-command'; id: string; verb: string; args: Record<string, unknown> }
   /** Pictures the Super Agent opened on the Mac's stage, sent to a phone mirror only (the phone
    *  has no stage): project-relative refs, at most six. `snapshot`: what the stage held as the
    *  phone joined, not a new open (lib/super/phone-mirror.ts `stageMediaFrame`). */
@@ -503,6 +506,9 @@ export type ClientControl =
   | { type: 'window_command_result'; id: string; ok: boolean; result?: unknown; error?: string }
   /** The window's answer to one `super-command`. */
   | { type: 'super_command_result'; id: string; ok: boolean; result?: unknown; error?: string }
+  /** The window's answer to one `hub-command` (its own frame, so a `window_command_result` never
+   *  settles it; W1 contract B3, the shape agreed with W2). */
+  | { type: 'hub_command_result'; id: string; result: { ok: true; [k: string]: unknown } | { ok: false; error: string; [k: string]: unknown } }
   /** The owner looked at or typed in this tab (at most once per 30 s): the load sweep leaves
    *  it alone for 2 min. */
   | { type: 'focus' }
@@ -1285,8 +1291,23 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   }
   if (subtype === 'super_digest') return { kind: 'super-digest', body: obj };
   if (subtype === 'owner_echo') {
-    const text = str(obj.text);
-    return text && text.trim() ? { kind: 'owner-echo', text: text.trim() } : ignored('_meta:owner_echo');
+    const raw = str(obj.text);
+    if (!raw || !raw.trim()) return ignored('_meta:owner_echo');
+    // A Telegram turn names its ref on the frame (B1, C1); a resubmit the window sent itself is
+    // echoed raw, with the sentinel pair still in front (F3): either way the bubble shows the body.
+    const claim = parseTelegramClaim(raw);
+    const text = claim.body.trim();
+    if (!text) return ignored('_meta:owner_echo');
+    const frameRef = typeof obj.ref === 'string' && TG_REF_SHAPE.test(obj.ref) ? obj.ref : null;
+    const ref = frameRef ?? claim.ref;
+    const telegram = obj.source === 'telegram' || claim.ref !== null;
+    return { kind: 'owner-echo', text, ...(ref && telegram ? { ref, source: 'telegram' as const } : {}) };
+  }
+  if (subtype === 'hub_command') {
+    const id = str(obj.id);
+    const verb = str(obj.verb);
+    if (!id || !verb) return ignored('_meta:hub_command');
+    return { kind: 'hub-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
   }
   if (subtype === 'super_event') {
     const eventKind = str(obj.kind);
@@ -1447,6 +1468,38 @@ export function parseChatLine(line: string): ChatEvent | null {
  * arrived: echoed first so `title`/`metadata` and every option field the parser does not
  * model (and so would silently drop) go back exactly as they came.
  */
+// ─── Telegram turns (W1 contract D1/E1/E4; MIRRORED from src/lib/telegram/contract.ts) ───
+//
+// A Telegram text travels as `SENTINEL + ref + SENTINEL + text` so its ref rides every hold path.
+// This module takes no imports, so the sentinel rule is mirrored here; tests/unit/
+// telegram-window.test.ts runs both copies over the same inputs and fails when they differ.
+
+/** The private-use code point framing a Telegram ref (contract `TG_SENTINEL`). */
+export const TG_SENTINEL_CHAR = '\uE0A7';
+/** The Super's ref shape (contract `TG_REF_RE`). */
+export const TG_REF_SHAPE = /^[0-9a-z]{6}$/;
+
+/** Every sentinel removed: what the composer does to owner-typed text before it is queued (F3). */
+export function stripSentinelChars(text: string): string {
+  return text.split(TG_SENTINEL_CHAR).join('');
+}
+
+/** THE sentinel rule: a LEADING well-formed pair parsed once. The ref is a claim for display only
+ *  (the server decides routing against its own store); the body never shows a sentinel. */
+export function parseTelegramClaim(text: string): { ref: string | null; body: string } {
+  if (text.startsWith(TG_SENTINEL_CHAR)) {
+    const end = text.indexOf(TG_SENTINEL_CHAR, 1);
+    const ref = end > 0 ? text.slice(1, end) : '';
+    if (end > 0 && TG_REF_SHAPE.test(ref)) return { ref, body: stripSentinelChars(text.slice(end + 1)) };
+  }
+  return { ref: null, body: stripSentinelChars(text) };
+}
+
+/** A text as the window shows it: held and pending chips, echoes, the composer re-fill (D1). */
+export function stripTgPrefix(text: string): string {
+  return parseTelegramClaim(text).body;
+}
+
 export function buildQuestionAnswer(
   questions: QuestionSpec[],
   picked: Record<string, string>,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { stripTgPrefix } from '../../../lib/chatProtocol';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHandover';
@@ -248,7 +249,7 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
           <QueuedRow
             key={q.id}
             index={i}
-            text={q.text}
+            text={stripTgPrefix(q.text)}
             superSid={session.mode === 'super' || session.superMirror ? session.claudeId : null}
             sendNowTitle={sendNowTitle}
             onSendNow={() => session.sendQueuedNow(q.id)}

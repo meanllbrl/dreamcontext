@@ -263,3 +263,6 @@
 .super-head-menu-grow { flex: 1; }
 .super-head-menu-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--color-success); }
 .super-head-menu-aside { flex: none; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+/* Inside the card the message is plain text: no second bubble around it. */
+.tg-card-body .chat-msg-user-bubble { padding: 0; border: 0; background: none; box-shadow: none; max-width: none; }
+.tg-card-body .chat-msg-user-media { margin-bottom: var(--space-2); }
