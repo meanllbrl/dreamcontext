@@ -202,6 +202,26 @@ describe('the Super target', () => {
     expect(frames).toHaveLength(1);
   });
 
+  it('a photo lands in agent-drops and its path joins the turn; >20 MB is refused; a voice note is transcribed and echoed', async () => {
+    reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj, sent } = fakeInjector();
+    reg.registerChatInjector(SID, inj);
+    (hub as unknown as { deps: { transcribeVoice: (p: string) => Promise<string> } }).deps.transcribeVoice = async () => 'merhaba dünya';
+    tg.files.set('ph1', Buffer.from('jpegbytes'));
+    tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, photo: [{ file_id: 'ph1', file_size: 9, width: 10, height: 10 }], caption: 'bak' }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    const body = parseTelegramPrefix(sent[0]).body;
+    expect(body).toMatch(/Dosya açıklaması: "bak"/);
+    expect(body).toMatch(/_dream_context\/tmp\/agent-drops\/tg-\d+-[0-9a-f]{8}\.jpg/);
+    tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, video: { file_id: 'big', file_size: 21 * 1024 * 1024 } }));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('20 MB'))).toBe(true));
+    tg.files.set('v1', Buffer.from('OggS'));
+    tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, voice: { file_id: 'v1', file_size: 4 } }));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    expect(parseTelegramPrefix(sent[1]).body).toBe('🎙 merhaba dünya');
+    expect(tg.texts()).toContain('Duyduğum: merhaba dünya');
+  });
+
   it('unbind sends the last message first, then removes the folder; an unkeyed one says so', async () => {
     await hub.unbind(scopeOfContextRoot(root), 'super', { keyed: false });
     expect(tg.texts().at(-1)).toBe('Telegram bağlantısı Mac\'te kaldırıldı (anahtarsız istek).');
