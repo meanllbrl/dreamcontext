@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { appendThreadEntry, isContainedBrainRel, resolvesInsideBrain, threadEntryContentHash } from '../../src/lib/automations/threads.js';
-import { confirmAgentSyncHere, recordThreadEntryHere, seedThreadLedger, threadEntriesHere, threadHashesHere } from '../../src/lib/agents/agent-sync.js';
+import { confirmAgentSyncHere, recordThreadEntryHere, renameOrForgetThreadLedger, seedThreadLedger, threadEntriesHere, threadHashesHere } from '../../src/lib/agents/agent-sync.js';
 import { setGlobalGitHubLogin } from '../../src/lib/git-sync/auth-store.js';
 import { localDir } from '../../src/lib/local-store.js';
 
@@ -102,6 +102,22 @@ describe('threadHashesHere: a sibling map beside id → at', () => {
     const e = appendThreadEntry(contextRoot, 'researcher', { runId: 'r1', kind: 'agent', text: 'kalsın', via: 'runner' });
     seedThreadLedger(contextRoot, home);
     expect(threadHashesHere(contextRoot, 'researcher', home)?.get(e.id)).toBe(threadEntryContentHash(e));
+  });
+});
+
+describe('rename and forget keep the hash map', () => {
+  it('a rename moves the slug\'s hashes, a forget drops them, other agents keep theirs', () => {
+    confirmAgentSyncHere(contextRoot, home);
+    const a = appendThreadEntry(contextRoot, 'researcher', { runId: 'r1', kind: 'agent', text: 'a', via: 'runner' });
+    const b = appendThreadEntry(contextRoot, 'writer', { runId: 'r2', kind: 'agent', text: 'b', via: 'runner' });
+    renameOrForgetThreadLedger(contextRoot, 'researcher', 'analyst', home);
+    expect(threadHashesHere(contextRoot, 'analyst', home)?.get(a.id)).toBe(threadEntryContentHash(a));
+    expect(threadHashesHere(contextRoot, 'writer', home)?.get(b.id)).toBe(threadEntryContentHash(b));
+    expect(JSON.parse(readFileSync(ledgerPath(), 'utf-8')).hashes.researcher).toBeUndefined();
+    renameOrForgetThreadLedger(contextRoot, 'analyst', null, home);
+    const led = JSON.parse(readFileSync(ledgerPath(), 'utf-8'));
+    expect(led.hashes.analyst).toBeUndefined();
+    expect(led.hashes.writer[b.id]).toBe(threadEntryContentHash(b));
   });
 });
 

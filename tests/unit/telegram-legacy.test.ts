@@ -22,6 +22,20 @@ describe('removeLegacyTelegramFiles', () => {
     expect(removeLegacyTelegramFiles(home)).toEqual([]);
   });
 
+  it('keeps managed-history.json and any file not in the old token shape; no slug length cap', () => {
+    const dir = join(home, '.dreamcontext', 'telegram');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'managed-history.json'), '{"botToken":"looks-old","rows":[]}');
+    writeFileSync(join(dir, 'other.json'), '{"rows":[]}');
+    writeFileSync(join(dir, 'broken.json'), 'not json');
+    const long = `${'a'.repeat(80)}.json`;
+    writeFileSync(join(dir, long), '{"botToken":"z","chatId":"1"}');
+    expect(removeLegacyTelegramFiles(home)).toEqual([join(dir, long)]);
+    for (const kept of ['managed-history.json', 'other.json', 'broken.json']) expect(existsSync(join(dir, kept))).toBe(true);
+    // Every start runs it again: still nothing more to remove.
+    expect(removeLegacyTelegramFiles(home)).toEqual([]);
+  });
+
   it('unlinks a symlinked legacy file as a link and never touches its target', () => {
     const dir = join(home, '.dreamcontext', 'telegram');
     mkdirSync(dir, { recursive: true });

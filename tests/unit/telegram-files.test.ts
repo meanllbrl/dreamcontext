@@ -3,10 +3,11 @@
  * hardlinks, symlinks, outside-root paths, gitignored files outside `_dream_context/tmp/`.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyOutbound, readOutbound, refusalLine } from '../../src/lib/telegram/files.js';
+import { classifyOutbound, gitIgnoredOrUnproven, readOutbound, refusalLine } from '../../src/lib/telegram/files.js';
 
 let base: string;
 let project: string;
@@ -54,6 +55,29 @@ describe('outbound classifier', () => {
   it('refuses anything under .git', () => {
     expect(classifyOutbound(put(project, '.git/config'), opts())).toEqual({ ok: false, reason: 'git_dir' });
     expect(classifyOutbound(put(linked, 'sub/.git/HEAD'), opts())).toEqual({ ok: false, reason: 'git_dir' });
+  });
+
+  it('refuses .git in any case (APFS ignores case: .GIT/config is .git/config)', () => {
+    expect(classifyOutbound(put(project, '.GIT/config'), opts())).toEqual({ ok: false, reason: 'git_dir' });
+    expect(classifyOutbound(put(linked, 'sub/.Git/HEAD'), opts())).toEqual({ ok: false, reason: 'git_dir' });
+  });
+
+  it('the default gitignore probe refuses unless git proves the file is not ignored', () => {
+    // Not a repo (git exits 128): unproven, so refused.
+    put(outside, 'a.txt');
+    expect(gitIgnoredOrUnproven(outside, 'a.txt')).toBe(true);
+    // A repo: an ignored file is refused, a plain one passes (git exits 1).
+    execFileSync('git', ['init', '-q'], { cwd: linked, stdio: 'ignore' });
+    put(linked, '.gitignore', 'serviceAccount.json\n');
+    put(linked, 'serviceAccount.json');
+    put(linked, 'notes.md');
+    expect(gitIgnoredOrUnproven(linked, 'serviceAccount.json')).toBe(true);
+    expect(gitIgnoredOrUnproven(linked, 'notes.md')).toBe(false);
+    // And it is the classifier's default when no probe is injected.
+    const noProbe = { roots: [linked], projectRoot: project };
+    expect(classifyOutbound(join(linked, 'serviceAccount.json'), noProbe)).toEqual({ ok: false, reason: 'gitignored' });
+    expect(classifyOutbound(join(linked, 'notes.md'), noProbe).ok).toBe(true);
+    expect(classifyOutbound(put(outside, 'b.txt'), { roots: [outside] })).toEqual({ ok: false, reason: 'gitignored' });
   });
 
   it('refuses a symlink (even to an allowed file) and a symlink pointing outside', () => {

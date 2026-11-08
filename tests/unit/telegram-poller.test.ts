@@ -179,6 +179,30 @@ describe('one poller per token, stop reasons', () => {
     expect(await p.run()).toBe('stopped');
     expect(waits).toEqual([1000, 2000]);
   });
+
+  it('the start drain: a network error backs off and drains again, a 401 stops as unauthorized', async () => {
+    const waits: number[] = [];
+    let drains = 0;
+    const stops: string[] = [];
+    const p = new TelegramPoller({
+      transport: { getUpdates: async (q: { timeout?: number }) => {
+        if (q.timeout === 0) { drains++; if (drains <= 2) throw new TelegramError('getUpdates', 0, 'offline'); return []; }
+        p.stop(); return [];
+      } },
+      token: TOKEN, state: memState(), allowedUpdates: ['message'], home, timeoutS: 50, sleep: async (ms) => { waits.push(ms); },
+      onUpdate: async () => 'accepted', onStop: (why) => stops.push(why),
+    });
+    await expect(p.run()).resolves.toBe('stopped');
+    expect(waits).toEqual([1000, 2000]);
+    expect(stops).toEqual(['stopped']);
+    const q = new TelegramPoller({
+      transport: { getUpdates: async () => { throw new TelegramError('getUpdates', 401, 'Unauthorized'); } },
+      token: TOKEN, state: memState(), allowedUpdates: ['message'], home, timeoutS: 50, sleep: async () => {},
+      onUpdate: async () => 'accepted', onStop: (why) => stops.push(why),
+    });
+    await expect(q.run()).resolves.toBe('unauthorized');
+    expect(stops).toEqual(['stopped', 'unauthorized']);
+  });
 });
 
 describe('managed_bot updates', () => {

@@ -187,9 +187,10 @@ export class TelegramPoller {
     let backoff = 1000;
     let why: PollerStop = 'stopped';
     try {
-      await this.drain('start');
+      let drained = false;
       while (this.running) {
         try {
+          if (!drained) { await this.drain('start'); drained = true; }
           await this.pollOnce();
           backoff = 1000;
         } catch (err) {

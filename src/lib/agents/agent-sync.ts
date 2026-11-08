@@ -1127,7 +1127,11 @@ export function renameOrForgetThreadLedger(contextRoot: string, from: string, to
       const moved = entries[from];
       delete entries[from];
       if (to && moved) entries[to] = { ...(entries[to] ?? {}), ...moved };
-      return { entries };
+      const hashes = cur.hashes && typeof cur.hashes === 'object' ? { ...cur.hashes } : {};
+      const movedHashes = hashes[from];
+      delete hashes[from];
+      if (to && movedHashes) hashes[to] = { ...(hashes[to] ?? {}), ...movedHashes };
+      return { ...cur, entries, hashes };
     }, home);
   } catch {
     // stale ids only name entries that no longer exist under that slug

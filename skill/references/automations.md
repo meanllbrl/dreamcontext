@@ -450,7 +450,7 @@ The dashboard renders the same card inline, in the automation's chat, below the 
 
 ## Telegram: the per-routine bot is retired
 
-The old per-automation Telegram channel (one bot token per routine, `automations telegram setup/test/off`) is gone: no CLI verb, no `/api/automations/<slug>/telegram` route, and a run's prompt carries no Telegram line. Old records that say a question was asked or answered `telegram` still parse; nothing can write that value any more. The old token files (`~/.dreamcontext/telegram.json`, `~/.dreamcontext/telegram/<slug>.json`) are deleted once, at the next app start.
+The old per-automation Telegram channel (one bot token per routine, `automations telegram setup/test/off`) is gone: no CLI verb, no `/api/automations/<slug>/telegram` route, and a run's prompt carries no Telegram line. Old records that say a question was asked or answered `telegram` still parse; nothing can write that value any more. The old token files (`~/.dreamcontext/telegram.json`, `~/.dreamcontext/telegram/<slug>.json`) are deleted at the next app start (only files in the old token shape; it is a no-op afterwards).
 
 Telegram now belongs to people, not routines: the Super Agent and each AI Team member can get a personal bot, bound only from the Mac app (never a CLI verb or an agent), stored machine-local under `~/.dreamcontext/telegram/` (mode 0600, symlinks refused, never synced). A member's bot carries its routines' free-text questions and failure notices, and a routine's results only when the owner ticks that routine on the Mac.
 

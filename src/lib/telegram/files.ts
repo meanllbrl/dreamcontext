@@ -8,10 +8,10 @@
  * a file over the upload cap. An allowed file is opened O_NOFOLLOW and sent from that fd, whose
  * fstat must be the file that was classified (no swap between check and read).
  */
+import { execFileSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { SAFE_TO_GITIGNORE } from '../secret-files.js';
-import { gitIgnoresPath } from '../git-tracked.js';
 import { TG_UPLOAD_MAX_BYTES } from './contract.js';
 
 export type OutboundRefusal =
@@ -35,6 +35,20 @@ export type Classified =
   | { ok: true; real: string; root: string; rel: string; size: number; dev: number; ino: number }
   | { ok: false; reason: OutboundRefusal };
 
+/**
+ * True unless git PROVES the path is not ignored (exit 1). Exit 0 (ignored), 128 (not a repo,
+ * dubious ownership) and a missing git all refuse: a file leaving the Mac fails closed, unlike
+ * `gitIgnoresPath`, whose callers fail toward writing an extra ignore line.
+ */
+export function gitIgnoredOrUnproven(cwd: string, relPath: string): boolean {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', relPath], { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+    return true;
+  } catch (err) {
+    return (err as { status?: number | null }).status !== 1;
+  }
+}
+
 function realOrNull(p: string): string | null {
   try { return realpathSync(p); } catch { return null; }
 }
@@ -56,11 +70,12 @@ export function classifyOutbound(path: string, opts: ClassifyOptions): Classifie
   }
   if (!root) return { ok: false, reason: 'outside_root' };
   const rel = relative(root, real).split(sep).join('/');
-  if (rel.split('/').includes('.git')) return { ok: false, reason: 'git_dir' };
+  // APFS ignores case by default: `.GIT/config` IS `.git/config`.
+  if (rel.split('/').some((seg) => seg.toLowerCase() === '.git')) return { ok: false, reason: 'git_dir' };
   if (SAFE_TO_GITIGNORE.test(rel) || EXTRA_SECRET.test(rel)) return { ok: false, reason: 'secret_class' };
   const projectReal = opts.projectRoot ? realOrNull(opts.projectRoot) : null;
   const inTmp = projectReal !== null && root === projectReal && rel.startsWith('_dream_context/tmp/');
-  const ignored = opts.isGitIgnored ?? gitIgnoresPath;
+  const ignored = opts.isGitIgnored ?? gitIgnoredOrUnproven;
   if (!inTmp && ignored(root, rel)) return { ok: false, reason: 'gitignored' };
   const max = opts.maxBytes ?? TG_UPLOAD_MAX_BYTES;
   if (st.size > max) return { ok: false, reason: 'too_large' };
