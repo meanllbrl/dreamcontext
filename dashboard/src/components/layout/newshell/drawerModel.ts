@@ -6,13 +6,13 @@
  * Under each expanded project, in order: the Super Agent row (always, D6), ONE Ekip row when the
  * project has a member of its own (plan-r10 1d: faces and one count, from `summary=1` `members`;
  * ten members are still one row), and one row per chat window that holds a chat, with its own
- * ring and count (W3, D8). A project with none has one New window row instead: nothing here opens
- * onto an empty screen. A collapsed project's row carries the sum of those same rows and hides
- * its Ekip row with the rest (owner 2026-11-03); a member's question still lights its asking dot. Members of all projects are in ONE Global ekip row at the very bottom (1f).
+ * mark (W3, D8; option A 2026-11-09). A project with none has one New window row instead: nothing
+ * here opens onto an empty screen. A collapsed project's row carries ONE mark summed from those
+ * same rows, its Ekip row included (owner 2026-11-03), so a member's question still reaches it. Members of all projects are in ONE Global ekip row at the very bottom (1f).
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import {
-  buildEkip, buildGlobalEkip, ekipAsking, ekipCount, projectEkip,
+  buildEkip, buildGlobalEkip, ekipApprovalCount, ekipAsking, ekipAskingCount, ekipCount, ekipUnreadCount, ekipWorkingCount, projectEkip,
   type EkipIdentity, type EkipMember, type EkipSummary, type GlobalEkipMember, type TeamRow, type TeamStatus,
 } from '../../aiteam/teamModel';
 import type { AddTabResult } from '../WindowChrome';
@@ -162,8 +162,47 @@ export interface DrawerProjectRow {
   children: DrawerChild[];
   /** Collapsed: its Super Agent, a child or an Ekip member waits on the owner. */
   superAsking?: boolean;
-  /** Collapsed: the sum of the rows it would show, for the ring beside the name. */
+  /** Collapsed: the sum of the rows it would show. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
+  /** Collapsed: its ONE end mark (option A): what waits on the owner, work running, unread replies,
+   *  from the Super Agent, every chat row and the Ekip row together. Absent = nothing to show. */
+  mark?: RowMark;
+  /** Collapsed: the project's own members (the Ekip row it hides), so "+" offers the same picker
+   *  folded as open. Absent when it has none. */
+  members?: EkipMember[];
+}
+
+/** The project's own members, open (its Ekip row) or folded (kept beside the mark). */
+export function ownMembersOf(row: Pick<DrawerProjectRow, 'children' | 'members'>): EkipMember[] {
+  return row.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? row.members ?? [];
+}
+
+/** A row's end mark (`StatusMark`): what waits on the owner (`asking`, of which `questions` are
+ *  known questions and `approvals` known approval cards; the rest is said as plain waiting), work
+ *  running, replies not read. */
+export interface RowMark {
+  asking: number;
+  questions?: number;
+  approvals?: number;
+  working: boolean;
+  unread: number;
+}
+
+/** A folded project's mark from the rows it hides; undefined when nothing would show. */
+export function foldedMark(children: readonly DrawerChild[]): RowMark | undefined {
+  const m: Required<RowMark> = { asking: 0, questions: 0, approvals: 0, working: false, unread: 0 };
+  for (const c of children) {
+    if (c.kind === 'super') { m.asking += c.asking ? 1 : 0; m.questions += c.asking ? 1 : 0; m.working ||= c.working > 0; }
+    else if (c.kind === 'window') { m.asking += c.asking; m.working ||= c.working > 0; m.unread += c.flagged; }
+    else if (c.kind === 'chat') { m.asking += c.state === 'asking' ? 1 : 0; m.working ||= c.state === 'working'; m.unread += c.flagged ? 1 : 0; }
+    else if (c.kind === 'team') {
+      const approvals = ekipApprovalCount(c.members);
+      const asking = ekipAskingCount(c.members);
+      m.asking += asking; m.approvals += approvals; m.questions += asking - approvals;
+      m.working ||= ekipWorkingCount(c.members) > 0; m.unread += ekipUnreadCount(c.members);
+    }
+  }
+  return m.asking || m.working || m.unread ? m : undefined;
 }
 
 /** The Global ekip row (plan-r10 1f, r8-12): every member of all projects once. */
@@ -387,7 +426,9 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     // Folded, its Ekip row folds with the rest (owner 2026-11-03); a question, the Super's or a
     // member's, still reaches the owner as the asking dot.
     const ask = children.some((c) => (c.kind === 'super' || c.kind === 'team') && c.asking);
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
+    const mark = foldedMark(children);
+    const own = ownMembersOf({ children });
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}), ...(mark ? { mark } : {}), ...(own.length ? { members: own } : {}) };
   });
 }
 
@@ -443,9 +484,9 @@ function childrenOf(
   }
   // Only on a known answer: before the roster is restored, or after a failed read, no row is
   // better than offering a chat over chats that are there.
-  // A project with members keeps its New window row (r8-07): its chevron is where a member's one
-  // conversation starts.
-  if ((children.length === before || (team && team.members.length > 0)) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  // A project with a chat has no New window row (option A, owner 2026-11-09): the project row's
+  // "+" opens the same picker (Claude or a member).
+  if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
   if (team) children.push(team);
   return { source, children };
 }
@@ -498,8 +539,9 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     const working = chats.filter((c) => c.state === 'working').length;
     const flagged = chats.filter((c) => c.flagged).length;
     const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
-    // The Ekip row folds with the project; a member's question keeps the asking dot.
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team?.asking ? { superAsking: true } : {}) };
+    // The Ekip row folds with the project; its question still reaches the project's mark.
+    const mark = foldedMark(team ? [...children, team] : children);
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team?.asking ? { superAsking: true } : {}), ...(mark ? { mark } : {}), ...(team?.members.length ? { members: team.members } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
   // Team last, after the chats and New window, as on the desktop (plan r4 R5).

@@ -199,35 +199,38 @@
   color: var(--color-text);
 }
 
-.ns-dr-chev {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  color: var(--color-text-tertiary);
+/* The project row's "+" and "⋯" (option A): over the row's end, shown on hover and on keyboard
+   focus inside the row; the end mark steps aside for them. A finger or a phone has no hover: they
+   stay, and the name makes room. */
+.ns-dr-acts {
+  position: absolute;
+  right: var(--space-1);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: var(--space-1);
+  border-radius: var(--radius-md);
+  background: inherit;
   opacity: 0;
-  transform: rotate(-90deg);
-  transition: opacity 0.15s, transform 0.15s;
+  pointer-events: none;
+  transition: opacity 0.15s;
 }
-
-.ns-dr-chev.is-open {
-  transform: none;
+.ns-dr-act .ns-dr-ico--fill { fill: currentColor; stroke: none; }
+.ns-dr-end { flex: none; display: inline-flex; align-items: center; }
+.ns-dr-proj:is(:hover, :focus-within) .ns-dr-acts {
+  opacity: 1;
+  pointer-events: auto;
 }
+.ns-dr-proj:is(:hover, :focus-within) .ns-dr-act { opacity: 0.85; }
+.ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: hidden; }
 
-.ns-dr-proj:hover .ns-dr-act,
-.ns-dr-proj:focus-within .ns-dr-act,
-.ns-dr-proj:hover .ns-dr-chev,
-.ns-dr-proj.is-cur .ns-dr-chev {
-  opacity: 0.8;
-}
-
-/* Touch has no hover: the actions stay visible. */
-@media (hover: none) {
-  .ns-dr-act, .ns-dr-chev { opacity: 0.8; }
+@media (hover: none), (max-width: 600px) {
+  .ns-dr-acts { opacity: 1; pointer-events: auto; }
+  .ns-dr-act { opacity: 0.85; }
+  .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * 22px + var(--space-2)); }
+  .ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: visible; }
 }
 
 .ns-dr-project[data-dragging="true"] {
@@ -258,17 +261,6 @@
   font-size: var(--font-size-sm);
 }
 
-/* The tree line on the left of every child row. */
-.ns-dr-child::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: -1px;
-  bottom: -1px;
-  width: 1px;
-  background: var(--color-border);
-}
-
 .ns-dr-child .ns-dr-t {
   color: var(--color-text-secondary);
 }
@@ -277,42 +269,9 @@
   color: var(--color-text);
 }
 
-.ns-dr-super .ns-dr-t {
-  color: var(--color-text);
-  font-weight: var(--font-weight-semibold);
-}
-
-/* A question for the owner: the row goes red with one short hop, and stays red until answered. */
-.ns-dr-super[data-asking="true"] .ns-dr-t { color: var(--color-error); }
-.ns-dr-super[data-asking="true"] { animation: ns-dr-hop 0.5s ease-out 3; }
-.ns-dr-ask {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-error);
-}
-@keyframes ns-dr-hop {
-  0%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-3px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ns-dr-super[data-asking="true"] { animation: none; }
-}
-
-.ns-dr-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin-right: var(--space-1);
-  border-radius: 50%;
-  background: var(--color-success);
-  opacity: 0;
-}
-
-.ns-dr-dot.is-on {
-  opacity: 1;
-}
+/* The Super Agent row reads like its siblings (option A): normal weight, no hop on a question
+   (the asking row in StatusMark.css says it); turned off, the name is muted beside "kapalı". */
+.ns-dr-super[data-off="true"] .ns-dr-t { color: var(--color-text-tertiary); }
 
 .ns-dr-status {
   flex: none;
@@ -341,14 +300,6 @@
   font-weight: var(--font-weight-medium);
 }
 
-.ns-dr-child.is-sel::before {
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  left: -0.5px;
-  border-radius: 2px;
-  background: var(--color-accent);
-}
 
 /* ── A chat by name (W1): a dot for its state, its name, and a close for a tab here ─── */
 
@@ -369,7 +320,7 @@
 }
 
 /* A Team's members hang one step further in, the same step (TeamList.css draws them). */
-.ns-team-sec:has(> .ns-dr-child) {
+.ns-team-sec:has(> .ns-team-sec-head > .ns-dr-child) {
   --ns-team-in: calc(19px + var(--space-4));
 }
 
@@ -473,9 +424,10 @@
     width: var(--touch-target);
     height: var(--touch-target);
   }
+  .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * var(--touch-target)); }
 }
 
-/* A chat row in the air, and the line where it lands (`::before` is the tree line). */
+/* A chat row in the air, and the line where it lands. */
 .ns-dr-win[data-dragging="true"] {
   opacity: 0.5;
 }
@@ -832,3 +784,4 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ns-dr-newchat-wrap:is(:hover, :focus-within) .ns-dr-act { opacity: 0.85; }

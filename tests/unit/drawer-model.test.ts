@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  buildDrawerRows, buildGlobalTeam, filterProjectRows, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, teamChildOf,
+  buildDrawerRows, buildGlobalTeam, filterProjectRows, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, ownMembersOf, teamChildOf,
   teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import { buildEkip, ekipFaces, ekipLine, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
@@ -265,7 +265,7 @@ describe('where a dragged chat row lands', () => {
     expect(windowDropIsNoop(ids, 'c', 'a')).toBe(false);
   });
 
-  it('only window rows are chats: Super Agent first, then the chats, New chat, and Team last (plan r4 R5)', () => {
+  it('only window rows are chats: Super Agent first, then the chats, and Team last (plan r4 R5)', () => {
     const [row] = buildDrawerRows({
       projects: [{ name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null }],
       activeVault: 'acme',
@@ -283,8 +283,53 @@ describe('where a dragged chat row lands', () => {
       } },
       fanout: {},
     });
-    // A project with members keeps its New chat row (r8-07): its chevron starts a member's conversation.
-    expect(row.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'w2', 'main', 'new-chat', 'team']);
+    // A project with a chat has no New window row (option A, owner 2026-11-09): the project
+    // row's "+" opens the same picker (Claude or a member).
+    expect(row.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'w2', 'main', 'team']);
+  });
+});
+
+describe('a folded project carries ONE mark (option A, owner 2026-11-09)', () => {
+  const facts = (o: Record<string, unknown> = {}) => ({
+    superOn: true, superSelected: false, chatOpen: false, team: [],
+    windows: [{ id: 'main', name: 'Chat', working: 0, asking: 0, flagged: 0, other: 1, tabs: 1 }],
+    members: [summary('m')], identities: [{ slug: 'm', title: 'M', hasPhoto: false }], ...o,
+  }) as any;
+  const folded = (f: Record<string, unknown>) => buildDrawerRows({ projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: [], facts: { acme: facts(f) }, fanout: {} })[0];
+
+  it('idle: no mark at all (an idle tab count is not news)', () => {
+    expect(folded({}).mark).toBeUndefined();
+  });
+  it('everything that waits on the owner is counted: the Super question, a chat question, a member question and an approval', () => {
+    const row = folded({
+      superMarks: { working: 0, asking: true },
+      windows: [{ id: 'main', name: 'Chat', working: 0, asking: 1, flagged: 0, other: 0, tabs: 1 }],
+      members: [summary('m', { asking: true }), summary('n', { approval: true }), summary('off', { enabled: false, asking: true })],
+    });
+    // By kind: the Super's and the member's questions, the member's approval, the chat's plain waiting.
+    expect(row.mark).toEqual({ asking: 4, questions: 2, approvals: 1, working: false, unread: 0 });
+  });
+  it('folded, it keeps its own members: "+" offers the same picker as when it is open', () => {
+    const f = { members: [summary('m'), summary('g', { global: true })], identities: [{ slug: 'm', title: 'M', hasPhoto: false }, { slug: 'g', title: 'G', hasPhoto: false }] };
+    const row = folded(f);
+    expect(row.children).toEqual([]);
+    const [open] = buildDrawerRows({ projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: ['acme'], facts: { acme: facts(f) }, fanout: {} });
+    expect(ownMembersOf(row).map((m) => m.slug)).toEqual(['m']);
+    expect(ownMembersOf(row)).toEqual(ownMembersOf(open));
+    // A phone's folded project keeps them too.
+    const live = { chats: [], draining: [], members: [{ vault: 'acme', members: [summary('rota')] }] };
+    const [phone] = buildDrawerRows({ projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: [], facts: {}, fanout: {}, device: { rows: [], members: liveMembersOf(live) } });
+    expect(ownMembersOf(phone).map((m) => m.slug)).toEqual(['rota']);
+  });
+  it('work running anywhere under it is the spinner; unread replies are counted, grey', () => {
+    expect(folded({ members: [summary('m', { ownerWorking: 1 })] }).mark).toMatchObject({ asking: 0, working: true, unread: 0 });
+    expect(folded({ superMarks: { working: 2, asking: false } }).mark).toMatchObject({ asking: 0, working: true, unread: 0 });
+    expect(folded({ windows: [{ id: 'main', name: 'Chat', working: 0, asking: 0, flagged: 1, other: 1, tabs: 1 }], members: [summary('m', { unread: 2 })] }).mark)
+      .toMatchObject({ asking: 0, working: false, unread: 3 });
+  });
+  it('open, the project row carries no mark: its rows carry theirs', () => {
+    const [open] = buildDrawerRows({ projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: ['acme'], facts: { acme: facts({ superMarks: { working: 0, asking: true } }) }, fanout: {} });
+    expect(open.mark).toBeUndefined();
   });
 });
 

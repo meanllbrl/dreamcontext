@@ -1,0 +1,59 @@
+/* A drawer row's one end mark and the asking row (option A + V2, owner 2026-11-09). Tokens only. */
+
+.ns-mark {
+  flex: none;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--space-4);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Waits on the owner: filled red, never pink, never quiet. */
+.ns-mark--ask {
+  background: var(--color-error);
+  color: var(--color-text-on-brand);
+}
+
+/* A reply not read yet: it does not wait on the owner, so it stays grey. */
+.ns-mark--unread {
+  min-width: 0;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-normal);
+}
+
+/* Work running: a small grey spinner, nothing louder. */
+.ns-mark-spin {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 2px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-text-tertiary);
+  border-top-color: transparent;
+  border-radius: var(--radius-full);
+  animation: ns-mark-spin 0.9s linear infinite;
+}
+@keyframes ns-mark-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ns-mark-spin { animation: none; }
+}
+
+/* The asking row (V2): the whole row a soft red wash with a red bar on its left and the name
+   semibold. The doubled attribute outranks a selected or hovered row: a question stays red there. */
+[data-ask-row="true"][data-ask-row="true"] {
+  background: var(--color-error-subtle);
+  box-shadow: inset 3px 0 0 var(--color-error);
+}
+[data-ask-row="true"][data-ask-row="true"]:hover {
+  background: var(--color-error-subtle);
+}
+[data-ask-row="true"] :is(.ns-dr-t, .ns-team-label, .ns-team-mname) {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
