@@ -5,6 +5,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import { formatBytes, readLastClean, tmpSize } from '../../lib/tmp-clean.js';
 import { header } from '../../lib/format.js';
 import { CHECK_COPY } from '../../lib/onboarding/copy.js';
 import { antigravityAgentName, antigravityRuntime } from '../../lib/antigravity-accounts.js';
@@ -616,6 +617,24 @@ function checkStatusSet(root: string, statuses: readonly StatusDef[]): CheckResu
  * references resolve (surfaced via the roadmap builder's own warnings).
  */
 /** `*.md` names in a directory, symlinks included (fast-glob would follow them). */
+/** tmp's size and when it was last cleaned (src/lib/tmp-clean.ts). Over 5 GB is a warning. */
+export function checkTmpSize(root: string): CheckResult[] {
+  const size = tmpSize(root);
+  if (!size) return [];
+  const last = readLastClean(root);
+  const when = last === null ? 'not cleaned yet' : `last cleaned ${new Date(last).toISOString().slice(0, 10)}`;
+  const big = size.bytes > 5 * 1024 ** 3;
+  return [{
+    name: 'Scratch folder (tmp)',
+    status: big ? 'warn' : 'ok',
+    message: `_dream_context/tmp/ holds ${formatBytes(size.bytes)} in ${size.files} file(s), ${when}; files older than 14 days that nothing links are removed daily`,
+    code: 'doctor/tmp-size',
+    subject: { dir: 'tmp' },
+    evidence: { bytes: size.bytes, files: size.files, lastCleanAt: last },
+    supportedFixes: ['dreamcontext tmp clean --dry-run', 'dreamcontext tmp clean'],
+  }];
+}
+
 function mdEntries(dir: string): string[] {
   try {
     return readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
@@ -1756,6 +1775,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkCoreFileSizes(root),
         ...checkSnapshotSize(root),
         ...checkContextDelivery(root),
+        ...checkTmpSize(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

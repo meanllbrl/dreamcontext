@@ -40,6 +40,7 @@ import { registerVoiceCommand } from './commands/voice.js';
 import { registerSuperCommand } from './commands/super.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
+import { registerTmpCommand } from './commands/tmp.js';
 import { registerConnectionsCommand } from './commands/connections.js';
 import { registerPeerCommand } from './commands/peer.js';
 import { registerAskCommand } from './commands/ask.js';
@@ -119,6 +120,7 @@ export function createProgram(): Command {
   registerEmbedCommand(program);
   registerTaxonomyCommand(program);
   registerVaultsCommand(program);
+  registerTmpCommand(program);
   registerConnectionsCommand(program);
   registerPeerCommand(program);
   registerAskCommand(program);

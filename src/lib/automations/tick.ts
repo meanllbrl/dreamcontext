@@ -58,6 +58,7 @@ import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
+import { cleanAllVaultTmps } from '../tmp-clean.js';
 import { defaultNotify, runAutomation, type RunOutcome } from './runner.js';
 import { announcePendingChanges } from '../agents/pending-change.js';
 import { readAccountWait } from './account.js';
@@ -75,6 +76,8 @@ const CONTEXT_DIR_NAME = '_dream_context';
 export const PROJECT_CONCURRENCY = 3;
 
 export interface TickOptions {
+  /** False skips the daily tmp clean of every vault (tmp-clean.ts). Default: on. */
+  tmpClean?: boolean;
   /** False skips the Telegram away duties (tests of the routine loop). Default: on. */
   telegramAway?: boolean;
   /** Business "now" for dueness math and both heartbeat timestamps — a single
@@ -422,6 +425,14 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   // A test run with no injected home never reaches the real ~/.dreamcontext's bots.
   if (opts.telegramAway !== false && (home !== undefined || !process.env.VITEST)) {
     try { await telegramAwayTick({ home, log: logFn }); } catch (err) { logFn(`[telegram] away tick failed: ${(err as Error)?.message ?? err}`); }
+  }
+
+  // Every vault's _dream_context/tmp/ cleans itself, at most once a day each (tmp-clean.ts), after
+  // the routines so a due clean never delays this minute's dispatch.
+  // Cheap when not due (one stamp read per vault); a test run with no injected home never walks
+  // the real ~/.dreamcontext's vaults.
+  if (opts.tmpClean !== false && (home !== undefined || !process.env.VITEST)) {
+    try { cleanAllVaultTmps({ home, now: now.getTime(), log: logFn }); } catch (err) { logFn(`[tmp-clean] failed: ${(err as Error)?.message ?? err}`); }
   }
 
   const durationMs = Date.now() - wallStart;
