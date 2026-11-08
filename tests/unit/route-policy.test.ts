@@ -55,8 +55,10 @@ describe('the route policy is exhaustive', () => {
     }
     const filtered = Object.entries(ROUTE_POLICY).filter(([, r]) => r.scope === 'cross:filter').map(([k]) => k).sort();
     expect(filtered).toEqual([
-      'GET /api/brain/team/updates', 'GET /api/connections', 'GET /api/federation/inbox', 'GET /api/peer/logo',
-      'GET /api/peer/peers', 'GET /api/vaults', 'POST /api/agent/prompt',
+      // The card records and a secret card's value (Telegram W4, plan H9, I1): the handler checks
+      // the RECORD's project with isMacExposed, never the request's.
+      'GET /api/agent/cards', 'GET /api/brain/team/updates', 'GET /api/connections', 'GET /api/federation/inbox', 'GET /api/peer/logo',
+      'GET /api/peer/peers', 'GET /api/vaults', 'POST /api/agent/prompt', 'POST /api/agent/secret',
     ]);
     for (const k of ['POST /api/brain/team/fetch', 'GET /api/launcher/status', 'GET /api/launcher/federation-graph', 'GET /api/launcher/logo']) {
       expect(ROUTE_POLICY[k].allow, k).toBe(false);
@@ -67,7 +69,7 @@ describe('the route policy is exhaustive', () => {
   it('every deny category the owner named is denied', () => {
     for (const k of [
       'POST /api/handsfree/mac/start', 'POST /api/window/:verb', 'GET /api/assistant/status', 'POST /api/agent/open-terminal',
-      'POST /api/launcher/register', 'POST /api/launcher/unregister', 'POST /api/agent/secret', 'POST /api/recall/cloud/key',
+      'POST /api/launcher/register', 'POST /api/launcher/unregister', 'GET /api/telegram', 'POST /api/recall/cloud/key',
       'POST /api/admin/shutdown', 'POST /api/agent/voice/tts', 'POST /api/notify', 'POST /api/brain/auth/token',
       'GET /api/launcher/status', 'POST /api/peer/send', 'POST /api/agent/grant', 'POST /api/agent/reveal',
     ]) expect(ROUTE_POLICY[k]?.allow, k).toBe(false);
