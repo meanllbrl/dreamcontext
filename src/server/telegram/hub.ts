@@ -53,6 +53,7 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
+import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 
 type Obj = Record<string, unknown>;
@@ -1084,10 +1085,14 @@ export class TelegramHub implements TelegramHubApi {
     const previews = !!this.richQuestion && qs.some((x) => x.options.some((o) => typeof o.preview === 'string' && o.preview.trim()));
     if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8 && !previews) {
       const labels = qs[0].options.map((o) => o.label);
-      await this.sendButtons(ab, `${prefix}❓ ${escapeHtml(redactSecrets(qs[0].question))}`, labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
+      await this.sendButtons(ab, formatAskQuestionHtml(qs[0], { title: q.title, prefix }), labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
       return;
     }
     if (this.richQuestion && await this.richQuestion(ab, sessionId, q).catch(() => false)) return;
+    if (qs.length) {
+      for (const html of formatAskCardMessages(qs, { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
+      return;
+    }
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);
   }
 }

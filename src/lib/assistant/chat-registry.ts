@@ -86,6 +86,8 @@ export interface PendingQuestion {
    *  and when the input is over {@link MAX_QUESTION_BYTES}: never cut, since a cut text would
    *  key an answer the CLI cannot match. */
   questions?: RegistryQuestion[];
+  /** An AskUserQuestion's card title (`input.title`), capped. Absent on a permission. */
+  title?: string;
   /** The tool call this request is about (`request.tool_use_id`). A tool_result for it means
    *  the CLI is no longer waiting on the request (it was rejected on a closed stream, say), so
    *  the request settles like a `control_cancel_request`. Absent on an older CLI. */
@@ -102,6 +104,8 @@ export interface RegistryQuestionOption { label: string; description?: string; p
 export interface RegistryQuestion {
   question: string;
   header?: string;
+  /** The question's own "why" line (the card's description), shown under it. */
+  description?: string;
   multiSelect?: boolean;
   options: RegistryQuestionOption[];
 }
@@ -460,7 +464,8 @@ export function registryQuestions(raw: readonly unknown[]): RegistryQuestion[] |
       options.push({ label, ...(description ? { description } : {}), ...(preview ? { preview } : {}) });
     }
     const header = str(q.header);
-    out.push({ question, ...(header ? { header } : {}), ...(q.multiSelect === true ? { multiSelect: true } : {}), options });
+    const qDescription = str(q.description);
+    out.push({ question, ...(header ? { header } : {}), ...(qDescription ? { description: qDescription } : {}), ...(q.multiSelect === true ? { multiSelect: true } : {}), options });
   }
   if (!out.length || Buffer.byteLength(JSON.stringify(out), 'utf-8') > MAX_QUESTION_BYTES) return undefined;
   return out;
@@ -500,7 +505,8 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
     const text = qs.map((q) => (typeof q.question === 'string' ? q.question : '')).filter(Boolean).join('\n');
     const images = imagesInPreviews(qs.map((q) => ({ options: Array.isArray(q.options) ? q.options as Array<{ label?: unknown; preview?: unknown }> : [] })));
     const questions = registryQuestions(qs);
-    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}), ...toolUse };
+    const title = typeof input.title === 'string' && input.title.trim() ? { title: cap(input.title.trim(), 200) } : {};
+    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...title, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}), ...toolUse };
   }
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path
