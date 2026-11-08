@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createStyledTerm, currentTermTheme, currentZoom, BASE_FONT, openWhenFontsReady } from '../termCore';
 import { appendTail, finishTail } from './runReport';
+import { cardTerminalUrl, type CardTarget } from '../../../lib/cardRecords';
 
 /**
  * A REAL PTY inside the transcript — one command, bounded height, and an exit code that
@@ -25,12 +26,16 @@ import { appendTail, finishTail } from './runReport';
 
 export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 
+export type { CardTarget };
+
 export function InlineTerminal({
-  vault, command, cwd, rows = 14, onExit, onStatus,
+  vault, command, cwd, card, rows = 14, onExit, onStatus,
 }: {
   vault: string;
   command: string;
   cwd?: string;
+  /** Chat host: the server record to start or attach to. No `cmd=` is ever sent then. */
+  card?: CardTarget;
   rows?: number;
   /** Fires ONCE, when the process ends. `code` is null when the socket died without one. */
   onExit: (result: { code: number | null; tail: string }) => void;
@@ -43,7 +48,7 @@ export function InlineTerminal({
   // from a ref — a card's command never changes under it (a different command is a
   // different card with a different key), and if it ever could, silently re-running a
   // deploy would be the wrong answer to it.
-  const argsRef = useRef({ vault, command, cwd, rows });
+  const argsRef = useRef({ vault, command, cwd, rows, card });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
   onExitRef.current = onExit;
@@ -52,7 +57,7 @@ export function InlineTerminal({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const { vault: v, command: cmd, cwd: dir, rows: wantRows } = argsRef.current;
+    const { vault: v, command: cmd, cwd: dir, rows: wantRows, card: target } = argsRef.current;
 
     const { term, fit, fontFamily, primaryMono, stopThemeSync } = createStyledTerm({ scrollback: 2000 });
 
@@ -70,7 +75,9 @@ export function InlineTerminal({
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams({ vault: v, kind: 'exec', cmd, theme: currentTermTheme(), bypass: '0' });
     if (dir) params.set('cwd', dir);
-    const ws = new WebSocket(`${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
+    const ws = new WebSocket(target
+      ? `${proto}://${location.host}${cardTerminalUrl(target, currentTermTheme())}`
+      : `${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
     // Binary frames are the server's control channel (`{type:'exit', code}`); output is
     // always text. arraybuffer so the exit can be decoded synchronously in onmessage.
     ws.binaryType = 'arraybuffer';
@@ -98,7 +105,9 @@ export function InlineTerminal({
     // and the card says so rather than inventing a zero for the agent to act on.
     ws.onclose = () => settle(null);
     ws.onerror = () => {
-      setError('Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
+      setError(target
+        ? 'Could not open this command\'s terminal. It may have finished, or it is no longer waiting.'
+        : 'Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
       settle(null);
     };
 

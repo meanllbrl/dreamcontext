@@ -30,17 +30,13 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { parseViewBlock, type RunViewSpec, type SecretViewSpec } from '../chat-view-spec.js';
+import { parseViewBlock } from '../chat-view-spec.js';
 import { answeredBy, type OwnerWait } from '../super/owner-wait.js';
 import { parseTelegramPrefix, CARD_RECORD_CAP, CLOSED_CARDS_CAP } from '../telegram/contract.js';
+import { canonicalJson, type CardKind, type CardRunInfo, type CardSpec, type PublicCard } from './public.js';
 
-export type CardKind = 'run' | 'secret';
-export type CardSpec = RunViewSpec | SecretViewSpec;
-
-export interface CardRunInfo {
-  runId: string;
-  owner: 'mac' | 'phone' | 'telegram';
-}
+export { canonicalJson };
+export type { CardKind, CardSpec, CardRunInfo, PublicCard };
 
 /** One record. `spec` is the FULL validated spec the chat drew. */
 export interface CardRecordEntry {
@@ -62,33 +58,12 @@ export interface CardRecordEntry {
   rebuilt?: true;
 }
 
-/** What a client is told (the `cards` frame, `GET /api/agent/cards`). Never more than the agent wrote. */
-export interface PublicCard {
-  id: string;
-  cardRef: string;
-  kind: CardKind;
-  spec: CardSpec;
-  state: 'open' | 'closed';
-  run: CardRunInfo | null;
-  exit?: number | null;
-}
-
 const FENCE = /```dream-view[^\S\r\n]*\r?\n([\s\S]*?)```/g;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const CARD_REF_RE = /^[0-9a-f]{32}$/;
 
 export function isSessionUuid(id: unknown): id is string {
   return typeof id === 'string' && UUID_RE.test(id);
-}
-
-/** Canonical JSON: keys sorted at every level, so two spellings of one spec hash alike. */
-export function canonicalJson(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(v);
 }
 
 export function cardRefOf(sessionId: string, messageUuid: string, fenceIndex: number, spec: CardSpec): string {

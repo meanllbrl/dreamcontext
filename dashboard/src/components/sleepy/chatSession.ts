@@ -16,6 +16,8 @@ import {
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
 import { isHubVerb, planHubAnswer, runHtmlSnapshot } from '../../lib/hubCommands';
+import { applyCardsFrame } from '../../lib/cardRecords';
+import { postToSession } from './chat/postToSession';
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
@@ -2485,6 +2487,13 @@ export function createChatSession(
     if (raw.includes('"subtype":"mcp_')) {
       if (applyMcpFrame(raw)) return;
     }
+    // The server's run/secret card records (plan I1): what this chat's cards match against.
+    if (raw.includes('"subtype":"cards"')) {
+      try {
+        const f = JSON.parse(raw) as { type?: unknown; subtype?: unknown; session?: unknown; cards?: unknown };
+        if (f.type === '_meta' && f.subtype === 'cards' && applyCardsFrame(f.session, f.cards)) return;
+      } catch { /* not ours */ }
+    }
     // The server's answer to a reattach — not a protocol event, so it never reaches the parser.
     if (raw.includes('"reattached"') || raw.includes('"turn_state"')) {
       const frame = readReattachedFrame(raw);
@@ -2993,6 +3002,12 @@ export function createChatSession(
           const written = answer(plan.requestId, { behavior: plan.behavior, updatedInput: plan.updatedInput, message: plan.message });
           result = written ? { ok: true } : { ok: false, error: 'offline' };
         }
+      } else if (cmd.verb === 'run_report') {
+        // A run the SERVER owned ended (plan H5): its report goes in as the Mac card's did.
+        const rep = (cmd.args.report ?? null) as { text?: unknown } | null;
+        const text = typeof rep?.text === 'string' ? rep.text : '';
+        if (cmd.args.sessionId !== session.claudeId || !text.startsWith('[ran in chat]') || text.length > 20_000) result = { ok: false, error: 'bad_args' };
+        else { postToSession(session, text); result = { ok: true }; }
       } else if (cmd.verb === 'html_snapshot') {
         const invoke = isDesktopShell() ? (await import('@tauri-apps/api/core')).invoke as (c: string, a: Record<string, unknown>) => Promise<unknown> : null;
         result = await runHtmlSnapshot(cmd.args, invoke);

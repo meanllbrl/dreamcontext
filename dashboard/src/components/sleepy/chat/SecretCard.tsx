@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApi } from '../../../context/VaultContext';
+import { useCardRecord } from '../../../lib/cardRecords';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MaskedSecretInput } from '../../core/MaskedSecretInput';
 import { CardHeader } from './molecules';
 import type { SecretViewSpec } from '../../../lib/chatViewSpec';
@@ -41,12 +43,18 @@ interface SecretResponse {
 
 type Phase = 'idle' | 'saving' | 'saved' | 'failed';
 
-export function SecretCard({ spec, report }: {
+export function SecretCard({ spec, report, sessionId }: {
   spec: SecretViewSpec;
   /** Where the receipt goes: the chat's session, or an agent thread's reply. */
   report?: (text: string) => void;
+  /** A chat's card names the server's record (plan H1, H9): the server writes exactly the file
+   *  and keys the agent declared, and the hands-free phone may fill it only through it. */
+  sessionId?: string;
 }) {
   const api = useApi();
+  const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
+  const { loaded, record } = useCardRecord(sessionId, spec, fetchJson);
+  const phone = isMacPhoneSurface();
   const [values, setValues] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState('');
@@ -63,6 +71,7 @@ export function SecretCard({ spec, report }: {
     setError('');
     try {
       const res = await api.post<SecretResponse>('/agent/secret', {
+        ...(sessionId && record ? { sessionId, cardRef: record.cardRef } : {}),
         file: spec.file,
         title: spec.title,
         ...(spec.app ? { app: spec.app } : {}),
@@ -81,7 +90,7 @@ export function SecretCard({ spec, report }: {
       setError(err instanceof Error ? err.message : 'The secret could not be written.');
       setPhase('failed');
     }
-  }, [api, filled, phase, report, spec.app, spec.fields, spec.file, spec.title, values]);
+  }, [api, filled, phase, record, report, sessionId, spec.app, spec.fields, spec.file, spec.title, values]);
 
   if (phase === 'saved' && result) {
     return (
@@ -99,6 +108,19 @@ export function SecretCard({ spec, report }: {
         <p className="chat-secretcard-note">
           Written to <code>{result.file}</code> (0600). The agent was told the key and the fingerprint, not the value.
         </p>
+      </div>
+    );
+  }
+
+  // A chat's card: no record yet (loading), none at all (an old card), or already answered.
+  // The phone can fill ONLY a live record; the Mac keeps the old path for a card without one.
+  const answered = !!sessionId && record?.state === 'closed';
+  const unfillable = !!sessionId && (!loaded || (phone && !record));
+  if (answered) {
+    return (
+      <div className="chat-viewcard chat-secretcard" data-phase="saved" data-view-kind="secret" data-view-id={spec.id}>
+        <CardHeader glyph="✓" title={spec.title} aside={<span className="chat-secretcard-file">{spec.file}</span>} />
+        <p className="chat-secretcard-note">Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</p>
       </div>
     );
   }
@@ -121,7 +143,7 @@ export function SecretCard({ spec, report }: {
               onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
               onSubmit={spec.fields.length === 1 ? () => { void submit(); } : undefined}
               ariaLabel={f.label ?? f.key}
-              disabled={phase === 'saving'}
+              disabled={phase === 'saving' || unfillable}
             />
             {f.hint && <p className="chat-secretcard-hint">{f.hint}</p>}
           </div>
@@ -129,6 +151,9 @@ export function SecretCard({ spec, report }: {
       </div>
 
       {error && <p className="chat-secretcard-error">{error}</p>}
+      {sessionId && loaded && phone && !record && (
+        <p className="chat-secretcard-note">This card is older than the chat's newest cards; fill it on the Mac.</p>
+      )}
 
       <div className="chat-secretcard-foot">
         {/* THE STANDING PROMISE. It is not a reassurance, it is the difference between this
@@ -141,7 +166,7 @@ export function SecretCard({ spec, report }: {
           type="button"
           className="chat-btn pill primary"
           onClick={() => { void submit(); }}
-          disabled={!filled || phase === 'saving'}
+          disabled={!filled || phase === 'saving' || unfillable}
         >
           {phase === 'saving' ? 'Saving…' : spec.submitLabel ?? `Save to ${spec.file}`}
         </button>
