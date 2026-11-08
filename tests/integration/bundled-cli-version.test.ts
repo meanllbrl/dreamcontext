@@ -10,7 +10,7 @@
  * first run, before a global npm CLI exists (desktop/src-tauri/src/lib.rs).
  *
  * Strategy: rebuild that layout in a temp dir from the real dist/index.js and
- * run the CLI out of it. Only index.js is copied — the bug is the ABSENCE of a
+ * run the CLI out of it. Only index.js and cli.js are copied — the bug is the ABSENCE of a
  * package.json, which holds either way, and copying the whole dist/ would drag
  * the dashboard bundle along for nothing.
  *
@@ -25,6 +25,8 @@ import { tmpdir } from 'node:os';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const BUILT_CLI = join(REPO_ROOT, 'dist', 'index.js');
+/** `dist/index.js` is a small stub since 0.41.8; the CLI itself is `dist/cli.js` beside it. */
+const BUILT_CLI_BODY = join(REPO_ROOT, 'dist', 'cli.js');
 
 function packageVersion(): string {
   return JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')).version as string;
@@ -39,6 +41,7 @@ function stageAppBundle(): string {
   mkdirSync(dist, { recursive: true });
   const cli = join(dist, 'index.js');
   copyFileSync(BUILT_CLI, cli);
+  copyFileSync(BUILT_CLI_BODY, join(dist, 'cli.js'));
   return cli;
 }
 
@@ -97,6 +100,7 @@ describe('app-bundled CLI version', () => {
     const root = mkdtempSync(join(tmpdir(), 'dc-npm-'));
     mkdirSync(join(root, 'dist'), { recursive: true });
     copyFileSync(BUILT_CLI, join(root, 'dist', 'index.js'));
+    copyFileSync(BUILT_CLI_BODY, join(root, 'dist', 'cli.js'));
     writeFileSync(
       join(root, 'package.json'),
       // `type: module` mirrors the real package and keeps node from reparsing
