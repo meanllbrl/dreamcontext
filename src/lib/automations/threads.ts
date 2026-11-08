@@ -3,6 +3,7 @@ import {
   realpathSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
@@ -403,6 +404,27 @@ export interface AppendThreadEntryInput {
    * entries nobody has seen.
    */
   id?: string;
+  /**
+   * Called once the entry is on disk, with the id actually written and its content hash
+   * (`threadEntryContentHash`). The runner's run-post stamp hangs here (plan AA3): this function
+   * mints the id itself, so a caller cannot know it beforehand.
+   */
+  stamp?: (id: string, contentHash: string) => void;
+}
+
+/**
+ * The content hash of an entry as written and read back: sha256 over the canonical JSON of
+ * `{text, files, summary}` (missing lists as empty). The thread ledger keeps it beside the id
+ * (`agent-sync.ts` `threadHashesHere`), so a synced copy with the same id and different content
+ * is told apart (plan Y3).
+ */
+export function threadEntryContentHash(entry: { text: string; files?: readonly string[]; summary?: readonly ThreadSummaryRow[] }): string {
+  const canonical = JSON.stringify({
+    text: entry.text,
+    files: [...(entry.files ?? [])],
+    summary: (entry.summary ?? []).map((r) => ({ key: r.key, value: r.value })),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 /**
@@ -425,7 +447,7 @@ const RECONCILE_ID_PATTERN = /^[0-9a-z]{9,}_[A-Za-z0-9_-]+~r$/;
  * PURE: no I/O, so a path is refused for its SHAPE, whether or not the file
  * happens to exist yet (a run posts the document it is still writing).
  */
-function isContainedBrainRel(contextRoot: string, raw: string): boolean {
+export function isContainedBrainRel(contextRoot: string, raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
   if (trimmed.startsWith('/') || /^[a-zA-Z]:/.test(trimmed)) return false;
@@ -456,7 +478,7 @@ function isContainedBrainRel(contextRoot: string, raw: string): boolean {
  * Returns true for a path that does not exist: nothing to resolve yet, and the
  * lexical check has already had its say.
  */
-function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
+export function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
   try {
     if (!existsSync(abs)) return true;
     if (lstatSync(abs).isSymbolicLink()) return false;
@@ -588,7 +610,9 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
   }
   appendFileSync(dayPath, block, 'utf-8');
   // The thread-entry ledger (M0): history injects only what THIS machine wrote (B1-6).
-  recordThreadEntryHere(contextRoot, slug, entry.id, entry.at);
+  const contentHash = threadEntryContentHash(entry);
+  recordThreadEntryHere(contextRoot, slug, entry.id, entry.at, undefined, contentHash);
+  input.stamp?.(entry.id, contentHash);
   return entry;
 }
 
