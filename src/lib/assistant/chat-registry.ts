@@ -679,6 +679,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
+      emitUserSent(e.sessionId, text, opts?.source);
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
       // Super Agent steering the child (a send the server noted for it) clears nothing. A
       // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
@@ -805,6 +806,7 @@ export function _resetChatRegistry(): void {
   ownerListeners.clear();
   unheard.clear();
   assistantListeners.clear();
+  userSentListeners.clear();
   injectors.clear();
   injectorListeners.clear();
   tgRefs.clear();
@@ -826,6 +828,20 @@ export function onChatAssistantText(fn: (sessionId: string, text: string) => voi
 function emitAssistantText(sessionId: string, text: string): void {
   for (const fn of [...assistantListeners]) {
     try { fn(sessionId, text); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+const userSentListeners = new Set<(sessionId: string, text: string, source: InjectedSource | undefined) => void>();
+
+/** Be told every owner turn a chat wrote, with who wrote it (a Telegram text or not). */
+export function onChatUserSent(fn: (sessionId: string, text: string, source: InjectedSource | undefined) => void): () => void {
+  userSentListeners.add(fn);
+  return () => { userSentListeners.delete(fn); };
+}
+
+function emitUserSent(sessionId: string, text: string, source: InjectedSource | undefined): void {
+  for (const fn of [...userSentListeners]) {
+    try { fn(sessionId, text, source); } catch { /* a listener's failure is its own */ }
   }
 }
 

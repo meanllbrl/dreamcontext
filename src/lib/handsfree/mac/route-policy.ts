@@ -401,6 +401,16 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),
+  // Telegram bindings (W2, plan A1, AA1, AB): never from a phone; the Rust-called id routes act on
+  // the vault their id was minted in, never the request's.
+  'GET /api/telegram': deny(SECRET),
+  'POST /api/telegram/:target/bind': deny(SECRET),
+  'DELETE /api/telegram/:target': deny(SECRET),
+  'GET /api/telegram-pairing/:id': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-pairing/:id/confirm': deny(SECRET, 'cross:deny'),
+  'GET /api/telegram-manager/status': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-manager/bind': deny(SECRET, 'cross:deny'),
+  'DELETE /api/telegram-manager': deny(SECRET, 'cross:deny'),
   // The ONE voice route the phone reaches (task the-hands-free-phone-sends-a-voice-message…): its
   // take, recorded on the phone, transcribed by the engine the owner chose on this Mac (local
   // whisper, or OpenRouter when the cloud was chosen, 2026-10-27). Capped per phone socket

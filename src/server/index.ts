@@ -137,6 +137,8 @@ import {
 } from './routes/lab-boards.js';
 import { sweepBoardStaging } from '../lib/lab/boards.js';
 import { removeLegacyTelegramFiles } from '../lib/telegram/legacy.js';
+import { registerTelegramRoutes } from './routes/telegram.js';
+import { startTelegramHub } from './telegram/start.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -375,6 +377,8 @@ export function buildRouter(): Router {
   router.get('/api/handsfree/phone', handleHandsfreePhone);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
+  // Telegram bindings (W2): page-called under /api/telegram, Rust-called under their own prefixes.
+  registerTelegramRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
   router.post('/api/admin/shutdown', handleAdminShutdown);
 
@@ -1136,7 +1140,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1639,6 +1643,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       pruneTakes();
       // The retired per-routine Telegram channel's token files: deleted once, here.
       try { removeLegacyTelegramFiles(); } catch { /* best-effort */ }
+      // The Telegram hub: one poll per bound bot. Desktop only; never on a CLI server.
+      if (isDesktop()) void startTelegramHub().catch((err) => console.warn(`[telegram] hub failed to start: ${(err as Error).message}`));
       // Task jobs: settle what died and start what is due, now and every minute (C1-3).
       startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
