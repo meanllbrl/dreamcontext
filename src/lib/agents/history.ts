@@ -1,15 +1,15 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { getAgent } from './store.js';
 import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
 import { readMachineIdentity } from '../machine-id.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
-import { feedCutoffDay, readRunHead, runDocumentPath, runUnread } from '../automations/feed.js';
+import { feedCutoffDay, readRunHead, runDocumentPath, runUnread, toBrainRelative } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
-import { ownerQuietReader } from '../automations/super-quiet.js';
+import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
 import { runChatSession } from '../automations/run-chat.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
@@ -71,6 +71,8 @@ export interface HistorySession {
   unread: boolean;
   /** A run with a published document here (`runDocumentPath`), posted or not. */
   hasDocument?: boolean;
+  /** That document, as a tile: brain-relative path, name, and its opening sentence. */
+  document?: { path: string; name: string; head?: string };
   /** The run's Claude session, from this machine's own records (`runChatSession`), never the
    *  synced cache. Owner audience only; absent when no steps can be opened here. */
   claudeId?: string;
@@ -113,6 +115,9 @@ export interface ListHistoryOptions {
   markTurns?: boolean;
   maxSessions?: number;
   maxRows?: number;
+  /** Routine runs only (a member's Super page): no talks, and no job the main Super gave this
+   *  member (its request and answer are already on that page, `super-quiet.ts`). */
+  runsOnly?: boolean;
 }
 
 export const HISTORY_PAGE_SESSIONS = 8;
@@ -324,6 +329,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const candidates: Candidate[] = [];
   let unreadCount = 0;
   const quietOf = ownerQuietReader(contextRoot);
+  const isSuperJob = opts.runsOnly ? superJobReader(contextRoot) : null;
   const nowMs = (opts.now ?? new Date()).getTime();
   const agentTitle = (() => {
     try {
@@ -352,6 +358,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
     }
     const title = titleOf(source);
     for (const [runId, runEntries] of byRun) {
+      if (isSuperJob?.(source, runEntries)) continue;
       // Unread exactly as the feed counts it: the run's entries inside the feed's window.
       const windowed = runEntries.filter((e) => windowIds.has(e.id));
       const u = runUnread(windowed, watermark, quietOf(source, runEntries));
@@ -390,6 +397,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             if (body) rows.splice(after < 0 ? rows.length : after, 0, body);
           }
           const chat = opts.audience === 'owner' ? runChatSession(contextRoot, source, runId, home) : null;
+          const docPath = runDocumentPath(contextRoot, run);
+          const docHead = docPath ? readRunHead(contextRoot, run) : null;
           const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
           return {
             key, kind: 'run', source, title,
@@ -399,7 +408,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             durationMs: run?.durationMs ?? threadDuration(runEntries),
             newestId,
             unread,
-            hasDocument: runDocumentPath(contextRoot, run) !== null,
+            hasDocument: docPath !== null,
+            ...(docPath ? { document: { path: toBrainRelative(contextRoot, docPath), name: basename(docPath), ...(docHead ? { head: docHead } : {}) } } : {}),
             ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
             ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
             rows,
@@ -410,7 +420,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   }
 
   // Talks: this machine's index. Ordering needs no parse — start = index `at`, last = mtime.
-  const sessions: AgentSessionEntry[] = listAgentSessions(projectRoot, slug, home);
+  const sessions: AgentSessionEntry[] = opts.runsOnly ? [] : listAgentSessions(projectRoot, slug, home);
   if (sessions.length) {
     const lookup = newTalkLookup(contextRoot, home);
     const found: string[] = [];

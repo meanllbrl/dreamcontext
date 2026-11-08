@@ -42,6 +42,8 @@ export interface FeedMeta {
   origin?: 'answer' | 'failure' | 'note';
   /** The run published a document here. */
   hasDocument?: boolean;
+  /** That document as a tile (brain path, name, opening sentence): it opens in the side file panel. */
+  document?: { path: string; name: string; head?: string };
   /** The run's session, from this machine's own records: its steps can be opened. */
   claudeId?: string;
   /** A reply can resume that session. */
@@ -92,14 +94,85 @@ export interface ChatFeed {
   /** A run session's last row (or its boundary) has been on screen. */
   onSeen: (meta: FeedMeta) => void;
   onBoundary: (meta: FeedMeta) => void;
-  /** Drawn under a run's last row: its steps, report and Continue. The host owns what is open. */
-  runFoot?: (meta: FeedMeta) => ReactNode;
+  /** Drawn under a run's last row: its steps, report and Continue. The host owns what is open;
+   *  `ctx.openFile` is the pane's own file opener (a report's path chips). */
+  runFoot?: (meta: FeedMeta, ctx?: { openFile: (path: string) => void }) => ReactNode;
   /** A card in a routine run's row finished (a command the owner ran): its report goes back
    *  into THAT run — a reply in its thread, which resumes its session. Absent: not drawn. */
   onRunReport?: (meta: FeedMeta, text: string) => void;
   onDividerScrolled: () => void;
   /** The reader is at the bottom (true) or scrolled up (false): deferred moves wait for true. */
   onPinned: (pinned: boolean) => void;
+  /** A member's Super page (owner 2026-11-08): its conversation is one long resumed session, so a
+   *  run that happened during it is drawn BETWEEN its messages, by time, and a run in flight at its
+   *  end; only runs older than the conversation stay at the head (`splitFeedAt`). Absent: every
+   *  session at the head, as on the AI Team stage. */
+  interleave?: boolean;
+}
+
+/** Where a session sits in time against the conversation: when it last moved, and a run still in
+ *  flight at the very end (it is live, so it is the newest thing on the page). */
+export function feedAnchorMs(meta: Pick<FeedMeta, 'sessionKind' | 'status' | 'lastAt'>): number {
+  if (meta.sessionKind === 'run' && meta.status === 'running') return Number.POSITIVE_INFINITY;
+  const t = Date.parse(meta.lastAt);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** A chat row's time, epoch ms: its `ts`, a tool step's `startedAt`; 0 means "no time". */
+export function itemTimeMs(it: object | null | undefined): number {
+  const r = (it ?? {}) as { ts?: unknown; startedAt?: unknown };
+  const t = typeof r.ts === 'number' ? r.ts : typeof r.startedAt === 'number' ? r.startedAt : 0;
+  return t > 0 ? t : 0;
+}
+
+/** The first known time of the conversation, or null with none. */
+export function firstKnownTs(...lists: ReadonlyArray<ReadonlyArray<object>>): number | null {
+  for (const list of lists) for (const it of list) { const t = itemTimeMs(it); if (t > 0) return t; }
+  return null;
+}
+
+/**
+ * An interleaved feed split at the conversation's start: whole sessions older than it stay at the
+ * head (in the window's index space, paged as before); the rest are drawn inside the conversation.
+ * No conversation yet (`startMs` null): everything is the head.
+ */
+export function splitFeedAt(items: readonly FeedItem[], startMs: number | null): { head: FeedItem[]; inline: FeedItem[] } {
+  if (startMs === null) return { head: [...items], inline: [] };
+  const head: FeedItem[] = [];
+  const inline: FeedItem[] = [];
+  for (const it of items) (feedAnchorMs(it.feed) <= startMs ? head : inline).push(it);
+  return { head, inline };
+}
+
+/** One session's rows in `items`: `[from, to)`. */
+export interface FeedGroup { key: string; from: number; to: number; anchor: number }
+
+/** The sessions of a feed list, in order (a session's rows are contiguous). */
+export function feedGroups(items: readonly FeedItem[]): FeedGroup[] {
+  const out: FeedGroup[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const key = items[i].feed.sessionKey;
+    const last = out[out.length - 1];
+    if (last && last.key === key) { last.to = i + 1; continue; }
+    out.push({ key, from: i, to: i + 1, anchor: feedAnchorMs(items[i].feed) });
+  }
+  return out;
+}
+
+/**
+ * Where each inline session goes among the conversation's rows: the index of the first row that
+ * came after it, or `rowTimes.length` (after the last row). A row with no time (0) takes the
+ * time of the row before it, so an untimed row never pulls a session above timed ones.
+ */
+export function inlinePlacement(groups: readonly Pick<FeedGroup, 'anchor'>[], rowTimes: readonly number[]): number[] {
+  const times: number[] = [];
+  let prev = 0;
+  for (const t of rowTimes) { prev = t > 0 ? t : prev; times.push(prev); }
+  return groups.map((g) => {
+    if (g.anchor === Number.POSITIVE_INFINITY) return times.length;
+    const at = times.findIndex((t) => t > g.anchor);
+    return at < 0 ? times.length : at;
+  });
 }
 
 /** One row's marks: what the pane draws ABOVE row `i` of the feed. */
@@ -123,24 +196,26 @@ export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): 
   return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
 }
 
-/** Does this row end a run that has a report to open? */
-export function feedReportShown(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
-  return marks.last && meta.sessionKind === 'run' && (meta.origin === 'answer' || meta.hasDocument === true);
+/** A run's document path (brain-relative, as the feeds carry it) as the chat pane opens files:
+ *  project-relative, so the side file panel reads it from the brain folder. */
+export function chatFilePath(brainPath: string): string {
+  return brainPath.startsWith('_dream_context/') ? brainPath : `_dream_context/${brainPath}`;
 }
 
-/** What can be opened under one run. Pure: the phone and the Mac draw the same answer. */
-export function runFootOf(meta: FeedMeta): { steps: boolean; report: boolean; noReport: boolean; canContinue: boolean; line: 'noSession' | 'otherMac' | null } {
-  const reportable = feedReportShown(meta, { last: true });
-  const report = reportable && meta.hasDocument === true;
-  const canContinue = !meta.elsewhere && (meta.resumable === true || meta.status === 'running');
-  const ended = meta.status === 'ok' || meta.status === 'failed' || meta.status === 'stopped';
-  return {
-    steps: !!meta.claudeId,
-    report,
-    noReport: reportable && !report,
-    canContinue,
-    line: meta.elsewhere ? 'otherMac' : !canContinue && ended ? 'noSession' : null,
-  };
+/** The first two lines of a document worth showing on its tile: headings lose their marks. */
+export function documentHead(text: string | null | undefined): string | undefined {
+  const lines = (text ?? '').split('\n').map((l) => l.replace(/^#{1,6}\s+/, '').replace(/[*_`>]/g, '').trim()).filter(Boolean);
+  const head = lines.slice(0, 2).join(' ').slice(0, 180);
+  return head || undefined;
+}
+
+/**
+ * What stands under one run: its steps (a session on this machine) and, when the run published a
+ * document, that document as a tile that opens in the side file panel. A run with no document
+ * shows nothing extra (owner 2026-11-08: no "Full report" link, no inline expand).
+ */
+export function runFootOf(meta: FeedMeta): { steps: boolean; document: { path: string; name: string; head?: string } | null } {
+  return { steps: !!meta.claudeId, document: meta.document ?? null };
 }
 
 /** A running run shows its steps by itself, until the owner closes them. */

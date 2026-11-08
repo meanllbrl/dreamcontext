@@ -204,7 +204,7 @@ export function feedCutoffDay(now: Date = new Date()): string {
 
 /** Absolute → brain-relative, so the card's path opens the same way a posted
  *  `files[]` path does. A path already relative is returned untouched. */
-function toBrainRelative(contextRoot: string, path: string): string {
+export function toBrainRelative(contextRoot: string, path: string): string {
   if (!isAbsolute(path)) return path;
   const rel = relPosix(contextRoot, path);
   return rel.startsWith('..') ? path : rel;

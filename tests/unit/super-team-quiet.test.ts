@@ -402,3 +402,18 @@ describe('banners', () => {
     expect(telegram).toHaveBeenCalled();
   });
 });
+
+describe('a member\'s Super page reads its routine runs, not the main Super\'s jobs (runsOnly)', () => {
+  const OWN = '2026-10-31T07:30:00.000Z';
+  it('a job the main Super gave is left out; a run the owner or the schedule started stays', () => {
+    superJob(contextRoot);
+    sys(contextRoot, 'started', OWN);
+    appendThreadEntry(contextRoot, slug, { runId: OWN, kind: 'agent', via: 'cli', text: 'Scheduled desk post' });
+    sys(contextRoot, 'ok', OWN);
+    const opts = { audience: 'owner', home } as Parameters<typeof listAgentHistory>[2];
+    const all = listAgentHistory(contextRoot, slug, opts).sessions.map((s) => s.key);
+    const runs = listAgentHistory(contextRoot, slug, { ...opts, runsOnly: true }).sessions.map((s) => s.key);
+    expect(all).toEqual([`${slug}::${OWN}`, `${slug}::${RUN}`]);
+    expect(runs).toEqual([`${slug}::${OWN}`]);
+  });
+});
