@@ -110,6 +110,30 @@ afterEach(async () => {
 const images = ['a', 'b', 'c'].map((n) => ({ id: `image-${n}`, kind: 'image', ref: `${n}.png`, shape: 'square', place: 'main', title: `Resim ${n.toUpperCase()}` }));
 const present = (ids: string[]) => noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'present', ids });
 
+describe('turn end sends no receipt', () => {
+  it('an answered turn sends no "Bitti · N iş" line', async () => {
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'selam'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ children: { c1: { sessionId: 'c1', brief: 'Paywall testi', row: 'working', startedAt: 1, adopted: false } } });
+    assistant(h, `<!-- re:${parseTelegramPrefix(sent[0]).ref} -->\nMerhaba`);
+    endTurn(h);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(tg.texts().some((t) => t.includes('Bitti ·'))).toBe(false);
+  });
+
+  it('a turn that ended with no text says one plain line', async () => {
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'selam'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('yazı göndermeden bitti'))).toBe(true));
+    expect(tg.texts().some((t) => t.includes('Bitti ·'))).toBe(false);
+  });
+});
+
 describe('stage presentations (L1, L2, N1)', () => {
   it('a present of 3 cards during a Telegram turn → one album of 3 in stage order with the layout caption, then Telefonda aç', async () => {
     const { h, sent } = chat();
