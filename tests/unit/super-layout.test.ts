@@ -586,7 +586,8 @@ describe('the owner\'s patch, applied locally (§0 C3)', () => {
     const s0 = { containers: [card('a', 'tall', { place: 'others' })], view: FLOAT };
     const s = applyLayoutPatch(s0, { cards: [{ id: 'a', place: 'float' }], view: { mode: 'half', card: 'a' } });
     expect(s.containers[0].place).toBe('float');
-    expect(s.view).toEqual({ mode: 'half', card: 'a' });
+    // His side by side, marked his as the server marks it (2026-11-08, agentShowsNew).
+    expect(s.view).toEqual({ mode: 'half', card: 'a', by: 'owner' });
   });
 
   it('patchEchoed knows when the server state carries the edit', () => {

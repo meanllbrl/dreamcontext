@@ -313,12 +313,12 @@ describe('the owner\'s layout is a locked patch (plan-r8 F3, C3)', () => {
       { id: 'k-1', kind: 'task', ref: 'a', shape: 'square', place: 'float', pos: { x: 0.5, y: 0.25 } },
     ]);
     // A view the owner sets is his (`by: owner`: a picture question never replaces it).
-    expect(s.view).toEqual({ mode: 'half', card: 'k-2', by: 'owner' });
+    expect(s.view).toEqual({ mode: 'half', card: 'k-2', by: 'owner', ownerAt: expect.any(Number) });
     const clear = res();
     await handleSuperLayout(req({ cards: [{ id: 'k-1', pos: null }] }), clear, {}, root);
     expect((await readSuperState(root)).containers[1].pos).toBeUndefined();
     // No `view` in the body keeps the current one.
-    expect((await readSuperState(root)).view).toEqual({ mode: 'half', card: 'k-2', by: 'owner' });
+    expect((await readSuperState(root)).view).toEqual({ mode: 'half', card: 'k-2', by: 'owner', ownerAt: expect.any(Number) });
   });
 
   it('an agent write landing after the window\'s snapshot survives the owner\'s drop (no full-list replace)', async () => {

@@ -10,12 +10,13 @@
  *   opened go to Others (a group of them as its group tile), unless the owner placed or sized
  *   them, or the view still shows them;
  * - the head question: its cards are presented (`view.ask` = the item), unless the owner set
- *   the view himself (`skipped: owner_layout`, never later).
+ *   the view himself and it is still his current intent (`ownerViewHeld`: within
+ *   OWNER_VIEW_HOLD_MS, not pinned to an ended job) (`skipped: owner_layout`, never later).
  *
  * Pure: never imports inbox.js (inbox imports this).
  */
 import {
-  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, leaveGroups, presentCards, sameCardSet,
+  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, OWNER_VIEW_HOLD_MS, leaveGroups, ownerViewHeld, presentCards, sameCardSet,
   type AskShow, type SuperQueueItem, type SuperState,
 } from './types.js';
 import type { ImageChain } from './image-group.js';
@@ -25,11 +26,19 @@ function isOpen(q: SuperQueueItem | undefined): boolean {
   return !!q && q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question');
 }
 
-/** The owner arranged the stage himself, for other cards than these. */
-function ownerArranged(s: SuperState, cards: readonly string[]): boolean {
+/** The owner arranged the stage himself, for other cards than these, and that is still his
+ *  current intent (types.ts ownerViewHeld: recent, not pinned to a job that is over). An older
+ *  arrangement of his never keeps a question's pictures off his screen. */
+function ownerArranged(s: SuperState, cards: readonly string[], now: number): boolean {
   const v = s.view;
   if (v.mode === 'present' && sameCardSet(v.cards ?? [], cards)) return false;
-  return v.by === 'owner' || (v.mode === 'present' && v.layoutBy === 'owner');
+  return ownerViewHeld(s, now, ownerHoldMs());
+}
+
+/** Verify only: a shorter hold (scripts/verify/super-sunum-gorunur.mjs). */
+function ownerHoldMs(): number {
+  const v = Number(process.env.DREAMCONTEXT_SUPER_OWNER_HOLD_MS);
+  return Number.isInteger(v) && v > 0 ? v : OWNER_VIEW_HOLD_MS;
 }
 
 /** What the view shows right now. */
@@ -69,7 +78,7 @@ function putBack(s: SuperState, e: AskShow): void {
 }
 
 /** Settle every picture question against the record (D2 a-c). Mutates `s`. */
-export function settleAskShows(s: SuperState, head: SuperQueueItem | null): void {
+export function settleAskShows(s: SuperState, head: SuperQueueItem | null, now: number = Date.now()): void {
   if (!s.askShows?.length) return;
   let entries = [...s.askShows];
   // a. Closed questions.
@@ -83,7 +92,7 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null): void
   if (e && !e.presented && !e.skipped) {
     const cards = e.cards.filter((id) => s.containers.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
     if (!cards.length) entries = entries.filter((x) => x !== e);
-    else if (ownerArranged(s, cards)) entries = entries.map((x) => (x === e ? { ...x, skipped: 'owner_layout' as const } : x));
+    else if (ownerArranged(s, cards, now)) entries = entries.map((x) => (x === e ? { ...x, skipped: 'owner_layout' as const } : x));
     else {
       presentCards(s, cards, undefined, e.item);
       entries = entries.map((x) => (x === e ? { ...x, cards, presented: true as const } : x));

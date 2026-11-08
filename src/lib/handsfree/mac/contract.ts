@@ -284,7 +284,7 @@ export interface RemoteContainer {
 
 export interface RemoteGroup { id: string; name: string; cards: string[]; place: 'float' | 'others'; pos?: { x: number; y: number } }
 
-export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar' }
+export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar'; auto?: true; by?: 'owner' }
 
 /** A child as the remote stage draws it: its row and its clocks, never its brief, branch,
  *  worktree, prompt, MCP servers or settings. */

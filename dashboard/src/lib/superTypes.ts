@@ -118,6 +118,8 @@ export interface SuperView {
   ask?: string;
   /** `half`/`present`: the owner set this view himself (server-stamped). */
   by?: 'owner';
+  /** When the owner last set this view or picked its layout (server-stamped, epoch ms). */
+  ownerAt?: number;
 }
 
 /**
@@ -219,7 +221,7 @@ export function resolveLayout(asked: unknown, cards: readonly LayoutCard[]): Pre
  * resolved, then cut to that layout's most. The owner's mark and the chat bar stay only while the
  * layout read is the layout kept (a closed card that changed it drops both). Null: no card left.
  */
-export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
+export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown; ownerAt?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
   const byId = new Map(containers.map((c) => [c.id, c] as const));
   const cards: string[] = [];
   for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
@@ -236,6 +238,8 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
     ...(kept && raw.chat === 'bar' ? { chat: 'bar' as const } : {}),
     ...(typeof raw.ask === 'string' && /^[a-z0-9-]{1,40}$/.test(raw.ask) ? { ask: raw.ask } : {}),
     ...(raw.by === 'owner' ? { by: 'owner' as const } : {}),
+    ...((raw.by === 'owner' || (kept && raw.layoutBy === 'owner')) && typeof raw.ownerAt === 'number' && Number.isFinite(raw.ownerAt)
+      ? { ownerAt: raw.ownerAt } : {}),
   };
 }
 
@@ -946,7 +950,9 @@ function readView(v: unknown, containers: readonly SuperContainer[]): SuperView 
   if (!isRecord(v) || !oneOf(VIEW_MODES, v.mode)) return { mode: 'float' };
   if (v.mode === 'half') {
     if (typeof v.card !== 'string' || !ids.has(v.card)) return { mode: 'float' };
-    return v.auto === true ? { mode: 'half', card: v.card, auto: true } : { mode: 'half', card: v.card };
+    if (v.auto === true) return { mode: 'half', card: v.card, auto: true };
+    // The owner's mark: a new presentation of the agent's is told apart from his own (SuperSurface).
+    return v.by === 'owner' ? { mode: 'half', card: v.card, by: 'owner' } : { mode: 'half', card: v.card };
   }
   if (v.mode === 'present') {
     // The server resolved it already; the same resolver keeps an older push (no layout) and

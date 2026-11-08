@@ -26,7 +26,7 @@ import { PRESENT_LAYOUTS, emptySuperState, type SuperState } from '../../src/lib
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
-import { applyLayoutPatch, patchEchoed, withPendingPatches, type LayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { agentShowsNew, applyLayoutPatch, patchEchoed, withPendingPatches, type LayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { SuperContainer, SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const CHILD = 'child-race';
@@ -171,5 +171,37 @@ describe('the server: the same fields, the same set rule', () => {
     await owner({ chat: { value: 'bar', cards: ids(1) } });
     await present(ids(1));
     expect(onDisk().view).toEqual({ mode: 'present', cards: ids(1), layout: 'spotlight', chat: 'bar' });
+  });
+});
+
+
+// Owner 2026-11-08: "a presentation stays open and another does not replace it, so I never saw
+// what you talked about". A new thing the agent presents closes what the window draws over the
+// stage (a full-screen card, a panel); his own view, the server's automatic page and the same
+// cards again do not.
+describe('agentShowsNew: the window brings a new presentation in front', () => {
+  it('a present or side by side of cards the view did not show', () => {
+    expect(agentShowsNew({ mode: 'half', card: 'chat-1', by: 'owner' }, { mode: 'present', cards: ['t0'], layout: 'spotlight' })).toBe(true);
+    expect(agentShowsNew({ mode: 'float' }, { mode: 'half', card: 't1' })).toBe(true);
+    expect(agentShowsNew({ mode: 'present', cards: ['t0', 't1'] }, { mode: 'present', cards: ['t0', 't1', 't2'] })).toBe(true);
+  });
+  it('not his own view, not the server\'s automatic page, not the same cards, not a float', () => {
+    expect(agentShowsNew({ mode: 'float' }, { mode: 'half', card: 't1', by: 'owner' })).toBe(false);
+    expect(agentShowsNew({ mode: 'float' }, { mode: 'half', card: 'web-1', auto: true })).toBe(false);
+    expect(agentShowsNew({ mode: 'present', cards: ['t0', 't1'] }, { mode: 'present', cards: ['t1', 't0'], layout: 'compare' })).toBe(false);
+    expect(agentShowsNew({ mode: 'present', cards: ['t0'] }, { mode: 'float' })).toBe(false);
+  });
+  it('his own gesture is marked his at once (the optimistic draw), so it never reads as the agent\'s', () => {
+    const half = applyLayoutPatch(staged({ mode: 'float' }), { view: { mode: 'half', card: 't3' } }).view;
+    expect(half).toEqual({ mode: 'half', card: 't3', by: 'owner' });
+    expect(agentShowsNew({ mode: 'float' }, half)).toBe(false);
+    const pres = applyLayoutPatch(staged({ mode: 'float' }), { view: { mode: 'present', cards: ['t0', 't1'] } }).view;
+    expect(pres.by).toBe('owner');
+    expect(agentShowsNew({ mode: 'float' }, pres)).toBe(false);
+  });
+  it('an automatic page waiting under a pending drag keeps its mark (never read as the agent\'s)', () => {
+    const v = applyLayoutPatch(staged({ mode: 'half', card: 'web-1', auto: true }), { cards: [{ id: 't0', pos: { x: 0.2, y: 0.2 } }] }).view;
+    expect(v).toMatchObject({ mode: 'half', card: 'web-1', auto: true });
+    expect(agentShowsNew({ mode: 'float' }, v)).toBe(false);
   });
 });

@@ -81,6 +81,17 @@ function fullRecord(): SuperState & Record<string, unknown> {
 }
 
 describe('superRemoteView is an allowlist (AC14)', () => {
+  // 2026-11-08 (end review): the remote stage reads who set the view, as the Mac does, so the
+  // server's automatic page or the owner's own view never closes his full screen there.
+  it('the view carries the automatic mark and the owner mark, never his time', () => {
+    const rec = fullRecord();
+    rec.view = { mode: 'half', card: rec.containers[0].id, auto: true } as SuperState['view'];
+    expect(superRemoteView(rec, 'acme', TUNNEL).view).toMatchObject({ mode: 'half', auto: true });
+    rec.view = { mode: 'half', card: rec.containers[0].id, by: 'owner', ownerAt: 123 } as SuperState['view'];
+    const v = superRemoteView(rec, 'acme', TUNNEL).view as Record<string, unknown>;
+    expect(v).toMatchObject({ mode: 'half', by: 'owner' });
+    expect(v.ownerAt).toBeUndefined();
+  });
   it('no marker of a filled record reaches the view, and a new record field does not either', () => {
     const rec = fullRecord();
     (rec.containers[0] as unknown as Record<string, unknown>).aNewCardField = 'NEW-FIELD-MARKER';

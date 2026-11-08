@@ -133,6 +133,10 @@ function remoteView(v: SuperState['view']): RemoteView {
     ...(v.layout ? { layout: v.layout } : {}),
     ...(v.layoutBy ? { layoutBy: v.layoutBy } : {}),
     ...(v.chat ? { chat: v.chat } : {}),
+    // Who set it: the remote stage, like the Mac's, tells a new presentation of the agent's from
+    // the server's automatic page and the owner's own view (SuperSurface agentShowsNew).
+    ...(v.mode === 'half' && v.auto ? { auto: true as const } : {}),
+    ...(v.by === 'owner' ? { by: 'owner' as const } : {}),
   };
 }
 
