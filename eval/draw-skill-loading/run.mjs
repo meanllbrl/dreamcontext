@@ -109,7 +109,11 @@ function runCase(c) {
   const bin = join(root, 'bin');
   for (const d of [join(home, '.dreamcontext'), proj, bin]) mkdirSync(d, { recursive: true });
   try {
-    writeFileSync(join(bin, 'dreamcontext'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --import ${JSON.stringify(LOADER)} ${JSON.stringify(join(SRC, 'src', 'cli', 'index.ts'))} "$@"\n`);
+    // `ask --tool` spawns the CLI again without the TS loader: a built tree runs from dist.
+    const built = join(SRC, 'dist', 'index.js');
+    writeFileSync(join(bin, 'dreamcontext'), existsSync(built)
+      ? `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(built)} "$@"\n`
+      : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --import ${JSON.stringify(LOADER)} ${JSON.stringify(join(SRC, 'src', 'cli', 'index.ts'))} "$@"\n`);
     chmodSync(join(bin, 'dreamcontext'), 0o755);
     symlinkSync(join(REAL_HOME, '.claude'), join(home, '.claude'));
     try { copyFileSync(join(REAL_HOME, '.claude.json'), join(home, '.claude.json')); } catch { /* none */ }
@@ -132,7 +136,8 @@ function runCase(c) {
 
     let stdout = '';
     if (TOOL !== 'claude') {
-      stdout = sh(join(bin, 'dreamcontext'), ['ask', '--tool', TOOL, '--write', '--json', c.prompt], { cwd: proj, env, allowFail: true, timeout: 20 * 60_000 }).stdout;
+      // Read-only: Codex --write needs the Mac-wide gate of a matching global install, Antigravity has no edits-only mode; reading still shows whether the skill is opened.
+      stdout = sh(join(bin, 'dreamcontext'), ['ask', '--tool', TOOL, '--json', c.prompt], { cwd: proj, env, allowFail: true, timeout: 20 * 60_000 }).stdout;
     } else {
       const brief = join(root, 'brief.md');
       const chatEnv = {};
