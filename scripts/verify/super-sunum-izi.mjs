@@ -11,13 +11,15 @@
  *
  *   npm run build && node scripts/verify/super-sunum-izi.mjs [outDir]
  *
+ * Never empty outDir before a run: this script swaps its own shots in once it has taken some.
+ *
  * The real dashboard server from dist (scratch HOME) and a stand-in `claude` that plays main Super
  * and runs the REAL `dreamcontext super open|stack|close` (so the stage record is real), streaming
  * each as a Bash tool call and recording it in its transcript as Claude Code does. No tokens.
  */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +33,24 @@ const HOME = join(SCRATCH, 'home');
 const VAULT = 'acme-storefront';
 const PROJ = join(SCRATCH, VAULT);
 const CLI = join(REPO, 'dist', 'index.js');
-const OUT = resolve(process.argv[2] || join(REPO, 'tmp', 'verify', 'super-sunum-izi'));
+const FINAL = resolve(process.argv[2] || join(REPO, 'tmp', 'verify', 'super-sunum-izi'));
+// Shots are taken into a staging folder beside FINAL and swapped in only once this run has
+// captured some: a run that is refused, crashes before its first shot or never starts leaves
+// the evidence already in FINAL untouched (a pre-run `rm` once emptied it for nothing).
+const OUT = `${FINAL}.staging-${process.pid}`;
+
+/** Replace FINAL's screenshots with this run's, if it took any; the staging folder always goes. */
+function swapShots() {
+  let fresh = [];
+  try { fresh = readdirSync(OUT).filter((f) => f.endsWith('.png')); } catch { /* never created */ }
+  if (fresh.length) {
+    mkdirSync(FINAL, { recursive: true });
+    for (const f of readdirSync(FINAL)) if (f.endsWith('.png')) rmSync(join(FINAL, f), { force: true });
+    for (const f of fresh) renameSync(join(OUT, f), join(FINAL, f));
+  }
+  rmSync(OUT, { recursive: true, force: true });
+  return fresh.length;
+}
 
 const env = () => cleanEnv(HOME);
 const { ok, summary } = reporter();
@@ -240,7 +259,8 @@ async function main() {
     await run(`http://127.0.0.1:${port}`, pw);
   } catch (e) { ok('ran to the end', false, e?.stack ?? e); }
   finally { srv?.kill(); rmSync(SCRATCH, { recursive: true, force: true }); }
-  console.log(`\nscreenshots: ${OUT}`);
+  const taken = swapShots();
+  console.log(taken ? `\nscreenshots (${taken}): ${FINAL}` : `\nno screenshots taken; ${FINAL} left as it was`);
   process.exit(summary() ? 0 : 1);
 }
 
