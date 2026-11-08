@@ -53,6 +53,31 @@ export function superAnswerText(
   return `${SUPER_ANSWER_PREFIX} item=${item.id}\nUser has answered your questions: ${parts.join(', ')}. You can now continue with the user's answers in mind.`;
 }
 
+/**
+ * "Unclear, ask again" (plan M3, P5): server MIRRORS of the window's `unclearMessage`
+ * (`dashboard/src/components/sleepy/chat/surveyAnswers.ts`) and `superUnclearText`
+ * (`superQuestions.ts`), pinned by `tests/unit/telegram-asks.test.ts`. `typed` = what the owner
+ * wrote per question (his notes), in question order.
+ */
+export function unclearMessage(typed: readonly string[]): string {
+  const words = typed.map((t) => t.trim()).filter(Boolean);
+  const said = words.length ? ` They wrote: "${words.join(' / ')}".` : '';
+  return 'The user did not understand this question and did not answer it.' + said
+    + ' Ask again with AskUserQuestion, written to be answered cold by someone who has not'
+    + ' read this conversation: a `title` naming the work in progress, the question in plain'
+    + ' words, a `description` saying why you need this now and what changes with the answer,'
+    + ' and options that each say what happens if picked. If the choice is visual, give each'
+    + ' option a `preview`.';
+}
+
+export function superUnclearText(item: Pick<SuperQueueItem, 'id'>, message: string): string {
+  const body = message.replace(
+    /Ask again with AskUserQuestion,/,
+    'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
+  );
+  return `${SUPER_ANSWER_PREFIX} item=${item.id} unclear\n${body}`;
+}
+
 // ─── A child's question or permission, through the window ───────────────────
 
 const MAX_ANSWER = 4000;

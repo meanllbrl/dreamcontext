@@ -162,6 +162,17 @@ function oneLine(text: string, max = 80): string {
 export interface FormatOptions {
   /** Ordinary code fences: kept as <pre> (chat answers) or one "Mac'te" line (routine forwards, W6). */
   codeFences?: 'pre' | 'mac';
+  /** Dream fences the hub draws itself (`blocks.ts`: dream-html pictures, dream-actions buttons,
+   *  insight / agent-thread / automation views) are left out of the text with `'hub'`; with
+   *  `'mac'` (the default, e.g. routine forwards) every dream fence is one "Mac'te" line. */
+  blocks?: 'mac' | 'hub';
+}
+
+/** The fences the hub sends as their own message in `'hub'` mode (M5). */
+export function hubDrawsFence(lang: string, body: string): boolean {
+  if (lang === 'dream-html' || lang === 'dream-actions') return true;
+  if (lang !== 'dream-view') return false;
+  try { return ['insight', 'agent-thread', 'automation'].includes(String((JSON.parse(body) as { type?: unknown }).type)); } catch { return false; }
 }
 
 function safeHref(raw: string): string | null {
@@ -210,6 +221,7 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
       i++; // closing fence
       const text = body.join('\n');
       if (DREAM_FENCES.has(lang)) {
+        if (opts.blocks === 'hub' && hubDrawsFence(lang, text)) continue;
         if (!isSilentView(lang, text)) out.push(`<i>Mac'te: ${escapeHtml(oneLine(fenceTitle(lang, text)))}</i>`);
       } else if (opts.codeFences === 'mac') {
         out.push(`<i>Mac'te: ${escapeHtml(lang ? `${lang} kodu` : 'kod')}</i>`);

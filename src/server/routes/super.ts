@@ -91,6 +91,8 @@ import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 import { ensureTidy, keepOwnerLooked, noteSeenClick, retireClockFrom, retireKeep, seenClickAt, touchCards, touchedAt, viewShows, type RetireLive, type TidyIo } from '../../lib/super/tidy.js';
 import { titleFromBrief } from '../../lib/super/remote-view.js';
+import { noteStageVerb, STAGE_VERBS, type StageVerbEvent } from '../../lib/super/stage-events.js';
+import { padMove } from '../../lib/super/pad-move.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -3183,6 +3185,7 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   }
   const body = expanded.body;
   const cue = CUED_VERBS.has(verb) ? captureOk(res) : null;
+  const staged = STAGE_VERBS.has(verb) ? (cue ?? captureOk(res)) : null;
   ensureTidy(caller.who.contextRoot, TIDY_IO);
   try {
     await SUPER_VERB_HANDLERS[verb](caller, body as Record<string, unknown>, res);
@@ -3193,6 +3196,10 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   // and may play a short sound. Pushed after the verb's own state push, on the super chat's socket.
   const result = cue?.();
   if (result !== undefined) pushFrame(caller.token, { subtype: SUPER_FRAME_CUE, verb, ids: cueIds(body as Record<string, unknown>, result) });
+  // The Super's own stage change, for the Telegram presenter (plan L1); never the owner's layout.
+  if (staged && staged() !== undefined) {
+    noteStageVerb({ vault: caller.who.vault, contextRoot: caller.who.contextRoot, sessionId: caller.who.sessionId, superId: caller.superId, verb: verb as StageVerbEvent['verb'], ids: cueIds(body as Record<string, unknown>, staged()) });
+  }
 }
 
 /** The verbs the window gives a visible cue (AC16). */
@@ -3555,19 +3562,9 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const id = typeof body.id === 'string' ? body.id : '';
     const section = body.section === 'now' || body.section === 'done' ? body.section : null;
     if (!PAD_ID_RE.test(id) || !section) { sendError(res, 400, 'invalid_body', 'give { id: <note id>, section: now | done }'); return; }
-    let found = false;
-    const state = await writeSuper(contextRoot, superId, (s) => {
-      s.pad = (s.pad ?? []).map((p) => {
-        if (p.id !== id) return p;
-        found = true;
-        const { why: _w, toldAt: _t, ...rest } = p;
-        return { ...rest, section, by: 'owner' as const, at: p.section === section ? p.at : Date.now() };
-      });
-      // Moved to the end, like every other move into a section.
-      const moved = s.pad.find((p) => p.id === id);
-      if (moved) s.pad = [...s.pad.filter((p) => p.id !== id), moved];
-    });
-    if (!found) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
+    // The same move Telegram's /gundem Bitti makes (pad-move.ts).
+    const { found, state } = await padMove(contextRoot, id, section, superId);
+    if (!found || !state) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   recap: async (_req, res, contextRoot, _body, superId) => {

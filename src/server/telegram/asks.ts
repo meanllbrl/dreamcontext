@@ -23,6 +23,11 @@ import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../..
 import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { richQuestionsOf, type RichAsks } from './rich-asks.js';
+
+/** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
+let rich: RichAsks | null = null;
+export function setRichAsks(r: RichAsks | null): void { rich = r; }
 
 type Obj = Record<string, unknown>;
 
@@ -33,6 +38,8 @@ const sentItems = new Set<string>();
 function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; labels: string[] } | null {
   const qs = spec?.questions ?? [];
   if (qs.length !== 1 || qs[0].multiSelect || !qs[0].options?.length || qs[0].options.length > 8) return null;
+  // Option previews are pictures (W5 M3): the rich path sends them before the buttons.
+  if (rich && qs[0].options.some((o) => typeof (o as { preview?: unknown }).preview === 'string' && (o as { preview: string }).preview.trim())) return null;
   return { question: qs[0].question, labels: qs[0].options.map((o) => o.label) };
 }
 
@@ -65,6 +72,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
         { queue: true, item: item.id, itemKind: 'ask', session: superSession, question: card.question, labels: card.labels, questions: spec.questions });
       return;
     }
+    if (rich && await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
     await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? spec.questions[0]?.question ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`);
     return;
   }
@@ -79,6 +87,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
         { queue: true, item: item.id, itemKind: 'question', question: card.question, labels: card.labels, questions: qs });
       return;
     }
+    if (rich && item.requestId && qs.length && await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: item.ownerText, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
     await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? pq?.text ?? 'Bir iş soru soruyor')}\n${LINES.waitingOnMac}`);
     return;
   }
