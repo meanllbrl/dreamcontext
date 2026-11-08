@@ -230,7 +230,10 @@ the work cannot fit one session:
   dreamcontext tasks insert "$S" technical_details -- "WAVE MAP: EXECUTION: lead | W1 (a.ts, b.ts: AC1, AC2) | W2 ... | also run: <tests>"
 
 A wave ends where a check can prove something, so the map has as FEW waves as the
-dependencies allow, and one wave is fine. Tests are written with the code they test, never in
+dependencies allow, and one wave is fine. A wave is a level of the dependency graph: each names
+the waves it waits for (\`W3 (after W1)\`), and a wave that uses only names a contract pins waits
+for the wave that pins them, never for the one that implements them. Waves of one level are
+independent: the Super runs them as separate sessions at once. Tests are written with the code they test, never in
 a test wave. "also run": test files that read a changed file by path (fixtures, manifests,
 docs checks), which a related-tests run cannot find.
 
@@ -423,6 +426,8 @@ Every wave costs a snapshot, the slowest lane and a check, in series, so the map
 waves as the dependencies allow:
 - Wave count = the longest dependency chain. A criterion goes in the EARLIEST wave whose
   inputs exist; each wave after W1 names what it consumes from an earlier one, or merges back.
+  A wave that uses only names a contract pins (a route, a type, a field) waits for the wave
+  that pins them, never for the one that implements them: a chain they do not force is a wrong map.
 - Criteria that share a file share a lane. A file clash is never a reason for a new wave.
 - Tests are written in the lane that writes their code, never a test wave.
 - Verify scripts and docs join the earliest wave that fits (against the task's stated

@@ -106,4 +106,6 @@ of scope. For an M or L goal, a dependency-map table \`task | files owned | depe
 | contract\` that opens with \`EXECUTION: lead\` (the default: one builder builds the waves in
 order) or \`EXECUTION: fan-out: <why>\` (only for work one session cannot hold). Same file =
 same lane; pin the exact signature of every cross-task contract; as few waves as the
-dependencies allow.`;
+dependencies allow. A wave is a level of the dependency graph: each names the waves it waits
+for (\`W3 (after W1)\`), a wave using only names a contract pins waits for the wave that pins
+them, and waves of one level run at the same time, then one merge step.`;

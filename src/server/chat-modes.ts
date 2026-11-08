@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.5', develop: '1.6', train: '0.1',
+  basic: '1.0', plan: '1.6', develop: '1.6', train: '0.1',
 };
 
 /**
@@ -140,8 +140,10 @@ You are planning, not building. Do not edit code in this session.
    \`EXECUTION: lead\` (one builder builds the waves in order: the default) or \`EXECUTION:
    fan-out: <why>\` (parallel builders, only for work one session cannot hold). Lanes are the
    truly disjoint file groups of a wave, no fixed count; list each lane's files.
-   **As few waves as the dependencies allow:** each wave after W1 names what it consumes from
-   an earlier one, or it merges back. Criteria sharing a file share a lane, never a new wave.
+   **As few waves as the dependencies allow; a wave is a level, not a step:** each wave after W1
+   names the waves it waits for (\`after W1\`), or it merges back; names a contract pins count
+   against the wave that pins them, and waves of one level run at once.
+   Criteria sharing a file share a lane, never a new wave.
    Tests ride in their code's lane; verify scripts and docs join the earliest wave that fits,
    never a closing wave of their own. Mark each contract or hot-path wave REVIEWED, and list
    tests that read changed files by path as "also run".

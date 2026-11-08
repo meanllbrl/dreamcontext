@@ -334,6 +334,14 @@ Safety rules the planner must apply when building the map:
   cost. A reviewer flags a line that does not fit the work as Major.
 - **Lanes are the truly disjoint file groups** of a wave, with no fixed count. The map
   exists only for M/L tiers — S is one serial implement, no map.
+- **A wave is a level of the dependency graph, not a step number.** Each wave names the
+  waves it waits for (`W3 (after W1)`); its level is one more than the highest of those. A
+  wave that uses only names a contract pins (a route, a type, a field) waits for the wave
+  that PINS them, never for the wave that implements them: two waves on W1's contract are
+  both `after W1`, one level, not a chain. Waves of one level run at the same time in
+  separate sessions, and one merge-and-test step follows each level. A chain the
+  dependencies do not force is a Major `map` finding (measured 2026-11-08: a five-wave
+  plan written as one chain was three levels).
 - **Waves are sub-tasks.** With two or more waves on a task that is not itself a sub-task,
   the task document (Phase 3) opens one sub-task per wave (`dreamcontext tasks create "Wave N:
   <what it delivers>" --parent <slug> --basis plan --quote "<the WN part>"`) holding that

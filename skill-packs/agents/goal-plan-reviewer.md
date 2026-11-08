@@ -93,6 +93,10 @@ without a packet still answers in the format below: the ledger parses it.
 
 Under the **critic** lens, you may also sanity-check the dependency-map table: are
 contracts pinned, are same-file tasks kept out of the same wave, are the waves acyclic?
+And is every chain forced? A wave is a level of the dependency graph: a wave placed after
+one it does not consume (it uses only names the contract pins, or nothing of it) holds
+everyone up, and is a Major `kind: map` finding naming the level it belongs on. The
+pragmatist lists the same as a proposal when it sees it.
 
 ## Your lens
 

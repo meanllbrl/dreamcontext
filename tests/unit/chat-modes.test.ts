@@ -388,7 +388,9 @@ describe('modeBriefing', () => {
   it('plan keeps the wave count to the dependency chain, and the critic checks it', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: false });
     expect(brief).toMatch(/As few waves as the dependencies allow/);
-    expect(brief).toMatch(/names what it consumes from\s+an earlier one, or it merges back/);
+    // 2026-11-08 (develop-inceleme-dongusu): a wave is a level; what it waits for is named.
+    expect(brief).toMatch(/names the waves it waits for \(`after W1`\), or it merges back/);
+    expect(brief).toMatch(/names a contract pins count\s+against the wave that pins them, and waves of one level run at once/);
     expect(brief).toMatch(/Criteria sharing a file share a lane, never a new wave/);
     expect(brief).toMatch(/never a closing wave of their own/);
     expect(brief).toMatch(/\*\*critic\*\* \(premise, correctness, scope, a wave that could merge,\s+what the owner sees on\s+first open\)/);

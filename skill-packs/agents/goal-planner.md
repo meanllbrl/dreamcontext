@@ -178,7 +178,13 @@ inventing a path around it.
 
 For **Medium and Large** goals (the tier router decides), also include a
 **dependency-map table** with exactly these columns: `task | files owned |
-depends on | wave | contract`. Waves are computed from file ownership.
+depends on | wave | contract`. Waves are computed from file ownership and the
+`depends on` column: **a wave is a level of the dependency graph, not a step number.**
+Each wave names the waves it waits for (`W3 (after W1)`); its level is one more than the
+highest of those. A wave that uses only names a contract pins (a route, a type, a field)
+waits for the wave that PINS them, never for the wave that implements them, so two waves
+on W1's contract are both `after W1`: one level, built at the same time in separate
+sessions, then one merge-and-test step. Never chain waves the dependencies do not force.
 
 **You decide how the work runs, so the map opens with one line:**
 - `EXECUTION: lead` (the default): ONE implementer builds the waves in order. Measured

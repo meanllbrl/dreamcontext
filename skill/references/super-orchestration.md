@@ -15,6 +15,10 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    feature area stays one unit unless there is a clean seam. One unit = one session's work.
 5. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
+   A plan's own waves too: read its map by level (a wave waits only for what it names, and names a
+   contract pins count against the wave that pins them), start every wave of a level at once, then
+   one merge unit per level (`super merge`, sonnet medium). A busy machine changes nothing: heavy
+   steps queue themselves.
 6. **Per unit** pick mode, model, effort, worktree (§3, §4). Name `--model` and `--effort` on every
    `delegate`; an omitted effort is set by the server (basic and develop `medium`, plan `high`), never
    inherited from the owner's own setting. `xhigh` and `max` only when you name them (§3).
