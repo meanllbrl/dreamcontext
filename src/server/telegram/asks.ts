@@ -74,7 +74,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     }
     if (rich && await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
     if (spec.questions.length) {
-      for (const html of formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html);
+      for (const html of formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html).catch(() => {});
       return;
     }
     await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`);
@@ -92,7 +92,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     }
     if (rich && item.requestId && qs.length && await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title ?? item.ownerText, lead: pq?.title ? item.ownerText : undefined, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
     if (qs.length) {
-      for (const html of formatAskCardMessages(qs, { title: pq?.title, lead: item.ownerText, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html);
+      for (const html of formatAskCardMessages(qs, { title: pq?.title, lead: item.ownerText, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html).catch(() => {});
       return;
     }
     await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? pq?.text ?? 'Bir iş soru soruyor')}\n${LINES.waitingOnMac}`);
