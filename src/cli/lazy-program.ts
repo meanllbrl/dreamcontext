@@ -82,6 +82,7 @@ const LOADERS = new Map<string, Loader>([
   ['embed', async () => (await import('./commands/embed.js')).registerEmbedCommand],
   ['taxonomy', async () => (await import('./commands/taxonomy.js')).registerTaxonomyCommand],
   ['vaults', async () => (await import('./commands/vaults.js')).registerVaultsCommand],
+  ['tmp', async () => (await import('./commands/tmp.js')).registerTmpCommand],
   ['connect', connections],
   ['disconnect', connections],
   ['connections', connections],

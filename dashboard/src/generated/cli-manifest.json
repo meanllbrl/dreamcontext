@@ -4876,6 +4876,17 @@
       ]
     },
     {
+      "path": "tmp",
+      "desc": "The project's _dream_context/tmp/ scratch folder",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "tmp clean",
+      "desc": "Remove tmp files older than 14 days that nothing in the brain links (also runs daily on its own)",
+      "args": []
+    },
+    {
       "path": "transcript",
       "desc": "Process session transcripts",
       "args": [],
