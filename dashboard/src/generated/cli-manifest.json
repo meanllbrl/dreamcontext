@@ -4516,7 +4516,7 @@
     },
     {
       "path": "tasks ready",
-      "desc": "Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan",
+      "desc": "Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan, and for a UX/UI plan the owner-approved outcome (+ approved drawing)",
       "args": [
         "<name>"
       ]

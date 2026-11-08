@@ -10,6 +10,8 @@ import {
   renderHandoffEntry,
   developHandoffGaps,
   developHandoffNotes,
+  outcomeScope,
+  outcomeApprovalGaps,
   HANDOFF_FIELDS,
 } from '../../src/lib/handoff-readiness.js';
 
@@ -76,6 +78,92 @@ describe('developHandoffGaps', () => {
     expect(developHandoffGaps({ ...READY, technical_details: 'Update the relevant files.' })[0].problem).toMatch(/names no file/);
     expect(developHandoffGaps({ ...READY, technical_details: '<!-- key files go here -->' })[0].problem).toMatch(/empty/);
     expect(developHandoffGaps({ ...READY, acceptance_criteria: '<!-- - [ ] Validation method: x -->' }).length).toBe(2);
+  });
+});
+
+// Owner 2026-11-08: a UX/UI plan reaches Develop only with the owner's recorded yes on the
+// outcome (and, for a screen, on a static drawing). Every test below fails on the old gate,
+// which read only criteria, the validation method and a file path.
+describe("outcome approval — a UX/UI plan needs the owner's recorded yes", () => {
+  const AC = '- [ ] The panel lists runs\n- [ ] Validation method: unit tests';
+  const OUTCOME = 'Owner-approved outcome: Runs page shows a filter chip row; pressing a chip narrows the list (2026-11-08)';
+  const yes = () => true;
+
+  it('a plan that changes no UX/UI is not blocked, declared or not', () => {
+    expect(developHandoffGaps({ acceptance_criteria: AC, technical_details: '- src/lib/runs.ts: add filter()' })).toEqual([]);
+    expect(developHandoffGaps({ acceptance_criteria: AC, technical_details: '- src/lib/runs.ts\nUX/UI change: none' })).toEqual([]);
+  });
+
+  it('a plan editing a UI file is a UI plan even undeclared, and names both missing records', () => {
+    const tech = '- dashboard/src/pages/Runs.tsx: add the chip row';
+    expect(outcomeScope(tech)).toMatchObject({ scope: 'ui', declared: false, uiFile: 'dashboard/src/pages/Runs.tsx' });
+    const gaps = developHandoffGaps({ acceptance_criteria: AC, technical_details: tech });
+    expect(gaps).toHaveLength(2);
+    expect(gaps[0].problem).toMatch(/changes a UI file \(dashboard\/src\/pages\/Runs\.tsx\).*no owner-approved outcome.*Owner-approved outcome:.*UX\/UI change: none/);
+    expect(gaps[1].problem).toMatch(/no approved drawing.*static HTML.*draft, not the final version.*Approved drawing:/);
+  });
+
+  it('"UX/UI change: none" is an explicit answer that overrides a UI path', () => {
+    expect(developHandoffGaps({ acceptance_criteria: AC, technical_details: '- dashboard/src/x.tsx: rename a prop\nUX/UI change: none' })).toEqual([]);
+  });
+
+  it('a declared UX plan needs the outcome only, and a one-word outcome is not a record', () => {
+    const tech = '- src/cli/commands/runs.ts\nUX/UI change: ux';
+    expect(outcomeApprovalGaps({ technical_details: tech }).map((g) => g.problem)).toEqual([expect.stringMatching(/declares "UX\/UI change: ux".*no owner-approved outcome/)]);
+    expect(outcomeApprovalGaps({ technical_details: `${tech}\nOwner-approved outcome: yes` })).toHaveLength(1);
+    expect(outcomeApprovalGaps({ technical_details: `${tech}\n${OUTCOME}` })).toEqual([]);
+  });
+
+  it('a UI plan with the outcome still needs the drawing, and the drawing must exist', () => {
+    const tech = `- src/lib/runs.ts\nUX/UI change: ui\n${OUTCOME}`;
+    expect(outcomeApprovalGaps({ technical_details: tech }).map((g) => g.problem)).toEqual([expect.stringMatching(/no approved drawing/)]);
+    const withDrawing = `${tech}\n- **Approved drawing:** \`_dream_context/state/assets/runs/draft.html\``;
+    expect(outcomeApprovalGaps({ technical_details: withDrawing }, yes)).toEqual([]);
+    expect(outcomeApprovalGaps({ technical_details: withDrawing }, () => false).map((g) => g.problem))
+      .toEqual([expect.stringMatching(/"Approved drawing: _dream_context\/state\/assets\/runs\/draft\.html" is not a file inside the project/)]);
+  });
+
+  it('the drawing path itself does not make a plan a UI plan', () => {
+    const tech = `- src/cli/commands/runs.ts\nUX/UI change: ux\n${OUTCOME}\nApproved drawing: docs/flow.html`;
+    expect(outcomeScope(tech).scope).toBe('ux');
+    expect(outcomeScope('- src/a.ts\nApproved drawing: docs/flow.html').scope).toBe('none');
+  });
+
+  // End review (edge-cases Major 1): the value was read by its first word only.
+  it('reads the declared value whole: both scopes are UI, the pasted template fails closed', () => {
+    for (const v of ['ux/ui', 'ux + ui', 'ux, ui', 'UX and UI', 'none|ux|ui', '`ui`']) {
+      expect(outcomeScope(`- dashboard/src/Runs.tsx\nUX/UI change: ${v}`), v).toMatchObject({ scope: 'ui', declared: true });
+    }
+    // Re-check Major: punctuation stuck to the word must not erase a UX declaration.
+    for (const v of ['ux.', 'ux-only', '(ux)', 'ux;', '**ux**']) {
+      expect(outcomeScope(`- src/cli/commands/tasks.ts\nUX/UI change: ${v}`), v).toMatchObject({ scope: 'ux', declared: true });
+    }
+    expect(outcomeScope('- src/lib/a.ts\nUX/UI change: ui-only').scope).toBe('ui');
+    expect(outcomeScope('- src/lib/a.ts\nUX/UI change: n/a').declared).toBe(false);
+    expect(outcomeScope('UX/UI change: none (backend only)').scope).toBe('none');
+    expect(outcomeScope('- src/a.ts\nUX/UI change: none, the UI is unchanged').scope).toBe('none');
+    // A value naming no scope word is no declaration: the plan's paths decide.
+    expect(outcomeScope('- dashboard/src/Runs.tsx\nUX/UI change: maybe')).toMatchObject({ scope: 'ui', declared: false });
+    expect(developHandoffGaps({ acceptance_criteria: AC, technical_details: `- dashboard/src/Runs.tsx\nUX/UI change: ux/ui\n${OUTCOME}` }).map((g) => g.problem))
+      .toEqual([expect.stringMatching(/no approved drawing/)]);
+  });
+
+  it('a very long line cannot stall the scan (the path regexes see at most 2000 chars a line)', () => {
+    const t0 = Date.now();
+    developHandoffGaps({ acceptance_criteria: AC, technical_details: `src/a.ts\n${'a'.repeat(200_000)}` });
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it('reads a bold label either way and a backticked value', () => {
+    expect(outcomeScope('- **UX/UI change:** `ux`').scope).toBe('ux');
+    expect(outcomeScope('- **UX/UI change**: none\n- dashboard/a.tsx').scope).toBe('none');
+    const seen: string[] = [];
+    outcomeApprovalGaps({ technical_details: `UX/UI change: ui\n${OUTCOME}\n- **Approved drawing:** \`docs/d.html\`` }, (p) => { seen.push(p); return true; });
+    expect(seen).toEqual(['docs/d.html']);
+  });
+
+  it('the newest declaration wins (a plan rewritten from ui to ux)', () => {
+    expect(outcomeScope('UX/UI change: ui\n- src/a.ts\nUX/UI change: ux').scope).toBe('ux');
   });
 });
 

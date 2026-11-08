@@ -178,3 +178,28 @@ describe('the card of a bare-label option', () => {
     expect(options).toEqual([{ label: 'Red' }, { label: 'Blue', description: 'the sea' }]);
   });
 });
+
+// Plan 1.7 (task plan-modu-once-anlar-…): the owner approves a UI drawing on a question card.
+// A provider that sends an option `preview` must reach the card with it; the bridge used to
+// drop it, so the owner was asked to approve a screen he never saw.
+describe('a question option preview on the wire', () => {
+  const withPreview = {
+    type: 'turn_item.updated',
+    turnItem: {
+      id: 'q-prev', threadId: 'pt-1', nativeItemRef: null, title: null, type: 'user_input_request', status: 'waiting', requestId: 'r-prev',
+      questions: [{ id: '0', header: 'Draft', question: 'Approve this draft screen?', options: [
+        { label: 'Approve the draft', description: 'Go on with this layout', preview: '<div class="dc-card">draft, not the final version</div>' },
+        { label: 'Change it', description: 'Change it' },
+      ] }],
+    },
+  };
+
+  it('carries a preview through and adds none where the provider sent none', () => {
+    const w = new ToWire({ tool: 'claude', model: 'm', cwd: '/p', permissionMode: 'auto' });
+    ev(w, running);
+    const card = ev(w, withPreview).find((f) => f.type === 'control_request') as any;
+    const options = card.request.input.questions[0].options;
+    expect(options[0]).toEqual({ label: 'Approve the draft', description: 'Go on with this layout', preview: '<div class="dc-card">draft, not the final version</div>' });
+    expect(options[1]).toEqual({ label: 'Change it' });
+  });
+});

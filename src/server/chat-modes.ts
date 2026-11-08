@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.6', develop: '1.7', train: '0.1',
+  basic: '1.0', plan: '1.7', develop: '1.7', train: '0.1',
 };
 
 /**
@@ -115,6 +115,15 @@ export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[num
  * open Critical, an unaccepted Major or a plan not done. "No round cap" and "the same finding
  * twice" are retired.
  *
+ * 2026-11-08 (owner, task plan-modu-once-anlar-…, Plan 1.7): a request is not a text to execute.
+ * Step 1 first asks what the person really wants (problem, scenario, what is different when
+ * done) and may push back; step 3 agrees the OUTCOME before any build: a UX flow in the owner's
+ * language, and for a screen a static "draft, not the final version" HTML drawing, both
+ * approved by him. Briefing text is forgotten, so the yes is RECORDED (UX/UI change,
+ * Owner-approved outcome, Approved drawing lines) and `tasks ready` refuses a UX/UI plan
+ * without it (lib/handoff-readiness.ts outcomeApprovalGaps). Codex and Antigravity Plan chats
+ * get this same text: the bridge spawn carries the one briefing file (agent-chat.ts briefingArg).
+ *
  * The dispatch depends on `SUBAGENT_DISPATCH_AUTHORIZATION` (cli/commands/hook.ts) naming
  * this mode: Claude Code appends "Do not call the AgentTool unless the user requested it" to
  * every Opus 5 system prompt, and that outranks a system-prompt append like this one. Without
@@ -124,9 +133,11 @@ const PLAN_BRIEFING = `# Mode: Plan
 
 You are planning, not building. Do not edit code in this session.
 
-1. **Ask first.** Critical questions a few at a time, then WAIT — including **how this should
-   be validated** (tests, or a manual checklist) and the **premise question** (the assumption
-   that, if wrong, changes the plan). Write an **Environment** block: repo, base branch + SHA,
+1. **Understand first.** A request is not a text to execute word for word: ask 2-4 questions
+   (the real problem, the usage scenario, what is different for the user when done), push back
+   on a better way or a smaller cut, then WAIT — including **how this should be validated**
+   (tests, or a manual checklist) and the **premise question** (the assumption that, if
+   wrong, changes the plan). Write an **Environment** block: repo, base branch + SHA,
    sync mode, tools (Claude Code, Codex, Antigravity). Independent capabilities become
    separate plans before drafting, split along the dependency arrow (the base first).
 2. **Drive the open decisions.** Name the options, recommend one, say why. Don't hand back a
@@ -151,6 +162,13 @@ You are planning, not building. Do not edit code in this session.
    seconds of opening the result? Each answer is a criterion (a web port: responsive at 390
    and 1440 px, a PWA installs). A goal the owner opens ends on an OBSERVED criterion: opened
    at a phone and a desktop width, no console errors, screenshots. UI: load \`design\` first.
+   **Outcome before build.** UX change: a **UX flow** in the owner's words (on this screen,
+   pressing this, this happens; behind it the system does this), a \`dc-graph\` past 4 steps.
+   UI change: static HTML, no behaviour, the real product's look, light theme, "draft, not the
+   final version", as an AskUserQuestion \`preview\` (a tool with none: a \`dream-html\` block,
+   then ask). No yes from the owner himself, no progress. After his yes, in
+   technical details: \`UX/UI change: none|ux|ui\`, \`Owner-approved outcome: <what>\`, UI:
+   \`Approved drawing: <project path of the html>\`.
 4. **Then have it attacked. Every plan, no exceptions — never review your own.** Each round run
    \`dreamcontext plan packet <plan> --lens <lens>\` per lens, then dispatch
    TWO \`goal-plan-reviewer\` sub-agents (model opus, effort high) IN PARALLEL in ONE message,
@@ -188,7 +206,7 @@ dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of s
 
 7. **Prove it complete.** Develop inherits ONLY this task file: run
    \`dreamcontext tasks ready <slug>\` and fill every gap it names (plan gaps: \`plan status\`)
-   until it passes. The button refuses until then.
+   until it passes (it refuses a UX/UI plan with no recorded owner yes). The button refuses until then.
 
 Then offer the handoff. Implementation runs in a NEW session in Develop mode, carrying the
 slug you just created:
