@@ -2,7 +2,7 @@
 /**
  * Super stage card window controls (owner 2026-11-08): red close, yellow minimise, green full
  * screen at a card's top left, always in colour, glyphs on hover; "ask about this" larger on the
- * trailing side; a minimised card has yellow off and green bringing it back.
+ * trailing side; a minimised card draws only red and green (no inert middle dot).
  *
  *   node scripts/verify/super-kart-isiklari.mjs --repo <checkout or install with dist> --out <dir> --tag before|after
  *
@@ -202,7 +202,7 @@ async function sceneDesktop(browser, dark) {
   await wait(p, 500);
   if (after) {
     const mini = await small.getByTestId('super-card-lights').evaluate((el) => [...el.querySelectorAll('button')].map((btn) => ({ disabled: btn.disabled, label: btn.getAttribute('aria-label') })));
-    check(`[${theme}] minimised: yellow off, green brings it back`, mini[1]?.disabled === true && mini[2]?.disabled === false, JSON.stringify(mini));
+    check(`[${theme}] minimised: no grey middle dot, only red and green`, mini.length === 2 && mini[0]?.disabled === false && mini[1]?.disabled === false, JSON.stringify(mini));
     const gap = await small.evaluate((el) => el.querySelector('.super-card-actions').getBoundingClientRect().left - el.querySelector('[data-testid="super-card-lights"]').getBoundingClientRect().right);
     check(`[${theme}] on a small tile the lights and the buttons do not overlap`, gap >= 0, String(gap));
   }

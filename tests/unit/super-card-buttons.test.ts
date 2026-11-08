@@ -46,7 +46,7 @@ describe('the close menu offers Minimise where the card can be minimised', () =>
 
 describe('the Mac window controls: red close, yellow minimise, green full screen (owner 2026-11-08)', () => {
   it('every card draws the three lights in that order, top left, with no word sliding out', () => {
-    expect(CONTAINER).toContain("{one('close', close)}\n      {one('minimize', minimize)}\n      {one('zoom', zoom)}");
+    expect(CONTAINER).toContain("{one('close', close)}\n      {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}\n      {minimize.onClick && one('minimize', minimize)}\n      {one('zoom', zoom)}");
     expect(CONTAINER).not.toContain('super-icon-btn-caption');
     expect(CSS).not.toContain('super-icon-btn--caption');
     expect(CSS).toMatch(/\.super-card-lights \{[^}]*position: absolute;[^}]*top: 6px;[^}]*left: 8px;/);
@@ -56,7 +56,7 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
     expect(CONTAINER).toContain("? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }");
     expect(CONTAINER).toContain(": { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}");
   });
-  it('a control that does not apply is drawn off and disabled, never hidden', () => {
+  it('minimise is not drawn where it has no action; another control that does not apply stays off and disabled', () => {
     expect(CONTAINER).toContain('disabled={off}');
     expect(CSS).toMatch(/\.super-light:disabled \.super-light-dot \{ background: var\(--color-bg-tertiary\);/);
   });
