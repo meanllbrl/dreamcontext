@@ -170,6 +170,9 @@ not from your last message. Every card must stand alone:
 - \`title\` — always: the work and the decision point, "Invoice export → date format".
 - \`question\` — the decision in plain words; no names only this conversation knows.
   \`description\` — why you need it now and what changes with the answer. Clear, not clever.
+- **What it points at is ON the card**: a problem to judge gets one concrete case (who,
+  which numbers, the steps). Never "the example", "above": he never saw your chat or
+  thinking. Such a card comes back to you.
 - Option \`label\` says what happens if picked; \`description\` its concrete cost.
 - **Things to LOOK at** (screens, layouts, styles, clips): give each option a \`preview\` —
   drawn as an A/B/C board with a fullscreen door. \`dc-\` classes work inside; a project file

@@ -147,6 +147,15 @@ function isMcpStatusAsk(obj: object): obj is Record<string, unknown> {
   return frame.type === 'control_request' && !!frame.request && typeof frame.request === 'object' && (frame.request as { subtype?: unknown }).subtype === 'mcp_status';
 }
 
+/**
+ * Where the words a turned-down question owes the tool go (`BridgeSession.answer`): an instance
+ * tool (ACP: Antigravity) takes no message into a running turn, so they wait for its end, with
+ * no line to the owner (they are not his); otherwise they go now (Codex steers them in).
+ */
+export function owedWordsRoute(tool: string, busy: boolean): 'hold' | 'send' {
+  return isInstanceTool(tool) && busy ? 'hold' : 'send';
+}
+
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
   const home = deps.home ?? homedir();
   // Codex by absolute path, with a PATH its launcher's `env node` resolves on: what the readiness
@@ -559,11 +568,14 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       const r = frame.response as { request_id?: unknown; response?: Record<string, unknown>; subtype?: string } | undefined;
       if (typeof r?.request_id !== 'string') return;
       const body = r.response ?? {};
-      await session.answer(r.request_id, {
+      const owed = await session.answer(r.request_id, {
         behavior: r.subtype === 'error' ? 'deny' : String(body.behavior ?? 'deny'),
         updatedInput: body.updatedInput,
         ...(typeof body.message === 'string' ? { message: body.message } : {}),
       });
+      if (!owed) return;
+      if (owedWordsRoute(args.tool, session.busy) === 'hold') heldMessages.push(owed);
+      else await session.send(owed);
       return;
     }
     if (frame.type === 'control_request') {

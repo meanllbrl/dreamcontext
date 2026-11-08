@@ -943,17 +943,23 @@ export class BridgeSession {
     this.clearFirstWord();
   }
 
-  /** The owner answered an approval or a question card. */
-  async answer(requestId: string, response: { behavior?: string; updatedInput?: unknown; message?: string }): Promise<void> {
+  /**
+   * The owner answered an approval or a question card. Returns the words a synchronous question
+   * turned down WITH a reason still owes the tool ("I did not pick an option. …": "Unclear? Ask
+   * again", or a card the server handed back for pointing off itself, card-standalone.ts): a
+   * question's answer has no field for words, and only the caller knows whether this tool can
+   * take a message into its running turn (ACP cannot: stdio holds it to the turn's end).
+   */
+  async answer(requestId: string, response: { behavior?: string; updatedInput?: unknown; message?: string }): Promise<string | null> {
     const session = this.session;
-    if (!session) return;
+    if (!session) return null;
     // Codex's async question: the tool already ended its turn and reads the answer as the next
     // message, so the pick goes as one (the held turn goes on in that run).
     if (this.wire.isAsyncAsk(requestId)) {
       const settled = this.wire.settleAsyncAsk(requestId, response);
       for (const frame of settled.frames) this.opts.emit(frame);
       if (settled.send) await this.send(settled.send);
-      return;
+      return null;
     }
     const t3Id = this.wire.t3RequestId(requestId);
     const questions = this.wire.questionsByRequest.has(t3Id);
@@ -963,6 +969,9 @@ export class BridgeSession {
       ? { requestId: t3Id as never, answers: allow ? this.wire.answersFor(requestId, response.updatedInput) : {} }
       : { requestId: t3Id as never, decision: (allow ? 'accept' : 'decline') as ProviderApprovalDecision, ...(response.message ? { feedback: response.message } : {}) };
     await this.run(session.respondToRuntimeRequest(input));
+    // A plain dismissal (the server's default "Denied") owes no words.
+    const said = response.message?.trim();
+    return questions && !allow && said && said !== 'Denied' ? `I did not pick an option. ${said}` : null;
   }
 
   /**

@@ -52,7 +52,14 @@ export function isMcpControlLine(obj: Record<string, unknown> | null): boolean {
  */
 export function routeChildLine(
   line: string,
-  sinks: { send: (line: string) => void; mirror: (line: string) => void; control: (obj: Record<string, unknown>) => void },
+  sinks: {
+    send: (line: string) => void;
+    mirror: (line: string) => void;
+    control: (obj: Record<string, unknown>) => void;
+    /** Answers a frame itself (true): it is then relayed nowhere, like an MCP reply. A question
+     *  card that points off itself goes back to the agent here (`card-standalone.ts`). */
+    intercept?: (obj: Record<string, unknown>) => boolean;
+  },
 ): Record<string, unknown> | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -62,6 +69,7 @@ export function routeChildLine(
     sinks.control(obj);
     return null;
   }
+  if (obj && sinks.intercept?.(obj)) return null;
   sinks.send(line);
   sinks.mirror(line);
   return obj;

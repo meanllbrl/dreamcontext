@@ -54,6 +54,7 @@ import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
 import { askWarning } from '../../lib/super/ask-summary.js';
+import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, vaultLiveChildren, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
@@ -2060,6 +2061,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const child = item.sessionId;
     const pq = pendingRequest(getChat(child), item.requestId);
     const images = pq && !pq.isPermission ? pq.images ?? [] : [];
+    // Your words caption the child's own card: what they point at must be on one or the other.
+    const childCard = pq && !pq.isPermission ? pq.questions?.[0] : undefined;
+    const offCard = offCardReferences(
+      { questions: [{
+        question: text,
+        ...(childCard ? { description: childCard.question, options: childCard.options } : {}),
+      }] },
+      { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true },
+    );
+    if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
     const prep = await prepareAskShow(c, b, res, images, c.state.children[child]?.worktree ?? dirname(c.who.contextRoot), child);
     if (!prep) return;
     // Asked inside an event turn: that turn renders in full for the owner (D8).
@@ -2235,6 +2246,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
       spec = askSpecFromLegacy(raw, legacy);
     }
+    // A card read cold carries what it points at (owner 2026-11-08: "örnek yok ama örnekteki
+    // gibi diyor"); only an explicit --show of the cards it means stands in for that.
+    const offCard = offCardReferences(spec, { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true });
+    if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
     const { ownerText: raw, options } = askSummary(spec);
     if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
     // Its pictures (task a-picture-question…): `--show`, the option previews, else the last set.

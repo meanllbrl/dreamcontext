@@ -402,9 +402,12 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * could not answer). Written to a file, the same script asks nothing. Actual 15,277.
    * 2026-11-07: -> 15400, +102 for the `app-install` button (app-araclari §5: an app the project
    * has and this Mac does not, shared with this account). Actual 15,379.
+   * 2026-11-08: -> 15620, +217 for the Asking line "What it points at is ON the card" (owner:
+   * a card said "örnekteki gibi" and carried no example; the server now hands such a card back,
+   * card-standalone.ts, and this line is the half the agent reads first). Actual 15,596.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15620);
   });
 
   /**
@@ -415,7 +418,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15379)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15596)).toBeLessThanOrEqual(20);
   });
 
   /**

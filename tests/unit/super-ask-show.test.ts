@@ -537,6 +537,17 @@ describe('super ask presents its pictures and answers show', () => {
     expect(r.json.show).toMatchObject({ state: 'presented', cut: 1 });
     expect((r.json.show as Show).cards).toHaveLength(2);
   });
+  it('an ask pointing off its card ("örnekteki gibi") is refused off_card: no item, no card, no mirror', async () => {
+    makeVault();
+    const r = await verb('ask', { ask: { title: 'Plan → paket', questions: [{ question: 'Örnekteki gibi hoca daha yüksek ücret alabiliyor. Nasıl kapatalım?', options: [{ label: 'Kapat' }, { label: 'Bırak' }] }] } });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toBe('off_card');
+    expect(String(r.json.message)).toContain('örnekteki gibi');
+    const s = await readSuperState(root);
+    expect(s.queue.filter((q) => q.kind === 'ask')).toHaveLength(0);
+    expect(s.containers).toHaveLength(0);
+    expect(mirror.frames).toHaveLength(0);
+  });
   it('a second ask refused by ask_open opens no card and mirrors nothing', async () => {
     makeVault({ queue: [ask('q-open', { sessionId: SUPER })] });
     const r = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
