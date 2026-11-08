@@ -94,10 +94,6 @@ export interface HubMember {
   onMessage(hub: TelegramHub, key: BindingKey, update: Obj): Promise<UpdateDisposition>;
 }
 
-export interface HubManager {
-  onUpdate(hub: TelegramHub, update: Obj): Promise<UpdateDisposition>;
-  onPairingConfirmed?(hub: TelegramHub, binding: BotBinding): void;
-}
 
 export interface HubDeps {
   home?: string;
@@ -116,7 +112,6 @@ export interface HubDeps {
   transcribeVoice?: (oggPath: string) => Promise<string>;
   handsfree?: HubHandsfree;
   member?: HubMember;
-  manager?: HubManager;
   /** Mac banner (tamper, conflict, unkeyed unbind). */
   banner?: (title: string, body: string) => void;
   /** Binding a bot makes sure the launchd dispatcher exists (lane B). */
@@ -210,10 +205,15 @@ export class TelegramHub implements TelegramHubApi {
       if (!row.read.ok) continue;
       this.activate(row.scope, row.target, row.read.binding);
     }
+    this.manager?.start();
   }
+
+  /** The device-level manager (manager.ts `wireManager`). */
+  manager: import('./manager.js').TelegramManager | null = null;
 
   async stop(): Promise<void> {
     for (const u of this.unsubs.splice(0)) u();
+    this.manager?.stop();
     for (const ab of this.active.values()) ab.poller?.stop();
     for (const p of this.pairings.values()) p.poller.stop();
     for (const t of this.turns.values()) if (t.typing) clearInterval(t.typing);
@@ -374,8 +374,12 @@ export class TelegramHub implements TelegramHubApi {
     const user = out.pairing.pendingUser!;
     const fields = { token: live.token, botId: live.botId, botUsername: live.botUsername, chatId: user.chatId, userId: user.userId, boundAt: new Date(this.now()).toISOString() };
     if (live.scope === 'manager') {
-      const b = this.deps.manager ? await this.adoptManager(fields) : null;
-      if (b) this.deps.manager?.onPairingConfirmed?.(this, b);
+      // The paired user id becomes the OWNER ID (X2); a new token for the same bot re-keys (AA3).
+      // The pairing loop lets go of the token's lock before the manager's own loop takes it.
+      this.waitTokens = this.waitTokens.filter((p) => p !== live.done);
+      await live.done;
+      const b = await this.adoptManager(fields);
+      await this.manager?.onPairingConfirmed(b);
       return 'ok';
     }
     // A confirmed bind that replaces an active one: the old bot says its last word first (C3).
@@ -394,7 +398,7 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** The manager's adoption of its own pairing: `manager.ts` writes it (kept out of the Super path). */
-  private async adoptManager(fields: Omit<BotBinding, 'v' | 'bindingHash'>): Promise<BotBinding | null> {
+  private async adoptManager(fields: Omit<BotBinding, 'v' | 'bindingHash'>): Promise<BotBinding> {
     const { writeManagerBinding } = await import('../../lib/telegram/config.js');
     return writeManagerBinding(fields, this.home);
   }
@@ -427,6 +431,8 @@ export class TelegramHub implements TelegramHubApi {
     ab.disabled = why;
     ab.poller?.stop();
     if (why !== 'unauthorized') await this.lastMessage(ab, why === 'conflict' ? LINES.conflict : LINES.tamper);
+    // A 401 on a bot the manager made: the manager token may be out (Z4, AA3).
+    if (why === 'unauthorized' && ab.binding.managed) this.manager?.raise('unauthorized');
     this.deps.handsfree?.onBindingLost?.(ab.scope, ab.target);
     this.deps.banner?.('Telegram', why === 'tamper' ? "Telegram kaydı Mac'te değişti; bağlantı durduruldu." : 'Telegram bağlantısı durdu.');
   }

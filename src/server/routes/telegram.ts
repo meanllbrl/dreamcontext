@@ -22,7 +22,7 @@ import { carriesOwnOrigin } from '../owner-page.js';
 import { fromOwnerPage } from './assistant.js';
 import { hasOwnerKey } from '../owner-key.js';
 import { HubError, MANAGER_PAIRING_TARGET, telegramHub, type TelegramHub } from '../telegram/hub.js';
-import { isValidTarget, readManagerBinding, scopeOfContextRoot } from '../../lib/telegram/config.js';
+import { isValidTarget, scopeOfContextRoot } from '../../lib/telegram/config.js';
 import { PAIRING_ID_RE, TELEGRAM_TARGET_RE, type TelegramStatusRow } from '../../lib/telegram/contract.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import type { Router } from '../router.js';
@@ -69,10 +69,7 @@ const status: Handler = async (req, res, _p, contextRoot) => {
   const h = telegramHub();
   const scope = scopeOfContextRoot(contextRoot);
   const rows: TelegramStatusRow[] = (h?.status() ?? []).filter((r) => r.scope === scope || (r.scope === 'global' && scopeOfTarget(contextRoot, r.target) === 'global'));
-  const m = readManagerBinding();
-  const manager: TelegramStatusRow | null = m.ok
-    ? { scope: 'global', target: MANAGER_PAIRING_TARGET, state: 'active', botUsername: m.binding.botUsername }
-    : m.reason === 'tamper' ? { scope: 'global', target: MANAGER_PAIRING_TARGET, state: 'disabled', botUsername: '', disabledReason: 'tamper' } : null;
+  const manager: TelegramStatusRow | null = h?.manager ? h.manager.row() : null;
   sendJson(res, 200, { rows, manager });
 };
 
@@ -156,6 +153,83 @@ const managerUnbind = async (req: IncomingMessage, res: ServerResponse): Promise
   sendJson(res, 200, { ok: true });
 };
 
+// ── Id-record routes (Z1, AA1, AB): page mints, Rust confirms ──
+
+function mgrOr(res: ServerResponse) {
+  const h = hubOr(res);
+  if (!h) return null;
+  if (!h.manager) { refuse(res, 503, 'telegram_unavailable', 'Telegram works only in the Mac app.'); return null; }
+  return h.manager;
+}
+
+const pageOnly = (handler: Handler): Handler => async (req, res, params, contextRoot) => {
+  if (!fromPageHeaders(req)) { refuse(res, 403, 'owner_page_only', 'Only the owner, in the app, changes Telegram.'); return; }
+  if (!scopeOfTarget(contextRoot, params.target)) { refuse(res, 404, 'not_found', 'No such Super or member here.'); return; }
+  try { await handler(req, res, params, contextRoot); } catch (err) { sendHubError(res, err); }
+};
+
+const forwardList: Handler = pageOnly(async (_req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (m) sendJson(res, 200, m.forwardList(contextRoot, params.target));
+});
+const forwardRequest: Handler = pageOnly(async (req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (!m) return;
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  sendJson(res, 200, m.forwardRequest(contextRoot, params.target, String(body.routine ?? '')));
+});
+/** OFF is keyless (less leaves the Mac, W3); ON only through the request + native confirm. */
+const forwardSet: Handler = pageOnly(async (req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (!m) return;
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  if (body.on !== false) { refuse(res, 403, 'confirm_required', 'Turning results on needs the Mac\'s own confirm.'); return; }
+  m.forwardOff(contextRoot, params.target, String(body.routine ?? ''));
+  sendJson(res, 200, { ok: true });
+});
+const creationRequest: Handler = pageOnly(async (_req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (m) sendJson(res, 200, m.creationRequest(contextRoot, params.target, scopeOfTarget(contextRoot, params.target)!));
+});
+const readoptRequest: Handler = pageOnly(async (_req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (m) sendJson(res, 200, m.readoptRequest(contextRoot, params.target, scopeOfTarget(contextRoot, params.target)!));
+});
+const readoptAvailable: Handler = pageOnly(async (_req, res, params, contextRoot) => {
+  const m = mgrOr(res);
+  if (m) sendJson(res, 200, m.readoptAvailable(contextRoot, params.target));
+});
+
+type Kind = 'forward' | 'creation' | 'readopt';
+/** A Rust call on an id record: desktop + loopback; POSTs also need the owner key. */
+function rustRecord(kind: Kind, keyed: boolean) {
+  return (run: (m: NonNullable<ReturnType<typeof mgrOr>>, rec: Exclude<ReturnType<NonNullable<ReturnType<typeof mgrOr>>['take']>, string>, req: IncomingMessage, res: ServerResponse) => Promise<void>) =>
+    async (req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> => {
+      if (!isDesktop() || !isLoopback(req) || (keyed && !fromOwnerPage(req))) { refuse(res, 403, keyed ? 'owner_key_required' : 'desktop_only', 'Only the Mac app\'s own confirm can do this.'); return; }
+      const m = mgrOr(res);
+      if (!m) return;
+      if (!PAIRING_ID_RE.test(params.id ?? '')) { refuse(res, 400, 'bad_id', 'Malformed id.'); return; }
+      const rec = m.take(kind, params.id);
+      if (rec === 'vault_gone') { refuse(res, 410, 'vault_gone', 'That project is gone.'); return; }
+      if (rec === 'gone') { refuse(res, keyed ? 409 : 404, 'gone', 'This request is no longer valid.'); return; }
+      try { await run(m, rec, req, res); } catch (err) { sendHubError(res, err); }
+    };
+}
+
+const forwardPreview = rustRecord('forward', false)(async (m, rec, _req, res) => { sendJson(res, 200, m.forwardPreview(rec)); });
+const forwardConfirm = rustRecord('forward', true)(async (m, rec, req, res) => {
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  const out = m.forwardConfirm(rec, { projectKey: body.projectKey, approvalHash: body.approvalHash });
+  if (out === 'ok') sendJson(res, 200, { ok: true }); else refuse(res, 409, 'mismatch', 'The routine or the bot changed since it was shown.');
+});
+const creationStart = rustRecord('creation', true)(async (m, rec, _req, res) => { sendJson(res, 200, m.creationStart(rec)); });
+const readoptPreview = rustRecord('readopt', false)(async (m, rec, _req, res) => { sendJson(res, 200, m.readoptPreview(rec)); });
+const readoptStart = rustRecord('readopt', true)(async (m, rec, req, res) => {
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  const out = await m.readoptStart(rec, body.approvalHash);
+  if (out === 'ok') sendJson(res, 200, { ok: true }); else refuse(res, 409, 'mismatch', 'What was shown changed.');
+});
+
 /** Every Telegram route. Order: the specific id routes before `:target`. */
 export function registerTelegramRoutes(router: Router): void {
   router.get('/api/telegram-pairing/:id', pairingPreview);
@@ -163,6 +237,17 @@ export function registerTelegramRoutes(router: Router): void {
   router.get('/api/telegram-manager/status', managerStatus);
   router.post('/api/telegram-manager/bind', managerBind);
   router.delete('/api/telegram-manager', managerUnbind);
+  router.get('/api/telegram-forward/:id/preview', forwardPreview);
+  router.post('/api/telegram-forward/:id/confirm', forwardConfirm);
+  router.post('/api/telegram-creation/:id/start', creationStart);
+  router.get('/api/telegram-readopt/:id/preview', readoptPreview);
+  router.post('/api/telegram-readopt/:id/start', readoptStart);
+  router.get('/api/telegram/:target/forward', forwardList);
+  router.post('/api/telegram/:target/forward/request', forwardRequest);
+  router.post('/api/telegram/:target/forward', forwardSet);
+  router.post('/api/telegram/:target/creation/request', creationRequest);
+  router.post('/api/telegram/:target/readopt/request', readoptRequest);
+  router.get('/api/telegram/:target/readopt', readoptAvailable);
   router.get('/api/telegram', status);
   router.post('/api/telegram/:target/bind', bind);
   router.delete('/api/telegram/:target', unbind);

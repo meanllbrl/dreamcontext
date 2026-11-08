@@ -6,6 +6,7 @@ import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { setTelegramHub, telegramHub, TelegramHub, type HubDeps } from './hub.js';
 import { wireTelegramAsks } from './asks.js';
 import { memberAdapter } from './member.js';
+import { wireManager } from './manager.js';
 
 export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<TelegramHub> {
   const have = telegramHub();
@@ -17,6 +18,7 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
   });
   setTelegramHub(hub);
   wireTelegramAsks(hub);
+  wireManager(hub);
   await hub.start();
   return hub;
 }
