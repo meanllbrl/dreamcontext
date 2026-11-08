@@ -5,7 +5,7 @@ import { sanitizeModel } from '../../lib/claude-args.js';
 import { WINDOW_TOKEN_HEADER, channelFor, identityOf, sendWindowCommand } from '../../lib/window-control.js';
 import { superIndex } from '../../lib/super/store.js';
 import { getChat, listChats } from '../../lib/assistant/chat-registry.js';
-import { noteSuperSend } from '../../lib/super/owner-wait.js';
+import { noteSuperSend, takeSuperSend } from '../../lib/super/owner-wait.js';
 
 /**
  * `/api/window/:verb` — a project chat's agent drives the chat surface it is drawn in
@@ -189,11 +189,14 @@ export async function handleWindowCommand(req: IncomingMessage, res: ServerRespo
   if (refusal) { sendError(res, 403, 'super_refused', refusal); return; }
   // An agent's send into a Super chat is the agent's, never the owner's words: noted so the
   // chat's frame ends no Telegram presence and answers no wait (owner-wait.ts).
+  let noted: { sid: string; text: string } | null = null;
   if (verb === 'send' && typeof args.tab === 'string' && typeof args.text === 'string') {
     const target = getChat(args.tab) ?? listChats().find((c) => c.conversationId === args.tab) ?? null;
-    if (target?.mode === 'super') noteSuperSend(target.sessionId, args.text);
+    if (target?.mode === 'super') { noteSuperSend(target.sessionId, args.text); noted = { sid: target.sessionId, text: args.text }; }
   }
   const r = await sendWindowCommand(token, verb, args);
+  // Never delivered: the note must not mistake his next words for this send.
+  if (!r.ok && noted) takeSuperSend(noted.sid, noted.text);
   if (r.ok && verb === 'state') {
     const who = identityOf(token);
     // Every super's tab but the caller's own is left out (a member's Super from main's state too).
