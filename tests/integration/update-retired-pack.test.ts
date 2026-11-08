@@ -75,8 +75,11 @@ describe('update retires the engineering pack (integration)', () => {
   it('with no manifest (a fresh clone), refreshes a shipped reviewer instead of leaving it stale', () => {
     // A shipped reviewer, as a pre-manifest project would hold it (effort differs: it is
     // outside the canonical form, so the content still proves the file is ours).
+    // The frozen hash list (retired-packs.ts keepAgents) covers reviewers up to 0.40.6, so the
+    // stale copy is the 0.40.6 text (a fixture); the current package reviewer is what it becomes.
+    const old = readFileSync(join(__dirname, '..', 'fixtures', 'reviewer-0.40.6.md'), 'utf-8');
     const shipped = readFileSync(PACKAGE_REVIEWER, 'utf-8');
-    writeFileSync(join(proj, '.claude/agents/reviewer.md'), shipped.replace(/^effort: high$/m, 'effort: low'));
+    writeFileSync(join(proj, '.claude/agents/reviewer.md'), old.replace(/^effort: high$/m, 'effort: low'));
     rmSync(join(proj, MANIFEST));
 
     const out = run(['update', '--yes'], proj, home);

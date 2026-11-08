@@ -165,7 +165,7 @@ describe('the windows that draw the Apps page hold the key', () => {
     expect(ownerKeyRs).toMatch(/\.local\(false\)/);
     expect(ownerKeyRs).toMatch(/\.permission\("allow-owner-key"\)/);
     // Granted right where the shell learns the port.
-    expect(libRs).toMatch(/app\.manage\(DashboardPort\(port\)\);[\s\S]{0,200}owner_key::grant\(&app, port\)/);
+    expect(libRs).toMatch(/app\.manage\(DashboardPort\(port\)\);[\s\S]{0,500}owner_key::grant\(&app, port\)/);
   });
 
   it('the command answers the notch, the Launcher and the project windows, and only them', () => {

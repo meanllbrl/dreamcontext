@@ -469,7 +469,7 @@ describe('the window rules (D10, AC12)', () => {
     expect(pane).toMatch(/\) : readOnly === 'silent' \? null : readOnly \? \(\s*<SuperReadOnlyLine finished={readOnly === 'finished'} \/>/);
     expect(pane).toMatch(/onModeChange=\{bare \|\| agentBound \|\| mode === 'super' \? undefined : onModeChange\}/);
     const host = read(`${SLEEPY}/ChatPaneHost.tsx`);
-    expect(host).toMatch(/readOnly=\{readOnly\}/);
+    expect(host).toMatch(/\n\s+readOnly,\n/);
   });
 
   it('no backdrop-filter; the only endless motion is a status animation through the contract, and nothing rotates', () => {

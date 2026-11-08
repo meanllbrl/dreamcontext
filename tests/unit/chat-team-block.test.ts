@@ -281,6 +281,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  `super resume <child>` reopens it); `--idle` lists idle ones; `--force` only if the owner asked.',
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
+      // 2026-11-08 (model-secimi): the handoff line also says a working style never fixes a model.
+      expect.stringContaining('handoff) reads that file first, then `super state`.'),
       expect.stringContaining('His Agenda card is YOUR notepad'),
       '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds,',
       '  `keep <id>` for a stale line that holds. His open questions show there by themselves.',
@@ -327,6 +329,12 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // 2026-11-07 (app-araclari): an app on this Mac may already answer; a changing tool is never the Super's.
       '- An app on this Mac may already answer: `dreamcontext apps tools`, then `apps do <app> <tool>` for one that',
       '  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.',
+      // 2026-11-08 (model-secimi): the work to model map rides in the briefing.
+      "- Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets",
+      "  it): haiku `low` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,",
+      "  even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,",
+      "  install, chores `sonnet` `medium`; multi-file develop, a bug with a repro, analysis `opus` `medium`; security,",
+      "  money, data migration, plans `opus` `high`. On `--tool codex|antigravity` the same rows, that tool's small, mid, large model (small: read-only research only).",
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
@@ -345,6 +353,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // rev 30 (2026-11-06): his approvals are asked on his Super screen, never given by the Super.
       '- Set up something that waits for his approval here (a member, a routine, changed instructions)?',
       '  Its card is already on his screen and in Waiting on you: say so in one line; never approve it.',
+      // 2026-11-08 (model-secimi): the handoff line never fixes a model per kind of job.
+      expect.stringContaining('Its working style never fixes a model per kind of job.'),
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
       '  it, never a child or a sub-agent.',
       'His Agenda card is YOUR notepad, never a list of children: a few',
@@ -358,6 +368,6 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       expect.stringContaining('<super-brief rev=32>'),
     ]);
-    expect(after.length).toBe(before.length + 39); // +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 44); // +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

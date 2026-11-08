@@ -547,7 +547,7 @@ describe('a member\'s phone mirror keeps the member\'s unread', () => {
     const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
     expect(pane).toMatch(/const paneMember = superMember \|\| \(session\.mode === 'super' \? chatAgentFor\(session\.claudeId\) : ''\);/);
     expect(pane).toMatch(/const paneSuperId: SuperId = paneMember \? memberSuperId\(paneMember\) : 'main';/);
-    expect(src('dashboard/src/components/sleepy/ChatPaneHost.tsx')).toMatch(/superMember=\{superMember\}/);
+    expect(src('dashboard/src/components/sleepy/ChatPaneHost.tsx')).toMatch(/\n\s+superMember,\n/);
     expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/superMember=\{memberMirrorsRef\.current\.get\(cs\.claudeId\)\}/);
   });
 });
