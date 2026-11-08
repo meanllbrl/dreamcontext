@@ -652,7 +652,7 @@ async function pollScope(
  *
  * Runs inside the dispatcher tick, so it works with the app closed — which is
  * the whole point, since that is when automations fire. An answer therefore
- * lands within one tick (5 minutes), which is right for a scheduler and wrong
+ * lands within one tick (a minute), which is right for a scheduler and wrong
  * for a chat; the server polls faster while it happens to be up.
  *
  * Cheap when nothing is configured: `listTelegramSlugs` is an empty-directory

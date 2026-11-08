@@ -9,7 +9,7 @@ An **automation** is a recurring job the brain runs on its own, on a schedule, w
 ```
 _dream_context/automations/<slug>.md        the manifest: schedule + prompt, written by you
               user runs: dreamcontext automations install
-~/Library/LaunchAgents/…automations.plist   one dispatcher, ticks every 5 minutes
+~/Library/LaunchAgents/…automations.plist   one dispatcher, ticks every minute
               user runs: dreamcontext automations approve <slug>
 a due automation spawns a headless `claude -p` session, bypassPermissions
               (a board agent instead: dontAsk + an allowlist scoped to its board)
@@ -306,7 +306,7 @@ dreamcontext automations propose <slug> --title "…" --body "…" --choice "A" 
 - **It needs `review` on.** `propose` refuses under `review: off`, choices or not, because a proposal nobody is watching for is a run that stops and waits forever. Set `review: agent` (or `output`) in the manifest and re-approve — it is a hashed field. The run's brief follows `review` (`askClause`): under `off` it is told not to propose and to post what needs the human instead, so no run spends its turn on a verb the CLI will refuse. A prompt that mentions `propose` while `review` is `off` is flagged by `automations show` and `automations approve`.
 - The choices become **buttons under the message** in the channel, and answering one goes through the ordinary question route; the thread then shows the answer and the run carries on. A question with no choices renders a free-text field instead.
 
-**The runner writes the bookkeeping itself** — `started` when a child actually spawns, then exactly one of `ok` / `failed` / `timeout`, plus `asked` when a run stops to ask and `replied` when a reply turn finishes. A SCHEDULED fire that never ran (`blocked`, `deferred`, `orphaned`) writes **nothing**, or a still-due automation would post every five minutes forever. These `system` entries appear only inside the thread panel, as grey one-line rows; the feed shows the agent's own words.
+**The runner writes the bookkeeping itself** — `started` when a child actually spawns, then exactly one of `ok` / `failed` / `timeout`, plus `asked` when a run stops to ask and `replied` when a reply turn finishes. A SCHEDULED fire that never ran (`blocked`, `deferred`, `orphaned`) writes **nothing**, or a still-due automation would post every minute forever. These `system` entries appear only inside the thread panel, as grey one-line rows; the feed shows the agent's own words.
 
 **A run that hits the account's usage limit publishes nothing, and says so.** The limit is account-global (headless runs share it with your interactive sessions), and a capped turn comes back as an ordinary success envelope whose text is the limit banner. Left alone that banner becomes the day's document and is handed to sleep as the job's result; it happened four times across projects before this gate existed. So the run is detected as limited **before** anything else is decided, marked `failed` with one sentence naming the window and its reset time, and **no output file is written**: there is no document, so there is no answer card and nothing reaches Telegram. The thread carries the same sentence. A document that legitimately *discusses* usage limits still publishes normally: the detector requires the CLI's own refusal shapes, a short body and no headings, because a false positive silently suppresses real work and is the expensive direction.
 
@@ -511,7 +511,7 @@ Within one project, automations run one at a time, in the order they come due. U
 
 ## Why the dispatcher resolves the way it does
 
-The dispatcher is a single scheduled job that wakes up every five minutes and checks every automation across every project on the machine, not one job per automation. When it runs, it needs to find the real `dreamcontext` command, and that turns out to be less obvious than it sounds. A script's default, non-interactive shell can resolve a different installed copy of the command than the one actually in everyday use, because PATH setup that only applies to interactive shells (the kind you get when you open a terminal) doesn't apply to a script running unattended.
+The dispatcher is a single scheduled job that wakes up every minute and checks every automation across every project on the machine, not one job per automation. When it runs, it needs to find the real `dreamcontext` command, and that turns out to be less obvious than it sounds. A script's default, non-interactive shell can resolve a different installed copy of the command than the one actually in everyday use, because PATH setup that only applies to interactive shells (the kind you get when you open a terminal) doesn't apply to a script running unattended.
 
 The dispatcher avoids this by resolving the real command path once, at install time, and using that resolved path directly on every tick, falling back to a full interactive-shell resolution only if that saved path ever stops working (for instance, after an upgrade moves things around). That fallback is what makes the dispatcher self-healing. If the installed CLI ever moves, the very next tick finds it again on its own instead of silently failing forever.
 

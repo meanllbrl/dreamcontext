@@ -7,7 +7,7 @@ import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
-import { approvalCardFacts, staleApprovalBlock } from '../../lib/automations/approval-card.js';
+import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
 import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
 import { globalAgentExists } from '../../lib/agents/scope.js';
@@ -321,9 +321,8 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     scheduleError: m.scheduleError ?? null,
     // The earliest fire across every slot. Server-computed so the card and the
     // CLI's `list` can never disagree about when an agent next runs.
-    nextFireAt: m.mode === 'call' || !m.enabled || m.schedule === null
-      ? null
-      : (nextFire(m.schedule, new Date())?.toISOString() ?? null),
+    // A fire still owed (its time passed, the run not done) is the next one, not tomorrow's.
+    nextFireAt: nextFireIso(m, new Date(), { projectRoot }),
     mode: m.mode,
     hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),

@@ -731,7 +731,7 @@
     },
     {
       "path": "automations install",
-      "desc": "Install the launchd dispatcher (ticks every 5 minutes)",
+      "desc": "Install the launchd dispatcher (ticks every minute)",
       "args": []
     },
     {

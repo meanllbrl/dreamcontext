@@ -615,7 +615,7 @@ The brain only acts while someone is in a session. **Automations** close that ga
 dreamcontext automations create eod-digest --title "End of day digest" --days daily --at 18:00
 # edit automations/eod-digest.md: fill in the ## Prompt section with what the run should do
 dreamcontext automations run eod-digest --force        # live-test it right now, before trusting the schedule
-dreamcontext automations install                       # turn on the dispatcher (ticks every 5 minutes)
+dreamcontext automations install                       # turn on the dispatcher (ticks every minute)
 dreamcontext automations approve <slug>                 # required again any time the prompt or timeout changes
 ```
 

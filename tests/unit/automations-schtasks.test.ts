@@ -79,9 +79,9 @@ describe('renderWindowsDispatcherScript', () => {
 });
 
 describe('renderWindowsTaskXml', () => {
-  it('is hidden, non-overlapping, every 5 minutes, and launches the VBS through wscript', () => {
+  it('is hidden, non-overlapping, every minute, and launches the VBS through wscript', () => {
     const xml = renderWindowsTaskXml('C:\\Users\\me\\.dreamcontext\\bin\\automations-dispatch.vbs');
-    expect(xml).toContain('<Interval>PT5M</Interval>');
+    expect(xml).toContain('<Interval>PT1M</Interval>');
     expect(xml).toContain('<Hidden>true</Hidden>');
     expect(xml).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>');
     expect(xml).toContain('<LogonType>InteractiveToken</LogonType>');

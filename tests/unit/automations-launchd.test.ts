@@ -214,7 +214,7 @@ describe('renderDispatcherPlist', () => {
     expect(a).toContain('<string>com.dreamcontext.automations</string>');
     expect(a).toContain('<string>/bin/sh</string>');
     expect(a).toContain('<string>/h/.dreamcontext/bin/automations-dispatch.sh</string>');
-    expect(a).toContain('<integer>300</integer>');
+    expect(a).toContain('<key>StartInterval</key>\n  <integer>60</integer>');
     expect(a).toContain('<true/>');
     // Never Background: that type throttles the tick and every run it starts (CPU, disk, network).
     expect(a).not.toContain('<string>Background</string>');

@@ -341,7 +341,7 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 | `automations unshare <slug>` | Stop publishing this automation from this machine. Prints a warning that this is not retroactive: anything already committed and pushed stays in git history. `-y/--yes` skips the interactive confirmation. |
 | `automations kill <slug>` | Kill a previous run's orphaned process group, read from its recorded sidecar. Never guesses with `pgrep`/`pkill`. `-y/--yes` skips confirmation, `--force` kills even when the sidecar is old enough that its process-group id may have been recycled. |
 | `automations remove <slug>` | Delete an automation manifest and its machine-local cache/lock/sidecar (approval revoked, sharing negations removed too). `-y/--yes`, `--purge-output` (also delete this automation's output directory). |
-| `automations install` | Install the launchd dispatcher (ticks every 5 minutes). `--check` inspects only and writes nothing. `-f/--force` installs even if the resolved CLI does not match the one running this command. |
+| `automations install` | Install the launchd dispatcher (ticks every minute). `--check` inspects only and writes nothing. `-f/--force` installs even if the resolved CLI does not match the one running this command. |
 | `automations uninstall` | Remove the launchd dispatcher. Registry approvals are left untouched. `-y/--yes`. |
 | `automations logs` | Tail the dispatcher log. `-n/--lines <n>` (default 50). |
 

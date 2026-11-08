@@ -444,6 +444,31 @@ export function isDue(
   return { due: true, fireAt: fire, reason: 'due' };
 }
 
+/**
+ * The fire a surface should call "next": the fire still OWED when one is (due and inside the
+ * catch-up window, but the dispatcher has not run it yet), else the next fire after `now`.
+ *
+ * `nextFire` alone reads only the clock, so in the minutes between a slot's time and the tick
+ * that runs it, every card said "next tomorrow" while today's run had not even started (owner
+ * 2026-11-08: a routine moved to 15:45 read "next tomorrow 15:45" at 15:46 and ran at 15:48).
+ * `approved: false` falls back to the clock: an unapproved fire is never run, so it is not owed.
+ */
+export function upcomingFire(
+  schedule: Schedule | null,
+  lastFireAt: string | null,
+  now: Date,
+  catchupHours: number,
+  mode: AutomationMode = 'sched',
+  approved = true,
+): Date | null {
+  if (mode === 'call' || schedule === null) return null;
+  if (approved) {
+    const owed = isDue(schedule, lastFireAt, now, catchupHours, mode);
+    if (owed.due && owed.fireAt) return owed.fireAt;
+  }
+  return nextFire(schedule, now);
+}
+
 /** "Mon 2026-09-28 09:30" in local time — how the run's preamble names a fire. */
 export function formatLocalFire(d: Date): string {
   const dow = WEEKDAYS[d.getDay()];
