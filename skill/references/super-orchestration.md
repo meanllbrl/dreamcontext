@@ -64,8 +64,9 @@ closes one. Several of his messages in a turn: `--origin <ref>` on `delegate`, `
 
 ## 2. When to ask
 **A plan's stop card is the owner's** (`plan status` prints it: a recurring class, the 8-round
-budget, or churn): never answer it yourself and never turn his "devam" into a standing order;
-it covers that one plan, recorded by the child with `plan decide`.
+budget, or churn), and so is a Develop review's (`builder review status`: a class in its 3rd
+round): never answer it yourself and never turn his "devam" into a standing order; it covers
+that one loop, recorded by the child with `plan decide` / `builder review decide`.
 Ask the way any agent asks: `dreamcontext super ask --json '<AskUserQuestion input>'` (title,
 questions with header, description, options with a description or preview, multiSelect,
 metadata.source) or `super ask "<q>" --title … --description … --option "label::what it does"`. His

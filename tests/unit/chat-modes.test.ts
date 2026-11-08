@@ -431,11 +431,16 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/criteria grouped by what one check can prove/);
   });
 
-  it('develop iterates on review findings, and escalates one that survives a fix', () => {
+  // 2026-11-08 (develop-inceleme-dongusu): "the SAME finding twice" matched words and caught none
+  // of the measured repeats; the class stop, the class-wide fix and the harm rule replace it.
+  it('develop iterates on review findings by class, and a class in its 3rd round stops for the owner', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/re-review/i);
-    expect(brief).toMatch(/SAME finding twice/i);
-    expect(brief).toMatch(/never merge past it/i);
+    expect(brief).not.toMatch(/SAME finding twice/i);
+    expect(brief).toContain('Every round runs through `dreamcontext builder review` (its packet, never a prompt you write).');
+    expect(brief).toMatch(/fix each finding's CLASS on every sibling path, in one place,\s+never a reviewer's code unverified/);
+    expect(brief).toMatch(/A Major counts only with a concrete harm/);
+    expect(brief).toMatch(/A class in its 3rd round →\s+STOP with the owner's card; never merge past it/);
   });
 
   // 2026-10-11 (owner decisions 8 and 13): the validator found 0 product bugs in 35 runs. A

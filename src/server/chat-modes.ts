@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.6', develop: '1.6', train: '0.1',
+  basic: '1.0', plan: '1.6', develop: '1.7', train: '0.1',
 };
 
 /**
@@ -251,6 +251,13 @@ slug you just created:
  * (screenshots at a phone and a desktop width, console output), and the end reviewer fails a
  * tick that has none (develop-recipe.ts EVIDENCE_TICK_RULE, OBSERVED_CHECK).
  *
+ * ── 2026-11-08: the review loop is the CLI's (1.7) ──────────────────────────────────
+ * Over 390 Develop runs, 42% of the blocking findings inside review loops were holes the
+ * previous fix opened, 32% another site of the same class, and 39% of the "Major"s were small;
+ * "the SAME finding twice" matched words and caught none of it. Every round now runs through
+ * `dreamcontext builder review` (the plan ledger in code mode): the packet is the CLI's, the
+ * fix is by class, a Major needs a concrete harm, a class in its 3rd round is the owner's card.
+ *
  * Only the CONTRACT lives here. The procedure (snapshot, checks, review, close, reopen) is
  * `dreamcontext goal-live recipe develop` (src/lib/develop-recipe.ts): it would not fit a
  * briefing that rides every turn, and printing it from the CLI keeps it in step with this
@@ -291,9 +298,11 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
 - **Judges you do not control:** after the last wave, the end review the diff picks
   (\`builder review-pick\`: one clean \`reviewer\`, or the multi-review team for a Full tier,
   a hot path, or UI plus another area). It runs \`git diff\` ITSELF; never paste a diff.
-  Record its verdict first. FAIL → fix exactly the findings, run the tests they touched, re-review the
-  fix alone at medium effort. The SAME finding twice →
-  STOP and put it to the owner; never merge past it. You do not sign off on your own work.
+  Every round runs through \`dreamcontext builder review\` (its packet, never a prompt you write).
+  Record its verdict first. FAIL → fix each finding's CLASS on every sibling path, in one place,
+  never a reviewer's code unverified; run the tests they touched, re-review the fix alone at
+  medium effort. A Major counts only with a concrete harm. A class in its 3rd round →
+  STOP with the owner's card; never merge past it. You do not sign off on your own work.
 - **No tick without evidence** in its \`dreamcontext tasks log <slug> "…"\` line: the check's
   output, or, for what the owner sees, screenshots you READ at a phone and a desktop width
   plus the console output. Green tests on an app that does not open are not evidence. No

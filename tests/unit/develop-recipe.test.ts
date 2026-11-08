@@ -88,8 +88,10 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(end).toMatch(/every path you changed, enumerated by name, with START and NOW, never a\s+bare `git diff` against a ref/);
     expect(end).toMatch(/never paste a diff/);
     expect(end).toMatch(/Record the verdict BEFORE anything else/);
-    expect(end).toMatch(/fix exactly the findings\s+or the failure and nothing else/);
-    expect(end).toMatch(/The SAME finding twice = STOP and put it to the owner/);
+    expect(end).toMatch(/fix exactly the findings, each across its whole class,\s+or the failure and nothing else/);
+    // 2026-11-08 (develop-inceleme-dongusu): the class stop replaces "the SAME finding twice".
+    expect(end).not.toMatch(/SAME finding twice/);
+    expect(end).toMatch(/A class in its 3rd counted round = STOP: the loop prints the owner's card/);
     expect(end).toMatch(/You never sign off on your own work/);
     expect(end).toMatch(/The\s+full suite runs only when the Validation method names it/);
   });
@@ -484,6 +486,40 @@ describe('every judge names its model and effort, in both recipes', () => {
       expect(fm(judge), judge).toMatch(/^model: opus\neffort: high$/m);
     }
     expect(fm('review-router')).toMatch(/^model: sonnet\neffort: low$/m);
+  });
+});
+
+// 2026-11-08 (develop-inceleme-dongusu): every review round runs through the plan's ledger in code
+// mode; the packet, the class-wide fix, the harm rule and the owner's stop card are the CLI's.
+describe('the review loop, in both recipes', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    const flat = recipe.replace(/\s+/g, ' ');
+    it(`${name}: open, packet, record and status are the loop's verbs; the packet is the dispatch`, () => {
+      expect(recipe).toContain('dreamcontext builder review open "$S" --lenses <reviewer, or the team> --start "$START"');
+      expect(recipe).toContain('dreamcontext builder review packet "$S" --lens <reviewer> --tree "$NOW" --paths <every path, by name>');
+      expect(flat).toContain('Dispatch each reviewer with only "Read <the packet path> and follow it."');
+      expect(flat).toContain('dreamcontext builder review record "$S" --lens <reviewer> --file <it>');
+      expect(flat).toMatch(/`open` takes `--criteria-file <the task's criteria>`/);
+    });
+    it(`${name}: a FAIL is fixed by class, the next packet needs the sweep, a Major needs its harm`, () => {
+      expect(flat).toContain('A FAIL is fixed by CLASS, never by the finding\'s sentence');
+      expect(flat).toContain('read and verify any code a reviewer suggests before you use it');
+      expect(flat).toContain('`sweep: <class> | <sibling paths checked> | <the one place fixed>` line per open class: the next packet refuses without it');
+      expect(flat).toContain('A Major counts only with a concrete harm written out; one without is recorded as Minor and opens no round');
+      expect(flat).toContain('in its 3rd the loop stops and `builder review status` prints the owner\'s stop card');
+      expect(flat).toContain('Rounds are never capped.');
+      expect(flat).not.toMatch(/SAME finding twice/);
+    });
+    it(`${name}: a re-review reads the CLI's packet, and a PARTIAL's text goes to the fresh copy`, () => {
+      expect(flat).toContain('hands it `git diff <the tree it reviewed> <FIX>` per file, the previous findings word for word, every reviewer\'s raw review and your changes.md');
+      expect(flat).toContain('dispatch a fresh copy of that agent on the same packet, which now carries the partial review');
+    });
+  }
+  it('fan-out: a wave reviewer runs its own loop, and the lane gets the class rule', () => {
+    const flat = R.replace(/\s+/g, ' ');
+    expect(flat).toContain('section 3\'s loop with `--loop wN` on every `builder review` call');
+    expect(flat).toContain('resume the owning builder with EXACTLY the findings and the class rule');
+    expect(flat).toContain('In a fan-out run the owning lane makes the fix');
   });
 });
 

@@ -590,23 +590,31 @@ file. No `review-*` agents in this project? General-purpose agents with the same
   exactly the team the line names (`review-edge-cases` always, then each named specialist, and
   the `reviewer` when no specialist is named; model opus), in parallel in ONE message, each
   given its scope from the plan (every path when it names none), the base ref and the task's
-  criteria. You merge their reports into one verdict
-  per the multi-review skill, with one change: you may dedupe, but never drop or downgrade a
+  criteria. Each member's raw review is recorded on its own, never merged into one report:
+  never drop or downgrade a
   Critical or Major. Any Critical or Major = FAIL.
 
-The loop below is the same for both. After a team FAIL, the fresh re-check is one specialist
+The loop below is the same for both, and it is the Develop review loop (`dreamcontext builder
+review`, the plan's ledger in code mode): `builder review open <slug> --lenses <reviewer|the
+team> --start <base tree>`, then per judge `builder review packet <slug> --lens <judge> --tree
+<NOW> --paths <its scope>`, dispatched with only "Read <the packet path> and follow it.", and
+`builder review record` with its raw reply. After a team FAIL, the fresh re-check is one specialist
 for each that raised a blocking finding, fed only its previous findings word for word and the
-files the fix changed; the router does not run again.
+files the fix changed (the next packet does it); the router does not run again.
 
-**Convergence by signal:**
-- `PASS` → proceed to Phase 6.
-- **New** findings → `--resume` the specific owning implementer with the failure
-  (mechanics rule 3b).
-- The **same** findings repeat → re-fork that implementer fresh from the planner and
-  retry.
-- Still stuck → **ESCALATE to the user** with the unresolved findings.
-- **Safety valve: 8 rounds.** Spend protection only, same as Phase 2 — never a
-  "proceed anyway" signal.
+**Convergence by signal:** (`builder review status <slug>` prints the one next action)
+- `done` (every judge PASS) → proceed to Phase 6.
+- `revise` → `--resume` the specific owning implementer with the failure
+  (mechanics rule 3b) and the class rule: fix each finding's class on every sibling path, in
+  one place, and verify any code a reviewer suggests before using it. Write `changes.md` in the
+  loop folder from its report (one `sweep: <class> | <paths checked> | <the one place>` line per
+  open class); the next packet refuses without it. A Major counts only with a concrete harm.
+- An id re-stated after a resume → re-fork that implementer fresh from the planner and retry.
+- `redesign` (a class in its 2nd counted round) → the fix moves to the one layer covering the
+  class, named in a `redesign:` line.
+- `stop` (a class in its 3rd counted round) → **ESCALATE to the user** with the stop card it
+  prints, as an owner card; record his pick with `builder review decide`. Rounds are never
+  capped: the class stop is the brake, never "proceed anyway".
 
 ### Phase 6 — VALIDATE (evidence by the agreed method — the real gate)
 
@@ -816,11 +824,11 @@ Standalone viewer and demo:
   card; `plan packet` refuses the next round while a stop stands. Only a Critical or Major
   finding is blocking; a Minor never costs a round. Repeats are tracked by id and class,
   never by wording.
-- **The code-review loop (Phase 5)** keeps its signal: all judges PASS → proceed. New
-  blocking findings → resume the builder with the delta. The same findings repeating after
-  a resume → one fresh re-fork, then retry. Still stuck after the re-fork → escalate. Its
-  **safety valve is 8 rounds**, purely to protect spend — hitting it means escalate, never
-  license to declare "good enough" and proceed.
+- **The code-review loop (Phase 5)** runs on the same ledger (`builder review`): all judges
+  PASS → proceed. Blocking findings → resume the builder with them and the class rule, then a
+  fresh re-check from the CLI's packet. An id re-stated after a resume → one fresh re-fork,
+  then retry. A class in its 3rd counted round → the owner's stop card; rounds are never
+  capped, and nothing declares "good enough" and proceeds.
 - Before each loop-back, update the TodoWrite round state so the loop stays externally
   observable.
 - "Reached the goal" is defined by Phase 6 validation passing — nothing else.

@@ -45,6 +45,12 @@ questions** section, not in Findings.
 
 ## 4. Output format (every specialist returns exactly this shape)
 
+**Exception: a Develop review loop.** When you were handed a packet file from
+`dreamcontext builder review packet`, follow ITS "Code review rules" instead of the shape
+below: first line `PASS` or `FAIL`, then one line per blocking finding with `id`, `class`,
+`origin` and a concrete `harm` (a Major without a harm is recorded as Minor and costs no round),
+your open ids re-stated or closed. The run's ledger parses that format, never this one.
+
 ```markdown
 ## Executive Summary
 <≤120 words. Lead with the verdict in one sentence (PASS / CONCERNS / FAIL / PARTIAL).

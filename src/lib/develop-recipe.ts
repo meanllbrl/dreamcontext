@@ -86,13 +86,45 @@ any auth, secret, env or endpoint file. No \`review-*\` agents in this project? 
 general-purpose agents with the router's and each specialist's mandate.`;
 
 const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: exactly the team the line names, one
-  sub-agent each (model opus, effort high, not in the background), each given its scope from the plan
-  (every changed path when the plan names none for it), START, NOW and the task's criteria.
+  sub-agent each (model opus, effort high, not in the background), the loop opened with
+  \`--lenses <the team>\` and each member given its own packet (\`--paths\` = its scope from the
+  plan, every changed path when the plan names none for it).
   \`review-edge-cases\` is always on it and also gets the REVIEWER brief's sentence on ticked
-  criteria; a \`reviewer\` on it gets the whole REVIEWER brief. Merge their reports into ONE
-  verdict: dedupe,
-  but never drop or downgrade a Critical or Major, since you are the author and their
-  severity is theirs. Any Critical or Major = FAIL.`;
+  criteria (the packet's rules carry it); a \`reviewer\` on it gets the whole REVIEWER brief.
+  Record each member's raw review on its own, never one merged report:
+  never drop or downgrade a Critical or Major, since you are the author and their severity is theirs.
+  Any Critical or Major = FAIL.`;
+
+/**
+ * The review loop (2026-11-08, task develop-inceleme-dongusu-…). Measured over 390 Develop runs:
+ * 41 ran 3+ failing reviews in a row; of 180 blocking findings in those loops 42% were holes the
+ * previous fix opened, 32% another site of the same class, 17% the same finding unfixed; 39% of
+ * the "Major"s were small; the re-reviewer got the previous findings by hand (in 17 of 34 long
+ * loops not word for word); "the SAME finding twice = stop" caught none of it, since two thirds
+ * of the repeats were the same class in other words. So every round goes through the plan's
+ * ledger in code mode (`builder review`, cli/commands/review-loop.ts): the packet is the CLI's,
+ * the fix is by class, a Major needs its harm, and a class in its 3rd round is the owner's card.
+ */
+const REVIEW_LOOP = `Every review round runs through the run's review loop, so the packet, the rounds and the
+stops are the CLI's, never your memory or a prompt you write:
+
+  dreamcontext builder review open "$S" --lenses <reviewer, or the team> --start "$START"
+  dreamcontext builder review packet "$S" --lens <reviewer> --tree "$NOW" --paths <every path, by name>
+
+Dispatch each reviewer with only "Read <the packet path> and follow it.", save its reply
+verbatim to a file, then \`dreamcontext builder review record "$S" --lens <reviewer> --file
+<it>\`; \`dreamcontext builder review status "$S"\` prints the ONE next action. No brain in this
+checkout: \`open\` takes \`--criteria-file <the task's criteria>\`.
+
+A FAIL is fixed by CLASS, never by the finding's sentence: search every sibling path of the
+class (each entry point, field, caller), fix it in ONE place, and read and verify any code a
+reviewer suggests before you use it. Then write changes.md in the loop folder, one
+\`sweep: <class> | <sibling paths checked> | <the one place fixed>\` line per open class: the
+next packet refuses without it. A Major counts only with a concrete harm written out; one
+without is recorded as Minor and opens no round. A class in its 2nd counted round asks for a
+redesign (a \`redesign:\` line); in its 3rd the loop stops and \`builder review status\` prints
+the owner's stop card: ask it as an owner card (a Super Agent never answers it), then record
+his pick with \`builder review decide\`. Rounds are never capped.`;
 
 /**
  * After a judge (2026-10-31): 13 minutes an hour went to re-running everything, more than the
@@ -101,18 +133,20 @@ const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: e
  * found a real bug, so never cap them.
  */
 const END_REVIEW_ROUND = `Take the snapshot as FIX (the same three commands), then a fresh reviewer (model opus, effort
-medium, not in the background) re-checks only the previous findings and the fix: \`git diff <the
-tree it reviewed> <FIX> -- <the files the fix changed>\`, with the previous findings word for
-word. It does not re-read the run. Rounds have no cap; each reads only the newest fix.`;
+medium, not in the background) re-checks only the previous findings and the fix, from its
+packet: \`dreamcontext builder review packet "$S" --lens <it> --tree <FIX> --paths <the files
+the fix changed>\` hands it \`git diff <the tree it reviewed> <FIX>\` per file, the previous
+findings word for word, every reviewer's raw review and your changes.md. It does not re-read
+the run. Rounds have no cap; each reads only the newest fix.`;
 
 const END_REVIEW_REROUND = `After a team FAIL, the fresh re-check is one specialist for each that raised a blocking
-finding (effort medium), fed only its previous findings word for word and the fix's diff; the
-router does not run again.
+finding (effort medium), fed only its previous findings word for word and the fix's diff (the
+next packet opens the round for exactly them); the router does not run again.
 
 A PARTIAL verdict (reviewer or specialist) means it ran out of turns, not that the change
-failed: keep its findings at their severity, then dispatch a fresh copy of that agent on its
-\`Not reviewed:\` paths only, with START and NOW. The review is done when nothing is left
-unread; a PARTIAL is never a PASS.`;
+failed: record it (the loop keeps its text), then dispatch a fresh copy of that agent on the
+same packet, which now carries the partial review: it re-states those findings and reads the
+\`Not reviewed:\` paths only. The review is done when nothing is left unread; a PARTIAL is never a PASS.`;
 
 const REVIEWER_EVIDENCE = `For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion about
 what the owner sees, ticked with no screenshot, is FAIL.`;
@@ -281,12 +315,14 @@ ${END_REVIEW_PICK}
 
 ${OBSERVED_CHECK}
 
+${REVIEW_LOOP}
+
 Then the end review:
 
   dreamcontext builder mark review-start || true
 
 - ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background) with the reviewer
-  brief (section 4): every path you changed, enumerated by name, with START and NOW, never a
+  brief (section 4, carried by its packet): every path you changed, enumerated by name, with START and NOW, never a
   bare \`git diff\` against a ref. It fetches its own changes; never paste a diff.
 ${END_REVIEW_TEAM}
 ${END_FINAL_CHECK}
@@ -294,7 +330,7 @@ ${END_FINAL_CHECK}
 ${REPEAT_LIMIT}
 
 Record the verdict BEFORE anything else: \`dreamcontext builder mark review-end || true\`, then
-a task-log line with PASS or FAIL. A reviewer FAIL or a red final check takes the same path: fix exactly the findings
+a task-log line with PASS or FAIL. A reviewer FAIL or a red final check takes the same path: fix exactly the findings, each across its whole class,
 or the failure and nothing else, and check the fix with \`builder test "$S" --wave final --related
 <files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
 Only what the fix touched runs: no build, no browser and no Validation command here, those wait
@@ -305,7 +341,7 @@ only what was red. Nothing closes on a fix no reviewer has read:
 
 ${END_REVIEW_REROUND}
 
-The SAME finding twice = STOP and put it to the owner. You never sign off on your own work.
+A class in its 3rd counted round = STOP: the loop prints the owner's card. You never sign off on your own work.
 
 ${WAVE_CLOSE_409}
 
@@ -327,6 +363,10 @@ fix (log \`"final-fix-reviewer PASS"\`), then the validator again.
 PASS: \`dreamcontext tasks status "$S" completed "<what shipped + the evidence>"\`.
 
 ## 4. Briefs
+
+The review loop's packet carries the REVIEWER brief for you (criteria, START and NOW, the
+scope by name, the evidence sentence, the review rules): the dispatch prompt is only "Read
+<the packet path> and follow it."
 
 REVIEWER: "Review the run of <slug> against criteria <list>. Start tree <START>, current tree
 <NOW>. Scope (read these yourself with git diff <START> <NOW> -- <path>): <files>. Files with
@@ -353,7 +393,9 @@ before builders became opt-in), follow section 6 of \`dreamcontext goal-live rec
 instead, since a builder may still be writing its files.
 
 The last \`run start tree\` line in the task log is START; ticked
-criteria and \`wN green\` lines say which waves are done. A \`test-wN.json\` in tmp/develop/$S/
+criteria and \`wN green\` lines say which waves are done. A review in progress is the loop's:
+\`dreamcontext builder review status "$S"\` prints its round, open classes and next action.
+A \`test-wN.json\` in tmp/develop/$S/
 holds the failures still open: \`builder test "$S" --wave N --failed\`. A validator FAIL newer
 than any final-fix-reviewer PASS = fix it, then final-fix-reviewer, then the validator: never
 re-validate an unreviewed fix.
@@ -562,14 +604,18 @@ owner. Each result is printed once.
   dreamcontext builder mark review-start || true
 
 Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background; a later round: effort medium, only the fix) with the
-reviewer brief (section 5), in the same message as the wave's \`builder test\` call. It
+reviewer brief (section 5), in the same message as the wave's \`builder test\` call. Its
+rounds are the wave's own review loop (section 3's loop with \`--loop wN\` on every
+\`builder review\` call and the wave's START): its packet is the brief. It
 fetches its own changes; never paste a diff. Record the verdict BEFORE the next phase:
 
   dreamcontext builder mark review-end || true
   dreamcontext goal-live state wN-reviewer=PASS --wave N || true
 
 FAIL: re-enter the build for this wave, resume the owning builder with EXACTLY the findings
-(2e step 4), check again, then re-enter the review and call a fresh reviewer that re-checks
+and the class rule (fix each class on every sibling path, in one place; verify any suggested
+code first; report the paths checked) (2e step 4), check again, write changes.md from its
+report, then re-enter the review and call a fresh reviewer that re-checks
 only the previous findings and the fix. The phase calls make the retry a round on the map:
 
   dreamcontext goal-live phase impl --wave N || true
@@ -577,7 +623,7 @@ only the previous findings and the fix. The phase calls make the retry a round o
   dreamcontext goal-live actor wN-reviewer --kind fresh --role reviewer --wave N --round 2 || true
   dreamcontext builder mark review-start || true   # and review-end with its verdict
 
-The SAME finding twice = STOP and put it to the owner.
+A class in its 3rd counted round = STOP: the loop prints the owner's card.
 
 Reviewing only REVIEWED waves REVERSES the owner's 2026-09-26 call that a reviewer closes
 every wave (owner, 2026-10-11): the wave-end check catches what a lane breaks, the plan
@@ -606,6 +652,9 @@ The review's paths are the scope below: a run whose end review is skipped skips 
 and a review of the ticks alone is always one reviewer.
 
 ${OBSERVED_CHECK}
+
+${REVIEW_LOOP} In a fan-out run the owning lane makes the fix: its resume message carries
+the class rule, and you write changes.md from its report.
 
 Then the end review:
 
@@ -709,7 +758,8 @@ First adopt the run, which keeps its builders on this pane:
 
 Then reconcile: \`dreamcontext builder status "$S"\` says where
 every session is, and the last \`wN start tree\` line in the task log is the current wave's
-START. Running = wait; reported but not checked = 2e; unfinished or crashed = resume once. A
+START. Running = wait; reported but not checked = 2e; unfinished or crashed = resume once.
+A review in progress: \`dreamcontext builder review status "$S" [--loop wN]\`. A
 \`test-wN.json\` in tmp/develop/$S/ holds the failures still open: \`builder test "$S" --wave N
 --failed\`. A validator FAIL newer than any final-fix-reviewer PASS = wait for the builder,
 then final-fix-reviewer, then the validator: never re-validate an unreviewed fix. Builder

@@ -13,6 +13,9 @@ import {
 import { CODE_REVIEW_RULES } from '../../src/lib/code-review-rules.js';
 import { computePlanState, parseReview, planGateGaps, type Ledger } from '../../src/lib/plan-ledger.js';
 import { reviewLoopDir } from '../../src/lib/plan-store.js';
+import { DEVELOP_RECIPE } from '../../src/lib/develop-recipe.js';
+import { CLAUDE_ONLY, toolText } from '../../src/lib/tool-text.js';
+import { modeBriefing } from '../../src/server/chat-modes.js';
 
 const T = 'demo-task';
 const START = 'aaaaaaa1';
@@ -226,6 +229,16 @@ describe('safety and the plan loop', () => {
     await reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(1), paths: ['a.ts'] });
     await record('reviewer', review([{ cls: 'row loss', level: 'Critical', harm: 'every export drops its first row for every user' }]));
     expect(planGateGaps([{ ok: true, ledger: ledger(), dir: dir() }], T)).toEqual([]);
+  });
+
+  it('Codex and Antigravity get the same Develop loop, with no Claude-only phrase', () => {
+    for (const tool of ['codex', 'antigravity'] as const) {
+      const brief = toolText(modeBriefing('develop', { worktreeAllowed: false }), tool);
+      expect(brief, tool).not.toMatch(CLAUDE_ONLY);
+      expect(brief, tool).toContain('dreamcontext builder review');
+      const recipe = toolText(DEVELOP_RECIPE, tool);
+      expect(recipe, tool).toContain('dreamcontext builder review packet "$S"');
+    }
   });
 
   it('CODE_REVIEW_RULES is mirrored verbatim in the reviewer agent', () => {
