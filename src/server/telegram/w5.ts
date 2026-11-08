@@ -64,7 +64,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
   const prevIntercept = hub.interceptText;
   hub.interceptText = async (ab, msg) => (await rich.takeNote(ab, msg)) || (prevIntercept ? prevIntercept(ab, msg) : false);
   const prevRich = hub.richQuestion;
-  hub.richQuestion = async (ab, sid, q) => (!q.isPermission && await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { sessionId: sid }))
+  hub.richQuestion = async (ab, sid, q) => (!q.isPermission && await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { title: q.title, sessionId: sid }))
     || (prevRich ? prevRich(ab, sid, q) : false);
 
   const prevButton = hub.extraButton;

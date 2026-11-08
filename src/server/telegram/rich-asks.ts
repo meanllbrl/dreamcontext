@@ -21,6 +21,7 @@ import { answerChildQuestion, superAnswerText, superUnclearText, unclearMessage 
 import { readSuperState } from '../../lib/super/store.js';
 import type { SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type AnswerPending } from '../../lib/telegram/contract.js';
+import { formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
@@ -34,7 +35,7 @@ import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
 
-export interface RichQuestion { question: string; header?: string; multiSelect?: boolean; options: { label: string; preview?: string }[] }
+export interface RichQuestion { question: string; header?: string; description?: string; multiSelect?: boolean; options: { label: string; description?: string; preview?: string }[] }
 
 /** Where the answer goes. */
 export type RichTarget =
@@ -84,10 +85,10 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return rows;
   }
 
-  async function sendQuestion(ab: ActiveBinding, a: RichAsk, qi: number, title: string): Promise<void> {
+  async function sendQuestion(ab: ActiveBinding, a: RichAsk, qi: number, head: { title?: string; lead?: string }): Promise<void> {
     const q = a.questions[qi];
     const n = a.questions.length > 1 ? ` (${qi + 1}/${a.questions.length})` : '';
-    const html = `❓ ${title}${escapeHtml(redactSecrets(q.question))}${n}${q.multiSelect ? '\n<i>Birden fazla seçebilirsin.</i>' : ''}`;
+    const html = formatAskQuestionHtml(q, { ...head, suffix: n, footer: q.multiSelect ? '<i>Birden fazla seçebilirsin.</i>' : undefined });
     await hub.sendButtons(ab, html, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
     a.messages[qi] = { messageId: 0, html };
   }
@@ -120,7 +121,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   }
 
   /** Sends a rich ask. False = it does not fit (the caller says "Mac'te seni bekliyor"). */
-  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; sessionId: string; itemId?: string }): Promise<boolean> {
+  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string }): Promise<boolean> {
     if (!richAskFits(questions)) return false;
     const pictures = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secretPending(opts.sessionId);
     if (pictures) await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null).catch(() => {});
@@ -130,8 +131,8 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     };
     asks.set(a.id, a);
     if (asks.size > 200) asks.delete(asks.keys().next().value as string);
-    const title = opts.title ? `${escapeHtml(redactSecrets(cleanTitle(opts.title, 120)))}\n` : '';
-    for (let i = 0; i < questions.length; i++) await sendQuestion(ab, a, i, i === 0 ? title : '');
+    const head = { title: opts.title ? cleanTitle(opts.title, 120) : undefined, lead: opts.lead };
+    for (let i = 0; i < questions.length; i++) await sendQuestion(ab, a, i, i === 0 ? head : {});
     return true;
   }
 
@@ -244,8 +245,11 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
 export type RichAsks = ReturnType<typeof wireRichAsks>;
 
 /** Registry questions → rich questions (labels kept exactly). */
-export function richQuestionsOf(raw: readonly { question: string; header?: string; multiSelect?: boolean; options?: readonly { label: string; preview?: string }[] }[] | undefined): RichQuestion[] {
-  return (raw ?? []).map((q) => ({ question: q.question, header: q.header, multiSelect: !!q.multiSelect, options: (q.options ?? []).map((o) => ({ label: o.label, preview: o.preview })) }));
+export function richQuestionsOf(raw: readonly { question: string; header?: string; description?: string; multiSelect?: boolean; options?: readonly { label: string; description?: string; preview?: string }[] }[] | undefined): RichQuestion[] {
+  return (raw ?? []).map((q) => ({
+    question: q.question, header: q.header, ...(q.description ? { description: q.description } : {}), multiSelect: !!q.multiSelect,
+    options: (q.options ?? []).map((o) => ({ label: o.label, ...(o.description ? { description: o.description } : {}), preview: o.preview })),
+  }));
 }
 
 /** Is the Super chat itself asking this request right now? */

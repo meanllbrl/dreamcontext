@@ -29,6 +29,7 @@ import { projectKey } from '../local-store.js';
 import { isContainedBrainRel, resolvesInsideBrain, threadEntryContentHash } from '../automations/threads.js';
 import type { ThreadEntry } from '../automations/types.js';
 import { bindingDir, readBinding, readForward, scopeOfContextRoot } from './config.js';
+import { formatAskQuestionHtml } from './ask-format.js';
 import { escapeHtml, redactSecrets, toTelegramMessages, wouldRedact } from './format.js';
 import { readOutbound, type OutboundFile } from './files.js';
 import { TelegramTransport, type FetchLike } from './transport.js';
@@ -125,7 +126,7 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
   if (failed) {
     messages.push(`⚠ <b>${escapeHtml(title)}</b>: Rutin çalışamadı: ${escapeHtml(line(input.error ?? input.status))}`);
   } else if (input.question && input.status.startsWith('awaiting')) {
-    messages.push(`❓ <b>${escapeHtml(title)}</b>\n${escapeHtml(line(input.question, 1500))}`);
+    messages.push(formatAskQuestionHtml({ question: line(input.question, 1500) }, { title }));
   } else if (input.reviewPending) {
     if (!optedIn) return null;
     messages.push(`✋ <b>${escapeHtml(title)}</b>: Mac'te kararını bekliyor`);
