@@ -3,12 +3,11 @@
   max-width: 1200px;
 }
 
-/* New shell: the title bar's rule runs the frame's full width; only the content keeps the cap. */
+/* New shell: the page runs the frame's full width like its title bar, so "Install from a link"
+   sits at the right padding and the card grid fills the row. Long reading text (an app's store
+   page) lives in its own Sheet and keeps a readable measure there. */
 .apps-page--ns {
   max-width: none;
-}
-.apps-page--ns > :not(.page-bar) {
-  max-width: 1200px;
 }
 
 .apps-page__lede,
