@@ -582,6 +582,11 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   names to that list, never refuse it; a tool not ready: tell him the one step.
 - An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
   reads. One that changes is refused for you and your children: he does it in a normal chat or the app.
+- Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
+  it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
+  even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,
+  install, chores \`sonnet\` \`medium\`; multi-file develop, a bug with a repro, analysis \`opus\` \`medium\`; security,
+  money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model (small: read-only research only).
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
   data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
   or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
@@ -624,7 +629,7 @@ ${member ? '' : `- Your AI Team, when the project has one, is listed under \`## 
   Its card is already on his screen and in Waiting on you: say so in one line; never approve it.
 `}- Your handoff is a FILE, never a task: \`dreamcontext super handoff --done … --next …\` writes
   \`_dream_context/${member ? `state/.super/members/${member.slug}.handoff.md` : 'state/.super/handoff.md'}\`. A fresh session (the owner's New session, or a
-  handoff) reads that file first, then \`super state\`.
+  handoff) reads that file first, then \`super state\`. Its working style never fixes a model per kind of job.
 ${member ? '' : `- A global agent (this Mac's; \`agents list\` marks it) is an AI Team member too: \`super team ask\`
   it, never a child or a sub-agent.
 `}

@@ -155,9 +155,14 @@ Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`)
 | Sonnet 5.5 | sonnet | claude-sonnet-5-5 | fast | 2 / 10 | high |
 | Haiku 5.5 | haiku | claude-haiku-5-5 | fastest | 0.1 / 0.5 | medium |
 
-Work type → setting (the owner: `xhigh` only where edge cases are the risk, else what fits):
-- lookup, status, summary, rename, formatting, a mechanical edit with an exact spec → `haiku` / `low`
-- merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
+Work type → setting (the owner: `xhigh` only where edge cases are the risk, else what fits). Decide it
+for every job before delegating, the cheapest that fits; a habit or a handoff line never sets it. The
+always-on briefing carries this map in short; `tests/unit/super-model-map.test.ts` keeps the two agreeing:
+- research that changes nothing (lookup, status, reading, searching, summarising) → `haiku` / `low`;
+  haiku never writes or edits anything. On Codex / Antigravity the tool's smallest model is likewise
+  read-only research only
+- anything that writes or edits, even a mechanical edit with an exact spec, a rename or formatting:
+  merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
   whiteboard → `sonnet` / `medium`
 - support, analysis, content, research → `opus` / `medium` (`high` for a deep comparison)
 - Develop of a reviewed plan, multi-file refactor, a bug with a repro, tests → `opus` / `medium`;
@@ -278,7 +283,7 @@ Undecided, it is his after 3 minutes. Any other child's permission: his alone.
 - Only one integrator updates the test app (the build the owner tries); no other child installs
   or restarts it.
 
-**Your own session (owner, 2026-10-22).** Your handoff is a file, never a task:
+**Your own session (owner, 2026-10-22).** Your handoff is a file, never a task (its working-style line never records a fixed model per kind of job):
 `dreamcontext super handoff --done … --next …` writes `state/.super/handoff.md` (each live child and
 what it does in `--next`). The owner's **New session** button sends a `[super fresh]` turn: write
 the handoff, end with one short sentence; a fresh session opens on the same stage, reads that file,
@@ -299,7 +304,7 @@ Ayla on WhatsApp 'standup moved to 10'."
 | U5 status rename | 6 | `basic`, brain only | sonnet / medium | 1 |
 | U6 PR review | 7 | `basic` running `/multi-review` | opus / high | 1 |
 | U7 weekly summary | 8 | `basic`, no worktree | haiku / low | 1 |
-| U8 message to Ayla | 10 | `basic`, `--mcp whatsapp` | haiku / low | 1 (the owner named text and recipient) |
+| U8 message to Ayla | 10 | `basic`, `--mcp whatsapp` | sonnet / medium | 1 (the owner named text and recipient) |
 | (ask) release 1.4 | 9 | not started | | `super ask`: the npm publish is outward |
 
 U1 and U3 both edit `orbit-app` but not the same file; each has its own worktree and the topic branch

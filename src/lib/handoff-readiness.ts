@@ -45,7 +45,7 @@ export const HANDOFF_FIELDS = [
   { key: 'next', flag: '--next', label: 'Next', minChars: 30, hint: 'the exact next step and what remains after it' },
   { key: 'decisions', flag: '--decisions', label: 'Decisions', minChars: 1, hint: 'choices made this session and why, or none' },
   { key: 'learned', flag: '--learned', label: 'Learned', minChars: 1, hint: 'traps, surprises, dead ends, or none' },
-  { key: 'style', flag: '--style', label: 'Working style', minChars: 1, hint: 'how you are working: commands, test loop, what the user asked for, or none' },
+  { key: 'style', flag: '--style', label: 'Working style', minChars: 1, hint: 'how you are working: commands, test loop, what the user asked for, or none; never a fixed model per kind of job' },
   { key: 'files', flag: '--files', label: 'Open files', minChars: 1, hint: 'the files in flight, with line anchors, or none' },
 ] as const;
 

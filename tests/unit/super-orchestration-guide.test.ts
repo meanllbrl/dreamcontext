@@ -111,7 +111,9 @@ describe('super-orchestration guide: shape', () => {
     // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
     // +1,360 (2026-11-08, planlama-dongusu: a plan's stop card is the owner's, a Plan unit carries the premise answer,
     // Environment, out of scope and decisions; measured 25,860, cap = measured + 1,000 per the plan).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(26_860);
+    // +300 (2026-11-08, super-model-secimi: decide the model per job, the briefing carries the map; measured 25,785).
+    // +250 (2026-11-08, owner correction: haiku only for read-only research; measured 26,015).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(27_410);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -283,10 +285,10 @@ describe('super-orchestration guide: the briefing slot', () => {
     expect(lead.startsWith('- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.\n')).toBe(true);
   });
 
-  it('the briefing names the guide path only through the slot, and no model id, price or alias table', () => {
+  it('the briefing names the guide path only through the slot, and no model id, price or table (the short work to model map, haiku/sonnet/opus, is allowed since 2026-11-08, super-model-secimi)', () => {
     const withGuide = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH);
     expect(withGuide).toContain(`- Before you split work, read the orchestration guide: ${SUPER_ORCHESTRATION_GUIDE_PATH}.`);
-    expect(withGuide).not.toMatch(/claude-(opus|sonnet|haiku|fable)|\$\d|\/MTok|haiku|fable/i);
+    expect(withGuide).not.toMatch(/claude-(opus|sonnet|haiku|fable)|\$\d|\/MTok|fable/i);
   });
 });
 
