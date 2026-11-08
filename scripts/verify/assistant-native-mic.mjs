@@ -287,8 +287,8 @@ async function main() {
     await page.waitForTimeout(90);
     await page.evaluate(() => window.__hotkey('released'));
     await page.waitForTimeout(1200);
-    const readAloud = () => page.evaluate(() => document.querySelector('.dc-notch__chat .chat-cmp-readaloud')?.getAttribute('aria-pressed') ?? 'missing');
-    if (await readAloud() === 'false') await page.click('.dc-notch__chat .chat-cmp-readaloud');
+    const readAloud = () => page.evaluate(() => (document.querySelector('.dc-notch__chat .chat-cmp-micsplit-caret') ? (localStorage.getItem('dreamcontext-read-aloud') === '1' ? 'true' : 'false') : 'missing'));
+    if (await readAloud() === 'false') { await page.click('.dc-notch__chat .chat-cmp-micsplit-caret'); await page.click('.chat-cmp-micmenu [role="menuitemcheckbox"]'); await page.keyboard.press('Escape'); }
     ok('read-aloud is switched on for this turn', await readAloud() === 'true', await readAloud());
     await page.waitForTimeout(400);
     const had = turns().length;

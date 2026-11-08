@@ -23,7 +23,7 @@ import {
 // rendered in-pane can never out-grow a narrow or right-edge pane. From <body> it is placed
 // above the trigger and clamped to the viewport, so it always fits — in any pane, any split.
 export function Popover({
-  trigger, align = 'right', menuClassName, children,
+  trigger, align = 'right', menuClassName, children, open: openProp, onOpenChange,
 }: {
   trigger: (open: boolean, toggle: () => void) => React.ReactNode;
   /** Which trigger edge the menu prefers to grow from (it clamps to the viewport either way). */
@@ -31,8 +31,23 @@ export function Popover({
   /** A modifier on the menu shell (the Attach menu's `agent-composer-menu--glass`). */
   menuClassName?: string;
   children: (close: () => void) => React.ReactNode;
+  /** Controlled: the owner of `open` (the mic opens its menu from a press on the mic). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const onChangeRef = useRef(onOpenChange);
+  onChangeRef.current = onOpenChange;
+  const controlled = openProp !== undefined;
+  const setOpen = useCallback((next: boolean | ((v: boolean) => boolean)) => {
+    const cur = openRef.current;
+    const v = typeof next === 'function' ? next(cur) : next;
+    if (!controlled) setOpenState(v);
+    if (v !== cur) onChangeRef.current?.(v);
+  }, [controlled]);
   const anchorRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // Esc/outside-click arbitration lives in `lib/useDismissOnOutside` — extracted from HERE so
@@ -41,7 +56,7 @@ export function Popover({
   // portaled menu is a global overlay, so its Esc arbitrates LIFO — it never swallows an Esc
   // meant for a surface stacked on top, and never loses one to a background panel's
   // earlier-registered listener.
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => setOpen(false), [setOpen]);
   useDismissOnOutside(open, close, [anchorRef, menuRef]);
 
   // Place the menu above the trigger, clamped inside the viewport. Anchoring via `bottom`

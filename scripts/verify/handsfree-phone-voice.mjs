@@ -233,7 +233,7 @@ try {
   report.check('a new chat opens with its composer', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000));
   const mic = vis('.chat-cmp-mic').first();
   report.check('the composer draws the hold-to-talk mic', await until(async () => (await mic.count()) === 1, 10000));
-  report.check('…and no read-aloud switch (speech stays the laptop\'s)', (await vis('.chat-cmp-readaloud').count()) === 0);
+  report.check('…and no read-aloud switch (speech stays the laptop\'s)', (await vis('.chat-cmp-micsplit-caret').count()) === 0);
   // At rest the phone draws no caption at all: the mic is the instruction (owner, 2026-10-21).
   const note = (await phone.evaluate(() => [...document.querySelectorAll('.chat-cmp-voice-note')].map((e) => e.textContent).join('|'))).trim();
   report.check(`no resting caption beside the phone's mic ("${note}")`, note === '');

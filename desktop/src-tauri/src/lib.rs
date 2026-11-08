@@ -37,6 +37,7 @@ mod assistant;
 mod cli_choice;
 mod frames;
 mod mic;
+mod mic_permission;
 mod node_runtime;
 mod node_setup;
 #[cfg(target_os = "macos")]
@@ -109,6 +110,9 @@ pub fn run() {
             mic::mic_take_begin,
             mic::mic_take_end,
             mic::mic_take_cancel,
+            mic_permission::mic_permission,
+            mic_permission::mic_permission_request,
+            mic_permission::mic_open_settings,
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
             assistant::assistant_wake,

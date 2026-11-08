@@ -30,6 +30,7 @@
     "allow-assistant-wake",
     "allow-pick-paths",
     "allow-mic-take",
+    "allow-mic-permission",
     "allow-set-frames"
   ]
 }

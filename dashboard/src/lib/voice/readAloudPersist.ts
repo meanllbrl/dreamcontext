@@ -29,7 +29,7 @@ export function wireReadAloudPersistence(): void {
   onAgentSettings((cfg) => adopt(cfg.readAloud));
 }
 
-/** The speaker button: flip the switch now, and persist it for the next launch. */
+/** The mic menu's spoken-replies row: flip the switch now, and persist it for the next launch. */
 export function toggleReadAloud(on: boolean): void {
   setReadAloud(on);
   void patchAgentSettings({ readAloud: on });

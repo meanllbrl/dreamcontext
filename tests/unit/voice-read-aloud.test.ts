@@ -127,24 +127,26 @@ describe('the composer read-aloud switch', () => {
   const composer = code(read('dashboard/src/components/sleepy/chat/Composer.tsx'));
   // The notch Assistant's AND the Super Agent's (owner, 2026-10-21: one visible speech switch on
   // the Super stage), and never on the hands-free phone (`!phoneVoice`): speech is the laptop's.
-  const button = composer.match(/\{voiceEnabled && \(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice && \(\s*<button[^>]*?className="chat-cmp-iconbtn chat-cmp-readaloud"[\s\S]*?<\/button>\s*\)\}/)?.[0] ?? '';
+  // Since 2026-11-08 it is the mic split's menu row (MicSplit.tsx), not a speaker button.
+  const split = code(read('dashboard/src/components/sleepy/chat/MicSplit.tsx'));
 
-  it('is drawn in the notch and the Super composer, as a pressed/unpressed toggle', () => {
-    expect(button).not.toBe('');
-    expect(button).toMatch(/aria-pressed=\{readAloud\}/);
-    expect(button).toMatch(/onClick=\{\(\) => toggleReadAloud\(!readAloud\)\}/);
-    expect(button).toContain("t('voice.readAloud.on')");
-    expect(button).toContain("t('voice.readAloud.off')");
-    expect(button).toMatch(/readAloud \? <SpeakerIcon \/> : <HushIcon \/>/);
+  it('is offered in the notch and the Super composer, as a checked/unchecked menu row', () => {
+    expect(composer).toMatch(/readAloudAvailable=\{\(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice\}/);
+    expect(composer).toMatch(/readAloudOn=\{readAloud\}/);
+    expect(composer).toMatch(/onToggleReadAloud=\{\(\) => toggleReadAloud\(!readAloud\)\}/);
+    expect(split).toMatch(/role="menuitemcheckbox" aria-checked=\{item\.on\}/);
+    expect(split).toMatch(/item\.on \? <SpeakerIcon \/> : <HushIcon \/>/);
+    // Named for what it does on the Super stage (owner, 2026-11-08): only a spoken message is answered aloud.
+    expect(composer).toContain("mode === 'super' ? t('micmenu.replyWhenSpoken') : t('micmenu.readAloud')");
   });
 
   it('is the ONLY speech switch: no second store, no second key', () => {
-    const files = ['dashboard/src/components/sleepy/chat/Composer.tsx', 'dashboard/src/components/sleepy/chatSession.ts'];
+    const files = ['dashboard/src/components/sleepy/chat/Composer.tsx', 'dashboard/src/components/sleepy/chatSession.ts', 'dashboard/src/components/sleepy/chat/MicSplit.tsx'];
     for (const f of files) {
       const src = code(read(f));
       expect(src).not.toMatch(/localStorage\.(get|set)Item\([^)]*(speech|voice|aloud)/i);
     }
-    expect(composer.match(/chat-cmp-readaloud/g)?.length).toBe(1);
+    expect(composer.match(/toggleReadAloud\(/g)?.length).toBe(1);
   });
 
   it('turning it off silences a reply already playing, through the Hush path', () => {

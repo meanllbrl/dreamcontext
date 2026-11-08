@@ -370,7 +370,7 @@ const toolbarState = (page, scope) => page.evaluate((s) => {
   const card = root.querySelector('.chat-cmp-card');
   return {
     mic: vis('.chat-cmp-mic').length, micTitle: vis('.chat-cmp-mic')[0]?.getAttribute('title') ?? null,
-    speaker: vis('.chat-cmp-readaloud').length, ring: vis('.chat-cmp-usagebtn').length,
+    speaker: vis('.chat-cmp-micsplit-caret').length, ring: vis('.chat-cmp-usagebtn').length,
     modeFace: bar.querySelectorAll('.chat-cmp-modetrigger-face, .smascot').length,
     chevrons: vis('svg.chat-cmp-caret').length,
     restText: /to talk/i.test(bar.textContent ?? ''),

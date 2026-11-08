@@ -693,7 +693,7 @@ try {
       const has = (sel) => els.some((el) => el.matches(sel));
       return {
         count: rects.length, outside, overlaps,
-        present: { ring: has('.chat-cmp-usagebtn'), model: has('.chat-cmp-model-wrap .chat-cmp-modeltrigger'), mic: has('.chat-cmp-mic'), send: has('.chat-cmp-send:not(.chat-cmp-mic)'), readAloud: has('.chat-cmp-readaloud') },
+        present: { ring: has('.chat-cmp-usagebtn'), model: has('.chat-cmp-model-wrap .chat-cmp-modeltrigger'), mic: has('.chat-cmp-mic'), send: has('.chat-cmp-send:not(.chat-cmp-mic)'), readAloud: has('.chat-cmp-micsplit-caret') },
       };
     });
     ok('FIT: the footer\'s controls are all there (context ring, model picker, mic, read-aloud, send)',
@@ -1012,10 +1012,10 @@ try {
     await npage.keyboard.press('Enter');
     await npage.waitForFunction(() => document.body.innerText.includes('"said":"A quiet reply please."'), null, { timeout: 30_000 }).catch(() => null);
     await npage.waitForTimeout(1500);
-    const switchState = () => npage.evaluate(() => document.querySelector('.dc-notch__chat .chat-cmp-readaloud')?.getAttribute('aria-pressed') ?? 'missing');
+    const switchState = () => npage.evaluate(() => (document.querySelector('.dc-notch__chat .chat-cmp-micsplit-caret') ? (localStorage.getItem('dreamcontext-read-aloud') === '1' ? 'true' : 'false') : 'missing'));
     const offState = await switchState();
     ok('read-aloud starts OFF and a reply is NOT spoken', offState === 'false' && ttsCalls === 0, `switch=${offState} tts=${ttsCalls}`);
-    if (offState === 'false') await npage.click('.dc-notch__chat .chat-cmp-readaloud');
+    if (offState === 'false') { await npage.click('.dc-notch__chat .chat-cmp-micsplit-caret'); await npage.click('.chat-cmp-micmenu [role="menuitemcheckbox"]'); await npage.keyboard.press('Escape'); }
     ok('the composer\'s read-aloud switch turns it on', await switchState() === 'true', await switchState());
     await npage.fill('.dc-notch__chat textarea', 'Read this answer aloud please.');
     await npage.keyboard.press('Enter');

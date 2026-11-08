@@ -11,6 +11,8 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../../../dashboard/src/styles/global.css';
 import '../../../../dashboard/src/components/sleepy/ChatPane.css';
+// The portaled menu shell (.agent-composer-menu) is styled here; the app loads it with AgentSurface.
+import '../../../../dashboard/src/components/sleepy/AgentTerminal.css';
 import { ThemeProvider } from '../../../../dashboard/src/context/ThemeContext';
 import { I18nProvider, useI18n } from '../../../../dashboard/src/context/I18nContext';
 import { Composer } from '../../../../dashboard/src/components/sleepy/chat/Composer';

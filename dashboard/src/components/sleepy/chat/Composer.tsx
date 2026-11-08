@@ -23,7 +23,8 @@ import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTal
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
-import { useVaultId, useInstanceEvent } from '../../../context/VaultContext';
+import { useVaultId, useInstanceEvent, emitInstance } from '../../../context/VaultContext';
+import { readDeviceShell } from '../../../lib/uxMode';
 import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -72,6 +73,10 @@ import { ConcentricRings } from './UsageRings';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
 import { useDictationReady } from '../../../lib/voice/useDictationReady';
+import { HushIcon, MicIcon } from './voiceIcons';
+import { MicSplit } from './MicSplit';
+import { micVisible, micSetupSteps, micPressAction } from '../../../lib/voice/micMenu';
+import { useMicPermission } from '../../../lib/voice/micPermission';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { useStageCards } from '../super/stageCards';
 
@@ -157,46 +162,7 @@ function PlusIcon() {
   );
 }
 
-/**
- * A microphone, drawn.
- *
- * It replaced a 🎙 emoji, and the reason is not taste: an emoji is a different picture on
- * every platform, sits on its own baseline inside a round button, and CANNOT take the state
- * colour — which is the whole point here, because the button is now the one control that
- * says whether the mode is listening, thinking or idle. `currentColor` is what makes that
- * work, so the colour lives in CSS with every other state in this file.
- */
-/** The composer's line icons (owner 2026-10-30: the prototype's thin line set, 16 px at a
- *  1.75 stroke). The speaker struck through is "replies are not read aloud". */
-function HushIcon() {
-  return (
-    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
-      <path d="M11 5.5 7 9H4.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H7l4 3.5z" />
-      <path d="M3 3l18 18" />
-    </svg>
-  );
-}
-
-/** A plain speaker with its waves — "replies are read aloud". */
-function SpeakerIcon() {
-  return (
-    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
-      <path d="M11 5.5 7 9H4.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H7l4 3.5z" />
-      <path d="M15 9.5a3.5 3.5 0 0 1 0 5" />
-      <path d="M17.8 7a7 7 0 0 1 0 10" />
-    </svg>
-  );
-}
-
-function MicIcon() {
-  return (
-    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
-      <rect x="9" y="3.5" width="6" height="11" rx="3" />
-      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
-      <path d="M12 18v2.5" />
-    </svg>
-  );
-}
+// The voice line icons (mic, speaker, hush) live in `voiceIcons.tsx`, shared with the mic split.
 
 /** A trigger's small chevron: "tap to change it", quieter than the words beside it. */
 function Chevron() {
@@ -671,7 +637,7 @@ export function Composer({
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
   // whichever chip the user last touched.
-  const { vault } = useVaultId();
+  const { vault, bus } = useVaultId();
   const { t } = useI18n();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.
@@ -1652,20 +1618,33 @@ export function Composer({
    *  ⇡ disc left the toolbar (owner 2026-11-07). */
   type SubmitMode = 'auto' | 'queue';
 
-  // ── Assistant mode: push-to-talk ──────────────────────────────────────────────────
+  // ── Push-to-talk ──────────────────────────────────────────────────────────────────
   //
-  // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
-  // has no microphone path at all — there is no Info.plist to carry a usage string and no
-  // WKWebView to grant against — so a button there would be a control that cannot work.
-  // K7 (jarvis plan r9): every desktop chat gets the mic once local dictation is installed; the
-  // Assistant always has it (its notch carries the install hint). The hands-free phone draws the
-  // same mic in any chat mode while the Mac has local dictation (usePhoneDictation): its take goes
-  // to the Mac's whisper. Read-aloud and the hotkey stay the laptop's (the tunnel refuses their
-  // routes), so the few lines below that differ ask `phoneVoice`. Read aloud stays the Assistant's.
-  const dictationReady = useDictationReady(isDesktop() && mode !== 'assistant');
+  // The mic is drawn ONLY in the desktop app (AC15) and the hands-free phone. The web dashboard
+  // has no microphone path at all (no Info.plist to carry a usage string and no WKWebView to
+  // grant against), so a button there would be a control that cannot work.
+  // ALWAYS DRAWN on the desktop (owner, 2026-11-08). It used to wait for local dictation, and
+  // macOS asks for the microphone only when something first records, so a Mac with no model or
+  // no grant had no way to reach either step: the chicken and the egg. Both are now steps in the
+  // mic's menu (`micSetupSteps`), and a press with a step missing opens that menu instead of
+  // recording (`micPressAction`). The hands-free phone draws the mic while the Mac has dictation
+  // (usePhoneDictation): its take goes to the Mac's whisper. Read-aloud and the hotkey stay the
+  // laptop's (the tunnel refuses their routes), so the few lines below that differ ask `phoneVoice`.
+  const dictationReady = useDictationReady(isDesktop());
   const phoneVoice = usePhoneDictation();
   const inAppFrame = !!useEmbed();
-  const voiceEnabled = !inAppFrame && ((isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice);
+  const voiceEnabled = micVisible({ inAppFrame, desktop: isDesktop(), phoneVoice });
+  const micPermission = useMicPermission(voiceEnabled && isDesktop());
+  const micSteps = micSetupSteps({ permission: micPermission, dictationReady, phone: phoneVoice && !isDesktop() });
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  /** Read by the press through a ref: a fresh array each render must not rebuild `startTake`,
+   *  which the hotkey listener depends on (a listener rebuilt mid-take would strand the take). */
+  const micStepsRef = useRef(micSteps);
+  micStepsRef.current = micSteps;
+  /** Voice settings is reachable from this composer (not the notch, an app frame or the phone). */
+  const micSettingsAvailable = isDesktop() && !inAppFrame && mode !== 'assistant' && !readDeviceShell();
+  const micSettingsRef = useRef(micSettingsAvailable);
+  micSettingsRef.current = micSettingsAvailable;
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -1893,6 +1872,9 @@ export function Composer({
    *  inside a real gesture handler. */
   const startTake = useCallback(() => {
     if (!voiceEnabled || voice.busy) return;
+    // Something is missing (the permission, a model): the press opens the menu on that step,
+    // never a take that cannot work and never nothing at all.
+    if (micPressAction(micStepsRef.current, { dictationFixable: micSettingsRef.current }) === 'open-menu') { setMicMenuOpen(true); return; }
     setVoiceNotice('');
     draftAtTakeRef.current = liveRef.current.draft;
     session.bargeInSpeech?.();
@@ -2837,57 +2819,60 @@ export function Composer({
         )}
         {/* Push-to-talk. Hold it, speak, let go — see `useVoiceCapture` for why the take is
             gated on duration and RMS before a single byte is uploaded. A tap (too short) nudges
-            the button and, where the device can, buzzes once: the word beside it is one word. */}
+            the button and, where the device can, buzzes once: the word beside it is one word.
+            THE MIC SPLIT (owner, 2026-11-08): the mic and a caret are one button; the caret's
+            menu holds the missing setup steps, spoken replies (the one speech switch, shared by
+            the notch and the Super Agent through `lib/voice/readAloud.ts`; off by default; never
+            on the phone, which plays nothing) and Voice settings. See `MicSplit.tsx`. */}
         {voiceEnabled && (
-          <button
-            type="button"
-            className={`chat-cmp-iconbtn chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
-            // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
-            // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
-            // the button or the OS takes the pointer away, so the recorder cannot be left open
-            // with the macOS mic indicator lit.
-            onPointerDown={startTake}
-            onPointerUp={endTake}
-            onPointerLeave={endTake}
-            onPointerCancel={endTake}
-            // A real gesture is required for autoplay, and a context menu on a long press
-            // would swallow the pointerup that ends the take.
-            onContextMenu={(e) => e.preventDefault()}
-            disabled={!canCompose || voice.state === 'transcribing'}
-            title={
-              voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
-                : voice.state === 'transcribing' ? 'Transcribing…'
-                      : voice.state === 'too-short' ? 'Hold the button while you speak.'
-                        : voice.state === 'silent' ? 'Nothing was heard in that take.'
-                          : voice.state === 'garbled' ? 'That take could not be understood, so nothing was sent. Say it again.'
-                          : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
-                            : voice.state === 'error' ? (voice.error || 'That take did not go through.')
-                              : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
-                                ? `Press ${hotkeyLabel(pushToTalk)} to start, again to send`
-                                : `Hold to talk · ${hotkeyLabel(pushToTalk)}`
-            }
-            aria-label="Hold to speak"
-            aria-pressed={voice.state === 'recording'}
-          >
-            {voice.state === 'transcribing' ? <span aria-hidden>…</span> : <MicIcon />}
-          </button>
-        )}
-        {/* SPOKEN REPLIES, beside the mic it pairs with: the one switch for speech (owner,
-            2026-10-21), shared by the notch and the Super Agent through `lib/voice/readAloud.ts`.
-            Off — the default — nothing is read aloud, not even the answer to a spoken message,
-            and a dictated message goes as text. A switch, not an action: `aria-pressed` carries
-            the state and the icon draws it. Not on the phone: it plays nothing. */}
-        {voiceEnabled && (mode === 'assistant' || mode === 'super') && !phoneVoice && (
-          <button
-            type="button"
-            className="chat-cmp-iconbtn chat-cmp-readaloud"
-            onClick={() => toggleReadAloud(!readAloud)}
-            title={readAloud ? t('voice.readAloud.on') : t('voice.readAloud.off')}
-            aria-label={t('voice.readAloud.aria')}
-            aria-pressed={readAloud}
-          >
-            {readAloud ? <SpeakerIcon /> : <HushIcon />}
-          </button>
+          <MicSplit
+            mic={(
+              <button
+                type="button"
+                className={`chat-cmp-iconbtn chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
+                // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
+                // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
+                // the button or the OS takes the pointer away, so the recorder cannot be left open
+                // with the macOS mic indicator lit.
+                onPointerDown={startTake}
+                onPointerUp={endTake}
+                onPointerLeave={endTake}
+                onPointerCancel={endTake}
+                // A real gesture is required for autoplay, and a context menu on a long press
+                // would swallow the pointerup that ends the take.
+                onContextMenu={(e) => e.preventDefault()}
+                disabled={!canCompose || voice.state === 'transcribing'}
+                title={
+                  micSteps.length > 0 && voice.state === 'idle' ? t('micmenu.mic.setup')
+                  : voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
+                    : voice.state === 'transcribing' ? 'Transcribing…'
+                          : voice.state === 'too-short' ? 'Hold the button while you speak.'
+                            : voice.state === 'silent' ? 'Nothing was heard in that take.'
+                              : voice.state === 'garbled' ? 'That take could not be understood, so nothing was sent. Say it again.'
+                              : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
+                                : voice.state === 'error' ? (voice.error || 'That take did not go through.')
+                                  : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
+                                    ? `Press ${hotkeyLabel(pushToTalk)} to start, again to send`
+                                    : `Hold to talk · ${hotkeyLabel(pushToTalk)}`
+                }
+                aria-label="Hold to speak"
+                aria-pressed={voice.state === 'recording'}
+              >
+                {voice.state === 'transcribing' ? <span aria-hidden>…</span> : <MicIcon />}
+                {micSteps.length > 0 && <span className="chat-cmp-micdot is-step" aria-hidden />}
+              </button>
+            )}
+            steps={micSteps}
+            permission={micPermission}
+            readAloudAvailable={(mode === 'assistant' || mode === 'super') && !phoneVoice}
+            readAloudOn={readAloud}
+            readAloudLabel={mode === 'super' ? t('micmenu.replyWhenSpoken') : t('micmenu.readAloud')}
+            settingsAvailable={micSettingsAvailable}
+            open={micMenuOpen}
+            onOpenChange={setMicMenuOpen}
+            onToggleReadAloud={() => toggleReadAloud(!readAloud)}
+            onOpenSettings={() => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'voice' })}
+          />
         )}
         {busy && (
           <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => { session.bargeInSpeech?.(); session.interrupt(); }}>
