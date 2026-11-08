@@ -123,6 +123,31 @@ describe('the share gate', () => {
     const strict = runGate([f('dreamcontext-app.json', '{}')], { mode: 'strict' });
     expect(strict.blocks.map((b) => b.rule)).toEqual(expect.arrayContaining(['no-license', 'no-readme']));
   });
+
+  it('sends a plain-text native source the server compiles (lib/*.m), and scans it like any text', () => {
+    const server = f('server.mjs', "const src = readFileSync(new URL('./lib/sicaklik.m', import.meta.url));");
+    const ok = runGate([f('dreamcontext-app.json', '{}'), server, f('lib/sicaklik.m', 'int main(void){return 0;}'), f('lib/probe.sh', 'echo hi')], { mode: 'normal' });
+    expect(ok.send.map((s) => s.path)).toEqual(expect.arrayContaining(['lib/sicaklik.m', 'lib/probe.sh']));
+    expect(ok.blocks).toEqual([]);
+    const leak = runGate([f('dreamcontext-app.json', '{}'), f('lib/sicaklik.m', `// token ${SECRET}`)], { mode: 'normal' });
+    expect(leak.ok).toBe(false);
+    const bin = runGate([f('dreamcontext-app.json', '{}'), f('lib/sicaklik', 'x'), f('lib/a.o', 'x')], { mode: 'normal' });
+    expect(bin.send.map((s) => s.path)).toEqual(['dreamcontext-app.json']);
+  });
+
+  it('blocks a publish whose sent code reads a committed file that stays behind', () => {
+    const server = f('server.mjs', "import { join } from 'node:path'; const p = join(root, 'tools/reader.sh'); const t = './test/verdict.test.mjs';");
+    const r = runGate([f('dreamcontext-app.json', '{}'), server, f('tools/reader.sh', 'puts 1'), f('test/verdict.test.mjs', 'x')], { mode: 'normal' });
+    expect(r.ok).toBe(false);
+    expect(r.blocks.filter((b) => b.rule === 'referenced-not-sent').map((b) => b.file).sort()).toEqual(['test/verdict.test.mjs', 'tools/reader.sh']);
+    // listed through share.include: it goes out and the block is gone
+    const inc = runGate([f('dreamcontext-app.json', '{}'), server, f('tools/reader.sh', 'puts 1'), f('test/verdict.test.mjs', 'x')], { mode: 'normal', include: ['tools', 'test'] });
+    expect(inc.blocks.filter((b) => b.rule === 'referenced-not-sent')).toEqual([]);
+    // a file nothing reads stays quietly
+    const quiet = runGate([f('dreamcontext-app.json', '{}'), f('server.mjs', 'x'), f('tools/reader.sh', 'puts 1')], { mode: 'normal' });
+    expect(quiet.blocks).toEqual([]);
+    expect(quiet.notSent.map((n) => n.path)).toContain('tools/reader.sh');
+  });
 });
 
 describe('registry and settings', () => {

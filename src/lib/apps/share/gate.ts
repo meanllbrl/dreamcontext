@@ -81,7 +81,10 @@ export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 const ROOT_FILES = new Set(['dreamcontext-app.json', 'ASSISTANT.md', 'README.md', 'CHANGES.md', 'LICENSE', 'package.json', 'package-lock.json', 'server.mjs', 'server.js', 'server.cjs', 'server.ts']);
 const DIRS = ['public', 'src', 'lib'];
 
-const EXTS = new Set(['.html', '.css', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff2', '.md', '.txt']);
+const EXTS = new Set(['.html', '.css', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff2', '.md', '.txt',
+  // Plain-text native/helper sources an app server compiles or spawns at start (a Swift or Objective-C reader, a shell
+  // helper). Text, so the content scan below reads them like any .js; compiled output and archives stay off the list.
+  '.m', '.mm', '.h', '.c', '.swift', '.sh']);
 const BINARY = new Set(['.png', '.jpg', '.jpeg', '.webp', '.woff2']);
 
 const ext = (p: string): string => { const i = p.lastIndexOf('.'); const s = p.lastIndexOf('/'); return i > s ? p.slice(i).toLowerCase() : ''; };
@@ -203,6 +206,41 @@ function scanText(file: string, text: string, terms: GateTerms, out: { blocks: G
   });
 }
 
+const CODE_EXTS = new Set(['.mjs', '.js', '.cjs', '.ts', '.tsx']);
+const PATH_LIT_RE = /(['"`])((?:\.{1,2}\/)?[\w@.\-/]+\.[A-Za-z][A-Za-z0-9]{0,5})\1/g;
+
+/**
+ * A sent code file names a committed file that stays behind: the published app would break for whoever installs it
+ * (a reader compiled at start, a helper script). Only the "not on the share list" leftovers count; data/, .env and the
+ * other never-paths are expected to stay and are not this rule's business.
+ */
+function referencedButNotSent(
+  files: readonly GateFile[],
+  send: GateReport['send'],
+  notSent: GateReport['notSent'],
+  block: (rule: string, file: string, label: string, line?: number) => void,
+): void {
+  const left = new Set(notSent.filter((n) => n.why === 'not on the share list').map((n) => n.path));
+  if (!left.size) return;
+  const sent = new Set(send.map((s) => s.path));
+  for (const f of files) {
+    if (!sent.has(f.path) || !CODE_EXTS.has(ext(f.path))) continue;
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+    const text = f.data.toString('utf-8');
+    const hit = new Set<string>();
+    for (const m of text.matchAll(PATH_LIT_RE)) {
+      const lit = m[2].replace(/^\.\//, '');
+      const candidates = [lit, dir ? `${dir}/${lit}` : lit];
+      if (lit.startsWith('../') && dir) candidates.push(`${dir.split('/').slice(0, -1).join('/')}/${lit.slice(3)}`.replace(/^\//, ''));
+      const found = candidates.find((c) => left.has(c));
+      if (found && !hit.has(found)) {
+        hit.add(found);
+        block('referenced-not-sent', found, `${f.path} reads "${found}", but it is not on the share list (add it to share.include in dreamcontext-app.json, or stop reading it)`);
+      }
+    }
+  }
+}
+
 export function runGate(files: readonly GateFile[], opts: GateOptions): GateReport {
   const mode = opts.mode;
   const terms = opts.terms ?? { hard: [], approvable: [] };
@@ -242,6 +280,7 @@ export function runGate(files: readonly GateFile[], opts: GateOptions): GateRepo
     if (opts.generated?.has(f.path)) continue;
     scanText(f.path, f.data.toString('utf-8'), terms, out);
   }
+  if (mode !== 'install') referencedButNotSent(files, send, notSent, block);
   if (total > MAX_TOTAL_BYTES) block('too-big-total', '(all)', 'more than 20 MB in total');
   if (!files.some((f) => f.path === 'dreamcontext-app.json')) block('no-manifest', 'dreamcontext-app.json', 'no app manifest');
   if (mode === 'strict') {

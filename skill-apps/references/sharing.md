@@ -10,9 +10,13 @@ updating and the rest stay his clicks on the Apps page.
 A publish reads the app's COMMITTED files only (commit first; an uncommitted change stops it), and
 only what an app is made of: `dreamcontext-app.json`, `ASSISTANT.md`, `README.md`, `CHANGES.md`,
 `LICENSE`, the icon, `server.{mjs,js,cjs,ts}`, `package.json`, `package-lock.json`, and
-`public/`, `src/`, `lib/` (html, css, js, ts, json, svg, images, woff2, md, txt), and up to three
+`public/`, `src/`, `lib/` (html, css, js, ts, json, svg, images, woff2, md, txt, and plain-text native sources:
+`.m .mm .h .c .swift .sh`; no compiled output or archives), and up to three
 store screenshots as flat images in `store/` (png, jpg, webp). `share.include`
-in the manifest adds a folder. Everything else stays on the Mac and is listed as "stays".
+in the manifest adds a folder. Everything else stays on the Mac and is listed as "stays". One exception stops the publish instead of
+staying quiet: when a file that goes out names (a quoted path like `'./lib/x.m'` or `'tools/x.rb'`) a committed file
+that stays, the gate blocks with `referenced-not-sent`, because the installed app would break. Add that
+folder to `share.include`, or stop reading the file. Nobody can approve past it.
 
 Never: `.env*`, `data/`, `node_modules/`, dotfiles, `CLAUDE.md`/`AGENTS.md`/`.claude/`, links,
 files over 2 MB. One commit goes out, as the account's noreply address at `+0000`; the app's own
