@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { TG_SENTINEL_CHAR, parseTelegramClaim, stripTgPrefix } from '../../../lib/chatProtocol';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHandover';
@@ -179,6 +180,15 @@ function whenLabel(paused: boolean, total: number, owed: number): string {
   return ` · ${owed} at the first opening, the rest when this turn ends`;
 }
 
+/** A queued Telegram turn shows its body; an edit keeps the sentinel pair in front, so the turn is
+ *  still routed back to Telegram and an unchanged Save is no change at all. */
+export function keepTelegramRef(original: string, edited: string): string {
+  const claim = parseTelegramClaim(original);
+  // Emptied: nothing left to send, so the row goes (an empty body never keeps a ref alive).
+  if (!edited.trim()) return edited;
+  return claim.ref ? `${TG_SENTINEL_CHAR}${claim.ref}${TG_SENTINEL_CHAR}${edited}` : edited;
+}
+
 export function QueuedMessages({ session }: { session: ChatSession }) {
   const conv = session.getModel();
   const paused = !!conv.queuePaused;
@@ -248,11 +258,11 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
           <QueuedRow
             key={q.id}
             index={i}
-            text={q.text}
+            text={stripTgPrefix(q.text)}
             superSid={session.mode === 'super' || session.superMirror ? session.claudeId : null}
             sendNowTitle={sendNowTitle}
             onSendNow={() => session.sendQueuedNow(q.id)}
-            onSave={(next) => session.editQueued(q.id, next)}
+            onSave={(next) => session.editQueued(q.id, keepTelegramRef(q.text, next))}
             onRemove={() => session.removeQueued(q.id)}
           />
         ))}

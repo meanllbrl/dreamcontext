@@ -28,6 +28,7 @@ import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
+import { SAFE_TO_GITIGNORE } from '../../lib/secret-files.js';
 import { listVaults } from '../../lib/vaults.js';
 
 /**
@@ -596,7 +597,7 @@ export async function handleBrainOriginDetach(
  * secret must be edited (remove the secret), not un-tracked (that would silently drop
  * real code from the repo). The dashboard mirrors this to decide whether to show the button.
  */
-export const SAFE_TO_GITIGNORE = /(^|\/)([^/]*\.env(\.[^/]+)?|[^/]*\.local\.[^/]+|[^/]*secrets?[^/]*\.(json|ya?ml|toml|env)|credentials?[^/]*\.(json|ya?ml|toml|env)|[^/]*\.(pem|key|p12|pfx|keystore|jks)|id_rsa[^/]*|id_ed25519[^/]*)$/i;
+export { SAFE_TO_GITIGNORE };
 
 export function isSafeToGitignore(relPath: string): boolean {
   const p = relPath.replace(/\\/g, '/').trim();

@@ -11,11 +11,6 @@ import { tmpdir } from 'node:os';
  */
 
 const notifyViaBundle = vi.hoisted(() => vi.fn(() => true));
-const telegram = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock('../../src/lib/automations/telegram.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/lib/automations/telegram.js')>()),
-  readTelegramConfigForSlug: () => ({ token: 't', chatId: 'c' }),
-}));
 vi.mock('../../src/lib/automations/notifier.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/lib/automations/notifier.js')>()),
   notifyViaBundle,
@@ -369,7 +364,6 @@ describe('banners', () => {
   });
 
   async function fire(status: 'ok' | 'failed', ask: boolean): Promise<ReturnType<typeof vi.fn>> {
-    telegram.mockClear();
     const NOW = new Date(RUN);
     const manifest = createAutomation(contextRoot, { slug: 'runner-job', title: 'Runner job', days: 'daily', at: '18:00', prompt: 'go' });
     approveAutomation(projectRoot + '/acme', manifest, NOW, home);
@@ -379,7 +373,7 @@ describe('banners', () => {
     const child = Object.assign(new EventEmitter(), { pid: 77, stdout, stderr, kill: () => {} });
     const notify = vi.fn();
     const run = runAutomation(contextRoot, 'runner-job', {
-      now: () => NOW, home, spawnImpl: vi.fn(() => child) as never, killImpl: vi.fn(), notify, sendTelegram: telegram,
+      now: () => NOW, home, spawnImpl: vi.fn(() => child) as never, killImpl: vi.fn(), notify,
       ...(ask ? { fireAt: NOW } : {}),
     });
     await new Promise((r) => setImmediate(r));
@@ -391,15 +385,12 @@ describe('banners', () => {
 
   it('the runner\'s completion banner: silent for a clean Super run', async () => {
     expect(await fire('ok', true)).not.toHaveBeenCalled();
-    expect(telegram).not.toHaveBeenCalled();
   });
   it('the runner\'s completion banner: a failed Super run rings', async () => {
     expect(await fire('failed', true)).toHaveBeenCalled();
-    expect(telegram).toHaveBeenCalled();
   });
   it('the runner\'s completion banner: a scheduled run rings', async () => {
     expect(await fire('ok', false)).toHaveBeenCalled();
-    expect(telegram).toHaveBeenCalled();
   });
 });
 

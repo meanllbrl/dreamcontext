@@ -70,7 +70,7 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
 import { SelectionScope } from './chat/SelectionBar';
 import { chatReplyRef, insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
-import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
+import { ownerRefOf, messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
 import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
@@ -1589,7 +1589,7 @@ export function ChatPane({
     for (let j = i - 1; j >= 0; j -= 1) {
       const it = all[j];
       const kind = from === 'owner' ? 'user' : 'text';
-      if (it.kind === kind && msgRef(it.text) === ref) { jumpToReplyTarget(it.id); return; }
+      if (it.kind === kind && (it.kind === 'user' ? ownerRefOf(it) : msgRef(it.text)) === ref) { jumpToReplyTarget(it.id); return; }
     }
   };
   /** One line per answer group, from its strip (or first row) to its last row, measured off
@@ -1948,7 +1948,7 @@ export function ChatPane({
     const words = !multi ? item.text
       : multi.parts.length >= 2 ? [multi.preamble, ...multi.parts.map((p) => p.words)].filter((w) => w.trim()).join(' · ')
         : splitAbout(splitPageContext(item.text).text).text;
-    const quote = replyAboutBlock(item.text, from, words);
+    const quote = replyAboutBlock(item.text, from, words, item.kind === 'user' ? item.ref : undefined);
     const name = `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${JSON.parse(quote.split('\nquote: ')[1]) as string}`;
     insertRef(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: quote });
     requestAnimationFrame(() => session.focus());
@@ -1972,7 +1972,7 @@ export function ChatPane({
         const from = item.kind === 'user' ? 'owner' : 'super';
         insertRef(convKey, {
           id: nextAttachmentId(), kind: 'about', name: `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${quote}`,
-          text: replySelectionBlock(item.text, from, quote),
+          text: replySelectionBlock(item.text, from, quote, item.kind === 'user' ? item.ref : undefined),
         });
       } else return;
       requestAnimationFrame(() => session.focus());

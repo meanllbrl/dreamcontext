@@ -36,6 +36,19 @@
  * the history divider or a notice never changes the answer; the render only looks it up.
  */
 import { msgRef, partRefs } from '../../../lib/superTypes';
+
+/**
+ * A user item's reference: a Telegram turn carries the ref the hub drew (plan B1/C1), every other
+ * message hashes its words. Every ref resolver goes through this.
+ */
+export function ownerRefOf(it: Pick<ChatUserItem, 'text' | 'ref'>): string {
+  return it.ref ?? msgRef(it.text);
+}
+
+/** Its parts' references, based on the same ref (E1: `partRefs(text, baseRef)`, W2's mirror). */
+export function ownerPartRefsOf(it: Pick<ChatUserItem, 'text' | 'ref'>): string[] {
+  return (partRefs as (text: string, baseRef?: string) => string[])(it.text, it.ref);
+}
 import type { ChatItem, ChatUserItem } from '../chatSession';
 import { splitAbout, splitAboutParts, superEventOf, type AgendaAbout, type MessageAbout } from '../super/superHandover';
 
@@ -122,7 +135,7 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
       textSinceUser = false;
       eventTurn = !isOwnerMessage(it);
       if (!eventTurn) {
-        owners.push({ id: it.id, ref: msgRef(it.text), parts: partRefs(it.text) });
+        owners.push({ id: it.id, ref: ownerRefOf(it), parts: ownerPartRefsOf(it) });
         waiting.push(it.id);
       }
       continue;

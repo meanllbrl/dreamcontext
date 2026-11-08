@@ -65,14 +65,7 @@ import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
-import { pollTelegram, type PollResult } from './telegram.js';
-
-/** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
- *  null and it returns without a single network call, which is the state every
- *  machine is in until someone runs `automations telegram setup`. */
-const defaultPollTelegram = (contextRoot: string, home?: string): Promise<PollResult> =>
-  pollTelegram(contextRoot, home);
-
+import { telegramAwayTick } from '../telegram/away.js';
 /** `_dream_context/` sits directly under a registered project root — the same
  *  literal join used throughout the CLI (`config.ts`, `update.ts`) for this
  *  exact registered-root → context-root derivation. */
@@ -82,6 +75,8 @@ const CONTEXT_DIR_NAME = '_dream_context';
 export const PROJECT_CONCURRENCY = 3;
 
 export interface TickOptions {
+  /** False skips the Telegram away duties (tests of the routine loop). Default: on. */
+  telegramAway?: boolean;
   /** Business "now" for dueness math and both heartbeat timestamps — a single
    *  fixed value (not a clock function), so one tick sees one consistent time
    *  across every project and automation it considers. Defaults to `new Date()`. */
@@ -97,10 +92,6 @@ export interface TickOptions {
   /** Injectable so tests never spawn a real `claude`. Defaults to the real
    *  `runAutomation`. */
   runImpl?: typeof runAutomation;
-  /** Injectable so NO test in this repo can reach api.telegram.org. Defaults
-   *  to the real poller, which is itself a no-op when Telegram is unconfigured
-   *  (the overwhelmingly common case). */
-  pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
   /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
   taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
   /** The clock each RUN reads: starts at `now` and moves with the wall clock, so a run's start,
@@ -197,6 +188,10 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const now = opts.now ?? new Date();
   const logFn = opts.log ?? (() => {});
   const runImpl = opts.runImpl ?? runAutomation;
+  // The member bots' routine messages (plan Z2): collected here and awaited after this project's
+  // loop, outside every run lock, so a slow send never delays the next due routine.
+  const deferred: Array<() => Promise<void>> = [];
+  const collect = (send: () => Promise<void>): void => { deferred.push(send); };
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
   // Before this, a run read the fixed `now` as its clock: every run looked 0s long and a timeout
   // read "Timed out after 0s" in the owner's thread.
@@ -293,6 +288,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${fire.slug} draining a queued fire (fired ${fire.firedAt}) — running`);
     const outcome = await runImpl(contextRoot, fire.slug, {
+      onDeferredSend: collect,
       now: clock,
       fireAt: new Date(firedAtMs),
       home: opts.home,
@@ -345,6 +341,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
+      onDeferredSend: collect,
       now: clock,
       fireAt: due.fireAt ?? now,
       home: opts.home,
@@ -356,32 +353,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }
 
-  // AFTER the runs, so a card a run just proposed is posted and answerable in
-  // this same pass rather than waiting for the next one.
-  //
-  // This lives in the tick — not in the server, not in a daemon — because that
-  // is the only process guaranteed to be alive when an automation fires. The
-  // whole reason a person needs Telegram is that they are not at the Mac; a
-  // channel that only drains while the app is open would work exactly when it
-  // is least needed. A verdict therefore lands within one tick, which is the
-  // right latency for a scheduler and the wrong one for a chat — the server
-  // polls faster while it happens to be up.
-  const poll = opts.pollTelegram ?? defaultPollTelegram;
-  try {
-    const result = await poll(contextRoot, opts.home);
-    if (result.processed > 0) logFn(`[automations] telegram: ${result.processed} update(s) handled`);
-    if (result.unauthorized > 0) {
-      // Never acted on, always said: a bot being messaged by someone who is not
-      // you is worth knowing about, even though the gate already dropped it.
-      logFn(`[automations] telegram: ${result.unauthorized} update(s) dropped from an unauthorized chat`);
-    }
-  } catch (err) {
-    // Telegram is a CHANNEL, not the gate. A broken token, a network blip or a
-    // rate limit must never stop automations from running or cards from being
-    // answerable everywhere else.
-    logFn(`[automations] telegram polling failed (automations are unaffected): ${(err as Error).message}`);
-  }
-
+  for (const send of deferred) await send().catch((err) => logFn(`[telegram] a routine message failed: ${(err as Error)?.message ?? err}`));
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };
 }
 
@@ -445,6 +417,12 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
   };
   await Promise.all(Array.from({ length: Math.min(PROJECT_CONCURRENCY, roots.length) }, worker));
   const projects = results.filter((r): r is TickProjectResult => r !== null);
+  // Telegram while the app is quit (W2 lane B): one "ulaşılamıyor" per message, power restored
+  // once after a dead server. Never polls the manager; works on a machine with no routines.
+  // A test run with no injected home never reaches the real ~/.dreamcontext's bots.
+  if (opts.telegramAway !== false && (home !== undefined || !process.env.VITEST)) {
+    try { await telegramAwayTick({ home, log: logFn }); } catch (err) { logFn(`[telegram] away tick failed: ${(err as Error)?.message ?? err}`); }
+  }
 
   const durationMs = Date.now() - wallStart;
   // The completion moment, not the start: `now` is when the tick BEGAN, so

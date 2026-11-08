@@ -1138,10 +1138,17 @@ const MSG_REF_SPACE = 2_176_782_336;
  *  message's reference, starting with `<` so the replay drops it. A message with two or more
  *  parts (`aboutHeads`) also lists each part's reference, in order (`partRefs`); with one or
  *  none the block is what it always was, byte for byte. */
-export function ownerMsgBlock(text: string): string {
-  const parts = partRefs(text);
-  return parts.length ? `<owner-msg ref="${msgRef(text)}" parts="${parts.join(' ')}"/>` : `<owner-msg ref="${msgRef(text)}"/>`;
+export function ownerMsgBlock(text: string, opts?: { ref: string; via: 'telegram' }): string {
+  // A Telegram turn (B1): the hub drew the ref (unique even for two identical "evet"s) and it
+  // is the base of the part refs too (E1). `via` sits on the server's own block only.
+  const ref = opts && MSG_REF_RE.test(opts.ref) ? opts.ref : msgRef(text);
+  const via = opts && MSG_REF_RE.test(opts.ref) ? ` via="${opts.via}"` : '';
+  const parts = partRefs(text, opts && MSG_REF_RE.test(opts.ref) ? opts.ref : undefined);
+  return parts.length ? `<owner-msg ref="${ref}" parts="${parts.join(' ')}"${via}/>` : `<owner-msg ref="${ref}"${via}/>`;
 }
+/** The server's Telegram owner block, as `ownerMsgBlock` writes it: `ref` and nothing forged
+ *  about it (the block is the whole text, written by the server, never typed). */
+export const TELEGRAM_OWNER_BLOCK_RE = /^<owner-msg ref="([0-9a-z]{6})"(?: parts="[0-9a-z ]{6,}")? via="telegram"\/>$/;
 /** The owner replies to one message (its ↩): his message opens with this header, then
  *  `quote: "<at most MAX_REPLY_QUOTE characters of it>"`, then his words. `ref=` is a scroll
  *  anchor for the window; the super knows its own words by the quote. Not `[super `. */
@@ -1208,10 +1215,10 @@ export function aboutHeads(text: string): AboutHead[] {
 /** Each part's reference, in order, for a message with two or more parts (`aboutHeads`): the
  *  message reference with `#<i>` hashed again. [] for a message with one part or none, whose
  *  sections the super marks with the message reference as before. MIRRORED in the window. */
-export function partRefs(text: string): string[] {
+export function partRefs(text: string, baseRef?: string): string[] {
   const n = aboutHeads(text).length;
   if (n < 2) return [];
-  const base = msgRef(text);
+  const base = baseRef && /^[0-9a-z]{6}$/.test(baseRef) ? baseRef : msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
 }
 /**

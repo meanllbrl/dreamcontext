@@ -107,7 +107,11 @@ import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { listCards, onCardsChange } from '../../lib/cards/records.js';
+import { flushHeldReports } from '../runs/delivery.js';
+import { ensureCards } from './run-terminal.js';
+import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -125,7 +129,7 @@ import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChi
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
-import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
+import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
@@ -136,7 +140,7 @@ import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
   knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
-import { deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
+import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
@@ -2030,6 +2034,13 @@ export const CLOSE_KILL_GRACE_MS = 5000;
 /** Exported for tests (agent-chat-close-reap.test.ts drives it with a mocked spawn + a
  *  fake ws to pin the socket-gone → drain → kill lifecycle); production callers reach it
  *  only through `attachAgentChat`'s upgrade handler. */
+/** A continue text written for a refused turn keeps the Telegram ref the refused text carried,
+ *  when the hub's store still honours it (plan E1); anything else is the bare continue text. */
+export function continueWithTelegramRef(lastSent: string | null, base: string, honoured: (ref: string) => boolean): string {
+  const { ref } = lastSent ? parseTelegramPrefix(lastSent) : { ref: null };
+  return ref && honoured(ref) ? withTelegramRef(ref, base) : base;
+}
+
 export function startChatSession(
   initialWs: import('ws').WebSocket,
   projectRoot: string,
@@ -2761,6 +2772,31 @@ export function startChatSession(
   });
   // An ended Super Agent child running again without `super resume`: the owner reopened it.
   if (registry) void noteChatStarted(chatRegistryId);
+  // How the Telegram hub writes into this Super (plan "Injector", B1, D1): the SAME path a
+  // phone mirror's frame takes (switch gate → writeOwnerTurn, the detached-pane bypass
+  // included), and the window and phones are shown the words with their ref. The hub has put
+  // the ref in the store first; `text` already carries the sentinel prefix.
+  const unregisterInjector = isSuper && registry
+    ? registerChatInjector(chatRegistryId, {
+      sessionId: chatRegistryId,
+      chatRegistryId,
+      sendOwnerText: async (text, meta) => {
+        if (!alive || stdinEnding() || handedOff) return { ok: false, reason: 'closed' };
+        const { ref, body } = parseTelegramPrefix(text);
+        if (ref !== meta.ref || !body.trim()) return { ok: false, reason: 'refused' };
+        const echo = { ref, source: 'telegram' as const };
+        if (mirrors?.size) mirrors.echo(body, null, echo);
+        else if (!detached && ws.readyState === ws.OPEN) {
+          try { ws.send(ownerEchoFrame(body, echo)); } catch { /* closing */ }
+        }
+        const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
+        return { ok: true };
+      },
+      interrupt: () => { if (alive) onWsMessage(JSON.stringify({ type: 'interrupt' })); },
+    })
+    : () => { /* not a Super */ };
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -2866,6 +2902,12 @@ export function startChatSession(
    * do NOT set it — resubmitting one after a switch would replay a setting, not a message.
    */
   let lastSentText: string | null = null;
+  /** The Telegram refs written in the running turn: settled (store entry deleted) on its clean
+   *  main `result`, kept on a limit or sign-in refusal so the resend still routes (E1). */
+  const turnTelegramRefs = new Set<string>();
+  /** A continue text the server writes for a refused turn keeps the Telegram ref the refused
+   *  text carried, when the hub's store still honours it (E1). */
+  const continueText = (base: string): string => continueWithTelegramRef(lastSentText, base, (ref) => telegramRefs.has(chatRegistryId, ref));
   /** Whether the main agent has answered since `lastSentText` went out. A refusal after that
    *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
    *  than replaying the request from the top. */
@@ -3388,7 +3430,17 @@ export function startChatSession(
 
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
-  const writeOwnerTurn = (text: string): void => {
+  const writeOwnerTurn = (raw: string): void => {
+    // A Telegram turn rides as `TG_SENTINEL + ref + TG_SENTINEL + text` through every hold path
+    // (D1). Parsed ONCE here: the ref counts only when the hub put it in THIS chat's store; an
+    // owner-typed or stale prefix is stripped and the turn is an ordinary Mac turn. Everything
+    // below reads `text` (the body); `lastSentText` keeps the RAW text, so a refusal's resend
+    // carries the ref again (E1).
+    const tg = isSuper ? telegramRefs.take(chatRegistryId, raw) : { ref: null, entry: null, body: parseTelegramPrefix(raw).body };
+    const text = tg.body;
+    const tgRef = tg.ref;
+    const tgSource: InjectedSource | undefined = tg.entry ? (tg.entry.kind === 'run-report' ? 'run-report' : 'telegram-text') : undefined;
+    if (tgRef) turnTelegramRefs.add(tgRef);
     // Any owner message cancels a "continue at reset" (resume-at-reset.ts): he is here.
     ownerSeq += 1;
     resumeAtReset.cancel();
@@ -3396,9 +3448,9 @@ export function startChatSession(
     // Super's lease must then outlive that turn's end (inbox.ts superOwnerSpoke).
     const midTurn = turnsInFlight > 0;
     openTurn();
-    lastSentText = text;
+    lastSentText = tgRef ? raw : text;
     turnProgressed = false;
-    registry?.userSent(text);
+    registry?.userSent(text, tgSource ? { source: tgSource } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3410,7 +3462,7 @@ export function startChatSession(
     // Every owner message to the Super Agent carries its reference, so its answer can open with
     // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
     // from the exact text the window sent; a slash command is no message of his.
-    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerMsgBlock(text) });
+    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
     // A server continue (usage reset, limit or sign-out move, a tool switch) rides this path but is
@@ -3476,7 +3528,7 @@ export function startChatSession(
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
     // command is no message of his: it answers none.
-    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') ? null : msgRef(text));
+    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') ? null : tgRef ?? msgRef(text));
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
@@ -3505,6 +3557,29 @@ export function startChatSession(
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
   };
+
+  // The chat's run/secret card records (plan I1): the socket that holds the chat and the phone
+  // mirrors are told on every change (the client matches its cards and sends back the server's
+  // cardRef, never one of its own). A report held while no window was mounted goes now (H5).
+  const cardsFrame = (): Record<string, unknown> => {
+    // A client treats this frame as the whole set: the older cards are read back first.
+    ensureCards(chatRegistryId);
+    return { subtype: 'cards', session: chatRegistryId, cards: listCards(chatRegistryId) };
+  };
+  const unlistenCards = registry
+    ? onCardsChange((sid) => {
+      if (sid !== chatRegistryId) return;
+      const frame = cardsFrame();
+      if (mirrors) mirrors.frame(JSON.stringify({ type: '_meta', ...frame }));
+      sendMeta(frame);
+    })
+    : () => { /* no records */ };
+  const flushHeld = (): void => {
+    if (!registry || !windowControl) return;
+    const t = setTimeout(() => { void flushHeldReports(chatRegistryId).catch(() => { /* next mount */ }); }, 1500);
+    t.unref?.();
+  };
+  flushHeld();
 
   // The live browser view: watches the override's CDP port once the agent calls a browser tool.
   // The Super Agent's stage reads every non-super chat's output for a dev-server pin or a
@@ -3629,6 +3704,8 @@ export function startChatSession(
     releaseAppSlot();
     unwatchAuth();
     registry?.exited();
+    unregisterInjector();
+    unlistenCards();
     // A respawn in place hands the notch's surface to its successor on the same socket.
     if (!handedOff) disposeSurface();
     windowControl?.release();
@@ -3768,6 +3845,7 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    if (registry) { sendMeta(cardsFrame()); flushHeld(); }
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
@@ -4085,6 +4163,14 @@ export function startChatSession(
       else if (limit) onLimitRejected(limit);
       else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
+      // The turn's clean end settles its Telegram refs (E1, F3): a refused turn keeps them, so
+      // its resend or continue text still writes `via="telegram"` and routes the answer.
+      if (mainResult && turnsInFlight === 0 && turnTelegramRefs.size) {
+        if (!limit && !limitHitThisTurn && !authFailedTurn && !isAuthFailureFrame(obj)) {
+          for (const ref of turnTelegramRefs) telegramRefs.settle(chatRegistryId, ref);
+        }
+        turnTelegramRefs.clear();
+      }
       // A turn that went through says the account is signed in again (claude-signed-out.ts).
       if (obj.type === 'result' && !obj.parent_tool_use_id) {
         if (!bridgeTool && !authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
@@ -4572,7 +4658,7 @@ export function startChatSession(
     // resubmitted turn would clear a taint only the owner may clear.
     const text = isAssistant
       ? lastSentText
-      : lastSentText && !turnProgressed ? lastSentText : LIMIT_CONTINUE_TEXT;
+      : lastSentText && !turnProgressed ? lastSentText : continueText(LIMIT_CONTINUE_TEXT);
 
     // Onto the SAME serialisation chain as the pre-emptive path. A rejection frame and a
     // user frame arriving together must not both decide to switch: the gate is what makes
@@ -4600,7 +4686,7 @@ export function startChatSession(
     if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
     const text = isAssistant
       ? lastSentText
-      : lastSentText && !turnProgressed ? lastSentText : AUTH_CONTINUE_TEXT;
+      : lastSentText && !turnProgressed ? lastSentText : continueText(AUTH_CONTINUE_TEXT);
     switchGate = switchGate.then(() => (switchPending
       ? false
       : decideAndAnnounce(text ?? '', 'needs_relogin', { id: activeAccountId, problem: 'needs-relogin' }, undefined, !!text)
@@ -4640,7 +4726,7 @@ export function startChatSession(
     recordToolSignedOut(accounts.tool, toolAccountId);
     if (switchPending || switchAbandoned) return;
     if (!accounts.list().some((a) => a.id !== toolAccountId && a.signedIn)) return;
-    const text = lastSentText && !turnProgressed ? lastSentText : accounts.limitContinueText;
+    const text = lastSentText && !turnProgressed ? lastSentText : continueText(accounts.limitContinueText);
     switchGate = switchGate.then(() => (switchPending
       ? false
       : decideToolAndAnnounce(text, 'needs_relogin', { id: toolAccountId, problem: 'needs-relogin' }, undefined, true).catch(() => false)));
@@ -4660,7 +4746,7 @@ export function startChatSession(
     }
     if (accounts.list().length < 2) { armOnRefusal(recorded, toolAccountId, accounts.tool); return; }
     registry?.markLimited();
-    const text = lastSentText && !turnProgressed ? lastSentText : accounts.limitContinueText;
+    const text = lastSentText && !turnProgressed ? lastSentText : continueText(accounts.limitContinueText);
     switchGate = switchGate.then(() => (switchPending
       ? false
       : decideToolAndAnnounce(text, 'limit_hit', { id: toolAccountId, problem: 'unknown' }, recorded.until, true).catch(() => false)));
@@ -5286,6 +5372,18 @@ export function startChatSession(
       deliverSuperResult(windowControl.token, r.id, r.ok === true
         ? { ok: true, result: r.result ?? null }
         : { ok: false, error: typeof r.error === 'string' ? r.error.slice(0, 300) : 'failed' });
+      return;
+    }
+
+    // A hub verb the window ran (`answer_pending`, `render_card`, …, A2/B3): settles only a
+    // `hub_command` this chat's token sent; its own subtype, so neither channel settles the other.
+    if (windowControl && msg.type === 'hub_command_result') {
+      const r = msg as unknown as { id?: unknown; result?: unknown };
+      const res = r.result && typeof r.result === 'object' && !Array.isArray(r.result) ? r.result as Record<string, unknown> : null;
+      const result: HubResult = res?.ok === true
+        ? { ...res, ok: true }
+        : { ok: false, error: typeof res?.error === 'string' ? (res.error as string).slice(0, 300) : 'failed' };
+      deliverHubResult(windowControl.token, r.id, result);
       return;
     }
 

@@ -53,7 +53,7 @@ const until = async (ok: () => boolean): Promise<void> => {
 };
 
 const ask = (spawnImpl: SpawnImpl, text: string, fireAt: Date) => runAutomation(contextRoot, SLUG, {
-  ask: text, fireAt, parallel: true, spawnImpl, home, notify: () => {}, sendTelegram: async () => {},
+  ask: text, fireAt, parallel: true, spawnImpl, home, notify: () => {},
   killImpl: () => {},
 });
 
@@ -141,9 +141,9 @@ describe('three asks of one member at once', () => {
 
   it('a scheduled fire still does not overlap itself, and an ask runs beside it', async () => {
     const { impl, children } = liveSpawn();
-    const fire = runAutomation(contextRoot, SLUG, { fireAt: new Date(iso(0)), spawnImpl: impl, home, notify: () => {}, sendTelegram: async () => {}, killImpl: () => {} });
+    const fire = runAutomation(contextRoot, SLUG, { fireAt: new Date(iso(0)), spawnImpl: impl, home, notify: () => {}, killImpl: () => {} });
     await until(() => children.length === 1);
-    const again = await runAutomation(contextRoot, SLUG, { fireAt: new Date(iso(1)), spawnImpl: impl, home, notify: () => {}, sendTelegram: async () => {}, killImpl: () => {} });
+    const again = await runAutomation(contextRoot, SLUG, { fireAt: new Date(iso(1)), spawnImpl: impl, home, notify: () => {}, killImpl: () => {} });
     expect(again.status).toBe('deferred');
     const beside = ask(impl, 'now please', new Date(iso(2)));
     await until(() => children.length === 2);

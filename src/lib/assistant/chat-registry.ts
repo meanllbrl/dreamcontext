@@ -35,8 +35,13 @@
  */
 
 import { outwardAction } from '../super/owed.js';
+import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
+import {
+  parseTelegramPrefix, TG_PENDING_REF_TTL_MS,
+  type ChatInjector, type InjectedSource, type PendingTelegramRef, type PendingTelegramRefStore, type TelegramRefDropped,
+} from '../telegram/contract.js';
 
 export const CHAT_STATUSES = ['starting', 'working', 'asking', 'idle', 'gone'] as const;
 export type ChatStatus = typeof CHAT_STATUSES[number];
@@ -169,7 +174,9 @@ export interface ChatEntry {
 export interface ChatHandle {
   readonly sessionId: string;
   observe(frame: Record<string, unknown>): void;
-  userSent(text: string): void;
+  /** `source` = who wrote the turn (I4, J1): a Telegram text clears no owner wait and is never
+   *  "unheard" (a run or secret card is answered on the Mac or the phone, never by a chat text). */
+  userSent(text: string, opts?: { source?: InjectedSource }): void;
   answered(requestId?: string): void;
   /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
   interrupted(): void;
@@ -352,6 +359,8 @@ export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string
   const e = entries.get(sessionId);
   if (!e) return;
   const k = `${kind}:${id}`;
+  // Its run/secret records close with it (H1): no button, phone or Telegram tap runs it after.
+  if (kind === 'run' || kind === 'secret') closeCardsById(sessionId, kind, id);
   const held = (e.ownerWaits ?? []).filter((w) => waitKey(w) === k);
   if (held.length) { answerWaits(e, held); return; }
   if (!e.ownerAnswered?.includes(k)) e.ownerAnswered = [...(e.ownerAnswered ?? []), k].slice(-MAX_ANSWERED);
@@ -677,6 +686,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         syncTools();
         const text = assistantText(frame);
         if (text) {
+          // The server's own run/secret card records (plan H1): keyed by this message's uuid.
+          const uuid = typeof frame.uuid === 'string' ? frame.uuid : typeof (frame.message as { id?: unknown } | undefined)?.id === 'string' ? (frame.message as { id: string }).id : '';
+          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text);
           // Read the whole text, before the cap: a card at the end of a long reply still counts.
           const cards = ownerCardsIn(text);
           if (cards.length) {
@@ -685,6 +697,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
             setOwnerWaits(e, [...keep, ...cards]);
           }
+          // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
+          emitAssistantText(e.sessionId, text);
           // The Super's reply mark (`<!-- re:<ref> -->`) is for the window, never a last line.
           e.lastAssistantText.push(cap(stripReplyMark(text)));
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
@@ -709,16 +723,18 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         setStatus(e, 'idle');
       }
     },
-    userSent(text) {
+    userSent(text, opts) {
       if (dead) return;
       alive();
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
       if (text.trim() && !text.trimStart().startsWith('/')) messagesOwed += 1;
+      emitUserSent(e.sessionId, text, opts?.source);
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
-      // Super Agent steering the child (a send the server noted for it) clears nothing.
-      if (!takeSuperSend(e.sessionId, text)) {
+      // Super Agent steering the child (a send the server noted for it) clears nothing. A
+      // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
+      if (opts?.source !== 'telegram-text' && !takeSuperSend(e.sessionId, text)) {
         if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
@@ -763,6 +779,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       e.pendingQuestion = null;
       delete e.earlierPending;
       setStatus(e, 'gone');
+      // The child that wrote its Telegram refs is gone: their 30-minute clock starts again (F6).
+      restartWrittenRefClocks(init.sessionId);
       const rest = (displaced.get(init.sessionId) ?? []).filter((x) => x !== e && x.status !== 'gone');
       if (rest.length) displaced.set(init.sessionId, rest); else displaced.delete(init.sessionId);
       // A process this one displaced still runs under the same id: it is the chat again.
@@ -776,7 +794,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       }
       const t = setTimeout(() => {
         deathTimers.delete(init.sessionId);
-        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); }
+        // Only THIS entry's death drops its refs: an old child exiting after its successor
+        // registered under the same id never deletes the successor's (F5).
+        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); dropAllRefs(init.sessionId); }
       }, GONE_TTL_MS);
       t.unref?.();
       deathTimers.set(init.sessionId, t);
@@ -849,4 +869,183 @@ export function _resetChatRegistry(): void {
   listeners.clear();
   ownerListeners.clear();
   unheard.clear();
+  assistantListeners.clear();
+  userSentListeners.clear();
+  injectors.clear();
+  injectorListeners.clear();
+  tgRefs.clear();
+  tgDropListeners.clear();
+  tgWrittenListeners.clear();
+  if (tgSweepTimer) { clearInterval(tgSweepTimer); tgSweepTimer = null; }
+  tgNow = Date.now;
 }
+
+// ─── Assistant text, for whoever routes answers (W2) ────────────────────────
+
+const assistantListeners = new Set<(sessionId: string, text: string) => void>();
+
+/** Be told every top-level assistant text of every chat, whole (reply marks included). */
+export function onChatAssistantText(fn: (sessionId: string, text: string) => void): () => void {
+  assistantListeners.add(fn);
+  return () => { assistantListeners.delete(fn); };
+}
+
+function emitAssistantText(sessionId: string, text: string): void {
+  for (const fn of [...assistantListeners]) {
+    try { fn(sessionId, text); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+const userSentListeners = new Set<(sessionId: string, text: string, source: InjectedSource | undefined) => void>();
+
+/** Be told every owner turn a chat wrote, with who wrote it (a Telegram text or not). */
+export function onChatUserSent(fn: (sessionId: string, text: string, source: InjectedSource | undefined) => void): () => void {
+  userSentListeners.add(fn);
+  return () => { userSentListeners.delete(fn); };
+}
+
+function emitUserSent(sessionId: string, text: string, source: InjectedSource | undefined): void {
+  for (const fn of [...userSentListeners]) {
+    try { fn(sessionId, text, source); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+// ─── Chat injectors (plan "Injector", B1, D1) ───────────────────────────────
+
+const injectors = new Map<string, ChatInjector>();
+const injectorListeners = new Set<(sessionId: string) => void>();
+
+/** A live Super chat registers how the hub writes into it (beside the mirror wiring). Returns
+ *  the unregister, which removes only this injector (a successor's stays). */
+export function registerChatInjector(sessionId: string, injector: ChatInjector): () => void {
+  injectors.set(sessionId, injector);
+  for (const fn of [...injectorListeners]) {
+    try { fn(sessionId); } catch { /* a listener's failure is its own */ }
+  }
+  return () => { if (injectors.get(sessionId) === injector) injectors.delete(sessionId); };
+}
+
+/** The injector of the chat with pin id `sessionId`, or null. Server-internal: no route reads it. */
+export function chatInjector(sessionId: string): ChatInjector | null {
+  return injectors.get(sessionId) ?? null;
+}
+
+/** Be told when an injector registers (the hub waits for a reopened Super, A3). */
+export function onChatInjector(fn: (sessionId: string) => void): () => void {
+  injectorListeners.add(fn);
+  return () => { injectorListeners.delete(fn); };
+}
+
+// ─── The pending Telegram ref store (D1, E1, F2, F5, F6; contract.ts) ──────
+//
+// Keyed by chatRegistryId (the pin id, which survives the --resume restart). Written ONLY by
+// the hub and the run registry; no HTTP route reads or writes it. Every key has a death: an
+// unwritten ref after TG_PENDING_REF_TTL_MS, a written ref on its turn's clean result, after
+// the TTL once its child is gone (the clock restarts at the exit, F6), and with the registry
+// entry's own death.
+
+interface RefSlot extends PendingTelegramRef { clockAt: number }
+const tgRefs = new Map<string, Map<string, RefSlot>>();
+const tgDropListeners = new Set<TelegramRefDropped>();
+const tgWrittenListeners = new Set<(chatRegistryId: string, ref: string) => void>();
+let tgSweepTimer: ReturnType<typeof setInterval> | null = null;
+let tgNow: () => number = Date.now;
+
+function dropRef(chatRegistryId: string, ref: string): void {
+  const map = tgRefs.get(chatRegistryId);
+  const slot = map?.get(ref);
+  if (!map || !slot) return;
+  map.delete(ref);
+  if (!map.size) tgRefs.delete(chatRegistryId);
+  for (const fn of [...tgDropListeners]) {
+    try { fn(chatRegistryId, ref, slot.written); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+function dropAllRefs(chatRegistryId: string): void {
+  for (const ref of [...(tgRefs.get(chatRegistryId)?.keys() ?? [])]) dropRef(chatRegistryId, ref);
+}
+
+function restartWrittenRefClocks(chatRegistryId: string): void {
+  const now = tgNow();
+  for (const slot of tgRefs.get(chatRegistryId)?.values() ?? []) if (slot.written) slot.clockAt = now;
+}
+
+/** The TTL: a written ref is exempt while the child that wrote it lives (F5, F6). */
+export function sweepTelegramRefs(): void {
+  const now = tgNow();
+  for (const [id, map] of [...tgRefs]) {
+    const e = entries.get(id);
+    const childLives = !!e && e.status !== 'gone';
+    for (const [ref, slot] of [...map]) {
+      if (slot.written && childLives) continue;
+      if (now - slot.clockAt > TG_PENDING_REF_TTL_MS) dropRef(id, ref);
+    }
+  }
+  if (!tgRefs.size && tgSweepTimer) { clearInterval(tgSweepTimer); tgSweepTimer = null; }
+}
+
+function armSweep(): void {
+  if (tgSweepTimer) return;
+  tgSweepTimer = setInterval(sweepTelegramRefs, 60_000);
+  tgSweepTimer.unref?.();
+}
+
+export const telegramRefs: PendingTelegramRefStore & {
+  has(chatRegistryId: string, ref: string): boolean;
+  get(chatRegistryId: string, ref: string): PendingTelegramRef | null;
+  /** Fires once when `writeOwnerTurn` first honours a ref (the turn reached a live child). */
+  onTelegramRefWritten(listener: (chatRegistryId: string, ref: string) => void): () => void;
+  /** The hub gives up an UNWRITTEN ref (the injection never happened): no drop notice. */
+  forget(chatRegistryId: string, ref: string): void;
+  /** Test seam: the clock the TTL reads. */
+  _setNow(now: () => number): void;
+} = {
+  put(chatRegistryId, ref, entry) {
+    const map = tgRefs.get(chatRegistryId) ?? new Map<string, RefSlot>();
+    map.set(ref, { ...entry, clockAt: tgNow() });
+    tgRefs.set(chatRegistryId, map);
+    armSweep();
+  },
+  take(chatRegistryId, text) {
+    const { ref, body } = parseTelegramPrefix(text);
+    if (!ref) return { ref: null, entry: null, body };
+    sweepTelegramRefs();
+    const slot = tgRefs.get(chatRegistryId)?.get(ref);
+    if (!slot) return { ref: null, entry: null, body };
+    const first = !slot.written;
+    slot.written = true;
+    // The hub's journal follows (F5): a crash after this point yields "yazıldı ama tamamlanamadı".
+    if (first) for (const fn of [...tgWrittenListeners]) { try { fn(chatRegistryId, ref); } catch { /* its own */ } }
+    slot.clockAt = tgNow();
+    const { clockAt: _c, ...entry } = slot;
+    return { ref, entry: { ...entry }, body };
+  },
+  settle(chatRegistryId, ref) {
+    if (tgRefs.get(chatRegistryId)?.get(ref)?.written) dropRef(chatRegistryId, ref);
+  },
+  onTelegramRefDropped(listener) {
+    tgDropListeners.add(listener);
+    return () => { tgDropListeners.delete(listener); };
+  },
+  onTelegramRefWritten(listener) {
+    tgWrittenListeners.add(listener);
+    return () => { tgWrittenListeners.delete(listener); };
+  },
+  has(chatRegistryId, ref) {
+    return !!tgRefs.get(chatRegistryId)?.has(ref);
+  },
+  get(chatRegistryId, ref) {
+    const slot = tgRefs.get(chatRegistryId)?.get(ref);
+    if (!slot) return null;
+    const { clockAt: _c, ...entry } = slot;
+    return { ...entry };
+  },
+  forget(chatRegistryId, ref) {
+    const map = tgRefs.get(chatRegistryId);
+    if (!map?.get(ref) || map.get(ref)!.written) return;
+    map.delete(ref);
+    if (!map.size) tgRefs.delete(chatRegistryId);
+  },
+  _setNow(now) { tgNow = now; },
+};

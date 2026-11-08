@@ -24,6 +24,7 @@ import { AntigravityAccounts, CodexAccounts } from '../components/settings/ToolA
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { HandsfreeSettingsCard } from '../components/handsfree/HandsfreeSettingsCard';
+import { TelegramSettings } from '../components/settings/TelegramSettings';
 import { TeamSyncRows } from '../components/settings/TeamSyncRows';
 import { isDesktop } from '../lib/desktop';
 import {
@@ -61,7 +62,7 @@ const PLATFORM_OPTIONS: PlatformOption[] = [
 type SettingsSectionId =
   | 'platforms' | 'format' | 'linkedrepos' | 'agents'
   | 'memory' | 'sleep' | 'learning' | 'recall'
-  | 'github' | 'teamsync' | 'clickup' | 'connections'
+  | 'github' | 'teamsync' | 'clickup' | 'connections' | 'telegram'
   | 'system';
 
 interface SettingsNavItem {
@@ -120,6 +121,7 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
       { id: 'teamsync', labelKey: 'settings.nav.teamsync' },
       { id: 'clickup', labelKey: 'settings.nav.clickup' },
       { id: 'connections', labelKey: 'settings.nav.connections' },
+      { id: 'telegram', labelKey: 'settings.nav.telegram' },
     ],
   },
   {
@@ -257,6 +259,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     if (focus?.id === 'brain' || focus?.id === 'teamsync') setActiveSection('teamsync');
     else if (focus?.id === 'github') setActiveSection('github');
     else if (focus?.id === 'system') setActiveSection('system');
+    // The bind sheet's "Ayarlar'a git" (no manager bot set up yet).
+    else if (focus?.id === 'telegram') setActiveSection('telegram');
     // The composer's model picker (Track T W4): "Models ›" and a tool's "Sign in" / "Add ›".
     else if (focus?.id === 'models') setActiveSection('agents');
     else if (focus?.id === 'accounts' || focus?.id === 'accounts-codex' || focus?.id === 'accounts-antigravity') {
@@ -795,6 +799,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       )}
 
       {show('connections') && <ConnectionsManager />}
+      {show('telegram') && (
+      <section className="settings-section" id="settings-telegram">
+        <SectionHead titleKey="settings.nav.telegram" descKey="settings.desc.telegram" />
+        <TelegramSettings />
+      </section>
+      )}
 
       {/* ─── This machine ────────────────────────────────────────────────── */}
 

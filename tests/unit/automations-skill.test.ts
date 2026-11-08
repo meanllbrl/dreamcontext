@@ -437,7 +437,7 @@ describe('dashboard approval-review surface — every hashed field reaches the h
 });
 
 /**
- * T22 — the flow graph, HITL questions, per-automation Telegram, the run queue,
+ * T22 — the flow graph, HITL questions, the retired per-routine Telegram, the run queue,
  * session bindings, and the three approval paths. This surface replaced the
  * review-card board entirely; these assertions are the lockstep guard for it,
  * the same role the twelve-hashed-fields block above plays for the approval
@@ -515,26 +515,18 @@ describe('skill/references/automations.md — Questions (the review-card board\'
   });
 });
 
-describe('skill/references/automations.md — Telegram is per-automation, never one bot for the project', () => {
+describe('skill/references/automations.md — the per-routine Telegram bot is retired', () => {
   const content = AUTOMATIONS_MD;
 
-  it('names the per-slug credential path, 0600, machine-local, never synced', () => {
-    expect(content).toContain('~/.dreamcontext/telegram/<slug>.json');
-    expect(content).toContain('mode 0600, machine-local, never synced');
+  it('says the old channel, verb and route are gone and old records still parse', () => {
+    expect(content).toContain('## Telegram: the per-routine bot is retired');
+    expect(content).not.toContain('dreamcontext automations telegram setup <slug>');
+    expect(content).toMatch(/still parse; nothing can write that value/);
   });
 
-  it('frames a bot token as a capability, not a preference', () => {
-    expect(content.toLowerCase()).toContain('a capability, not a preference');
-  });
-
-  it('states the blast radius of a leaked token is one automation, never the whole project', () => {
-    expect(content).toMatch(/blast radius to one job/i);
-  });
-
-  it('documents the telegram setup/test/off verbs with a required slug', () => {
-    expect(content).toContain('dreamcontext automations telegram setup <slug>');
-    expect(content).toContain('dreamcontext automations telegram test <slug>');
-    expect(content).toContain('dreamcontext automations telegram off <slug>');
+  it('names the one-time removal of the old token files and the new machine-local home', () => {
+    expect(content).toContain('`~/.dreamcontext/telegram.json`, `~/.dreamcontext/telegram/<slug>.json`');
+    expect(content).toContain('never a CLI verb or an agent');
   });
 });
 
@@ -592,11 +584,11 @@ describe('skill/references/automations.md — session bindings are the sole resu
   });
 });
 
-describe('skill/SKILL.md — Automations capabilities row names Flow, HITL questions, and per-slug Telegram', () => {
-  it('mentions the Flow graph, questions, and per-automation Telegram in the capabilities row', () => {
+describe('skill/SKILL.md — Automations capabilities row names Flow and HITL questions', () => {
+  it('mentions the Flow graph and questions, and no per-automation Telegram bot', () => {
     expect(SKILL_MD).toMatch(/## Flow` graph/);
     expect(SKILL_MD).toContain('a **question**');
-    expect(SKILL_MD).toMatch(/\*\*per-automation\*\* Telegram bot/);
+    expect(SKILL_MD).not.toMatch(/\*\*per-automation\*\* Telegram bot/);
   });
 });
 
@@ -605,14 +597,14 @@ describe('sleep docs — automations/hitl/ and its machine-local siblings are ex
     expect(SLEEP_MD).toContain('automations/hitl/<slug>/*.json');
   });
 
-  it('sleep.md names the per-slug Telegram credential and session-binding paths as out of bounds', () => {
-    expect(SLEEP_MD).toContain('~/.dreamcontext/telegram/<slug>.json');
+  it('sleep.md names the Telegram binding and session-binding paths as out of bounds', () => {
+    expect(SLEEP_MD).toContain('~/.dreamcontext/telegram/**');
     expect(SLEEP_MD).toContain('~/.dreamcontext/automations/<slug>.sessions.json');
   });
 
   it('agents/sleep-product.md domain table names hitl/ questions and the machine-local Telegram/session state', () => {
     expect(SLEEP_PRODUCT_MD).toMatch(/manifest\/cache\/output\/`hitl\/` questions/);
-    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/*.json');
+    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/**');
     expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/automations/*.sessions.json');
   });
 });

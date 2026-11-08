@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { error, info, success, warn } from '../../lib/format.js';
-import type { MacDevice, MacStatus } from '../../lib/handsfree/mac/contract.js';
+import { RELAYED_PTY_ENV, type MacDevice, type MacStatus } from '../../lib/handsfree/mac/contract.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { listVaults } from '../../lib/vaults.js';
 
@@ -22,7 +22,14 @@ export interface MacCliIo {
   out: (line: string) => void;
 }
 
-const realIo = (): MacCliIo => ({ isTTY: !!process.stdout.isTTY, out: (l) => console.log(l) });
+/** A PTY the server relays off the Mac (a run card started from the phone or Telegram, plan H7)
+ *  is not the owner's terminal: its output reaches a phone page or a chat, so it counts as no
+ *  terminal at all and no secret is printed into it. */
+export function stdoutIsOwnTerminal(env: NodeJS.ProcessEnv = process.env, isTTY = !!process.stdout.isTTY): boolean {
+  return isTTY && env[RELAYED_PTY_ENV] !== '1';
+}
+
+const realIo = (): MacCliIo => ({ isTTY: stdoutIsOwnTerminal(), out: (l) => console.log(l) });
 
 export function serverHint(home: string = homedir()): { pid: number; port: number } | null {
   try {

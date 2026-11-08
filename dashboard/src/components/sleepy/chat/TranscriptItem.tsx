@@ -1,4 +1,5 @@
 import { memo, useMemo, useRef, useState } from 'react';
+import { TelegramTurnCard } from '../../telegram/TelegramTurnCard';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { SelectionItemContext } from './SelectionBar';
@@ -171,6 +172,7 @@ function UserMessage({
         : about?.kind === 'card' ? <ReplyStrip label={t('super.reply.toCard')} quotes={[about.quote]} />
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
       {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
+      {(() => { const content = (<>
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}
@@ -188,6 +190,9 @@ function UserMessage({
         : text && (inlineRuns(text)
           ? <div className="chat-msg-user-bubble"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
           : <div className="chat-msg-user-bubble">{text}</div>)}
+      </>);
+      // A message from Telegram is a collapsible card (W3); its answer links under it by ref.
+      return item.source === 'telegram' ? <TelegramTurnCard text={text || item.text} ts={item.ts}>{content}</TelegramTurnCard> : content; })()}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
           its next tool boundary — so the tool calls rendered just below it were decided

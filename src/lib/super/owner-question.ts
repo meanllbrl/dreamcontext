@@ -26,7 +26,7 @@ import { getChat, pendingRequest } from '../assistant/chat-registry.js';
  * imports neither the notch inbox nor the push notifier.
  */
 
-export type OwnerChannel = 'screen' | 'notch' | 'banner' | 'phone';
+export type OwnerChannel = 'screen' | 'notch' | 'banner' | 'phone' | 'telegram';
 
 export interface OwnerQuestionReach {
   /** At the head of his bar now. False = waiting behind `ahead` items he must answer first. */
@@ -56,12 +56,15 @@ export interface OwnerQuestionSinks {
   banner: (title: string, body: string, link: string | null) => boolean;
   /** Push to the hands-free phones; how many devices it goes to (0 = Mac mode off). */
   push: (q: OwnerQuestionPush) => number;
+  /** The project's Super bot (W2): true when a bound bot takes it (it sends on its own). */
+  telegram: (q: { vault: string; sessionId: string; item: SuperQueueItem }) => boolean;
 }
 
 const NONE: OwnerQuestionSinks = {
   presence: () => ({ vault: null, session: null }),
   banner: () => false,
   push: () => 0,
+  telegram: () => false,
 };
 let sinks: OwnerQuestionSinks = NONE;
 
@@ -175,6 +178,10 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
     try { if (sinks.banner(title, body, link)) via.push('banner'); } catch { /* the other channels still stand */ }
   }
   try { if (sinks.push({ vault, sessionId: session, key: `super-ask:${head.id}`, title, body }) > 0) via.push('phone'); } catch { /* idem */ }
+  // Duplicate pings are intended (M6): the owner may be walking away from the Mac.
+  if (memberTitle === undefined) {
+    try { if (sinks.telegram({ vault, sessionId: session, item: head })) via.push('telegram'); } catch { /* idem */ }
+  }
   // A notch that polls is listed but proves nothing alone: it polls while he is away too.
   const reached = via.some((v) => v !== 'notch');
   remember(head.id, { shown: true, ahead: 0, via, reached, note: noteFor(head, true, 0, via, reached) });

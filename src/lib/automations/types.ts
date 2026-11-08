@@ -624,7 +624,7 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app' | 'telegram';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a
@@ -666,6 +666,9 @@ export interface ThreadEntry {
    *  the owner's sentence, on any surface, even when he typed it in the app's own chat. */
   app?: string;
   via: ThreadVia;
+  /** A run post's stamp (plan Y3, Z3, AA3): HMAC(per-run key, id + content hash), written by
+   *  `automations post` from the run's own child. Only the parent runner can verify it. */
+  stamp?: string;
 }
 
 /** One run's thread, as a channel list renders it. */
@@ -780,6 +783,12 @@ export interface AutomationCache {
 export const REVIEW_CHANNELS = ['dashboard', 'cli', 'telegram', 'notification'] as const;
 export type ReviewChannel = (typeof REVIEW_CHANNELS)[number];
 
+/** The channels a NEW verdict or steer may be recorded with. `telegram` is a
+ *  LEGACY value: records written by the retired per-routine Telegram channel still
+ *  parse with it (it stays in {@link REVIEW_CHANNELS}), but no writer can set it. */
+export const SETTABLE_REVIEW_CHANNELS = ['dashboard', 'cli', 'notification'] as const;
+export type SettableReviewChannel = (typeof SETTABLE_REVIEW_CHANNELS)[number];
+
 /** One correction a human gave a pending question (or, on the legacy surface, a
  *  pending card). Kept on the record itself — not only in the resumed
  *  transcript — so every channel can show the trail without reading a session
@@ -802,7 +811,7 @@ export interface QuestionSteer {
 // A question is what a run hands a human when it must ask before going on. It
 // inherits the review card's one load-bearing property — THE ANSWER RESUMES THE
 // SESSION THAT ASKED — and drops the queue around it: the question is delivered
-// where the human already is (their own chat, or Telegram), not onto a board
+// where the human already is (their own chat), not onto a board
 // nobody is standing in front of at 18:00.
 //
 // That property is why a question stores a `sessionId` and NOTHING RESEMBLING A
@@ -818,6 +827,9 @@ export interface QuestionSteer {
 /** Where a question was asked, and therefore where its answer comes back. */
 export const HITL_CHANNELS = ['chat', 'telegram'] as const;
 export type HitlChannel = (typeof HITL_CHANNELS)[number];
+/** Where a NEW question may be asked. `telegram` only parses, from records the
+ *  retired per-routine Telegram channel wrote; nothing can create one. */
+export type SettableHitlChannel = Exclude<HitlChannel, 'telegram'>;
 
 /**
  * WHICH GATE this question belongs to. A SECURITY DISCRIMINATOR, not ergonomics
@@ -922,9 +934,8 @@ export interface AutomationQuestion {
   /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
    *  ledgers elsewhere in the brain, which are scanned newest-first. */
   steers: QuestionSteer[];
-  /** Per-channel handles for a question already rendered somewhere (a Telegram
-   *  message id, say), so a steer edits it in place instead of posting a second
-   *  copy of a question that is still the same question. */
+  /** Per-channel handles for a question already rendered somewhere. Written only by
+   *  the retired per-routine Telegram channel; kept so old records still parse. */
   channelRefs: Record<string, string>;
   createdAt: string;
 }

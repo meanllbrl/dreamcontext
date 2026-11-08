@@ -172,6 +172,8 @@ import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
 import { PhoneWaitingToast } from './PhoneWaitingToast';
 import { applyLayoutPatch, withPendingPatches, type LayoutPatch, type StagePlan } from './super/superLayout';
+import { setHubCardRenderer, setHubHandover } from '../../lib/hubCommands';
+import { renderCardFromDom } from '../../lib/renderCard';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -4794,16 +4796,19 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   };
   const sidOfClaude = (claudeId: string) => sessionListRef.current.find((m) => m.claudeId === claudeId)?.id ?? '';
 
-  const handOver = useCallback(async () => {
+  const handOver = useCallback(async (opts?: unknown): Promise<string | null> => {
+    // Telegram's "Super'i aç" (N5): the same hand-over, adopting none of the open chats.
+    const adoptNone = !!opts && typeof opts === 'object' && (opts as { adoptNone?: unknown }).adoptNone === true;
+    let landed: string | null = null;
     const live = flightRunRef.current;
-    if (live?.run.active) { live.run.reverse(); return; }
+    if (live?.run.active) { live.run.reverse(); return null; }
     // Pressed again while the hand-over request is still out: the flight reverses the moment it
     // starts (a slow server must not swallow the owner's "no, back").
-    if (superBusyRef.current) { reverseQueuedRef.current = !reverseQueuedRef.current; return; }
+    if (superBusyRef.current) { reverseQueuedRef.current = !reverseQueuedRef.current; return null; }
     // The Super Agent's own session is exempt from the tab cap, so the cap is checked here,
     // before anything is handed over (D8).
     const superSession = superStateRef.current?.session;
-    if (!(superSession && sessionListRef.current.some((m) => m.claudeId === superSession)) && !admitTab()) return;
+    if (!(superSession && sessionListRef.current.some((m) => m.claudeId === superSession)) && !admitTab()) return null;
     reverseQueuedRef.current = false;
     superBusyRef.current = true;
     setSuperBusy(true);
@@ -4823,7 +4828,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       });
       // New shell: every session has one home and there is no take-back, so opening the Super
       // Agent takes none of the owner's chats out of their windows.
-      const body = adoptionBody(windowed ? [] : tabs, before?.session);
+      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session);
       // FIRST rects, in ONE batch, before anything changes.
       const first = new Map<string, { role: FlightRole; rect: Rect }>();
       for (const cid of body.adopt) {
@@ -4839,6 +4844,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // A late `disable` from an earlier take-back must not land on top of this hand-over.
       const gen = superGenRef.current.begin();
       const { session, state, skipped } = await enableSuper(scopedApi, body);
+      landed = session;
       setSuperSkipped(remoteHeldTitles(skipped));
       // Minted by THIS hand-over (the record knew none, or another): start it under that id.
       if (before && before.session !== session) superFreshRef.current = session;
@@ -4880,8 +4886,32 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       superBusyRef.current = false;
       setSuperBusy(false);
     }
+    return landed;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedApi, ensureSuperSession, panes, activePaneId, transportKind, t, instanceId]);
+
+  // Telegram's "Super'i aç" reaches this window as `hub_command super_handover` (N5, P4): the
+  // same hand-over, adopting nothing; a full tab bar or a flight in progress says why.
+  useEffect(() => {
+    if (!vault) return undefined;
+    return setHubHandover(vault, async () => {
+      if (flightRunRef.current?.run.active || superBusyRef.current) return { ok: false, error: 'reversing', reason: 'reversing' };
+      const cur = superStateRef.current;
+      if (cur?.enabled && cur.session) return { ok: true, sessionId: cur.session };
+      const superSession = cur?.session;
+      const open = sessionListRef.current.filter((m) => !isSuperSession(m, superSession)).length;
+      if (!(superSession && sessionListRef.current.some((m) => m.claudeId === superSession)) && open >= TAB_CAP) return { ok: false, error: 'tab_cap', reason: 'tab_cap' };
+      const session = await handOver({ adoptNone: true });
+      // A reverse queued while the request was out takes it back: not "opened".
+      const now = superStateRef.current;
+      return session && now?.enabled !== false ? { ok: true, sessionId: session } : { ok: false, error: 'super_off', reason: 'super_off' };
+    });
+  }, [handOver, vault]);
+  // Telegram pictures of THIS project's stage insight cards (`hub_command render_card`, plan T4).
+  useEffect(() => {
+    if (!vault) return undefined;
+    return setHubCardRenderer(vault, async (args) => renderCardFromDom(args, hostRef.current));
+  }, [vault]);
 
   const takeBack = useCallback(async (focusSid?: string) => {
     const live = flightRunRef.current;
@@ -6120,7 +6150,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       arrivalHeldRef.current = true;
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
-        handOver,
+        handOver: async () => { await handOver(); },
         spawnChat: () => {
           const id = addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass });
           if (!id) throw new Error('40 chats are open in this project');

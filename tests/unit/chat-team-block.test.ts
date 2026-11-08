@@ -314,6 +314,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'turn\'s text, never only thought; never point him "above" at what you did not write there. He says it',
       'is missing: it is, write it now; never blame his screen. He did not understand a question: explain it',
       "in plain words in this turn's last text, then ask a reworded card with what was missing, never the same card.",
+      expect.stringContaining('came from his Telegram'),
       // rev 26 (2026-11-02): weigh a new idea from the owner before agreeing.
       'A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,',
       'does it break one of his earlier decisions or a project pattern, what does it cost? Sound: say so',
@@ -372,6 +373,6 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       expect.stringContaining('<super-brief rev=33>'),
     ]);
-    expect(after.length).toBe(before.length + 44); // +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 45); // +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

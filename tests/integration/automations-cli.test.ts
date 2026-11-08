@@ -266,7 +266,7 @@ describe('automations CLI (integration)', () => {
     for (const verb of [
       'create', 'list', 'show', 'run', 'tick', 'enable', 'disable', 'share', 'unshare',
       'approve', 'kill', 'remove', 'install', 'uninstall', 'logs',
-      'questions', 'answer', 'flow', 'telegram',
+      'questions', 'answer', 'flow',
     ]) {
       expect(out.stdout).toContain(verb);
     }
@@ -1063,41 +1063,15 @@ describe('automations CLI (integration)', () => {
     });
   });
 
-  // ── telegram (per-automation) ──────────────────────────────────────────────
-  describe('telegram (per-automation)', () => {
-    it('setup refuses when no slug is given', () => {
-      const out = run(['automations', 'telegram', 'setup', '--token', 'tok', '--chat', '123'], projectDir, home);
-      expect(out.exitCode).not.toBe(0);
-      expect(out.stdout.toLowerCase()).toContain('slug');
-    });
-
-    it('setup requires an existing automation, writes a 0600 per-slug file, and test/off are slug-scoped', () => {
+  // ── telegram (retired) ──────────────────────────────────────────────────
+  describe('telegram (retired)', () => {
+    it('the per-routine telegram verb is gone: no verb in --help, setup is refused, no file is written', () => {
+      const help = run(['automations', '--help'], projectDir, home);
+      expect(help.stdout).not.toMatch(/^\s+telegram\b/m);
       run(['automations', 'create', 'telegram-test', '--title', 'Telegram Test', '--days', 'daily', '--at', '09:00'], projectDir, home);
-
-      const missingOut = run(['automations', 'telegram', 'setup', 'does-not-exist', '--token', 'tok', '--chat', '123'], projectDir, home);
-      expect(missingOut.exitCode).toBe(1);
-      expect(missingOut.stdout).toMatch(/no such automation/i);
-
-      const setupOut = run(['automations', 'telegram', 'setup', 'telegram-test', '--token', 'tok-123', '--chat', '999'], projectDir, home);
-      expect(setupOut.exitCode).toBe(0);
-      expect(setupOut.stdout).toMatch(/configured for "telegram-test"/i);
-
-      const cfgPath = join(home, '.dreamcontext', 'telegram', 'telegram-test.json');
-      expect(existsSync(cfgPath)).toBe(true);
-      const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
-      expect(cfg.chatId).toBe('999');
-
-      const offOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
-      expect(offOut.exitCode).toBe(0);
-      expect(offOut.stdout).toMatch(/off for "telegram-test"/i);
-      expect(existsSync(cfgPath)).toBe(false);
-
-      // Off on an automation that was never configured is a clean no-op, not
-      // an error — and it must not invent a config file.
-      const offAgainOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
-      expect(offAgainOut.exitCode).toBe(0);
-      expect(offAgainOut.stdout).toMatch(/not configured/i);
-      expect(existsSync(cfgPath)).toBe(false);
+      const out = run(['automations', 'telegram', 'setup', 'telegram-test', '--token', 'tok-123', '--chat', '999'], projectDir, home);
+      expect(out.exitCode).not.toBe(0);
+      expect(existsSync(join(home, '.dreamcontext', 'telegram', 'telegram-test.json'))).toBe(false);
     });
   });
 

@@ -769,10 +769,10 @@ export function aboutHeads(text: string): AboutHead[] {
 /** Each part's reference, in order, for a message with two or more parts (`aboutHeads`): the
  *  message reference with `#<i>` hashed again. [] for a message with one part or none, whose
  *  sections the super marks with the message reference as before. MIRRORED in the window. */
-export function partRefs(text: string): string[] {
+export function partRefs(text: string, baseRef?: string): string[] {
   const n = aboutHeads(text).length;
   if (n < 2) return [];
-  const base = msgRef(text);
+  const base = baseRef && /^[0-9a-z]{6}$/.test(baseRef) ? baseRef : msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
 }
 /**

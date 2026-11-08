@@ -16,6 +16,7 @@ import { openAgentSurface } from '../../lib/agentSettings';
 import { DELETE_ARM_MS, deleteAction } from '../../lib/agentDraft';
 import { requestTalkToAgent } from '../../lib/talkToAgent';
 import { AgentAvatar } from './AgentAvatar';
+import { TelegramMemberSection } from '../telegram/TelegramMemberSection';
 import { APPROVAL_STATE_KEY, approvalChips, stateHasDot, tx } from './AgentRosterCard';
 import './AgentProfilePanel.css';
 
@@ -139,7 +140,7 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
  * and approval for chat and approval to run, shown SEPARATELY, read-only. There is no Approve here
  * any more (plan-r10 1e): a member changed on this Mac stamps itself; a synced or widening change
  * waits for its ONE card (TeamApproval, on the AI Team page), which this panel names. No browser
- * dialog anywhere (they are silent no-ops in the desktop app). No Run now and no Telegram.
+ * dialog anywhere (they are silent no-ops in the desktop app). No Run now.
  */
 export function AgentProfilePanel({
   slug, onClose, onEdit, onDeleted, onToast, placement = null,
@@ -321,6 +322,9 @@ export function AgentProfilePanel({
         {agent.shared && <p className="agp-muted">{t('agents.roster.sharedHint')}</p>}
         {agent.implicit && <p className="agp-muted">{t('agents.roster.implicitHint')}</p>}
       </section>
+
+      {/* Its own Telegram bot, right under the job (plan U). Device-only; a teammate's member has none here. */}
+      {!readOnly && <TelegramMemberSection slug={slug} name={name} />}
 
       {/* Read-only: what it learned from its own runs. Notes, never instructions. */}
       <section className="agp-section" aria-label={t('agents.profile.pattern')} data-section="pattern" data-pattern-state={view ?? undefined}>

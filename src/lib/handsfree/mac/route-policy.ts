@@ -400,7 +400,33 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/pick-paths': deny('the composer\'s file picker opens a dialog on the Mac; the phone has its own sheet'),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
-  'POST /api/agent/secret': deny(SECRET),
+  // A secret card filled on the phone (plan G2, H9, I5): only for an OPEN server record of a chat
+  // of an exposed project, matched by {sessionId, cardRef}; the handler writes only that record's
+  // file and the keys it declared, under that chat's project. Without a matching record: 403/409.
+  'POST /api/agent/secret': filtered(`${CHAT}: a pending secret card's value, written only to the file and keys the card declared (record matched by session + cardRef; the record's project must be exposed)`),
+  // The chat's run/secret card records (plan I1, J4): the record's project must be exposed, else 404.
+  'GET /api/agent/cards': filtered(`${CHAT}: a chat's run and secret card records (what the agent wrote, never a path); side-effect free`),
+  // Telegram bindings (W2, plan A1, AA1, AB): never from a phone; the Rust-called id routes act on
+  // the vault their id was minted in, never the request's.
+  'GET /api/telegram': deny(SECRET),
+  'POST /api/telegram/:target/bind': deny(SECRET),
+  'DELETE /api/telegram/:target': deny(SECRET),
+  'GET /api/telegram-pairing/:id': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-pairing/:id/confirm': deny(SECRET, 'cross:deny'),
+  'GET /api/telegram-manager/status': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-manager/bind': deny(SECRET, 'cross:deny'),
+  'DELETE /api/telegram-manager': deny(SECRET, 'cross:deny'),
+  'GET /api/telegram/:target/forward': deny(SECRET),
+  'POST /api/telegram/:target/forward/request': deny(SECRET),
+  'POST /api/telegram/:target/forward': deny(SECRET),
+  'POST /api/telegram/:target/creation/request': deny(SECRET),
+  'POST /api/telegram/:target/readopt/request': deny(SECRET),
+  'GET /api/telegram/:target/readopt': deny(SECRET),
+  'GET /api/telegram-forward/:id/preview': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-forward/:id/confirm': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-creation/:id/start': deny(SECRET, 'cross:deny'),
+  'GET /api/telegram-readopt/:id/preview': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-readopt/:id/start': deny(SECRET, 'cross:deny'),
   // The ONE voice route the phone reaches (task the-hands-free-phone-sends-a-voice-message…): its
   // take, recorded on the phone, transcribed by the engine the owner chose on this Mac (local
   // whisper, or OpenRouter when the cloud was chosen, 2026-10-27). Capped per phone socket
@@ -540,8 +566,6 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/automations/:slug/photo': allow('read: an automation photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/automations/:slug/photo': allow(PROJECT_WRITE),
   'GET /api/automations/:slug/flow': allow(READ),
-  'GET /api/automations/:slug/telegram': deny(SECRET),
-  'POST /api/automations/:slug/telegram': deny(SECRET),
 
   // Theses and learning
   'GET /api/theses': allow(READ),

@@ -774,6 +774,7 @@ export interface AutomationQuestion {
    *  so the question can be closed but never resumed. */
   sessionId: string | null;
   kind: 'approval' | 'flow-hitl';
+  /** `telegram` only on records the retired per-routine Telegram channel wrote. */
   channel: 'chat' | 'telegram';
   /** What the human is being asked, in the run's own words. */
   question: string;
@@ -795,7 +796,7 @@ export interface AutomationQuestion {
 /**
  * Every question awaiting an answer, across every automation, oldest first —
  * mirrors `handleAutomationsQuestionsList`. Polled, for the reason the
- * retired review queue was: a question can be answered from Telegram or the
+ * retired review queue was: a question can be answered from a thread or the
  * CLI while this is open, and a stale list would keep offering controls for a
  * question someone already answered elsewhere. The engine's claim lock makes
  * that safe either way, but showing it is better than catching it.
@@ -870,46 +871,6 @@ export function useAnswerQuestion() {
       // The feed carries the open question too (AI Team's composer answers it): an answered
       // one must leave it now, not at the next 15s poll.
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
-    },
-  });
-}
-
-// ─── Per-automation Telegram ────────────────────────────────────────────────
-
-/** What the dashboard needs to answer "is Telegram set up for this
- *  automation, and where does it reply" — mirrors `TelegramConfigView` in
- *  `src/server/routes/automations.ts`. Deliberately has NO token field: the
- *  bot token is a capability (it can resume a `bypassPermissions` session)
- *  and never leaves the server process. */
-export interface TelegramConfigView {
-  configured: boolean;
-  chatId: string | null;
-}
-
-export function useAutomationTelegram(slug: string | null) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['automations', slug, 'telegram'],
-    queryFn: () =>
-      api.get<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`).then((r) => r.telegram),
-    enabled: !!slug,
-    retry: 0,
-  });
-}
-
-/** Set (or replace) one automation's Telegram bot credentials. The response
- *  echoes the same presence-only shape the read hook returns — the token that
- *  was just written is never read back over HTTP. */
-export function useSetAutomationTelegram() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, botToken, chatId }: { slug: string; botToken: string; chatId: string }) =>
-      api
-        .post<{ telegram: TelegramConfigView }>(`/automations/${slug}/telegram`, { botToken, chatId })
-        .then((r) => r.telegram),
-    onSuccess: (_data, { slug }) => {
-      queryClient.invalidateQueries({ queryKey: ['automations', slug, 'telegram'] });
     },
   });
 }

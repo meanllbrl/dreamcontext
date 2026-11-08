@@ -1017,11 +1017,15 @@ const THREAD_LEDGER_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface ThreadLedger {
   entries: Record<string, Record<string, string>>;
+  /** Sibling of `entries` (plan AA3): slug → id → content hash (`threadEntryContentHash`).
+   *  Pruned with `entries` by id. An id with no hash here is "unknown": never forwarded. */
+  hashes?: Record<string, Record<string, string>>;
 }
 
-/** Record an entry THIS machine appended (slug, id, at). Only once agent sync is confirmed here:
- *  before that, threads are local-only and every entry is this machine's. Never throws. */
-export function recordThreadEntryHere(contextRoot: string, slug: string, id: string, at: string, home?: string): void {
+/** Record an entry THIS machine appended (slug, id, at, and its content hash when known). Only
+ *  once agent sync is confirmed here: before that, threads are local-only and every entry is this
+ *  machine's. Never throws. */
+export function recordThreadEntryHere(contextRoot: string, slug: string, id: string, at: string, home?: string, hash?: string): void {
   try {
     if (!agentSyncState(contextRoot, home).active) return;
     const cutoff = Date.now() - THREAD_LEDGER_KEEP_MS;
@@ -1033,7 +1037,12 @@ export function recordThreadEntryHere(contextRoot: string, slug: string, id: str
         if (!(Date.parse(v) >= cutoff)) delete forSlug[k];
       }
       entries[slug] = forSlug;
-      return { entries };
+      const hashes = cur.hashes && typeof cur.hashes === 'object' ? { ...cur.hashes } : {};
+      const hashSlug: Record<string, string> = {};
+      for (const [k, v] of Object.entries(hashes[slug] ?? {})) if (k in forSlug && typeof v === 'string') hashSlug[k] = v;
+      if (hash) hashSlug[id] = hash;
+      hashes[slug] = hashSlug;
+      return { ...cur, entries, hashes };
     }, home);
   } catch {
     // an unrecorded entry is only missing from this agent's history block
@@ -1049,6 +1058,17 @@ export function threadEntriesHere(contextRoot: string, slug: string, home?: stri
   if (!agentSyncState(contextRoot, home).active) return null;
   const led = readLocalJson<ThreadLedger>(dirname(contextRoot), THREAD_LEDGER_FILE, { entries: {} }, home);
   return new Set(Object.keys(led.entries?.[slug] ?? {}));
+}
+
+/** The content hash this machine recorded for each entry id of `slug`, or null while agent sync
+ *  is not confirmed here (the caller then takes the run's own entries, plan Z3). */
+export function threadHashesHere(contextRoot: string, slug: string, home?: string): Map<string, string> | null {
+  if (!agentSyncState(contextRoot, home).active) return null;
+  const led = readLocalJson<ThreadLedger>(dirname(contextRoot), THREAD_LEDGER_FILE, { entries: {} }, home);
+  const ids = led.entries?.[slug] ?? {};
+  const out = new Map<string, string>();
+  for (const [id, h] of Object.entries(led.hashes?.[slug] ?? {})) if (id in ids && typeof h === 'string') out.set(id, h);
+  return out;
 }
 
 /** Seed the ledger from this machine's own thread files (untracked here): at confirm, before any
@@ -1080,7 +1100,9 @@ export function seedThreadLedger(contextRoot: string, home?: string): void {
     updateLocalJson<ThreadLedger>(dirname(contextRoot), THREAD_LEDGER_FILE, { entries: {} }, (cur) => {
       const entries = cur.entries && typeof cur.entries === 'object' ? { ...cur.entries } : {};
       for (const [slug, ids] of Object.entries(seeds)) entries[slug] = { ...(entries[slug] ?? {}), ...ids };
-      return { entries };
+      // `updateLocalJson` replaces the file: keep the hash map (plan AB). Seeded ids carry no
+      // hash, so they read as unknown and are never forwarded (fails closed).
+      return { ...cur, entries };
     }, home);
   } catch {
     // history starts from the next entry this machine writes
@@ -1105,7 +1127,11 @@ export function renameOrForgetThreadLedger(contextRoot: string, from: string, to
       const moved = entries[from];
       delete entries[from];
       if (to && moved) entries[to] = { ...(entries[to] ?? {}), ...moved };
-      return { entries };
+      const hashes = cur.hashes && typeof cur.hashes === 'object' ? { ...cur.hashes } : {};
+      const movedHashes = hashes[from];
+      delete hashes[from];
+      if (to && movedHashes) hashes[to] = { ...(hashes[to] ?? {}), ...movedHashes };
+      return { ...cur, entries, hashes };
     }, home);
   } catch {
     // stale ids only name entries that no longer exist under that slug

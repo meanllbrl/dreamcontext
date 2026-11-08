@@ -91,7 +91,7 @@ dreamcontext is **more than memory files**. Each capability below ships; its ref
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory: reminders that fire when context matches | this file |
 | **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](../draw/references/whiteboards.md) |
-| **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
+| **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat or CLI); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
 | **Apps** | Own-window apps, own icon, not our logo (`/apps`) | [apps.md](references/apps.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`), **AI Team**: automations pick one, tasks go to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>`. A mistake: `super team amend` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
@@ -447,7 +447,7 @@ Open these with `Read` when the task needs depth:
 - **[sleep.md](references/sleep.md)**: full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
-- **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, Telegram, sharing, the channel, approval, stopping a run.
+- **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, the retired per-routine Telegram, sharing, the channel, approval, stopping a run.
 - **[apps.md](references/apps.md)**: local web apps in their own Mac windows: manifest, run, `apps do`, schedules.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync, dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.

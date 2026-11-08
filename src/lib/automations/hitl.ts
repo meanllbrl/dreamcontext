@@ -34,7 +34,7 @@
  * question is never given a session id, by construction, on every write path
  * (see {@link createQuestion} and {@link backfillQuestionSession}). The refusal
  * to RESUME one lives inside the verdict engine, where every channel — HTTP,
- * CLI, Telegram — must pass through it. Neither guard is sufficient alone and
+ * CLI — must pass through it. Neither guard is sufficient alone and
  * both are cheap.
  *
  * ── MECHANICS
@@ -73,6 +73,8 @@ import {
   type QuestionState,
   type QuestionSteer,
   type ReviewChannel,
+  type SettableReviewChannel,
+  type SettableHitlChannel,
   type RunKind,
 } from './types.js';
 
@@ -134,13 +136,10 @@ function parseSteers(v: unknown): QuestionSteer[] {
 }
 
 /**
- * A button LABEL, not a paragraph. 64 keeps a Telegram `inline_keyboard` button and a
- * dashboard button on one line; longer is truncated rather than dropped, so a clumsy
- * choice still answers.
- *
- * NOT a mirror of the Bot API's 64-BYTE ceiling — that one is on `callback_data`, which
- * `renderQuestionKeyboard` generates itself (`answer:<id>:<i>`, short and ours). This cap
- * is about a legible label and a payload that sends at all.
+ * A button LABEL, not a paragraph. 64 keeps a chat button (dashboard, or a Telegram
+ * `inline_keyboard` button) on one line; longer is truncated rather than dropped, so a
+ * clumsy choice still answers. This cap is about a legible label and a payload that sends
+ * at all; Telegram's 64-BYTE `callback_data` ceiling is on ids the sender mints itself.
  */
 export const QUESTION_CHOICE_MAX_CHARS = 64;
 
@@ -155,10 +154,10 @@ export const QUESTION_CHOICES_MAX = 4;
  * teammate's vault is cleaned when it is read, not only when it is written.
  *
  * WHY THE CAPS ARE LOAD-BEARING and not tidiness: an agent may now author its own option
- * set (`automations propose --choice`), and `renderQuestionKeyboard` maps each choice
- * straight into an `inline_keyboard` button's `text`. One over-long or newline-bearing
- * choice makes the whole Telegram send fail — so the human never sees the question and the
- * run waits for an answer that can no longer be given. Control characters are STRIPPED
+ * set (`automations propose --choice`), and every surface maps each choice straight into a
+ * button's text. One over-long or newline-bearing choice can make a whole send fail — so
+ * the human never sees the question and the run waits for an answer that can no longer be
+ * given. Control characters are STRIPPED
  * rather than escaped: a button label has no use for them.
  */
 function parseChoices(v: unknown): string[] {
@@ -394,7 +393,7 @@ export interface CreateQuestionInput {
   kind: QuestionKind;
   /** Ignored — forced to null — when `kind` is `'approval'`. */
   sessionId: string | null;
-  channel: HitlChannel;
+  channel: SettableHitlChannel;
   question: string;
   choices?: string[];
   /** The run target that asked; only `'agent'` is recorded (see `AutomationQuestion.target`). */
@@ -462,7 +461,7 @@ export function createQuestion(contextRoot: string, input: CreateQuestionInput):
 export function recordSteer(
   contextRoot: string,
   q: AutomationQuestion,
-  opts: { text: string; via: ReviewChannel; newQuestion?: string; lesson?: string | null; nowISO?: string },
+  opts: { text: string; via: SettableReviewChannel; newQuestion?: string; lesson?: string | null; nowISO?: string },
 ): AutomationQuestion {
   const next: AutomationQuestion = {
     ...q,
@@ -489,8 +488,8 @@ export type ClaimResult =
  * Take a question from `pending` to `answered`, exactly once.
  *
  * THE AUTHORITY IS DISK, NEVER THE CALLER'S COPY. A question object can be held
- * by several surfaces at the same time — the chat pane has one rendered, the
- * Telegram poller has one in a message, the CLI has one from a `list` — and
+ * by several surfaces at the same time — the chat pane has one rendered, a
+ * thread has one in a message, the CLI has one from a `list` — and
  * every one of them believes it is `pending` until it re-reads. Trusting the
  * in-memory copy means two taps a second apart both resume the session and the
  * approved work happens twice; for an automation that sends, publishes, or
@@ -505,7 +504,7 @@ export function claimQuestion(
   contextRoot: string,
   q: AutomationQuestion,
   answer: string,
-  via: ReviewChannel,
+  via: SettableReviewChannel,
   nowISO?: string,
 ): ClaimResult {
   const dir = hitlSlugDir(contextRoot, q.slug);
@@ -553,7 +552,7 @@ export function resolveQuestion(
   contextRoot: string,
   q: AutomationQuestion,
   answer: string,
-  via: ReviewChannel,
+  via: SettableReviewChannel,
   nowISO?: string,
 ): AutomationQuestion {
   const next: AutomationQuestion = {
@@ -623,20 +622,6 @@ export function reopenQuestion(contextRoot: string, q: AutomationQuestion, reaso
     answeredVia: null,
     resolutionError: reason,
   };
-  writeQuestion(contextRoot, next);
-  return next;
-}
-
-/** Attach a channel's handle for an already-rendered question, so a steer edits
- *  it in place rather than posting a second copy of a question that has not
- *  changed identity. */
-export function setChannelRef(
-  contextRoot: string,
-  q: AutomationQuestion,
-  channel: ReviewChannel,
-  ref: string,
-): AutomationQuestion {
-  const next: AutomationQuestion = { ...q, channelRefs: { ...q.channelRefs, [channel]: ref } };
   writeQuestion(contextRoot, next);
   return next;
 }

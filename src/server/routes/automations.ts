@@ -86,7 +86,6 @@ import { isPhoneSocket } from '../phone-origin.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
 import { noteTeamFollowUp } from '../../lib/super/team.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
-import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import { expandBoardRefs } from '../../lib/whiteboards/board-refs.js';
@@ -858,7 +857,7 @@ const APPROVAL_DECISIONS = { approve: true, yes: true, reject: false, no: false 
  *  - `'flow-hitl'` — an already-approved run stopped mid-flight to ask a
  *    question ABOUT ITS OWN WORK, not about whether to trust it, so free text
  *    is the correct and only shape of answer. `resumeWithAnswer` is the one
- *    path every channel (HTTP, CLI, Telegram) uses for this, and it re-checks
+ *    path every channel (HTTP, CLI) uses for this, and it re-checks
  *    the kind itself before touching anything — this route's branch is a
  *    nicer early exit for the wrong kind, not the defense. Do not fold this
  *    branch back into the one above: the two kinds disagree about whether
@@ -986,85 +985,6 @@ export async function handleAutomationsQuestionAnswer(
     if (sendIfNotOwner(res, err)) return;
     console.error('[automations] question answer failed:', err);
     sendError(res, 500, 'question_failed', 'Failed to answer the question.');
-  }
-}
-
-// ─── Per-automation Telegram config ─────────────────────────────────────────
-
-/** What the dashboard needs to answer "is Telegram set up for this
- *  automation, and where does it reply" — never the bot token itself, the
- *  same shape discipline `GET /api/lab/credentials` uses for lab secrets. */
-interface TelegramConfigView {
-  configured: boolean;
-  chatId: string | null;
-}
-
-function telegramView(cfg: ReturnType<typeof readTelegramConfigForSlug>): TelegramConfigView {
-  return cfg ? { configured: true, chatId: cfg.chatId } : { configured: false, chatId: null };
-}
-
-/** GET /api/automations/:slug/telegram — presence + chat id only. The bot
- *  token is a capability (it can resume a `bypassPermissions` session) and
- *  never leaves this process. */
-export async function handleAutomationsTelegramGet(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    if (!getAutomation(contextRoot, params.slug)) {
-      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
-      return;
-    }
-    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
-  } catch {
-    sendError(res, 500, 'telegram_status_failed', 'Failed to read the Telegram configuration.');
-  }
-}
-
-/**
- * POST /api/automations/:slug/telegram — set (or replace) this automation's
- * bot credentials. Body is `{ botToken: string, chatId: string }`; both are
- * required non-empty strings. The response echoes the same presence-only
- * shape the GET route returns — the token that was just written is never
- * read back over HTTP.
- *
- * The `offset` (getUpdates cursor) is carried over from any existing config
- * rather than reset to 0: re-saving the same bot must not replay updates it
- * already processed. A genuinely new bot (no prior config) starts at 0.
- */
-export async function handleAutomationsTelegramSet(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    const target = getAutomation(contextRoot, params.slug);
-    if (!target) {
-      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
-      return;
-    }
-    if (refuseNotOwner(res, target)) return;
-    const body = await parseJsonBody(req);
-    const botToken = typeof body?.botToken === 'string' ? body.botToken.trim() : '';
-    const chatId = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
-    if (!botToken || !chatId) {
-      sendError(res, 400, 'invalid_body', 'Request body must be { botToken, chatId } with non-empty strings.');
-      return;
-    }
-    const existing = readTelegramConfigForSlug(params.slug);
-    writeTelegramConfigForSlug(params.slug, { botToken, chatId, offset: existing?.offset ?? 0 });
-    sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
-  } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-    if (err instanceof AutomationError) {
-      sendError(res, 400, 'telegram_rejected', err.message);
-      return;
-    }
-    console.error('[automations] telegram set failed:', err);
-    sendError(res, 500, 'telegram_failed', 'Failed to store the Telegram configuration.');
   }
 }
 
@@ -2255,7 +2175,8 @@ function onOneOffJob(contextRoot: string, manifest: AutomationManifest, runId: s
 
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
  *  member a job while the owner has handed the Chat screen over (`super team ask`). */
-export type SayVia = 'dashboard' | 'assistant' | 'super';
+/** `telegram`: the owner wrote from the member's own bot (W2, plan "Members"). */
+export type SayVia = 'dashboard' | 'assistant' | 'super' | 'telegram';
 
 /**
  * An app asking one of its project's agents to do something. Reaches `sayFromApp` only from the

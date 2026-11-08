@@ -36,6 +36,7 @@ mod assistant;
 mod assistant;
 mod cli_choice;
 mod frames;
+mod html_snapshot;
 mod mic;
 mod mic_permission;
 mod node_runtime;
@@ -45,6 +46,7 @@ mod open_panel_guard;
 mod owner_key;
 mod page_focus;
 mod splash;
+mod telegram_confirm;
 mod updater;
 #[cfg(windows)]
 mod win;
@@ -119,6 +121,11 @@ pub fn run() {
             assistant::assistant_set_enabled,
             frames::set_frames,
             owner_key::owner_key,
+            telegram_confirm::confirm_telegram_binding,
+            telegram_confirm::confirm_telegram_forward,
+            telegram_confirm::start_telegram_creation,
+            telegram_confirm::start_telegram_readopt,
+            html_snapshot::html_snapshot,
             app_link::take_app_link,
             splash::splash_done,
             splash::splash_play,
@@ -170,6 +177,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            // A debug build asked to prove the sealed snapshot webview renders one probe page
+            // and exits, before any server or window (src/html_snapshot.rs, the spike).
+            #[cfg(debug_assertions)]
+            if html_snapshot::spike_if_asked(&handle) {
+                return Ok(());
+            }
             // Windows: tell the CLI the desktop app owns the dashboard (src/win.rs).
             #[cfg(windows)]
             if let Some(home) = node_runtime::home_dir() {
@@ -218,6 +231,11 @@ pub fn run() {
         // all exit). A dreamcontext App window still open needs this server: keep running
         // windowless, without reaping, until the owner quits (dreamcontext-apps plan r19 W1).
         if let RunEvent::ExitRequested { code: None, api, .. } = &event {
+            #[cfg(debug_assertions)]
+            if html_snapshot::SPIKE_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+                api.prevent_exit();
+                return;
+            }
             if apps_window_count(app_handle) > 0 {
                 applog::log("[apps] last window closed with an app window open: staying up");
                 api.prevent_exit();

@@ -2,12 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
-import { isReservedId, readSuperState } from '../../lib/super/store.js';
+import { readSuperState } from '../../lib/super/store.js';
 import { querySuperId } from '../super-id-query.js';
-import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
+import { directQuestion, superSanitizeOpts, superVaultName } from '../../lib/super/inbox.js';
+import { answerChildPermission, answerChildQuestion, childPermission, childQuestions, ownChild } from '../../lib/super/answer.js';
+export { cleanPhoneAnswer, phoneAnswerOpen } from '../../lib/super/answer.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
 import { getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
-import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.js';
 
 /**
  * The Super Agent's open questions to the owner, for a surface that holds neither the super
@@ -62,25 +63,15 @@ export interface PhoneSuperQuestions {
 
 const MAX_ANSWER = 4000;
 
-/** Is `item` about one of THIS super's children, live in THIS project? (The registry spans every
- *  project: never a chat the record does not name, never another project's.) */
-function ownChild(state: Pick<SuperState, 'children'>, vault: string, item: SuperQueueItem): boolean {
-  return !isReservedId(item.sessionId) && Object.prototype.hasOwnProperty.call(state.children, item.sessionId)
-    && getChat(item.sessionId)?.vault === vault;
-}
-
-/** The child's AskUserQuestion behind an escalated question, while it still asks exactly that. */
-function childQuestions(item: SuperQueueItem): RegistryQuestion[] | null {
-  const chat = getChat(item.sessionId);
-  const pq = pendingRequest(chat, item.requestId);
-  if (!chat || chat.status !== 'asking' || !pq || pq.isPermission || pq.toolName !== 'AskUserQuestion') return null;
-  return pq.questions ?? null;
-}
-
-/** The child's permission request behind an owner-bound permission item, while it still waits. */
-function childPermission(item: SuperQueueItem): PendingQuestion | null {
-  const pq = pendingRequest(getChat(item.sessionId), item.requestId);
-  return pq && pq.isPermission ? pq : null;
+/** A refusal from the shared answer core, as the phone routes have always worded it. */
+function sendAnswerFailure(res: ServerResponse, error: string): void {
+  if (error === 'unavailable') { sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.'); return; }
+  if (error === 'not_handed_over') { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
+  if (error === 'stale_request') { sendError(res, 409, 'stale_request', 'That question is no longer open.'); return; }
+  if (error === 'stale_permission') { sendError(res, 409, 'stale_request', 'That permission request is no longer open.'); return; }
+  if (error === 'invalid_args') { sendError(res, 400, 'invalid_args', 'give an answer for at least one of the child\'s questions'); return; }
+  if (error === 'no_window') { sendError(res, 409, 'no_window', 'The Mac window that holds the Super Agent is not open.'); return; }
+  sendJson(res, 200, { ok: false, error });
 }
 
 /** A permission item that waits for the OWNER: not the Super's to decide first, not answered. */
@@ -178,26 +169,6 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
   }));
 }
 
-/** The owner's picks, checked against the child's own questions: every key is one of its question
- *  texts, every value a non-empty line. Null when anything is off. */
-export function cleanPhoneAnswer(questions: readonly RegistryQuestion[], raw: unknown): Record<string, string> | null {
-  if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const known = new Set(questions.map((q) => q.question));
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (!known.has(k) || typeof v !== 'string' || !v.trim() || v.length > MAX_ANSWER) return null;
-    out[k] = v;
-  }
-  return out;
-}
-
-/** Does the phone's answer still have an open question to go to: a child question escalated to
- *  him, or his from birth (`direct`: answerable before the Super ever saw it), on this request. */
-export function phoneAnswerOpen(item: SuperQueueItem, requestId: string): boolean {
-  return item.kind === 'question' && (item.state === 'escalated' || directQuestion(item)) && item.requestId === requestId;
-}
-
 /** POST /api/agent/super-answer {item, requestId, picked?, notes?, unclear?} */
 export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   // The phone gate already judged the write's Origin (the tunnel's own); the device session is
@@ -209,44 +180,10 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   if (!id || !requestId || requestId.length > 200) { sendError(res, 400, 'invalid_args', 'item and requestId are required'); return; }
   const answerSuper = querySuperId(req, res, contextRoot);
   if (!answerSuper) return;
-  let state: SuperState;
-  try { state = await readSuperState(contextRoot, answerSuper, superSanitizeOpts()); } catch (err) {
-    // Unread is not "not handed over": a retry may land (the card comes back with its picks).
-    console.warn(`[super-phone] ${contextRoot}: the record could not be read for an answer: ${(err as Error).message}`);
-    sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.');
-    return;
-  }
-  if (!state.enabled || !state.session) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
-  const item = state.queue.find((q) => q.id === id);
-  if (!item || !phoneAnswerOpen(item, requestId)) {
-    sendError(res, 409, 'stale_request', 'That question is no longer open.');
-    return;
-  }
-  const questions = ownChild(state, superVaultName(contextRoot), item) ? childQuestions(item) : null;
-  if (!questions) { sendError(res, 409, 'stale_request', 'That child is not asking this question any more.'); return; }
-  const unclear = typeof b.unclear === 'string' ? b.unclear.slice(0, MAX_ANSWER) : null;
-  const picked = cleanPhoneAnswer(questions, b.picked);
-  const notes = cleanPhoneAnswer(questions, b.notes);
-  if (unclear === null && (!picked || !notes || !Object.keys(picked).length)) {
-    sendError(res, 400, 'invalid_args', 'give an answer for at least one of the child\'s questions');
-    return;
-  }
-  const token = superTokenOfSession(state.session);
-  if (!token) { sendError(res, 409, 'no_window', 'The Mac window that holds the Super Agent is not open.'); return; }
-  const args = unclear !== null
-    ? { child: item.sessionId, requestId, unclear }
-    : { child: item.sessionId, requestId, picked, ...(notes && Object.keys(notes).length ? { notes } : {}) };
-  const r = await sendSuperCommand(token, 'answer', args);
-  if (!r.ok) { sendJson(res, r.error === 'no_window' ? 409 : 200, { ok: false, error: r.error }); return; }
-  // The child HAS its answer: the reply says so whatever the record write does. Closed like the
-  // super's own `answer` closes it: every item on that request (an item escalated twice too).
-  try {
-    await writeSuper(contextRoot, answerSuper, (s) => {
-      for (const q of s.queue) if (q.kind === 'question' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
-    });
-  } catch (err) {
-    console.warn(`[super-phone] ${id}: the child was answered but the record was not closed: ${(err as Error).message}`);
-  }
+  const r = await answerChildQuestion(contextRoot, answerSuper, {
+    item: id, requestId, picked: b.picked, notes: b.notes, unclear: typeof b.unclear === 'string' ? b.unclear.slice(0, MAX_ANSWER) : null,
+  });
+  if (!r.ok) { sendAnswerFailure(res, r.error); return; }
   sendJson(res, 200, { ok: true });
 }
 
@@ -263,29 +200,7 @@ export async function handleSuperPhonePermission(req: IncomingMessage, res: Serv
   // A member's Super answers through its own record (`?superId=m:<slug>`), as the GET listed it.
   const permSuper = querySuperId(req, res, contextRoot);
   if (!permSuper) return;
-  let state: SuperState;
-  try { state = await readSuperState(contextRoot, permSuper, superSanitizeOpts()); } catch (err) {
-    console.warn(`[super-phone] ${contextRoot}: the record could not be read for a permission: ${(err as Error).message}`);
-    sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.');
-    return;
-  }
-  if (!state.enabled || !state.session) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
-  const item = state.queue.find((q) => q.id === id);
-  if (!item || item.kind !== 'permission' || item.state === 'done' || item.requestId !== requestId
-    || !ownChild(state, superVaultName(contextRoot), item) || !childPermission(item)) {
-    sendError(res, 409, 'stale_request', 'That permission request is no longer open.');
-    return;
-  }
-  const token = superTokenOfSession(state.session);
-  if (!token) { sendError(res, 409, 'no_window', 'The Mac window that holds the Super Agent is not open.'); return; }
-  const r = await sendSuperCommand(token, 'allow', { child: item.sessionId, requestId, behavior: choice, by: 'owner' });
-  if (!r.ok) { sendJson(res, r.error === 'no_window' ? 409 : 200, { ok: false, error: r.error }); return; }
-  try {
-    await writeSuper(contextRoot, permSuper, (s) => {
-      for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
-    });
-  } catch (err) {
-    console.warn(`[super-phone] ${id}: the child was answered but the record was not closed: ${(err as Error).message}`);
-  }
+  const r = await answerChildPermission(contextRoot, permSuper, { item: id, requestId, choice });
+  if (!r.ok) { sendAnswerFailure(res, r.error === 'stale_request' ? 'stale_permission' : r.error); return; }
   sendJson(res, 200, { ok: true });
 }

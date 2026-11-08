@@ -232,8 +232,7 @@ export function AskBlock({
         // button that resumes a conversation this machine never had is not, and
         // saying WHOSE it is beats a button that fails with a wrong reason.
         <div className="auto-ask-foreign">
-          This question belongs to a run on another machine — answer it there, or from the
-          Telegram chat that automation is connected to.
+          This question belongs to a run on another machine — answer it there.
         </div>
       )}
     </div>

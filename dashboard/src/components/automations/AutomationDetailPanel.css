@@ -86,7 +86,7 @@
   font-size: 13px; font-weight: 600; letter-spacing: normal; text-transform: none;
   color: var(--color-text); margin-bottom: 10px;
 }
-/* Used where the label sits inline in its own header row (Flow, Telegram) —
+/* Used where the label sits inline in its own header row (Flow) —
    that row already carries the bottom margin the label wants. */
 .adp-section-label--inline { margin-bottom: 0; }
 

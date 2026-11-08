@@ -3,6 +3,7 @@ import {
   realpathSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
@@ -218,9 +219,10 @@ function parseEntry(json: string): ThreadEntry | null {
       ...(summary && summary.length > 0 ? { summary } : {}),
       ...(result ? { result } : {}),
       ...(r.via === 'app' && typeof r.app === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(r.app) ? { app: r.app } : {}),
-      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app')
+      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app' || r.via === 'telegram')
         ? (r.via as ThreadVia)
         : 'runner',
+      ...(typeof r.stamp === 'string' && /^[0-9a-f]{64}$/.test(r.stamp) ? { stamp: r.stamp } : {}),
     };
   } catch {
     return null;
@@ -403,6 +405,30 @@ export interface AppendThreadEntryInput {
    * entries nobody has seen.
    */
   id?: string;
+  /**
+   * Called once the entry is on disk, with the id actually written and its content hash
+   * (`threadEntryContentHash`). The runner's run-post stamp hangs here (plan AA3): this function
+   * mints the id itself, so a caller cannot know it beforehand.
+   */
+  stamp?: (id: string, contentHash: string) => void;
+  /** Computes the entry's `stamp` field from the id it will carry and its content hash, BEFORE
+   *  it is written (the run-post stamp, `automations post` with the run's key). */
+  runStamp?: (id: string, contentHash: string) => string;
+}
+
+/**
+ * The content hash of an entry as written and read back: sha256 over the canonical JSON of
+ * `{text, files, summary}` (missing lists as empty). The thread ledger keeps it beside the id
+ * (`agent-sync.ts` `threadHashesHere`), so a synced copy with the same id and different content
+ * is told apart (plan Y3).
+ */
+export function threadEntryContentHash(entry: { text: string; files?: readonly string[]; summary?: readonly ThreadSummaryRow[] }): string {
+  const canonical = JSON.stringify({
+    text: entry.text,
+    files: [...(entry.files ?? [])],
+    summary: (entry.summary ?? []).map((r) => ({ key: r.key, value: r.value })),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 /**
@@ -425,7 +451,7 @@ const RECONCILE_ID_PATTERN = /^[0-9a-z]{9,}_[A-Za-z0-9_-]+~r$/;
  * PURE: no I/O, so a path is refused for its SHAPE, whether or not the file
  * happens to exist yet (a run posts the document it is still writing).
  */
-function isContainedBrainRel(contextRoot: string, raw: string): boolean {
+export function isContainedBrainRel(contextRoot: string, raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
   if (trimmed.startsWith('/') || /^[a-zA-Z]:/.test(trimmed)) return false;
@@ -456,7 +482,7 @@ function isContainedBrainRel(contextRoot: string, raw: string): boolean {
  * Returns true for a path that does not exist: nothing to resolve yet, and the
  * lexical check has already had its say.
  */
-function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
+export function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
   try {
     if (!existsSync(abs)) return true;
     if (lstatSync(abs).isSymbolicLink()) return false;
@@ -568,6 +594,10 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     ...(input.app ? { app: input.app } : {}),
     via: input.via,
   };
+  if (input.runStamp) {
+    const sig = input.runStamp(entry.id, threadEntryContentHash(entry));
+    if (/^[0-9a-f]{64}$/.test(sig)) entry.stamp = sig;
+  }
 
   const block = `${THREAD_ENTRY_MARKER}\n\`\`\`json\n${JSON.stringify(entry)}\n\`\`\`\n\n`;
   if (Buffer.byteLength(block, 'utf-8') > THREAD_ENTRY_MAX_BYTES) {
@@ -588,7 +618,9 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
   }
   appendFileSync(dayPath, block, 'utf-8');
   // The thread-entry ledger (M0): history injects only what THIS machine wrote (B1-6).
-  recordThreadEntryHere(contextRoot, slug, entry.id, entry.at);
+  const contentHash = threadEntryContentHash(entry);
+  recordThreadEntryHere(contextRoot, slug, entry.id, entry.at, undefined, contentHash);
+  input.stamp?.(entry.id, contentHash);
   return entry;
 }
 

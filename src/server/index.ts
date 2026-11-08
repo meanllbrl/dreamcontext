@@ -136,6 +136,9 @@ import {
   handleLabExplorer,
 } from './routes/lab-boards.js';
 import { sweepBoardStaging } from '../lib/lab/boards.js';
+import { removeLegacyTelegramFiles } from '../lib/telegram/legacy.js';
+import { registerTelegramRoutes } from './routes/telegram.js';
+import { startTelegramHub, stopTelegramHub } from './telegram/start.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -153,8 +156,6 @@ import {
   handleAutomationsFlow,
   handleAutomationsQuestionsList,
   handleAutomationsQuestionAnswer,
-  handleAutomationsTelegramGet,
-  handleAutomationsTelegramSet,
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
@@ -264,6 +265,7 @@ import { handleAgentDrop, handleAgentDropPath } from './routes/agent-drop.js';
 import { handleAgentPickPaths } from './routes/agent-pick.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
+import { attachPhoneRunTerminal, handleAgentCards, wireRunRegistry } from './routes/run-terminal.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus, handleVoiceLog,
   handleVoiceRetranscribe,
@@ -376,6 +378,8 @@ export function buildRouter(): Router {
   router.get('/api/handsfree/phone', handleHandsfreePhone);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
+  // Telegram bindings (W2): page-called under /api/telegram, Rust-called under their own prefixes.
+  registerTelegramRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
   router.post('/api/admin/shutdown', handleAdminShutdown);
 
@@ -819,6 +823,8 @@ export function buildRouter(): Router {
   // transcript. Vault-SCOPED (the .env belongs to the project named in the header), and
   // NOT desktop-gated — see the route's header for why.
   router.post('/api/agent/secret', handleAgentSecret);
+  // A chat's run/secret card records (plan I1): what the Mac card and the phone page match against.
+  router.get('/api/agent/cards', handleAgentCards);
   // Assistant mode's two audio legs. Desktop-gated, and the ONLY routes in this server
   // that spend money — hence the server-side concurrency and rate caps in
   // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.
@@ -1042,7 +1048,7 @@ export function buildRouter(): Router {
   // load-bearing for these, only relative to one another (never ambiguous:
   // each has a unique literal suffix).
   // Agent identity: edit, delete, and the photo. Same distinct-shape note as
-  // `flow`/`telegram` below — each carries a unique literal suffix, so only
+  // `flow` below — each carries a unique literal suffix, so only
   // their order relative to one another would ever matter, and it doesn't.
   // `delete` is a POST on purpose: `index.ts`'s cross-site write guard is
   // written against state-changing POSTs, and reaching for a prettier verb
@@ -1052,8 +1058,6 @@ export function buildRouter(): Router {
   router.get('/api/automations/:slug/photo', handleAutomationsPhotoGet);
   router.post('/api/automations/:slug/photo', handleAutomationsPhotoUpload);
   router.get('/api/automations/:slug/flow', handleAutomationsFlow);
-  router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
-  router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`
@@ -1138,7 +1142,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1422,7 +1426,10 @@ export function phoneListenerPort(): number | null {
  * THIS process so the phone can adopt the claude children the desktop already runs. Every
  * socket it accepts is marked a phone socket before a byte is read; every request passes
  * {@link macPhoneGate}; every upgrade passes {@link macUpgradeRefusal} first, and only the chat
- * upgrade listener is attached (never the PTY, the Assistant or the browser mirror).
+ * upgrade listener and a run card's narrow terminal are attached (plan H8: `/api/agent/run-terminal`
+ * reads only `session` + `card`, re-checks the device session and the record's exposed project,
+ * and spawns only a pending record's argv or attaches to its run). Never a free PTY
+ * (`attachAgentTerminal`), the Assistant or the browser mirror.
  */
 export async function startPhoneListener(opts: { port?: number } = {}): Promise<{ port: number }> {
   if (phoneListener) return { port: phoneListener.port };
@@ -1445,6 +1452,7 @@ export async function startPhoneListener(opts: { port?: number } = {}): Promise<
   const mainPort = mainAddress && typeof mainAddress === 'object' ? mainAddress.port : 0;
   // The window-control base stays the MAIN server's port: that is where the agent's CLI calls.
   attachAgentChat(server, { networkToken: null, windowControlPort: mainPort });
+  attachPhoneRunTerminal(server);
   server.setTimeout(30000);
   const port = await new Promise<number>((resolvePort, reject) => {
     server.once('error', reject);
@@ -1516,6 +1524,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
     attachAgentTerminal(server);
+    // Run cards are server-owned processes (plan H4): the registry spawns through node-pty with
+    // the same login-shell argv, and reports what it runs (desktop only: the phone never spawns
+    // a free terminal, and a run card needs the PTY machinery).
+    if (isDesktop()) void wireRunRegistry().catch(() => { /* no node-pty: run cards stay Copy-only */ });
     // Agent Chat (beta): bridge a WebSocket to a headless stream-json `claude` process.
     // Self-gates (desktop + loopback, or a token-bearing tailnet peer when remote access is
     // on); a no-op otherwise. The token rides in because a WS upgrade has no ServerResponse
@@ -1597,6 +1609,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
         stopProjectCatchUp?.();
+        // Telegram: every poll loop stops and lets go of its token's lock NOW, so a relaunch
+        // within the lock's stale window is never deaf.
+        stopTelegramHub();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
@@ -1639,6 +1654,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       startOrphanSweep();
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
+      // The retired per-routine Telegram channel's token files: deleted once, here.
+      try { removeLegacyTelegramFiles(); } catch { /* best-effort */ }
+      // The Telegram hub: one poll per bound bot. Desktop only; never on a CLI server.
+      if (isDesktop()) void startTelegramHub().catch((err) => console.warn(`[telegram] hub failed to start: ${(err as Error).message}`));
       // Task jobs: settle what died and start what is due, now and every minute (C1-3).
       startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state

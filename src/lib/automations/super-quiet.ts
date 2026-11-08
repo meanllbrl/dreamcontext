@@ -138,7 +138,7 @@ export function superQuietReader(contextRoot: string): QuietReader {
  * A failure, a timeout, a skip and a question always count.
  *
  * COUNTS ONLY. A wrapper, never an edit inside `superQuietReader`: `superRunQuiet` reads that one
- * to decide a banner and a Telegram delivery, and a notify:false rule there would silence them.
+ * to decide a banner, and a notify:false rule there would silence them.
  */
 export function ownerQuietReader(contextRoot: string): QuietReader {
   const superQuiet = superQuietReader(contextRoot);

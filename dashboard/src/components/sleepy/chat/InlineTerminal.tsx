@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createStyledTerm, currentTermTheme, currentZoom, BASE_FONT, openWhenFontsReady } from '../termCore';
 import { appendTail, finishTail } from './runReport';
+import { cardTerminalUrl, type CardTarget } from '../../../lib/cardRecords';
 
 /**
  * A REAL PTY inside the transcript — one command, bounded height, and an exit code that
@@ -25,15 +26,21 @@ import { appendTail, finishTail } from './runReport';
 
 export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 
+export type { CardTarget };
+
 export function InlineTerminal({
-  vault, command, cwd, rows = 14, onExit, onStatus,
+  vault, command, cwd, card, rows = 14, onExit, onStatus,
 }: {
   vault: string;
   command: string;
   cwd?: string;
+  /** Chat host: the server record to start or attach to. No `cmd=` is ever sent then. */
+  card?: CardTarget;
   rows?: number;
-  /** Fires ONCE, when the process ends. `code` is null when the socket died without one. */
-  onExit: (result: { code: number | null; tail: string }) => void;
+  /** Fires ONCE, when the socket ends. `code` is null when it died without one. `exited`: the
+   *  server's exit frame arrived (the process really ended). `opened`: the socket ever opened;
+   *  a refused start (busy, no PTY, a closed card) never does. */
+  onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean }) => void;
   onStatus?: (status: InlineTermStatus) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -43,7 +50,7 @@ export function InlineTerminal({
   // from a ref — a card's command never changes under it (a different command is a
   // different card with a different key), and if it ever could, silently re-running a
   // deploy would be the wrong answer to it.
-  const argsRef = useRef({ vault, command, cwd, rows });
+  const argsRef = useRef({ vault, command, cwd, rows, card });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
   onExitRef.current = onExit;
@@ -52,25 +59,32 @@ export function InlineTerminal({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const { vault: v, command: cmd, cwd: dir, rows: wantRows } = argsRef.current;
+    const { vault: v, command: cmd, cwd: dir, rows: wantRows, card: target } = argsRef.current;
 
     const { term, fit, fontFamily, primaryMono, stopThemeSync } = createStyledTerm({ scrollback: 2000 });
 
     let tail = '';
     let settled = false;
     let disposed = false;
+    let opened = false;
     let revealTimer: ReturnType<typeof setTimeout> | undefined;
-    const settle = (code: number | null) => {
+    const settle = (code: number | null, exited = false) => {
       if (settled) return;
       settled = true;
       onStatusRef.current?.(code === null ? 'failed' : 'exited');
-      onExitRef.current({ code, tail: finishTail(tail) });
+      onExitRef.current({ code, tail: finishTail(tail), exited, opened });
     };
+    // Only a terminal the user opened with ▶ (or a thread card's own) scrolls into view and takes
+    // the keyboard. One that mounts by itself to watch a run started on the phone or Telegram
+    // stays passive until clicked: keys typed in the composer must never reach a running prompt.
+    const userOpened = !target || target.start;
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams({ vault: v, kind: 'exec', cmd, theme: currentTermTheme(), bypass: '0' });
     if (dir) params.set('cwd', dir);
-    const ws = new WebSocket(`${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
+    const ws = new WebSocket(target
+      ? `${proto}://${location.host}${cardTerminalUrl(target, currentTermTheme())}`
+      : `${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
     // Binary frames are the server's control channel (`{type:'exit', code}`); output is
     // always text. arraybuffer so the exit can be decoded synchronously in onmessage.
     ws.binaryType = 'arraybuffer';
@@ -81,7 +95,7 @@ export function InlineTerminal({
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
 
-    ws.onopen = () => { onStatusRef.current?.('running'); sendResize(); };
+    ws.onopen = () => { opened = true; onStatusRef.current?.('running'); sendResize(); };
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         tail = appendTail(tail, ev.data);
@@ -90,7 +104,7 @@ export function InlineTerminal({
       }
       try {
         const msg = JSON.parse(new TextDecoder().decode(ev.data as ArrayBuffer)) as { type?: string; code?: number };
-        if (msg.type === 'exit') settle(typeof msg.code === 'number' ? msg.code : null);
+        if (msg.type === 'exit') settle(typeof msg.code === 'number' ? msg.code : null, true);
       } catch { /* an unrecognized control frame is not ours to interpret */ }
     };
     // A socket that closes with no exit frame is a process whose fate we do not know — the
@@ -98,7 +112,10 @@ export function InlineTerminal({
     // and the card says so rather than inventing a zero for the agent to act on.
     ws.onclose = () => settle(null);
     ws.onerror = () => {
-      setError('Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
+      if (settled) return;
+      setError(target
+        ? 'Could not open this command\'s terminal. It may have finished, or it is no longer waiting.'
+        : 'Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
       settle(null);
     };
 
@@ -129,6 +146,7 @@ export function InlineTerminal({
       // had any effect. The second pass lands after that settles. `center` because
       // `nearest` is satisfied by the sliver of terminal that is already showing, which is
       // exactly the state where nothing renders.
+      if (!userOpened) return;
       const reveal = () => { if (!disposed && host.isConnected) host.scrollIntoView({ block: 'center' }); };
       reveal();
       revealTimer = setTimeout(reveal, 250);

@@ -4,19 +4,17 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
-import { SANDBOX_ALLOW, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
-import { SELECTION_BRIDGE } from '../../lib/textSelection';
+import { SANDBOX_ALLOW } from '../../lib/sandboxHtml';
 import { frameEscSpent, useFrameSelection } from '../sleepy/chat/SelectionBar';
-import { pageDefaultCss } from '../../lib/pageDefaultCss';
+import { buildReportSrcdoc } from '../../lib/reportSrcdoc';
 import {
-  CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
-  KIT_BEHAVIOUR, readHeightMessage, resolveChatKitTokens,
+  CHAT_HTML_SANDBOX, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
+  readHeightMessage, resolveChatKitTokens,
 } from '../sleepy/chat/chatHtmlKit';
 import { useProjectHtml } from '../appLink/DocumentReader';
-import { LINK_GUARD } from '../../lib/htmlLocalAssets';
 import { fileNameOf } from '../appLink/viewerPaths';
 import { WEB_WIDGET_SANDBOX } from '../whiteboard/widgets/WebWidget';
-import { ZOOM_BRIDGE, readZoomMessage } from './frameZoomBridge';
+import { readZoomMessage } from './frameZoomBridge';
 import { gestureScale, usePanZoom, type Size, type View } from './usePanZoom';
 import { DeviceSwitch } from './DeviceSwitch';
 import { deviceFit, useWebDevice } from '../../lib/webDevice';
@@ -264,9 +262,7 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
   const loads = useRef(0);
   const html = state.html;
   const srcDoc = useMemo(
-    () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}\n${KIT_BEHAVIOUR}`,
-    })),
+    () => (html === null ? null : buildReportSrcdoc(html, resolveChatKitTokens(), theme)),
     [html, theme],
   );
   useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);

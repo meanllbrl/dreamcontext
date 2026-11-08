@@ -295,11 +295,10 @@ describe('propose is guarded by the run\'s ancestry', () => {
 
 // ─── resumeWithAnswer — the question surface ────────────────────────────────
 //
-// One path for every channel. The HTTP route, the CLI verb and the Telegram
-// handler all land here, which is why the kind gate lives INSIDE this function
-// rather than in any one of their handlers: the CLI imports this module
-// directly and Telegram arrives by a third route, so a gate in the HTTP layer
-// would guard one door of three.
+// One path for every channel. The HTTP route and the CLI verb both land here,
+// which is why the kind gate lives INSIDE this function rather than in either
+// handler: the CLI imports this module directly, so a gate in the HTTP layer
+// would guard only one door.
 
 describe('resumeWithAnswer — the kind gate', () => {
   it('REFUSES an approval question, spawning nothing', async () => {
@@ -350,7 +349,7 @@ describe('resumeWithAnswer — the binding is the authority', () => {
       sessionId: SESSION, channel: 'chat', question: 'Send it?', nowISO: NOW.toISOString(),
     });
     const { impl, calls } = fakeSpawn(claudeJson('done'));
-    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'telegram', { home, spawnImpl: impl, now: () => NOW });
+    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(outcome.status).toBe('refused');
     expect(outcome.error).toMatch(/not registered on this machine/);
     expect(calls).toHaveLength(0);
@@ -436,7 +435,7 @@ describe('resumeWithAnswer — ordering and double-answer', () => {
     const first = fakeSpawn(claudeJson('done'));
     await resumeWithAnswer(contextRoot, q, 'send', 'dashboard', { home, spawnImpl: first.impl, now: () => NOW });
     const second = fakeSpawn(claudeJson('done'));
-    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'telegram', { home, spawnImpl: second.impl, now: () => NOW });
+    const outcome = await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: second.impl, now: () => NOW });
     expect(outcome.status).toBe('refused');
     expect(second.calls).toHaveLength(0);
   });

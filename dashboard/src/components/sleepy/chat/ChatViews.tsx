@@ -123,10 +123,12 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // The two cards drawn IN the transcript that act on the machine rather than describe
     // it: one writes a file the agent never reads, the other runs a process the user types
     // into. Both hand a short report back to the host when they are done.
+    // In a chat they are the server's records (plan H1, I1): named by the session, run and
+    // reported by the server. An agent thread's card (no session) keeps its own report path.
     case 'secret':
-      return <SecretCard spec={view} report={report} />;
+      return <SecretCard spec={view} report={report} sessionId={session?.claudeId || undefined} />;
     case 'run':
-      return <RunCard spec={view} report={report} />;
+      return <RunCard spec={view} report={report} sessionId={session?.claudeId || undefined} />;
     // The chat's own live MCP status, a row per server the agent needs (task mcp-management).
     // It reports once, when all are connected or the owner continues without them.
     case 'mcp':
