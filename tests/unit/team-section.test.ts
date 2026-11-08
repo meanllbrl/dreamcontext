@@ -103,6 +103,14 @@ describe('the Team row in place', () => {
     expect(html).not.toMatch(/team-popout"[^>]*data-slug="w"/);
   });
 
+  it('open row: no summed ring or count on the Team row, the member rows carry their own', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    const open = render([member('w', { ownerWorking: 1 }), member('r', { unread: 2 })]);
+    expect(open).not.toContain('data-testid="team-row-ring"');
+    expect(open).not.toContain('data-testid="team-row-count"');
+    expect(open).toContain('data-testid="team-mark-working"');
+  });
+
   it('folded row: a ring when a member works for the owner, else the count; question colour when one asks', () => {
     const ring = render([member('w', { ownerWorking: 1 }), member('r', { unread: 2 })]);
     expect(ring).toContain('data-testid="team-row-ring"');
