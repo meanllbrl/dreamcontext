@@ -190,3 +190,38 @@ describe('the plan gate', () => {
     expect(readFileSync(join(v.root, 'state', `${slug}.md`), 'utf-8')).toContain('Edit src/lib/thing.ts');
   });
 });
+
+describe('end-review fixes (2026-11-08)', () => {
+  it('a ledger malformed inside (events, findings) is a gap at every door, never a throw or a 500', async () => {
+    const slug = await openPlan('m');
+    await round('m', { critic: [{ cls: 'a' }] });
+    const lp = join(plansDir(v.root), 'm', 'ledger.json');
+    const good = JSON.parse(readFileSync(lp, 'utf-8'));
+    for (const bad of [{ ...good, events: [null] }, { ...good, rounds: [{ ...good.rounds[0], lenses: { ...good.rounds[0].lenses, critic: { ...good.rounds[0].lenses.critic, findings: {} } } }] }]) {
+      writeFileSync(lp, JSON.stringify(bad));
+      const r = await readiness(slug);
+      expect(r.status).toBe(200);
+      expect(r.body.ready).toBe(false);
+      expect(r.body.gaps.some((g: any) => g.field === 'plan' && /unreadable plan ledger/.test(g.problem))).toBe(true);
+      expect((await tasksReady(slug)).code).toBe(1);
+    }
+    // And the gate itself never throws on a ledger its shape check let through.
+    const sneaky = { ok: true as const, dir: '/x', ledger: { ...good, events: [{ kind: 'split', moved: 5, seq: 99 }] } };
+    expect(() => planGateGaps([sneaky], slug)).not.toThrow();
+    expect(planGateGaps([sneaky], slug)[0].problem).toMatch(/unreadable plan ledger/);
+  });
+
+  it('two plans splitting into one follow-up task each insert their own criteria (ids repeat across plans)', async () => {
+    await openPlan('one');
+    await openPlan('two');
+    await round('one', { critic: [{ cls: 'x', level: 'Critical' }] });
+    await round('two', { critic: [{ cls: 'y', level: 'Critical' }] });
+    const follow = await v.backend.create({ name: 'Shared follow up' });
+    await planDecide(v.deps, 'one', 'split', { note: 'böl', task: follow.slug, classes: ['x'] });
+    expect(await planDecide(v.deps, 'two', 'split', { note: 'böl', task: follow.slug, classes: ['y'] })).toMatch(/1 inserted/);
+    const ac = (await v.backend.get(follow.slug))!.acceptance_criteria;
+    expect(ac).toMatch(/Resolve plan finding r1-critic-1 \(Critical, x\):.*tmp\/plans\/one\/r1-critic\.md/);
+    expect(ac).toMatch(/Resolve plan finding r1-critic-1 \(Critical, y\):.*tmp\/plans\/two\/r1-critic\.md/);
+    // A re-run of the same split skips its own criterion.
+  });
+});

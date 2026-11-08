@@ -109,11 +109,23 @@ export function ledgerProblem(raw: unknown): string | null {
   const l = raw as Partial<Ledger>;
   if (l.v !== PLAN_LEDGER_VERSION) return `unknown ledger version ${JSON.stringify(l.v)} (this CLI reads v${PLAN_LEDGER_VERSION})`;
   if (typeof l.plan !== 'string' || typeof l.task !== 'string') return 'missing plan or task';
-  if (!Array.isArray(l.lenses) || l.lenses.length !== 2) return 'lenses must be the fixed pair';
+  if (!Array.isArray(l.lenses) || l.lenses.length !== 2 || l.lenses[0] !== 'critic' || !(FIXED_SECOND_LENSES as readonly string[]).includes(l.lenses[1] as string)) {
+    return 'lenses must be the fixed pair (critic + security or edge-cases)';
+  }
   if (!l.budget || typeof l.budget.base !== 'number' || typeof l.budget.extra !== 'number') return 'missing budget';
   if (!Array.isArray(l.events) || !Array.isArray(l.rounds)) return 'missing events or rounds';
+  for (const e of l.events) {
+    if (!e || typeof e !== 'object' || typeof (e as LedgerEvent).kind !== 'string') return 'an event is malformed';
+    for (const k of ['moved', 'classes'] as const) if ((e as LedgerEvent)[k] !== undefined && !Array.isArray((e as LedgerEvent)[k])) return `an event's ${k} is not a list`;
+  }
   for (const r of l.rounds) {
     if (!r || typeof r.n !== 'number' || !r.lenses || typeof r.lenses !== 'object') return 'a round is malformed';
+    for (const [lens, rec] of Object.entries(r.lenses)) {
+      if (!(PLAN_LENSES as readonly string[]).includes(lens)) return `unknown lens "${lens}" in round ${r.n}`;
+      if (!rec || typeof rec !== 'object' || typeof rec.verdict !== 'string' || !Array.isArray(rec.findings)) return `round ${r.n} ${lens} is malformed`;
+      if (rec.closed !== undefined && !Array.isArray(rec.closed)) return `round ${r.n} ${lens}: closed is not a list`;
+      if (rec.findings.some((f) => !f || typeof f.id !== 'string' || typeof f.cls !== 'string' || typeof f.level !== 'string')) return `round ${r.n} ${lens}: a finding is malformed`;
+    }
   }
   return null;
 }
@@ -147,6 +159,8 @@ const FINDING_RE = /^\s*(\d+)\.\s*\[(Critical|Major)\]\s*id:\s*([^|]+?)\s*\|\s*c
 const CLOSED_RE = /^\s*closed:\s*([^|]+?)\s*\|\s*(.+?)\s*$/i;
 const PROPOSAL_RE = /^\s*-\s*(cut|defer|premise):\s*(.+)$/i;
 const SECTION_END_RE = /^\s*(?:#+\s*)?(?:build notes|non-blocking)\b/i;
+/** A severity token that marks a blocking finding, wherever the line starts. */
+const LEVEL_TOKEN_RE = /\[\s*(?:critical|major)\s*\]/i;
 
 /**
  * Parse a lens's raw review against the format in PLAN_REVIEW_RULES. Never throws: a review
@@ -170,6 +184,7 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
   let blockingLines = 0;
   let inBlocking = true;
   let current: LedgerFinding | null = null;
+  const seenK = new Set<string>();
 
   for (const raw of lines.slice(lines.indexOf(first) + 1)) {
     const line = raw.replace(/\*\*/g, '');
@@ -179,12 +194,25 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
     const p = PROPOSAL_RE.exec(line);
     if (p && pragmatist) { proposals.push(`${p[1].toLowerCase()}: ${p[2].trim()}`); continue; }
     if (!inBlocking) continue;
+    if (!FINDING_START_RE.test(line) && LEVEL_TOKEN_RE.test(line)) {
+      // A blocking finding written in another shape (a bullet, "1)") would be skipped silently.
+      blockingLines += 1;
+      errors.push(`unreadable finding line (use \`<k>. [Critical|Major] id: …\`): "${raw.trim().slice(0, 120)}"`);
+      current = null;
+      continue;
+    }
     if (FINDING_START_RE.test(line)) {
       blockingLines += 1;
       current = null;
       const m = FINDING_RE.exec(line);
       if (!m) { errors.push(`unreadable finding line: "${raw.trim().slice(0, 120)}"`); continue; }
       const [, k, lvl, rawId, cls, kind, rest] = m;
+      if (seenK.has(k)) {
+        // Two findings numbered alike would get one id and the open set would keep only one.
+        errors.push(`finding number ${k} is used twice: number the blocking list 1, 2, 3… once`);
+        continue;
+      }
+      seenK.add(k);
       const level = (lvl[0].toUpperCase() + lvl.slice(1).toLowerCase()) as FindingLevel;
       const id = rawId.trim();
       const kindN = kind.trim().toLowerCase();
@@ -295,7 +323,7 @@ export function roundCompleteSeq(ledger: Ledger, round: LedgerRound): number | n
 }
 
 /** Class aliases from `merge-class`, applied everywhere: a merge only ever grows a count. */
-function classResolver(events: LedgerEvent[]): (c: string) => string {
+export function classResolver(events: LedgerEvent[]): (c: string) => string {
   const alias = new Map<string, string>();
   for (const e of events) if (e.kind === 'merge' && e.cls && e.into) alias.set(normClass(e.cls), normClass(e.into));
   return (c: string) => {
@@ -345,7 +373,9 @@ export function computePlanState(ledger: Ledger): PlanState {
       for (const f of r.lenses[lens]?.findings ?? []) {
         if (f.level === 'Major' && accepted.has(f.id)) continue;
         if (cut.has(f.id)) continue;
-        if (!out.has(f.id)) out.set(f.id, { ...f, cls: resolve(f.cls), lens, round: r.n });
+        const prev = out.get(f.id);
+        // One id twice (an old ledger, a hand edit): never let a Major hide a Critical.
+        if (!prev || (prev.level === 'Major' && f.level === 'Critical')) out.set(f.id, { ...f, cls: resolve(f.cls), lens, round: r.n });
       }
     }
     return [...out.values()];
@@ -403,7 +433,11 @@ export function computePlanState(ledger: Ledger): PlanState {
   const round = latest?.n ?? 0;
   const roundComplete = !!latest && roundCompleteSeq(ledger, latest) !== null;
   const afterLatest = events.filter((e) => (e.seq ?? 0) > latestCompleteSeq);
-  const reopened = afterLatest.some((e) => e.kind === 'add' || e.kind === 'split');
+  // An addition made after the latest round OPENED was never reviewed (that round read the old
+  // snapshot), so it reopens the plan even when it landed before the round completed.
+  const latestOpenSeq = latest?.openSeq ?? 0;
+  const reopened = afterLatest.some((e) => e.kind === 'split')
+    || events.some((e) => e.kind === 'add' && (e.seq ?? 0) > latestOpenSeq);
   // The open set: the latest complete round's, minus everything accepted since.
   const open = latestOpen.filter((f) => !(f.level === 'Major' && accepted.has(f.id)));
   const done = !abandoned && roundComplete && latestComplete === round && open.length === 0 && !reopened;
@@ -571,7 +605,13 @@ export function planGateGaps(ledgers: readonly LedgerReadResult[], taskSlug: str
       continue;
     }
     if (r.ledger.task !== taskSlug) continue;
-    const s = computePlanState(r.ledger);
+    let s: PlanState;
+    try {
+      s = computePlanState(r.ledger);
+    } catch (err) {
+      gaps.push({ field: 'plan', problem: `unreadable plan ledger ${r.dir}/ledger.json (${err instanceof Error ? err.message : String(err)}): repair it, or move that plan folder out of tmp/plans/` });
+      continue;
+    }
     if (s.abandoned) continue;
     const status = `dreamcontext plan status ${r.ledger.plan}`;
     const crit = s.open.filter((f) => f.level === 'Critical').map((f) => f.id).concat(s.pendingCriticals);

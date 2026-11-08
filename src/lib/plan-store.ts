@@ -83,7 +83,7 @@ export function writeSafe(root: string, p: string, content: string): void {
   assertSafePath(root, dirname(p));
   if (existsSync(p) || isDanglingLink(p)) assertSafePath(root, p);
   const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, content);
+  writeFileSync(tmp, content, { flag: 'wx' }); // never through a link planted at the tmp name
   renameSync(tmp, p);
 }
 
@@ -109,7 +109,7 @@ export function readLedger(root: string, plan: string): LedgerRead {
   try {
     if (!existsSync(p) && !isDanglingLink(p)) return { ok: false, missing: true, problem: `no plan "${plan}" (no ledger at ${p})` };
     const raw = JSON.parse(readSafe(root, p));
-    const problem = ledgerProblem(raw);
+    const problem = ledgerProblem(raw) ?? ((raw as Ledger).plan !== plan ? `names plan "${(raw as Ledger).plan}" but lives in folder "${plan}"` : null);
     if (problem) return { ok: false, missing: false, problem: `${p}: ${problem}` };
     return { ok: true, ledger: raw as Ledger };
   } catch (err) {

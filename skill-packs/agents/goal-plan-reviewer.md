@@ -170,7 +170,8 @@ goes to the owner.
 - Then the FULL current list of blocking findings. Re-state every one of YOUR open ids that is
   still open with its id; a new finding gets `new`. One line each, then its evidence:
   `<k>. [Critical|Major] id: <id|new> | class: <name> | kind: <premise|contract|security|criteria|map> | <the invariant violated>`
-  then `file:line` or a quote, and an optional `Suggestion:`.
+  then `file:line` or a quote, and an optional `Suggestion:`. Number the list 1, 2, 3… once
+  (never restart per level).
 - Close each of YOUR open ids you no longer hold with one line: `closed: <id> | <why>`. An own
   open id neither re-stated nor closed rejects the review. Other lenses' ids are theirs: you
   may mention them, only the owning lens closes one.

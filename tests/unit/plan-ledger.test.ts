@@ -443,3 +443,67 @@ describe('pure state', () => {
     expect(computePlanState(l).next).toEqual({ kind: 'review', lenses: ['critic', E], redispatch: [] });
   });
 });
+
+describe('end-review fixes (2026-11-08)', () => {
+  const ctx = (): ParseContext => ({ round: 1, lens: 'critic', ownOpen: new Map(), otherOpen: new Set(), accepted: new Set(), cut: new Set() });
+
+  it('a repeated finding number, a bulleted or "1)" blocking line is UNPARSED, never a silently lost Critical', () => {
+    const dup = parseReview('NEEDS_WORK\n1. [Major] id: new | class: naming | kind: contract | x\n1. [Critical] id: new | class: auth | kind: security | y\n', ctx());
+    expect(dup.verdict).toBe('UNPARSED');
+    expect(dup.errors.join(' ')).toMatch(/number 1 is used twice/);
+    expect(parseReview('SOLID\n- [Critical] id: new | class: auth | kind: security | y\n', ctx()).verdict).toBe('UNPARSED');
+    expect(parseReview('NEEDS_WORK\n1. [Major] id: new | class: a | kind: contract | x\n2) [Critical] id: new | class: b | kind: security | y\n', ctx()).verdict).toBe('UNPARSED');
+    // Build notes may still mention a severity in prose after the heading.
+    expect(parseReview('SOLID\n\nBuild notes\n- was [Major] last round, now local\n', ctx()).verdict).toBe('SOLID');
+  });
+
+  it('one id held twice keeps the Critical in the open set', () => {
+    const l: Ledger = {
+      v: 1, plan: 'x', goal: 'g', task: 't', lenses: ['critic', E], budget: { base: 8, extra: 0, unlimited: false }, createdAt: '', seq: 3, events: [],
+      rounds: [{ n: 1, openedAt: '', snapshotSha: 's', openSeq: 1, lenses: {
+        critic: { verdict: 'NEEDS_WORK', dispatchedAt: '', seq: 2, findings: [{ id: 'r1-critic-1', level: 'Major', cls: 'a', kind: 'contract' }, { id: 'r1-critic-1', level: 'Critical', cls: 'b', kind: 'security' }] },
+        [E]: { verdict: 'SOLID', dispatchedAt: '', seq: 3, findings: [] },
+      } }],
+    };
+    expect(computePlanState(l).open.map((f) => [f.id, f.level])).toEqual([['r1-critic-1', 'Critical']]);
+  });
+
+  it('an owner addition made while a round runs reopens the plan once that round completes', async () => {
+    v = makePlanVault();
+    await open();
+    writePlan(v, P, 1);
+    await planPacket(v.deps, P, 'critic');
+    await planPacket(v.deps, P, E);
+    await planDecide(v.deps, P, 'add', { note: 'owner adds mid-round' });
+    for (const l of ['critic', E]) { writeFileSync(reviewPath(v.root, P, 1, l), reviewText([])); await planRecord(v.deps, P, l, {}); }
+    const s = planStatus(v.deps, P).state;
+    expect(s.done).toBe(false);
+    expect(s.next.kind).toBe('revise');
+    writePlan(v, P, 2);
+    expect((await planPacket(v.deps, P, 'critic')).round).toBe(2);
+  });
+
+  it('merge-class back into its source is refused, so counts never split again', async () => {
+    v = makePlanVault();
+    await open();
+    await round({ critic: [{ cls: 'a' }] });
+    let s = await round({ critic: [{ cls: 'b' }] });
+    await planMergeClass(v.deps, P, 'a', 'b');
+    s = planStatus(v.deps, P).state;
+    expect(s.classCounts).toMatchObject({ b: 2 });
+    expect(await refused(planMergeClass(v.deps, P, 'b', 'a'))).toMatch(/already resolves to "b"|merging back/);
+    expect(planStatus(v.deps, P).state.classCounts).toMatchObject({ b: 2 });
+  });
+
+  it('a pragmatist review that did not land is re-dispatched into the same round', async () => {
+    v = makePlanVault();
+    await open();
+    writePlan(v, P, 1);
+    await planPacket(v.deps, P, 'critic');
+    await planPacket(v.deps, P, 'pragmatist');
+    writeFileSync(reviewPath(v.root, P, 1, 'pragmatist'), 'some musings\n');
+    expect(await planRecord(v.deps, P, 'pragmatist', {})).toMatch(/UNPARSED/);
+    expect((await planPacket(v.deps, P, 'pragmatist')).round).toBe(1);
+    expect(await refused(planRecord(v.deps, P, '../state/x', {}))).toMatch(/--lens must be one of/);
+  });
+});

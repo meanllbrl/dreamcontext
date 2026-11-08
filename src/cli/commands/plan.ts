@@ -10,7 +10,7 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import type { TaskBackend } from '../../lib/task-backend/types.js';
 import { cliStatusAuthor, statusChangeEntry } from '../../lib/task-history.js';
 import {
-  changesLines, computePlanState, FIXED_SECOND_LENSES, nextSeq, normClass, ownerOf, parseReview, planGateGaps, planSection,
+  changesLines, classResolver, computePlanState, FIXED_SECOND_LENSES, nextSeq, normClass, ownerOf, parseReview, planGateGaps, planSection,
   pragmatistAllowed, renderNextAction, renderStopCard, PLAN_BUDGET_BASE, PLAN_LEDGER_VERSION, PLAN_LENSES,
   type FindingLevel, type Ledger, type LedgerEvent, type LedgerRound, type PlanState,
 } from '../../lib/plan-ledger.js';
@@ -192,7 +192,7 @@ export async function planPacket(deps: PlanDeps, plan: string, lens: string): Pr
       const rec = round.lenses[lens];
       if (lens === 'pragmatist') {
         if (!pragmatistAllowed(ledger, round.n)) throw new PlanRefusal('The pragmatist joins only round 1 and the round after an owner addition (`plan decide add`).');
-        if (rec && rec.verdict !== 'PENDING') throw new PlanRefusal(`The pragmatist already reported in round ${round.n}.`);
+        if (rec && !['PENDING', 'UNPARSED', 'ABANDONED'].includes(rec.verdict)) throw new PlanRefusal(`The pragmatist already reported in round ${round.n}.`);
       } else if (rec && COMPLETE.includes(rec.verdict)) {
         throw new PlanRefusal(`${lens} already reported in round ${round.n} (${rec.verdict}); waiting on ${state.next.kind === 'review' ? state.next.lenses.join(', ') : 'nothing'}.`);
       }
@@ -245,6 +245,7 @@ export async function planPacket(deps: PlanDeps, plan: string, lens: string): Pr
 // ─── record ─────────────────────────────────────────────────────────────────
 
 export async function planRecord(deps: PlanDeps, plan: string, lens: string, opts: { file?: string; abandon?: boolean; note?: string }): Promise<string> {
+  if (!(PLAN_LENSES as readonly string[]).includes(lens)) throw new PlanRefusal(`--lens must be one of ${PLAN_LENSES.join(', ')}.`);
   return withPlanLock(deps.root, plan, () => {
     const ledger = loadLedger(deps, plan);
     const before = computePlanState(ledger);
@@ -420,9 +421,13 @@ async function splitPlan(deps: PlanDeps, ledger: Ledger, s: PlanState, note: str
   const sectionName = SECTION_MAP.acceptance_criteria;
   const existing = target.acceptance_criteria ?? '';
   let inserted = 0;
+  const planRel = relative(deps.root, planDir(deps.root, ledger.plan));
   for (const f of moved) {
-    if (existing.includes(`Resolve plan finding ${f.id} `)) continue;
-    const raw = join(relative(deps.root, planDir(deps.root, ledger.plan)), `r${f.round}-${f.lens}.md`);
+    // Ids repeat across plans (every plan has an r1-critic-1): a criterion is this plan's only
+    // when its line also names this plan's folder.
+    const mine = existing.split('\n').some((l) => l.includes(`Resolve plan finding ${f.id} `) && l.includes(`raw review ${planRel}/`));
+    if (mine) continue;
+    const raw = join(planRel, `r${f.round}-${f.lens}.md`);
     const sentence = (f.text ?? '').replace(/\s+/g, ' ').trim() || '(see the raw review)';
     const prep = prepareSectionInsert('acceptance_criteria', `Resolve plan finding ${f.id} (${f.level}, ${f.cls}): ${sentence}; raw review ${raw}`, today())!;
     await backend.insertSection(follow, sectionName, prep.content, { position: prep.position, replacePlaceholders: prep.replacePlaceholders });
@@ -444,9 +449,13 @@ export async function planMergeClass(deps: PlanDeps, plan: string, from: string,
     const ledger = loadLedger(deps, plan);
     const s = computePlanState(ledger);
     if (!s.knownClasses.includes(a)) throw new PlanRefusal(`"${a}" is not a known class of ${plan} (${s.knownClasses.join(', ') || 'none'}).`);
-    event(deps, ledger, 'merge', { cls: a, into: b });
+    // Merge into the class `into` already resolves to, and never back into `from`: a cycle
+    // (a→b, then b→a) would split the counts again, which is the rename-to-dodge a merge exists to stop.
+    const target = classResolver(ledger.events)(b);
+    if (target === a) throw new PlanRefusal(`"${b}" already resolves to "${a}": merging back would split the counts. Merge only grows counts.`);
+    event(deps, ledger, 'merge', { cls: a, into: target });
     const after = save(deps, ledger);
-    return `Merged "${a}" into "${b}": ${after.classCounts[b] ?? 0} counted round(s). A merge only ever grows a count.`;
+    return `Merged "${a}" into "${target}": ${after.classCounts[target] ?? 0} counted round(s). A merge only ever grows a count.`;
   });
 }
 
