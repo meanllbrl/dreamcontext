@@ -142,6 +142,12 @@ function storeRefusal(res: ServerResponse, err: unknown): void {
   sendError(res, 500, 'super_state_unreadable', 'The Super Agent state could not be read.');
 }
 
+/** What `delivered: "queued"` means, said in the answer itself (owner 2026-11-08, Tilki): the
+ *  Super read "queued" as "it has it" and told the owner "I passed this to the plan job" while
+ *  the message sat behind the child's open question until he answered it. Last in the answer, so
+ *  a `tail` of it still shows this line. */
+export const SEND_QUEUED_WAITS = 'NOT read yet: the child is stopped on an open question or permission card, and your message goes in only after that card is answered. Never tell the owner the job has it or works on it: say it waits until that question is answered. When the brief and the project settle the question, answer it yourself with `dreamcontext super answer` and your message goes in right after.';
+
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const refuse = (res: ServerResponse, status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   sendJson(res, status, { ok: false, error, message, ...extra });
@@ -2015,7 +2021,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
     await markOwnersJob(c, child, b);
-    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}), ...(notOpened ?? {}) });
+    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}) });
   },
 
   'queue-list': async (c, _b, res) => {

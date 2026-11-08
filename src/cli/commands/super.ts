@@ -317,7 +317,7 @@ export function registerSuperCommand(program: Command): void {
       run('adopt', { chat, brief: o.brief, force: o.force === true }));
 
   s.command('send <child> <text>')
-    .description('Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: "delivered" says how it arrived')
+    .description('Send a message into a child chat (steered into its running turn; queued only while it asks, and then "waits" says it is not read yet). A parked child is woken first, in the same command: "delivered" says how it arrived')
     .option('--origin <ref>', ORIGIN_HELP)
     .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
