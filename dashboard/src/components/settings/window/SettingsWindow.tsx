@@ -5,7 +5,7 @@ import { applySettingsSearch, paintSettingsSearch } from '../settingsSearch';
 import { SW_GROUPS, groupOf, pageTitleKey, swTarget, type SwModelsTab, type SwPageId } from './sections';
 import { SwIcon } from './icons';
 import {
-  ChatPage, ConnectedPage, GeneralPage, HandsfreePage, ReposPage, SleepPage, SuperPage, SystemPage, TasksPage,
+  ChatPage, ConnectedPage, GeneralPage, HandsfreePage, TelegramPage, ReposPage, SleepPage, SuperPage, SystemPage, TasksPage,
   type PageProps,
 } from './pages/SimplePages';
 import { McpPage, MemoryPage, MirrorPage, TeamSyncPage, VoicePage } from './pages/TopicPages';
@@ -41,6 +41,7 @@ const PAGES: Record<SwPageId, (p: WindowPageProps) => ReactNode> = {
   mirror: MirrorPage,
   connected: ConnectedPage,
   handsfree: HandsfreePage,
+  telegram: TelegramPage,
   system: SystemPage,
 };
 

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { IconButton } from './SuperContainer';
 import { useStageMenu } from './useStageMenu';
+import { atName, rowOf, useTelegramStatus } from '../../../api/telegram';
+import { TelegramBindSheet } from '../../telegram/TelegramBindSheet';
 
 /**
  * The Super chat head's ⋯ (owner 2026-11-05: "the head is too wordy"): New session and Turn off
@@ -16,6 +18,10 @@ import { useStageMenu } from './useStageMenu';
  * "Handing over…" and is greyed; a refusal or a failed post shows one short line beside the ⋯.
  *
  * Turn off is the last row, under a rule: it asks first (the stage's own dialog), as before.
+ *
+ * Telegram (plan U, owner 2026-11-08) sits between New session and the rule: "Telegram'a bağla"
+ * opens the bind sheet; bound, the row reads "Telegram", a green dot and the bot's @name and opens
+ * the connected view. Only where Turn off is (the desktop stage's own head).
  */
 export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
   /** Absent: this head starts no session (a remote screen). */
@@ -29,7 +35,11 @@ export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
   const [open, setOpen] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [telegram, setTelegram] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const tgStatus = useTelegramStatus({ enabled: !!onTurnOff });
+  const tgRow = rowOf(tgStatus.data, 'super');
+  const tgBound = tgRow?.state === 'active' ? tgRow.botUsername : null;
   useEffect(() => {
     if (!error) return;
     const timer = setTimeout(() => setError(null), 6_000);
@@ -62,6 +72,10 @@ export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
     close(false);
     onTurnOff?.();
   };
+  const pressTelegram = () => {
+    close(false);
+    setTelegram(true);
+  };
 
   return (
     <div ref={wrapRef} className="super-head-more" data-busy={busy ? 'true' : undefined}>
@@ -74,18 +88,22 @@ export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
           fresh={fresh ? { busy, onPress: pressFresh } : undefined}
           onTurnOff={onTurnOff ? pressOff : undefined}
           onAdd={onAdd ? pressAdd : undefined}
+          telegram={onTurnOff ? { bound: tgBound, onPress: pressTelegram } : undefined}
         />
       )}
+      {telegram && <TelegramBindSheet target="super" name={null} onClose={() => setTelegram(false)} />}
     </div>
   );
 }
 
-function HeadMenu({ toggle, onClose, fresh, onTurnOff, onAdd }: {
+function HeadMenu({ toggle, onClose, fresh, onTurnOff, onAdd, telegram }: {
   toggle: () => Element | null;
   onClose: (why: 'escape' | 'outside') => void;
   fresh?: { busy: boolean; onPress: () => void };
   onTurnOff?: () => void;
   onAdd?: () => void;
+  /** `bound`: the bot's username when a binding is live, else null. */
+  telegram?: { bound: string | null; onPress: () => void };
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
@@ -112,7 +130,25 @@ function HeadMenu({ toggle, onClose, fresh, onTurnOff, onAdd }: {
           <span>{fresh.busy ? t('super.fresh.pending') : t('super.fresh.button')}</span>
         </button>
       )}
-      {fresh && onTurnOff && <div className="super-head-menu-rule" role="separator" />}
+      {telegram && (
+        <button type="button" role="menuitem" className="super-head-menu-item" data-testid="super-head-telegram"
+          data-bound={telegram.bound ? 'true' : undefined} onClick={telegram.onPress}>
+          <svg className="super-head-menu-glyph" width={16} height={16} viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M14 2.5 1.8 7.3c-.5.2-.5.9 0 1.1l3 1.1 1.2 3.7c.1.4.6.5.9.2l1.7-1.6 3.1 2.3c.4.3.9.1 1-.4L14.9 3.3c.1-.5-.4-.9-.9-.8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+            <path d="m4.8 9.5 6.4-4.2-4.4 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {telegram.bound ? (
+            <>
+              <span className="super-head-menu-grow">{t('telegram.menu.bound')}</span>
+              <span className="super-head-menu-dot" aria-hidden />
+              <span className="super-head-menu-aside">{atName(telegram.bound)}</span>
+            </>
+          ) : (
+            <span>{t('telegram.menu.bind')}</span>
+          )}
+        </button>
+      )}
+      {(fresh || telegram) && onTurnOff && <div className="super-head-menu-rule" role="separator" />}
       {onTurnOff && (
         <button type="button" role="menuitem" className="super-head-menu-item super-head-menu-item--off" data-testid="super-head-off"
           title={t('super.off.title')} onClick={onTurnOff}>

@@ -16,6 +16,7 @@ import { AutoUpdateSetting } from '../../AutoUpdateSetting';
 import { LoopbackPorts } from '../../LoopbackPorts';
 import { LinkedRepos } from '../../../brain/LinkedRepos';
 import { HandsfreeSettingsCard } from '../../../handsfree/HandsfreeSettingsCard';
+import { TelegramSettings } from '../../TelegramSettings';
 import { isDesktop } from '../../../../lib/desktop';
 import { useTheses, useSetLearningEnabled } from '../../../../hooks/useTheses';
 import { useLightMode } from '../../../../lib/lightMode';
@@ -306,6 +307,11 @@ export function HandsfreePage() {
     );
   }
   return (<><Head id="handsfree" /><HandsfreeSettingsCard /></>);
+}
+
+/** Settings → Telegram: the device's manager bot (plan X2). The page itself says when it is Mac-only. */
+export function TelegramPage() {
+  return (<><Head id="telegram" /><TelegramSettings /></>);
 }
 
 // ─── System ─────────────────────────────────────────────────────────────────

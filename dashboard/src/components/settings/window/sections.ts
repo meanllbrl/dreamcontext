@@ -8,7 +8,7 @@ export type SwPageId =
   | 'models' | 'mcp' | 'super' | 'assistant'
   | 'memory' | 'sleep'
   | 'tasks' | 'repos'
-  | 'teamsync' | 'mirror' | 'connected' | 'handsfree'
+  | 'teamsync' | 'mirror' | 'connected' | 'handsfree' | 'telegram'
   | 'system';
 
 /** The tabs of the Models page: Defaults, then one per tool. */
@@ -26,7 +26,7 @@ export const SW_GROUPS: readonly SwGroup[] = [
   { id: 'agents', labelKey: 'shell.sw.group.agents', pages: ['models', 'mcp', 'super', 'assistant'] },
   { id: 'memory', labelKey: 'shell.sw.group.memory', pages: ['memory', 'sleep'] },
   { id: 'project', labelKey: 'shell.sw.group.project', pages: ['tasks', 'repos'] },
-  { id: 'connections', labelKey: 'shell.sw.group.connections', pages: ['teamsync', 'mirror', 'connected', 'handsfree'] },
+  { id: 'connections', labelKey: 'shell.sw.group.connections', pages: ['teamsync', 'mirror', 'connected', 'handsfree', 'telegram'] },
   { id: 'end', labelKey: '', pages: ['system'] },
 ];
 

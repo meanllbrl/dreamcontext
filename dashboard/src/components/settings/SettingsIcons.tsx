@@ -200,6 +200,16 @@ export function LinkedReposIcon(props: IconProps) {
   );
 }
 
+/** A paper plane: Telegram (Settings → Telegram, the manager bot). */
+function TelegramIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 3.75 2.9 10.9c-.7.3-.7 1.3 0 1.6l4.5 1.6 1.8 5.5c.2.6.9.8 1.4.3l2.5-2.4 4.6 3.4c.6.4 1.4.1 1.5-.6L22.3 5c.2-.8-.5-1.4-1.3-1.25Z" />
+      <path d="m7.4 14.1 9.6-6.3-6.6 7.5" />
+    </Icon>
+  );
+}
+
 export const SETTINGS_ICONS = {
   platforms: PlatformsIcon,
   format: FormatIcon,
@@ -214,6 +224,7 @@ export const SETTINGS_ICONS = {
   linkedrepos: LinkedReposIcon,
   clickup: ClickUpIcon,
   connections: ConnectionsIcon,
+  telegram: TelegramIcon,
   system: SystemIcon,
   models: ModelsIcon,
   /** Legacy id kept so the old `tasks` icon import site (if any) still resolves. */
