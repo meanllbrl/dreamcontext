@@ -27,13 +27,14 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STALE_MS, _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
-import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
+import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superKey, superRecordPath } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, STOPPED_SETTLE_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { GONE_DEBOUNCE_MS } from '../../src/lib/assistant/delegations.js';
-import { REASK_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
+import { REASK_TEXT, RESUME_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
+import { createAgent } from '../../src/lib/agents/store.js';
 import {
-  _resetSuperInbox, _superInboxDrained, _sweepArmed, attachSuperInbox, noteChatStarted, reconcileRows, startSuperInbox,
+  RESTARTED_LINE, RESUME_MAX_MS, _resetSuperInbox, _superInboxDrained, _sweepArmed, attachSuperInbox, noteChatStarted, reconcileRows, startSuperInbox,
   noteOwnerActivity, superOwnerSpoke, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
@@ -634,5 +635,122 @@ describe('a relaunch brings back no old news (field 2026-10-21)', { timeout: 30_
     resetSuperIndex();
     await relaunch();
     expect(await reask()).toEqual(['ask1']);
+  });
+
+  // Field 2026-11-08: an account switch and an update each restarted the app; eight children came
+  // back idle, read `done`, and the Super had to write "continue" to each by hand.
+  describe('a child the restart cut off mid-job resumes by itself', () => {
+    const cutVault = () => makeVault({
+      children: {
+        mid: kid('mid', { row: 'working' }),
+        fin: kid('fin', { row: 'done' }),
+        settl: kid('settl', { row: 'working', settling: true }),
+      },
+      containers: ['mid', 'fin', 'settl'].map(card),
+    });
+    const resumeFor = async () => (await readOutbox(root)).filter((i) => i.text === RESUME_TEXT).map((i) => i.child).sort();
+
+    it('stays working (resuming), never done, the Super gets one restarted line, and the server keeps its continue turn', async () => {
+      cutVault();
+      const { delivered } = await relaunch();
+      // The window restores the three tabs; none runs a turn by itself.
+      const h = reg('mid');
+      reg('fin');
+      reg('settl');
+      await advance(READOPT_GRACE_MS + DONE_SETTLE_MS + 2 * STALE_SWEEP_MS);
+      let s = await readSuperState(root);
+      expect(s.children.mid.row).toBe('working');
+      expect(s.children.mid.resuming).toBeTypeOf('number');
+      expect(await items('done', 'mid')).toHaveLength(0);
+      // One restarted item, for the cut-off child only; a finished one stays finished.
+      expect((await items('restarted')).map((q) => q.sessionId)).toEqual(['mid']);
+      expect(s.children.fin.row).toBe('done');
+      expect(await items('done', 'fin')).toHaveLength(0);
+      // A row inside its settle window had finished its turn: no resume, it settles as before.
+      expect(s.children.settl.row).toBe('done');
+      expect(s.children.settl.resuming).toBeUndefined();
+      expect(await resumeFor()).toEqual(['mid']);
+      const told = delivered.map((d) => d.text).join('\n');
+      expect(told).toMatch(/child=mid event=restarted/);
+      expect(told).toContain(RESTARTED_LINE);
+      expect(told).not.toMatch(/child=mid event=done/);
+      // The continue turn runs and ends: now it is done, once.
+      h.userSent(RESUME_TEXT);
+      await advance(5_000);
+      s = await readSuperState(root);
+      expect(s.children.mid.row).toBe('working');
+      expect(s.children.mid.resuming).toBeUndefined();
+      h.observe({ type: 'result' });
+      await advance(DONE_SETTLE_MS + STALE_SWEEP_MS);
+      s = await readSuperState(root);
+      expect(s.children.mid.row).toBe('done');
+      expect(await items('done', 'mid')).toHaveLength(1);
+    });
+
+    it('a second relaunch before it came back adds no second restarted item and no second continue turn', async () => {
+      cutVault();
+      await relaunch();
+      _resetSuperInbox();
+      _resetChatRegistry();
+      resetSuperIndex();
+      await relaunch();
+      expect((await items('restarted')).map((q) => q.sessionId)).toEqual(['mid']);
+      expect(await resumeFor()).toEqual(['mid']);
+    });
+
+    it('a child whose continue turn never runs is stuck after RESUME_MAX_MS, never done', async () => {
+      cutVault();
+      await relaunch();
+      reg('mid');
+      await advance(RESUME_MAX_MS + 2 * STALE_SWEEP_MS, 30_000);
+      const s = await readSuperState(root);
+      expect(s.children.mid.row).toBe('stuck');
+      expect(s.children.mid.resuming).toBeUndefined();
+      expect(await items('done', 'mid')).toHaveLength(0);
+      expect(await items('stuck', 'mid')).toHaveLength(1);
+    });
+
+    it('an asking child whose question item had already closed is still asked again, never told to continue', async () => {
+      makeVault({
+        children: { ask: kid('ask', { row: 'asking' }) },
+        containers: [card('ask')],
+        queue: [{ id: 'q-a', sessionId: 'ask', kind: 'question', requestId: 'r-a', state: 'done', createdAt: 1, batch: 'b-1' }],
+      });
+      await relaunch();
+      expect((await readOutbox(root)).filter((i) => i.child === 'ask').map((i) => i.text)).toEqual([REASK_TEXT]);
+    });
+
+    it('a member Super\'s children get the same: the working one its continue turn, the asking one its question again', async () => {
+      makeVault({});
+      mkdirSync(join(superRecordPath(root, 'm:rota'), '..'), { recursive: true });
+      writeFileSync(superRecordPath(root, 'm:rota'), JSON.stringify({
+        ...emptySuperState(), session: 'sess-rota', enabled: true, member: 'rota',
+        children: { mWork: kid('mWork', { row: 'working' }), mAsk: kid('mAsk', { row: 'asking' }) },
+        containers: ['mWork', 'mAsk'].map(card),
+      }));
+      createAgent(root, { slug: 'rota', title: 'Rota Planner', prompt: 'Plans routes.' }, { approve: { now: new Date() } });
+      await relaunch();
+      const key = superKey(root, 'm:rota');
+      const texts = Object.fromEntries((await readOutbox(key)).map((i) => [i.child, i.text]));
+      expect(texts).toEqual({ mWork: RESUME_TEXT, mAsk: REASK_TEXT });
+      const m = await readSuperState(key);
+      expect([m.children.mWork.resuming, m.children.mAsk.resuming].every((v) => typeof v === 'number')).toBe(true);
+      expect(m.queue.filter((q) => q.kind === 'restarted').map((q) => q.sessionId).sort()).toEqual(['mAsk', 'mWork']);
+    });
+
+    it('an asking child gets its question asked again, not a second continue, and no done meanwhile', async () => {
+      makeVault({
+        children: { ask: kid('ask', { row: 'asking' }) },
+        containers: [card('ask')],
+        queue: [{ id: 'q-a', sessionId: 'ask', kind: 'question', requestId: 'r-a', state: 'delivered', createdAt: 1, batch: 'b-1' }],
+      });
+      await relaunch();
+      reg('ask');
+      await advance(READOPT_GRACE_MS + DONE_SETTLE_MS + 2 * STALE_SWEEP_MS);
+      const s = await readSuperState(root);
+      expect(s.children.ask.row).toBe('working');
+      expect(await items('done', 'ask')).toHaveLength(0);
+      expect((await readOutbox(root)).filter((i) => i.child === 'ask').map((i) => i.text)).toEqual([REASK_TEXT]);
+    });
   });
 });

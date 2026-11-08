@@ -14,7 +14,7 @@ import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
-import { keepQuestionsAcrossRelaunch } from './outbox.js';
+import { REASK_TEXT, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
 import { settleAskShows } from './ask-show.js';
 import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, getChat, onChatChange, onOwnerWaitChange, ownerWaitAnswered, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
@@ -327,6 +327,8 @@ export function setRow(ch: SuperChild, row: ChildRow, reason?: StuckReason, now 
   if (row === 'stuck' && reason) ch.stuckReason = reason; else delete ch.stuckReason;
   if (reason !== 'no_start') delete ch.startError;
   if (row !== 'working') delete ch.settling;
+  // Finished, stopped or gone: a relaunch's resume is no longer awaited.
+  if (row === 'done' || row === 'gone' || row === 'stuck') delete ch.resuming;
   return true;
 }
 
@@ -1320,6 +1322,10 @@ export const PERMISSION_LINE = `An item whose own server line says event=permiss
 /** Added to a batch that carries an `automation` item: the owner decided on its chat card. */
 export const AUTOMATION_LINE = `An item whose own server line says event=automation is the owner's decision on the approval card of an automation you set up (member=<slug> instead of automation=: of an AI Team member, new or with changed instructions): decision=approved means it is approved and runs by itself from now on (state= and next= are its live state and next run, local time; scheduler=missing means this Mac has no scheduler installed, so it will not fire until he installs it from the AI Team page); decision=rejected means he said no: it is off and stays off, never create it again unless he asks. Tell him in one sentence what now happens (${OWNER_VOICE}); this is an exception to the no-text rule. Never approve, enable or re-create it yourself.`;
 
+/** What a `restarted` item means (field 2026-11-08: after a relaunch every child read done and the
+ *  Super wrote "continue" to eight of them by hand). */
+export const RESTARTED_LINE = 'An item whose own server line says event=restarted is a child the app restart cut off mid-job: the server already resumes it (a continue turn that says what was stopped, or, for one that was asking, its question asked again), and its row stays working until it really finishes (then you get its done). Nothing to send and nothing to tell the owner; do not write "continue" to it.';
+
 /** One `automation` item, its live state read at delivery (never what the queue stored). */
 function automationItemLines(root: string, item: SuperQueueItem): string[] {
   if (item.member && !item.automation) return memberDecisionLines(root, item);
@@ -1362,7 +1368,7 @@ function itemDebt(s: Pick<SuperState, 'owed'>, itemId: string): SuperOwed | unde
 
 /** What a child sent out that this item must tell: its open debt's (a re-delivery), else the child's own. */
 function itemSent(s: SuperState, item: SuperQueueItem): string[] {
-  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation') return [];
+  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted') return [];
   const debt = itemDebt(s, item.id);
   if (debt?.sent?.length) return debt.sent;
   return s.children[item.sessionId]?.sent ?? [];
@@ -1521,6 +1527,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'owner') ? [OWNER_WAIT_LINE] : []),
     ...(items.some((it) => it.kind === 'permission') ? [PERMISSION_LINE] : []),
     ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
+    ...(items.some((it) => it.kind === 'restarted') ? [RESTARTED_LINE] : []),
     BATCH_LAST_LINE,
     // The agenda lines the server moved, or that went stale (pad.ts): keep or close each.
     ...padNotice(state, now).lines,
@@ -1609,7 +1616,7 @@ function scheduleRetry(key: string, at: number): void {
 /** A recap older than this is dropped, never delivered (`nextBatch`). */
 export const RECAP_MAX_AGE_MS = 30 * 60_000;
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 2, recap: 3, request: 4, reply: 5 };
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission']);
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted']);
 
 /** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
  *  (the child started working again), a `gone` whose child is live. A team item reads its
@@ -1625,6 +1632,8 @@ function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean
     || (q.kind === 'done' && row !== 'done')
     || (q.kind === 'stuck' && row !== 'stuck')
     || (q.kind === 'gone' && isLive(getChat(q.sessionId)))
+    // A restart notice is news until its child is gone or ended (it may resume and finish first).
+    || (q.kind === 'restarted' && (!state.children[q.sessionId] || state.children[q.sessionId].endedAt !== undefined || row === 'gone'))
     || (q.kind === 'owner' && !ownerWaitStands(q))
     || (q.kind === 'permission' && !permissionStillAsked(q));
 }
@@ -2380,6 +2389,19 @@ function newerEnd(ch: SuperChild, e: ChatEntry | null): boolean {
   return ch.rowAt !== undefined && Number.isFinite(ended) && ended > ch.rowAt;
 }
 
+/** How long a child the relaunch cut off may go without a turn of its own before its row reads
+ *  `stuck`: the window restores its tabs within seconds and the outbox retries every 30 s, so
+ *  past this its continue turn is not coming (the Super looks; it is never `done`). */
+export const RESUME_MAX_MS = 10 * 60_000;
+
+/** A relaunch cut this child off mid-job and no turn of its own has ended since: it still owes
+ *  the rest of its job, so idle is not finished. */
+export function resumeAwaited(ch: Pick<SuperChild, 'resuming'>, e: ChatEntry | null): boolean {
+  if (ch.resuming === undefined) return false;
+  const ended = e?.lastTurn ? Date.parse(e.lastTurn.endedAt) : Number.NaN;
+  return !(Number.isFinite(ended) && ended > ch.resuming);
+}
+
 /** The settle window ran out: still idle → `done` (or `stuck` for an error turn), exactly once:
  *  a row that already left working/asking adds nothing. */
 function settleDraft(s: SuperState, sid: string, now: number): boolean {
@@ -2388,6 +2410,8 @@ function settleDraft(s: SuperState, sid: string, now: number): boolean {
   delete ch.settling;
   const e = getChat(sid);
   if (ch.row !== undefined && ch.row !== 'working' && ch.row !== 'asking' && ch.row !== 'waiting' && !newerEnd(ch, e)) return false;
+  // Cut off by a relaunch and not yet resumed: idle is not finished (the reconcile decides it).
+  if (resumeAwaited(ch, e)) { setRow(ch, 'working', undefined, now); return false; }
   // Something only the owner can do is still open: it waits on him, it is not done.
   if (hasOpenOwnerWait(s, sid)) { setRow(ch, 'waiting', undefined, now); return false; }
   const stuck = errorTurn(e);
@@ -2457,6 +2481,23 @@ export function reconcileDraft(s: SuperState, now: number, armed: (sid: string) 
     if (owner.changed) changed = true;
     if (owner.added) added = true;
     if (ch.row === 'gone' && act !== 'gone') { delete ch.row; changed = true; }
+    // Cut off by a relaunch (startSuperInbox): working, never settling, until a turn of its own
+    // runs (the server's continue turn, outbox.ts); past RESUME_MAX_MS with none, stuck.
+    if (ch.resuming !== undefined && act !== 'gone') {
+      if (act === 'working' || act === 'asking' || !resumeAwaited(ch, e)) {
+        delete ch.resuming;
+        changed = true;
+      } else if (now - ch.resuming >= RESUME_MAX_MS) {
+        setRow(ch, 'stuck', 'stale', now);
+        changed = true;
+        if (pushRowItem(s, sid, 'stuck', now)) added = true;
+        continue;
+      } else {
+        if (setRow(ch, 'working', undefined, now)) changed = true;
+        if (ch.settling) { delete ch.settling; changed = true; }
+        continue;
+      }
+    }
     if (ch.row === undefined) {
       const derived: ChildRow | null = act === 'working' || act === 'stale' ? 'working' : act === 'asking' ? 'asking' : act === 'gone' ? null : 'done';
       if (derived) { setRow(ch, derived, undefined, now); changed = true; }
@@ -2970,18 +3011,83 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
         console.warn(`[super] ${root}: the rows of held children were not set gone: ${(err as Error).message}`);
       }
     }
+    s = await resumeCutChildren(keyOf(root), s, opts.parked);
     syncSweep(keyOf(root), s);
     await reconcileRows(root);
   };
   await Promise.all(contextRoots.map(async (root) => {
     await bootMain(root);
-    await startMemberSupers(root);
+    await startMemberSupers(root, opts);
   }));
+}
+
+/** Which children the relaunch cut off mid-job: one the relaunch brings back (main's child: no
+ *  restore hold; a member's child: not parked, as the window decides from main's record),
+ *  not ended, whose row worked (its turn or its background work; a `working` row inside its settle
+ *  window had finished) or asked. A child that had finished stays finished. Exported for tests. */
+export function cutChildren(s: SuperState, parked?: (sessionId: string) => boolean): string[] {
+  return Object.keys(s.children).filter((sid) => {
+    const ch = s.children[sid];
+    if (ch.endedAt !== undefined || isLive(getChat(sid))) return false;
+    // The window decides a tab's restore from MAIN's record (agent-sessions.ts): a member's child
+    // is no child there, so only a park holds it; main's own children follow the full hold.
+    const hold = s.member !== undefined ? (parked?.(sid) ? 'parked' : null) : superRestoreHold(s, sid, parked?.(sid) ?? false);
+    if (hold) return false;
+    return (ch.row === 'working' && !ch.settling) || ch.row === 'asking';
+  });
+}
+
+/**
+ * At boot: every child the relaunch cut off mid-job ({@link cutChildren}) gets the server's own
+ * continue turn in the outbox (sent at its first idle once its tab is back), its row stays
+ * `working` with `resuming` set (never settled into a false `done`), and the Super one `restarted`
+ * item each, batched (field 2026-11-08: eight children read done after an account switch and an
+ * update, and the Super had to write "continue" to each by hand). Returns the record as written.
+ */
+async function resumeCutChildren(key: string, s: SuperState, parked?: (sessionId: string) => boolean): Promise<SuperState> {
+  if (!s.enabled) return s;
+  const cut = cutChildren(s, parked);
+  if (!cut.length) return s;
+  const now = Date.now();
+  // The outbox is keyed like the send route's (the super key), so its pump finds the Super's token.
+  // The words follow what was cut, for every Super (main's and each member's): a working child
+  // is told to go on; an asking one gets its question asked again, never "continue" without its
+  // answer (review: a member's asking child, or one whose question item had closed).
+  const asking = cut.filter((sid) => s.children[sid].row === 'asking');
+  const working = cut.filter((sid) => s.children[sid].row !== 'asking');
+  try {
+    await keepWorkAcrossRelaunch(key, asking, now, REASK_TEXT);
+    await keepWorkAcrossRelaunch(key, working, now);
+  } catch (err) {
+    console.warn(`[super] ${key}: the continue turns of the children the restart cut off were not kept: ${(err as Error).message}`);
+  }
+  let added = false;
+  try {
+    s = await writeSuper(key, (d) => {
+      for (const sid of cut) {
+        const ch = d.children[sid];
+        if (!ch || ch.endedAt !== undefined) continue;
+        // Cut off again before it came back from the last restart: the Super was told once.
+        const told = ch.resuming !== undefined;
+        ch.resuming = now;
+        setRow(ch, 'working', undefined, now);
+        delete ch.settling;
+        if (told || d.queue.some((q) => q.sessionId === sid && q.kind === 'restarted' && q.state === 'pending')) continue;
+        d.queue.push({ id: newQueueId(), sessionId: sid, kind: 'restarted', state: 'pending', createdAt: now });
+        countEvent(d);
+        added = true;
+      }
+    });
+  } catch (err) {
+    console.warn(`[super] ${key}: the children the restart cut off were not marked resuming: ${(err as Error).message}`);
+  }
+  if (added) void pumpSuper(rootOf(key), idOf(key));
+  return s;
 }
 
 /** At boot, each member Super of a vault (plan-r10 1): its head and sweep, and a request whose
  *  turn never finished back to pending (an accepted one stays open). A refused record is skipped. */
-async function startMemberSupers(root: string): Promise<void> {
+async function startMemberSupers(root: string, opts: { parked?: (sessionId: string) => boolean } = {}): Promise<void> {
   for (const slug of await listMemberSupers(root)) {
     const key = superKey(root, superIdOfMember(slug));
     let s: SuperState;
@@ -2989,6 +3095,8 @@ async function startMemberSupers(root: string): Promise<void> {
     if (bootRequests(structuredClone(s))) {
       try { s = await writeSuper(key, (d) => { bootRequests(d); }); } catch { continue; }
     } else noteHead(key, s);
+    // A member's children are cut off by the same relaunch as main's.
+    s = await resumeCutChildren(key, s, opts.parked);
     syncSweep(key, s);
   }
 }

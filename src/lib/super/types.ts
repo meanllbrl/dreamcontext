@@ -499,6 +499,11 @@ export interface SuperChild {
   rowAt?: number;
   /** The 30 s settle window after a turn end is running (the list's "bitiyor" chip). */
   settling?: boolean;
+  /** The app restarted while this child was mid-job (epoch ms of that boot; field 2026-11-08:
+   *  eight children came back idle and read `done`). Its row stays `working`, it never settles,
+   *  until a turn of its own runs again (the server's continue turn, outbox.ts) or
+   *  RESUME_MAX_MS passes with none (then `stuck`). */
+  resuming?: number;
   /** The task this job belongs to (`super brief --task`, `delegate --task`): a slug under state/. */
   task?: string;
   /** Why the row is `stuck`: an error turn, a working turn silent past the stale bar, or a child
@@ -598,8 +603,11 @@ question about a request, written into the member's queue; its delivery closes t
 `owed` (owed.ts): a natural turn end left owner debts open (`SuperState.owed`); one solo `[super owed]`
 turn names them (`owed` = their ids). Re-decided at delivery: dropped when none is still open.
 Its `sessionId` is the super's own.
+`restarted`: the app went down while this child was mid-job; the server resumes it with a continue
+turn of its own (outbox.ts) and its row stays `working` (`SuperChild.resuming`). One line in the next
+batch, never a `done`; the Super has nothing to send.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
