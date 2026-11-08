@@ -163,7 +163,10 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
     const config = /(?:--config|\s-c)[ =](\S+)/.exec(s)?.[1];
     const args = (testScript ?? runner)![1] ?? '';
     if (namesTests(args)) return { kind: 'check', target: 'tests', ...namedFiles(args) };
-    const partial = wholeSuiteArgs(args);
+    // `npm test` whose script chains (`npm run test:unit`, `tsc && vitest --dir x`) was not read
+    // through above: what it runs cannot be told, so it is no provable whole suite.
+    const chainedScript = testScript && npm && scripts[npm[1]] && /\bnpm\b|&&/.test(scripts[npm[1]]) ? `a test script that chains (${scripts[npm[1]].slice(0, 60)})` : null;
+    const partial = chainedScript ?? wholeSuiteArgs(args);
     return { kind: 'suite', target: config ? `suite ${config}` : 'suite', ...(partial ? { partial } : {}) };
   }
   if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc', ...(/\s--noEmit\b/.test(s) ? {} : { emits: true }) };

@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
-import { constants } from 'node:os';
+import { constants, homedir } from 'node:os';
 import {
   HEAVY_DEFAULT_WAIT_S,
   HEAVY_LOCK_BUSY_EXIT,
@@ -281,14 +281,33 @@ function readCheckState(cwd: string, id: string): CheckState | null {
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException)?.code === 'EPERM'; } };
 
+/**
+ * The folder a command's suite runs in: the cwd, moved by each `cd`/`pushd` in it. Agents prefix
+ * `cd <root> &&` because the shell's folder resets, and the hook offers that line back, so it
+ * must key the same record as a run from the root. null = a cd that cannot be resolved here.
+ */
+function suiteRunDir(command: string, cwd: string): string | null {
+  let dir = recordToplevel(cwd);
+  for (const raw of shellSegments(command)) {
+    const seg = raw.trim().replace(/^[({]\s*/, '').trim();
+    const cd = /^(?:cd|pushd)(?:\s+(.+))?$/.exec(seg);
+    if (!cd) continue;
+    let target = (cd[1] ?? '~').trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (target === '~' || target.startsWith('~/')) target = join(homedir(), target.slice(1));
+    if (/[$*?`]/.test(target) || /^[-+]/.test(target)) return null;
+    dir = recordToplevel(resolve(dir, target));
+  }
+  return dir;
+}
+
 /** A suite run's record context: the worktree, branch and target its record is keyed by. */
-interface SuiteCtx { top: string; branch: string | null; target: string; config?: string }
+interface SuiteCtx { top: string; branch: string | null; target: string; config?: string; /** Where the suite runs (vitest prints paths from here). */ runDir: string }
 
 function suiteCtxOf(cwd: string, target: string): SuiteCtx | null {
   const t = gitToplevel(cwd);
   if (!t) return null;
   const top = recordToplevel(t);
-  return { top, branch: branchOf(top), target, config: configOf(target) };
+  return { top, branch: branchOf(top), target, config: configOf(target), runDir: recordToplevel(cwd) };
 }
 
 /**
@@ -338,7 +357,7 @@ function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null;
   const dist = o.dist ? distProofHeld(ctx.top, o.dist) : null;
   const j = judgeSuiteRun({ exit: o.exit, exitNotOwned: exitNotOwned(o.command), summary: parseVitestLog(text), killed: o.killed, dist });
   // vitest prints paths from its own root, the folder it ran in: the record keeps them repo-relative.
-  j.files = j.files.map((f) => relative(ctx.top, resolve(recordToplevel(deps.cwd()), f)).split(sep).join('/'));
+  j.files = j.files.map((f) => relative(ctx.top, resolve(ctx.runDir, f)).split(sep).join('/'));
   const id = suiteRecordId(ctx.top, ctx.branch, ctx.target);
   const base = { v: 1 as const, id, pid: process.pid, toplevel: ctx.top, branch: ctx.branch, target: ctx.target, ...(ctx.config ? { config: ctx.config } : {}), at: new Date().toISOString(), log: o.log ?? undefined };
   let rec: SuiteRecord;
@@ -426,7 +445,7 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
     if (!(deps.alive ?? alive)(s.pid) && readCheckState(deps.cwd(), id)?.state !== 'done') {
       // Nothing will write its end: a running suite record of that runner is incomplete now.
       const ctxStep = heavyStep(s.command, packageScripts(deps.cwd()));
-      const ctx = ctxStep?.kind === 'suite' ? suiteCtxOf(deps.cwd(), ctxStep.target) : null;
+      const ctx = ctxStep?.kind === 'suite' ? suiteCtxOf(suiteRunDir(s.command, deps.cwd()) ?? deps.cwd(), ctxStep.target) : null;
       if (ctx) {
         const path = suiteRecordPath(ctx.top, ctx.branch, ctx.target);
         try {
@@ -516,12 +535,13 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   // A whole-suite run is gated on its record's state, and leaves a record (lib/suite-record.ts).
   // A partial one (`--shard`, `--changed`, `--bail`, …) is gated too, but proves no whole suite:
   // it never writes or closes a record.
-  const suite = step?.kind === 'suite' ? suiteCtxOf(deps.cwd(), step.target) : null;
+  const runDir = step?.kind === 'suite' ? suiteRunDir(command, deps.cwd()) : null;
+  const suite = step?.kind === 'suite' ? suiteCtxOf(runDir ?? deps.cwd(), step.target) : null;
   // Only a provably whole run keeps a record: the toplevel's own suite, from the toplevel, with
   // nothing but allow-listed flags (run-budget.ts wholeSuiteArgs). Anything else is partial.
   const notWhole = !suite ? null : step?.partial
-    ?? (recordToplevel(deps.cwd()) !== suite.top ? `run from ${relative(suite.top, recordToplevel(deps.cwd())) || '.'}, not the repo root` : null)
-    ?? (shellSegments(command).some((seg) => /^(?:cd|pushd)\b/.test(seg.trim())) ? 'a cd in the command' : null);
+    ?? (runDir === null ? 'a cd that cannot be resolved here' : null)
+    ?? (suite.runDir !== suite.top ? `run in ${relative(suite.top, suite.runDir) || suite.runDir}, not the repo root` : null);
   const recordable = suite !== null && !notWhole;
   if (suite && notWhole) deps.printErr(`builder heavy: not provably the whole suite (${notWhole}): it keeps no suite record, and cannot close one`);
   if (suite) {

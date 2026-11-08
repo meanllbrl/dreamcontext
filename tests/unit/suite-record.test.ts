@@ -8,7 +8,7 @@ import { builderTest, DEFAULT_SESSION_DEPS, type SessionDeps } from '../../src/c
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotPaths } from '../../src/lib/builder-tools.js';
 import { contentTree } from '../../src/lib/check-receipt.js';
 import { releaseFileLock } from '../../src/lib/file-lock.js';
-import { HEAVY_OVER_BUDGET_EXIT, heavyStep, markPhase, suiteInCommand, wholeSuiteArgs } from '../../src/lib/run-budget.js';
+import { HEAVY_OVER_BUDGET_EXIT, heavyStep, heavySuggestion, markPhase, suiteInCommand, wholeSuiteArgs } from '../../src/lib/run-budget.js';
 import {
   branchOf, cliSpawnTests, distCheck, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree, readSuiteRecord, suiteRecordId, writeSuiteRecord, type RunSummary,
 } from '../../src/lib/suite-record.js';
@@ -231,6 +231,7 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     mkdirSync(join(repo, 'sub'), { recursive: true });
     expect(await builderHeavy(deps(join(repo, 'sub')), ['npm', 'test'], {})).toBe(0);
     expect(await builderHeavy(deps(), ['cd sub && npm test'], {})).toBe(0);
+    expect(await builderHeavy(deps(), ['{ cd sub; npm test; }'], {})).toBe(0);
     expect(record()).toBeNull();
     scenario('red2');
     expect(await builderHeavy(deps(), ['npm', 'test'], {})).toBe(1);
@@ -242,7 +243,7 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], {})).toBe(2);
     expect(await builderHeavy(deps(), ['npm run build --if-present && npm test'], { detach: true })).toBe(2);
     expect(err.join('\n')).toMatch(/a full test suite inside a chain/);
-    expect(runs()).toBe(4);
+    expect(runs()).toBe(5);
   });
 
   it('only allow-listed arguments make a whole suite; deny by default', () => {
@@ -265,6 +266,18 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     expect(record()).toMatchObject({ state: 'red', files: ['tests/a.test.ts'], redTree: tree });
     writeSuiteRecord({ v: 1, id: suiteRecordId(top, 'main', 'suite'), state: 'running', pid: 2_147_483_000, toplevel: top, branch: 'main', target: 'suite', at: new Date().toISOString(), maxRunMs: 60_000, files: [] });
     expect(record()).toMatchObject({ state: 'incomplete', files: [] });
+  });
+
+  it('the line the hook offers for a full suite (cd <root> && npm test) keeps a record', async () => {
+    scenario('red2');
+    const offered = heavySuggestion(`cd ${repo} && npm test 2>&1 | tail -50`);
+    const line = /--detach -- '([^']+)'/.exec(offered)![1];
+    expect(line).toBe(`cd ${repo} && npm test`);
+    expect(await builderHeavy(deps(root), [line], {})).toBe(1);
+    expect(record()).toMatchObject({ state: 'red', files: ['tests/a.test.ts', 'tests/b.test.ts'] });
+    // A chained test script cannot be told whole.
+    expect(heavyStep('npm test', { test: 'tsc --noEmit && vitest run --dir tests/unit' })).toMatchObject({ kind: 'suite', partial: expect.stringMatching(/chains/) });
+    expect(heavyStep('npm test', { test: 'vitest' })!.partial).toBeUndefined();
   });
 
   it('a run past a red (--because) that proves nothing keeps the red list', async () => {
