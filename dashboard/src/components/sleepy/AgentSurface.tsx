@@ -14,7 +14,8 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
+import { publishSuperEventContext, publishSuperQuestions, publishSuperStage } from './super/superJobsStore';
+import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
@@ -100,7 +101,7 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
@@ -4005,6 +4006,55 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
   }, []);
+  // The card tiles under the Super's answers (turnCards.ts, owner 2026-11-08) read where each card
+  // is now and bring one back with the stage's own moves: a card side by side (as a question's
+  // report card does, above), a group presented whole (the group's "Open all"), from Others too.
+  const superGroups = superState?.groups;
+  const superStageKey = (superContainers ?? []).map((k) => `${k.id}=${k.place}=${k.title ?? ''}`).join('\u0001')
+    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001');
+  const publishedStageSid = useRef<string | null>(null);
+  // The owner's own open (declared further down): a closed card's tile opens it again.
+  const openCardRef = useRef<(body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>>(async () => { throw new Error('no stage'); });
+  useEffect(() => {
+    const prev = publishedStageSid.current;
+    if (prev && prev !== superQuestionSid) publishSuperStage(prev, null);
+    publishedStageSid.current = superQuestionSid;
+    if (!superQuestionSid) return;
+    const containers = superContainers ?? [];
+    const groups = superGroups ?? [];
+    const now = { containers, groups };
+    const bring = (target: { card: string } | { group: string }) => {
+      const patch = bringPatch(target, now, (g) => groupPresentCards({ cards: [...g.cards] }, containers));
+      if (patch) editLayoutRef.current(patch);
+    };
+    const reopen = async (cards: readonly KnownCard[]) => {
+      const ids: string[] = [];
+      const groupIds = new Set<string | null>();
+      for (const card of cards) {
+        const body = reopenBody(card);
+        if (!body) continue;
+        try {
+          const r = await openCardRef.current(body);
+          if (!ids.includes(r.id)) ids.push(r.id);
+          groupIds.add(r.groupId);
+        } catch { /* refused (stage full, file gone): the rest still open */ }
+      }
+      if (!ids.length) return false;
+      if (ids.length === 1) { editLayoutRef.current({ view: { mode: 'half', card: ids[0] } }); return true; }
+      // Several came back as the group they were: the server's own picture chain grouped them,
+      // else they are put together again, and the group is presented whole.
+      const one = groupIds.size === 1 ? [...groupIds][0] : null;
+      const shown = ids.slice(0, MAX_FILMSTRIP);
+      editLayoutRef.current(one
+        ? { view: { mode: 'present', cards: shown } }
+        : { group: { id: `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, cards: ids }, view: { mode: 'present', cards: shown } });
+      return true;
+    };
+    publishSuperStage(superQuestionSid, { now, bring, reopen }, superStageKey);
+  }, [superQuestionSid, superStageKey, superContainers, superGroups]);
+  useEffect(() => () => {
+    if (publishedStageSid.current) publishSuperStage(publishedStageSid.current, null);
+  }, []);
   // The alarm for what the owner must answer: chime, Dock bounce, banner and the tab's attention,
   // exactly what any agent's question raises (chatSession.ts), once for EVERY item as it arrives
   // (`headAlarmOnce`), never only for the queue's head. Owner 2026-10-22: "normal agent sorusu
@@ -4510,6 +4560,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (st) setSuperRecordFor(sid, sid === activeSuperIdRef.current ? withPendingEdits(st) : st);
     return { id, groupId };
   }, [scopedApi, setSuperRecordFor]);
+  openCardRef.current = openCardOnStage;
 
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.

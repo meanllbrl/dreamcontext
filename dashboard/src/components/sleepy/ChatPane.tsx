@@ -88,6 +88,7 @@ import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
+import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
 import { useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
@@ -820,6 +821,21 @@ export function ChatPane({
   // expands one with a click. The phone's mirror folds too, from the Mac's digest (PhoneAgenda).
   // Any other chat has no context and draws nothing new.
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
+  // The cards each Super turn put on the stage, by its answer (turnCards.ts, owner 2026-11-08): read
+  // from the turn's own tool results, so they outlive the stage. An answer whose cards did not
+  // change keeps its object, so a streaming token never re-renders an earlier answer.
+  const turnCardsRef = useRef<Map<string, TurnCards>>(new Map());
+  const turnCards = useMemo(() => {
+    if (!superView) return null;
+    const next = turnCardsByAnswer([...conv.history, ...conv.items]);
+    const prev = turnCardsRef.current;
+    for (const [id, turn] of next) {
+      const old = prev.get(id);
+      if (old && sameTurnCards(old, turn)) next.set(id, old);
+    }
+    turnCardsRef.current = next;
+    return next;
+  }, [superView, conv.history, conv.items]);
   /** Whose Super this chat is: a member's (`m:<slug>`, its chat is bound to that member) or main's. */
   const paneMember = superMember || (session.mode === 'super' ? chatAgentFor(session.claudeId) : '');
   const paneSuperId: SuperId = paneMember ? memberSuperId(paneMember) : 'main';
@@ -2160,6 +2176,7 @@ export function ChatPane({
         stepsKey={stepsHost.get(item.id)}
         stepsOpen={stepsHost.has(item.id) && openSteps.has(stepsHost.get(item.id)!)}
         onToggleSteps={toggleSteps}
+        stageCards={turnCards?.get(item.id)}
       />
     );
     if (!shape.parties.length && !shape.guarded) return view;

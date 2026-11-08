@@ -27,6 +27,8 @@ import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
 import { splitAbout, splitAboutParts, type MessagePart } from '../super/superHandover';
 import { AgendaAboutStrip, PageStrip, RefChip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
+import { TurnCardTiles } from '../super/TurnCardTiles';
+import type { TurnCards } from '../../../lib/turnCards';
 import { splitPageContext } from '../../../lib/superTypes';
 import { pageChipName } from '../../../lib/pageContext';
 import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
@@ -434,9 +436,11 @@ function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefine
 
 function AssistantMessage({
   item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, report, readOnly, replyGroup, replyHeads, onReplyTarget,
-  stepsKey, stepsOpen = false, onToggleSteps,
+  stepsKey, stepsOpen = false, onToggleSteps, stageCards,
 }: {
   item: ChatTextItem;
+  /** A Super answer whose turn put cards on the stage (turnCards.ts): drawn under it as tiles. */
+  stageCards?: TurnCards;
   /** A Super answer whose turn's steps were put away (owner 2026-11-06): a faint "steps" link
    *  shows on hover and opens them. The key names the run in ChatPane's open set. */
   stepsKey?: string;
@@ -604,6 +608,9 @@ function AssistantMessage({
       {item.done && onOpenBoard && boards.map((path) => (
         <BoardEmbed key={path} path={path} onOpenBoard={onOpenBoard} />
       ))}
+      {/* The cards this turn put on the stage, as their tiles: the presentation stays findable
+          under the answer that made it, and a click brings it back (owner 2026-11-08). */}
+      {item.done && stageCards && <TurnCardTiles turn={stageCards} superSid={superSid} onOpenFile={onOpenFile} />}
       {onAction && <ActionRow actions={actions} onAction={onAction} />}
       {!readOnly && (
         <HoverActions>
@@ -718,8 +725,10 @@ interface StepStretch {
 
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, report, onQuote, readOnly = false,
-  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget, stepsKey, stepsOpen, onToggleSteps,
+  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget, stepsKey, stepsOpen, onToggleSteps, stageCards,
 }: StepStretch & {
+  /** A Super answer's stage cards: see `AssistantMessage`. */
+  stageCards?: TurnCards;
   /** A Super answer whose turn's steps were put away: see `AssistantMessage`. */
   stepsKey?: string;
   stepsOpen?: boolean;
@@ -782,6 +791,7 @@ function ItemViewInner({
           stepsKey={stepsKey}
           stepsOpen={stepsOpen}
           onToggleSteps={onToggleSteps}
+          stageCards={stageCards}
         />
       );
     // Step lines: where they sit in their speaker's stretch is decided by the transcript
