@@ -16,7 +16,7 @@
  *    from first injection), or the whole text when the turn held only Telegram text; while
  *    Telegram-started hands-free is on, every answer (marks stripped);
  *  - typing while the turn runs; one status message per Telegram message, rows = children and
- *    team jobs whose origin is that ref; a final "Bitti" message;
+ *    team jobs whose origin is that ref; the status line edited to its done state;
  *  - the Super chat's own permission / question prompts as buttons answered through the window
  *    (`hub_command answer_pending`), so the Mac card closes;
  *  - every loss of a binding sends a last message from the IN-MEMORY binding first (C3, D3).
@@ -77,7 +77,7 @@ export const LINES = {
   unbound: (keyed: boolean) => `Telegram bağlantısı Mac'te kaldırıldı${keyed ? '' : ' (anahtarsız istek)'}.`,
   conflict: "Bu bot başka bir yerde de dinleniyor; bağlantı durdu. BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
-  done: (jobs: number, minutes: number) => `Bitti · ${jobs} iş · ${minutes} dk`,
+  endedSilent: 'Bu tur sana yazı göndermeden bitti. Gerekirse Mac\'e bak ya da tekrar yaz.',
 } as const;
 
 // ─── Dependencies (tests inject fakes) ──────────────────────────────────────
@@ -835,10 +835,9 @@ export class TelegramHub implements TelegramHubApi {
         if (!ab) continue;
         void (async () => {
           await this.refreshStatus({ ...t, lastEditAt: 0 }).catch(() => {});
-          if (t.statusMessageId !== null || t.statusText) {
-            const rows = await this.statusRows(ab, t.ref).catch(() => []);
-            await this.reply(ab, LINES.done(rows.length, Math.max(1, Math.round((this.now() - t.startedAt) / 60_000))));
-          }
+          // No turn-end receipt: the answer is already there. Only a turn that ended with no text
+          // for the owner says one plain line (it failed or stopped while he waits).
+          if (!t.answered) await this.reply(ab, LINES.endedSilent);
         })();
       }
     }
@@ -898,7 +897,7 @@ export class TelegramHub implements TelegramHubApi {
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     const inputs = this.turnInputs.get(sessionId);
     const tgTurn = [...this.turns.values()].some((t) => t.sessionId === sessionId);
-    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode()); await this.answerExtras?.(ab, text, sessionId); }
+    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode()); await this.answerExtras?.(ab, text, sessionId); for (const t of this.turns.values()) if (t.sessionId === sessionId) t.answered = true; }
   }
 
   // ── Buttons (plan "Button integrity") ──
