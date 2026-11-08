@@ -483,6 +483,10 @@ export interface ConversationModel {
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
 
+/** `typed` = the owner sends this from the composer right now (see `ClientControl` `typed`). */
+export interface SendOpts { typed?: true }
+const TYPED: SendOpts = { typed: true };
+
 export interface ChatSession {
   id: string;
   bypass: boolean;
@@ -635,7 +639,7 @@ export interface ChatSession {
   mcpRefresh: () => void;
   /** Submit a user message: sends the `user` control frame and appends it to the
    *  transcript optimistically (the protocol never echoes the user's own text back). */
-  send: (text: string) => void;
+  send: (text: string, opts?: SendOpts) => void;
   /**
    * Hand a message to the turn ALREADY in flight — the composer's ⏎ while `busy`. The CLI
    * folds it in at its next tool boundary (measured on 2.1.220: same turn, one `result`), so
@@ -645,7 +649,7 @@ export interface ChatSession {
    * socket is shut — and the caller is expected to {@link enqueue} instead rather than let
    * the text evaporate.
    */
-  steer: (text: string) => boolean;
+  steer: (text: string, opts?: SendOpts) => boolean;
   /** Whether {@link steer} would land right now, for callers that must decide BEFORE they
    *  have text to send (labelling ⏎, enabling a row's "Send now"). */
   canSteer: () => boolean;
@@ -2623,7 +2627,7 @@ export function createChatSession(
    * `user` frame leaves this client, shared by `send` (start a turn) and `steer` (cut into
    * the one already running) — the two differ only in what they may claim afterwards.
    */
-  function writeUser(text: string, opts: { steered: boolean }): boolean {
+  function writeUser(text: string, opts: { steered: boolean; typed?: boolean }): boolean {
     const clean = text.trim();
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     // Spoken now, or spoken before an account switch restarted this pane (`spokenCarry`).
@@ -2639,6 +2643,7 @@ export function createChatSession(
     voiceTakes.delete(clean);
     const frame: ClientControl = {
       type: 'user', text: clean, ...(spoken ? { voice: true as const } : {}), ...(take ? { voiceTake: take } : {}),
+      ...(opts.typed ? { typed: true as const } : {}),
     };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
@@ -2686,9 +2691,9 @@ export function createChatSession(
     try { return aboutHeader(text); } catch { return text; }
   }
 
-  function send(text: string): boolean {
+  function send(text: string, opts?: SendOpts): boolean {
     if (ownerWordsTaken(text)) return true;
-    return writeUser(withAbout(text), { steered: false });
+    return writeUser(withAbout(text), { steered: false, typed: opts?.typed === true });
   }
 
   /**
@@ -2699,13 +2704,13 @@ export function createChatSession(
    * `busy` is already true here; `writeUser` setting it again is a no-op the turn clock's
    * false→true edge never sees.
    */
-  function steer(text: string): boolean {
+  function steer(text: string, opts?: SendOpts): boolean {
     if (ownerWordsTaken(text)) return true;
     if (!steerable()) return false;
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(withAbout(text), { steered: true });
+    return writeUser(withAbout(text), { steered: true, typed: opts?.typed === true });
   }
 
   /**
@@ -2837,7 +2842,8 @@ export function createChatSession(
     // still report (a socket that closed between the guard and the write), so neither the
     // message nor the order the strip was showing is lost.
     applyAndNotify(() => { conv = { ...conv, queued: conv.queued.filter((q) => q.id !== qid) }; });
-    if (session.busy ? steer(row.text) : send(row.text)) return;
+    // His click, now: typed (the automatic drain below is not).
+    if (session.busy ? steer(row.text, TYPED) : send(row.text, TYPED)) return;
     applyAndNotify(() => {
       const restored = [...conv.queued];
       restored.splice(Math.min(at, restored.length), 0, row);

@@ -80,6 +80,9 @@ import { useMicPermission } from '../../../lib/voice/micPermission';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { useStageCards } from '../super/stageCards';
 
+/** His ⏎ in this box, now: the server reads it as "back at the Mac" on the Mac's own page. */
+const TYPED_NOW = { typed: true } as const;
+
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
  * `ChatComposer` and is mounted by the `ChatPane` orchestrator against the pinned
@@ -2121,15 +2124,15 @@ export function Composer({
         // The same three deliveries as any send, now that the chat is here: a turn the Mac was
         // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
         if (mode === 'queue') session.enqueue(message);
-        else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
-        else if (session.send(message) === false) return;
+        else if (session.busy) { if (!session.steer(message, TYPED_NOW)) session.enqueue(message, { steerWhenPossible: true }); }
+        else if (session.send(message, TYPED_NOW) === false) return;
         sent();
       });
       return;
     }
     if (mode === 'queue') session.enqueue(message);
-    else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
-    else if (session.send(message) === false) return;
+    else if (isBusy) { if (!session.steer(message, TYPED_NOW)) session.enqueue(message, { steerWhenPossible: true }); }
+    else if (session.send(message, TYPED_NOW) === false) return;
     sent();
   };
 
