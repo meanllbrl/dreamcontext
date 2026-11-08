@@ -67,6 +67,15 @@ const SEALED_FEATURES_OFF: &[&str] = &[
     "BackgroundFetchAPIEnabled",
     "ServiceWorkerNavigationPreloadEnabled",
 ];
+/// Turned off for sure: preconnect and DNS prefetch (by feature or by the older setter) and WebRTC.
+/// Without all three the sealed webview refuses to render.
+pub(crate) fn hardening_complete(off: &[String]) -> bool {
+    let has = |k: &str| off.iter().any(|o| o == k);
+    has("LinkPreconnect")
+        && (has("LinkDNSPrefetchEnabled") || has("_setDNSPrefetchingEnabled:"))
+        && (has("PeerConnectionEnabled") || has("_setPeerConnectionEnabled:"))
+}
+
 /// What the last render turned off (the spike reports it).
 static FEATURES_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -168,7 +177,7 @@ pub(crate) async fn html_snapshot(app: AppHandle, webview: Webview, html: String
     }
     let port = app.try_state::<crate::DashboardPort>().map(|p| p.0).ok_or("the server is not up yet")?;
     let url = webview.url().map_err(|e| e.to_string())?;
-    if !crate::telegram_confirm::caller_label_ok(webview.label()) || !crate::owner_key::is_app_page(&url, port) {
+    if !crate::telegram_confirm::caller_label_ok(webview.label()) || !crate::owner_key::is_own_server_page(&url, port) {
         return Err("forbidden".into());
     }
     if html.len() > MAX_HTML_BYTES {
@@ -239,7 +248,7 @@ mod imp {
             .map_err(|e| format!("failed: {e}"))?;
 
         park_offscreen(&win).await?;
-        load_html(&win, sealed)?;
+        load_html(&win, sealed).await?;
 
         // The page is ours once our own sealed meta is in the document and everything loaded.
         let deadline = Instant::now() + BUDGET + extra;
@@ -266,8 +275,10 @@ mod imp {
         let mut pngs = Vec::new();
         let mut total = 0usize;
         let mut y = 0u32;
-        for h in slices {
-            let png = snapshot(&win, NSRect::new(NSPoint::new(0.0, f64::from(y)), NSSize::new(f64::from(width), f64::from(h)))).await?;
+        for (i, h) in slices.into_iter().enumerate() {
+            // Only the FIRST slice decides "blank" (a display that did not paint paints nothing at
+            // all); a later slice that is all bottom padding is a real, if plain, picture.
+            let png = snapshot(&win, NSRect::new(NSPoint::new(0.0, f64::from(y)), NSSize::new(f64::from(width), f64::from(h))), i == 0).await?;
             total += png.len();
             if total > MAX_PNG_BYTES {
                 return Err("too_large".into());
@@ -359,16 +370,25 @@ mod imp {
         off
     }
 
-    fn load_html(win: &WebviewWindow, sealed: String) -> Result<(), String> {
+    async fn load_html(win: &WebviewWindow, sealed: String) -> Result<(), String> {
+        let (tx, mut rx) = tauri::async_runtime::channel::<bool>(1);
         win.with_webview(move |wv| {
             let view = wv.inner() as *mut AnyObject;
             if view.is_null() {
+                let _ = tx.try_send(false);
                 return;
             }
             // SAFETY: main thread, live WKWebView; every SPI is probed with respondsToSelector.
             let off = unsafe { harden_preferences(view) };
+            let sealed_off = hardening_complete(&off);
             if let Ok(mut last) = FEATURES_OFF.lock() {
                 *last = off;
+            }
+            // Fail closed: a WebKit where preconnect, DNS prefetch or WebRTC could not be turned off
+            // renders nothing (the server sends the card as text), never a page that can beacon.
+            if !sealed_off {
+                let _ = tx.try_send(false);
+                return;
             }
             let html = NSString::from_str(&sealed);
             let nil: *mut AnyObject = std::ptr::null_mut();
@@ -377,8 +397,13 @@ mod imp {
             unsafe {
                 let _: *mut AnyObject = msg_send![view, loadHTMLString: &*html, baseURL: nil];
             }
+            let _ = tx.try_send(true);
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        match rx.recv().await {
+            Some(true) => Ok(()),
+            _ => Err("unsupported".into()),
+        }
     }
 
     fn ns_string_of(obj: *mut AnyObject) -> Option<String> {
@@ -427,7 +452,7 @@ mod imp {
     }
 
     /// One slice through `-[WKWebView takeSnapshotWithConfiguration:completionHandler:]`, as PNG.
-    async fn snapshot(win: &WebviewWindow, rect: NSRect) -> Result<Vec<u8>, String> {
+    async fn snapshot(win: &WebviewWindow, rect: NSRect, refuse_flat: bool) -> Result<Vec<u8>, String> {
         let (tx, mut rx) = tauri::async_runtime::channel::<Result<Vec<u8>, String>>(1);
         win.with_webview(move |wv| {
             let view = wv.inner() as *mut AnyObject;
@@ -445,7 +470,7 @@ mod imp {
                 let _: () = msg_send![&*config, setRect: rect];
                 let _: () = msg_send![&*config, setAfterScreenUpdates: Bool::YES];
                 let done = RcBlock::new(move |image: *mut AnyObject, _err: *mut AnyObject| {
-                    let _ = tx.try_send(png_of(image));
+                    let _ = tx.try_send(png_of(image, refuse_flat));
                 });
                 let _: () = msg_send![view, takeSnapshotWithConfiguration: &*config, completionHandler: &*done];
             }
@@ -455,7 +480,7 @@ mod imp {
     }
 
     /// NSImage → PNG bytes, refusing a slice that is one flat colour.
-    fn png_of(image: *mut AnyObject) -> Result<Vec<u8>, String> {
+    fn png_of(image: *mut AnyObject, refuse_flat: bool) -> Result<Vec<u8>, String> {
         if image.is_null() {
             return Err("failed".into());
         }
@@ -472,7 +497,7 @@ mod imp {
             let Some(rep) = Retained::from_raw(rep) else {
                 return Err("failed".into());
             };
-            if is_flat(&rep) {
+            if refuse_flat && is_flat(&rep) {
                 return Err("blank".into());
             }
             let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
@@ -636,7 +661,7 @@ fn spike_probe(port: u16, frame_port: u16) -> String {
         r#"
 var out=[];function note(k,v){{out.push(k+': '+v);var d=document.getElementById('r');if(d)d.textContent=out.join('\n');try{{parent!==window&&parent.postMessage({{k:k,v:v}},'*')}}catch(e){{}}}}
 try{{fetch('{u}/fetch-'+WHERE).then(function(){{note('fetch','REACHED')}},function(){{note('fetch','blocked')}})}}catch(e){{note('fetch','threw')}}
-try{{var t=window.__TAURI_INTERNALS__;if(!t){{note('tauri','absent')}}else{{t.invoke('owner_key').then(function(){{note('tauri','INVOKED')}},function(e){{note('tauri','refused')}})}}}}catch(e){{note('tauri','threw')}}
+try{{var t=window.__TAURI_INTERNALS__;if(!t){{note('tauri','absent')}}else{{t.invoke('focus_diag',{{line:'html_snapshot spike'}}).then(function(){{note('tauri','INVOKED')}},function(e){{note('tauri','refused')}})}}}}catch(e){{note('tauri','threw')}}
 try{{var t2=window.__TAURI_INTERNALS__;if(t2)t2.invoke('plugin:__TAURI_CHANNEL__|fetch',{{}}).then(function(){{note('channel','INVOKED')}},function(){{note('channel','refused')}});else note('channel','absent')}}catch(e){{note('channel','threw')}}
 try{{var md=navigator.mediaDevices;if(!md||!md.getUserMedia){{note('mic','absent')}}else{{md.getUserMedia({{audio:true}}).then(function(){{note('mic','GRANTED')}},function(e){{note('mic','refused')}})}}}}catch(e){{note('mic','threw')}}
 try{{var w=window.open('{u}/open-'+WHERE);note('open',w?'OPENED':'null')}}catch(e){{note('open','threw')}}
@@ -738,6 +763,16 @@ mod tests {
         assert_eq!(clamp_width(None), 720);
         assert_eq!(clamp_width(Some(10)), WIDTH_MIN);
         assert_eq!(clamp_width(Some(99999)), WIDTH_MAX);
+    }
+
+    #[test]
+    fn rendering_needs_preconnect_dns_prefetch_and_webrtc_off() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(hardening_complete(&v(&["LinkPreconnect", "LinkDNSPrefetchEnabled", "PeerConnectionEnabled"])));
+        assert!(hardening_complete(&v(&["LinkPreconnect", "_setDNSPrefetchingEnabled:", "_setPeerConnectionEnabled:"])));
+        assert!(!hardening_complete(&v(&["LinkDNSPrefetchEnabled", "PeerConnectionEnabled"])));
+        assert!(!hardening_complete(&v(&["LinkPreconnect", "PeerConnectionEnabled"])));
+        assert!(!hardening_complete(&v(&[])));
     }
 
     #[test]

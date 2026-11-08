@@ -4547,6 +4547,9 @@ const translations: Record<string, Record<string, string>> = {
     'telegram.refusal.malformed': 'This request is not valid. Start again.',
     'telegram.refusal.failed': 'The Mac could not complete it. Try again.',
     'telegram.card.chip': 'Telegram',
+    'telegram.error.status': 'Telegram status could not be read.',
+    'telegram.retry': 'Try again',
+    'telegram.pair.title': 'Press Start in Telegram',
   },
 };
 
@@ -7611,7 +7614,7 @@ const TR_PARTIAL: Record<string, string> = {
   'telegram.menu.bind': 'Telegram\'a bağla',
   'telegram.menu.bound': 'Telegram',
   'telegram.sheet.titleSuper': 'Super\'i Telegram\'a bağla',
-  'telegram.sheet.titleMember': '{name}\'ı Telegram\'a bağla',
+  'telegram.sheet.titleMember': 'Telegram\'a bağla: {name}',
   'telegram.connected.title': 'Telegram',
   'telegram.close': 'Kapat',
   'telegram.loading': 'Yükleniyor…',
@@ -7669,7 +7672,7 @@ const TR_PARTIAL: Record<string, string> = {
   'telegram.forward.none': 'Bu üye bu projede rutin çalıştırmıyor.',
   'telegram.forward.unavailable': 'Rutin listesi okunamadı.',
   'telegram.forward.always': 'Sorular ve hatalar her zaman gelir.',
-  'telegram.manager.step1': '@BotFather\'da bir bot aç (ör. "Mehmet\'in dreamcontext\'i").',
+  'telegram.manager.step1': '@BotFather\'da bir bot aç (ör. "Benim dreamcontext\'im").',
   'telegram.manager.step2': 'BotFather\'ın ayarlarında Bot Management Mode\'u aç.',
   'telegram.manager.step3': 'Anahtarını buraya yapıştır, sonra Telegram\'da Başlat\'a bas.',
   'telegram.manager.keyNote': 'Bu bot yalnız yeni bot açar, seninle konuşmaz. Bu anahtar açtığı bütün botların anahtarıdır: yalnız bu Mac\'te durur, kimseyle paylaşma.',
@@ -7682,7 +7685,7 @@ const TR_PARTIAL: Record<string, string> = {
   'telegram.manager.modeOff': 'BotFather\'da Bot Management Mode kapalı görünüyor.',
   'telegram.manager.removeNote': 'Bağlı botlar, bu anahtarı BotFather\'da iptal edene kadar çalışmaya devam eder.',
   'telegram.manager.alarm': 'Yönetici anahtarı başka yerde kullanılıyor: BotFather\'da /revoke yap, sonra yeni anahtarı gir. Yeni anahtarla bütün botların anahtarı yenilenir.',
-  'telegram.manager.no409': '409 görünmemesi anahtarın güvende olduğu anlamına gelmez.',
+  'telegram.manager.no409': 'Bu uyarının görünmemesi anahtarın güvende olduğu anlamına gelmez.',
   'telegram.manager.newKey': 'Yeni anahtarı gir',
   'telegram.error.generic': 'Olmadı. Tekrar dene.',
   'telegram.refusal.unsupported': 'Bu yalnız Mac uygulamasında çalışır.',
@@ -7694,6 +7697,9 @@ const TR_PARTIAL: Record<string, string> = {
   'telegram.refusal.malformed': 'Bu istek geçerli değil. Yeniden başlat.',
   'telegram.refusal.failed': 'Mac bunu tamamlayamadı. Tekrar dene.',
   'telegram.card.chip': 'Telegram',
+  'telegram.error.status': 'Telegram durumu okunamadı.',
+  'telegram.retry': 'Tekrar dene',
+  'telegram.pair.title': 'Telegram\'da Başlat\'a bas',
 };
 
 const PARTIALS: Record<string, Record<string, string>> = { tr: TR_PARTIAL };

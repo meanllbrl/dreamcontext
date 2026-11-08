@@ -11,7 +11,9 @@ import {
 import {
   TG_REF_SHAPE, TG_SENTINEL_CHAR, parseChatLine, parseTelegramClaim, stripSentinelChars, stripTgPrefix,
 } from '../../dashboard/src/lib/chatProtocol.js';
-import { isHubVerb, parseAnswerPending, parseSnapshotArgs, planHubAnswer, runHtmlSnapshot } from '../../dashboard/src/lib/hubCommands.js';
+import { isHubVerb, parseAnswerPending, parseSnapshotArgs, picksMatchOptions, planHubAnswer, runHtmlSnapshot } from '../../dashboard/src/lib/hubCommands.js';
+import { keepTelegramRef } from '../../dashboard/src/components/sleepy/chat/QueuedMessages.js';
+import { pendingSince } from '../../dashboard/src/components/telegram/TelegramBindSheet.js';
 import { historyChatItem, type ChatItem, type PendingItem } from '../../dashboard/src/components/sleepy/chatSession.js';
 import { ownerRefOf, replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
@@ -175,5 +177,40 @@ describe('html_snapshot passes the page to the shell and its refusals back', () 
       expect(await runHtmlSnapshot({ html: 'x' }, async () => { throw code; })).toEqual({ ok: false, error: code });
     }
     expect(await runHtmlSnapshot({ html: 'x' }, async () => { throw new Error('/Users/someone/secret path'); })).toEqual({ ok: false, error: 'failed' });
+  });
+});
+
+describe('end-review r1 fixes', () => {
+  it('a multiSelect label that itself holds ", " still matches, in option order only', () => {
+    const labels = ['Yes, ship it', 'Wait', 'No, drop it'];
+    expect(picksMatchOptions('Yes, ship it, No, drop it', labels, true)).toBe(true);
+    expect(picksMatchOptions('Yes, ship it', labels, true)).toBe(true);
+    expect(picksMatchOptions('No, drop it, Yes, ship it', labels, true)).toBe(false);
+    expect(picksMatchOptions('Yes', labels, true)).toBe(false);
+    expect(picksMatchOptions('Wait', labels, false)).toBe(true);
+    expect(picksMatchOptions('Yes, ship it, Wait', labels, false)).toBe(false);
+  });
+
+  it('a plan approval or a question shaped as a permission is never allowed once from Telegram', () => {
+    for (const toolName of ['ExitPlanMode', 'AskUserQuestion']) {
+      const pending: PendingItem[] = [{ kind: 'permission', requestId: 'r1', toolName, input: {} }];
+      expect(planHubAnswer({ kind: 'permission', requestId: 'r1', choice: 'allow_once' }, pending)).toEqual({ ok: false, error: 'refused_kind' });
+    }
+  });
+
+  it('editing a queued Telegram turn keeps its ref; a Mac turn stays plain', () => {
+    const tg = withTelegramRef('k3x9a1', 'evet');
+    expect(keepTelegramRef(tg, stripTgPrefix(tg))).toBe(tg);
+    expect(parseTelegramClaim(keepTelegramRef(tg, 'evet, ama yarın'))).toEqual({ ref: 'k3x9a1', body: 'evet, ama yarın' });
+    expect(keepTelegramRef('normal', 'normal 2')).toBe('normal 2');
+  });
+
+  it('a pending row read before this pairing began never raises its confirm', () => {
+    const row = { scope: '0123456789abcdef', target: 'super', state: 'pending' as const, botUsername: 'b', userLabel: 'deniz' };
+    expect(pendingSince(row, 1000, 2000)).toBe(false);
+    expect(pendingSince(row, 2001, 2000)).toBe(true);
+    expect(pendingSince({ ...row, userLabel: undefined }, 3000, 2000)).toBe(false);
+    expect(pendingSince({ ...row, state: 'active' }, 3000, 2000)).toBe(false);
+    expect(pendingSince(null, 3000, 2000)).toBe(false);
   });
 });

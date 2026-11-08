@@ -31,7 +31,9 @@ import './telegram.css';
 type Step =
   | { kind: 'auto' }
   | { kind: 'token' }
-  | { kind: 'pairing'; start: PairingStart; asked: boolean; cancelled: boolean }
+  /** `since`: when this pairing began. A status read older than it is about some other pairing
+   *  (the cache can still hold an earlier pending row), so it never raises this one's confirm. */
+  | { kind: 'pairing'; start: PairingStart; asked: boolean; cancelled: boolean; since: number }
   | { kind: 'creating'; link: string | null; until: number }
   | { kind: 'readopting' }
   | { kind: 'done' };
@@ -87,25 +89,28 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
     if (row?.state === 'active' && waiting) setStep({ kind: 'done' });
   }, [row?.state, waiting]);
 
-  // Step 3: once Telegram's /start arrived (the row is pending with a user), the shell raises the
-  // native confirm. Once per pairing; a cancel offers to ask again.
+  // Step 3: once Telegram's /start arrived (the row is pending with a user, read AFTER this pairing
+  // began), the shell raises the native confirm. Once per pairing; a cancel or a refusal offers to
+  // ask again.
   useEffect(() => {
-    if (step.kind !== 'pairing' || step.asked || row?.state !== 'pending' || !row.userLabel) return;
+    if (step.kind !== 'pairing' || step.asked || !pendingSince(row, status.dataUpdatedAt, step.since)) return;
     setStep({ ...step, asked: true });
     void telegramShell.confirmBinding(step.start.pairingId)
       .then((r) => {
         if (!r.ok) setStep((s) => (s.kind === 'pairing' ? { ...s, cancelled: true } : s));
         invalidate();
       })
-      .catch((e) => setError(refusalText(t, e)));
-  }, [step, row?.state, row?.userLabel, invalidate, t]);
+      .catch((e) => {
+        setError(refusalText(t, e));
+        setStep((s) => (s.kind === 'pairing' ? { ...s, cancelled: true } : s));
+      });
+  }, [step, row, status.dataUpdatedAt, invalidate, t]);
 
   // A creation that heard nothing in 10 minutes (X6).
   useEffect(() => {
     if (step.kind !== 'creating') return;
     const left = step.until - Date.now();
-    const timer = setTimeout(() => setStep({ kind: 'auto' }), Math.max(0, left));
-    if (left <= 0) setError(t('telegram.create.noNews'));
+    const timer = setTimeout(() => { setStep({ kind: 'auto' }); setError(t('telegram.create.noNews')); }, Math.max(0, left));
     return () => clearTimeout(timer);
   }, [step, t]);
 
@@ -124,7 +129,7 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
       .then((start) => {
         setToken(''); // W7: the token leaves the component's state once step 1 answers
         setBusy(false);
-        setStep({ kind: 'pairing', start, asked: false, cancelled: false });
+        setStep({ kind: 'pairing', start, asked: false, cancelled: false, since: Date.now() });
         invalidate();
       })
       .catch((e) => {
@@ -167,6 +172,9 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
     body = <p className="tg-hint" data-testid="tg-browser-only">{t('telegram.browserOnly')}</p>;
   } else if (status.isLoading) {
     body = <p className="tg-hint">{t('telegram.loading')}</p>;
+  } else if (status.isError) {
+    // A failed read is never "not set up": that would send the owner to Settings for nothing.
+    body = <StatusError onRetry={() => void status.refetch()} />;
   } else if (row?.state === 'active') {
     body = <TelegramConnected row={row} fresh={step.kind === 'done'} target={target} onRemoved={onClose} />;
   } else if (step.kind === 'token') {
@@ -192,8 +200,8 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
     body = (
       <>
         <p className="tg-step">{t('telegram.step').replace('{n}', '2')}</p>
-        <PairingView start={step.start} row={row} cancelled={step.cancelled}
-          onRestart={() => setStep({ kind: 'token' })} onAskAgain={() => setStep({ ...step, asked: false, cancelled: false })} />
+        <PairingView start={step.start} row={pendingSince(row, status.dataUpdatedAt, step.since) ? row : null} cancelled={step.cancelled}
+          onRestart={() => setStep({ kind: 'token' })} onAskAgain={() => { setError(null); setStep({ ...step, asked: false, cancelled: false }); }} />
         <p className="tg-note">{t('telegram.pair.launchd')}</p>
       </>
     );
@@ -241,7 +249,7 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
       <div ref={dialogRef} className="tg-sheet" role="dialog" aria-modal="true" aria-labelledby="tg-sheet-title" tabIndex={-1} data-testid="tg-sheet" data-target={target}>
         <header className="tg-sheet-head">
           <div className="tg-title-row">
-            <h2 id="tg-sheet-title" className="tg-title">{row?.state === 'active' ? t('telegram.connected.title') : title}</h2>
+            <h2 id="tg-sheet-title" className="tg-title">{row?.state === 'active' ? t('telegram.connected.title') : step.kind === 'pairing' ? t('telegram.pair.title') : title}</h2>
             {row?.state === 'active' && <span className="tg-chip tg-chip--good">{t('telegram.bound')}</span>}
           </div>
           <button type="button" className="tg-icon-btn" onClick={onClose} aria-label={t('telegram.close')}>✕</button>
@@ -253,6 +261,23 @@ export function TelegramBindSheet({ target, name, onClose, startWith }: {
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** A row that says Telegram's /start arrived for THIS pairing: pending, with a user, and read after
+ *  the pairing began (the status cache may still hold an earlier pairing's pending row). */
+export function pendingSince(row: TelegramStatusRow | null, readAt: number, since: number): boolean {
+  return !!row && row.state === 'pending' && !!row.userLabel && readAt > since;
+}
+
+/** The status could not be read: say so, and offer to read it again. */
+export function StatusError({ onRetry }: { onRetry: () => void }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <p className="tg-error" role="alert" data-testid="tg-status-error">{t('telegram.error.status')}</p>
+      <button type="button" className="tg-btn tg-btn--start" onClick={onRetry}>{t('telegram.retry')}</button>
+    </>
   );
 }
 

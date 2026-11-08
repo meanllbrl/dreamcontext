@@ -17,6 +17,9 @@ import { HUB_VERBS, type AnswerPending, type HubResult, type HubVerb } from '../
  * back (desktop/src-tauri/src/html_snapshot.rs); outside the app it is `unsupported`.
  */
 
+/** Tools whose "allow" is an approval or an answer, never a plain permission. */
+const APPROVAL_TOOLS = new Set(['ExitPlanMode', 'AskUserQuestion']);
+
 export function isHubVerb(verb: string): verb is HubVerb {
   return (HUB_VERBS as readonly string[]).includes(verb);
 }
@@ -72,6 +75,9 @@ export function planHubAnswer(args: unknown, pending: readonly PendingItem[]): H
   if (!entry) return { ok: false, error: 'not_pending' };
   if (a.kind === 'permission') {
     if (entry.kind !== 'permission') return { ok: false, error: 'refused_kind' };
+    // A plan approval or a question whose card did not parse falls back to a permission card on the
+    // Mac; from Telegram it is still an approval, never an "allow once".
+    if (APPROVAL_TOOLS.has(entry.toolName)) return { ok: false, error: 'refused_kind' };
     return a.choice === 'allow_once'
       // Exactly the Mac card's "Allow": the tool input echoed, no always-allow rule written.
       ? { ok: true, requestId: a.requestId, behavior: 'allow', updatedInput: entry.input }
@@ -88,9 +94,7 @@ export function planHubAnswer(args: unknown, pending: readonly PendingItem[]): H
   for (const q of entry.questions) {
     const v = a.picked[q.question];
     if (typeof v !== 'string' || !v) continue;
-    const labels = new Set(q.options.map((o) => o.label));
-    const parts = q.multiSelect ? v.split(', ') : [v];
-    if (parts.every((p) => labels.has(p))) picked[q.question] = v;
+    if (picksMatchOptions(v, q.options.map((o) => o.label), !!q.multiSelect)) picked[q.question] = v;
   }
   if (!Object.keys(picked).length) return { ok: false, error: 'no_choice' };
   const notes = a.notes ? Object.fromEntries(Object.entries(a.notes).filter(([k]) => k in picked)) : undefined;
@@ -98,6 +102,21 @@ export function planHubAnswer(args: unknown, pending: readonly PendingItem[]): H
     ok: true, requestId: a.requestId, behavior: 'allow',
     updatedInput: buildQuestionAnswer(entry.questions, picked, { input: entry.input, ...(notes && Object.keys(notes).length ? { notes } : {}) }),
   };
+}
+
+/**
+ * Does `value` name only this question's options? A single choice is one label; a multiSelect is
+ * labels in OPTION order joined with ", " (`buildQuestionPicks`), so it is walked label by label in
+ * that order: a label that itself contains ", " ("Yes, ship it") still matches.
+ */
+export function picksMatchOptions(value: string, labels: readonly string[], multiSelect: boolean): boolean {
+  if (!multiSelect) return labels.includes(value);
+  let rest = value;
+  for (const label of labels) {
+    if (rest === label) return true;
+    if (rest.startsWith(`${label}, `)) rest = rest.slice(label.length + 2);
+  }
+  return false;
 }
 
 /** `html_snapshot` args: the server's page and an optional width. */

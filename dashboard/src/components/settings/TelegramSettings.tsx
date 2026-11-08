@@ -4,7 +4,7 @@ import { useApi } from '../../context/VaultContext';
 import { isDesktop } from '../../lib/desktop';
 import { DELETE_ARM_MS } from '../../lib/agentDraft';
 import { MaskedSecretInput } from '../core/MaskedSecretInput';
-import { PairingView, TelegramBindSheet } from '../telegram/TelegramBindSheet';
+import { PairingView, StatusError, TelegramBindSheet, pendingSince } from '../telegram/TelegramBindSheet';
 import {
   TelegramShellError, atName, telegramRoutes, telegramShell, useInvalidateTelegram, useTelegramManager,
   type PairingStart,
@@ -24,7 +24,7 @@ import '../telegram/telegram.css';
  * replaces it with the warning and "Yeni anahtarı gir". In a browser tab: one line, setup is in
  * the Mac app only.
  */
-type Flow = { kind: 'idle' } | { kind: 'token' } | { kind: 'pairing'; start: PairingStart; asked: boolean; cancelled: boolean };
+type Flow = { kind: 'idle' } | { kind: 'token' } | { kind: 'pairing'; start: PairingStart; asked: boolean; cancelled: boolean; since: number };
 
 export function TelegramSettings() {
   const { t } = useI18n();
@@ -50,15 +50,18 @@ export function TelegramSettings() {
 
   // The manager's pairing: once its /start arrived, the shell raises the native confirm.
   useEffect(() => {
-    if (flow.kind !== 'pairing' || flow.asked || manager?.state !== 'pending' || !manager.userLabel) return;
+    if (flow.kind !== 'pairing' || flow.asked || !pendingSince(manager, status.dataUpdatedAt, flow.since)) return;
     setFlow({ ...flow, asked: true });
     void telegramShell.confirmBinding(flow.start.pairingId)
       .then((r) => {
         if (!r.ok) setFlow((f) => (f.kind === 'pairing' ? { ...f, cancelled: true } : f));
         invalidate();
       })
-      .catch((e) => setError(e instanceof TelegramShellError ? t(`telegram.refusal.${e.reason}`) : t('telegram.error.generic')));
-  }, [flow, manager?.state, manager?.userLabel, invalidate, t]);
+      .catch((e) => {
+        setError(e instanceof TelegramShellError ? t(`telegram.refusal.${e.reason}`) : t('telegram.error.generic'));
+        setFlow((f) => (f.kind === 'pairing' ? { ...f, cancelled: true } : f));
+      });
+  }, [flow, manager, status.dataUpdatedAt, invalidate, t]);
 
   useEffect(() => {
     if (flow.kind === 'pairing' && manager?.state === 'active' && !alarm) setFlow({ kind: 'idle' });
@@ -68,6 +71,8 @@ export function TelegramSettings() {
     return <div className="tg-settings"><p className="tg-hint" data-testid="tg-settings-browser">{t('telegram.browserOnly')}</p></div>;
   }
   if (status.isLoading) return <div className="tg-settings"><p className="tg-hint">{t('telegram.loading')}</p></div>;
+  // A failed read is never "not set up": that would ask for the manager key again for nothing.
+  if (status.isError && flow.kind === 'idle') return <div className="tg-settings"><StatusError onRetry={() => void status.refetch()} /></div>;
 
   const submit = () => {
     const value = token.trim();
@@ -75,7 +80,7 @@ export function TelegramSettings() {
     setBusy(true);
     setError(null);
     routes.managerBind(value)
-      .then((start) => { setToken(''); setBusy(false); setFlow({ kind: 'pairing', start, asked: false, cancelled: false }); invalidate(); })
+      .then((start) => { setToken(''); setBusy(false); setFlow({ kind: 'pairing', start, asked: false, cancelled: false, since: Date.now() }); invalidate(); })
       .catch((e) => {
         setBusy(false);
         setError(e instanceof RequestError && e.status === 400 ? t('telegram.token.bad') : t('telegram.error.generic'));
@@ -102,8 +107,8 @@ export function TelegramSettings() {
   let body;
   if (flow.kind === 'pairing') {
     body = (
-      <PairingView start={flow.start} row={manager} cancelled={flow.cancelled}
-        onRestart={() => setFlow({ kind: 'token' })} onAskAgain={() => setFlow({ ...flow, asked: false, cancelled: false })} />
+      <PairingView start={flow.start} row={pendingSince(manager, status.dataUpdatedAt, flow.since) ? manager : null} cancelled={flow.cancelled}
+        onRestart={() => setFlow({ kind: 'token' })} onAskAgain={() => { setError(null); setFlow({ ...flow, asked: false, cancelled: false }); }} />
     );
   } else if (alarm && flow.kind !== 'token') {
     body = (

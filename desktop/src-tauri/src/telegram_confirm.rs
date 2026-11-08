@@ -17,7 +17,7 @@
 // is alive, so a server someone else put on the port never receives it.
 //
 // Caller contract, every command: the calling webview is an app page (`main` or `vault-*`, served
-// by the app's own server, `owner_key::is_app_page`); the id is 22 base64url characters; one call
+// by the app's own server, `owner_key::is_own_server_page`, 127.0.0.1 only); the id is 22 base64url characters; one call
 // in flight across all four (a second while one is open is refused); every URL is built from fixed
 // segments plus the checked id. macOS only: elsewhere binding is unavailable, never an in-page
 // dialog (lib.rs `confirm_dialog` off macOS).
@@ -74,7 +74,7 @@ pub(crate) fn caller_label_ok(label: &str) -> bool {
 
 /// The whole caller contract as one pure check, so the tests cover exactly what runs.
 pub(crate) fn precheck(label: &str, url: &Url, port: u16, id: &str) -> Result<(), String> {
-    if !caller_label_ok(label) || !crate::owner_key::is_app_page(url, port) {
+    if !caller_label_ok(label) || !crate::owner_key::is_own_server_page(url, port) {
         return Err("only the app's own project window can ask for this".into());
     }
     if !valid_id(id) {
@@ -444,6 +444,8 @@ mod tests {
     fn only_a_project_window_on_the_apps_own_page_may_ask() {
         let app = url("http://127.0.0.1:4173/");
         assert!(precheck("main", &app, 4173, ID).is_ok());
+        // `localhost` can resolve to [::1], which our server does not hold.
+        assert!(precheck("main", &url("http://localhost:4173/"), 4173, ID).is_err());
         assert!(precheck("vault-dreamcontext", &app, 4173, ID).is_ok());
         for label in ["assistant", "viewer-1", "checklist-x", "html-snapshot", "splash", "vault-", "inbox", "mainx"] {
             assert!(precheck(label, &app, 4173, ID).is_err(), "{label} must be refused");
