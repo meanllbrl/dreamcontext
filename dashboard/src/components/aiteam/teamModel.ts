@@ -788,16 +788,6 @@ export function ekipFaces(members: readonly EkipMember[], max = 3): EkipMember[]
   return [...members.filter(working), ...members.filter((m) => !working(m))].slice(0, max);
 }
 
-/**
- * Who pops out under the folded Team row (plan r4 D4): a member with an approval card, a question
- * or unread for the owner (enabled, not "Super için"), in the list's order, at most `max`; `more`
- * = the rest, drawn as "+N daha". Working alone does not pop out: the row's ring says it.
- */
-export function ekipPopOuts(members: readonly EkipMember[], max = 3): { shown: EkipMember[]; more: number } {
-  const news = members.filter((m) => m.approval || (m.enabled && !m.superOnly && (m.asking || m.unread > 0)));
-  return { shown: news.slice(0, max), more: Math.max(0, news.length - max) };
-}
-
 /** How many members work for the owner right now (the folded row's ring). */
 export function ekipWorkingCount(members: readonly EkipMember[]): number {
   return members.filter((m) => m.enabled && !m.superOnly && m.ownerWorking > 0).length;

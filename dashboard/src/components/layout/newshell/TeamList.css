@@ -278,14 +278,12 @@
 .ns-team-sec-row[data-asking="true"] .ns-team-label { color: var(--color-error); }
 .ns-team-mlist { margin: 0; padding: 0; list-style: none; }
 /* The members one level under the Team row: the drawer's nesting (a nested chat's indent and its
-   tree line), hung from the Team row's chevron. One box for the pop-outs, one for the open list
-   (search, rows, Manage members), so the line runs unbroken and never scrolls with the box. */
-.ns-team-sec > .ns-team-mlist,
+   tree line), hung from the Team row's chevron. One box for the open list (search, rows, Manage
+   members), so the line runs unbroken and never scrolls with the box. Folded, nothing hangs here. */
 .ns-team-open-list {
   position: relative;
   margin-left: var(--ns-team-in);
 }
-.ns-team-sec > .ns-team-mlist::before,
 .ns-team-open-list::before {
   content: '';
   position: absolute;
@@ -316,13 +314,10 @@
 }
 .ns-team-mrow:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .ns-team-mrow:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
-.ns-team-mrow.is-pop { background: var(--color-bg-tertiary); }
-.ns-team-mrow.is-pop[data-asking="true"] { background: color-mix(in srgb, var(--mood-waiting) 14%, transparent); }
 .ns-team-mrow.is-sel { position: relative; background: var(--color-accent-soft); color: var(--color-text); font-weight: var(--font-weight-medium); }
 .ns-team-mrow.is-sel::before { content: ''; position: absolute; left: -0.5px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--color-accent); }
 .ns-team-mrow[data-off="true"] { color: var(--color-text-secondary); opacity: 0.6; }
 .ns-team-mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ns-team-more,
 .ns-team-sec-manage {
   display: block;
   width: 100%;
@@ -336,7 +331,7 @@
   text-align: left;
   cursor: pointer;
 }
-.ns-team-more:hover, .ns-team-sec-manage:hover { text-decoration: underline; }
+.ns-team-sec-manage:hover { text-decoration: underline; }
 .ns-team-search {
   display: block;
   width: calc(100% - var(--space-4));
