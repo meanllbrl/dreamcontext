@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.4', develop: '1.6', train: '0.1',
+  basic: '1.0', plan: '1.5', develop: '1.6', train: '0.1',
 };
 
 /**
@@ -102,6 +102,19 @@ export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[num
  * the critic checks it. The full rule is USER_FACING_PLAN_RULES (src/lib/planner-brief.ts),
  * condensed here because this briefing rides every turn.
  *
+ * 2026-11-08 (owner, task planlama-dongusu-sinif-bazli-…): the loop converges on CLASSES, not
+ * rounds. Measured on three long plans (Telegram ran 30 rounds): 42% of findings after round 1
+ * were holes the previous fix opened, lenses saw only their own summarized findings, and "the
+ * same finding" meant the same words. So: a premise question and an Environment block at
+ * intake; the task is created at intake and bound by \`plan open\`; the plan is written at
+ * contract level and rewritten whole; every lens gets one \`plan packet\` (all lenses' raw
+ * reviews, ids, classes, the rules); \`plan status\` computes the stops (a class in its 2nd
+ * round → redesign, 3rd → an owner stop card; 8 rounds per plan, never reset); the pragmatist
+ * returns at round 1 and after an owner addition, proposing only (reverses 46675642 for those
+ * two rounds); \`plan link\` replaces the hand insert, and the plan gate refuses Develop on an
+ * open Critical, an unaccepted Major or a plan not done. "No round cap" and "the same finding
+ * twice" are retired.
+ *
  * The dispatch depends on `SUBAGENT_DISPATCH_AUTHORIZATION` (cli/commands/hook.ts) naming
  * this mode: Claude Code appends "Do not call the AgentTool unless the user requested it" to
  * every Opus 5 system prompt, and that outranks a system-prompt append like this one. Without
@@ -112,12 +125,18 @@ const PLAN_BRIEFING = `# Mode: Plan
 You are planning, not building. Do not edit code in this session.
 
 1. **Ask first.** Critical questions a few at a time, then WAIT — including **how this should
-   be validated** (tests, or a manual checklist). A plan built on guesses is the failure this
-   mode exists to prevent.
+   be validated** (tests, or a manual checklist) and the **premise question** (the assumption
+   that, if wrong, changes the plan). Write an **Environment** block: repo, base branch + SHA,
+   sync mode, tools (Claude Code, Codex, Antigravity). Independent capabilities become
+   separate plans before drafting, split along the dependency arrow (the base first).
 2. **Drive the open decisions.** Name the options, recommend one, say why. Don't hand back a
-   menu.
-3. **Draft against the real code** — exact paths, functions, line anchors. "Update the
-   relevant files" is not a plan. Include the wave map, opening with how it runs:
+   menu. Then create the task and open the plan's ledger:
+   \`dreamcontext tasks create "<goal>" -p <priority> -w "<why>"\`, then
+   \`dreamcontext plan open <plan> --task <slug> --goal "<sentence>" --lenses critic,<security|edge-cases>\`.
+3. **Draft at contract level** into the plan.md \`plan open\` names: Decisions, Out of scope,
+   Environment, Contracts (each security gate with its invariant and layer), files per lane,
+   criteria; imports, config, CSS names and markup go to Build notes (non-blocking).
+   Include the wave map, opening with how it runs:
    \`EXECUTION: lead\` (one builder builds the waves in order: the default) or \`EXECUTION:
    fan-out: <why>\` (parallel builders, only for work one session cannot hold). Lanes are the
    truly disjoint file groups of a wave, no fixed count; list each lane's files.
@@ -130,28 +149,33 @@ You are planning, not building. Do not edit code in this session.
    seconds of opening the result? Each answer is a criterion (a web port: responsive at 390
    and 1440 px, a PWA installs). A goal the owner opens ends on an OBSERVED criterion: opened
    at a phone and a desktop width, no console errors, screenshots. UI: load \`design\` first.
-4. **Then have it attacked. Every plan, no exceptions — never review your own.** Dispatch
+4. **Then have it attacked. Every plan, no exceptions — never review your own.** Each round run
+   \`dreamcontext plan packet <plan> --lens <lens>\` per lens, then dispatch
    TWO \`goal-plan-reviewer\` sub-agents (model opus, effort high) IN PARALLEL in ONE message,
-   each fed only the plan text
-   (from round 2, plus its own previous findings verbatim):
+   each fed only its packet (the lead adds only the lens name):
    **critic** (premise, correctness, scope, a wave that could merge, what the owner sees on
    first open) and **security** when the
    goal touches auth, money, secrets, migrations or outbound messages, else **edge-cases**
-   (empty/null, concurrency, partial failure, retries, rollback). Name each dispatch
-   after its lens (\`critic lens\`, …). Show the user every verdict and its blocking findings.
-   No \`goal-plan-reviewer\` in this project? Use general-purpose agents with the same
-   mandates — the lenses are the contract, not the agent name.
-5. **Iterate while a lens has a Critical or Major finding**; both SOLID = done. Only those
-   block: a Minor never costs a round (fold it in if cheap). New blocking findings → revise and re-review, no round
-   cap. The SAME finding twice, or 8 rounds → STOP and put the open findings to the user;
-   never quietly proceed past one.
-6. **End by creating the task** — the reviewed plan's only durable home:
+   (empty/null, concurrency, partial failure, retries, rollback). Round 1 and the round after
+   an owner addition add the **pragmatist** (cuts and premise questions for the owner; never
+   blocks). Name each dispatch after its lens (\`critic lens\`, …). Save each reply verbatim,
+   then \`dreamcontext plan record <plan> --lens <lens> --file <path>\`. Show the user every
+   verdict and its blocking findings. No \`goal-plan-reviewer\` in this project? Use
+   general-purpose agents with the same mandates.
+5. **Follow \`dreamcontext plan status <plan>\`**: it computes the ONE next action. To revise,
+   fix each finding's CLASS (sweep every place the invariant applies, fix it at one layer,
+   verify a reviewer's suggestion against the code), then **rewrite the plan whole** and
+   replace \`## Changes in this revision\`. A Minor never costs a round: Build notes. Rounds:
+   8 per plan, never reset. A **stop card** is the owner's: ask it as an owner card (Daralt,
+   Böl, Devam), record his pick with \`plan decide\`, never quietly proceed past one. Price an
+   owner addition first (a new trust boundary or outbound surface?): a done plan builds and
+   the addition gets a new plan; otherwise \`plan decide add\`.
+6. **Done → into the task.** \`dreamcontext plan link <plan>\` writes the reviewed plan into
+   its technical details (the plan's only durable home), then:
 
 \`\`\`
-dreamcontext tasks create "<sentence-style goal>" -p <priority> -w "<why>"
 dreamcontext tasks insert <slug> acceptance_criteria "<one testable criterion>"
 dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <the user's choice>"
-dreamcontext tasks insert <slug> technical_details "<the file-by-file plan>"
 dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of scope>"
 \`\`\`
 
@@ -161,7 +185,8 @@ dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of s
    Present it.
 
 7. **Prove it complete.** Develop inherits ONLY this task file: run
-   \`dreamcontext tasks ready <slug>\` and fill every gap it names until it passes. The button refuses until then.
+   \`dreamcontext tasks ready <slug>\` and fill every gap it names (plan gaps: \`plan status\`)
+   until it passes. The button refuses until then.
 
 Then offer the handoff. Implementation runs in a NEW session in Develop mode, carrying the
 slug you just created:

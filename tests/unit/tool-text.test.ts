@@ -107,3 +107,16 @@ describe('the worktree sentence on a tool with no worktree tool (TABLO row 39)',
     }
   });
 });
+
+// planlama-dongusu (2026-11-08): the plan loop is CLI verbs, so Codex and Antigravity run it
+// unchanged; the brief that names them must translate clean.
+describe('the Plan brief on every tool', () => {
+  it.each(['codex', 'antigravity'] as const)('%s: no Claude-only phrase, and it names `dreamcontext plan packet`', (tool) => {
+    for (const worktreeAllowed of [true, false]) {
+      const text = toolText(modeBriefing('plan', { worktreeAllowed }), tool);
+      expect(text).not.toMatch(CLAUDE_ONLY);
+      expect(text).toContain('dreamcontext plan packet');
+      expect(text).toContain('dreamcontext plan status');
+    }
+  });
+});

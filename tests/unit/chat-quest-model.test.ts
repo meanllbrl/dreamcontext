@@ -534,6 +534,22 @@ describe('deriveChatQuest: Plan', () => {
     expect(quest([user('u'), errored])?.stages[3].state).toBe('todo');
     expect(quest([user('u')], [], { slug: 'quest-demo', state: 'ok', done: 0, total: 4 })?.stages[3].state).toBe('active');
   });
+
+  // 2026-11-08 (planlama-dongusu): a chat that ran `plan open` created its task at intake, so
+  // the Task stage waits for `plan link`, the step that writes the reviewed plan into it.
+  it('in a chat that ran `plan open`, only `plan link` lights Task; `tasks create` and the progress path do not', () => {
+    const created = bash('tc', 'dreamcontext tasks create "Quest demo" -w "demo"', 'done', '✓ Task created: quest-demo.md');
+    const opened = bash('po', 'dreamcontext plan open quest-demo --task quest-demo --goal "g" --lenses critic,edge-cases', 'done', 'Plan quest-demo opened for task quest-demo');
+    const inserted = bash('ti', 'dreamcontext tasks insert quest-demo acceptance_criteria "x" && dreamcontext tasks ready quest-demo', 'done', '✓ Inserted');
+    const progress = { slug: 'quest-demo', state: 'ok' as const, done: 0, total: 4 };
+    expect(quest([user('u'), created, opened, inserted], [], progress)?.stages[3].state).toBe('todo');
+    const linked = bash('pl', 'dreamcontext plan link quest-demo', 'done', 'Linked quest-demo into quest-demo');
+    expect(quest([user('u'), created, opened, inserted, linked], [], progress)?.stages[3].state).toBe('active');
+    const failedLink = bash('pl2', 'dreamcontext plan link quest-demo', 'done', '✗ Not linked: the plan gate refuses quest-demo');
+    expect(quest([user('u'), created, opened, failedLink])?.stages[3].state).toBe('todo');
+    // Without `plan open`, today's rule: `tasks create` lights it.
+    expect(quest([user('u'), created])?.stages[3].state).toBe('active');
+  });
 });
 
 describe('deriveChatQuest: Develop', () => {

@@ -563,16 +563,21 @@ export function deriveChatQuest(i: {
   if (mode === 'plan') {
     mark('ask', startedAt);
     if (users.length >= 2) mark('draft', entryTime(users[1]));
+    // A chat that opened a plan ledger (`plan open`) creates its task at intake, so neither
+    // `tasks create` nor a slug read off `tasks insert|ready` means the plan reached the task:
+    // `plan link` does (2026-11-08). The stage still reads rounds off the stream, not the ledger.
+    const ledgerChat = entries.some((e) => parseDreamActions(succeededCommand(e) ?? undefined).some((a) => a.path === 'plan open'));
+    const taskStep = ledgerChat ? 'plan link' : 'tasks create';
     for (const [index, e] of entries.entries()) {
       if (e.kind === 'tool' && e.name === 'AskUserQuestion' && e.status === 'done') mark('draft', entryTime(e));
       const command = succeededCommand(e);
-      if (command && parseDreamActions(command).some((a) => a.path === 'tasks create')) mark('task', entryTime(e));
+      if (command && parseDreamActions(command).some((a) => a.path === taskStep)) mark('task', entryTime(e));
       if (e.kind === 'text' && e.done && e.text) {
         const develop = parseChatActions(e.text).actions.find((a) => a.action === 'develop');
         if (develop) won = { kind: 'sealed', slug: develop.id ?? progress?.slug ?? null, at: entryTime(e), index };
       }
     }
-    if (progress) mark('task', null);
+    if (progress && !ledgerChat) mark('task', null);
   } else {
     mark('build', startedAt, parties.filter((p) => p.stage === 'build').length || 1);
     const status = lastStatusCall(entries);

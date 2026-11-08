@@ -39,6 +39,28 @@ evidence that the goal was reached.
 **A goal with UI loads the \`design\` skill** (responsive layout, touch targets,
 accessibility; its design-web or design-mobile part) before planning.`;
 
+/**
+ * How a plan is written and revised so the review loop converges on classes (2026-11-08, task
+ * planlama-dongusu-sinif-bazli-…: 42% of findings after round 1 were holes the previous fix
+ * opened, and an 84 KB plan of 11 appended layers). Mirrored verbatim into goal-planner.md.
+ */
+export const PLAN_SHAPE_RULES = `## How the plan is shaped and revised (the review loop reads it)
+
+- **Premise first.** Name the one assumption that, if wrong, changes the plan, and its answer.
+- **Contract level.** The plan carries \`## Decisions\` (the owner's, dated), \`## Out of scope\`,
+  \`## Environment\` (repo, base branch + SHA, sync mode, tools: Claude Code, Codex,
+  Antigravity), \`## Contracts\` (between parts; each security gate with its invariant and its
+  layer), \`## Wave map\` (files per lane), the criteria, and \`## Build notes\`. Imports, build
+  config, CSS names and exact markup go to Build notes: non-blocking, a compiler catches them.
+- **Split independent capabilities** into separate plans before drafting, along the
+  dependency arrow only (the base first).
+- **Revise by class, not by finding.** Take each finding's class (the invariant), sweep every
+  place it applies, and fix it at the one layer that covers them all. A reviewer's Suggestion
+  is a hypothesis: verify it against the code before adopting it. Read every file the
+  revision newly cites.
+- **Rewrite the plan whole** each round: no amendment layers, superseded text deleted, and
+  \`## Changes in this revision\` replaced with what changed and why. Minors go to Build notes.`;
+
 /** goal-skill's planner brief. The orchestrator fills the <placeholders> and writes it to a file. */
 export const PLANNER_BRIEF = `# Planner brief (goal-skill planner)
 
@@ -70,6 +92,8 @@ Produce a plan an enthusiastic mid-level engineer could execute without guessing
 is rejected.
 
 ${USER_FACING_PLAN_RULES}
+
+${PLAN_SHAPE_RULES}
 
 ${CODE_STANDARD}
 

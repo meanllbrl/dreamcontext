@@ -133,8 +133,9 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    A resume without the write flags stalls at its first Write or Bash (rule 3). Then rule 6
    on its output.
 
-4. **Re-fork on repeated failure** (same finding twice): fork fresh from the planner
-   again rather than continuing to resume a session that is arguing with itself.
+4. **Re-fork on repeated failure** (Phase 5: the same finding after a resume; Phase 2: the
+   ledger's stop on a recurring class, below): fork fresh from the planner again rather than
+   continuing to resume a session that is arguing with itself.
 
 5. **Verify on disk before trusting any builder report.** After every implementer
    run/resume returns, check `git status --porcelain` on its owned files BEFORE gating,
@@ -245,12 +246,10 @@ flowchart TD
     P0[Phase 0 — one batched ask to the user] --> PT[Tier router: S / M / L, hot-path override]
     PT --> P1[Phase 1 — goal-planner: spawn once, plan + dep map, opus at effort high]
     P1 --> P2{Phase 2 — plan-reviewers, clean, parallel: all SOLID?}
-    P2 -->|new blocking findings| R1[RESUME planner with the delta]
+    P2 -->|plan status: revise or redesign| R1[RESUME planner with plan status: whole rewrite by class]
     R1 --> P1
-    P2 -->|same findings repeat| RF1[one fresh RE-FORK of the planner]
-    RF1 --> P1
-    P2 -->|still stuck after re-fork, or valve at 8 rounds| ESC1[ESCALATE to user — do NOT proceed]
-    P2 -->|all SOLID| P3[Phase 3 — persist plan + dep map + session registry as a dreamcontext task]
+    P2 -->|plan status: stop class, budget 8 per plan, or churn| ESC1[STOP CARD to the owner: Daralt / Böl / Devam — do NOT proceed]
+    P2 -->|plan status: done| P3[Phase 3 — plan link + criteria + session registry into the task]
     P3 --> P4[Phase 4 — implementers FORK from the planner: ONE for EXECUTION lead, one per lane for fan-out]
     P4 --> GATE{wave gate, orchestrator once: type-checks + the wave's tests}
     GATE -->|FAIL| R2[RESUME the owning implementer]
@@ -313,8 +312,10 @@ shipped a PWA that was not responsive and opened with errors: the plan writes do
 owner will notice in the first 30 seconds of opening the result, and a goal the owner opens
 ends on an OBSERVED criterion (opened at a phone and a desktop width, screenshots).
 
-It returns a **file-by-file plan**; it does NOT write code or the task doc. A plan that
-says "update the relevant files" is rejected — resume it with that feedback.
+It writes a **file-by-file plan** at contract level to the `plan.md` that `plan open` named
+(Phase 2 opens the ledger first; give the planner that path in its brief); it does NOT write
+code or the task doc. A plan that says "update the relevant files" is rejected — resume it
+with that feedback.
 
 For **M** and **L** tiers, the plan must also include a **dependency-map table** with
 exactly these columns:
@@ -346,58 +347,94 @@ Safety rules the planner must apply when building the map:
   `T2 + build:cli`. That mark is the only thing that pulls a heavy step forward into a
   wave gate.
 
-### Phase 2 — PLAN REVIEW (judges, clean, parallel)
+### Phase 2 — PLAN REVIEW (judges, clean, parallel, through the plan ledger)
 
-Dispatch `goal-plan-reviewer` Agent-tool subagents in parallel, in a single message,
-lens count per tier (S: skip this phase entirely; M: 1 lens; L: 2 lenses):
+The loop converges on **classes, not rounds** (owner, 2026-11-08: the Telegram plan ran 30
+rounds; 42% of its findings after round 1 were holes the previous fix opened, each lens saw
+only its own summarized findings, and "the same finding" meant the same words). The ledger
+records what happened and `dreamcontext plan status` computes the rest, on every tool alike.
+
+**Open it before Phase 1 writes a word.** The task exists from intake (`tasks create` moves
+here from Phase 3), so the plan names it from round 1:
+
+```bash
+dreamcontext tasks create "<sentence-style goal name>" -p high -w "<why>"
+dreamcontext plan open <plan> --task <slug> --goal "<one sentence>" --lenses critic,<security|edge-cases>
+```
+
+The planner writes the plan (at contract level, PLAN_SHAPE_RULES in its brief) to the
+`plan.md` that `plan open` names. Lenses, one fixed pair every round (M and L tiers; S skips
+this phase):
 - **critic** — correctness/assumptions and scope, and (when a dep map exists) whether the
   map itself is safe: contracts pinned, no same-file tasks in the same wave, waves acyclic,
   a wave that could merge, an `EXECUTION:` line that fits the work. And what the owner will
   notice on first opening the result: is each of those a criterion, and does a goal the
-  owner opens end on an observed one? Every reviewed tier.
-- **security** — L tier on a hot path (auth, crypto, secrets, money, migrations, outbound
+  owner opens end on an observed one?
+- **security** — on a hot path (auth, crypto, secrets, money, migrations, outbound
   messages).
-- **edge-cases** — L tier otherwise: empty/null, concurrency, partial failure, retries,
-  rollback.
+- **edge-cases** — otherwise: empty/null, concurrency, partial failure, retries, rollback.
+- **pragmatist** — joins round 1 and the round after an owner addition only: proposes cuts,
+  deferrals and premise questions for the owner, never blocks. (This reverses commit
+  46675642's "no pragmatist in Phase 2" for those two rounds only.)
 
-Each reviewer is fed **only the plan text from the task doc**, and from round 2 its own
-previous findings word for word, so it can drop what the revision answers and repeat what
-is still open — never the planner's session. Each returns `SOLID | NEEDS_WORK` + blocking findings. **Only a Critical or Major
-finding blocks** (the reviewer's severity ladder): a Minor never costs a round, the planner
-folds it in on the next real revision if it is cheap.
+**Each round:**
+1. `dreamcontext plan packet <plan> --lens <lens>` for each lens: it opens the round (only
+   when no stop stands and plan.md changed) and writes the packet, the ONE thing a lens
+   reads: the plan snapshot, its Decisions / Out of scope / Environment / Changes, the
+   previous round's raw reviews of ALL lenses verbatim, the open finding ids, accepted ids,
+   known classes and the review rules. Never hand-write a review prompt and never seed it
+   with hypotheses: the lead adds only the lens name.
+2. Dispatch the `goal-plan-reviewer` Agent-tool subagents in parallel, in a single message,
+   each fed only its packet. Each returns `SOLID | NEEDS_WORK` and the FULL current list of
+   blocking findings (`id`, `class`, `kind`), closing its own ids it no longer holds.
+3. Save each reply verbatim and `dreamcontext plan record <plan> --lens <lens> --file <path>`.
+   A malformed reply is `UNPARSED`, a dead one `--abandon`: re-dispatch it into the same
+   round (`plan packet` again); it is never counted.
+4. `dreamcontext plan status <plan>` prints the ONE next action and its round (pass that number
+   to `goal-live --round N`).
 
-**Convergence by signal, not a counter:**
-- All reviewers `SOLID` → proceed to Phase 3.
-- **New** blocking (Critical/Major) findings → `--resume` the same planner session with
-  the delta. No fixed round cap: a serious finding is never left open because rounds ran out.
-- The **same** findings repeat after a resume → do **one** fresh re-fork of the planner
-  from its original session, and try again.
-- Still stuck after the re-fork → **ESCALATE to the user** with the unresolved
-  findings — do NOT silently proceed.
-- **Safety valve: 8 rounds total.** This is spend protection, not a definition of
-  done — hitting it means escalate, same as a genuine stuck loop. It does not mean
-  "good enough, proceed."
+**Severity is calibrated.** Only a Critical or Major blocks, and a Major only when the fix
+changes a contract, a gate, a criterion, the wave map or the approach: a local fix is a build
+note, a Minor never costs a round.
+
+**Convergence is computed by the ledger and enforced by `packet`:**
+- `revise` → `--resume` the same planner with `plan status`'s output: fix each finding's
+  CLASS everywhere it applies, verify a reviewer's suggestion against the code, rewrite the
+  plan whole and replace `## Changes in this revision`.
+- `redesign <class>` (a class in its 2nd counted round) → the planner moves the fix to the
+  layer covering the whole class; the next round opens only when Changes carries
+  `redesign: <class> | <the new layer>`.
+- `stop class` (3rd counted round), `stop budget` (**8 rounds per plan, never reset** by an
+  owner addition, a new session or a split) or `stop churn` (after Devam: 3 rounds not falling,
+  a new class each) → **ESCALATE**: ask `plan status`'s stop card as an owner card, recommendation
+  first (**Daralt** cut the feature carrying the class; **Böl** cut that part into a follow-up
+  task, its findings become criteria, this plan is rewritten and reviewed once more; **Devam**
+  unlimited rounds, a recurring class still stops). Record his pick with `plan decide`; never
+  proceed past a stop, and an open Critical is never dropped.
+- `done` (both lenses SOLID, nothing open) → Phase 3.
+- An owner addition is priced first (a new trust boundary or outbound surface): a done plan
+  goes to build and the addition gets a new plan; otherwise `plan decide add` (whole rewrite,
+  the pragmatist next round, rounds keep counting).
 
 ### Phase 3 — TASK DOC + SESSION REGISTRY (the validated plan becomes the source of truth)
 
-Once the plan is `SOLID`, persist it as a dreamcontext task — the existing task system
-is the single source of truth from here on (no parallel doc), and **you are its single
-writer**:
+Once `plan status` says `done`, the reviewed plan goes into the task Phase 2 opened — the
+existing task system is the single source of truth from here on (no parallel doc), and **you
+are its single writer**. `plan link` writes the final round's snapshot (Contracts, Wave map,
+Build notes, plan path) into `technical_details` behind the plan gate (an open Critical, an
+unaccepted open Major or a plan not done refuses it, and refuses `tasks ready` and the Develop
+button too); never hand-insert the plan:
 
 ```bash
-# Name = a short plain sentence describing the goal (never a slug — the file
-# slug derives from it). -w is mandatory; new tasks scaffold lean (Why +
-# Changelog only) and each insert below creates its section on first use.
-dreamcontext tasks create "<sentence-style goal name>" -p high -w "<why>"
+dreamcontext plan link <plan>
 dreamcontext tasks insert <slug> acceptance_criteria "<criterion>"   # one per criterion
 dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <user choice>"
-dreamcontext tasks insert <slug> technical_details "<file-by-file plan + dependency-map table>"
 dreamcontext tasks insert <slug> technical_details "<the Session registry block, pinned format above>"
 dreamcontext tasks insert <slug> constraints "<decisions, out-of-scope>"
 dreamcontext tasks status <slug> in_progress "plan validated; implementing"
 ```
 
-If `<slug>` already exists, de-collide (append a short suffix) rather than clobbering.
+When Phase 2 created the task, `<slug>` already exists: never create a second one.
 
 Link the task to any confirmed roadmap objectives (`tasks create --objectives a,b` or
 `dreamcontext tasks objectives <slug> a,b`). Never leave an obviously-serving task
@@ -765,14 +802,17 @@ Standalone viewer and demo:
 
 ## Convergence rules (how the loops end)
 
-- **Loops converge on a signal, never a fixed round count.** All judges SOLID/PASS →
-  proceed. Only a Critical or Major finding is blocking; a Minor never costs a round. New
-  blocking findings → resume the builder with the delta. The same findings
-  repeating after a resume → one fresh re-fork, then retry. Still stuck after the
-  re-fork → escalate.
-- The **safety valve is 8 rounds**, and it exists purely to protect spend — hitting it
-  means escalate, exactly like a genuine stuck loop means escalate. It is never license
-  to declare "good enough" and proceed.
+- **The plan loop (Phase 2) converges on classes, computed by the ledger.** `plan status`
+  decides: revise, redesign (a class in its 2nd counted round), or stop (a class in its 3rd,
+  the budget of **8 rounds per plan, never reset**, or churn after Devam) with an owner stop
+  card; `plan packet` refuses the next round while a stop stands. Only a Critical or Major
+  finding is blocking; a Minor never costs a round. Repeats are tracked by id and class,
+  never by wording.
+- **The code-review loop (Phase 5)** keeps its signal: all judges PASS → proceed. New
+  blocking findings → resume the builder with the delta. The same findings repeating after
+  a resume → one fresh re-fork, then retry. Still stuck after the re-fork → escalate. Its
+  **safety valve is 8 rounds**, purely to protect spend — hitting it means escalate, never
+  license to declare "good enough" and proceed.
 - Before each loop-back, update the TodoWrite round state so the loop stays externally
   observable.
 - "Reached the goal" is defined by Phase 6 validation passing — nothing else.
@@ -790,6 +830,9 @@ Standalone viewer and demo:
 | "I'll skip asking the user how to validate, tests are obviously the way." | Phase 0 is non-negotiable. Validation criteria are the user's call. |
 | "We've resumed this planner 6 times, but I think the next round fixes it." | Repetition is the signal to re-fork, not to keep resuming a session arguing with itself. |
 | "We hit the safety valve — 8 rounds is a lot, let's just ship it." | The valve protects spend; it does not define done. Escalate, don't proceed. |
+| "The owner added something, so the plan's round count starts over." | 8 rounds per plan, never reset by an addition, a new session or a split. `plan status` counts. |
+| "The reviewer's suggested fix looks right, paste it in." | A suggestion is a hypothesis: about a sixth of one long plan's findings came from pasted, unverified fixes. Verify it against the code, fix the class at one layer, rewrite the plan whole. |
+| "The stop card is just a formality, I'll answer Devam for the owner." | The card is the owner's. Neither you nor a Super Agent answers it; record his words with `plan decide`. |
 | "I'll fork a judge so it doesn't have to re-read the diff." | Never fork a judge — inherited framing produces a rubber stamp, not a verdict. |
 | "Two implementers can both touch the task doc, I'll sort it out after." | You are the single writer. Implementers report to you; they never write the map/registry. |
 | "I'll mark it complete because I *think* it's done." | Done is defined by Phase 6 validation passing with evidence — not by your hunch. |
