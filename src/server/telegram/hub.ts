@@ -985,9 +985,25 @@ export class TelegramHub implements TelegramHubApi {
       projectName: ab.scope === 'global' ? 'Tüm projeler' : ab.projectName, target: ab.target,
       label: ab.target === 'super' ? 'Super' : ab.target, botUsername: ab.binding.botUsername, state: ab.disabled ? 'disabled' : 'active',
     }));
-    return { manager: this.managerRow ? this.managerRow() : null, bots };
+    return { manager: this.managerNow(), bots };
   }
   managerRow: (() => TelegramStatusRow | null) | null = null;
+
+  /**
+   * The manager's row as Settings must see it: a manager pairing whose /start arrived is
+   * `pending` with the user's label (that row is what raises the native confirm), else the bound
+   * manager. Every status surface reads the manager through here, never `managerRow` alone:
+   * `status()` skips manager pairings, so without this the confirm never came (2026-11-08).
+   */
+  managerNow(): TelegramStatusRow | null {
+    for (const p of this.pairings.values()) {
+      if (p.scope !== 'manager') continue;
+      const cur = p.book.current();
+      if (!cur?.pendingUser) continue;
+      return { scope: 'global', target: MANAGER_PAIRING_TARGET, state: 'pending', botUsername: p.botUsername, userLabel: cur.pendingUser.label };
+    }
+    return this.managerRow ? this.managerRow() : null;
+  }
   removeManager: ((keyed?: boolean) => Promise<void>) | undefined = undefined;
 
   /** Further button kinds (answer.ts asks, approvals) plug in here. */

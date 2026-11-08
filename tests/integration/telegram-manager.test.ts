@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
 import { TelegramHub, setTelegramHub } from '../../src/server/telegram/hub.js';
 import { wireManager } from '../../src/server/telegram/manager.js';
-import { buildRouter } from '../../src/server/index.js';
+import { apiVaultGate, buildRouter } from '../../src/server/index.js';
 import { setOwnerKey } from '../../src/server/owner-key.js';
 import { bindingDir, readBinding, readForward, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 
@@ -166,6 +166,24 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     await pair(MANAGER, '/api/telegram-manager/bind', 900001);
     await vi.waitFor(() => expect(tg.sent('replaceManagedBotToken')).toHaveLength(2), { timeout: 5000 });
   }, 20_000);
+
+  it('Settings sees its manager pairing go pending after /start, with no vault header (2026-11-08)', async () => {
+    // The desktop server runs with --launcher: nothing pinned, Settings sends no vault header.
+    for (const [m, p] of [['GET', '/api/telegram-manager/status'], ['POST', '/api/telegram-manager/bind'], ['DELETE', '/api/telegram-manager'], ['GET', '/api/telegram-pairing/x'], ['POST', '/api/telegram-pairing/x/confirm']] as const) {
+      expect(apiVaultGate(req(m, p, PAGE), p, null)).toEqual({ ok: true, root: null });
+    }
+    const start = (await call('POST', '/api/telegram-manager/bind', PAGE, { token: MANAGER })).json;
+    await drained();
+    // Before /start: waiting, never a pending row (the confirm must not open early).
+    expect((await call('GET', '/api/telegram-manager/status')).json.manager).toBeNull();
+    tg.push(MANAGER, textUpdate(OWNER, `/start ${new URL(start.deepLink).searchParams.get('start')}`));
+    // What TelegramSettings polls: the row that raises the native confirm.
+    await vi.waitFor(async () => expect((await call('GET', '/api/telegram-manager/status')).json.manager)
+      .toEqual({ scope: 'global', target: '@manager', state: 'pending', botUsername: 'acme_mgr_bot', userLabel: '@owner' }), { timeout: 5000 });
+    expect((await call('GET', '/api/telegram')).json.manager).toMatchObject({ state: 'pending', userLabel: '@owner' });
+    expect((await call('POST', `/api/telegram-pairing/${start.pairingId}/confirm`, KEYED, { botId: 900001, userId: OWNER })).status).toBe(200);
+    expect((await call('GET', '/api/telegram-manager/status')).json.manager).toMatchObject({ target: '@manager', state: 'active', botUsername: 'acme_mgr_bot' });
+  });
 
   it('creation without a manager → 409 no_manager; a 409 on the manager poll raises the alarm', async () => {
     expect((await call('POST', '/api/telegram/ua-manager/creation/request', PAGE)).json.error).toBe('no_manager');
