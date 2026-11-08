@@ -4,14 +4,17 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { url as openInspectorUrl } from 'node:inspector';
 
 /**
- * The secret that proves a request came from the owner's own window, for the one door where a
- * decision is made in his name (`POST /api/assistant/answer`).
+ * The secret that proves a request came from the owner's own window, for every door where a
+ * decision is made in his name (`fromOwnerPage`: the notch's permission answer, the Apps page's
+ * Share, install, update, settings and uninstall).
  *
  * Every header is a claim: a process on this machine (an agent's `curl`, the Super Agent's too)
  * can write any Origin, Host or Sec-Fetch-Site it likes. So the shell mints a key per launch and
  * hands it down the server's stdin, a pipe nothing else holds: never the environment (every agent
  * inherits that, and `ps -E` shows it), never a file, never an HTTP answer. The page gets it from
  * the shell over IPC, whose invoke key a loopback client never sees (desktop/src-tauri/src/owner_key.rs).
+ * The shell hands it to the notch, the Launcher and the project windows on the app's own origin;
+ * a key held by the notch alone refused the owner's own Share click (2026-11-08).
  *
  * No key (a server the shell did not start, or a shell too old to send one) means no owner
  * answer at all: the route refuses and the chat's own card still answers.

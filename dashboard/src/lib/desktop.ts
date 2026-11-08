@@ -631,8 +631,11 @@ export async function focusThisWindow(): Promise<void> {
 }
 
 /**
- * The key the shell holds for the owner's own notch (`POST /api/assistant/answer`). Asked for on
- * every answer, so no page keeps it. Null outside the app, in another window, or on an older shell.
+ * The key the shell holds for the owner's own windows (the notch, the Launcher, a project window),
+ * sent on every decision made in his name (`api.ownerPost`: the notch's answer, the Apps page's
+ * Share, install, update, settings, uninstall). Asked for on every click, so no page keeps it.
+ * Null outside the app, in another window (inbox, viewer, checklist), or on a shell too old to hand
+ * it to this window, where the server refuses the click as `owner_page_only`.
  */
 export async function ownerKey(): Promise<string | null> {
   if (!isDesktop()) return null;

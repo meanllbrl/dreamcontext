@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), Dock-bounce + native notification banners for the \"Claude is asking\" alarm, shell spawn/kill scoped to the Node child, and claiming a parked dreamcontext:// link (allow-take-app-link). The Notifications window (`inbox`) is here too because it routes links exactly like a project window does: it emits to other windows and opens project and viewer windows.",
+  "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, opening external URLs (shell:allow-open — target=_blank links / Open GitHub), Dock-bounce + native notification banners for the \"Claude is asking\" alarm, shell spawn/kill scoped to the Node child, and claiming a parked dreamcontext:// link (allow-take-app-link). The owner key (`owner_key`) is NOT granted here: this capability allows every loopback port, so a web card's frame would pass it. The shell adds the `owner-key` capability at runtime, scoped to the server's exact port, for `assistant`, `main` and `vault-*` (src/owner_key.rs `grant`). The Notifications window (`inbox`) is here too because it routes links exactly like a project window does: it emits to other windows and opens project and viewer windows.",
   "windows": ["main", "vault-*", "inbox"],
   "remote": {
     "urls": ["http://localhost:*", "http://127.0.0.1:*"]
