@@ -89,9 +89,12 @@ export function HtmlInsightBody(props: Parameters<typeof HtmlInsightBodyLive>[0]
   return useInAppChat() ? <ModelHtmlOff compact /> : <HtmlInsightBodyLive {...props} />;
 }
 
-function HtmlInsightBodyLive({ html, title, full = false, fill = false }: {
+function HtmlInsightBodyLive({ html, title, full = false, fill = false, slug }: {
   html: string;
   title: string;
+  /** The insight this body draws: its frame says so (`data-dc-insight`), so Telegram's
+   *  `render_card` can name the slug and the SERVER rebuilds the srcdoc (plan T4). */
+  slug?: string;
   full?: boolean;
   /** Fill the parent's height (a host-sized box: LabFrameFill); a taller body scrolls inside. */
   fill?: boolean;
@@ -157,6 +160,7 @@ function HtmlInsightBodyLive({ html, title, full = false, fill = false }: {
     <iframe
       ref={frameRef}
       className="lab-html-body"
+      data-dc-insight={slug}
       title={`${title} — script-rendered body`}
       sandbox={HTML_KIT_SANDBOX}
       allow={HTML_KIT_ALLOW}

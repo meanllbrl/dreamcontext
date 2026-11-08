@@ -141,3 +141,25 @@ export async function runHtmlSnapshot(args: unknown, invoke: ((cmd: string, a: R
     return { ok: false, error: known.includes(code) ? code : 'failed' };
   }
 }
+
+// ─── super_handover and render_card: answered by the project surface, not the chat ──────────
+
+/** `super_handover` (N5, P4): the project window's own hand-over, adopting nothing. */
+export type HubHandover = () => Promise<HubResult>;
+let handover: HubHandover | null = null;
+/** AgentSurface registers its hand-over while mounted (one surface per window). */
+export function setHubHandover(fn: HubHandover | null): void { handover = fn; }
+export async function runHubHandover(args: unknown): Promise<HubResult> {
+  if (!isRecord(args) || !Array.isArray(args.adopt) || args.adopt.length !== 0) return { ok: false, error: 'bad_args' };
+  if (!handover) return { ok: false, error: 'no_window', reason: 'no_window' };
+  return handover();
+}
+
+/** `render_card` (R5, S2, T4): the stage's insight cards only; set by the Super stage. */
+export type HubCardRenderer = (args: unknown) => Promise<HubResult>;
+let cardRenderer: HubCardRenderer | null = null;
+export function setHubCardRenderer(fn: HubCardRenderer | null): void { cardRenderer = fn; }
+export async function runHubRenderCard(args: unknown): Promise<HubResult> {
+  if (!cardRenderer) return { ok: false, error: 'not_mounted', reason: 'not_mounted' };
+  return cardRenderer(args);
+}

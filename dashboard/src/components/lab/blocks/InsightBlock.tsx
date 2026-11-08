@@ -95,7 +95,7 @@ function InsightBody({ summary, cache, full, fill, height, app }: {
       onNavigate={app.onNavigate}
     />
   ) : cache?.html ? (
-    <HtmlInsightBody html={cache.html} title={summary.title} full={full} fill={app.fill} />
+    <HtmlInsightBody html={cache.html} title={summary.title} full={full} fill={app.fill} slug={summary.slug} />
   ) : (
     <Body summary={summary} cache={cache} series={series} full={full} emptyHint={entry.emptyHint} />
   );

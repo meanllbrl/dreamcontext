@@ -56,7 +56,7 @@ describe('note 1 and the one-home rule: a Super session never enters a chat wind
   });
 
   it('opening the Super in the new shell adopts no chat; classic still adopts', () => {
-    expect(src(SURFACE)).toContain('adoptionBody(windowed ? [] : tabs, before?.session)');
+    expect(src(SURFACE)).toContain('adoptionBody(windowed || adoptNone ? [] : tabs, before?.session)');
     expect(adoptionBody([{ id: 'a', claudeId: '11111111-1111-4111-8111-111111111111', title: 't', kind: 'chat' }], null).adopt).toHaveLength(1);
   });
 

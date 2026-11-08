@@ -15,7 +15,7 @@ import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent, settledToolUseIds, parseTelegramClaim, TG_REF_SHAPE, TG_SENTINEL_CHAR,
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
-import { isHubVerb, planHubAnswer, runHtmlSnapshot } from '../../lib/hubCommands';
+import { isHubVerb, planHubAnswer, runHtmlSnapshot, runHubHandover, runHubRenderCard } from '../../lib/hubCommands';
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
@@ -2996,6 +2996,14 @@ export function createChatSession(
       } else if (cmd.verb === 'html_snapshot') {
         const invoke = isDesktopShell() ? (await import('@tauri-apps/api/core')).invoke as (c: string, a: Record<string, unknown>) => Promise<unknown> : null;
         result = await runHtmlSnapshot(cmd.args, invoke);
+      } else if (cmd.verb === 'interrupt') {
+        // Telegram's /dur: exactly what Esc does (interrupt + hold the queue), one interrupt.
+        if (ws.readyState !== WebSocket.OPEN) result = { ok: false, error: 'offline' };
+        else { interrupt(); result = { ok: true }; }
+      } else if (cmd.verb === 'super_handover') {
+        result = await runHubHandover(cmd.args);
+      } else if (cmd.verb === 'render_card') {
+        result = await runHubRenderCard(cmd.args);
       } else {
         result = { ok: false, error: 'unsupported' };
       }
