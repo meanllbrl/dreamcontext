@@ -102,6 +102,13 @@ describe('telegram routes', () => {
     expect((await call('POST', `/api/telegram-pairing/${a.pairingId}/confirm`, { ...PAGE, 'x-dreamcontext-owner-key': KEY }, { botId: 123456, userId: 777 })).status).toBe(409);
   });
 
+  it('hub verbs have no HTTP surface: /api/window/answer_pending and /api/window/html_snapshot do not exist (A2)', () => {
+    for (const verb of ['answer_pending', 'html_snapshot', 'render_card', 'run_report', 'super_handover', 'interrupt']) {
+      const m = router.match('POST', `/api/window/${verb}`);
+      expect(m === null || !/answer_pending|html_snapshot|render_card|run_report|super_handover|interrupt/.test(m.path)).toBe(true);
+    }
+  });
+
   it('the Rust-called prefixes are vault-agnostic, the page routes are not', () => {
     for (const p of ['/api/telegram-pairing/x', '/api/telegram-forward/x/preview', '/api/telegram-creation/x/start', '/api/telegram-readopt/x/start', '/api/telegram-manager/status']) expect(isVaultAgnostic(p)).toBe(true);
     for (const p of ['/api/telegram', '/api/telegram/super/bind']) expect(isVaultAgnostic(p)).toBe(false);

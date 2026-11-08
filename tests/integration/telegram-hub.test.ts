@@ -229,6 +229,18 @@ describe('the Super target', () => {
     expect(hub.status()).toEqual([]);
   });
 
+  it('a crash with accepted messages in the journal: one notice each kind at the next start (E2, F5)', async () => {
+    const dir = bindingDir(scopeOfContextRoot(root), 'super', home);
+    const pollFile = join(dir, 'poll.json');
+    const p = JSON.parse(readFileSync(pollFile, 'utf-8'));
+    writeFileSync(pollFile, JSON.stringify({ ...p, pending: [{ updateId: 5, kind: 'text', written: false, at: 1 }, { updateId: 6, kind: 'text', written: true, at: 1, ref: 'abc123' }] }), { mode: 0o600 });
+    await hub.stop();
+    hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+    await hub.start();
+    await vi.waitFor(() => expect(tg.texts()).toEqual(expect.arrayContaining(["Mesajın Mac'te yazılamadı, tekrar gönder.", "Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak."])));
+    expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([]);
+  });
+
   it('a bot.json the hub did not write disables the binding after a last message', async () => {
     const file = join(bindingDir(scopeOfContextRoot(root), 'super', home), 'bot.json');
     const b = JSON.parse(readFileSync(file, 'utf-8'));

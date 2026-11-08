@@ -2028,6 +2028,13 @@ export const CLOSE_KILL_GRACE_MS = 5000;
 /** Exported for tests (agent-chat-close-reap.test.ts drives it with a mocked spawn + a
  *  fake ws to pin the socket-gone → drain → kill lifecycle); production callers reach it
  *  only through `attachAgentChat`'s upgrade handler. */
+/** A continue text written for a refused turn keeps the Telegram ref the refused text carried,
+ *  when the hub's store still honours it (plan E1); anything else is the bare continue text. */
+export function continueWithTelegramRef(lastSent: string | null, base: string, honoured: (ref: string) => boolean): string {
+  const { ref } = lastSent ? parseTelegramPrefix(lastSent) : { ref: null };
+  return ref && honoured(ref) ? withTelegramRef(ref, base) : base;
+}
+
 export function startChatSession(
   initialWs: import('ws').WebSocket,
   projectRoot: string,
@@ -2894,10 +2901,7 @@ export function startChatSession(
   const turnTelegramRefs = new Set<string>();
   /** A continue text the server writes for a refused turn keeps the Telegram ref the refused
    *  text carried, when the hub's store still honours it (E1). */
-  const continueText = (base: string): string => {
-    const { ref } = lastSentText ? parseTelegramPrefix(lastSentText) : { ref: null };
-    return ref && telegramRefs.has(chatRegistryId, ref) ? withTelegramRef(ref, base) : base;
-  };
+  const continueText = (base: string): string => continueWithTelegramRef(lastSentText, base, (ref) => telegramRefs.has(chatRegistryId, ref));
   /** Whether the main agent has answered since `lastSentText` went out. A refusal after that
    *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
    *  than replaying the request from the top. */

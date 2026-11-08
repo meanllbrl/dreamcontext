@@ -56,7 +56,7 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
 const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
 const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
-const { startChatSession } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, continueWithTelegramRef } = await import('../../src/server/routes/agent-chat.js');
 const reg = await import('../../src/lib/assistant/chat-registry.js');
 const { SUPER_STATE_REL, readSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
 const { emptySuperState, ownerMsgBlock, partRefs, msgRef, TELEGRAM_OWNER_BLOCK_RE } = await import('../../src/lib/super/types.js');
@@ -273,6 +273,15 @@ describe('writeOwnerTurn through the real bridge (D1 a-d, B1)', () => {
     ws.emit('message', JSON.stringify({ type: 'hub_command_result', id: sent.id, result: { ok: true, done: 1 } }));
     await expect(p).resolves.toEqual({ ok: true, done: 1 });
     await expect(wc.sendHubCommand(token, 'nope' as never, {})).resolves.toEqual({ ok: false, error: 'unknown_verb' });
+  });
+});
+
+describe('a refused Telegram turn\'s continue text keeps its ref (E1)', () => {
+  it('prefixed only while the store honours the ref; a Mac text stays bare', () => {
+    expect(continueWithTelegramRef(withTelegramRef('tg0003', 'deploy'), 'Continue.', (r) => r === 'tg0003')).toBe(withTelegramRef('tg0003', 'Continue.'));
+    expect(continueWithTelegramRef(withTelegramRef('tg0003', 'deploy'), 'Continue.', () => false)).toBe('Continue.');
+    expect(continueWithTelegramRef('mac text', 'Continue.', () => true)).toBe('Continue.');
+    expect(continueWithTelegramRef(null, 'Continue.', () => true)).toBe('Continue.');
   });
 });
 
