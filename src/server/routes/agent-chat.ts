@@ -2831,6 +2831,9 @@ export function startChatSession(
   /** The Super Agent only: a turn its inbox opened is running. An owner frame that arrives
    *  meanwhile is written AT ONCE and folded into it, like a steer in any chat (plan r4 D4). */
   let superEventTurnOpen = false;
+  /** This bridge's own Super inbox id: its turn ends settle what IT carried, even while a second
+   *  bridge under the same pin is the current one (inbox.ts `superTurnEnded`). */
+  const superInboxId = randomUUID();
   /** Owner texts sent spoken (`voice: true`) not yet written to the CLI. */
   const spokenTexts = new Set<string>();
   /** Owner texts dictated and sent UNCHANGED (the frame's `voiceTake`), bound to this chat and
@@ -3143,7 +3146,7 @@ export function startChatSession(
     // the same `result`); the queue's next batch may go now (D7).
     if (superEventTurnOpen) superEventTurnOpen = false;
     // One end per turn; a Stop says so (an owed decision is never made on it).
-    if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId, { stopped }));
+    if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId, { stopped, inboxId: superInboxId }));
   };
   /**
    * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
@@ -3168,7 +3171,7 @@ export function startChatSession(
     }
     if (turnsInFlight > 0) closeTurn(stopped);
     // No turn in flight: still one end, marked stopped (a Stop is one end, never two).
-    else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true }));
+    else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true, inboxId: superInboxId }));
     stopSettledLate = true;
     sendMeta({ subtype: 'turn_state', busy: false });
   };
@@ -4891,7 +4894,7 @@ export function startChatSession(
   // `super_event` frame first (the batch and its items) so the window draws the turn as one line.
   if (isSuper && pinId) {
     detachInbox = attachSuperInbox({
-      id: randomUUID(),
+      id: superInboxId,
       sessionId: chatRegistryId,
       attached: () => alive && !detached && ws.readyState === ws.OPEN,
       idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding(),

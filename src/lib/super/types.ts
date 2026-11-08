@@ -1732,4 +1732,8 @@ export interface SuperStateView extends SuperState {
   /** The super's pane is rotating into a fresh session ("New session"): the window greys the
    *  button and nothing is delivered until it has answered. Absent: false. */
   rotating?: boolean;
+  /** Events have waited undelivered for SUPER_BLOCKED_VISIBLE_MS or longer: why (the pump's
+   *  blocker: `no_socket`, `no_chat`, `busy`, `rotating`, `not_written`, …) and since when (ms).
+   *  The pump keeps looking meanwhile. Absent: nothing waits that long. */
+  blocked?: { reason: string; since: number };
 }
