@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useAgent, useAnswerBoardScope, useApproveAgent } from '../../hooks/useAgents';
 import { useApproveAutomation, useAutomation } from '../../hooks/useAutomations';
-import type { PendingApproval } from './teamModel';
+import { approvalSentence, pendingChangeLine, type PendingApproval } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 
 /**
@@ -49,17 +49,6 @@ export function TeamApproval({
       <p className="aiteam-approval-lead" data-approval-rule>{t('agents.approval.rule')}</p>
     </div>
   );
-}
-
-/** The one sentence a pending item is said in. */
-export function approvalSentence(p: PendingApproval, agentTitle: string, t: (k: string) => string): string {
-  const changed = p.reason === 'manifest-changed' || p.reason === 'payload-format-changed';
-  const key = p.kind === 'routine'
-    ? (changed ? 'aiteam.approval.routineChanged' : 'aiteam.approval.routineNew')
-    : p.blocksTalk
-      ? (changed ? 'aiteam.approval.talkChanged' : 'aiteam.approval.talkNew')
-      : 'aiteam.approval.runOnly';
-  return t(key).replace('{name}', agentTitle).replace('{routine}', p.title);
 }
 
 /**
@@ -156,10 +145,12 @@ function ApprovalRow({
   return (
     <div className={`aiteam-approval-row${open ? ' aiteam-approval-row--open' : ''}`} data-approval-item={`${item.kind}:${item.slug}`}>
       <div className="aiteam-approval-line">
-        <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name="lock" size={12} /></span>
+        <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name={item.keepsWorking ? 'check' : 'lock'} size={12} /></span>
         <span className="aiteam-approval-text">
           {approvalSentence(item, agentTitle, t)}
-          {changedFields && changedFields.length > 0 && (
+          {item.change ? (
+            <span className="aiteam-approval-fields" data-approval-change> {pendingChangeLine(item.change, t, changedFields)}</span>
+          ) : changedFields && changedFields.length > 0 && (
             <span className="aiteam-approval-fields" data-approval-fields> {t('agents.approval.synced').replace('{fields}', changedFields.join(', '))}</span>
           )}
         </span>

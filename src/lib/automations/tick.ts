@@ -58,7 +58,8 @@ import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
-import { runAutomation, type RunOutcome } from './runner.js';
+import { defaultNotify, runAutomation, type RunOutcome } from './runner.js';
+import { announcePendingChanges } from '../agents/pending-change.js';
 import { readAccountWait } from './account.js';
 import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
@@ -88,6 +89,8 @@ export interface TickOptions {
   /** Machine-local home for the registry + heartbeat file. Defaults to the
    *  real `homedir()` (via each downstream module's own default). */
   home?: string;
+  /** Where a waiting change is announced (tests); the macOS banner by default. */
+  notifyPending?: (title: string, body: string) => void;
   /** Defaults to a no-op — the CLI wires a real logger/log-file writer through
    *  this, mirroring `runner.ts`'s own `log` convention. */
   log?: (line: string) => void;
@@ -228,6 +231,10 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // Hand edits arriving by sync raise owner rows here instead of starting anything (B1-5), and
   // ledger records of tasks that moved on die.
   scanOutsideAssignments(contextRoot, opts.home);
+
+  // A change that waits for the owner's card while the member keeps working on what he approved:
+  // he hears once, even when nothing runs it (owner 2026-11-08).
+  announcePendingChanges(contextRoot, opts.notifyPending ?? ((t, b) => defaultNotify(t, b, opts.home)), opts.home);
 
   // Task jobs (C1): settle what died, then start what is due. Each step runs in a DETACHED host,
   // so this never waits for one: the routines below fire on time while task jobs run.

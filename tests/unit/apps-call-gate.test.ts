@@ -218,11 +218,16 @@ describe('gateAppCall', () => {
       expect(named()).toMatchObject({ ok: false, code: 'needs_owner' });
       expect(named('notify-test')).toMatchObject({ ok: false, code: 'needs_owner' });
       expect(gate(ctx, rec, twin, { method: 'POST', path: '/api/notify-test', confirm: true, claim: { class: 'run', automation: 'tooljob' }, tool: 'notify-test' }, { home })).toMatchObject({ ok: true });
-      // The file changes mid-run: the hash no longer matches what was approved.
+      // The file changes mid-run (owner 2026-11-08): the run keeps working on the approved job, so
+      // the tool that job named still passes, and a tool only the waiting edit names never does.
       const { writeFileSync, readFileSync } = await import('node:fs');
       const path = getAutomation(ctx, 'tooljob', home)!.path;
       writeFileSync(path, readFileSync(path, 'utf-8').replace('p\n', 'p, and more\n'));
-      expect(run('tooljob')).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(run('tooljob')).toMatchObject({ ok: true });
+      writeFileSync(path, readFileSync(path, 'utf-8').replace(/^(\s*)- yuk\/notify-test$/m, '$1- yuk/notify-test\n$1- yuk/send'));
+      expect(getAutomation(ctx, 'tooljob', home)!.appTools).toContain('yuk/send');
+      expect(other.ok).toBe(false);
+      expect(gate(ctx, rec, [...actions, { id: 'send', title: 'Send', method: 'POST', path: '/api/send' }], { method: 'POST', path: '/api/send', confirm: true, claim: { class: 'run', automation: 'tooljob' } }, { home })).toMatchObject({ ok: false, code: 'needs_owner' });
     });
 
     it("jobStartedByOwner: the owner's dashboard reply delivering now passes; Super's, a settled one, or two do not", async () => {

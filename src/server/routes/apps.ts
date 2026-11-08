@@ -57,7 +57,7 @@ import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';
 import { getRunTarget } from '../../lib/automations/store.js';
-import { checkApproval } from '../../lib/automations/registry.js';
+import { approvedTarget, checkApproval } from '../../lib/automations/registry.js';
 import { resolveEmbedToken, type EmbedGrant } from '../apps/embed-token.js';
 import { resolveAppAgent } from '../../lib/apps/assistant.js';
 import { appChatRoot, closeAppChat, listAppChats, lookupAppChat, newestAppChat, stampAppRemoved, titleAppChat } from '../../lib/apps/chat-store.js';
@@ -793,7 +793,9 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
     if (action && slug && !ambiguous) {
       const m = getAutomation(contextRoot, slug, deps.home);
       const ref = `${rec.slug}/${action.id}`;
-      if (m && m.appTools?.includes(ref) && checkApproval(projectRootOf(contextRoot), m, deps.home).approved) return { ok: true, effect, action, timeoutMs };
+      // Judged on the version that may run: a pending edit never adds an app tool (`approvedTarget`).
+      const view = m ? approvedTarget(projectRootOf(contextRoot), m, deps.home) : null;
+      if (view && view.verdict.approved && view.manifest.appTools?.includes(ref)) return { ok: true, effect, action, timeoutMs };
     }
     if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return { ok: true, effect, action, timeoutMs };
     return refuse(`An unattended run changes things only with a tool its approved job names (app_tools: ${rec.slug}/${action?.id ?? '<tool>'}).`);

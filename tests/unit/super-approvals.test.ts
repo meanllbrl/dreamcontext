@@ -89,6 +89,17 @@ describe('what waits for his approval (superApprovals)', () => {
     expect(agendaApprovals(rows, []).length).toBe(4);
   });
 
+  it('a member or routine working on its approved version while a change waits is listed, said as such (owner 2026-11-08)', () => {
+    const change = { member: 'scout', by: 'teammate' as const, who: 'mate', at: null, fields: ['prompt'], risks: [], runsOnApproved: true };
+    const rows = superApprovals(
+      [agent('scout', { approvedForChat: true, approvedToRun: true, approvalReason: null, pendingChange: change } as never), agent('calm', { approvedForChat: true, approvedToRun: true, approvalReason: null })],
+      [routine('daily', { approved: true, approvalReason: null, changeWaits: true } as never), routine('quiet', { approved: true, approvalReason: null })],
+    );
+    expect(rows.map((r) => `${r.key}:${r.keepsWorking === true}`)).toEqual(['agent:scout:true', 'routine:daily:true']);
+    const t = (k: string) => ({ 'aiteam.approval.keepsWorking': '{name} keeps working', 'aiteam.approval.routineKeepsWorking': '{routine} keeps running' } as Record<string, string>)[k] ?? k;
+    expect(rows.map((r) => superApprovalSentence(r, t))).toEqual(['SCOUT keeps working', 'Routine daily keeps running'].map((x, i) => (i === 0 ? x.replace('SCOUT', rows[0].title) : x.replace('Routine daily', rows[1].title))));
+  });
+
   it('nothing loaded yet is nothing waiting', () => {
     expect(superApprovals(undefined, undefined)).toEqual([]);
   });

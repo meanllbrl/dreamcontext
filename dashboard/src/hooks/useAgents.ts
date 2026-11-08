@@ -41,6 +41,17 @@ export interface AgentUsageTask {
 }
 
 /** One row of `GET /api/agents` — mirrors `AgentSummary`. */
+/** The change that waits for the owner's card (`src/lib/agents/pending-change.ts`). */
+export interface PendingChange {
+  member: string;
+  by: 'background' | 'teammate' | 'unknown';
+  who: string | null;
+  at: string | null;
+  fields: string[] | null;
+  risks: string[];
+  runsOnApproved: boolean;
+}
+
 export interface AgentSummary {
   slug: string;
   title: string;
@@ -81,6 +92,10 @@ export interface AgentSummary {
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
   approvalReason: string | null;
+  /** A newer version waiting for the owner's card: who wrote it, when, which fields, what was
+   *  flagged, and whether it keeps working on its last approved text meanwhile. Optional: an older
+   *  server sends none. */
+  pendingChange?: PendingChange | null;
   /** Its `call.enabled` (the AI Team on/off switch). Optional: an older server sends none. */
   enabled?: boolean;
   /** Its creator's login (`machine:<id>`, `unowned`); null on an unstamped file. Optional: an

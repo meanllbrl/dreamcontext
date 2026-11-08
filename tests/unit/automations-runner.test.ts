@@ -25,6 +25,7 @@ import {
   writeRunSidecar,
 } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
+import { approvedTextsDir } from '../../src/lib/automations/approved-text.js';
 import { writeTelegramConfigForSlug } from '../../src/lib/automations/telegram.js';
 import { queuedFire } from '../../src/lib/automations/queue.js';
 import { pendingQuestion } from '../../src/lib/automations/hitl.js';
@@ -1248,12 +1249,29 @@ const QUESTION_JSON = JSON.stringify({
   session_id: 'sess_question', result: 'Your digest automation was edited. Approve it?', is_error: false,
 });
 
-/** Approved, then edited — the exact state that triggers the question. */
+/** Approved BEFORE approved texts were kept (none stored), then edited: the exact state that
+ *  still triggers the question. With a stored text the run goes on the approved version instead
+ *  (`member-keeps-working-on-approved.test.ts`). */
 function createEditedAfterApproval(slug = 'digest'): void {
   createApproved(slug, { prompt: 'Say hello.' });
+  rmSync(approvedTextsDir(home), { recursive: true, force: true });
   const path = join(contextRoot, 'automations', `${slug}.md`);
   writeFileSync(path, readFileSync(path, 'utf-8').replace('Say hello.', 'Say hello, and also email everyone.'), 'utf-8');
 }
+
+describe('approval: a CHANGED manifest with its approved text kept runs on that text (owner 2026-11-08)', () => {
+  it('spawns the approved prompt with its normal envelope, never the edited one', async () => {
+    createApproved('digest', { prompt: 'Say hello.' });
+    const path = join(contextRoot, 'automations', 'digest.md');
+    writeFileSync(path, readFileSync(path, 'utf-8').replace('Say hello.', 'Say hello, and also email everyone.'), 'utf-8');
+    const { impl, calls } = capturingSpawn(JSON.stringify({ session_id: 's', result: '# ok\n', is_error: false }));
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW, notify: () => {} });
+    expect(outcome.status).toBe('ok');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].join(' ')).toContain('Say hello.');
+    expect(calls[0].join(' ')).not.toContain('email everyone');
+  });
+});
 
 describe('approval: never-approved still refuses outright', () => {
   it('is blocked, and spawns NOTHING', async () => {

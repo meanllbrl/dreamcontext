@@ -17,6 +17,7 @@ import {
 import { classifyAutomationSlot, contextRootOf } from '../agents/slot.js';
 import { assertOwned, currentLogin, foreignOwner } from '../agents/owner.js';
 import { GLOBAL_REGISTRY_KEY } from '../agents/scope.js';
+import { overlayApprovedText, pruneApprovedTexts, readApprovedText, saveApprovedText } from './approved-text.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -221,6 +222,13 @@ export function readAutomationsRegistry(home?: string): AutomationsRegistry {
 /** Persist the registry atomically (temp+rename, pid+nonce). */
 export function writeAutomationsRegistry(registry: AutomationsRegistry, home?: string): void {
   writeJsonAtomic(automationsRegistryPath(home), registry);
+  // The last approved texts live as long as an approval names them (`approved-text.ts`).
+  const keep = new Set<string>();
+  for (const p of Object.values(registry.projects)) {
+    for (const e of Object.values(p.approvals)) keep.add(e.manifestSha256);
+    for (const e of Object.values(p.agentApprovals ?? {})) keep.add(e.manifestSha256);
+  }
+  pruneApprovedTexts(keep, home);
 }
 
 // ─── Project registration ───────────────────────────────────────────────────
@@ -730,6 +738,55 @@ export function checkApproval(
   return own;
 }
 
+/** What waits for the owner while a target keeps running on its last approved text. */
+export interface PendingApprovalChange {
+  /** The approved version it runs on (`expected`) and the version that waits (`actual`). */
+  reason: 'manifest-changed';
+  expected: string;
+  actual: string;
+}
+
+/** {@link approvedTarget}'s answer: the verdict, the manifest to run, and what waits. */
+export interface ApprovedTargetView {
+  verdict: ApprovalVerdict;
+  /** What a run or a conversation must be built from: `m` itself when it is approved as it
+   *  stands, its last approved text overlaid when a change waits, `m` (refused) otherwise. */
+  manifest: AutomationManifest;
+  /** Set when a newer version waits for the owner and this one runs on the last approved text. */
+  pending: PendingApprovalChange | null;
+}
+
+/**
+ * THE ONE QUESTION "may this run here, and as what?" (owner 2026-11-08). A change the owner did not
+ * make on this Mac (a teammate's synced edit, risky text a background run wrote) no longer stops a
+ * member: while it waits for his card, the member and its routines run on the version he approved
+ * last, kept on this Mac by its hash (`approved-text.ts`).
+ *
+ * Fails closed at every step: only `manifest-changed` falls back (never `never-approved`,
+ * `payload-format-changed` or `not_owner`), only when a text is stored for the approved hash, and
+ * only when the overlaid manifest passes {@link checkApproval} itself, so a stale or edited text
+ * can never run. A caller that runs or talks to the target MUST build it from `manifest`.
+ */
+export function approvedTarget(
+  projectRoot: string,
+  m: AutomationManifest,
+  home?: string,
+  use: ApprovalUse = 'run',
+  login: string = currentLogin(),
+): ApprovedTargetView {
+  const verdict = checkApproval(projectRoot, m, home, use, login);
+  if (verdict.approved || verdict.reason !== 'manifest-changed' || !verdict.expected) {
+    return { verdict, manifest: m, pending: null };
+  }
+  const text = readApprovedText(verdict.expected, home);
+  if (!text) return { verdict, manifest: m, pending: null };
+  const last = overlayApprovedText(m, text);
+  if (manifestHash(last) !== verdict.expected) return { verdict, manifest: m, pending: null };
+  const lastVerdict = checkApproval(projectRoot, last, home, use, login);
+  if (!lastVerdict.approved) return { verdict, manifest: m, pending: null };
+  return { verdict: lastVerdict, manifest: last, pending: { reason: 'manifest-changed', expected: verdict.expected, actual: verdict.actual } };
+}
+
 /**
  * True when `e` holds a home-board agent to its board pending the owner's answer: a `held` mark,
  * or an entry of a board agent written before marks existed. A `board` mark is NOT a hold: it
@@ -838,6 +895,8 @@ function mutateProject<T>(projectRoot: string, home: string | undefined, mutate:
 export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string): ApprovalEntry {
   // Someone else's member is read-only here: approving it would be running it by another door.
   assertOwned(m, m.agentTitle || m.title || m.slug);
+  // Kept BEFORE the registry write, whose prune keeps only what an approval names.
+  saveApprovedText(manifestHash(m), m, home);
   if (m.agentScope === 'global') {
     return mutateProject(GLOBAL_REGISTRY_KEY, home, (project) => {
       const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug]);
@@ -889,6 +948,7 @@ export function approvePair(
     throw new AutomationError('approvePair needs an automation and the call target of the same-slug agent it runs as');
   }
   const agentHash = manifestHash(agentTarget);
+  saveApprovedText(manifestHash(automation), automation, home);
   return mutateProject(projectRoot, home, (project) => {
     const slug = automation.slug;
     const entry = approvalEntryFor(automation, now, project.approvals[slug], agentEntryIn(project, agentTarget.slug));

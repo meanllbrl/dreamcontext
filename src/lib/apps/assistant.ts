@@ -26,6 +26,7 @@ import { MANIFEST_FILE, ROLE_FILE, cleanText, effectOf, readManifest, roleFilePr
 import { appChatsDir, appsHome, getApp, real, registryPath } from './registry.js';
 import { AppDataError, appsDataRoot, contextRootOf, ensureAppDataDir } from './data-dir.js';
 import { FILE_GATE_MATCHER } from './write-gate.js';
+import { approvedRunTarget } from '../automations/approved-run-target.js';
 
 /** The role's cap: the same trust as the backend command, kept small because it rides every turn. */
 export const ROLE_MAX_CHARS = 8000;
@@ -261,7 +262,8 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
 
   if (record.member) {
     const contextRoot = join(projectRoot, '_dream_context');
-    const target = getRunTarget(contextRoot, record.member, 'agent');
+    // As it may run here: a pending edit never sets its board or level.
+    const target = approvedRunTarget(contextRoot, record.member, 'agent', home, 'identity');
     if (!target) return refuse(`no agent named "${record.member}" in this project`);
     if (target.whiteboard) return refuse(`${record.member} is confined to a whiteboard`);
     const prep = prepareAgentChat(contextRoot, record.member, home, { excludeSession: record.id });

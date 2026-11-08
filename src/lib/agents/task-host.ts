@@ -26,6 +26,7 @@ import {
   dropClaim, openTaskCheck, raiseTaskRow, requeue, setTaskStatus, startDueTaskJobs, type TaskJobDeps,
 } from './task-starter.js';
 import { fanOutDelivered, type NotifyFn } from './task-delivery.js';
+import { approvedRunTarget } from '../automations/approved-run-target.js';
 
 /**
  * The task host (AI Team v2 C1-3): the detached `dreamcontext tasks run-job <slug> --run <id>`
@@ -248,7 +249,8 @@ export async function runTaskJob(contextRoot: string, slug: string, runId: strin
     return { state: 'blocked', outcome: null };
   };
 
-  const target = getRunTarget(contextRoot, claim.agent, 'agent');
+  // As it may run here: a pending edit (a teammate's, a held background change) never sets the level.
+  const target = approvedRunTarget(contextRoot, claim.agent, 'agent', home);
   if (!target) return block(`the agent ${claim.agent} is gone`);
   const level = target.autonomy ?? DEFAULT_AGENT_AUTONOMY;
   if (claim.step === 'plan' && level !== 'ask') {

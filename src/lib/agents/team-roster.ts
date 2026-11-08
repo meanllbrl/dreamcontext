@@ -6,7 +6,7 @@ import { identityOnly } from './compose.js';
 import { nameOf, summaryOf } from './agent-summary.js';
 import { foreignOwner } from './owner.js';
 import { getAutomation } from '../automations/store.js';
-import { checkApproval, type ApprovalVerdict } from '../automations/registry.js';
+import { approvedTarget, checkApproval, type ApprovalVerdict, type PendingApprovalChange } from '../automations/registry.js';
 import { chatSubagents, type ChatSubagents } from '../automations/chat-subagents.js';
 import type { AutomationManifest } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
@@ -51,6 +51,8 @@ export interface MemberCall {
   state: MemberState | 'missing' | 'not_owner';
   manifest: AutomationManifest | null;
   verdict: ApprovalVerdict | null;
+  /** Ready on its last approved text while a newer version waits for the owner's card. */
+  pending?: PendingApprovalChange | null;
 }
 
 /**
@@ -63,10 +65,13 @@ export function memberCallState(contextRoot: string, slug: string, home?: string
   const manifest = getAutomation(contextRoot, slug, home);
   if (!manifest) return { state: 'missing', manifest: null, verdict: null };
   if (!manifest.enabled) return { state: 'off', manifest, verdict: null };
-  const verdict = checkApproval(dirname(contextRoot), manifest, home, 'run');
+  // The same question every run asks (`approvedTarget`): a change waiting for the owner's card
+  // leaves the member ready on its last approved text, which is what `manifest` then is.
+  const view = approvedTarget(dirname(contextRoot), manifest, home, 'run');
+  const verdict = view.verdict;
   if (!verdict.approved && verdict.reason === 'not_owner') return { state: 'not_owner', manifest, verdict };
   if (!verdict.approved) return { state: 'needs-approval', manifest, verdict };
-  return { state: 'ready', manifest, verdict };
+  return { state: 'ready', manifest: view.manifest, verdict, pending: view.pending };
 }
 
 const STATE_RANK: Record<MemberState, number> = { ready: 0, 'needs-approval': 1, off: 2 };
@@ -382,8 +387,9 @@ function callableMembers(contextRoot: string, route: TeamRoute, exclude: string 
   for (const m of targets) {
     if (m.slug === exclude) continue;
     try {
-      if (!checkApproval(dirname(contextRoot), m, home, 'identity').approved) continue;
-      const own = identityOnly(m);
+      const view = approvedTarget(dirname(contextRoot), m, home, 'identity');
+      if (!view.verdict.approved) continue;
+      const own = identityOnly(view.manifest);
       out.push({ slug: m.slug, title: nameOf(m), role: summaryOf(own), state: 'ready', watches: watchedInsights(own.prompt, slugs) });
     } catch { /* unreadable: not callable */ }
   }

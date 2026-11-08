@@ -123,15 +123,19 @@ function ApprovalRow({ item, superId, open, onOpen, onDone }: {
       data-testid="super-approval-row"
     >
       <div className="aiteam-approval-line">
-        <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name="lock" size={12} /></span>
+        <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name={item.keepsWorking ? 'check' : 'lock'} size={12} /></span>
         <span className="aiteam-approval-text">{superApprovalSentence(item, t)}</span>
         <span className="super-approval-actions">
           <button type="button" className="agent-btn" aria-expanded={open} onClick={toggle} data-testid="super-approval-review">
             {t(open ? 'aiteam.approval.hide' : 'aiteam.approval.review')}
           </button>
-          <button type="button" className="agent-btn" disabled={busy !== null} onClick={() => { void decide('rejected'); }} data-testid="super-approval-decline">
-            {t(busy === 'rejected' ? 'super.approvals.declining' : 'super.approvals.decline')}
-          </button>
+          {/* Declining switches the member off or takes its approval back: never on a member that
+              keeps working while a newer version waits (owner 2026-11-08). Review and approve only. */}
+          {!item.keepsWorking && (
+            <button type="button" className="agent-btn" disabled={busy !== null} onClick={() => { void decide('rejected'); }} data-testid="super-approval-decline">
+              {t(busy === 'rejected' ? 'super.approvals.declining' : 'super.approvals.decline')}
+            </button>
+          )}
         </span>
       </div>
       {open && (

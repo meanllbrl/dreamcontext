@@ -19,6 +19,7 @@ import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/t
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
 import { AmendmentRefused, amendMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
+import { describePendingChange, pendingChangeSentence } from '../../lib/agents/pending-change.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
 import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
@@ -35,6 +36,7 @@ import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '..
 import {
   approvalFields,
   approveAutomation,
+  approvedTarget,
   checkApproval,
   registerProject,
 } from '../../lib/automations/registry.js';
@@ -143,14 +145,18 @@ export function resolveSoulOption(opts: SoulOptions): string | undefined {
   return undefined;
 }
 
-function verdicts(root: string, slug: string): { chat: boolean; run: boolean; readOnlyOwner: string | null } | null {
+function verdicts(root: string, slug: string): { chat: boolean; run: boolean; readOnlyOwner: string | null; waits: string | null } | null {
   const target = getRunTarget(root, slug, 'agent');
   if (!target) return null;
   const projectRoot = dirname(root);
-  const run = checkApproval(projectRoot, target, undefined, 'run');
+  // The same question the screen and every run ask (`approvedTarget`).
+  const view = approvedTarget(projectRoot, target, undefined, 'run');
+  const run = view.verdict;
+  const waiting = view.pending !== null || (!run.approved && run.reason === 'manifest-changed');
   return {
-    chat: checkApproval(projectRoot, target, undefined, 'identity').approved,
+    chat: approvedTarget(projectRoot, target, undefined, 'identity').verdict.approved,
     run: run.approved,
+    waits: waiting ? pendingChangeSentence(describePendingChange(root, target, view.pending !== null)) : null,
     // Someone else's agent: read-only here, never "needs approval" (B1-4).
     readOnlyOwner: !run.approved && run.reason === 'not_owner' ? run.owner : null,
   };
@@ -247,7 +253,7 @@ export function registerAgentsCommand(program: Command): void {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
             learning: agent.learning, whiteboard: agent.whiteboard, boardOnly: agent.boardOnly === true, shared: agent.shared, implicit: agent.implicit,
             reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
-            approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
+            approvedForChat: v.chat, approvedToRun: v.run, waits: v.waits, usedBy: usage,
             effective: effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy)).replace(/^effective: /, ''),
             boardLimited: envelope.limited, boardQuestion: envelope.question,
           },
@@ -262,7 +268,8 @@ export function registerAgentsCommand(program: Command): void {
         console.log(chalk.yellow(`  Should ${agent.title} still be limited to its board? Answer on its AI Team page, or: dreamcontext agents board-scope ${slug} keep|lift`));
       }
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
-      console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
+      console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}${v.waits && v.run ? ' (on the last approved version)' : ''}`);
+      if (v.waits) console.log(chalk.yellow(`  A change waits for your approval on the AI Team page: ${v.waits}`));
       if (usage.automations.length > 0) console.log(`  automations: ${usage.automations.join(', ')}`);
       if (usage.boards.length > 0) console.log(`  boards: ${usage.boards.join(', ')}`);
       if (usage.tasks.length > 0) console.log(`  tasks: ${usage.tasks.join(', ')}`);
