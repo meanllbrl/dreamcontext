@@ -29,6 +29,10 @@ import {
   AGENT_BOARD_ENV,
   AGENT_SCRATCH_ENV,
   AGENT_SELF_ENV,
+  AGENT_CHAT_ENV,
+  SUPER_CREW_ENV,
+  MEMBER_SUPER_ENV,
+  MEMBER_CREW_ENV,
 } from '../../src/lib/automations/types.js';
 import { parseFlowSection } from '../../src/lib/automations/store.js';
 import { createWhiteboard } from '../../src/lib/whiteboards/store.js';
@@ -110,6 +114,10 @@ function run(args: string[], cwd: string, home: string, extraEnv: Record<string,
   // run), `approve` would be refused for a reason no test asked for.
   delete inherited.CLAUDECODE;
   delete inherited.DREAMCONTEXT_AUTOMATION_RUN;
+  // The owner-only verbs (`answer`, `create`...) ask insideAgentRun/createNeedsOwner, which also
+  // read the agent chat, Super crew and member crew markers. A suite started from a Super or
+  // member session inherits them and every owner step is refused for a reason no test asked for.
+  for (const k of [AGENT_CHAT_ENV, SUPER_CREW_ENV, MEMBER_SUPER_ENV, MEMBER_CREW_ENV]) delete inherited[k];
   try {
     const stdout = execFileSync(process.execPath, [CLI, ...args], {
       cwd,
