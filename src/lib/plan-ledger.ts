@@ -157,6 +157,7 @@ export function ledgerProblem(raw: unknown): string | null {
   }
   if (!l.budget || typeof l.budget.base !== 'number' || typeof l.budget.extra !== 'number') return 'missing budget';
   if (!Array.isArray(l.events) || !Array.isArray(l.rounds)) return 'missing events or rounds';
+  if (code && l.start !== undefined && !GIT_OBJECT_RE.test(String(l.start))) return 'start must be a git object id';
   for (const e of l.events) {
     if (!e || typeof e !== 'object' || typeof (e as LedgerEvent).kind !== 'string') return 'an event is malformed';
     for (const k of ['moved', 'classes'] as const) if ((e as LedgerEvent)[k] !== undefined && !Array.isArray((e as LedgerEvent)[k])) return `an event's ${k} is not a list`;
@@ -164,6 +165,8 @@ export function ledgerProblem(raw: unknown): string | null {
   for (const r of l.rounds) {
     if (!r || typeof r.n !== 'number' || !r.lenses || typeof r.lenses !== 'object') return 'a round is malformed';
     if (code && Object.keys(r.lenses).length === 0) return `round ${r.n} has no lenses`;
+    // A packet prints these into the git commands a reviewer runs: only an object id may reach it.
+    if (code && [r.tree, r.base].some((t) => t !== undefined && !GIT_OBJECT_RE.test(String(t)))) return `round ${r.n}: tree and base must be git object ids`;
     for (const [lens, rec] of Object.entries(r.lenses)) {
       if (!lensSet.includes(lens)) return `unknown lens "${lens}" in round ${r.n}`;
       if (!rec || typeof rec !== 'object' || typeof rec.verdict !== 'string' || !Array.isArray(rec.findings)) return `round ${r.n} ${lens} is malformed`;
@@ -206,11 +209,18 @@ export interface ParsedReview {
 }
 
 const CODE_FINDING_RE = /^\s*(\d+)\.\s*\[(Critical|Major)\]\s*id:\s*([^|]+?)\s*\|\s*class:\s*([^|]+?)\s*\|\s*origin:\s*([^|]+?)\s*(?:\|\s*(.*))?$/i;
-const HARM_RE = /^harm:\s*(.*)$/i;
-/** A harm line that names nobody and nothing ("none", "n/a", "-") is no harm. */
+/** A START, NOW, FIX or base tree as the code ledger stores it. */
+export const GIT_OBJECT_RE = /^[0-9a-f]{7,64}$/;
+/** The `harm:` field wherever it stands among the fields after origin (backticks allowed). */
+const HARM_RE = /(?:^|\|)\s*`?harm`?\s*:\s*(.*)$/i;
+/** The harm a finding's field tail names, or undefined when it has no `harm:` field. */
+export function harmOf(rest: string): string | undefined {
+  return HARM_RE.exec(rest)?.[1];
+}
+/** A harm that names nobody and nothing ("none", "n/a", "-", "tbd") is no harm; length is no measure. */
 export function hasConcreteHarm(harm: string | undefined): boolean {
-  const h = (harm ?? '').trim();
-  return h.length >= 12 && !/^(?:none|n\/?a|-+|tbd|unknown|minor|cosmetic)\b/i.test(h);
+  const h = (harm ?? '').trim().replace(/[.!]+$/, '');
+  return h !== '' && !/^(?:none|n\/?a|-+|tbd|todo|unknown|minor|cosmetic|\?+)$/i.test(h);
 }
 
 const FINDING_START_RE = /^\s*\d+\.\s*\[/;
@@ -291,7 +301,7 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
       }
       let text = (rest ?? '').trim();
       if (code) {
-        const harm = HARM_RE.exec(text)?.[1];
+        const harm = harmOf(text);
         if (kindN === 'same-class' && !(ctx.knownClasses ?? new Set()).has(normClass(cls))) {
           errors.push(`finding ${k}: origin \`same-class\` needs a class from the packet's Known classes, got "${cls.trim()}"`);
           continue;
@@ -301,10 +311,13 @@ export function parseReview(text: string, ctx: ParseContext): ParsedReview {
             errors.push(`finding ${k}: a Critical names its harm: \`| harm: <the user or the data that is hurt, and how>\``);
             continue;
           }
+          if (ctx.ownOpen.has(id)) {
+            // An open finding leaves only by `closed:`; re-stated without its harm it would slip out.
+            errors.push(`finding ${k}: ${id} is open, so re-state it with its harm, or close it: \`closed: ${id} | <why>\``);
+            continue;
+          }
           // A Major with no concrete harm is a Minor: kept in the record, never open, never counted.
-          // A re-stated own id that loses its harm leaves the open set this way too.
-          downgraded.push({ id: ctx.ownOpen.has(id) ? id : `r${ctx.round}-${ctx.lens}-${k}`, cls: normClass(cls), text: text.slice(0, 300) });
-          if (ctx.ownOpen.has(id)) restated.add(id);
+          downgraded.push({ id: `r${ctx.round}-${ctx.lens}-${k}`, cls: normClass(cls), text: text.slice(0, 300) });
           blockingLines -= 1;
           continue;
         }

@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -29,7 +30,9 @@ beforeEach(() => {
   mkdirSync(raw, { recursive: true });
   repo = realpathSync(raw);
   let tick = Date.parse('2026-11-08T10:00:00Z');
-  deps = { repo, now: () => new Date((tick += 1000)), brain: () => { throw new Error('no brain in this test'); } };
+  // Every path these tests name is a path the trees changed; the real git check has its own test.
+  const changed = ['src/lib/export.ts', 'src/a b.ts', 'a.ts', 'b.ts', 'log.ts', 'c.ts'];
+  deps = { repo, now: () => new Date((tick += 1000)), brain: () => { throw new Error('no brain in this test'); }, diffNames: () => changed };
   writeFileSync(join(repo, 'criteria.md'), '- [ ] AC1 the export keeps every row\n', 'utf-8');
 });
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
@@ -93,6 +96,35 @@ describe('open and the round-1 packet', () => {
     expect(sec.text).toContain(`-- 'b.ts'`);
     expect(sec.text).not.toContain(`-- 'a.ts'`);
   });
+
+  it('a path the trees did not change is refused, so no reviewer reads an empty diff', async () => {
+    await open('review-edge-cases,review-security');
+    // zsh hands an unquoted $ALL over as ONE argument: refused, with the reason.
+    await expect(reviewPacket(deps, T, 'end', 'review-edge-cases', { tree: tree(1), paths: ['a.ts b.ts c.ts'] })).rejects.toThrow(/its own argument/);
+    await expect(reviewPacket(deps, T, 'end', 'review-edge-cases', { tree: tree(1), paths: ['a.ts', 'typo.ts'] })).rejects.toThrow(/"typo.ts" is not changed/);
+    expect(existsSync(join(dir(), 'r1-review-edge-cases.packet.md'))).toBe(false);
+    const p = await reviewPacket(deps, T, 'end', 'review-edge-cases', { tree: tree(1), paths: ['a.ts', 'b.ts'] });
+    expect(p.leftOut).toEqual(['src/lib/export.ts', 'src/a b.ts', 'log.ts', 'c.ts']);
+    // A team member's own scope is held to the same trees.
+    await expect(reviewPacket(deps, T, 'end', 'review-security', { paths: ['nope.ts'] })).rejects.toThrow(/review-security's scope/);
+  });
+
+  it('checks the paths against the real git trees', async () => {
+    const git = (...a: string[]): string => execFileSync('git', a, { cwd: repo, encoding: 'utf-8' }).trim();
+    git('init', '-q');
+    writeFileSync(join(repo, 'one.ts'), 'a\n');
+    git('add', 'one.ts');
+    const start = git('write-tree');
+    writeFileSync(join(repo, 'two.ts'), 'b\n');
+    git('add', 'two.ts');
+    const now = git('write-tree');
+    const real: ReviewDeps = { ...deps, diffNames: undefined };
+    await reviewOpen(real, T, 'end', { lenses: 'reviewer', start, criteriaFile: join(repo, 'criteria.md') });
+    await expect(reviewPacket(real, T, 'end', 'reviewer', { tree: now, paths: ['one.ts'] })).rejects.toThrow(/"one.ts" is not changed/);
+    await expect(reviewPacket(real, T, 'end', 'reviewer', { tree: 'deadbeef', paths: ['two.ts'] })).rejects.toThrow(/git cannot diff/);
+    const p = await reviewPacket(real, T, 'end', 'reviewer', { tree: now, paths: ['two.ts'] });
+    expect(p.leftOut).toEqual([]);
+  });
 });
 
 describe('the harm rule', () => {
@@ -110,6 +142,23 @@ describe('the harm rule', () => {
     const ok = parseReview(review([{ cls: 'row loss' }]), ctx);
     expect(ok.verdict).toBe('FAIL');
     expect(ok.findings[0]).toMatchObject({ id: 'r1-reviewer-1', cls: 'row loss', kind: 'new' });
+  });
+
+  it('a written harm counts wherever it stands and however short it is', () => {
+    const line = (tail: string): string => `FAIL\n\n1. [Major] id: new | class: drafts | origin: new | ${tail}\n   a.ts:1\n`;
+    for (const tail of ['siblings: a.ts, b.ts | harm: every user loses unsaved drafts on reload', 'harm: auth bypass', 'harm: data loss', '`harm`: every user loses unsaved drafts']) {
+      const r = parseReview(line(tail), ctx);
+      expect(r.verdict, tail).toBe('FAIL');
+      expect(r.findings, tail).toHaveLength(1);
+    }
+    expect(parseReview(line('harm: n/a'), ctx).verdict).toBe('PASS');
+  });
+
+  it('an open finding re-stated without its harm cannot slip out of the open set', () => {
+    const own = { ...ctx, round: 2, ownOpen: new Map([['r1-reviewer-1', 'Critical']]) };
+    const r = parseReview(review([{ id: 'r1-reviewer-1', cls: 'row loss', harm: null }]), own as typeof ctx);
+    expect(r.verdict).toBe('UNPARSED');
+    expect(r.errors.join(' ')).toMatch(/re-state it with its harm, or close it/);
   });
 
   it('same-class must name a known class; an unknown origin is refused', () => {

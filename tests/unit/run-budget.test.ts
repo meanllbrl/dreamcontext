@@ -55,6 +55,11 @@ describe('classifyHeavy', () => {
     ['(cd dashboard && node ../scripts/verify/a.mjs)', 'scripts/verify/a.mjs'],
     ['bun scripts/verify/a.ts', 'scripts/verify/a.ts'],
     ['node "scripts/verify/a.mjs"', 'scripts/verify/a.mjs'],
+    // End review 2026-11-08: a valued timeout flag and the other package runners.
+    ['timeout -k 5 120 node scripts/verify/a.mjs', 'scripts/verify/a.mjs'],
+    ['pnpm exec tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
+    ['bunx tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
+    ['yarn tsx scripts/verify/a.ts', 'scripts/verify/a.ts'],
   ])('a verify run spelled otherwise is still one: %s', (cmd, target) => {
     expect(directHeavy(cmd)).toBe('browser');
     expect(heavyStep(cmd)?.target).toBe(target);

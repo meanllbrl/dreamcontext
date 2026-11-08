@@ -49,15 +49,15 @@ export const BUDGET_BUCKET_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const MAX_OVERRUNS = 200;
 
 const ENV_PREFIX = /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/;
-/** `timeout 120 node …` is still the node run (measured 2026-11-08: one of the shapes that slipped past). */
-const WRAPPER = /^(?:(?:sudo|time|command|exec|nice|npx\s+--yes|timeout(?:\s+(?:-\S+|[A-Z]+))*\s+\d+(?:\.\d+)?[smhd]?)\s+)+/;
+/** `timeout 120 node …` (or `timeout -k 5 120 node …`) is still the node run (measured 2026-11-08: one of the shapes that slipped past). */
+const WRAPPER = /^(?:(?:sudo|time|command|exec|nice|npx\s+--yes|timeout(?:\s+(?:-[ks]\s+\S+|-\S+|[A-Z]+))*\s+\d+(?:\.\d+)?[smhd]?)\s+)+/;
 /**
- * A verify script run however it is spelled: `npx tsx`, `bun`, a `../../` or absolute path, a
+ * A verify script run however it is spelled: `npx tsx`, `pnpm exec tsx`, `bunx tsx`, `bun`, a `../../` or absolute path, a
  * node flag first. Measured over the Develop runs after the hook gate landed (2026-10-31 to
  * 11-08): every direct run the strict `node scripts/verify/x.mjs` shape missed was one of these.
  * `node --check` only parses the file, so it runs nothing.
  */
-const VERIFY_RUN = /^(?:npx\s+(?:--yes\s+)?)?(?:node|tsx|ts-node|bun)\s+((?:-\S+(?:\s+[^-\s'"/.]\S*)?\s+)*)(\S*?)(scripts\/verify\/\S+?\.(?:m?[jt]s|c[jt]s))(?=$|[\s)'"])/;
+const VERIFY_RUN = /^(?:npx\s+(?:--yes\s+)?|(?:pnpm|yarn)\s+(?:exec\s+|dlx\s+)?|bunx\s+)?(?:node|tsx|ts-node|bun)\s+((?:-\S+(?:\s+[^-\s'"/.]\S*)?\s+)*)(\S*?)(scripts\/verify\/\S+?\.(?:m?[jt]s|c[jt]s))(?=$|[\s)'"])/;
 const REDIRECT = /\s+(?:(?:\d|&)?>>?&?\s*\S+|<\s*\S+)/g;
 
 /** `-t foo` is a filter and names tests; these take a value that names none. */

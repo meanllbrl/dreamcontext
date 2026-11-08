@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { CODE_REVIEW_RULES } from '../../lib/code-review-rules.js';
@@ -6,7 +7,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { repoToplevel } from '../../lib/builder-tools.js';
 import {
   classResolver, computePlanState, CODE_LENSES, loopCommand, nextRoundLenses, nextSeq, normClass, noteLines, ownerOf, renderNextAction, renderStopCard,
-  PLAN_LEDGER_VERSION, type Ledger, type LedgerRound, type PlanState,
+  GIT_OBJECT_RE, PLAN_LEDGER_VERSION, type Ledger, type LedgerRound, type PlanState,
 } from '../../lib/plan-ledger.js';
 import {
   ensureReviewLoopDir, PlanStoreError, readExternalNoLink, readLedgerAt, readSafe, reviewLoopDir, reviewLoopsDir, sha, withLockFile, writeSafe,
@@ -41,9 +42,41 @@ export interface ReviewDeps {
   now: () => Date;
   /** The brain, for the criteria at open and for split / --cancel-task. */
   brain: () => { root: string; backend: TaskBackend };
+  /** The paths that differ between two trees; throws when either is no object of the repo. */
+  diffNames?: (base: string, tree: string) => string[];
 }
 
-const TREE_RE = /^[0-9a-f]{7,64}$/;
+function gitDiffNames(repo: string, base: string, tree: string): string[] {
+  let out: string;
+  try {
+    out = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--no-renames', '--name-only', '-z', base, tree], { cwd: repo, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  } catch {
+    throw new PlanRefusal(`git cannot diff ${base} against ${tree} in ${repo}: give the snapshot trees of this repo (START, NOW, FIX).`);
+  }
+  return out.split('\0').filter(Boolean);
+}
+
+/**
+ * Every path a round or a reviewer's scope carries is a path the trees really changed, so the
+ * `git diff` a packet prints can never come back empty. The one guard for every way a path
+ * enters a round: round 1's paths, a fix round's paths, and a team member's own scope. Returns
+ * the changed paths left out, which the lead hears about (another session's work, or a miss).
+ */
+function checkPaths(deps: ReviewDeps, base: string, tree: string, paths: string[], what: string): string[] {
+  const changed = new Set((deps.diffNames ?? ((b, t) => gitDiffNames(deps.repo, b, t)))(base, tree));
+  const unknown = paths.filter((p) => !changed.has(p));
+  if (unknown.length > 0) {
+    const joined = unknown.filter((p) => /\s/.test(p) && p.split(/\s+/).every((x) => changed.has(x)));
+    throw new PlanRefusal([
+      `${what}: ${unknown.map((p) => `"${p}"`).join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not changed between ${base} and ${tree}, so a reviewer would read an empty diff.`,
+      joined.length > 0 ? 'Several paths arrived as one argument: pass each path as its own argument (in zsh an unquoted $VAR is not split; use ${=VAR} or an array).' : 'Name the paths exactly as `git diff --name-only` prints them.',
+    ].join(' '));
+  }
+  const given = new Set(paths);
+  return [...changed].filter((p) => !given.has(p));
+}
+
+
 
 function store(deps: ReviewDeps, task: string, loop: string): LoopStore {
   const dir = reviewLoopDir(deps.repo, task, loop);
@@ -96,7 +129,7 @@ function cleanPaths(paths: string[] | undefined): string[] {
 export async function reviewOpen(deps: ReviewDeps, task: string, loop: string, opts: { lenses: string; start: string; criteriaFile?: string }): Promise<string> {
   const s = store(deps, task, loop);
   const lenses = parseLenses(opts.lenses);
-  if (!TREE_RE.test(opts.start ?? '')) throw new PlanRefusal('--start <tree> must be the run\'s START tree (a git object id).');
+  if (!GIT_OBJECT_RE.test(opts.start ?? '')) throw new PlanRefusal('--start <tree> must be the run\'s START tree (a git object id).');
   let criteria = '';
   if (opts.criteriaFile) criteria = readExternalNoLink(opts.criteriaFile).trim();
   else {
@@ -198,11 +231,11 @@ export function buildCodePacketText(p: CodePacketInput): string {
   return out.join('\n') + '\n';
 }
 
-export async function reviewPacket(deps: ReviewDeps, task: string, loop: string, lens: string, opts: { tree?: string; paths?: string[] }): Promise<{ text: string; path: string; round: number; opened: boolean }> {
+export async function reviewPacket(deps: ReviewDeps, task: string, loop: string, lens: string, opts: { tree?: string; paths?: string[] }): Promise<{ text: string; path: string; round: number; opened: boolean; leftOut: string[] }> {
   if (!(CODE_LENSES as readonly string[]).includes(lens)) throw new PlanRefusal(`--lens must be one of ${CODE_LENSES.join(', ')}.`);
   const s = store(deps, task, loop);
   const paths = cleanPaths(opts.paths);
-  if (opts.tree !== undefined && !TREE_RE.test(opts.tree)) throw new PlanRefusal('--tree <tree> must be a git object id (the NOW or FIX snapshot).');
+  if (opts.tree !== undefined && !GIT_OBJECT_RE.test(opts.tree)) throw new PlanRefusal('--tree <tree> must be a git object id (the NOW or FIX snapshot).');
   return s.lock(() => {
     const ledger = s.load();
     let state = computePlanState(ledger);
@@ -211,6 +244,7 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
     const now = deps.now().toISOString();
     let round = latestRound(ledger);
     let opened = false;
+    let leftOut: string[] = [];
 
     if (round && !state.roundComplete) {
       const rec = round.lenses[lens];
@@ -219,6 +253,7 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
       if (opts.tree && opts.tree !== round.tree) throw new PlanRefusal(`Round ${round.n} reviews tree ${round.tree}; --tree ${opts.tree} differs. Finish this round first.`);
       // A team member's own scope is its packet's --paths; a re-dispatch keeps it.
       const lensPaths = paths.length > 0 ? paths : rec.paths;
+      if (paths.length > 0) checkPaths(deps, round.base ?? ledger.start ?? '', round.tree ?? '', paths, `${lens}'s scope`);
       round.lenses[lens] = { verdict: 'PENDING', dispatchedAt: now, findings: [], seq: nextSeq(ledger), ...(lensPaths ? { paths: lensPaths } : {}) };
     } else {
       const blocking = state.stops.filter((x) => x.kind !== 'redesign');
@@ -227,9 +262,10 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
       if (paths.length === 0) throw new PlanRefusal(`Opening a round needs --paths: ${round ? 'the files the fix changed' : 'every path of the run'}, by name.`);
       const lenses = nextRoundLenses(ledger, state);
       if (!lenses.includes(lens)) throw new PlanRefusal(`Round ${(round?.n ?? 0) + 1} is for ${lenses.join(', ')} (${round ? 'each reviewer that still owns an open id' : 'the reviewers chosen at open'}); start it with one of them.`);
+      if (round && opts.tree === round.tree) throw new PlanRefusal(`Tree ${opts.tree} is the one round ${round.n} reviewed: nothing was fixed. Fix, take the FIX snapshot, then open the round.`);
+      leftOut = checkPaths(deps, round?.tree ?? ledger.start ?? '', opts.tree, paths, `Round ${(round?.n ?? 0) + 1}'s --paths`);
       let changes = '';
       if (round) {
-        if (opts.tree === round.tree) throw new PlanRefusal(`Tree ${opts.tree} is the one round ${round.n} reviewed: nothing was fixed. Fix, take the FIX snapshot, then open the round.`);
         const notePath = join(s.dir, 'changes.md');
         if (!existsSync(notePath)) throw new PlanRefusal(`Write the fix note first: ${notePath}\n\n${renderNextAction(ledger, state)}`);
         changes = readSafe(deps.repo, notePath);
@@ -280,7 +316,7 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
     });
     const path = join(s.dir, `r${round.n}-${lens}.packet.md`);
     writeSafe(deps.repo, path, text);
-    return { text, path, round: round.n, opened };
+    return { text, path, round: round.n, opened, leftOut };
   });
 }
 
@@ -370,7 +406,8 @@ export function registerReviewLoopCommands(builder: Command): void {
     .action((task: string, o: Common & { lens: string; tree?: string; paths?: string[]; print?: boolean }) => run(async () => {
       const r = await reviewPacket(depsFor(o.repo), task, o.loop, o.lens, o);
       if (o.print) return r.text;
-      return `${r.opened ? `Round ${r.round} opened.` : `Round ${r.round}.`} Packet for ${o.lens}: ${r.path}\nDispatch prompt: "Read ${r.path} and follow it."`;
+      const left = r.leftOut.length > 0 ? `\nChanged but not in --paths (another session's work? otherwise this round misses them): ${r.leftOut.join(', ')}` : '';
+      return `${r.opened ? `Round ${r.round} opened.` : `Round ${r.round}.`} Packet for ${o.lens}: ${r.path}\nDispatch prompt: "Read ${r.path} and follow it."${left}`;
     }));
 
   common(review.command('record').argument('<task>'))
