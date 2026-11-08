@@ -59,7 +59,7 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
     return (
       <li className="sidebar-team">
         <TeamSection members={own} kind="project" vault={vaultId} label={t('drawer.team.row')} className="sidebar-item" testid="drawer-team-row"
-          onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} />
+          onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} onNewMember={() => requestManageMembers({ create: true })} />
       </li>
     );
   }
@@ -68,7 +68,7 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
     <div className="ns-team-global">
       <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
       <TeamSection members={global.members} kind="global" label={t('drawer.team.global')} className="sidebar-item" testid="drawer-global-team-row"
-        onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} />
+        onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} onNewMember={() => requestManageMembers({ create: true })} />
     </div>
   );
 }

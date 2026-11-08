@@ -1,9 +1,9 @@
 /**
  * The Team row that opens in place (plan r4 D1-D4, AC 1-5): folded by default, its open state
  * kept per project; up to 8 members a plain list, over 8 a box that scrolls inside, over 12 a
- * search field; no switch on a sidebar row; one end mark per member; pop-outs under the folded
- * row (approval, question, unread; at most 3, then "+N daha"); the ring when a member works for
- * the owner, else the aggregate count.
+ * search field; no switch on a sidebar row; one end mark per member (option A: a red count for what
+ * waits on the owner, a grey spinner for work, a grey count for unread); the folded row sums them;
+ * no faces on the row, and its "⋯" holds Manage members and New member.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -70,8 +70,18 @@ describe('the Team row in place', () => {
     ]);
     expect(html).not.toContain('role="switch"');
     expect(html).not.toContain('team-member-switch');
-    for (const id of ['team-mark-approval', 'team-mark-working', 'team-mark-question', 'team-mark-unread', 'team-mark-super']) expect(countOf(html, id), id).toBe(1);
+    // Waits on the owner (approval, question) wins over work and unread: card, ring and ask are red.
+    expect(countOf(html, 'data-testid="mark-asking"')).toBe(3);
+    expect(countOf(html, 'data-ask-row="true"')).toBe(3);
+    expect(countOf(html, 'data-testid="mark-working"')).toBe(0);
+    expect(countOf(html, 'data-testid="mark-unread"')).toBe(1);
+    expect(countOf(html, 'data-testid="team-mark-super"')).toBe(1);
+    // What waits is said in words, on hover and to a reader.
+    expect(html).toContain('aria-label="CARD (approvals waiting: 1, 2 unread)"');
+    expect(html).toContain('title="ASK (questions for you: 1, 1 unread)"');
     expect(html).toMatch(/data-slug="off" data-off="true"/);
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    expect(render([member('w', { ownerWorking: 1 })])).toContain('data-testid="mark-working"');
   });
 
   it('a photo is read from the row\'s project (the drawer sits outside every provider: owner 2026-11-05)', () => {
@@ -104,8 +114,9 @@ describe('the Team row in place', () => {
       expect(html).not.toContain('team-popout');
       expect(html).not.toContain('data-slug=');
     }
-    // The row itself still says a member works or has news.
-    expect(render(news)).toContain('data-testid="team-row-ring"');
+    // The row itself still says what waits: two (a question, an approval), red, as the asking row.
+    expect(render(news)).toMatch(/data-testid="mark-asking" aria-hidden="true">2</);
+    expect(render(news)).toMatch(/data-testid="drawer-team-row"[^>]*data-ask-row="true"/);
     // Unfolded, the same members are rows again.
     withStore({ [teamOpenKey('project', 'acme')]: '1' });
     expect(countOf(render(news), 'data-testid="team-list-member"')).toBe(5);
@@ -114,18 +125,38 @@ describe('the Team row in place', () => {
   it('open row: no summed ring or count on the Team row, the member rows carry their own', () => {
     withStore({ [teamOpenKey('project', 'acme')]: '1' });
     const open = render([member('w', { ownerWorking: 1 }), member('r', { unread: 2 })]);
-    expect(open).not.toContain('data-testid="team-row-ring"');
-    expect(open).not.toContain('data-testid="team-row-count"');
-    expect(open).toContain('data-testid="team-mark-working"');
+    expect(open).toContain('data-testid="team-row-mark"></span>');
+    expect(open).toContain('data-testid="mark-working"');
+    expect(open).toContain('data-testid="mark-unread"');
   });
 
-  it('folded row: a ring when a member works for the owner, else the count; question colour when one asks', () => {
+  it('folded row: the spinner when a member works, else the grey unread count; a question makes it the red asking row', () => {
     const ring = render([member('w', { ownerWorking: 1 }), member('r', { unread: 2 })]);
-    expect(ring).toContain('data-testid="team-row-ring"');
-    expect(ring).not.toContain('data-testid="team-row-count"');
-    const count = render([member('r', { unread: 2 }), member('q', { asking: true })]);
-    expect(count).toContain('data-testid="team-row-count"');
-    expect(count).toMatch(/data-testid="drawer-team-row"[^>]*data-asking="true"/);
+    expect(ring).toContain('data-testid="mark-working"');
+    expect(ring).not.toContain('data-ask-row');
+    expect(ring).not.toContain('ns-team-faces');
+    expect(render([member('r', { unread: 2 })])).toMatch(/data-testid="mark-unread" aria-hidden="true">2</);
+    const ask = render([member('r', { unread: 2 }), member('q', { asking: true })]);
+    expect(ask).toMatch(/data-testid="drawer-team-row"[^>]*data-asking="true"[^>]*data-ask-row="true"/);
+    expect(ask).toMatch(/data-testid="mark-asking" aria-hidden="true">1</);
+    expect(ask).toContain('title="Team (questions for you: 1, 2 unread)"');
+    // Only an approval waits: the row names an approval, never a question.
+    const card = render([member('c', { approval: true })]);
+    expect(card).toContain('title="Team (approvals waiting: 1)"');
+    expect(card).not.toContain('question');
+  });
+
+  it('"⋯" holds Manage members and New member; no Manage link under the open list', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    const html = render(many(2), { onNewMember: () => undefined });
+    expect(html).toContain('data-testid="team-more"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).not.toContain('ns-team-sec-manage');
+    expect(html).not.toContain('data-testid="team-manage"');
+    // An empty team has no "⋯": its row itself sets the team up.
+    expect(render([])).not.toContain('data-testid="team-more"');
+    // Without either flow, no "⋯".
+    expect(render(many(2), { onManage: undefined })).not.toContain('data-testid="team-more"');
   });
 
   it('search filters by name in Turkish case', () => {
@@ -156,7 +187,7 @@ describe('a project with no member yet (owner 2026-11-03)', () => {
     withStore({ 'dc.drawer.team.acme': '1' });
     const html = render([]);
     expect(html).toMatch(/data-testid="drawer-team-row"[^>]*data-empty="true"/);
-    expect(html).toContain('data-testid="team-empty-slot"');
+    expect(html).toMatch(/data-testid="team-empty-slot" aria-hidden="true">Set up team</);
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).not.toContain('data-testid="team-list"');
     expect(html).not.toContain('aria-expanded');

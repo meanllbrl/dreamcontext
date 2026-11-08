@@ -1,9 +1,9 @@
 import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectLogoPanel } from './ProjectLogoPanel';
-import { ProjectChipBubbles } from '../ProjectTabs';
+import { StatusMark, askRow, markWords, type MarkState } from './StatusMark';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import type { EkipMember } from '../../aiteam/teamModel';
 import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
@@ -11,7 +11,7 @@ import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { filterProjectRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
+import { filterProjectRows, ownMembersOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -54,8 +54,9 @@ export interface ChatDrawerProps {
   globalTeam?: GlobalTeamRow | null;
   /** A member's on/off switch in an Ekip list: `POST /api/agents/:slug/enabled` in `vault`. */
   onSwitchMember?(vault: string, slug: string, enabled: boolean): Promise<unknown>;
-  /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view). */
-  onManage?(vault: string | null): void;
+  /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view);
+   *  `create` opens it on New member. */
+  onManage?(vault: string | null, opts?: { create?: boolean }): void;
 }
 
 interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
@@ -265,20 +266,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
     return open && p.globalTeam?.members.some((m) => m.slug === open) ? open : null;
   })();
 
-  /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
-   *  D1); a phone keeps its bottom sheet. */
-  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone && c.members.length === 0 && p.onManage ? (
-    // No member yet (owner 2026-11-03): one plain row like "Chat", same edge, type and states; it opens team setup.
-    <button key="team" type="button" className={`ns-dr-row ns-dr-child ns-dr-team-empty${c.selected ? ' is-sel' : ''}`}
-      data-testid="drawer-team-row" data-vault={c.vault} data-empty="true" aria-haspopup="dialog"
-      onClick={() => p.onManage?.(c.vault)}>
-      <span className="ns-dr-t">{t('drawer.team.setYour')}</span>
-    </button>
-  ) : !phone ? (
+  /** A project's Ekip row (r8-05). On the desktop it opens IN PLACE (plan r4 D1), and with no
+   *  member yet it reads "Ekip · Ekip kur" and opens team setup (owner 2026-11-03, option A);
+   *  a phone keeps its bottom sheet. */
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone ? (
     <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
       openSlug={c.openSlug ?? null} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}
-      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault) } : {})} />
+      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault), onNewMember: () => p.onManage?.(c.vault, { create: true }) } : {})} />
   ) : (
     <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
@@ -288,14 +283,15 @@ export function ChatDrawer(p: ChatDrawerProps) {
 
   /** A project's members for the New window menu: its own, then the members of all projects. */
   const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
-    const own = row.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
+    // Folded or open, the same members (a folded row keeps them beside its mark).
+    const own = ownMembersOf(row);
     const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));
     return [...own, ...global].filter((m) => m.enabled);
   };
 
   const teamOf = (vault: string): EkipMember[] => {
     const row = p.rows.find((r) => r.name === vault);
-    return row?.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
+    return row ? ownMembersOf(row) : [];
   };
 
   /** The member's stage, its one conversation, in the project it is opened for. */
@@ -308,8 +304,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (c.kind === 'super') {
       return (
         <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} working={c.working} asking={c.asking} label={t('shell.drawer.superAgent')}
-          workingLabel={(n) => t('shell.drawer.superWorking').replace('{n}', String(n))} askingLabel={t('shell.drawer.superAsking')}
-          unreadLabel={(n) => t('super.unread.count').replace('{n}', String(n))} onPick={() => pick(row.name, { kind: 'super' })} />
+          onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
     if (c.kind === 'team') return teamRow(c);
@@ -356,7 +351,6 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </div>
       );
     }
-    const live = c.working + c.asking + c.other;
     const label = c.name === STORED_DEFAULT_NAME ? t('shell.windows.defaultName') : c.name;
     if (renaming && renaming.vault === row.name && renaming.id === c.id) {
       // Enter or a click away keeps the name; Esc, or a blank name, leaves it as it was.
@@ -385,9 +379,12 @@ export function ChatDrawer(p: ChatDrawerProps) {
     const dragHere = winDrag?.vault === row.name ? winDrag : null;
     const order = windowIds(row);
     const landing = dragHere && !windowDropIsNoop(order, dragHere.id, dragHere.before);
+    const mark: MarkState = { asking: c.asking, working: c.working > 0, unread: c.flagged };
+    const words = markWords(t, mark);
     return (
       <button key={`w-${c.id}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-win${c.selected ? ' is-sel' : ''}`}
-        data-testid="drawer-window-row" data-window-id={c.id} aria-haspopup="menu"
+        data-testid="drawer-window-row" data-window-id={c.id} aria-haspopup="menu" {...askRow(mark.asking)}
+        title={words ? `${label} (${words})` : undefined} aria-label={words ? `${label} (${words})` : undefined}
         data-dragging={dragHere?.id === c.id ? 'true' : undefined}
         data-drop-before={landing && dragHere.before === c.id ? 'true' : undefined}
         data-drop-after={landing && dragHere.before === null && order[order.length - 1] === c.id ? 'true' : undefined}
@@ -407,7 +404,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           }
         }}>
         <span className="ns-dr-t">{label}</span>
-        <ProjectChipBubbles chip={{ live, asking: c.asking, working: c.working, idle: c.other, flagged: c.flagged }} />
+        <StatusMark {...mark} />
       </button>
     );
   };
@@ -465,16 +462,19 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
-            {/* Two sibling buttons, never one inside the other: the row's own toggle (name, notes)
-                and "+". The rest of the row (the chevron, the gaps) toggles on a pointer click. */}
-            <div className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
+            {/* Sibling buttons, never one inside the other: the row's own toggle (name, notes, mark),
+                "+" and "⋯". The rest of the row (the gaps) toggles on a pointer click. */}
+            <ProjectRowShell row={row} className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
               onPointerDown={p.device ? undefined : (e) => { if (!searching) startDrag(e, row.name); }}
               onClick={(e) => {
                 if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
                 p.onToggleExpanded(row.name);
               }}
               onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
+              {(words) => (<>
               <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
+                aria-label={words ? `${[row.name, row.otherWindow ? t('shell.drawer.otherWindow') : '', row.asleep ? t('shell.drawer.asleep') : ''].filter(Boolean).join(', ')} (${words})` : undefined}
+                title={words ? `${row.name} (${words})` : undefined}
                 onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
                 onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
                 <span className="ns-dr-pic">
@@ -485,14 +485,30 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 <span className="ns-dr-t">{row.name}</span>
                 {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
                 {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
-                {row.sum && <ProjectChipBubbles chip={row.sum} />}
-                {row.superAsking && <span className="ns-dr-ask" data-testid="drawer-project-asking" aria-label={t('shell.drawer.superAsking')} />}
+                {/* Folded, the ONE mark of everything it hides (option A); open, the rows carry theirs. */}
+                <ProjectMark row={row} />
               </button>
-              <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
-                data-testid="drawer-project-add"
-                onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>+</button>
-              <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
-            </div>
+              {/* Over the row's end on hover or keyboard focus (always on a finger): "+" is the same
+                  picker as New window (Claude or a member), "⋯" the project's menu. */}
+              <span className="ns-dr-acts">
+                <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
+                  data-testid="drawer-project-add" aria-haspopup={newChatMembers(row).length > 0 ? 'menu' : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (newChatMembers(row).length === 0) { pick(row.name, { kind: 'new-window' }); return; }
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 });
+                  }}>
+                  <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
+                </button>
+                <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
+                  data-testid="drawer-project-more" aria-haspopup="menu"
+                  onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+                  <svg className="ns-dr-ico ns-dr-ico--fill" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg>
+                </button>
+              </span>
+              </>)}
+            </ProjectRowShell>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
           </div>
         ))}
@@ -505,7 +521,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           {!phone ? (
             <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row" openSlug={globalOpenSlug}
               onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
-              {...(p.onManage ? { onManage: () => p.onManage?.(null) } : {})} />
+              {...(p.onManage ? { onManage: () => p.onManage?.(null), onNewMember: () => p.onManage?.(null, { create: true }) } : {})} />
           ) : (
           <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
             label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
@@ -643,23 +659,50 @@ function windowIds(row: DrawerProjectRow): string[] {
   return row.children.flatMap((c) => (c.kind === 'window' ? [c.id] : []));
 }
 
-/** The Super Agent row: its project's unread count rides beside the title (the pane publishes it). */
-function SuperRow({ vault, selected, on, working, asking, label, workingLabel, askingLabel, unreadLabel, onPick }: {
-  vault: string; selected: boolean; on: boolean; working: number; asking: boolean; label: string;
-  workingLabel: (n: number) => string; askingLabel: string; unreadLabel: (n: number) => string; onPick: () => void;
+/** A folded project's mark: what its rows would say, plus its Super Agent's unread replies. */
+function useProjectMark(row: DrawerProjectRow): MarkState {
+  const superUnread = useSuperUnreadCount(row.name);
+  if (row.expanded) return { asking: 0, working: false, unread: 0 };
+  const m = row.mark ?? { asking: 0, working: false, unread: 0 };
+  return { ...m, unread: m.unread + superUnread };
+}
+
+/** The project row's frame: the asking look and the mark's words come from the same mark. */
+function ProjectRowShell({ row, className, children, ...rest }: {
+  row: DrawerProjectRow; className: string; children: (words: string) => ReactNode;
+} & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'className'>) {
+  const { t } = useI18n();
+  const mark = useProjectMark(row);
+  return <div className={className} {...askRow(mark.asking)} {...rest}>{children(markWords(t, mark))}</div>;
+}
+
+function ProjectMark({ row }: { row: DrawerProjectRow }) {
+  const mark = useProjectMark(row);
+  return <span className="ns-dr-end" data-testid="drawer-project-mark"><StatusMark {...mark} /></span>;
+}
+
+/** The Super Agent row (option A): normal weight, ONE end mark (its question in red, its children
+ *  at work as the spinner, else its unread replies); a question turns the row red with no hop;
+ *  turned off, the name is muted and the row says "kapalı". */
+function SuperRow({ vault, selected, on, working, asking, label, onPick }: {
+  vault: string; selected: boolean; on: boolean; working: number; asking: boolean; label: string; onPick: () => void;
 }) {
+  const { t } = useI18n();
   const unread = useSuperUnreadCount(vault);
-  // One mark at the row's end, in order of what the owner must do: the row itself goes red for a
-  // question; the ring counts the children at work; the unread count shows only when no ring does.
-  const named = [asking ? askingLabel : '', working > 0 ? workingLabel(working) : '', unread > 0 ? unreadLabel(unread) : ''].filter(Boolean).join(', ');
+  const mark: MarkState = { asking: asking ? 1 : 0, working: working > 0, unread };
+  const words = [
+    asking ? t('shell.drawer.superAsking') : '',
+    working > 0 ? t('shell.drawer.superWorking').replace('{n}', String(working)) : '',
+    unread > 0 ? t('super.unread.count').replace('{n}', String(unread)) : '',
+    on ? '' : t('shell.drawer.superOff'),
+  ].filter(Boolean).join(', ');
   return (
     <button type="button" className={`ns-dr-row ns-dr-child ns-dr-super${selected ? ' is-sel' : ''}`} data-asking={asking ? 'true' : undefined}
-      data-testid="drawer-super-row" aria-label={named ? `${label} (${named})` : undefined} onClick={onPick}>
+      data-off={on ? undefined : 'true'} {...askRow(mark.asking)}
+      data-testid="drawer-super-row" aria-label={words ? `${label} (${words})` : undefined} title={words ? `${label} (${words})` : undefined} onClick={onPick}>
       <span className="ns-dr-t">{label}</span>
-      {working > 0
-        ? <span data-testid="super-working-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
-        : unread > 0 && <span className="ns-menu-count" data-testid="super-unread-badge">{unread}</span>}
-      {working === 0 && unread === 0 && !asking && <span className={`ns-dr-dot${on ? ' is-on' : ''}`} aria-hidden="true" />}
+      <StatusMark {...mark} />
+      {!on && <span className="ns-dr-note" data-testid="super-off-note">{t('shell.drawer.superOff')}</span>}
     </button>
   );
 }

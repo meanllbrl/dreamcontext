@@ -781,6 +781,26 @@ export function ekipAsking(members: readonly EkipMember[]): boolean {
   return members.some((m) => m.approval || (m.asking && !m.superOnly && m.enabled));
 }
 
+/** Things waiting on the owner, counted: each approval card and each open question. */
+export function ekipAskingCount(members: readonly EkipMember[]): number {
+  let n = 0;
+  for (const m of members) {
+    if (m.approval) n += 1;
+    if (m.asking && !m.superOnly && m.enabled) n += 1;
+  }
+  return n;
+}
+
+/** Approval cards waiting on the owner (counted in `ekipAskingCount` too). */
+export function ekipApprovalCount(members: readonly EkipMember[]): number {
+  return members.filter((m) => m.approval).length;
+}
+
+/** Owner-origin replies not read yet, summed (they wait on nobody: a grey count). */
+export function ekipUnreadCount(members: readonly EkipMember[]): number {
+  return members.reduce((n, m) => n + (m.enabled && !m.superOnly ? m.unread : 0), 0);
+}
+
 /** Up to three faces, the ones at work first (for the owner, then for the Super), then the
  *  list's order. */
 export function ekipFaces(members: readonly EkipMember[], max = 3): EkipMember[] {

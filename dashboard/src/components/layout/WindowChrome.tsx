@@ -1172,24 +1172,25 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   ), [notify]);
   /** "Üyeleri yönet" for a project not on screen: queued per project (like a drawer intent) and
    *  taken by that project's instance once it is mounted and active, never by a timer. */
-  const [pendingManage, setPendingManage] = useState<Record<string, number>>({});
+  const [pendingManage, setPendingManage] = useState<Record<string, { nonce: number; create?: boolean }>>({});
   const manageSeqRef = useRef(0);
   const consumeManage = useCallback((vault: string, nonce: number) => {
     setPendingManage((prev) => {
-      if (prev[vault] !== nonce) return prev;
+      if (prev[vault]?.nonce !== nonce) return prev;
       const { [vault]: _gone, ...rest } = prev;
       return rest;
     });
   }, []);
-  /** "Üyeleri yönet": the modal opens in that project, which comes forward first. */
-  const manageMembers = useCallback((vault: string | null) => {
+  /** "Üyeleri yönet": the modal opens in that project, which comes forward first; `create` opens
+   *  it on New member (the drawer Team row's "⋯"). */
+  const manageMembers = useCallback((vault: string | null, opts?: { create?: boolean }) => {
     const target = vault ?? activeRef.current;
     if (!target) return;
     setFloatingOpen(false);
-    if (target === activeRef.current) { requestManageMembers(); return; }
+    if (target === activeRef.current) { requestManageMembers(opts?.create ? { create: true } : undefined); return; }
     manageSeqRef.current += 1;
     const nonce = manageSeqRef.current;
-    setPendingManage((prev) => ({ ...prev, [target]: nonce }));
+    setPendingManage((prev) => ({ ...prev, [target]: { nonce, ...(opts?.create ? { create: true } : {}) } }));
     if (openRef.current.some((p) => p.vault === target)) { activate(target); return; }
     void addTab(target).then((result) => {
       const tab = openRef.current.find((p) => p.vault === target);

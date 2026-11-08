@@ -275,23 +275,12 @@
   transition: transform var(--duration-fast, 120ms) ease;
 }
 .ns-team-chev.is-open { transform: rotate(90deg); }
-.ns-team-sec-row[data-asking="true"] .ns-team-label { color: var(--color-error); }
 .ns-team-mlist { margin: 0; padding: 0; list-style: none; }
-/* The members one level under the Team row: the drawer's nesting (a nested chat's indent and its
-   tree line), hung from the Team row's chevron. One box for the open list (search, rows, Manage
-   members), so the line runs unbroken and never scrolls with the box. Folded, nothing hangs here. */
+/* The members one level under the Team row, hung from its chevron; no tree line (option A,
+   owner 2026-11-09). Folded, nothing hangs here. */
 .ns-team-open-list {
   position: relative;
   margin-left: var(--ns-team-in);
-}
-.ns-team-open-list::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--color-border);
 }
 /* Over 8 members: a box 8 rows tall that scrolls INSIDE; the rows under it never move. */
 .ns-team-mlist.is-box { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -318,20 +307,67 @@
 .ns-team-mrow.is-sel::before { content: ''; position: absolute; left: -0.5px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--color-accent); }
 .ns-team-mrow[data-off="true"] { color: var(--color-text-secondary); opacity: 0.6; }
 .ns-team-mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ns-team-sec-manage {
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+/* The Team row's head: the row, and its "⋯" over the row's end on hover or keyboard focus (the
+   end mark steps aside for it). A finger has no hover: the "⋯" stays, and the row makes room. */
+.ns-team-sec-head { position: relative; display: flex; }
+.ns-team-end { flex: none; display: inline-flex; align-items: center; }
+.ns-team-setup { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.ns-team-more {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.ns-team-more svg { width: 14px; height: 14px; fill: currentColor; }
+.ns-team-more:hover { background: var(--color-bg-elevated); color: var(--color-text); }
+.ns-team-more:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.ns-team-sec-head:is(:hover, :focus-within, [data-menu-open="true"]) .ns-team-more { opacity: 1; pointer-events: auto; }
+.ns-team-sec-head[data-more="true"]:is(:hover, :focus-within, [data-menu-open="true"]) .ns-team-end { visibility: hidden; }
+@media (hover: none), (max-width: 600px) {
+  .ns-team-more { opacity: 0.85; pointer-events: auto; }
+  .ns-team-sec-head[data-more="true"] .ns-team-sec-row { padding-right: calc(var(--space-2) + 22px); }
+  .ns-team-sec-head[data-more="true"]:is(:hover, :focus-within, [data-menu-open="true"]) .ns-team-end { visibility: visible; }
+}
+.ns-team-menu {
+  position: fixed;
+  z-index: 62;
+  min-width: 160px;
+  padding: var(--space-1);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+}
+.ns-team-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
   font: inherit;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
 }
-.ns-team-sec-manage:hover { text-decoration: underline; }
+.ns-team-menu-item:hover { background: var(--color-bg-tertiary); }
+.ns-team-menu-item:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 .ns-team-search {
   display: block;
   width: calc(100% - var(--space-4));
