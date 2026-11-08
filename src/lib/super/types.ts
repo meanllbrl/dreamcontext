@@ -9,6 +9,7 @@
  */
 
 import type { OwnerWaitKind } from './owner-wait.js';
+import type { OwnerLanguage } from './owner-language.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
 
@@ -938,6 +939,9 @@ export interface SuperState {
   pad?: SuperPadItem[];
   /** The last pad id handed out (`n<padSeq>`): ids are never reused, so a stale id names nothing. */
   padSeq?: number;
+  /** The language the owner writes to this Super in, decided by the server from his messages
+   *  (owner-language.ts) and named in every turn. Absent: not known yet. */
+  ownerLanguage?: OwnerLanguage;
   /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
   /** A member Super's record (`state/.super/members/<slug>.json`): its member slug. Absent = main. */

@@ -12,6 +12,7 @@
  *    pre-approved in an `auto` vault only;
  *  - exactly one super session per vault at the upgrade: a different id 409, the phone 403.
  */
+import { ownerLanguageBlock } from '../../src/lib/super/owner-language.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
@@ -199,8 +200,9 @@ describe('the super chat\'s event turns (plan r4 D4, D8, D10)', () => {
     owner(ws, 'two');
     owner(ws, 'three');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(4));
-    // Each owner message carries its reference block (owner 2026-10-23); the event turn none.
-    expect(userFrames(proc)).toEqual([['[super events] batch=b-1 items=1'], ...['one', 'two', 'three'].map((t) => [t, ownerMsgBlock(t)])]);
+    // Each owner message carries its reference block (owner 2026-10-23) and its language block
+    // (owner 2026-11-08: words that do not tell name no language); the event turn neither.
+    expect(userFrames(proc)).toEqual([['[super events] batch=b-1 items=1'], ...['one', 'two', 'three'].map((t) => [t, ownerMsgBlock(t), ownerLanguageBlock(null)])]);
     result(proc);
     await new Promise((r) => setTimeout(r, 30));
     expect(userFrames(proc)).toHaveLength(4);
@@ -211,7 +213,7 @@ describe('the super chat\'s event turns (plan r4 D4, D8, D10)', () => {
     const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
     owner(ws, 'Fix the Orbit login page');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(1));
-    expect(userFrames(proc)[0]).toEqual(['Fix the Orbit login page', `<owner-msg ref="${msgRef('Fix the Orbit login page')}"/>`]);
+    expect(userFrames(proc)[0]).toEqual(['Fix the Orbit login page', `<owner-msg ref="${msgRef('Fix the Orbit login page')}"/>`, ownerLanguageBlock(null)]);
     result(proc);
     owner(ws, '/compact');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));

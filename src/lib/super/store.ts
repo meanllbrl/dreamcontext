@@ -17,6 +17,7 @@ import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { renameWithRetry } from '../fs-retry.js';
+import { asOwnerLanguage } from './owner-language.js';
 import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
 
 /**
@@ -790,6 +791,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   // Never below a debt it holds: a later debt can never take an id in use.
   const owedSeq = Math.max(rawOwedSeq !== undefined && rawOwedSeq > 0 && rawOwedSeq < 1e9 ? Math.floor(rawOwedSeq) : 0, ...owed.map((d) => d.seq));
   const owedSince = finite(raw.owedSince);
+  const ownerLanguage = asOwnerLanguage(raw.ownerLanguage);
   return {
     v: SUPER_STATE_VERSION,
     session,
@@ -817,6 +819,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(owed.length ? { owed } : {}),
     ...(owedSeq ? { owedSeq } : {}),
     ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
+    ...(ownerLanguage ? { ownerLanguage } : {}),
   };
 }
 

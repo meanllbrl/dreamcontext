@@ -4067,7 +4067,7 @@
     },
     {
       "path": "super send",
-      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: \"delivered\" says how it arrived",
+      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks, and then \"waits\" says it is not read yet). A parked child is woken first, in the same command: \"delivered\" says how it arrived",
       "args": [
         "<child>",
         "<text>"

@@ -450,6 +450,15 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-msg-assistant-body .md-preview .markdown-body ol {
   margin-bottom: var(--chat-block-gap, var(--space-4));
 }
+/* ...but the LAST block ends at the card's padding. The rule above out-specifies
+   MarkdownPreview's own `> :last-child { margin-bottom: 0 }` (0,3,1 over 0,3,0), so every answer
+   card carried one block gap of empty space under its last line, its bottom twice its top (owner
+   2026-11-08, Tilki Super: "böyle kalıyor"). One class more than the block rule wins it back;
+   the last list's last item drops its own item gap for the same reason. */
+.chat-msg-assistant-body .md-preview .markdown-body > :last-child,
+.chat-msg-assistant-body .md-preview .markdown-body > :is(ul, ol):last-child > li:last-child {
+  margin-bottom: 0;
+}
 /* THE list fix. MarkdownPreview pins `li` to the body-sm leading (1.43) with a selector that
    outranked the block above, so a findings list — the shape most long answers take — was the
    TIGHTEST text in the transcript, tighter than the paragraphs around it, and it was the part

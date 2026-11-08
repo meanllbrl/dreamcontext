@@ -325,6 +325,21 @@ async function runTheme(chromium, base, theme, report) {
   ok('and two findings sit ≥6px apart — a multi-line item needs more than the 4px a one-liner does',
     (itemGap ?? 0) >= 6, `item gap=${itemGap}px`);
 
+  // Owner 2026-11-08 (Tilki Super, "böyle kalıyor"): every answer card had one block gap of
+  // empty space under its last line, because the chat's block rule out-specified
+  // MarkdownPreview's `> :last-child { margin-bottom: 0 }`. The card's bottom inset must equal
+  // its top inset, measured off the painted boxes of its first and last block.
+  const insets = await page.evaluate(() => [...document.querySelectorAll('.chat-msg-assistant-body')].map((body) => {
+    const md = body.querySelector('.markdown-body');
+    if (!md || !md.firstElementChild || !md.lastElementChild) return null;
+    const b = body.getBoundingClientRect();
+    const top = Math.round(md.firstElementChild.getBoundingClientRect().top - b.top);
+    const bottom = Math.round(b.bottom - md.lastElementChild.getBoundingClientRect().bottom);
+    return { top, bottom };
+  }).filter(Boolean));
+  ok('an answer card ends at its padding: bottom inset = top inset (was one block gap more)',
+    insets.length > 0 && insets.every((x) => Math.abs(x.bottom - x.top) <= 2), JSON.stringify(insets));
+
   // ── shared chat pieces the #agents pass touched (a no-op or a fix for Chat too) ──
   console.log('── shared pieces: board, Copy, placeholder, the / menu');
   const canvasBox = page.locator('.chat-board-canvas').first();

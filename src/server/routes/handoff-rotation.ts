@@ -6,6 +6,8 @@ import { startHandoffRun, type HandoffRun, type HandoffStage } from '../../lib/h
 import { startRotating, takeFreshDelivered } from '../../lib/super/fresh-session.js';
 import { superHandoffTask } from '../../lib/super/handoff-file.js';
 import { superOfSession } from '../../lib/super/store.js';
+import { superKnownLanguage } from '../../lib/super/inbox.js';
+import { ownerLanguageLine } from '../../lib/super/owner-language.js';
 
 /**
  * The context handoff's rotation at a pane's main `result` frame, out of agent-chat.ts so every
@@ -54,7 +56,10 @@ export function handleRotationAtResult(input: RotationInput): RotationDecision {
   stampHandoffRecord(contextRoot, pane, { actedAt: (input.now ?? new Date()).toISOString() });
   // Both are USER frames, so both open turns (see turnsInFlight's header in agent-chat.ts).
   input.writeUserTurn('/clear');
-  input.writeUserTurn(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }));
+  // A fresh Super session has no message of his to copy the language from: the turn names it.
+  const langLine = input.isSuper ? ownerLanguageLine(superKnownLanguage(pane)) : null;
+  const prompt = handoffContinuePrompt(rec, { fallback: decision === 'fallback' });
+  input.writeUserTurn(langLine ? `${prompt}\n${langLine}` : prompt);
   input.startRun(startHandoffRun({
     task: rec.task,
     title: rec.title,
