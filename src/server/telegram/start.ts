@@ -5,12 +5,14 @@
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { setTelegramHub, telegramHub, TelegramHub, type HubDeps } from './hub.js';
 import { wireTelegramAsks } from './asks.js';
+import { memberAdapter } from './member.js';
 
 export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<TelegramHub> {
   const have = telegramHub();
   if (have) return have;
   const hub = new TelegramHub({
     banner: (title, body) => { try { notifyViaBundle(title, body); } catch { /* no banner */ } },
+    member: memberAdapter(),
     ...extra,
   });
   setTelegramHub(hub);

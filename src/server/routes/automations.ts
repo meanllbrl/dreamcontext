@@ -2170,7 +2170,8 @@ function onOneOffJob(contextRoot: string, manifest: AutomationManifest, runId: s
 
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
  *  member a job while the owner has handed the Chat screen over (`super team ask`). */
-export type SayVia = 'dashboard' | 'assistant' | 'super';
+/** `telegram`: the owner wrote from the member's own bot (W2, plan "Members"). */
+export type SayVia = 'dashboard' | 'assistant' | 'super' | 'telegram';
 
 /**
  * An app asking one of its project's agents to do something. Reaches `sayFromApp` only from the

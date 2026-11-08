@@ -219,7 +219,7 @@ function parseEntry(json: string): ThreadEntry | null {
       ...(summary && summary.length > 0 ? { summary } : {}),
       ...(result ? { result } : {}),
       ...(r.via === 'app' && typeof r.app === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(r.app) ? { app: r.app } : {}),
-      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app')
+      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app' || r.via === 'telegram')
         ? (r.via as ThreadVia)
         : 'runner',
     };
