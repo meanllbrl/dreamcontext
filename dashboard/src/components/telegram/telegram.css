@@ -121,8 +121,8 @@
 .tg-btn:hover:not(:disabled) { background: var(--color-bg-tertiary); }
 .tg-btn:active:not(:disabled) { transform: scale(0.98); }
 .tg-btn:disabled { opacity: 0.5; cursor: default; }
-.tg-btn--primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-text); font-weight: var(--font-weight-semibold); }
-.tg-btn--primary:hover:not(:disabled) { background: var(--color-accent-strong); }
+.tg-btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); font-weight: var(--font-weight-semibold); }
+.tg-btn--primary:hover:not(:disabled) { filter: brightness(0.92); }
 .tg-btn--wide { width: 100%; }
 .tg-btn--start { align-self: flex-start; }
 .tg-btn--danger { border-color: transparent; background: transparent; color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
@@ -155,7 +155,8 @@
   height: 8px;
   border-radius: 50%;
   background: var(--color-text-secondary);
-  animation: tg-pulse 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, tg-pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes tg-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .tg-wait-dot { animation: none; } }

@@ -100,8 +100,8 @@ describe('the route arms it only under Continue, and cancels it', () => {
     expect(route).toMatch(/if \(!choice\.target\) armResumeAtReset\(choice\.earliestResetAt, toolAccountId, accounts\.tool\);/);
   });
   it('an owner turn and the pane ending cancel it', () => {
-    const at = route.indexOf('const writeOwnerTurn = (text: string): void => {');
-    expect(route.slice(at, at + 300)).toMatch(/ownerSeq \+= 1;\s*resumeAtReset\.cancel\(\);/);
+    const at = route.indexOf('const writeOwnerTurn = (raw: string): void => {');
+    expect(route.slice(at, at + 1800)).toMatch(/ownerSeq \+= 1;\s*resumeAtReset\.cancel\(\);/);
     expect(route.match(/resumeAtReset\.cancel\(\);\n    stopPing\(\);/g)?.length).toBe(2);
   });
   it('the rule is read again when it fires: a switch to Stop since arming sends nothing', () => {
