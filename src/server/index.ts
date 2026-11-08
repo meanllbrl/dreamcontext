@@ -257,6 +257,7 @@ import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
 import { handleSuperPhoneAnswer, handleSuperPhonePermission, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
+import { handleMacOwnerInput } from './mac-owner.js';
 import { handleSuperReadGet, handleSuperReadPost } from './routes/super-read.js';
 import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } from './routes/super-remote.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
@@ -754,6 +755,8 @@ export function buildRouter(): Router {
   router.get('/api/agent/super-questions', handleSuperPhoneQuestions);
   router.post('/api/agent/super-answer', handleSuperPhoneAnswer);
   router.post('/api/agent/super-permission', handleSuperPhonePermission);
+  // He wrote or answered a card on this Mac's page: "back at the Mac" (server/mac-owner.ts).
+  router.post('/api/mac-owner/input', handleMacOwnerInput);
   router.get('/api/agent/super-read', handleSuperReadGet);
   router.post('/api/agent/super-read', handleSuperReadPost);
   // The remote screen's Super stage (read and arrange only; the Mac window stays the bridge).
@@ -1142,7 +1145,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

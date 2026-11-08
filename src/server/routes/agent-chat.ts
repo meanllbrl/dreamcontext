@@ -107,8 +107,6 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
-import { isMacOwnerRequest } from '../mac-owner.js';
-import { macOwnerTurn, noteOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
 import { listCards, onCardsChange } from '../../lib/cards/records.js';
 import { flushHeldReports } from '../runs/delivery.js';
@@ -989,10 +987,6 @@ const MCP_CONNECT_POLL_MS = 3000;
  *  ones that may start an MCP sign-in. `socketDevice` tags phone sockets only, so this is the
  *  positive mark; a tailnet peer or a phone never gets it. */
 const socketLoopback = new WeakMap<object, boolean>();
-/** Sockets the app's own page on THIS Mac opened (`isMacOwnerRequest` AT THEIR UPGRADE): the owner's
- *  words on one end the automatic Telegram part (`lib/telegram/back-at-mac.ts`). A phone-link socket,
- *  a tailnet device, a mirror and an Origin-less client never get it. */
-const socketMac = new WeakMap<object, boolean>();
 /** May the socket holding a chat right now drive its MCP actions? Desktop + loopback only. */
 export function mcpSocketAllowed(ws: object): boolean {
   return !socketDevice.has(ws) && socketLoopback.get(ws) === true;
@@ -1682,7 +1676,6 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
         socketLoopback.set(ws, !phone && isLoopback(req));
-        socketMac.set(ws, !phone && isMacOwnerRequest(req));
         if (adoptable && passive) {
           void passiveAdopt(adoptable, ws, () => childNow() !== null).then((outcome) => {
             if (outcome === 'handed_over') { toWatch(ws, childNow()); return; }
@@ -3438,7 +3431,7 @@ export function startChatSession(
 
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
-  const writeOwnerTurn = (raw: string, typedAtMac = false): void => {
+  const writeOwnerTurn = (raw: string): void => {
     // A Telegram turn rides as `TG_SENTINEL + ref + TG_SENTINEL + text` through every hold path
     // (D1). Parsed ONCE here: the ref counts only when the hub put it in THIS chat's store; an
     // owner-typed or stale prefix is stripped and the turn is an ordinary Mac turn. Everything
@@ -3465,9 +3458,6 @@ export function startChatSession(
       || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
     registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
-    // He typed this himself on this Mac, now: back at the Mac, whichever chat kind this is (the
-    // Assistant and a card chat have no registry handle, so it is decided here, not there).
-    if (macOwnerTurn({ typedAtMac, telegram: !!tgSource, server: serverContinue || isServerTurnText(text), text })) noteOwnerAtMac();
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -5143,7 +5133,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean; voiceTake?: unknown; typed?: unknown;
+      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean; voiceTake?: unknown;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -5191,11 +5181,6 @@ export function startChatSession(
       ownerSeq += 1;
       resumeAtReset.cancel();
       dropHeldContinue();
-      // Typed on this Mac, now: the page marked it as his composer send (`typed`; a queue drain, a
-      // reconnect flush or an agent's `window send` never is), the socket it came on was the app's
-      // own page here at its upgrade, and it is not a phone mirror's or the hub's frame. Read NOW
-      // (the socket may change in the gate).
-      const typedAtMac = msg.typed === true && !(typeof raw !== 'string' && mirrorFrames.has(raw)) && socketMac.get(ws) === true;
       const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
       switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
@@ -5206,7 +5191,7 @@ export function startChatSession(
           if (!alive || held) return;
           // Autonomy changed while this message waited in the gate: it belongs to the successor.
           if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          writeOwnerTurn(text, typedAtMac);
+          writeOwnerTurn(text);
         }));
       return;
     }

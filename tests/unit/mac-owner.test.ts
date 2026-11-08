@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { ServerResponse } from 'node:http';
 import type { IncomingMessage } from 'node:http';
-import { isMacOwnerRequest } from '../../src/server/mac-owner.js';
+import { handleMacOwnerInput, isMacOwnerRequest, noteMacOwnerInput } from '../../src/server/mac-owner.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { readFileSync } from 'node:fs';
-import { isOwnerWords, macOwnerTurn, noteOwnerAtMac, onOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
+import { isOwnerWords, noteOwnerAtMac, onOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 
 /** "Back at the Mac" rests on what the server sees of the request, never on a flag anyone sends. */
 
@@ -67,46 +68,130 @@ describe('back-at-mac signal', () => {
   });
 });
 
-describe('one owner turn: macOwnerTurn', () => {
-  const turn = (o: Partial<{ typedAtMac: boolean; telegram: boolean; server: boolean; text: string }>) =>
-    macOwnerTurn({ typedAtMac: true, telegram: false, server: false, text: 'Mac\'ten yazdım', ...o });
-  it('his composer send on the Mac counts; nothing else does', () => {
-    expect(turn({})).toBe(true);
-    expect(turn({ typedAtMac: false })).toBe(false); // phone link, a mirror, a queue drain, an agent send
-    expect(turn({ telegram: true })).toBe(false);
-    expect(turn({ server: true })).toBe(false); // a usage-reset continue, a run report
-    expect(turn({ text: '' })).toBe(false);
-    expect(turn({ text: '/compact' })).toBe(false);
+/** Count the "back at the Mac" signals a block of code raises. */
+function signals(run: () => void): number {
+  let n = 0;
+  const off = onOwnerAtMac(() => { n += 1; });
+  try { run(); } finally { off(); }
+  return n;
+}
+function fakeRes(): ServerResponse & { status?: number; body?: string } {
+  const r = {
+    writeHead(code: number) { r.status = code; return r; },
+    end(b?: string) { r.body = b; },
+  } as unknown as ServerResponse & { status?: number; body?: string };
+  return r;
+}
+const withResume = (r: IncomingMessage) => Object.assign(r, { resume: () => r });
+
+describe('THE one gate: noteMacOwnerInput', () => {
+  it('the app page on this Mac counts', () => {
+    expect(signals(() => noteMacOwnerInput(req()))).toBe(1);
+    expect(signals(() => noteMacOwnerInput(req(), 'Mac\'ten yazdım'))).toBe(1);
+  });
+
+  it('must not count: the phone link, a tailnet device, a client with no Origin', () => {
+    expect(signals(() => noteMacOwnerInput(req({ phone: true }), 'telefondan yazdım'))).toBe(0);
+    expect(signals(() => noteMacOwnerInput(req({ addr: '100.64.0.7', host: '100.64.0.1:4173', origin: 'http://100.64.0.1:4173' })))).toBe(0);
+    expect(signals(() => noteMacOwnerInput(req({ origin: null }), 'agent curl'))).toBe(0);
+  });
+
+  it('known words that are not his: empty, a slash command', () => {
+    expect(signals(() => noteMacOwnerInput(req(), '   '))).toBe(0);
+    expect(signals(() => noteMacOwnerInput(req(), '/compact'))).toBe(0);
+  });
+
+  it('POST /api/mac-owner/input (phone policy: deny): counts for the Mac page, not for the phone link; the answer is the same', () => {
+    const mac = fakeRes();
+    expect(signals(() => { void handleMacOwnerInput(withResume(req()), mac); })).toBe(1);
+    const phone = fakeRes();
+    expect(signals(() => { void handleMacOwnerInput(withResume(req({ phone: true })), phone); })).toBe(0);
+    expect([mac.status, mac.body]).toEqual([200, '{"ok":true}']);
+    expect([phone.status, phone.body]).toEqual([200, '{"ok":true}']);
   });
 });
 
-// The wiring is read from source: the chat route is a 6000-line socket handler whose owner path
-// cannot be driven without a CLI child. What must hold is pinned here.
-describe('the wiring that makes it "any chat, typed now"', () => {
-  const chat = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
-  const session = readFileSync(new URL('../../dashboard/src/components/sleepy/chatSession.ts', import.meta.url), 'utf-8');
-  const composer = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/Composer.tsx', import.meta.url), 'utf-8');
+// The page's half: one call, from the two owner-input surfaces only.
+const post = vi.fn((_path: string, _body: unknown) => Promise.resolve({ ok: true }));
+vi.mock('../../dashboard/src/api/client', () => ({ api: { post: (p: string, b: unknown) => post(p, b) } }));
 
-  it('the server needs the page\'s composer mark AND the socket\'s Mac facts, never a mirror frame', () => {
-    expect(chat).toMatch(/const typedAtMac = msg\.typed === true && !\(typeof raw !== 'string' && mirrorFrames\.has\(raw\)\) && socketMac\.get\(ws\) === true;/);
-    expect(chat).toMatch(/socketMac\.set\(ws, !phone && isMacOwnerRequest\(req\)\);/);
+describe('the page\'s one call: noteOwnerWrote', () => {
+  beforeEach(() => post.mockClear());
+  it('posts to the one gate; a slash command or an empty text does not', async () => {
+    const { noteOwnerWrote } = await import('../../dashboard/src/lib/ownerAtMac.js');
+    noteOwnerWrote();
+    noteOwnerWrote('Mac\'ten yazdım');
+    noteOwnerWrote('/compact');
+    noteOwnerWrote('  ');
+    expect(post.mock.calls.map((c) => c[0])).toEqual(['/mac-owner/input', '/mac-owner/input']);
+  });
+  it('a failed call is swallowed (the automatic part simply stays on)', async () => {
+    post.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+    const { noteOwnerWrote } = await import('../../dashboard/src/lib/ownerAtMac.js');
+    expect(() => noteOwnerWrote()).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+// The wiring is read from source: the composer and the card are large React components whose
+// gestures cannot be driven without a DOM. What must hold, per path, is pinned here.
+describe('every owner input on the Mac passes the one call; nothing released later does', () => {
+  const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf-8');
+  const composer = read('dashboard/src/components/sleepy/chat/Composer.tsx');
+  const commit = (() => {
+    const at = composer.indexOf('  const commit = (mode: SubmitMode) => {');
+    return composer.slice(at, composer.indexOf('\n  const submit = (mode: SubmitMode', at));
+  })();
+  const called = commit.indexOf('if (!slash) noteOwnerWrote();');
+  const after = (needle: string) => {
+    const at = commit.indexOf(needle);
+    expect(at, needle).toBeGreaterThan(-1);
+    expect(at, needle).toBeGreaterThan(called);
+  };
+
+  it('the composer says so once, right after it knows there is a message, before any delivery', () => {
+    expect(called).toBeGreaterThan(commit.indexOf('if (!quoted.trim()) return;'));
+    expect(commit.match(/noteOwnerWrote\(/g)).toHaveLength(1);
+    // Nothing but a disconnected box or an empty message returns before it.
+    const before = commit.slice(0, called);
+    expect(before.match(/return;/g)).toHaveLength(2);
   });
 
-  it('the signal fires in writeOwnerTurn for every chat kind, not behind the registry (the Assistant and card chats have none)', () => {
-    const body = chat.slice(chat.indexOf('const writeOwnerTurn = (raw: string, typedAtMac = false)'));
-    const fn = body.slice(0, body.indexOf('\n  };\n'));
-    expect(fn).toMatch(/\n    if \(macOwnerTurn\(\{ typedAtMac, telegram: !!tgSource, server: serverContinue \|\| isServerTurnText\(text\), text \}\)\) noteOwnerAtMac\(\);/);
+  it('path 1, ⏎ while a card is open: the refused steer queues it, after the call', () => {
+    after('if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true });');
   });
 
-  it('only the composer\'s send and a row\'s "Send now" carry the mark; the queue drain and agent deliveries do not', () => {
-    expect(session).toMatch(/\.\.\.\(opts\.typed \? \{ typed: true as const \} : \{\}\)/);
-    expect(composer).toMatch(/session\.steer\(message, TYPED_NOW\)/);
-    expect(composer).toMatch(/session\.send\(message, TYPED_NOW\)/);
-    expect(session).toMatch(/steer\(row\.text, TYPED\) : send\(row\.text, TYPED\)/);
-    // maybeFlushQueue: the drain sends plain.
-    expect(session).toMatch(/if \(!steer\(owed\.text\)\)/);
-    expect(session).toMatch(/if \(!send\(next\.text\)\)/);
-    const deliver = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/postToSession.ts', import.meta.url), 'utf-8');
-    expect(deliver).not.toMatch(/typed/);
+  it('path 2, ⌥⏎ adds to the queue, after the call (also on a taken-back remote tab)', () => {
+    after("if (mode === 'queue') session.enqueue(message);");
+    expect(commit.lastIndexOf("if (mode === 'queue') session.enqueue(message);")).toBeGreaterThan(called);
+  });
+
+  it('path 3, a sleeping tab: its first message goes through the composer\'s sendVia, after the call', () => {
+    after('if (sendVia) { if (sendVia(message)) sent(); return; }');
+    expect(read('dashboard/src/components/sleepy/ParkedChat.tsx')).toMatch(/sendVia=\{sendVia\}/);
+  });
+
+  it('path 4, a question card answered on the Mac: SurveyCard says so on a written answer or "unclear"', () => {
+    const card = read('dashboard/src/components/sleepy/chat/SurveyCard.tsx');
+    expect(card).toMatch(/resolveNotes\(questions, picks\)\)\) \{ hold\(\); return; \}\n(?:\s*\/\/.*\n)*\s*noteOwnerWrote\(\);/);
+    expect(card).toMatch(/unclearMessage\(questions, picks\) \}\)\) \{ hold\(\); return; \}\n\s*noteOwnerWrote\(\);/);
+    // The Super's own question, a child's question and a remote card are all drawn as SurveyCard.
+    expect(read('dashboard/src/components/sleepy/super/SuperQuestionCard.tsx').match(/<SurveyCard\b/g)?.length).toBe(3);
+  });
+
+  it('must not count: the queue drain, an agent\'s send or card answer never pass the call', () => {
+    for (const f of ['dashboard/src/components/sleepy/chatSession.ts', 'dashboard/src/components/sleepy/chat/postToSession.ts',
+      'dashboard/src/components/sleepy/AgentSurface.tsx', 'dashboard/src/components/sleepy/windowVerbs.ts']) {
+      expect(read(f), f).not.toMatch(/ownerAtMac|noteOwnerWrote/);
+    }
+  });
+
+  it('must not count: nothing the server releases (a held or queued turn, a Telegram turn) raises it; only the gate does', () => {
+    expect(read('src/server/routes/agent-chat.ts')).not.toMatch(/noteOwnerAtMac|noteMacOwnerInput|back-at-mac/);
+    expect(read('src/server/telegram/hub.ts')).not.toMatch(/noteOwnerAtMac\(|noteMacOwnerInput/);
+    expect(read('src/server/routes/automations.ts').match(/noteOwnerAtMac\(/g)).toBeNull();
+    const index = read('src/server/index.ts');
+    expect(index).toMatch(/router\.post\('\/api\/mac-owner\/input', handleMacOwnerInput\);/);
+    expect(index).toMatch(/'\/api\/mac-owner'\]/);
   });
 });

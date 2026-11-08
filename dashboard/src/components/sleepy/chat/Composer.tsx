@@ -79,9 +79,7 @@ import { micVisible, micSetupSteps, micPressAction } from '../../../lib/voice/mi
 import { useMicPermission } from '../../../lib/voice/micPermission';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { useStageCards } from '../super/stageCards';
-
-/** His ⏎ in this box, now: the server reads it as "back at the Mac" on the Mac's own page. */
-const TYPED_NOW = { typed: true } as const;
+import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -2009,6 +2007,10 @@ export function Composer({
     // A message about an agenda line opens with its block (the About chip), before the quote.
     const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
     if (!quoted.trim()) return;
+    // He wrote this, now, whatever happens to it next (sent, steered, queued by ⌥⏎ or behind an
+    // open card, handed to a sleeping tab, a peer or a member): the one place the composer says
+    // so (lib/ownerAtMac.ts). A slash command is not his words; a queue drain never passes here.
+    if (!slash) noteOwnerWrote();
     // Every test below reads his words without the chips; every path that clears the box keeps
     // them for the next message (they were not sent) and never hands a token to a peer.
     const staged = readScratch(convId).attachments;
@@ -2124,15 +2126,15 @@ export function Composer({
         // The same three deliveries as any send, now that the chat is here: a turn the Mac was
         // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
         if (mode === 'queue') session.enqueue(message);
-        else if (session.busy) { if (!session.steer(message, TYPED_NOW)) session.enqueue(message, { steerWhenPossible: true }); }
-        else if (session.send(message, TYPED_NOW) === false) return;
+        else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+        else if (session.send(message) === false) return;
         sent();
       });
       return;
     }
     if (mode === 'queue') session.enqueue(message);
-    else if (isBusy) { if (!session.steer(message, TYPED_NOW)) session.enqueue(message, { steerWhenPossible: true }); }
-    else if (session.send(message, TYPED_NOW) === false) return;
+    else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+    else if (session.send(message) === false) return;
     sent();
   };
 

@@ -80,15 +80,14 @@ export interface ComposerHost {
    * Returning nothing means "delivered", which is what `ChatSession.send` (a `void` method)
    * already says — so every existing host satisfies this unchanged.
    */
-  /** `opts.typed` = his ⏎ now (`ClientControl` `typed`); a host that has no Mac turn ignores it. */
-  send(text: string, opts?: { typed?: true }): void | false;
+  send(text: string): void | false;
   /**
    * The three BUSY-ONLY deliveries: steer into the running turn, hold for the next one, stop.
    * Every control that reaches them is drawn only while the `busy` prop is true, so a host
    * that has no turn to steer (one that reports `busy: false` — its agents' progress is not
    * a turn) can implement them as no-ops that are never called.
    */
-  steer(text: string, opts?: { typed?: true }): boolean;
+  steer(text: string): boolean;
   enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void;
   interrupt(): void;
   /**

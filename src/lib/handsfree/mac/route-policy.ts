@@ -400,6 +400,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/pick-paths': deny('the composer\'s file picker opens a dialog on the Mac; the phone has its own sheet'),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
+  // "Back at the Mac": only the app page on this Mac counts (server/mac-owner.ts); the phone link's
+  // copy of the page must never end the automatic Telegram part.
+  'POST /api/mac-owner/input': deny('laptop-only: the owner wrote on this Mac (ends the automatic Telegram part); the phone link never counts'),
   // A secret card filled on the phone (plan G2, H9, I5): only for an OPEN server record of a chat
   // of an exposed project, matched by {sessionId, cardRef}; the handler writes only that record's
   // file and the keys it declared, under that chat's project. Without a matching record: 403/409.

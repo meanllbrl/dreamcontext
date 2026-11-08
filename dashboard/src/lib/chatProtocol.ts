@@ -455,10 +455,7 @@ export type ClientControl =
   /** `voice`: the owner spoke this message (the Super Agent answers aloud, K1). `voiceTake`:
    *  the dictated take this message is, sent unchanged — the server binds it and tells the
    *  agent, which may then retranscribe it (`dreamcontext voice retry`). */
-  /** `typed` = the owner sent this from the composer just now (⏎, or a queued row's "Send now"):
-   *  on the Mac's own page it is "back at the Mac" (server `lib/telegram/back-at-mac.ts`). A queue
-   *  drain, a reconnect flush, an agent's `window send` and a card's reply never carry it. */
-  | { type: 'user'; text: string; voice?: true; voiceTake?: string; typed?: true }
+  | { type: 'user'; text: string; voice?: true; voiceTake?: string }
   | { type: 'answer'; requestId: string; behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }
   | { type: 'interrupt' }
   /** MCP (task mcp-management): sign a server in / restart it / read the status again, through

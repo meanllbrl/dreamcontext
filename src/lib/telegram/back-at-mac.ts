@@ -5,13 +5,14 @@
  * keep-awake the hub started by itself (`telegram/hub.ts`, `telegram/handsfree.ts`). A hands-free
  * run started by hand (Mac panel, phone link, `/handsfree` buttons) never listens to it.
  *
- * Only server code calls {@link noteOwnerAtMac}: the chat route for one owner turn
- * ({@link macOwnerTurn}: the page marked it as his composer send AND its socket was a desktop,
- * loopback, same-origin, non-phone peer AT ITS UPGRADE, `server/mac-owner.ts`), and the AI Team
- * say/reply routes for a request with those same facts. No route body, CLI verb or agent text sets
- * the socket facts. A message from the phone link, from Telegram, an agent's `window send` or
- * `super send` (delivered by the page without the composer mark), a queued row the page drains
- * later, an app report or a server continue never reaches it. Memory only, like the presence.
+ * Only server code calls {@link noteOwnerAtMac}, and only through ONE gate, `noteMacOwnerInput`
+ * (`server/mac-owner.ts`): the request must be the app's own page on this Mac (desktop, loopback,
+ * same-origin with an Origin, not the phone tunnel). The page reaches it from its two owner-input
+ * surfaces, the composer's send (every gesture: ⏎, ⌥⏎ into the queue, ⏎ while a card is open, a
+ * sleeping tab) and the question card's answer (`dashboard/src/lib/ownerAtMac.ts`), and the AI Team
+ * say/reply routes call it with his text. No route body, CLI verb or agent text sets the facts. A
+ * message from the phone link, from Telegram, an agent's `window send` or `super send`, a queued
+ * row drained later, an app report or a server continue never reaches it. Memory only.
  */
 
 type Listener = (at: number) => void;
@@ -28,13 +29,6 @@ export function noteOwnerAtMac(at = Date.now()): void {
   for (const fn of [...listeners]) {
     try { fn(at); } catch { /* a listener's failure is its own */ }
   }
-}
-
-/** One owner turn of a chat: is it "back at the Mac"? `typedAtMac` = the composer mark AND the
- *  socket's Mac facts (never a phone mirror's or the hub's frame); a Telegram turn and the
- *  server's own text never count, nor an empty event turn or a slash command. */
-export function macOwnerTurn(t: { typedAtMac: boolean; telegram: boolean; server: boolean; text: string }): boolean {
-  return t.typedAtMac && !t.telegram && !t.server && isOwnerWords(t.text);
 }
 
 /** Is this text an owner's words (not an event turn, not a slash command)? */
