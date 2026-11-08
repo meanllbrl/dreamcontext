@@ -16,4 +16,7 @@ export interface OpenSessionDetail {
   /** The Claude conversation UUID — the tab's `claudeId`, the transcript's file name. */
   claudeId: string;
   accepted?: boolean;
+  /** A History pick (the window's picker): on the tunnel it is guarded (`historyPickRefused`).
+   *  A link or a notification tap leaves it unset and keeps its own path. */
+  pick?: boolean;
 }

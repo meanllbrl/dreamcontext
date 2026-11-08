@@ -13,10 +13,10 @@ import { modelLabelFor, FALLBACK_MODEL_CONFIG, type ModelConfig } from '../../da
 
 const CONFIG: ModelConfig = {
   models: [
-    { id: 'opus', label: 'Opus 4.8' },
-    { id: 'sonnet', label: 'Sonnet' },
-    { id: 'haiku', label: 'Haiku' },
-    { id: 'fable', label: 'Fable' },
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'sonnet', label: 'Sonnet 5.5' },
+    { id: 'haiku', label: 'Haiku 5.5' },
+    { id: 'fable', label: 'Fable 5.1' },
   ],
   efforts: ['low', 'high'],
   defaultModel: 'opus',
@@ -25,18 +25,20 @@ const CONFIG: ModelConfig = {
 
 describe('modelLabelFor', () => {
   it('resolves a picker alias to its own label', () => {
-    expect(modelLabelFor(CONFIG, 'sonnet')).toBe('Sonnet');
+    expect(modelLabelFor(CONFIG, 'sonnet')).toBe('Sonnet 5.5');
   });
 
   it("resolves the CLI's full model id by family — this is what system:init actually reports", () => {
-    expect(modelLabelFor(CONFIG, 'claude-opus-4-5-20251101')).toBe('Opus 4.8');
+    expect(modelLabelFor(CONFIG, 'claude-opus-5-5')).toBe('Opus 5.5');
+    expect(modelLabelFor(CONFIG, 'claude-fable-5-1[1m]')).toBe('Fable 5.1');
+    // An older version the list does not name keeps its family's name, never the current version.
     expect(modelLabelFor(CONFIG, 'claude-sonnet-4-5-20250929')).toBe('Sonnet');
     expect(modelLabelFor(CONFIG, 'claude-haiku-4-5-20251001')).toBe('Haiku');
   });
 
   it('falls back to the user\'s default model before the first init frame lands (was: "—")', () => {
-    expect(modelLabelFor(CONFIG, '')).toBe('Opus 4.8');
-    expect(modelLabelFor(FALLBACK_MODEL_CONFIG, '')).toBe('Opus');
+    expect(modelLabelFor(CONFIG, '')).toBe('Opus 5.5');
+    expect(modelLabelFor(FALLBACK_MODEL_CONFIG, '')).toBe('Opus 5.5');
   });
 
   it('prints an unknown id verbatim rather than a dash — a raw id is still information', () => {

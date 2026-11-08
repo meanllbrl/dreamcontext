@@ -31,7 +31,10 @@ describe('superBriefing', () => {
     expect(brief).toContain('dreamcontext super answer <child> <question id>');
     expect(brief).toContain('escalate ONE clear question');
     expect(brief).toContain('dreamcontext super queue ask <item>');
-    expect(brief).toContain('Permission requests never reach you: the owner answers them.');
+    // A Bypass child's leftover permission comes as `event=permission` (its event line says how to
+    // decide it, inbox.ts PERMISSION_LINE); every other permission stays the owner's alone.
+    expect(brief).toContain('`event=permission` (his Bypass child): decide it as its event line says.');
+    expect(brief).toContain('permission is the owner\'s alone: never try.');
     for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
     expect(brief).toContain('only a question, done, gone, stuck or owner\nreaches you, batched, and nothing while a question is open with the owner');
     expect(brief).toContain('He sees an event turn as one line: write no text there but a reply if he wrote to you, the\n  question you escalate, a job waiting on him, and, when an event says `awaited=owner` (a job he waits on), its result:\n  every one, the second and later too;');
@@ -200,10 +203,44 @@ const MEMBER_AMEND_2026_10_31 = 370;
   const SMALL_READ_RULE_2026_10_31 = 240;
   // A plan or options report is drawn, not written (owner, 2026-10-31).
   const DRAWN_REPORT_2026_10_31 = 135;
+  // The line before `super ask`, then `super ask` last in the turn (owner, 2026-11-01).
+  const ASK_LINE_FIRST_2026_11_01 = 220;
+  // Which tool and model a child runs on (`--tool`, Gemini = antigravity), owner 2026-11-02.
+  const TOOL_PICK_2026_11_02 = 330;
+  // Weigh an owner's idea before agreeing; never agree or argue by reflex (owner, 2026-11-02).
+  const WEIGH_FIRST_2026_11_02 = 420;
+  // 2026-11-06 (owner): an AI Team approval the Super set up is on his screen; it never approves it.
+  const APPROVAL_ON_SCREEN_2026_11_06 = 210;
+  // 2026-11-06 (super-borc-defteri): one subject per section; his messages, awaited results
+  // and sends kept owed until a section says it; `--origin` on send/resume (measured 16,274).
+  const OWED_SECTIONS_2026_11_06 = 330;
+  // 2026-11-07 (app-araclari): an app on this Mac may already answer; a changing tool is never the Super's (measured +207).
+  const APP_TOOLS_2026_11_07 = 210;
+  // 2026-11-07 (owner, super-metin-gizlenmez): he sees text, never thinking; a summary he asked for
+  // is written, never pointed "above"; a reported gap is filled, never blamed on his screen.
+  const TEXT_NOT_THOUGHT_2026_11_07 = 470; // + the not-understood re-ask line (~190)
+  // 2026-11-08 (W2 Telegram): a `via="telegram"` turn is answered in plain text under its mark.
+  const TELEGRAM_TURN_2026_11_08 = 400;
+  it('writes what he asked for in text, never only in thinking, and never blames his screen', () => {
+    expect(brief).toContain('He sees your text, never your thinking');
+    expect(brief).toContain('never point him "above" at what you did not write there');
+    expect(brief).toContain('He says it\nis missing: it is, write it now; never blame his screen.');
+  });
+  it('explains a question he did not understand in the last text and rewords the card, never the same one', () => {
+    expect(brief).toContain("He did not understand a question: explain it\nin plain words in this turn's last text");
+    expect(brief).toContain('then ask a reworded card with what was missing, never the same card.');
+  });
+  it('weighs a new idea from the owner before agreeing, and just does a clear task', () => {
+    expect(brief).toContain('weigh it before you agree or start');
+    expect(brief).toContain('earlier decisions or a project pattern');
+    expect(brief).toContain('Never agree by reflex, never argue by reflex');
+    expect(brief).toContain('A clear task is not such a question: just do it.');
+    expect(brief).toContain('he decides in a `super ask`.');
+  });
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + SELECTED_PASSAGE_2026_10_31 + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27 + AGENDA_CURRENT_2026_10_28 + WHITEBOARD_NOT_BOARD_2026_10_29 + OPEN_PRESENT_2026_10_29 + AI_TEAM_ROUTING_2026_10_29 + PLAN_SUMMARY_2026_10_29 + GLOBAL_MEMBER_2026_10_30 + AWAITED_ORIGIN_2026_10_30 + REPORT_CARD_2026_10_30 + MEMBER_AMEND_2026_10_31 + SMALL_READ_RULE_2026_10_31 + DRAWN_REPORT_2026_10_31);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + SELECTED_PASSAGE_2026_10_31 + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27 + AGENDA_CURRENT_2026_10_28 + WHITEBOARD_NOT_BOARD_2026_10_29 + OPEN_PRESENT_2026_10_29 + AI_TEAM_ROUTING_2026_10_29 + PLAN_SUMMARY_2026_10_29 + GLOBAL_MEMBER_2026_10_30 + AWAITED_ORIGIN_2026_10_30 + REPORT_CARD_2026_10_30 + MEMBER_AMEND_2026_10_31 + SMALL_READ_RULE_2026_10_31 + DRAWN_REPORT_2026_10_31 + ASK_LINE_FIRST_2026_11_01 + TOOL_PICK_2026_11_02 + WEIGH_FIRST_2026_11_02 + APPROVAL_ON_SCREEN_2026_11_06 + OWED_SECTIONS_2026_11_06 + APP_TOOLS_2026_11_07 + TEXT_NOT_THOUGHT_2026_11_07 + TELEGRAM_TURN_2026_11_08);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
       expect(b).toContain('`[About card @card:<id>]` to a card passage: `quote:` is a pointer');
@@ -232,7 +269,8 @@ describe('how the super agent talks to the owner', () => {
     // action, otherwise they slip by unseen." The old "at most one question, at the end" went.
     expect(brief).toContain('a choice you\nneed from him goes in a `super ask` card, never only as a question in your text');
     expect(brief).toContain('the text says in one line that a question waits');
-    expect(brief).toContain('Say\n  in that turn\'s text, in one line, that a question waits, and end it');
+    // rev 25 (2026-11-01): the line comes first, `super ask` is the last act of the turn.
+    expect(brief).toContain('Write\n  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn');
     expect(brief).not.toContain('at most one\nquestion, at the end');
     expect(brief).not.toContain('Write\n  the question in that turn too');
   });
@@ -274,7 +312,8 @@ describe('how the super agent talks to the owner', () => {
 
   it('the shipped text never names a condition', () => {
     const files: string[] = [];
-    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|md)$/.test(f)) files.push(p); } };
+    // src/vendor is third-party code (T3 Code, MIT) we copy unchanged, not text we write or brief with.
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (p === join('src', 'vendor')) continue; if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|md)$/.test(f)) files.push(p); } };
     for (const d of ['src', 'skill', 'dashboard/src']) walk(d);
     const hits = files.filter((f) => /\bADHD\b/i.test(readFileSync(f, 'utf-8')));
     expect(hits).toEqual([]);

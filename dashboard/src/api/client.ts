@@ -1,3 +1,4 @@
+import { fileSessionParam } from '../lib/chatAppBinding';
 import { phoneAllows } from '../lib/phoneSurface';
 
 const BASE_URL = '/api';
@@ -69,7 +70,7 @@ export function agentFileUrl(vault: string | null, path: string, opts: { raw?: b
   const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
   // The chat session the path was written in: a child working in its own worktree names files
   // relative to THAT tree, which only the server can map back (session-worktree.ts).
-  const session = opts.session ? `&session=${encodeURIComponent(opts.session)}` : '';
+  const session = opts.session ? `&session=${encodeURIComponent(opts.session)}` : fileSessionParam();
   return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${scope}${session}`;
 }
 
@@ -131,6 +132,17 @@ export function launcherLogoUrl(name: string): string {
  * whichever chip the user touched last. Components get theirs from `useApi()`; the `null`
  * client below is the launcher/browser case, where no project is pinned.
  */
+/**
+ * Each local `phone_unavailable` refusal, counted on `window.__dcPhoneRefused`. The network log
+ * cannot see one (no request leaves), so this is how a check proves the phone's screens never
+ * ask for a route the phone cannot have: the count stays 0 over a whole session.
+ */
+function countPhoneRefusal(): void {
+  if (typeof window === 'undefined') return;
+  const w = window as unknown as { __dcPhoneRefused?: number };
+  w.__dcPhoneRefused = (w.__dcPhoneRefused ?? 0) + 1;
+}
+
 export class ApiClient {
   constructor(private readonly vault: string | null) {}
 
@@ -138,6 +150,7 @@ export class ApiClient {
     // On the phone only the allowed routes exist for this page: answer the
     // server's own refusal locally instead of sending a request it is built to refuse.
     if (!phoneAllows(options?.method ?? 'GET', `${BASE_URL}${path}`)) {
+      countPhoneRefusal();
       throw new RequestError('Not available on the phone.', 403, 'phone_unavailable');
     }
     const headers: Record<string, string> = {
@@ -177,6 +190,20 @@ export class ApiClient {
     return this.request<T>(path, {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * A POST in the owner's name (shared apps: publish, install, update…): carries the key only the
+   * shell holds, so an agent's request to the same route is refused. Null key = refused there.
+   */
+  async ownerPost<T>(path: string, body: unknown): Promise<T> {
+    const { ownerKey } = await import('../lib/desktop');
+    const key = await ownerKey();
+    return this.request<T>(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: key ? { 'X-Dreamcontext-Owner-Key': key } : {},
     });
   }
 

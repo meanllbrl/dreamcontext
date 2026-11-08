@@ -18,6 +18,7 @@ import { levelPermissionArgs } from './permission.js';
 import { armStart } from './assignment-ledger.js';
 import {
   casTask, claimByRun, findTaskHead, metaFor, newRunToken, patchMeta, readTaskJobs, registerTaskSession, setResumeNote,
+  REPEAT_REFUSAL_BLOCKS,
   peekResumeNote, takeResumeNote, taskJobView, taskWorkspaceSlug, thisMachine, updateTaskJobs,
   type TaskClaim, type TaskJobView, type TaskMeta, type TaskStep,
 } from './task-jobs.js';
@@ -379,15 +380,22 @@ export function settleTaskStep(
     return 'stalled';
   }
   if (!outcome.spawned) {
-    // Refused before a child ran: blocked asks the owner; every other refusal waits its turn again.
+    // Refused before a child ran: blocked asks the owner; every other refusal waits its turn again,
+    // except the same one twice in a row (counted in M0), which would only come a third time: it
+    // blocks too, so a refusal can never respawn the host in a loop. A lock wait (`deferred`: the
+    // sleep lock, the agent's own run lock, an account at its limit) is never counted.
     dropClaim(projectRoot, runId, home);
-    if (outcome.status === 'blocked') {
-      if (!set('blocked', { agent_blocked: oneDataLine(outcome.error ?? 'blocked', 300) })) return null;
+    const repeat = outcome.status === 'blocked' || outcome.status === 'deferred' ? null : repeatedRefusal(projectRoot, view.id, meta, outcome, home);
+    if (outcome.status === 'blocked' || repeat) {
+      const why = outcome.error ?? (repeat ? `it was refused twice: ${outcome.status}` : 'blocked');
+      if (!set('blocked', { agent_blocked: oneDataLine(why, 300) })) return null;
       raiseTaskRow(projectRoot, 'task-blocked', view, claim.agent, `${view.name}: blocked, ${outcome.error ?? 'the agent could not start'}.`, ['continue', 'take-over', 'dismiss'], undefined, home, now);
       return 'blocked';
     }
     return requeue(contextRoot, view.slug, view.id, step, claim.round, ['running', 'starting'], home) ? 'queued' : null;
   }
+  // A child ran: whatever refused before is history.
+  if (meta.lastRefusal) patchMeta(projectRoot, view.id, { lastRefusal: null }, home);
   // The run stopped and asked (its own `propose`, or a gate that asks): the owner owes an answer.
   if (outcome.status === 'awaiting-review' || (outcome.reviewCardId && outcome.status === 'ok')) {
     claimPatch(projectRoot, runId, { phase: 'waiting_owner', sessionId: outcome.sessionId ?? claim.sessionId }, home);
@@ -449,6 +457,8 @@ function settleReview(
       return requeue(contextRoot, view.slug, view.id, 'review', claim.round, ['running', 'starting'], home) ? 'queued' : null;
     }
     if (!set({ agent_state: 'stuck' })) return null;
+    const stuckBy = meta.reviewer ?? claim.agent;
+    reviewLine(contextRoot, view, stuckBy, `Review round ${claim.round}: stuck (${reviewerName(contextRoot, stuckBy)}): no usable verdict.`);
     raiseTaskRow(projectRoot, 'task-stuck', view, meta.reviewer,
       `${view.name}: the reviewer gave no usable verdict${verdict && !unchanged ? ' (it changed the workspace)' : ''}.`,
       ['one-more-round', 'take-over', 'cancel'], undefined, home, now);
@@ -457,25 +467,70 @@ function settleReview(
   patchMeta(projectRoot, view.id, { noVerdict: 0 }, home);
   const reviewer = meta.reviewer ?? claim.agent;
   const findings = usable.findings.join('\n');
+  const who = reviewerName(contextRoot, reviewer);
   if (usable.verdict === 'pass') {
     if (!set({ agent_state: 'delivered', review_passed: true })) return null;
+    reviewLine(contextRoot, view, reviewer, `Review round ${claim.round}: passed (${who}).`);
     fanOutDelivered(contextRoot, view, meta, { passedBy: reviewer, notify: deps.notify, home, now });
     return 'delivered';
   }
   if (claim.round < meta.reviewCap) {
     if (!set({ agent_state: 'queued', agent_step: 'rework', review_passed: false })) return null;
-    setTaskStatus(contextRoot, view.slug, PARENT_BY_KIND.active, { kind: 'reviewer', slug: reviewer }, `Review round ${claim.round}: sent back.`);
+    // The findings reach the task itself (its changelog), not only the doer's resume note.
+    setTaskStatus(contextRoot, view.slug, PARENT_BY_KIND.active, { kind: 'reviewer', slug: reviewer }, `Review round ${claim.round}: sent back (${who}): ${findingsExcerpt(findings)}`);
     setResumeNote(projectRoot, { taskId: view.id, kind: 'findings', text: findings || 'The reviewer failed the delivery without naming a criterion.' }, home);
     armStart(projectRoot, view.id, 'rework', claim.round, home);
     return 'queued';
   }
   if (!set({ agent_state: 'stuck', review_passed: false })) return null;
+  reviewLine(contextRoot, view, reviewer, `Review round ${claim.round}: failed (${who}): ${findingsExcerpt(findings)}`);
   setResumeNote(projectRoot, { taskId: view.id, kind: 'findings', text: findings || 'The reviewer failed the delivery.' }, home);
   const reviewerGone = !getRunTarget(contextRoot, reviewer, 'agent');
   raiseTaskRow(projectRoot, 'task-stuck', view, reviewer,
     `${view.name}: still failing at review round ${claim.round}${reviewerGone ? ` (its reviewer ${reviewer} is gone)` : ''}.`,
     ['one-more-round', 'take-over', 'cancel'], findings || undefined, home, now);
   return 'stuck';
+}
+
+/** The first characters of the reviewer's findings the task's changelog carries. */
+export const FINDINGS_ON_TASK_CHARS = 300;
+
+function findingsExcerpt(findings: string): string {
+  const flat = oneDataLine(findings, FINDINGS_ON_TASK_CHARS);
+  return flat || 'no criterion named.';
+}
+
+/** The reviewer as the task names it: its title, else its slug. */
+function reviewerName(contextRoot: string, slug: string): string {
+  const t = getRunTarget(contextRoot, slug, 'agent');
+  return oneDataLine(t ? t.agentTitle || t.title : slug, 80) || slug;
+}
+
+/**
+ * A review result on the task's changelog, by the reviewer, in the status-change shape the drawer's
+ * History and the review rounds read (`Review round N: passed|failed|stuck (<reviewer>)…`). The
+ * status itself does not move: the entry names the status the task already has. Best effort.
+ */
+function reviewLine(contextRoot: string, view: TaskJobView, reviewer: string, reason: string): void {
+  try {
+    const current = findTaskHead(contextRoot, view.id);
+    const status = (current ? taskJobView(current).status : view.status) ?? PARENT_BY_KIND.review;
+    setTaskStatus(contextRoot, view.slug, status, { kind: 'reviewer', slug: reviewer }, reason);
+  } catch {
+    // the state on the task already says it
+  }
+}
+
+/**
+ * Count a pre-spawn refusal in M0: true when it is the same one (status and words) as the last,
+ * for the {@link REPEAT_REFUSAL_BLOCKS}th time in a row. The count is reset once it blocks.
+ */
+function repeatedRefusal(projectRoot: string, taskId: string, meta: TaskMeta, outcome: RunOutcome, home?: string): boolean {
+  const key = `${outcome.status}:${oneDataLine(outcome.error ?? '', 200)}`;
+  const count = meta.lastRefusal?.key === key ? meta.lastRefusal.count + 1 : 1;
+  const blocks = count >= REPEAT_REFUSAL_BLOCKS;
+  patchMeta(projectRoot, taskId, { lastRefusal: blocks ? null : { key, count } }, home);
+  return blocks;
 }
 
 /** One line on the task's changelog. Best effort: the state change is the record. */

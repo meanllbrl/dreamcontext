@@ -22,13 +22,17 @@ export type StatusAuthor =
   | { kind: 'agent'; slug: string }
   | { kind: 'reviewer'; slug: string }
   | { kind: 'claude' }
-  | { kind: 'sleep' };
+  | { kind: 'sleep' }
+  /** A dreamcontext App's backend (the gateway's `x-dc-app`): data from the app, not the owner. */
+  | { kind: 'app'; slug: string };
 
 export function authorLabel(who: StatusAuthor): string {
   switch (who.kind) {
     case 'agent':
     case 'reviewer':
       return `${who.kind}:${isSafeAutomationSlug(who.slug) ? who.slug : 'unknown'}`;
+    case 'app':
+      return `app:${/^[a-z][a-z0-9-]{0,63}$/.test(who.slug) ? who.slug : 'unknown'}`;
     default:
       return who.kind;
   }

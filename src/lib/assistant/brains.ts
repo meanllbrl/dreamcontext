@@ -8,6 +8,7 @@ import type { CorpusType } from '../recall.js';
 import { isSafeSessionId } from '../transcript-locate.js';
 import { parseTranscriptHistory } from '../transcript-history.js';
 import { ASSISTANT_VAULT, assistantProjectRoot } from './home.js';
+import { isAppRunSession } from '../automations/history.js';
 
 /**
  * The Assistant READS every project's brain itself (owner, 2026-10-17): "it should not have to
@@ -257,9 +258,10 @@ export function readBrainSession(
   if (!isSafeSessionId(sessionId)) throw new BrainReadError('not_found', `"${sessionId}" is not a session id.`);
   const file = join(home, '.claude', 'projects', transcriptDirName(join(b.contextRoot, '..')), `${sessionId}.jsonl`);
   if (!existsSync(file)) throw new BrainReadError('not_found', `No session ${sessionId} in ${b.label}.`);
+  const speaker = isAppRunSession(b.contextRoot, sessionId) ? 'APP (not the owner)' : 'OWNER';
   const conversation = parseTranscriptHistory(readFileSync(file, 'utf-8'))
     .filter((i) => (i.kind === 'user' || i.kind === 'text') && i.text?.trim())
-    .map((i) => `${i.kind === 'user' ? 'OWNER' : 'AGENT'}: ${i.text!.trim()}`)
+    .map((i) => `${i.kind === 'user' ? speaker : 'AGENT'}: ${i.text!.trim()}`)
     .join('\n\n');
   const limit = Math.min(Math.max(Math.floor(opts.limit ?? READ_LIMIT), 1), READ_LIMIT_MAX);
   const offset = opts.offset ?? Math.max(conversation.length - limit, 0);

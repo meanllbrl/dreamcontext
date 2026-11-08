@@ -6,9 +6,31 @@ import { useAnswerQuestion, useAutomationQuestions } from '../../../hooks/useAut
 import { useI18n } from '../../../context/I18nContext';
 import { tr, type Translate } from '../../../lib/assignToAgent';
 import { requestOpenAgents } from '../../../lib/openAgents';
-import { instantToLocalInput, jobChip, localInputToInstant, queuePosition, shortWhen } from '../../../lib/taskAgentJob';
+import { instantToLocalInput, jobChip, jobWaitLine, localInputToInstant, queuePosition, shortWhen } from '../../../lib/taskAgentJob';
 import { TaskAgentFace } from '../AssignToAgentComposer';
 import { JobChipView } from '../JobChipView';
+
+/**
+ * A task's doer or reviewer face as a BUTTON (plan-r10 1c, AC18): it opens that member's stage
+ * with the task on top (`requestOpenAgents({ slug, task })`, routed by `ProjectInstance` to the
+ * member intent). Used on the board card, the properties panel, the job row and the review
+ * rounds. A click never reaches the card under it.
+ */
+export function TaskFaceButton({ slug, task, role, size = 20 }: { slug: string; task: string; role: 'doer' | 'reviewer'; size?: number }) {
+  const { t } = useI18n();
+  const { data: agents } = useAgents();
+  const name = findAgent(agents, slug)?.title ?? slug;
+  const label = tr(t, 'tasks.agent.openMember', "Open {name}'s page", { name });
+  return (
+    <button type="button" className="task-agent-face-btn" data-testid="task-agent-face" data-slug={slug} data-role={role}
+      aria-label={label} title={label}
+      style={{ display: 'inline-flex', padding: 0, border: 0, background: 'transparent', borderRadius: 'var(--radius-sm)', cursor: 'pointer', lineHeight: 0 }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); requestOpenAgents({ slug, task }); }}>
+      <TaskAgentFace slug={slug} size={size} />
+    </button>
+  );
+}
 
 /** Actions the drawer offers on its own (the rows' `open-task`/`dismiss` mean nothing here). */
 const ROW_SKIP = new Set(['open-task', 'dismiss']);
@@ -119,6 +141,8 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
   useEffect(() => { setAsking(null); setText(''); }, [detail.state, detail.step]);
 
   const chip = jobChip(detail, t);
+  // Who the job waits on (mockup r8-11): the status stays the project's own (In Review), this says whose turn it is.
+  const wait = closed ? null : jobWaitLine(detail, t, nameOf(task.agent ?? ''));
   const rows = readOnly || closed ? [] : detail.rows.filter((r) => r.actions.some((a) => !ROW_SKIP.has(a)));
   const own = readOnly || closed ? [] : stateActions(detail);
   const rowActions = new Set<string>(rows.flatMap((r) => r.actions));
@@ -177,6 +201,14 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
               <span className="djob-machine">{tr(t, 'tasks.job.onMachine', 'on {machine}', { machine: detail.claimedMachine })}</span>
             )}
           </div>
+          {wait && (
+            <p className="djob-wait" data-testid="job-wait" data-wait={wait.key} style={{ margin: '2px 0 0', fontSize: 'var(--font-size-sm)', display: 'flex', flexWrap: 'wrap', gap: '0 var(--space-2)', alignItems: 'baseline' }}>
+              <strong style={{ fontWeight: 600, color: wait.key === 'stuck' ? 'var(--color-danger, var(--color-text))' : 'var(--color-text)' }}>
+                {wait.round ? `${wait.label} · ${wait.round}` : wait.label}
+              </strong>
+              {wait.hint && <span style={{ color: 'var(--color-text-tertiary)' }}>{wait.hint}</span>}
+            </p>
+          )}
           <p className="djob-say">
             {!closed
               ? stateLine(task, detail, allTasks, t, nameOf)
@@ -187,7 +219,7 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
           {detail.reason && !closed && <p className="djob-reason">{detail.reason}</p>}
         </div>
         {task.agent && (
-          <button type="button" className="djob-link" onClick={() => requestOpenAgents({ slug: task.agent ?? undefined })}>
+          <button type="button" className="djob-link" onClick={() => requestOpenAgents({ slug: task.agent ?? undefined, task: task.slug })}>
             {tr(t, 'tasks.job.openStage', 'Open its stage')}
           </button>
         )}

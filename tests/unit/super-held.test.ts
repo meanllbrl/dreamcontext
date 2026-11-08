@@ -82,16 +82,16 @@ afterEach(async () => {
 });
 
 describe('the held ledger', () => {
-  it('notes only while a question is open, only event kinds, once each', () => {
+  it('notes only while a question is open, only a child\'s question (D1: a result never waits), once each', () => {
     const s = sanitizeSuperState({
       ...emptySuperState(), session: SUPER, enabled: true,
-      queue: [{ id: 'q-d1', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 }],
+      queue: [{ id: 'q-d1', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 }, { id: 'q-q1', sessionId: 'c1', kind: 'question', state: 'pending', createdAt: 1 }],
     });
     expect(noteHeld(s)).toBe(false);
     s.queue.push({ id: 'q-ask-1', sessionId: SUPER, kind: 'ask', state: 'escalated', createdAt: 2 });
     s.queue.push({ id: 'q-p1', sessionId: 'c1', kind: 'permission', state: 'pending', createdAt: 3 });
     expect(noteHeld(s)).toBe(true);
-    expect(s.held).toEqual([{ item: 'q-d1', child: 'c1', kind: 'done', at: 1 }]);
+    expect(s.held).toEqual([{ item: 'q-q1', child: 'c1', kind: 'question', at: 1 }]);
     expect(noteHeld(s)).toBe(false);
   });
 
@@ -143,7 +143,7 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     }, W);
   });
 
-  it('a finished job, a result he waits on, a child\'s question and one that moved on: all told, none as a silent batch', async () => {
+  it('D1: a finished job and a result he waits on reach the Super at once; only a child\'s question waits, and rides with his answer', async () => {
     makeVault({ children: { c1: child('c1'), c2: child('c2', { awaited: true }), c3: child('c3') } });
     await startSuperInbox([root]);
     settle(reg(SUPER, 'super'));
@@ -153,50 +153,34 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     const { inbox, delivered } = fakeInbox();
     attachSuperInbox(inbox);
     await openAsk();
-    // While it is open: c1 asks, c2 (the owner waits on it) and c3 finish, then c3 moves on.
+    // While it is open: c1 asks, c2 (the owner waits on it) finishes: the result goes at once.
     askQuestion(c1, 'req-1');
     await finish('c2', 'q-done-c2');
-    await finish('c3', 'q-done-c3');
-    await writeSuper(root, (s) => { s.children.c3.row = 'working'; });
-    await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.kind).sort()).toEqual(['done', 'done', 'question']), W);
-    await new Promise((r) => setTimeout(r, 60));
-    expect(delivered).toHaveLength(0); // the single-question rule held every event turn back
+    void pumpSuper(root);
+    await vi.waitFor(() => expect(delivered.map((d) => d.text).join('\n')).toMatch(/- item=q-done-c2 child=c2 event=done awaited=owner/), W);
+    await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.kind)).toEqual(['question']), W);
+    // The question never went to the Super while his own card is open.
+    for (const d of delivered) expect(d.text).not.toMatch(/event=question/);
 
     const digest = superAnswerDigest(SUPER);
     expect(digest).not.toBeNull();
     const text = digest!.text;
-    expect(text.split('\n')[0]).toBe(`${HELD_OPEN} items=3>`);
-    expect(text).toMatch(/- item=q-done-c2 child=c2 event=done awaited=owner status=/);
+    expect(text.split('\n')[0]).toBe(`${HELD_OPEN} items=1>`);
     expect(text).toMatch(/- item=q-[a-z0-9-]+ child=c1 event=question status=asking question=req-1/);
     expect(text).toContain('<untrusted-project-output vault="acme">Question: Which database?</untrusted-project-output>');
-    expect(text).toMatch(/- item=q-done-c3 child=c3 event=done moved-on/);
     expect(text).toMatch(/ONE AT A TIME/);
     expect(text.trimEnd().endsWith('</super-while-you-asked>')).toBe(true);
-    expect(digest!.items).toHaveLength(3);
+    expect(digest!.items).toHaveLength(1);
 
-    // The owner's answer is written with that block; the ask closes, the pile is delivered with it.
+    // His answer is written with that block; the ask closes, the question is delivered with it.
     superOwnerSpoke(SUPER, Date.now(), digest!.items);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('done');
-      expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('delivered');
       expect(s.queue.find((q) => q.kind === 'question')?.state).toBe('delivered');
       expect(s.held).toBeUndefined();
     }, W);
     expect(superAnswerDigest(SUPER)).toBeNull();
-
-    // That turn ends: the result counts as told; the owner's job stays his until the child is gone
-    // (its later results reach him too); the question it did not settle stays his (it was on his
-    // bar from birth: `direct`), never carried to the super again.
-    superTurnEnded(SUPER);
-    await vi.waitFor(async () => {
-      const s = await readSuperState(root);
-      expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('done');
-      expect(s.children.c2.awaited).toBe(true);
-      expect(s.queue.find((q) => q.kind === 'question')).toMatchObject({ state: 'escalated', direct: true });
-    }, W);
-    // No event turn re-tells the done items silently.
-    for (const d of delivered) expect(d.text).not.toMatch(/q-done-c2|q-done-c3/);
   });
 
   it('no question open: no block, the owner\'s message goes alone', async () => {
@@ -229,7 +213,7 @@ describe('a child\'s question open: the pile goes in the first event turn after 
     expect((await readSuperState(root)).held).toBeUndefined();
   });
 
-  it('held while an older escalation (no `direct`) is open, then one batch with the held block, rendered in full', async () => {
+  it('an older escalation (no `direct`) open: a finished job still goes at once (D1)', async () => {
     makeVault({ children: { c1: child('c1'), c2: child('c2', { awaited: true }) } });
     await startSuperInbox([root]);
     settle(reg(SUPER, 'super'));
@@ -239,31 +223,13 @@ describe('a child\'s question open: the pile goes in the first event turn after 
     attachSuperInbox(inbox);
     askQuestion(c1, 'req-9');
     await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
-    // The super escalates it to the owner and ends its turn.
-    // A record from before direct questions: the escalation is the super's alone, and holds.
+    // A record from before direct questions: the escalation is the super's alone, and holds questions only.
     await writeSuper(root, (s) => { const q = s.queue.find((x) => x.requestId === 'req-9'); if (q) { q.state = 'escalated'; q.ownerText = 'Postgres or sqlite?'; delete q.direct; } });
     superTurnEnded(SUPER);
     await finish('c2', 'q-done-c2');
-    await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.item)).toEqual(['q-done-c2']), W);
-    await new Promise((r) => setTimeout(r, 60));
-    expect(delivered).toHaveLength(1);
-    expect(superAnswerDigest(SUPER)).toBeNull(); // not the super's own ask: no answer message to ride
-
-    // The owner answers the child in its card: the escalation closes, the pump goes.
-    c1.answered('req-9');
-    await vi.waitFor(() => expect(delivered).toHaveLength(2), W);
-    const text = delivered[1].text;
-    expect(text).toMatch(/^\[super events\] batch=b-[a-z0-9-]+ items=1/);
-    expect(text).toContain(`${HELD_OPEN} items=1>`);
-    expect(text).toMatch(/- item=q-done-c2 child=c2 event=done awaited=owner/);
-    // The held block comes after the no-text rule: it is the exception the super acts on.
-    expect(text.indexOf(HELD_OPEN)).toBeGreaterThan(text.indexOf('write no text at all'));
-    await vi.waitFor(async () => {
-      const s = await readSuperState(root);
-      expect(s.held).toBeUndefined();
-      expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('delivered');
-      expect(s.ownerBatches).toContain(delivered[1].event.batch);
-    }, W);
+    void pumpSuper(root);
+    await vi.waitFor(() => expect(delivered.some((d) => /- item=q-done-c2 child=c2 event=done awaited=owner/.test(d.text))).toBe(true), W);
+    expect((await readSuperState(root)).held).toBeUndefined();
   });
 });
 
@@ -275,16 +241,19 @@ describe('a child\'s question open: the pile goes in the first event turn after 
  */
 describe('a message about one agenda line', () => {
   const noteAbout = { kind: 'note' as const, id: 'n7' };
+  let HELD = '';
   async function heldWhileAsked() {
     makeVault({ children: { c1: child('c1', { awaited: true }) } });
     await startSuperInbox([root]);
     settle(reg(SUPER, 'super'));
-    reg('c1');
+    const c1 = reg('c1');
     const { inbox, delivered } = fakeInbox();
     attachSuperInbox(inbox);
     await openAsk();
-    await finish('c1', 'q-done-c1');
-    await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.item)).toEqual(['q-done-c1']), W);
+    // D1: only a child's question waits behind his open card.
+    askQuestion(c1, 'req-1');
+    await vi.waitFor(async () => expect((await readSuperState(root)).held?.length).toBe(1), W);
+    HELD = (await readSuperState(root)).held![0].item;
     return delivered;
   }
 
@@ -297,8 +266,8 @@ describe('a message about one agenda line', () => {
     await new Promise((r) => setTimeout(r, 120));
     const s = await readSuperState(root);
     expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
-    expect(s.held?.map((h) => h.item)).toEqual(['q-done-c1']);
-    expect(s.queue.find((q) => q.id === 'q-done-c1')?.state).toBe('pending');
+    expect(s.held?.map((h) => h.item)).toEqual([HELD]);
+    expect(s.queue.find((q) => q.id === HELD)?.state).toBe('pending');
     expect(delivered).toHaveLength(0);
 
     // His words answered it anyway: the super closes it (`super queue done <ask>`), and the held
@@ -309,11 +278,11 @@ describe('a message about one agenda line', () => {
     await vi.waitFor(() => expect(delivered.length).toBeGreaterThanOrEqual(1), W);
     const text = delivered.map((d) => d.text).join('\n');
     expect(text).toContain(`${HELD_OPEN} items=1>`);
-    expect(text).toMatch(/- item=q-done-c1 child=c1 event=done awaited=owner/);
+    expect(text).toMatch(new RegExp(`- item=${HELD} child=c1 event=question`));
     await vi.waitFor(async () => {
       const after = await readSuperState(root);
       expect(after.held).toBeUndefined();
-      expect(after.queue.find((q) => q.id === 'q-done-c1')?.state).toBe('delivered');
+      expect(after.queue.find((q) => q.id === HELD)?.state).toBe('delivered');
     }, W);
   });
 
@@ -321,7 +290,7 @@ describe('a message about one agenda line', () => {
     await heldWhileAsked();
     const own = { kind: 'item' as const, id: 'q-ask-1' };
     const digest = superAnswerDigest(SUPER, Date.now(), [own]);
-    expect(digest?.items).toEqual(['q-done-c1']);
+    expect(digest?.items).toEqual([HELD]);
     superOwnerSpoke(SUPER, Date.now(), digest!.items, [own]);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
@@ -361,7 +330,7 @@ describe('a message about one agenda line', () => {
     await new Promise((r) => setTimeout(r, 120));
     const s = await readSuperState(root);
     expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
-    expect(s.held?.map((h) => h.item)).toEqual(['q-done-c1']);
+    expect(s.held?.map((h) => h.item)).toEqual([HELD]);
     expect(delivered).toHaveLength(0);
   });
 
@@ -380,7 +349,7 @@ describe('a message about one agenda line', () => {
     await new Promise((r) => setTimeout(r, 120));
     const s = await readSuperState(root);
     expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
-    expect(s.held?.map((h) => h.item)).toEqual(['q-done-c1']);
+    expect(s.held?.map((h) => h.item)).toEqual([HELD]);
     expect(delivered).toHaveLength(0);
   });
 
@@ -388,18 +357,18 @@ describe('a message about one agenda line', () => {
     const delivered = await heldWhileAsked();
     const parts = [noteAbout, { kind: 'item' as const, id: 'q-ask-1' }];
     const digest = superAnswerDigest(SUPER, Date.now(), parts);
-    expect(digest?.items).toEqual(['q-done-c1']);
+    expect(digest?.items).toEqual([HELD]);
     superOwnerSpoke(SUPER, Date.now(), digest!.items, parts);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('done');
       expect(s.held).toBeUndefined();
-      expect(s.queue.find((q) => q.id === 'q-done-c1')?.state).toBe('delivered');
+      expect(s.queue.find((q) => q.id === HELD)?.state).toBe('delivered');
     }, W);
     // Carried by that message: no event turn repeats it.
     clearOwnerLease(root);
     void pumpSuper(root);
     await new Promise((r) => setTimeout(r, 150));
-    expect(delivered.map((d) => d.text).join('\n')).not.toContain('q-done-c1');
+    expect(delivered.map((d) => d.text).join('\n')).not.toContain(HELD);
   });
 });

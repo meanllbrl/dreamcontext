@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
+import { SidebarTeam } from './SidebarTeam';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
@@ -15,16 +16,13 @@ import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats' | 'apps';
 
 interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page, id?: string) => void;
   /** Collapsed state, owned by the Shell and toggled from the title bar. */
   collapsed: boolean;
-  /** Phone: the rail is an off-canvas drawer (Shell owns open/close). Settings is laptop-only
-   *  there (hands-free denies its writes), "What is this?" gets a row, sync controls stay home. */
-  phone?: { open: boolean; onClose: () => void };
 }
 
 export { PAGE_LABEL_KEY } from '../../lib/pageLabels';
@@ -89,13 +87,14 @@ export const NAV_GROUPS: NavGroup[] = [
       // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
-      // AI TEAM (owner, 2026-10-20): Agents and Automations are ONE row now. A teammate is an
-      // agent, its automations are its routines, and you talk to each one in its own
-      // conversation. Production from day one, so no maturity tag. The page key stays
-      // `automations` (persisted nav state); `agents` lands on the same page.
-      { page: 'automations', labelKey: 'nav.aiTeam', hero: true },
+      // NO AI TEAM ROW (plan-r10 1d, owner `uv773y`): each project's members are ONE Ekip row
+      // under Chat, opened, switched on/off and seen there; created and edited in "Üyeleri
+      // yönet". The `automations` and `agents` page ids stay only as deep-link aliases.
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
+      // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
+      // Beta, so it sits above the alpha rows (owner rule, 2026-10-02).
+      { page: 'apps', labelKey: 'nav.apps', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
       // "Whiteboard" opens the default board, "Control Panel", directly (A15). The page id
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
@@ -126,54 +125,25 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'packs', labelKey: 'nav.packs' },
       { page: 'settings', labelKey: 'nav.settings' },
-      // 'about' entry ("What is this?") intentionally not in the rail — page/logic kept, just unlinked.
       // 'announcements' is pinned to the footer (below), not this rail — it's an
       // announcement of dreamcontext itself, not a per-project surface.
     ],
   },
 ];
 
-// One-time first-run nudge: the "What is this?" entry pulses until the user
-// opens it once, then this flag persists so it never nags again. GLOBAL on purpose —
-// "I have read what this app is" lives in the user's head, not in a project, and
-// re-explaining dreamcontext once per project would be nagging.
-const ABOUT_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.aboutSeen';
 // Same first-run pattern for the GitHub cloud-sync CTA pinned to the rail footer, but
-// PER VAULT: unlike `aboutSeen`, what this CTA *does* (`brain enable`) is per-project, so
+// PER VAULT: what this CTA *does* (`brain enable`) is per-project, so
 // dismissing it in a synced project must not hide it in one that is still unsynced.
 const GITHUB_SYNC_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.githubSyncSeen';
 
-function readFlag(key: string): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(key) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeFlag(key: string): void {
-  try {
-    window.localStorage.setItem(key, '1');
-  } catch {
-    // localStorage unavailable — ignore
-  }
-}
-
-export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collapsedProp, phone }: SidebarProps) {
-  // On a phone every pick also closes the drawer, and the rail is never collapsed to icons.
-  const onNavigate = (page: Page, id?: string) => { navigateTo(page, id); phone?.onClose(); };
-  const collapsed = phone ? false : collapsedProp;
+export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   // Mac mode's tunnel, phone OR remote computer (hands-free sekmeler W2): Settings and the brain's
   // GitHub sync are the laptop's administration, never drawn there.
-  const tunnel = !!phone || isMacPhoneSurface();
+  const tunnel = isMacPhoneSurface();
   const { t } = useI18n();
   // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
   // window's URL names the first chip, and several projects render their own rail here.
   const { vault, bus } = useVault();
-  // aboutSeen: whether the user has opened "What is this?" at least once.
-  // Until then, the entry bounces to invite the first click.
-  const [aboutSeen, setAboutSeen] = useState<boolean>(() => readFlag(ABOUT_SEEN_STORAGE_KEY));
   const [githubSyncSeen, setGithubSyncSeen] = useState<boolean>(
     () => readScopedRaw(vault, GITHUB_SYNC_SEEN_STORAGE_KEY) === '1',
   );
@@ -183,8 +153,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
-  // `agents` is the AI Team too (its old deep links land there), so its row lights up.
-  const current: Page | null = chatOpen && showChat ? null : activePage === 'agents' ? 'automations' : activePage;
+  // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.
+  const current: Page | null = chatOpen && showChat ? null : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -192,15 +162,6 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // (BrainSyncControl owns the sync row + every failure/handoff surface).
   const signedIn = !!authStatus?.connected;
   const hasRemote = !!brainStatus?.hasRemote;
-
-  // Opening "What is this?" retires the first-run nudge for good.
-  const openAbout = () => {
-    if (!aboutSeen) {
-      setAboutSeen(true);
-      writeFlag(ABOUT_SEEN_STORAGE_KEY);
-    }
-    onNavigate('about');
-  };
 
   const openGithubSync = () => {
     if (!githubSyncSeen) {
@@ -210,8 +171,6 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
     onNavigate('settings', 'brain');
   };
 
-  // The nudge stops once the page has been opened (now or in a past session).
-  const nudgeAbout = !aboutSeen && activePage !== 'about';
   const nudgeGithubSync = !githubSyncSeen;
 
   // Connect / set-up CTA label for the pre-connected states.
@@ -234,14 +193,10 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
 
   return (
     <>
-    {phone && <div className="sidebar-scrim" data-open={phone.open ? 'true' : undefined} onClick={phone.onClose} aria-hidden="true" />}
     <nav
       ref={railRef}
-      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}${phone ? ' sidebar--phone' : ''}`}
+      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}
       aria-label="Primary"
-      data-open={phone?.open ? 'true' : undefined}
-      aria-hidden={phone && !phone.open ? true : undefined}
-      inert={phone && !phone.open ? true : undefined}
     >
       <RailTip railRef={railRef} enabled={collapsed} />
       {/* Brand lockup — the dream gem + wordmark + active vault. */}
@@ -264,7 +219,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
         >
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {[...group.items, ...(phone && group.labelKey === 'nav.group.system' ? [{ page: 'about' as Page, labelKey: 'nav.about' }] : [])].map((item) => {
+            {group.items.map((item) => {
               if ('launch' in item) {
                 if (!showChat) return null;
                 staggerIndex += 1;
@@ -272,11 +227,12 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                 const { live, waiting } = chatRollup;
                 const showUnread = superUnread > 0;
                 return (
-                  <li key={item.launch} className={`animate-stagger animate-stagger-${staggerIndex}`}>
+                  <Fragment key={item.launch}>
+                  <li className={`animate-stagger animate-stagger-${staggerIndex}`}>
                     <button
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
-                      onClick={() => { openAgentSurface(bus); phone?.onClose(); }}
+                      onClick={() => openAgentSurface(bus)}
                       {...named(showUnread ? `${label} (${t('super.unread.count').replace('{n}', String(superUnread))})` : live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>
@@ -292,6 +248,9 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                       )}
                     </button>
                   </li>
+                  {/* ONE Ekip row under Chat (plan-r10 1d, r8-05). */}
+                  {!tunnel && <SidebarTeam kind="project" />}
+                  </Fragment>
                 );
               }
               const { page, labelKey, maturity, hero } = item as NavItem;
@@ -304,15 +263,14 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
               const off = page === 'hypotheses' && learningOff;
               const level: MaturityLevel | undefined = off ? 'off' : maturity;
               const tag = level ? t(`maturity.${level}`) : null;
-              const isAbout = page === 'about';
               const badgeCount = page === 'announcements' ? unread.length
                 : page === 'automations' ? agentUnread
                   : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
-                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout && !phone ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
-                    onClick={isAbout ? openAbout : () => onNavigate(page)}
+                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${off ? ' sidebar-item--off' : ''}`}
+                    onClick={() => onNavigate(page)}
                     {...named(tag ? `${label} (${tag})` : label)}
                     aria-current={current === page ? 'page' : undefined}
                     data-hero={hero || undefined}
@@ -344,6 +302,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
+        {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
+        {!tunnel && <SidebarTeam kind="global" />}
         <button
           className={`sidebar-item sidebar-item--announcements ${activePage === 'announcements' ? 'sidebar-item--active' : ''}`}
           onClick={() => onNavigate('announcements')}

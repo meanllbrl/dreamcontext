@@ -4,16 +4,16 @@ import { useI18n } from '../../../context/I18nContext';
 import { RequestError } from '../../../api/client';
 import { phoneLogSnapshot } from '../../../lib/phoneConnLog';
 
-/** How long the result line stays under the button. */
+/** How long the result line stays over the row. */
 const NOTE_MS = 4000;
 
 type Note = { tone: 'good' | 'bad'; text: string };
 
 /**
- * "Bağlantı kaydını Mac'e gönder" — the Sohbetler list's footer row. Sends the phone's own
+ * "Kaydı gönder" — the right end of the drawer's foot (PhoneDrawerFoot.tsx). Sends the phone's own
  * connection log (lib/phoneConnLog.ts: socket drops, reattaches, card mounts; no message text)
  * to the Mac, where the agent reads it when the owner says the phone misbehaved. The result is
- * an inline status line under the button (the phone list has no toasts): how many events
+ * a status line laid over the row, so the row keeps its height (the phone list has no toasts): how many events
  * arrived, or the failure in words.
  */
 export function PhoneLogSend() {
@@ -48,17 +48,14 @@ export function PhoneLogSend() {
   };
 
   return (
-    <div className="mlist-log">
-      <button type="button" className="mlist-log-btn" onClick={() => { void send(); }} disabled={busy} data-testid="phone-log-send">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <>
+      <button type="button" className="mfoot-log" aria-label={t('handsfree.phoneLog.send')} onClick={() => { void send(); }} disabled={busy} data-testid="phone-log-send">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M10 13V3M6 7l4-4 4 4M5 13v4h10v-4" />
         </svg>
-        <span className="mlist-log-text">
-          <span className="mlist-log-title">{t('handsfree.phoneLog.send')}</span>
-          <span className="mlist-log-sub">{t('handsfree.phoneLog.sub')}</span>
-        </span>
+        {t('handsfree.phoneLog.short')}
       </button>
       <p className="mlist-foot-note" role="status" data-tone={note?.tone} data-testid="phone-log-note">{note?.text ?? ''}</p>
-    </div>
+    </>
   );
 }

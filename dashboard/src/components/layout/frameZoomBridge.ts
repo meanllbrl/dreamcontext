@@ -4,6 +4,8 @@
  * document, out of the viewer's reach. This script, run in the sandboxed page, posts them to the
  * parent so the viewer still scrolls and zooms; it stops the page itself zooming on ctrl+wheel.
  * Esc pressed inside the page (its focus is in the page after a click) closes the viewer too.
+ * A ctrl+wheel the page already took (the kit's dc-graph zooms itself) is not posted: the card
+ * and the drawing would zoom together.
  * A double click is posted as well: a card zoomed in place (the Super stage's ZoomPane) fits on it.
  *
  * The page's own scripts can read this script and post the same messages, so the parent trusts
@@ -15,6 +17,7 @@ export const ZOOM_MESSAGE_KEY = '__dreamFrameZoom';
 export const ZOOM_BRIDGE = `(function () {
   function post(m) { parent.postMessage({ ${ZOOM_MESSAGE_KEY}: m }, '*'); }
   window.addEventListener('wheel', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.defaultPrevented) return;
     if (e.ctrlKey || e.metaKey) e.preventDefault();
     post({ kind: 'wheel', dx: e.deltaX, dy: e.deltaY, ctrl: !!(e.ctrlKey || e.metaKey), x: e.clientX, y: e.clientY });
   }, { passive: false });

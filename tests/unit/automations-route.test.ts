@@ -40,7 +40,6 @@ import { enqueueFire } from '../../src/lib/automations/queue.js';
 import { recordRun } from '../../src/lib/automations/store.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { mkdirSync as mkdirp, writeFileSync as writeFileP } from 'node:fs';
-import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../src/lib/automations/telegram.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -50,8 +49,6 @@ import {
   handleAutomationsFlow,
   handleAutomationsQuestionsList,
   handleAutomationsQuestionAnswer,
-  handleAutomationsTelegramGet,
-  handleAutomationsTelegramSet,
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
@@ -63,6 +60,7 @@ import {
   currentAutomationJob,
   runningAutomationJobs,
 } from '../../src/server/automation-job.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 /**
  * `/api/automations*` — mirrors `tests/unit/tasks-token-route.test.ts`: call
@@ -88,16 +86,15 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 function makePostReq(): IncomingMessage {
   // No body is ever sent — handleAutomationsRunNow must not require or read one.
   const readable = Readable.from([]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
-/** For the routes below that DO read a JSON body (questions answer, telegram
- *  set). Buffers, not strings: `parseJsonBody` concats with `Buffer.concat`,
+/** For the routes below that DO read a JSON body (questions answer). Buffers, not strings: `parseJsonBody` concats with `Buffer.concat`,
  *  which throws on string chunks and degrades to a null body — a string-chunk
  *  helper would make every "the body was honoured" assertion pass vacuously. */
 function makePostReqWithBody(body?: unknown): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 const getReq = { method: 'GET', headers: {} } as unknown as IncomingMessage;
@@ -220,8 +217,6 @@ describe('route registration order', () => {
     router.get('/api/automations/queue', handleAutomationsQueue);
     router.get('/api/automations/:slug', handleAutomationsShow);
     router.get('/api/automations/:slug/flow', handleAutomationsFlow);
-    router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
-    router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
 
     const questionsMatch = router.match('GET', '/api/automations/questions');
     expect(questionsMatch?.handler).toBe(handleAutomationsQuestionsList);
@@ -236,7 +231,7 @@ describe('route registration order', () => {
     expect(queueMatch?.params).toEqual({});
 
     // …and the :slug routes it sits in front of still resolve normally,
-    // including the 4-segment `/flow` and `/telegram` sub-paths, whose
+    // including the 4-segment `/flow` sub-path, whose
     // ordering relative to `/:slug` is NOT load-bearing (different shape).
     const slugMatch = router.match('GET', '/api/automations/eod-digest');
     expect(slugMatch?.handler).toBe(handleAutomationsShow);
@@ -246,10 +241,9 @@ describe('route registration order', () => {
     expect(flowMatch?.handler).toBe(handleAutomationsFlow);
     expect(flowMatch?.params).toEqual({ slug: 'eod-digest' });
 
-    const telegramGetMatch = router.match('GET', '/api/automations/eod-digest/telegram');
-    expect(telegramGetMatch?.handler).toBe(handleAutomationsTelegramGet);
-    const telegramPostMatch = router.match('POST', '/api/automations/eod-digest/telegram');
-    expect(telegramPostMatch?.handler).toBe(handleAutomationsTelegramSet);
+    // The retired per-routine Telegram routes are gone, not merely unlisted.
+    expect(router.match('GET', '/api/automations/eod-digest/telegram')).toBeNull();
+    expect(router.match('POST', '/api/automations/eod-digest/telegram')).toBeNull();
   });
 
   it('WOULD misroute /questions and /queue as a slug if registered after /:slug (proves the ordering is load-bearing)', () => {
@@ -739,8 +733,6 @@ describe('POST /api/automations/questions/:id', () => {
   });
 });
 
-// ─── per-automation telegram ─────────────────────────────────────────────────
-
 /**
  * An approval question an AGENT call-target run asked, on a same-slug pair. Mutations checked:
  *  - the route resolving the slug with `getAutomation` (not `approvalQuestionTarget`) ⇒ the
@@ -813,96 +805,6 @@ describe("POST /api/automations/questions/:id — an agent target's approval", (
     expect(String(body().result)).toContain('did not run again');
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout', 'agent')!, undefined, 'run').approved).toBe(true);
     expect(vi.mocked(runAutomation)).not.toHaveBeenCalled();
-  });
-});
-
-describe('GET/POST /api/automations/:slug/telegram', () => {
-  it('404s for a missing slug on both verbs', async () => {
-    const getRes = makeRes();
-    await handleAutomationsTelegramGet(getReq, getRes.res, { slug: 'nope' }, contextRoot);
-    expect(getRes.status()).toBe(404);
-
-    const postRes = makeRes();
-    await handleAutomationsTelegramSet(
-      makePostReqWithBody({ botToken: 'x', chatId: '1' }),
-      postRes.res,
-      { slug: 'nope' },
-      contextRoot,
-    );
-    expect(postRes.status()).toBe(404);
-  });
-
-  it('reads as not configured before any bot is set', async () => {
-    makeAutomation('bot-unset', { approve: false });
-    const { res, status, body } = makeRes();
-    await handleAutomationsTelegramGet(getReq, res, { slug: 'bot-unset' }, contextRoot);
-    expect(status()).toBe(200);
-    expect(body()).toEqual({ telegram: { configured: false, chatId: null } });
-  });
-
-  it('400s on a malformed body — missing botToken or chatId', async () => {
-    makeAutomation('bot-bad-body', { approve: false });
-
-    const missingToken = makeRes();
-    await handleAutomationsTelegramSet(
-      makePostReqWithBody({ chatId: '123' }),
-      missingToken.res,
-      { slug: 'bot-bad-body' },
-      contextRoot,
-    );
-    expect(missingToken.status()).toBe(400);
-
-    const emptyBody = makeRes();
-    await handleAutomationsTelegramSet(makePostReqWithBody({}), emptyBody.res, { slug: 'bot-bad-body' }, contextRoot);
-    expect(emptyBody.status()).toBe(400);
-
-    // …and neither malformed attempt actually wrote a config.
-    expect(readTelegramConfigForSlug('bot-bad-body')).toBeNull();
-  });
-
-  it('sets the bot, and the token NEVER appears in either response body — asserted on the serialized JSON, not just object shape', async () => {
-    makeAutomation('bot-secret', { approve: false });
-    const secretToken = 'super-secret-bot-token-123456';
-
-    const setRes = makeRes();
-    await handleAutomationsTelegramSet(
-      makePostReqWithBody({ botToken: secretToken, chatId: '555' }),
-      setRes.res,
-      { slug: 'bot-secret' },
-      contextRoot,
-    );
-    expect(setRes.status()).toBe(200);
-    expect(setRes.body()).toEqual({ telegram: { configured: true, chatId: '555' } });
-    expect(JSON.stringify(setRes.body())).not.toContain(secretToken);
-
-    const getRes = makeRes();
-    await handleAutomationsTelegramGet(getReq, getRes.res, { slug: 'bot-secret' }, contextRoot);
-    expect(getRes.body()).toEqual({ telegram: { configured: true, chatId: '555' } });
-    expect(JSON.stringify(getRes.body())).not.toContain(secretToken);
-
-    // …and it really was written (never leaked over HTTP, but not silently
-    // dropped either) — the channel poller has to read it from somewhere.
-    expect(readTelegramConfigForSlug('bot-secret')?.botToken).toBe(secretToken);
-  });
-
-  it('preserves the getUpdates offset across a re-save, so re-saving credentials never replays already-processed updates', async () => {
-    makeAutomation('bot-reoffset', { approve: false });
-    writeTelegramConfigForSlug('bot-reoffset', { botToken: 'old-token', chatId: '1', offset: 42 });
-
-    const { res, status } = makeRes();
-    await handleAutomationsTelegramSet(
-      makePostReqWithBody({ botToken: 'new-token', chatId: '2' }),
-      res,
-      { slug: 'bot-reoffset' },
-      contextRoot,
-    );
-    expect(status()).toBe(200);
-
-    expect(readTelegramConfigForSlug('bot-reoffset')).toMatchObject({
-      botToken: 'new-token',
-      chatId: '2',
-      offset: 42,
-    });
   });
 });
 

@@ -2,12 +2,16 @@
  * The PreToolUse gate on a member's file (`member-file-guard.ts`). The Python case is the real
  * accident, renamed: a session appended to `agents/doctor.md` from a heredoc with a relative path.
  */
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { memberFileRefusal, memberFileWriteTarget } from '../../src/lib/agents/member-file-guard.js';
 
 const HOME = '/Users/robin';
 const BRAIN = '/Users/robin/projects/acme/_dream_context';
 const bash = (command: string, cwd = '/Users/robin/projects/acme') => memberFileWriteTarget('Bash', { command }, cwd, HOME);
+/** What the guard answers for a POSIX-spelled fixture path: the host's absolute form with forward
+ *  slashes (on Windows `/Users/robin` resolves onto the current drive, `D:/Users/robin`). */
+const R = (p: string): string => resolve(p).replace(/\\/g, '/');
 
 describe('Edit, Write, MultiEdit', () => {
   it.each(['Edit', 'Write', 'MultiEdit'])('%s stops at an agent and an automation file', (tool) => {
@@ -15,8 +19,8 @@ describe('Edit, Write, MultiEdit', () => {
     expect(memberFileWriteTarget(tool, { file_path: `${BRAIN}/automations/doctor.md` }, '/', HOME)).toBe(`${BRAIN}/automations/doctor.md`);
   });
   it('resolves a relative path, and a global agent', () => {
-    expect(memberFileWriteTarget('Edit', { file_path: 'agents/doctor.md' }, BRAIN, HOME)).toBe(`${BRAIN}/agents/doctor.md`);
-    expect(memberFileWriteTarget('Write', { file_path: '~/.dreamcontext/agents/roamer.md' }, '/', HOME)).toBe('/Users/robin/.dreamcontext/agents/roamer.md');
+    expect(memberFileWriteTarget('Edit', { file_path: 'agents/doctor.md' }, BRAIN, HOME)).toBe(R(`${BRAIN}/agents/doctor.md`));
+    expect(memberFileWriteTarget('Write', { file_path: '~/.dreamcontext/agents/roamer.md' }, '/', HOME)).toBe(R('/Users/robin/.dreamcontext/agents/roamer.md'));
   });
   it('leaves everything else free', () => {
     for (const p of [
@@ -33,10 +37,14 @@ describe('Edit, Write, MultiEdit', () => {
 describe('Bash', () => {
   it('stops the real accident: a heredoc, a variable, a relative path', () => {
     const command = `python3 - <<'EOF'\np='agents/doctor.md'\ns=open(p).read()\ns=s.replace('## Pattern','A new line\\n\\n## Pattern',1)\nopen(p,'w').write(s)\nEOF`;
-    expect(bash(command, BRAIN)).toBe(`${BRAIN}/agents/doctor.md`);
+    expect(bash(command, BRAIN)).toBe(R(`${BRAIN}/agents/doctor.md`));
+  });
+  it('reads a Windows path with backslashes as a path, quoted or not', () => {
+    for (const c of ['cp x "C:\\p\\_dream_context\\agents\\a.md"', 'cp x C:\\p\\_dream_context\\agents\\a.md', 'rm C:\\p\\_dream_context\\automations\\job.md']) expect([c, bash(c)]).not.toEqual([c, null]);
+    expect(bash('cp x C:\\p\\notes\\a.md')).toBeNull();
   });
   it('follows a cd', () => {
-    expect(bash(`cd ${BRAIN} && sed -i '' 's/a/b/' agents/doctor.md`)).toBe(`${BRAIN}/agents/doctor.md`);
+    expect(bash(`cd ${BRAIN} && sed -i '' 's/a/b/' agents/doctor.md`)).toBe(R(`${BRAIN}/agents/doctor.md`));
   });
   it.each([
     [`sed -i 's/a/b/' ${BRAIN}/agents/doctor.md`],

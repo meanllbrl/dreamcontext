@@ -56,8 +56,28 @@ describe('pageDefaultCss', () => {
     expect(pageDefaultCss(true)).not.toMatch(/url\(|@import/);
   });
 
+  it("leaves the kit graph's svg alone (its engine sizes it) and still fits every other svg", () => {
+    expect(pageDefaultCss(true)).toContain(':where(img, svg:not(.dc-graph-svg), video) { max-width: 100%; height: auto; }');
+  });
+
+  it('both page surfaces carry the kit runtime with the kit CSS (graph and tabs work as in a chat block)', () => {
+    const reader = read('dashboard/src/components/appLink/DocumentReader.tsx');
+    expect(reader).toMatch(/headScript: \[HEIGHT_BRIDGE,[^\n]*KIT_BEHAVIOUR\]\.join/);
+    // The file viewer builds its page through buildReportSrcdoc (shared with the Telegram kit).
+    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('buildReportSrcdoc(html, ');
+    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain("${ZOOM_BRIDGE}\\n${KIT_BEHAVIOUR}`");
+    // The sandbox does not move with it.
+    for (const p of ['dashboard/src/components/appLink/DocumentReader.tsx', 'dashboard/src/components/layout/FrameViewer.tsx']) {
+      const src = read(p);
+      expect(src).toContain('sandbox={CHAT_HTML_SANDBOX}');
+      expect(src).toContain('allow={SANDBOX_ALLOW}');
+      expect(src).not.toContain('allow-same-origin');
+    }
+  });
+
   it('both page surfaces use it', () => {
     expect(read('dashboard/src/components/appLink/DocumentReader.tsx')).toContain('overrideCss: pageDefaultCss(fill)');
-    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('overrideCss: pageDefaultCss(true)');
+    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('buildReportSrcdoc(html, ');
+    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain('overrideCss: pageDefaultCss(true)');
   });
 });

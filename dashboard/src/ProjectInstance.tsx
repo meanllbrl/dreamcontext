@@ -12,6 +12,8 @@ import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
+import { StatsPage } from './pages/StatsPage';
+import { OPEN_STATS_EVENT } from './lib/openStats';
 import { AiTeamPage, type AutomationsFocus } from './pages/AiTeamPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
@@ -20,14 +22,20 @@ import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PacksPage } from './pages/PacksPage';
-import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
+import { AppsPage } from './pages/AppsPage';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
-import { OPEN_AGENTS_EVENT, readOpenAgentsDetail, type AgentsFocus, type OpenAgentsDetail } from './lib/openAgents';
+import {
+  MANAGE_MEMBERS_EVENT, OPEN_AGENTS_EVENT, readManageMembersDetail, readOpenAgentsDetail, routeOpenAgents,
+  type AgentsFocus, type ManageMembersDetail, type OpenAgentsDetail,
+} from './lib/openAgents';
+import { ManageMembersModal } from './components/aiteam/ManageMembersModal';
+import { useAgents } from './hooks/useAgents';
+import { isMacPhoneSurface } from './lib/phoneSurface';
 import { TALK_TO_AGENT_REQUEST_EVENT, forwardTalkToAgent } from './lib/talkToAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from './lib/openSession';
 import {
@@ -41,8 +49,8 @@ import { PAGE_LABEL_KEY } from './lib/pageLabels';
 import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
-import { DRAWER_PAGE_EVENT, landsOnChat, type PendingDrawerIntent } from './lib/drawerIntents';
-import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, useIsNewShell } from './lib/uxMode';
+import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, landsOnChat, memberIntent, type DrawerIntent, type PendingDrawerIntent } from './lib/drawerIntents';
+import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, readDeviceShell, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
 
@@ -85,7 +93,9 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
+      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings' && page !== 'apps') return;
+      // A device shell has no Settings (Shell.navigate refuses it too): the agent cannot open them.
+      if (page === 'settings' && readDeviceShell()) return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
     },
   );
@@ -164,22 +174,47 @@ function RollupBridge({
  *
  * Rendered inside Shell's children for `nav`. Renders nothing.
  */
-function OpenAgentsBridge({
-  nav, onAgentsFocus,
-}: {
-  nav: ShellNavigation;
-  onAgentsFocus: (focus: OpenAgentsDetail) => void;
-}) {
+function OpenStatsBridge({ nav }: { nav: ShellNavigation }) {
   const { isActive } = useVault();
   useEffect(() => {
-    if (!isActive) return;
-    const listener = (event: Event) => {
-      nav.navigate('agents', null);
-      onAgentsFocus(readOpenAgentsDetail((event as CustomEvent<unknown>).detail));
+    if (!isActive) return undefined;
+    const listener = () => nav.navigate('stats', null);
+    window.addEventListener(OPEN_STATS_EVENT, listener);
+    return () => window.removeEventListener(OPEN_STATS_EVENT, listener);
+  }, [isActive, nav]);
+  return null;
+}
+
+/**
+ * Where `requestOpenAgents` lands now (plan-r10 1c, 1d): `{slug}` and `{slug, task}` open that
+ * member's stage, its one conversation, through the drawer's member intent rung on this
+ * instance's bus (`AgentSurface` takes it, the task strip with it); `{create}`, `{whiteboard}` and
+ * a bare request open "Üyeleri yönet". `requestManageMembers` opens the modal. Renders nothing.
+ */
+function OpenAgentsBridge({ onManage }: { onManage: (detail: ManageMembersDetail) => void }) {
+  const { isActive, bus } = useVault();
+  const agentsQ = useAgents({ enabled: isActive });
+  const agentsRef = useRef(agentsQ.data);
+  agentsRef.current = agentsQ.data;
+  useEffect(() => {
+    if (!isActive) return undefined;
+    const onOpen = (event: Event) => {
+      const route = routeOpenAgents(readOpenAgentsDetail((event as CustomEvent<unknown>).detail));
+      if (route.to === 'manage') { onManage(route.detail); return; }
+      const title = agentsRef.current?.find((a) => a.slug === route.slug)?.title ?? route.slug;
+      const intent = memberIntent(route.slug, title, route.task);
+      if (!intent) return;
+      openAgentSurface(bus);
+      emitInstance<DrawerIntent>(bus, DRAWER_INTENT_EVENT, intent);
     };
-    window.addEventListener(OPEN_AGENTS_EVENT, listener);
-    return () => window.removeEventListener(OPEN_AGENTS_EVENT, listener);
-  }, [isActive, nav, onAgentsFocus]);
+    const onManageEvent = (event: Event) => onManage(readManageMembersDetail((event as CustomEvent<unknown>).detail));
+    window.addEventListener(OPEN_AGENTS_EVENT, onOpen);
+    window.addEventListener(MANAGE_MEMBERS_EVENT, onManageEvent);
+    return () => {
+      window.removeEventListener(OPEN_AGENTS_EVENT, onOpen);
+      window.removeEventListener(MANAGE_MEMBERS_EVENT, onManageEvent);
+    };
+  }, [isActive, bus, onManage]);
   return null;
 }
 
@@ -220,6 +255,21 @@ function TalkToAgentBridge() {
     return () => window.removeEventListener(TALK_TO_AGENT_REQUEST_EVENT, listener);
   }, [isActive, bus]);
   return null;
+}
+
+/** True when the link did not open a window and belongs on the Apps page. */
+async function followAppLink(vault: string, slug: string, nonce: string | null): Promise<boolean> {
+  try {
+    const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': vault },
+      body: JSON.stringify({ link: true, ...(nonce ? { nonce } : {}) }),
+    });
+    if (!r.ok) return true;
+    return (await r.json() as { landed?: string }).landed === 'card';
+  } catch {
+    return true;
+  }
 }
 
 /** A `dreamcontext://` link waiting to land in this project; `nonce` tells two clicks apart. */
@@ -288,7 +338,8 @@ function StartIntentBridge({
   return (
     <div className="start-intent-notice" role="status" data-no-drag>
       <span className="start-intent-notice-text">{t('onboarding.startIntent.refused')}</span>
-      <button
+      {/* The setup lives in Settings, which a device shell does not have. */}
+      {!readDeviceShell() && <button
         type="button"
         className="start-intent-notice-action"
         onClick={() => {
@@ -297,7 +348,7 @@ function StartIntentBridge({
         }}
       >
         {t('onboarding.startIntent.openSetup')}
-      </button>
+      </button>}
       <button
         type="button"
         className="start-intent-notice-close"
@@ -356,6 +407,12 @@ function AppLinkBridge({
     } else if (parsed.kind === 'automation') {
       nav.navigate('automations', null);
       onAutomationFocus(parsed.slug);
+    } else if (parsed.kind === 'app') {
+      // A running app comes forward. A stopped one opens only on a live nonce; otherwise the
+      // link lands on the Apps card and the owner presses Launch.
+      void followAppLink(vault, parsed.slug, parsed.nonce).then((onCard) => {
+        if (onCard) nav.navigate('apps', null);
+      });
     } else if (parsed.kind === 'session') {
       // ACKed like every bus bridge into the surface: on a window built for this link the surface
       // subscribes a beat after this effect runs, so ask again until someone says it took it.
@@ -383,7 +440,7 @@ function AppLinkBridge({
  *  re-renders (a rail fold, the palette), so the open page is left alone then. */
 /** Pages with a title and no toolbar of their own: the new shell gives them a title-only bar
  *  (W2-B). Pages with a toolbar row put the title in that row themselves. */
-const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'taxonomy', 'sleep', 'packs', 'announcements', 'about']);
+const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'taxonomy', 'sleep', 'packs', 'announcements']);
 
 /** The new shell's page header around the router (W2-B): "← Chat" for a page a chat opened,
  *  and the title-only bar. Classic renders the page alone, exactly as before. */
@@ -437,10 +494,13 @@ const PageRouter = memo(function PageRouter({
       return <HypothesesPage focus={focus} />;
     case 'lab':
       return <LabPage focus={focus} />;
+    case 'stats':
+      return <StatsPage onNavigate={(page) => nav.navigate(page, null)} />;
     case 'automations':
     case 'agents':
-      // ONE page for both keys: the AI Team. `agents` is its old Agents page key, kept so its
-      // deep links (`page/agents/<slug>`, `requestOpenAgents`) land on that teammate.
+      // Deep-link aliases only (plan-r10 1d): no rail row lands here. `page/agents/<slug>`, an
+      // automation link or a palette hit opens "Üyeleri yönet" on that member; an app's embedded
+      // team screen still reads its member's conversation.
       return (
         <AiTeamPage
           automationFocus={automationFocus}
@@ -463,12 +523,12 @@ const PageRouter = memo(function PageRouter({
       return <PacksPage />;
     case 'taxonomy':
       return <TaxonomyPage />;
-    case 'about':
-      return <AboutPage />;
     case 'announcements':
       return <AnnouncementsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
+    case 'apps':
+      return <AppsPage focus={focus} />;
     case 'relations':
       // New shell only: `Shell` never lands a classic window here.
       return <RelationsPage />;
@@ -518,12 +578,17 @@ export interface ProjectInstanceProps {
   /** New shell: a drawer intent queued for this project (D5). */
   pendingDrawerIntent?: PendingDrawerIntent | null;
   onDrawerIntentConsumed?: (vault: string, nonce: number) => void;
+  /** New shell: "Üyeleri yönet" was asked for this project from the drawer while it was not on
+   *  screen (a nonce); the modal opens once this instance is active. */
+  pendingManage?: number | null;
+  onManageConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
   drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
+  pendingManage = null, onManageConsumed,
 }: ProjectInstanceProps) {
   const newShell = useIsNewShell();
   /*
@@ -558,6 +623,20 @@ export function ProjectInstance({
     setAgentsFocus({ ...focus, nonce: focusSeq.current });
   }, []);
   const clearAgentsFocus = useCallback(() => setAgentsFocus(null), []);
+  // "Üyeleri yönet" (plan-r10 1d): a modal over whatever is on screen, desktop only.
+  const [manage, setManage] = useState<(ManageMembersDetail & { nonce: number }) | null>(null);
+  const openManage = useCallback((detail: ManageMembersDetail) => {
+    if (isMacPhoneSurface()) return;
+    focusSeq.current += 1;
+    setManage({ ...detail, nonce: focusSeq.current });
+  }, []);
+  const closeManage = useCallback(() => setManage(null), []);
+  // The window's queued "Üyeleri yönet" for this project: taken once, when this project is on screen.
+  useEffect(() => {
+    if (pendingManage === null || !isActive) return;
+    onManageConsumed?.(vault, pendingManage);
+    openManage({});
+  }, [pendingManage, isActive, vault, onManageConsumed, openManage]);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
   const consumeStart = useCallback((nonce: number) => onStartConsumed?.(vault, nonce), [onStartConsumed, vault]);
   // A project opened (or reached) by "Start with Claude" is about to show the initializer chat,
@@ -620,7 +699,8 @@ export function ProjectInstance({
                       />
                     )}
                     <AgentPageNavBridge nav={nav} />
-                    <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
+                    <OpenAgentsBridge onManage={openManage} />
+                    <OpenStatsBridge nav={nav} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <TalkToAgentBridge />
                     <AppLinkBridge
@@ -655,6 +735,7 @@ export function ProjectInstance({
                 arrival={newShell && pendingDrawerIntent && landsOnChat(pendingDrawerIntent.intent) ? pendingDrawerIntent : null} />
               {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
               {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
+              {manage && isActive && <ManageMembersModal focus={manage} onClose={closeManage} />}
             </I18nProvider>
           </ProjectProvider>
         </VaultProvider>

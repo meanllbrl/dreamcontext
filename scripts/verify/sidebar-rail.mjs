@@ -302,9 +302,6 @@ async function load(page, base, { theme, collapsed }) {
   await page.addInitScript(([t, c]) => {
     localStorage.setItem('dreamcontext-theme', t);
     localStorage.setItem('dreamcontext.dashboard.sidebarCollapsed', c);
-    // The first-run nudges add an animation to the rail; silencing them keeps
-    // the screenshots comparable between the four passes.
-    localStorage.setItem('dreamcontext.dashboard.aboutSeen', '1');
   }, [theme, collapsed ? '1' : '0']);
   await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1800);

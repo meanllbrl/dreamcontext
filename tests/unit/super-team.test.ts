@@ -54,7 +54,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } 
 import { MAX_TEAM_JOBS, emptySuperState, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, superQueueHead, superView } from '../../src/lib/super/inbox.js';
 import { teamJobAnswer, teamJobLive } from '../../src/lib/super/team.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAutomation, getAutomation, removeAutomation, recordRun, setAutomationEnabled } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
@@ -74,6 +74,12 @@ function makeVault(state: Partial<SuperState> = {}): void {
   writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER, enabled: true, ...state }));
   token = mintWindowToken({ send: () => true, vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super' }).token;
 }
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask` by naming the `say` route; the live default since Wave 3
+// is the request route (the block at the end, and super-multi-*.test.ts).
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-team-')));
@@ -152,7 +158,8 @@ describe('super team ask — through the AI Team\'s say path', () => {
     const r = await verb('team-ask', { member: 'scout', text: 'look at the funnel' });
     expect(r.status).toBe(409);
     expect(r.json.error).toBe('say_unapproved');
-    expect(String(r.json.message)).toMatch(/You cannot approve it: the owner does, in AI Team/);
+    expect(String(r.json.message)).toContain('You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet").');
+    expect(String(r.json.message)).not.toMatch(/AI Team page|in AI Team\./);
     let s = await stored();
     expect(s.queue).toHaveLength(1);
     const [item] = s.queue;
@@ -574,5 +581,38 @@ describe('the team job\'s card on the stage (W2)', () => {
     expect(view?.teamLive).toEqual({ 'team-a1': { status: 'running', lastLine: 'Looking.' } });
     const bad = client.readSuperStateView({ ...emptySuperState(), vault: 'acme', session: SUPER, team: [job], teamLive: { 'team-a1': { status: 'weird', lastLine: 'x' } } });
     expect(bad?.teamLive).toEqual({});
+  });
+});
+
+describe('plan-r10 Wave 2: team ask is a request; team answer is main-only', () => {
+  beforeEach(() => { setTeamAskRouteForTest('request'); });
+
+  it('team ask no longer goes through the headless say path: an unknown member is 404 and nothing reaches say', async () => {
+    const r = await verb('team-ask', { member: 'nobody', text: 'x' });
+    expect(r.status).toBe(404);
+    expect(r.json.error).toBe('unknown_member');
+    expect(say.calls).toEqual([]);
+  });
+
+  it('a member turned off is still 409 say_disabled, nothing queued, no say call', async () => {
+    member('doctor', 'Doctor');
+    setAutomationEnabled(root, 'doctor', false);
+    const r = await verb('team-ask', { member: 'doctor', text: 'check the logs' });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('say_disabled');
+    expect(say.calls).toEqual([]);
+    expect((await stored()).team).toEqual([]);
+  });
+
+  it('team answer from main names a member question; from a member it is 403 main_only', async () => {
+    expect((await verb('team-answer', { item: 'q-none-00000000', text: 'yes' })).status).toBe(404);
+    const memberTok = mintWindowToken({ send: () => true, vault: 'acme', contextRoot: root, sessionId: 'sess-m', mode: 'super', superId: 'm:doctor' }).token;
+    member('doctor', 'Doctor');
+    const { withSuperState } = await import('../../src/lib/super/store.js');
+    await withSuperState(root, 'm:doctor', (s) => { s.session = 'sess-m'; s.enabled = true; });
+    const r = res();
+    await handleSuperVerb(req({ item: 'q-none-00000000', text: 'yes' }, { 'x-dreamcontext-window-token': memberTok }), r, { verb: 'team-answer' });
+    expect(r.status).toBe(403);
+    expect(r.json.error).toBe('main_only');
   });
 });

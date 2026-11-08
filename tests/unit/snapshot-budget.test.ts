@@ -370,8 +370,9 @@ describe('applyBudget', () => {
 
 describe('renderOverBudgetBanner', () => {
   const input = (overrides: Partial<Parameters<typeof renderOverBudgetBanner>[0]> = {}) => ({
-    chars: 24_010,
+    chars: 29_010,
     budgetChars: 18_000,
+    limitLabel: '28,500 chars the session hooks can carry',
     neverEvictChars: 18_900,
     neverEvictSectionIds: ['header', 'linked-repos', 'awareness'],
     flooredSectionIds: ['memory', 'knowledge-index', 'features'],
@@ -394,9 +395,9 @@ describe('renderOverBudgetBanner', () => {
   it('diagnoses the never-evict tier, the floors, and the actionable fix', () => {
     const banner = renderOverBudgetBanner(input());
     expect(banner).toContain('CONTEXT IS INCOMPLETE');
-    expect(banner).toContain('24,010 chars');
+    expect(banner).toContain('29,010 chars');
     expect(banner).toContain("18,000-char target");
-    expect(banner).toContain('20,000-char harness limit');
+    expect(banner).toContain('28,500 chars the session hooks can carry');
     expect(banner).toContain('18,900 chars are never-evict (header, linked-repos, awareness)');
     expect(banner).toContain('memory, knowledge-index, features');
     expect(banner).toContain('`_dream_context/core/0.soul.md` (32,598 chars / 109 lines)');

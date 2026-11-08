@@ -24,7 +24,7 @@ A system prompt is a security kernel + cognitive framework + tool policy + outpu
 ```
 Reference config at: /absolute/path/to/project/ORCHESTRATOR.md
 Load context from: /absolute/path/to/project/_dream_context/Core/0 - MEMORY & PREFERENCES.md
-Load state from: /home/user/vango/projects/state/Progress.md
+Load state from: /home/user/acme/projects/state/Progress.md
 ```
 
 ### Pattern

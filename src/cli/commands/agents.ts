@@ -14,11 +14,11 @@ import {
   removeAgent,
   setAgentPlacement,
   setAgentShared,
-  withRestamp,
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
-import { listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { AmendmentRefused, amendMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
+import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
 import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
@@ -27,6 +27,9 @@ import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js'
 import { listInboxRows } from '../../lib/owner-inbox.js';
 import { listAgentHistory, searchAgentHistory } from '../../lib/agents/history.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
+import { effectiveEnvelopeLine } from '../../lib/automations/board-scope.js';
+import { levelChatMode } from '../../lib/agents/permission.js';
+import { agentBoardView, answerBoardScope } from '../../lib/agents/board-question.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
 import {
@@ -65,7 +68,7 @@ const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATI
 /** The refusal. It names the page, never a command: a session that reads it
  *  must not be one shell line away from approving the agent itself. */
 export const SELF_APPROVAL_REFUSAL =
-  'Approving is the owner\'s step, and this is a Claude session or an agent run. Approve it on the AI Team page in the dashboard.';
+  'Approving is the owner\'s step, and this is a Claude session or an agent run. He approves it on its card in the chat or on the AI Team page.';
 
 /**
  * A guard against ACCIDENTAL self-approval — not a security boundary (a session
@@ -85,10 +88,11 @@ export function inSession(env: NodeJS.ProcessEnv = process.env): boolean {
   return SELF_APPROVAL_ENVS.some((k) => env[k] !== undefined);
 }
 
-/** A hashed field's edit from a session. `agents edit` re-stamps what it changes, so a session
- *  that may not approve must not reach the same result through an edit. */
+/** What a session's or an agent's hashed edit says about itself (plan-r10 1e). It is no refusal any
+ *  more: the edit goes through `team amend`'s checks (risk filter, size caps, trace, `agents revert`)
+ *  and stamps when it is clean and narrows nothing; otherwise it waits for the owner's one card. */
 export const SESSION_EDIT_REFUSAL =
-  'A Claude session or an agent run does not edit a member\'s instructions or reach: an edit re-approves it, and approving is the owner\'s step. The Super Agent corrects instructions with `dreamcontext super team amend`; any other session tells the Super Agent, or asks the owner to edit it on the AI Team page.';
+  'Saved through the AI Team\'s amendment door: it is traced (`dreamcontext agents amendments <slug>`) and the owner can take it back. Made on this Mac, so it stays approved; only risky text from a background run (a new address, a command, a secret path, a hidden character) waits for his one approval card.';
 
 /** True when `patch` changes something the approval hash covers. */
 function touchesHash(patch: AgentIdentityPatch): boolean {
@@ -235,20 +239,28 @@ export function registerAgentsCommand(program: Command): void {
       }
       const usage = agentUsage(root, slug);
       const pattern = parsePattern(agent.pattern);
+      const target = getRunTarget(root, slug, 'agent');
+      const envelope = target ? agentBoardView(root, slug, target) : { board: null, limited: false, held: false, question: false };
       if (opts.json) {
         console.log(JSON.stringify({
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
-            learning: agent.learning, whiteboard: agent.whiteboard, shared: agent.shared, implicit: agent.implicit,
+            learning: agent.learning, whiteboard: agent.whiteboard, boardOnly: agent.boardOnly === true, shared: agent.shared, implicit: agent.implicit,
             reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
             approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
+            effective: effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy)).replace(/^effective: /, ''),
+            boardLimited: envelope.limited, boardQuestion: envelope.question,
           },
         }, null, 2));
         return;
       }
       console.log(header(`${agent.title} (${agent.slug})`));
       console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${agent.autonomy}`);
-      if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}`);
+      if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}${agent.boardOnly ? '  (scope: board)' : ''}`);
+      console.log(`  ${effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy))}`);
+      if (envelope.question) {
+        console.log(chalk.yellow(`  Should ${agent.title} still be limited to its board? Answer on its AI Team page, or: dreamcontext agents board-scope ${slug} keep|lift`));
+      }
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
       if (usage.automations.length > 0) console.log(`  automations: ${usage.automations.join(', ')}`);
@@ -273,20 +285,35 @@ export function registerAgentsCommand(program: Command): void {
     .option('--soul-template <id>', `Start the soul from a template (${SOUL_TEMPLATE_LIST})`)
     .option('--model <model>', 'Model override')
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')})`)
-    .option('--whiteboard <board>', 'Home board: the agent acts only on it')
+    .option('--whiteboard <board>', 'Home board: where its work shows and its card lives (not a limit: it runs under its autonomy)')
+    .option('--board-only', 'Limit it to its home board (scope: board): only the board, the read verbs and its output folder; no Bash, node, MCP or .env')
     .option('--no-learning', 'Do not keep a pattern of lessons')
     .option('--scope <scope>', 'project (this brain, default) or global (this machine: listed in every project, never in a brain)', 'project')
-    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean; scope: string }) => {
+    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning: boolean; scope: string }) => {
       if (opts.scope !== 'project' && opts.scope !== 'global') {
         fail(new Error(`--scope is project or global, not "${opts.scope}".`));
         return;
       }
-      // Inside an agent run or the Super Agent's crew, nothing it creates is approved by it: the
-      // owner approves on the AI Team page (a self-approved global agent would run in every project
-      // of this machine, and a new member is the widest change there is).
-      const selfRun = createNeedsOwner();
+      // Made on this Mac, so approved as it is written (`localWriteStamps`, owner 2026-11-07), a
+      // global member included. The one exception: a risky prompt or soul from a process that never
+      // talks to the owner (an agent run, the Super Agent's crew) waits for his one approval card.
+      // Who made it is decided as before (`createNeedsOwner`): a plain Claude shell is the owner's.
+      // Anyone else's create is traced, with what it widened and what the risk filter flagged.
+      const actor = !createNeedsOwner() ? 'owner' as const : memberActorFromEnv().actor === 'agent' ? 'agent' as const : 'session' as const;
+      let soulText = '';
+      try { soulText = resolveSoulOption(opts) ?? ''; } catch { soulText = ''; }
+      const risks = actor === 'owner' ? [] : createRisks(opts.prompt, soulText);
+      const widened = actor === 'owner' ? [] : widensAuthority(null, {
+        prompt: opts.prompt, soul: soulText, model: opts.model ?? null, whiteboard: opts.whiteboard ?? null,
+        learning: opts.learning, scope: opts.scope === 'global' ? 'global' : 'project',
+      }, actor);
+      const selfRun = actor !== 'owner' && !localWriteStamps(actor, risks);
       const approve = selfRun ? {} : { approve: { now: new Date() } };
-      const unapproved = selfRun ? ' It waits for the owner\'s approval on the AI Team page.' : '';
+      const unapproved = selfRun ? ` Its text has ${risks.join(', ')}, so it waits for the owner's one approval card on the AI Team page.` : '';
+      const trace = (projectRoot: string) => {
+        if (actor === 'owner') return;
+        traceMemberCreate(projectRoot, { member: slug, by: actor, risks, widened, waits: selfRun });
+      };
       if (opts.scope === 'global') {
         try {
           const soul = resolveSoulOption(opts);
@@ -300,6 +327,9 @@ export function registerAgentsCommand(program: Command): void {
             whiteboard: opts.whiteboard ?? null,
             learning: opts.learning,
           }, approve);
+          if (actor !== 'owner') {
+            try { trace(dirname(ensureContextRoot())); } catch { /* no project here: the global card still waits */ }
+          }
           success(`Created the global agent "${slug}" (~/.dreamcontext/agents/${slug}.md): every project lists it${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
         } catch (err) {
           fail(err);
@@ -318,8 +348,10 @@ export function registerAgentsCommand(program: Command): void {
           model: opts.model ?? null,
           effort: readEffort(opts.effort) ?? null,
           whiteboard: opts.whiteboard ?? null,
+          ...(opts.boardOnly ? { boardOnly: true } : {}),
           learning: opts.learning,
         }, approve);
+        trace(dirname(root));
         success(`Created the agent "${slug}" (agents/${slug}.md)${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
       } catch (err) {
         fail(err);
@@ -337,13 +369,15 @@ export function registerAgentsCommand(program: Command): void {
     .option('--soul-template <id>', `Replace the soul with a template (${SOUL_TEMPLATE_LIST})`)
     .option('--model <model>', 'Model override ("" for the default)')
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')}, or none)`)
-    .option('--whiteboard <board>', 'Home board ("" for none)')
+    .option('--whiteboard <board>', 'Home board: where its work shows ("" for none). Not a limit unless --board-only')
+    .option('--board-only', 'Limit it to its home board (scope: board): no Bash, node, MCP or .env')
+    .option('--no-board-only', 'Lift the board limit: it runs under its autonomy level like any member')
     .option('--learning', 'Keep a pattern of lessons')
     .option('--no-learning', 'Stop keeping a pattern of lessons')
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
     .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -355,6 +389,7 @@ export function registerAgentsCommand(program: Command): void {
         const effort = readEffort(opts.effort);
         if (effort !== undefined) patch.effort = effort;
         if (opts.whiteboard !== undefined) patch.whiteboard = opts.whiteboard || null;
+        if (opts.boardOnly !== undefined) patch.boardOnly = opts.boardOnly;
         if (opts.learning !== undefined) patch.learning = opts.learning;
         const autonomy = readAutonomyOption(opts.autonomy);
         if (autonomy !== undefined) patch.autonomy = autonomy;
@@ -365,9 +400,17 @@ export function registerAgentsCommand(program: Command): void {
           warn('Nothing to change.');
           return;
         }
-        if (touchesHash(patch) && inSession()) {
-          throw new AutomationError(SESSION_EDIT_REFUSAL);
+        const { actor, self } = memberActorFromEnv();
+        // A home board is a member's whole reach. Widening no longer waits for a card (a change made
+        // on this Mac stamps), so a background run taking a member off its board, or moving it to
+        // another, is refused outright, as its autonomy is. Adding a board narrows: allowed.
+        if (patch.whiteboard !== undefined && actor === 'agent') {
+          const board = getAgent(root, slug)?.whiteboard ?? null;
+          if (board && patch.whiteboard !== board) {
+            throw new AutomationError('A background run cannot take a member off its home board or move it to another board: that widens what it reaches. Ask the owner to do it on the AI Team page.');
+          }
         }
+        const viaDoor = touchesHash(patch) && actor !== 'owner';
         // The placement first: it is checked against the team (a loop, an unknown manager) and
         // refused before any identity change lands.
         if (Object.keys(place).length > 0) {
@@ -376,8 +419,45 @@ export function registerAgentsCommand(program: Command): void {
             warn(`"${slug}" has no reports yet: its team "${placed.team}" shows once someone reports to it.`);
           }
         }
-        if (Object.keys(patch).length > 0) withRestamp(root, dirname(root), slug, patch);
+        if (viaDoor) {
+          // One door with `team amend` (plan-r10 1e): checks, trace, revert, and the stamp rule.
+          const { prompt, soul: newSoul, ...extra } = patch;
+          const a = amendMember(root, {
+            member: slug, by: actor as Exclude<typeof actor, 'owner'>, self,
+            why: `edited with \`dreamcontext agents edit\` from ${actor === 'session' ? 'a chat session' : 'a background run'}`,
+            ...(prompt !== undefined ? { prompt } : {}),
+            ...(newSoul !== undefined ? { soul: newSoul } : {}),
+            extra,
+          });
+          success(`Saved "${slug}". ${SESSION_EDIT_REFUSAL}${a.waits ? ' This one waits for that card.' : ''}`);
+          return;
+        }
+        // His own edit: stamped as before, and traced (`agents amendments`), so he can take it back.
+        if (Object.keys(patch).length > 0) ownerEdit(root, slug, patch, { why: 'edited with `dreamcontext agents edit`' });
         success(`Saved "${slug}".`);
+      } catch (err) {
+        fail(err instanceof AmendmentRefused ? new AutomationError(`${err.code}: ${err.message}`) : err);
+      }
+    });
+
+  agents
+    .command('board-scope')
+    .argument('<slug>', 'Agent slug')
+    .argument('<answer>', 'keep (stay limited to its board: writes scope: board) or lift (run under its autonomy level)')
+    .description('Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)')
+    .action((slug: string, answer: string) => {
+      if (refuseSelfApproval(process.env)) return;
+      if (answer !== 'keep' && answer !== 'lift') {
+        fail(new AutomationError(`Answer keep or lift, not "${answer}".`));
+        return;
+      }
+      const root = ensureContextRoot();
+      try {
+        const r = answerBoardScope(root, slug, answer === 'keep');
+        settleApprovalQuestions(root, slug);
+        success(r.kept
+          ? `${r.title} stays limited to its board (scope: board is in its file now; untick it in its Edit dialog to lift it later).`
+          : `${r.title} now runs under its autonomy level; its board still shows its work.`);
       } catch (err) {
         fail(err);
       }
@@ -663,7 +743,7 @@ export function registerAgentsCommand(program: Command): void {
         if (opts.json) { console.log(JSON.stringify(found, null, 2)); return; }
         if (found.hits.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
         for (const h of found.hits) {
-          const who = h.who === 'owner' ? 'the owner' : 'you';
+          const who = h.who === 'owner' ? 'the owner' : h.who === 'app' ? 'an app, not the owner' : 'you';
           const where = h.kind === 'talk' ? 'a conversation' : h.title;
           console.log(`${chalk.dim(h.at)}  ${chalk.bold(who)} ${chalk.dim(`(${where})`)}: ${oneLine(h.text, 400)}`);
         }
@@ -677,7 +757,7 @@ export function registerAgentsCommand(program: Command): void {
         const head = s.kind === 'talk' ? `Conversation with the owner · ${s.startedAt}` : `${s.title} ran · ${s.startedAt}${s.status ? ` · ${s.status}` : ''}`;
         console.log(header(head));
         if (s.missing) console.log(chalk.dim('  (no longer on this machine)'));
-        for (const r of s.rows) console.log(`  ${chalk.bold(r.kind === 'user' ? 'owner' : 'you')}: ${oneLine(r.text, 400)}`);
+        for (const r of s.rows) console.log(`  ${chalk.bold(r.kind === 'user' ? (r.via === 'app' ? 'an app, not the owner' : 'owner') : 'you')}: ${oneLine(r.text, 400)}`);
       }
       if (page.nextBefore) console.log(chalk.dim(`  older: --before '${page.nextBefore}'`));
     });

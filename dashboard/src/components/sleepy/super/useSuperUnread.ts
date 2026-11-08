@@ -6,6 +6,8 @@ import {
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
+import { forSuper } from './superApi';
+import type { SuperId } from '../../../lib/superTypes';
 
 const TICK_MS = 250;
 const FLUSH_MS = 300;
@@ -61,14 +63,18 @@ const spanOf = (el: HTMLElement): Span => {
  * Painting takes no layout room: a read never moves a row.
  * `enabled` false: nothing runs, no request, no timer.
  */
-export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding, isWalking }: {
+export function useSuperUnread({ enabled, vault, superId = 'main', api, items, fold, ownerBatches, mainBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding, isWalking }: {
   enabled: boolean;
   /** The project the rail's count goes to; null = this pane publishes none. */
   vault: string | null;
+  /** Whose chat this is (plan-r10 1): its read marks and its count are that super's. */
+  superId?: SuperId;
   api: ApiClient;
   items: readonly UnreadItem[];
   fold: boolean;
   ownerBatches: readonly string[];
+  /** A member's turns for main Super: never unread for the owner. */
+  mainBatches?: readonly string[];
   openQuestions: ReadonlyArray<{ id: string; createdAt: number }>;
   scrollRef: RefObject<HTMLElement | null>;
   contentRef: RefObject<HTMLElement | null>;
@@ -83,8 +89,9 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
   const [edge, setEdge] = useState<UnreadEdge>(null);
   const pending = useRef<ReadMark[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const apiRef = useRef(api);
-  apiRef.current = api;
+  // A member's marks are its own (`?superId=m:<slug>`); main's requests are unchanged.
+  const apiRef = useRef(forSuper(api, superId));
+  apiRef.current = forSuper(api, superId);
 
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retries = useRef(0);
@@ -116,7 +123,7 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     const onVisible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { live = false; document.removeEventListener('visibilitychange', onVisible); };
-  }, [enabled, retryLater]);
+  }, [enabled, retryLater, superId]);
 
   const flush = useCallback(() => {
     if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
@@ -149,17 +156,36 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
 
   const unread = useMemo(() => {
     if (!enabled || !marks) return [];
-    return unreadOf(unreadUnits(items, { fold, ownerBatches, openQuestions }), marks);
-  }, [enabled, marks, items, fold, ownerBatches, openQuestions]);
+    return unreadOf(unreadUnits(items, { fold, ownerBatches, openQuestions, ...(mainBatches?.length ? { mainBatches } : {}) }), marks);
+  }, [enabled, marks, items, fold, ownerBatches, mainBatches, openQuestions]);
   const unreadRef = useRef(unread);
   unreadRef.current = unread;
   const count = unread.length;
 
   const paneToken = useRef({}).current;
+  // Keyed by vault + superId (plan-r10 1): a member's count never lands on main's row.
+  const asking = openQuestions.length > 0;
   useEffect(() => {
-    if (enabled && vault) publishSuperUnread(vault, count, paneToken);
-  }, [enabled, vault, count, paneToken]);
-  useEffect(() => (enabled && vault ? () => dropSuperUnread(vault, paneToken) : undefined), [enabled, vault, paneToken]);
+    if (enabled && vault) publishSuperUnread(vault, count, paneToken, superId, asking);
+  }, [enabled, vault, count, paneToken, superId, asking]);
+  useEffect(() => (enabled && vault ? () => dropSuperUnread(vault, paneToken, superId) : undefined), [enabled, vault, paneToken, superId]);
+
+  // A MEMBER's stage read to the end tells the server (plan r4 D7): its replies stop counting on
+  // the Team row. Only once its marks are LOADED (before that the count is a false 0), only while
+  // the window is seen, and again whenever the chat grows (every turn end is a new item), so a
+  // reply that lands while he reads is cleared too. Never for main (the server refuses it).
+  const seenSent = useRef<string>('');
+  const lastItem = items.length ? `${items.length}:${items[items.length - 1].id}` : '0';
+  useEffect(() => {
+    if (superId === 'main' || !enabled || !marks || count !== 0) return undefined;
+    const send = () => {
+      if (!getWindowActivity().visible || seenSent.current === lastItem) return;
+      seenSent.current = lastItem;
+      void apiRef.current.post<unknown>('/agent/super-read', { seen: true }).catch(() => { seenSent.current = ''; });
+    };
+    send();
+    return onWindowActivity(() => send());
+  }, [superId, enabled, marks, count, lastItem]);
 
   const markRead = useCallback((seen: readonly UnreadUnit[]) => {
     if (!seen.length) return;

@@ -50,7 +50,7 @@ export function Lightbox({
       caption={caption}
       // The hands-free phone cannot hand a file to the Mac's OS (laptop-only routes): no buttons
       // that could only fail there.
-      actions={path && !isMacPhoneSurface() ? <FileActions path={path} compact /> : undefined}
+      actions={path && !isMacPhoneSurface() ? <FileActions path={path} iconOnly /> : undefined}
       // Only a picture with a file behind it can be explained or granted; a URL-only image
       // falls through to the viewer's own "couldn't load" line.
       fallback={path ? <FileUnavailable src={url} kind="image" onGranted={() => setReload((n) => n + 1)} /> : undefined}

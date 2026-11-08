@@ -1,13 +1,14 @@
 import type { RefObject } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperStateView } from '../../../lib/superTypes';
-import { superNotepad, type JobLook } from './superHandover';
+import { agendaWaitingCount, type JobLook } from './superHandover';
 import type { Rect } from './superLayout';
 
 /** What waits on the owner: his open questions and what the super noted it needs from him. */
 function useWaiting(state: SuperStateView, look: JobLook): { waiting: number; label: string } {
   const { t } = useI18n();
-  const waiting = superNotepad(state, look).waiting.length;
+  // An unanswered line counts too: a minimised agenda never reads as nothing waiting.
+  const waiting = agendaWaitingCount(state, look);
   const label = waiting > 0 ? `${t('super.agenda.open')}: ${t('super.agenda.section.waiting')} ${waiting}` : t('super.agenda.open');
   return { waiting, label };
 }
@@ -37,8 +38,9 @@ export function AgendaButton({ state, look, onOpen }: { state: SuperStateView; l
 }
 
 /**
- * Others in the centre's head, on a phone-width stage (owner 2026-10-31: the pill under the chat
- * cost the height): the same panel, opened beside Agenda, its count on the button.
+ * Others in the centre's head, wherever the chat leaves its pill no room beside it (owner
+ * 2026-10-31 on a phone, 2026-11-01 on any stage: the pill under the chat cost the height): the
+ * same panel, opened beside Agenda, its count on the button.
  */
 export function OthersButton({ count, asking, open, buttonRef, onToggle }: {
   count: number;

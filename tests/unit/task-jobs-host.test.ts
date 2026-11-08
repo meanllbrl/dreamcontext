@@ -186,7 +186,8 @@ describe('the reviewer loop (C1-12, AC-C1-2, AC-C1-8)', () => {
     expect(h.calls[2].args.slice(0, 2)).toEqual(['--resume', doerSession]);
     expect(argAfter(h.calls[2].args, '-p')).toContain('AC 1: the login still 500s');
     const hist = parseStatusHistory(taskText(f, 'fix'));
-    expect(hist.map((r) => `${r.to}:${r.by}`)).toEqual(['in_review:agent:scout', 'in_progress:reviewer:checker', 'in_review:agent:scout', 'in_progress:owner']);
+    // The pass leaves its own line by the reviewer, on the status the task already has (Wave 1 lane G).
+    expect(hist.map((r) => `${r.to}:${r.by}`)).toEqual(['in_review:reviewer:checker', 'in_review:agent:scout', 'in_progress:reviewer:checker', 'in_review:agent:scout', 'in_progress:owner']);
     expect(taskData(f, 'fix')).toMatchObject({ review_round: 2, review_passed: true, agent_state: 'delivered' });
   });
 
@@ -483,7 +484,7 @@ describe('the session gate (C1-14, AC-C1-12)', () => {
     expect(spawn.calls).toHaveLength(0);
     expect(readQuestion(questionPath(f.contextRoot, 'scout', q.id))?.state).toBe('answered');
     expect(taskData(f, 'fix').agent_state).toBe('queued');
-    const again = await resumeWithAnswer(f.contextRoot, q, 'Another answer.', 'telegram', { home: f.home, spawnImpl: spawn.impl });
+    const again = await resumeWithAnswer(f.contextRoot, q, 'Another answer.', 'cli', { home: f.home, spawnImpl: spawn.impl });
     expect(again.status).toBe('refused');
     expect(spawn.calls).toHaveLength(0);
     startDueTaskJobs(f.contextRoot, h.deps);
@@ -493,11 +494,11 @@ describe('the session gate (C1-14, AC-C1-12)', () => {
     expect(taskData(f, 'fix').status).toBe('in_review');
   });
 
-  it('a thread or Telegram message never resumes a task session; the chat socket refuses it', async () => {
+  it('a thread or direct message never resumes a task session; the chat socket refuses it', async () => {
     const { sid } = await askedTask();
     expect(latestBoundSession('scout', f.home)).toBeNull();
     const spawn = standInClaude([]);
-    const talk = await resumeWithMessage(f.contextRoot, 'scout', 'hello?', { home: f.home, spawnImpl: spawn.impl, surface: 'telegram' });
+    const talk = await resumeWithMessage(f.contextRoot, 'scout', 'hello?', { home: f.home, spawnImpl: spawn.impl, surface: 'direct' });
     expect(talk.status).toBe('refused');
     expect(spawn.calls).toHaveLength(0);
     expect(refusesTaskSession(f.contextRoot, [sid], f.home)).toBe(true);

@@ -23,8 +23,9 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUsageLimits, EMPTY_USAGE_LIMITS } from '../../src/lib/claude-usage.js';
+import { readUsageLimits, EMPTY_USAGE_LIMITS, configDirIdentity, otherAccountSignedIn } from '../../src/lib/claude-usage.js';
 import { fileURLToPath } from 'node:url';
+import { writeClaudeAccounts } from '../../src/lib/claude-accounts.js';
 
 const FIXTURE_HOME = mkdtempSync(join(tmpdir(), 'dc-claude-usage-'));
 const CLAUDE_JSON = join(FIXTURE_HOME, '.claude.json');
@@ -400,3 +401,56 @@ function blobHome(blob: unknown): string {
   writeHome(blob);
   return FIXTURE_HOME;
 }
+
+// Owner, 2026-11-03, four accounts on screen: the machine's own row (gmail) drew the Team
+// account's week digit for digit. The real HOME had been signed in again from a terminal and
+// the browser picked the Team account, so `~/.claude.json` and the HOME meter both measured
+// THAT account. Measured read-only on the owner's machine: HOME oauth email = the Team account.
+describe('a folder signed in as ANOTHER account never lends its numbers to this row', () => {
+  const SANDBOX = join(FIXTURE_HOME, '.dreamcontext', 'claude-accounts', 'team-account');
+  const register = (homeEmail: string) => {
+    writeClaudeAccounts([
+      { id: 'me-personal', accountUuid: '', email: homeEmail, organizationUuid: '', organizationName: '', tier: 'max', configDir: null, preferred: true },
+      { id: 'team-account', accountUuid: '', email: 'me@team.example', organizationUuid: '', organizationName: '', tier: 'team', configDir: SANDBOX, preferred: false },
+    ], FIXTURE_HOME);
+  };
+  const teamCache = {
+    oauthAccount: { accountUuid: 'uuid-team', emailAddress: 'me@team.example' },
+    cachedUsageUtilization: {
+      fetchedAtMs: FETCHED, accountUuid: 'uuid-team',
+      utilization: { five_hour: { utilization: 2, resets_at: SESSION_RESET }, seven_day: { utilization: 92, resets_at: WEEKLY_RESET } },
+    },
+  };
+  beforeEach(() => {
+    mkdirSync(SANDBOX, { recursive: true });
+    writeFileSync(join(SANDBOX, '.claude.json'), JSON.stringify(teamCache), 'utf-8');
+  });
+  afterAll(() => rmSync(join(FIXTURE_HOME, '.dreamcontext'), { recursive: true, force: true }));
+
+  it('the HOME row reads nothing while HOME is signed in as the Team account', () => {
+    register('me@personal.example');
+    writeHome(teamCache);
+    expect(readUsageLimits(FIXTURE_HOME)).toEqual(EMPTY_USAGE_LIMITS);
+    expect(otherAccountSignedIn(FIXTURE_HOME)).toBe('me@team.example');
+    // The Team account's OWN row still reads its own folder.
+    expect(bar(readUsageLimits(SANDBOX), 'weekly')?.percent).toBe(92);
+    expect(otherAccountSignedIn(SANDBOX)).toBeNull();
+  });
+
+  it('configDirIdentity tells another account apart from no account at all', () => {
+    register('me@personal.example');
+    const home = { accountUuid: '', email: 'me@personal.example', organizationUuid: '', configDir: null };
+    writeHome(teamCache);
+    expect(configDirIdentity(home, FIXTURE_HOME)).toEqual({ kind: 'other', email: 'me@team.example' });
+    writeHome({ hasCompletedOnboarding: true });
+    expect(configDirIdentity(home, FIXTURE_HOME)).toEqual({ kind: 'none' });
+    writeHome({ ...teamCache, oauthAccount: { accountUuid: 'uuid-me', emailAddress: 'ME@personal.example' } });
+    expect(configDirIdentity(home, FIXTURE_HOME)).toEqual({ kind: 'match' });
+  });
+
+  it('a HOME signed in as its own account still reads normally', () => {
+    register('me@team.example');
+    writeHome(teamCache);
+    expect(bar(readUsageLimits(FIXTURE_HOME), 'weekly')?.percent).toBe(92);
+  });
+});

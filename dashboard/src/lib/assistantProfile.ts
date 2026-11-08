@@ -129,6 +129,11 @@ export async function uploadAvatar(file: Blob & { name?: string }): Promise<{ ur
   return { url: out.url };
 }
 
+/** DELETE /api/assistant/avatar: back to the initial. Idempotent. */
+export async function removeAvatar(): Promise<void> {
+  await request<{ ok: boolean }>('/api/assistant/avatar', { method: 'DELETE' });
+}
+
 // ─── Voice key (the existing voice settings store: ~/.dreamcontext/voice.json) ────────────
 
 /** Whether a voice key is stored. The server never returns the key itself. */

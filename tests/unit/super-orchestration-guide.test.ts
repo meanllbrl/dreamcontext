@@ -97,8 +97,19 @@ describe('super-orchestration guide: shape', () => {
   // +700 (2026-10-31): a member's mistake, corrected with `super team amend`; refusals live in cli-reference (measured 22,164).
   // +150 (2026-10-31): a report on a plan or on options is drawn, never written (measured 22,314).
   // +150 (2026-10-31, 0.36.6): secim-yorum's [About card] lines, already in the 0.36.5 guide (measured 22,490); nothing dropped.
-  it('is at most 22,500 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_500);
+  // +100 (2026-11-01, Track T W4): `--tool codex` on a delegated child.
+  // +100 (2026-11-01): the owner opens cards himself too (measured 22,655).
+  // +300 (2026-11-02, 0.36.15): `--tool antigravity` on a delegated child and the rows the integration merges added (measured 22,977).
+  // +500 (2026-11-02): weigh the owner's idea before saying yes, never agree or argue by reflex (measured 23,448).
+  // +450 (2026-11-02, plan-r10 Wave 2): every member is a Super; `team answer`, `team done`, no member assigns.
+  // +500 (2026-11-02): a Bypass child's permission is the Super's to allow, deny or hand to the owner.
+  // Wave 3 rewrote the request route in place (+0). Merged in 0.40.2 (measured 24,236).
+  // +425 (2026-11-03, rapor-kurali): a product mockup copies that product's real look, the kit is
+  // only the report around it; steps in order are a dc-graph, never chips (measured 24,661).
+  it('is at most 24,700 bytes', () => {
+    // +750 (2026-11-06, super-borc-defteri: §1b the owed ledger, measured 25,394).
+    // +50 (2026-11-07, test-makbuzu: a check green on the same code prints its receipt; measured 25,475).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(25_500);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -109,6 +120,20 @@ describe('super-orchestration guide: shape', () => {
     expect(FLAT).toContain('A follow-up is another `super team ask` to the same member');
     expect(FLAT).not.toContain('No event comes when it ends');
     expect(FLAT).not.toContain('is never listed here');
+  });
+
+  it('describes the request route as live (plan-r10 1, Wave 3): the member\'s own Super, `team done`, `team answer`', () => {
+    expect(FLAT).toContain('lands in the member\'s own Super as a request (its stage shows it as "Super Agent\'tan")');
+    expect(FLAT).toContain('a done is its `super team done`');
+    expect(FLAT).toContain('Its question about your job comes to YOUR queue, never his: `super team answer <item> "<answer>"`, or your own `super ask`, never forwarding it.');
+    expect(FLAT).toContain('A member never gives another member work.');
+    expect(FLAT).not.toMatch(/not live yet|After Wave 3|Until then `team ask`|member's own thread/);
+  });
+
+  it('draws a product mockup in that product\'s real look and a sequence as a dc-graph (owner, 2026-11-03)', () => {
+    expect(FLAT).toContain('A mockup of a real product screen copies THAT product\'s look from its source styles');
+    expect(FLAT).toContain('the `dc-` kit is only the report around it, grey boxes only for a wireframe he asked for');
+    expect(FLAT).toContain('Steps in order (a user journey) are a `dc-graph` with edges, never a row of chips');
   });
 
   it('has the seven sections in order', () => {

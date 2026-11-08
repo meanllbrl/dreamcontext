@@ -4,6 +4,8 @@ import {
 } from '../../lib/context-watch.js';
 import { startHandoffRun, type HandoffRun, type HandoffStage } from '../../lib/handoff-progress.js';
 import { startRotating, takeFreshDelivered } from '../../lib/super/fresh-session.js';
+import { superHandoffTask } from '../../lib/super/handoff-file.js';
+import { superOfSession } from '../../lib/super/store.js';
 
 /**
  * The context handoff's rotation at a pane's main `result` frame, out of agent-chat.ts so every
@@ -43,6 +45,9 @@ export function handleRotationAtResult(input: RotationInput): RotationDecision {
   if (decision === 'none') return decision;
   if (decision === 'fallback') {
     record = superFallbackRecord(pane, input.observedConversation, input.lastMainContext > 0 ? input.lastMainContext : null, input.now);
+    // A member's Super pane rotates onto ITS own handoff file (plan-r10 1), never main's.
+    const own = superOfSession(pane);
+    if (own && own.superId !== 'main') record = { ...record, task: superHandoffTask(own.superId) };
     if (!writeHandoffRecord(contextRoot, pane, record)) throw new Error('could not write the fallback handoff record');
   }
   const rec = record as HandoffRecord;

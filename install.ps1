@@ -22,7 +22,8 @@ function Install-Dreamcontext {
   $ProgressPreference = 'SilentlyContinue'
   Set-StrictMode -Version 2.0
 
-  $NodeMinMajor = 18
+  # The bundled provider layer (T3 Code, src/vendor/t3) needs Node 22.16 or later.
+  $NodeMin = '22.16'
 
   # The private Node.js installed when this computer has no usable Node. These values MIRROR
   # assets/runtime-pins.json (node.version, node.base, nodeWindows.files);
@@ -59,21 +60,21 @@ function Install-Dreamcontext {
     return $null
   }
 
-  function Get-NodeMajor([string]$Node) {
-    if (-not $Node) { return 0 }
+  # True when the node at $Node is $NodeMin or newer (major AND minor: 22.15 is not enough).
+  function Test-NodeMeetsMin([string]$Node) {
+    if (-not $Node) { return $false }
     try {
-      $out = & $Node -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2> $null
-      if ($LASTEXITCODE -ne 0) { return 0 }
-      return [int]$out
+      & $Node -e "const [a,b]=process.versions.node.split('.').map(Number);const [x,y]='$NodeMin'.split('.').map(Number);process.exit(a>x||(a===x&&b>=y)?0:1)" 2> $null
+      return ($LASTEXITCODE -eq 0)
     } catch {
-      return 0
+      return $false
     }
   }
 
   function Test-NodeReady {
     $node = Find-Exe 'node.exe'
     $npm = Find-Exe 'npm.cmd'
-    return [bool]($node -and $npm -and (Get-NodeMajor $node) -ge $NodeMinMajor)
+    return [bool]($node -and $npm -and (Test-NodeMeetsMin $node))
   }
 
   # `win-x64` or `win-arm64`: the key of this computer's build in the pin table. A 32-bit
@@ -92,7 +93,7 @@ function Install-Dreamcontext {
   function Assert-NotLink([string]$Path) {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      Fail "$Path is a link, so dreamcontext will not install Node.js through it. Install Node.js >= $NodeMinMajor from https://nodejs.org instead, then re-run this script."
+      Fail "$Path is a link, so dreamcontext will not install Node.js through it. Install Node.js >= $NodeMin from https://nodejs.org instead, then re-run this script."
     }
   }
 
@@ -152,7 +153,7 @@ function Install-Dreamcontext {
   function Install-ManagedNode {
     $key = Get-NodePlatformKey
     if (-not $key -or -not $NodePins.ContainsKey($key)) {
-      Fail "There is no private Node.js build for this computer. Install Node.js >= $NodeMinMajor from https://nodejs.org, then re-run this script."
+      Fail "There is no private Node.js build for this computer. Install Node.js >= $NodeMin from https://nodejs.org, then re-run this script."
     }
     $pin = $NodePins[$key]
 
@@ -225,9 +226,9 @@ function Install-Dreamcontext {
     # stderr into a terminating error under ErrorActionPreference Stop.
     $installed = & $nodeExe --version
     if ($LASTEXITCODE -ne 0 -or -not $installed) {
-      Fail "The private Node.js did not start. Install Node.js >= $NodeMinMajor from https://nodejs.org instead, then re-run this script."
+      Fail "The private Node.js did not start. Install Node.js >= $NodeMin from https://nodejs.org instead, then re-run this script."
     }
-    if ((Get-NodeMajor $nodeExe) -lt $NodeMinMajor) {
+    if (-not (Test-NodeMeetsMin $nodeExe)) {
       Fail "The private Node.js reported an unexpected version ($installed)."
     }
     if ($aside) { Remove-Item -LiteralPath $aside -Recurse -Force -ErrorAction SilentlyContinue }
@@ -243,7 +244,7 @@ function Install-Dreamcontext {
       return
     }
     if (Test-Switch 'DREAMCONTEXT_INSTALL_NO_NODE') {
-      Fail "Node.js >= $NodeMinMajor is required and DREAMCONTEXT_INSTALL_NO_NODE is set. Install it from https://nodejs.org, then re-run this script."
+      Fail "Node.js >= $NodeMin is required and DREAMCONTEXT_INSTALL_NO_NODE is set. Install it from https://nodejs.org, then re-run this script."
     }
     $node = Find-Exe 'node.exe'
     if (-not $node) {
@@ -251,11 +252,11 @@ function Install-Dreamcontext {
     } elseif (-not (Find-Exe 'npm.cmd')) {
       Say "Node.js $(& $node --version) is installed but npm is missing."
     } else {
-      Say "Node.js $(& $node --version) is too old. dreamcontext requires v$NodeMinMajor or later."
+      Say "Node.js $(& $node --version) is too old. dreamcontext requires v$NodeMin or later."
     }
     Install-ManagedNode
     if (-not (Test-NodeReady)) {
-      Fail "Node.js >= $NodeMinMajor is still not the active version after the install. Open a NEW terminal and run 'node --version'. If it is still missing or too old, another Node.js is earlier on your PATH. Fix that, then re-run this script."
+      Fail "Node.js >= $NodeMin is still not the active version after the install. Open a NEW terminal and run 'node --version'. If it is still missing or too old, another Node.js is earlier on your PATH. Fix that, then re-run this script."
     }
     Say "Node.js $(& (Find-Exe 'node.exe') --version) ready."
   }

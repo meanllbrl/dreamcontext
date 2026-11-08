@@ -83,7 +83,7 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 
 function req(body?: unknown, socket: object = { remoteAddress: '127.0.0.1' }): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', url: '/', headers: { host: 'localhost' }, socket }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', url: '/', headers: { host: 'localhost', origin: 'http://localhost' }, socket }) as unknown as IncomingMessage;
 }
 
 const NOW = new Date('2026-10-25T09:00:00.000Z');
@@ -372,7 +372,7 @@ describe('end review r1 (D1): what the reviewers found', () => {
     expect(listInboxRows(a.project).some((x) => x.dedupeKey === 'global-shadowed:scout')).toBe(false);
   });
 
-  it('the phone creates, edits and deletes no global agent; an agent run\'s create is never approved by it', async () => {
+  it('the phone creates, edits and deletes no global agent; an agent run\'s clean create is approved (made on this Mac)', async () => {
     createGlobalAgent(scout, { approve: { now: NOW } });
     const phone = { remoteAddress: '127.0.0.1' };
     markPhoneSocket(phone);
@@ -393,7 +393,7 @@ describe('end review r1 (D1): what the reviewers found', () => {
       delete process.env.DREAMCONTEXT_AUTOMATION_RUN;
     }
     expect(existsSync(globalAgentPath('helper'))).toBe(true);
-    expect(readAutomationsRegistry().projects[GLOBAL_REGISTRY_KEY]?.agentApprovals?.helper).toBeUndefined();
-    expect(listAgentSummaries(b.context).find((x) => x.slug === 'helper')?.approvedToRun).toBe(false);
+    expect(readAutomationsRegistry().projects[GLOBAL_REGISTRY_KEY]?.agentApprovals?.helper).toBeDefined();
+    expect(listAgentSummaries(b.context).find((x) => x.slug === 'helper')?.approvedToRun).toBe(true);
   });
 });

@@ -1,7 +1,10 @@
+import { SESSION_START_PART_HOOK } from '../../lib/hook-delivery.js';
+import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { relPosix } from '../../lib/paths.js';
+import { CODEX_GATE_SPEC, codexHookCommand } from '../../lib/t3-bridge/codex-user-gate.js';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox, header } from '../../lib/format.js';
@@ -67,6 +70,7 @@ const POST_TOOL_USE_HOOK = hookCommand('post-tool-use');
 const PRE_COMPACT_HOOK = hookCommand('pre-compact');
 const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
+const SESSION_START_MATCHER = 'startup|resume|compact|clear';
 
 /**
  * The 0.33.0 task system (reverted 2026-10-20) installed two hooks this version does not run:
@@ -110,11 +114,19 @@ interface HookSpec {
 }
 
 export const HOOK_SPECS: readonly HookSpec[] = [
-  { event: 'SessionStart', name: 'session-start', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|compact|clear' },
+  { event: 'SessionStart', name: 'session-start', command: SESSION_START_HOOK, timeout: 10, matcher: SESSION_START_MATCHER },
+  // The snapshot's later pieces. One hook carries at most HARNESS_PERSIST_CHAR_LIMIT, so these run
+  // beside session-start and print what it left them (lib/hook-delivery.ts). An older CLI has no such
+  // subcommand: the hook fails on its own and session-start still works.
+  ...Array.from({ length: SESSION_START_PARTS - 1 }, (_, i) => {
+    const name = `${SESSION_START_PART_HOOK} ${i + 2}`;
+    return { event: 'SessionStart', name, command: hookCommand(name), timeout: 10, matcher: SESSION_START_MATCHER };
+  }),
   // 45 s, not 5: a TS project whose check takes over 4 s is type-checked once per turn, at Stop
   // (lib/tsc-check.ts), and a hook killed by its timeout loses its answer.
   { event: 'Stop', name: 'stop', command: STOP_HOOK, timeout: 45 },
-  { event: 'SubagentStart', name: 'subagent-start', command: SUBAGENT_START_HOOK, timeout: 5 },
+  // 10 s, not 5: under load a hook killed by its timeout left the sub-agent with no briefing at all.
+  { event: 'SubagentStart', name: 'subagent-start', command: SUBAGENT_START_HOOK, timeout: 10 },
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
   // Second PreToolUse entry: gates direct writes to protected files (e.g. marketing/.env).
   // The hook.ts action already branches on tool_name, so the same command serves both gates.
@@ -288,6 +300,66 @@ function removeRetiredReadTaskGuard(projectRoot: string): void {
  * installer wrote (`npx dreamcontext hook <name>`) IN PLACE to {@link hookCommand}: matching on
  * the new string alone would add a second handler beside the old one and run every event twice.
  */
+/** The command Codex runs for one hook event: the same CLI hook, printed in Codex's shape. */
+export { codexHookCommand };
+
+/**
+ * Codex's hook events → our handlers, for `.codex/hooks.json` (Claude-compatible shape). No
+ * PostToolUse: the formatter/type-check hook is Claude's (Codex runs its own tooling). Inside a
+ * desktop Codex chat these stay quiet except pre-tool-use (DREAMCONTEXT_CONTEXT_BY, hook.ts).
+ */
+export const CODEX_HOOK_SPECS: readonly { event: string; name: string; timeout: number; matcher?: string }[] = [
+  { event: 'SessionStart', name: 'session-start', timeout: 10, matcher: 'startup|resume|compact|clear' },
+  { event: 'UserPromptSubmit', name: 'user-prompt-submit', timeout: 120 },
+  { event: 'PreToolUse', name: 'pre-tool-use', timeout: 5 },
+  { event: 'PreCompact', name: 'pre-compact', timeout: 5 },
+  { event: 'SubagentStart', name: 'subagent-start', timeout: 5 },
+  { event: 'Stop', name: 'stop', timeout: 45 },
+];
+
+const isOurCodexHook = (cmd: unknown): boolean => typeof cmd === 'string' && /dreamcontext hook [a-z-]+ --format codex/.test(cmd);
+
+/**
+ * Write or refresh our entries in `<project>/.codex/hooks.json`; idempotent. Every entry that is
+ * not ours (another tool's, the owner's) is kept as it is; ours are recognised by their command.
+ */
+export function ensureCodexHooks(projectRoot: string): { file: string; changed: boolean } {
+  return writeCodexHooks(join(projectRoot, '.codex', 'hooks.json'), CODEX_HOOK_SPECS);
+}
+
+/** The one Mac-wide gate in `<codex home>/hooks.json`. Only the gate: the brain hooks stay opt-in. */
+export function ensureCodexUserGate(codexHome: string): { file: string; changed: boolean } {
+  return writeCodexHooks(join(codexHome, 'hooks.json'), [CODEX_GATE_SPEC]);
+}
+
+function writeCodexHooks(file: string, specs: readonly { event: string; name: string; timeout: number; matcher?: string; command?: string }[]): { file: string; changed: boolean } {
+  let doc: { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string; timeout?: number }> }>> } & Record<string, unknown> = {};
+  const before = existsSync(file) ? readFileSync(file, 'utf-8') : '';
+  if (before.trim()) {
+    try { doc = JSON.parse(before); } catch { throw new Error(`${file} is not valid JSON; fix or move it, then run this again (nothing was written).`); }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(`${file} is not a JSON object; nothing was written.`);
+  }
+  const hooks: Record<string, Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string; timeout?: number }> }>> = doc.hooks && typeof doc.hooks === 'object' ? doc.hooks : {};
+  // Drop our previous entries (a group left empty by that goes too), then add the current set.
+  for (const event of Object.keys(hooks)) {
+    const groups = Array.isArray(hooks[event]) ? hooks[event]! : [];
+    hooks[event] = groups
+      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurCodexHook(h.command)) }))
+      .filter((g) => (g.hooks ?? []).length > 0);
+    if (hooks[event]!.length === 0) delete hooks[event];
+  }
+  for (const spec of specs) {
+    const group = { ...(spec.matcher ? { matcher: spec.matcher } : {}), hooks: [{ type: 'command', command: spec.command ?? codexHookCommand(spec.name), timeout: spec.timeout }] };
+    (hooks[spec.event] ??= []).push(group);
+  }
+  doc.hooks = hooks;
+  const after = JSON.stringify(doc, null, 2) + '\n';
+  if (after === before) return { file, changed: false };
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, after, 'utf-8');
+  return { file, changed: true };
+}
+
 export function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: string[]; migrated: boolean } {
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
   const result = { added: [] as string[], updated: [] as string[], migrated: false };
@@ -398,10 +470,18 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     }
   }
 
+  // App data (plan-veri K3): an instruction file inside `_dream_context/apps/` is data, never
+  // loaded into a session. Claude Code reads `claudeMdExcludes` (picomatch on absolute paths).
+  const excludes = Array.isArray(settings.claudeMdExcludes) ? (settings.claudeMdExcludes as unknown[]).filter((e): e is string => typeof e === 'string') : [];
+  if (!excludes.includes(APP_DATA_CLAUDE_MD_EXCLUDE)) settings.claudeMdExcludes = [...excludes, APP_DATA_CLAUDE_MD_EXCLUDE];
+
   mkdirSync(join(projectRoot, '.claude'), { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
   return result;
 }
+
+/** The `claudeMdExcludes` entry that keeps app data's CLAUDE.md files out of every session. */
+export const APP_DATA_CLAUDE_MD_EXCLUDE = '**/_dream_context/apps/**';
 
 // ─── Catalog (re-exported from lib/catalog) ──────────────────────────────────
 
@@ -419,6 +499,7 @@ export {
 import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform, AGENT_CORE_SKILL } from '../../lib/catalog.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
+import { DESIGN_SKILL, DESIGN_SKILL_SOURCE, installDesignSkill } from '../../lib/core-design-skill.js';
 import {
   installPack,
   installAgentForPlatform,
@@ -565,6 +646,10 @@ export function directPackInstall(
   const selectedNames = new Set(packNames);
 
   for (const name of packNames) {
+    if (name === DESIGN_SKILL) {
+      info(`${chalk.bold(DESIGN_SKILL)} is a core skill now: setup and \`dreamcontext update\` install it on every project.`);
+      continue;
+    }
     const isPackName = catalog.packs.some((p) => p.name === name);
     try {
       info(isPackName ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
@@ -849,7 +934,7 @@ export async function installCoreForPlatform(
   // The foundational core skills below are each "non-fatal if absent", but `update` treats whatever
   // this install did not record as retired and prunes it. A package missing one of these folders
   // would therefore delete the project's copy, so a partial package fails here instead.
-  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns']
+  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', DESIGN_SKILL_SOURCE]
     .filter((dir) => !findPackageFile(dir, 'SKILL.md'));
   if (missingCore.length > 0) {
     throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
@@ -952,6 +1037,53 @@ export async function installCoreForPlatform(
       const dreamSyncRefFiles = readdirSync(dreamSyncRefsSourceDir).filter((f) => f.endsWith('.md'));
       for (const rf of dreamSyncRefFiles) {
         recordIfManifest(manifest, `${skillRootRel}/dream-sync/references/${rf}`, 'core');
+      }
+    }
+  }
+
+  // Copy the `apps` core skill (dreamcontext Apps: `/apps` builds and drives project-owned local
+  // web apps, dreamcontext-apps plan r19). Shipped at repo root in `skill-apps/` (package.json
+  // `files`); the app template stays in the package (`apps new` reads it from there), only the
+  // skill and its references are installed. Recorded 'core' so `update` refreshes it.
+  const appsSkillSource = findPackageFile('skill-apps', 'SKILL.md');
+  if (appsSkillSource) {
+    const appsDestDir = join(skillRoot, 'apps');
+    mkdirSync(appsDestDir, { recursive: true });
+    writeFileSync(join(appsDestDir, 'SKILL.md'), readFileSync(appsSkillSource, 'utf-8'), 'utf-8');
+    const appsSkillRel = `${skillRootRel}/apps/SKILL.md`;
+    recordIfManifest(manifest, appsSkillRel, 'core');
+    installed.push(platformPrefixed(platform, appsSkillRel));
+    const appsRefsSourceDir = join(dirname(appsSkillSource), 'references');
+    if (existsSync(appsRefsSourceDir)) {
+      cpSync(appsRefsSourceDir, join(appsDestDir, 'references'), { recursive: true });
+      for (const rf of readdirSync(appsRefsSourceDir).filter((f) => f.endsWith('.md'))) {
+        recordIfManifest(manifest, `${skillRootRel}/apps/references/${rf}`, 'core');
+      }
+    }
+  }
+
+  // Copy the `design` core skill (universal UI rules: hierarchy, states, contrast, a 4px grid, a
+  // truthful screen). It was an optional pack until 2026-11-04; every skill and agent that says
+  // "load `design`" (the /apps builder, Develop and Plan briefs) now finds it on every project.
+  // Unlike the copies above it honours edits: a file changed since we wrote it is kept and
+  // reported, never overwritten (see core-design-skill.ts). Shipped from `skill-design/`.
+  {
+    const designSkillMd = findPackageFile(DESIGN_SKILL_SOURCE, 'SKILL.md');
+    if (designSkillMd) {
+      const designSource = dirname(designSkillMd);
+      const design = installDesignSkill(designSource, projectRoot, skillRootRel, readManifest(projectRoot));
+      for (const w of design.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
+      for (const k of design.kept) {
+        // Still tracked, so `update` never offers the owner's own copy for deletion.
+        if (k.reason !== 'not-ours') recordIfManifest(manifest, k.rel, 'core', k.baselineSha ? { baselineSha: k.baselineSha } : undefined);
+        notes.push(chalk.dim(k.reason === 'edited'
+          ? `Kept ${k.rel}: it is edited (not a version dreamcontext shipped). Delete it and run \`dreamcontext update\` to take the shipped one.`
+          : k.reason === 'symlink'
+            ? `Left ${k.rel} alone: it or a folder above it is a symlink, never written through.`
+            : `Left ${k.rel} alone: it was not written by dreamcontext.`));
+      }
+      if (design.written.length > 0) {
+        installed.push(platformPrefixed(platform, `${skillRootRel}/${DESIGN_SKILL}/ ${chalk.dim(`(${design.written.length} file${design.written.length === 1 ? '' : 's'})`)}`));
       }
     }
   }

@@ -198,7 +198,7 @@ async function runTheme(chromium, base, theme, report) {
   const pane = () => vis('.chat-pane').first();
   const composer = () => vis('.chat-cmp-input').first();
   const paneText = async () => (await pane().innerText()).replace(/\s+/g, ' ');
-  const busy = async () => (await vis('.chat-cmp-stop').count()) > 0;
+  const busy = async () => (await vis('.chat-cmp-send.is-stop').count()) > 0;
   const until = async (fn, ms = 15000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (await fn()) return true; await page.waitForTimeout(150); }
@@ -233,10 +233,9 @@ async function runTheme(chromium, base, theme, report) {
   ok('a turn starts (Stop appears)', await waitBusy());
   await page.waitForTimeout(250);
   await type('S1-CORRECTION');
-  ok('while busy the toolbar offers Stop, Queue(⇡) AND Send(↑) — three live actions',
-    (await vis('.chat-cmp-stop').count()) === 1 && (await vis('.chat-cmp-queue').count()) === 1
-    && (await vis('.chat-cmp-send').count()) === 1);
-  const sendTitle = await vis('.chat-cmp-send').first().getAttribute('title');
+  ok('while busy the toolbar offers two discs, Stop and Send(↑): no queue disc (owner 2026-11-07)',
+    (await vis('.chat-cmp-send.is-stop').count()) === 1 && (await vis('.chat-cmp-send').count()) === 2);
+  const sendTitle = await vis('.chat-cmp-send:not(.is-stop)').first().getAttribute('title');
   ok('↑ says it goes into the RUNNING turn, not "queue for the next"', /running turn/i.test(sendTitle ?? ''), sendTitle);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
@@ -250,21 +249,21 @@ async function runTheme(chromium, base, theme, report) {
   ok('the turn ends ONCE, having consumed it (same turn, not a second one)', await waitText('DONE: P1 | picked up 1'));
   await waitIdle();
 
-  // S2 — ⇡ still holds for the next turn.
-  console.log('── S2: ⇡ holds for the next turn');
+  // S2 — ⌥⏎ still holds for the next turn (the ⇡ disc left, 2026-11-07).
+  console.log('── S2: ⌥⏎ holds for the next turn');
   await type('P2');
   await page.keyboard.press('Enter');
   ok('turn 2 starts', await waitBusy());
   await page.waitForTimeout(250);
   await type('Q2-LATER');
-  await vis('.chat-cmp-queue').first().click();
+  await page.keyboard.press('Alt+Enter');
   await page.waitForTimeout(400);
-  ok('⇡ produced a queue strip', (await vis('.chat-queue').count()) === 1);
+  ok('⌥⏎ produced a queue strip', (await vis('.chat-queue').count()) === 1);
   const strip = (await vis('.chat-queue').innerText()).replace(/\s+/g, ' ');
   ok('the row holds the text', strip.includes('Q2-LATER'), strip);
   ok('the strip says it waits for the turn to end', /sends when this turn ends/.test(strip), strip);
   ok('the row offers Send now', (await sendNow().count()) === 1);
-  ok('the running turn ends having picked up NOTHING — ⇡ really held it', await waitText('DONE: P2 | picked up 0'));
+  ok('the running turn ends having picked up NOTHING — ⌥⏎ really held it', await waitText('DONE: P2 | picked up 0'));
   ok('then the held message goes out on its own turn', await waitText('DONE: Q2-LATER'));
   ok('and the strip is empty again', (await vis('.chat-queue').count()) === 0);
   await waitIdle();
@@ -276,7 +275,7 @@ async function runTheme(chromium, base, theme, report) {
   ok('turn 3 starts', await waitBusy());
   await page.waitForTimeout(250);
   await type('Q3-JUMP');
-  await vis('.chat-cmp-queue').first().click();
+  await page.keyboard.press('Alt+Enter');
   await page.waitForTimeout(400);
   ok('the row is queued first', (await vis('.chat-queue-row').count()) === 1);
   await sendNow().click();
@@ -320,10 +319,10 @@ async function runTheme(chromium, base, theme, report) {
   ok('turn 5 starts', await waitBusy());
   await page.waitForTimeout(250);
   await type('Q5-MUST-NOT-FIRE');
-  await vis('.chat-cmp-queue').first().click();
+  await page.keyboard.press('Alt+Enter');
   await page.waitForTimeout(300);
   ok('a row is queued', (await vis('.chat-queue-row').count()) === 1);
-  await vis('.chat-cmp-stop').first().click();
+  await vis('.chat-cmp-send.is-stop').first().click();
   await page.waitForTimeout(3000);
   const paused = (await vis('.chat-queue').innerText().catch(() => '')).replace(/\s+/g, ' ');
   ok('the strip says paused', /paused/.test(paused), paused);

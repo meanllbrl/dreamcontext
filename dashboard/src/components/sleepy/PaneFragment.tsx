@@ -1,6 +1,5 @@
 import { memo, useCallback } from 'react';
 import { useTabDragActive, useTabDragZone, type TabDragStore } from './tabDrag';
-import { useI18n } from '../../context/I18nContext';
 
 /**
  * One PANE of the expanded overlay — the terminal slot for that pane's ACTIVE session,
@@ -42,7 +41,7 @@ export interface PaneActions {
 }
 
 function PaneFragmentInner({
-  paneId, activeSessionId, actions, active, dormant, parked, drag, composer,
+  paneId, activeSessionId, actions, active, dormant, parkedView, drag, composer,
 }: {
   paneId: string;
   /** The session this pane is currently showing — what `resume`/`close` act on. */
@@ -56,13 +55,13 @@ function PaneFragmentInner({
   active: boolean;
   /** The pane's active session is a restored roster entry with NO live session yet. */
   dormant?: boolean;
-  /** That dormant tab was PARKED under machine load: Resume brings the same conversation back. */
-  parked?: boolean;
+  /** That dormant tab was PARKED under machine load: its conversation, drawn as the chat it was
+   *  (ParkedChat). Parking is never shown, so no "saved" card goes over it. */
+  parkedView?: React.ReactNode;
   /** The surface's tab-drag store (one stable identity) — mounts the drop overlay while a
    *  tab is dragged and highlights the zone under the pointer. */
   drag: TabDragStore;
 }) {
-  const { t } = useI18n();
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   const dragging = useTabDragActive(drag);
   // Which of this pane's zones the dragged tab is over (for the highlight), or ''.
@@ -80,18 +79,18 @@ function PaneFragmentInner({
       data-pane-id={paneId}
       onMouseDownCapture={onActivate}
     >
-      <div className="agent-pane-slot" data-pane={paneId} />
+      <div className="agent-pane-slot" data-pane={paneId}>{parkedView}</div>
       {/* This pane's own bottom strip — files/skills + THIS agent's live model & effort. */}
       {composer}
 
       {/* Dormant restored tab → its name is remembered; resume spawns a real session
           here. (A LIVE ended session shows NO overlay — its output stays frozen.) */}
-      {dormant && (
+      {dormant && !parkedView && (
         <div className="agent-pane-ended" onMouseDown={stop}>
           <div className="agent-pane-ended-card">
             <div className="agent-pane-ended-glyph" aria-hidden>&gt;_</div>
-            <div className="agent-pane-ended-title">{parked ? t('agent.pane.parked_title') : 'Session saved'}</div>
-            <div className="agent-pane-ended-sub">{parked ? t('agent.pane.parked_sub') : 'This tab’s name is remembered. Resume to start a fresh Claude Code session right here.'}</div>
+            <div className="agent-pane-ended-title">Session saved</div>
+            <div className="agent-pane-ended-sub">This tab’s name is remembered. Resume to start a fresh Claude Code session right here.</div>
             <div className="agent-pane-ended-actions">
               <button className="agent-pane-reconnect" onClick={(e) => { e.stopPropagation(); onResume(); }}>▸ Resume session</button>
               <button className="agent-pane-ended-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>Close</button>

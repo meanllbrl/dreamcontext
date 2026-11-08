@@ -7,11 +7,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   SUPER_STATE_REL, SuperStoreRefused, acceptableWorktree, clearSuperNote, isSuperChild, isSuperSessionId,
-  peekSuperNote, primeSuperIndex, readSuperState, resetSuperIndex, sanitizeSuperState, superIndex,
-  superRootOfChild, superRootOfSession, updateSuperState,
+  peekSuperNote, primeSuperIndex, readSuperState, resetSuperIndex, sanitizeSuperState,
+  superEntry, superOfChild, superOfSession, updateSuperState,
 } from '../../src/lib/super/store.js';
 import { emptySuperState, MAX_CONTAINERS } from '../../src/lib/super/types.js';
 import { FULL_REPO_LOCAL_GITIGNORE_ENTRIES, buildBrainGitignore } from '../../src/lib/git-sync/brain-repo.js';
@@ -244,11 +244,11 @@ describe('the in-memory index (D4b, D16, D17)', () => {
       s.children['c-1'] = { sessionId: 'c-1', brief: '', adopted: true, startedAt: 1 };
       s.notes['c-1'] = 'handover';
     });
-    expect(superIndex(root)).toMatchObject({ session: 'sess-super', enabled: true });
+    expect(superEntry(root)).toMatchObject({ session: 'sess-super', enabled: true });
     expect(isSuperSessionId('sess-super')).toBe(true);
-    expect(superRootOfSession('sess-super')).toBe(root);
+    expect(superOfSession('sess-super')).toEqual({ root: resolve(root), superId: 'main' });
     expect(isSuperChild('c-1')).toBe(true);
-    expect(superRootOfChild('c-1')).toBe(root);
+    expect(superOfChild('c-1')).toEqual({ root: resolve(root), superId: 'main' });
     expect(peekSuperNote('c-1')).toBe('handover');
     await clearSuperNote(root, 'c-1', 'handover');
     expect(peekSuperNote('c-1')).toBeNull();
@@ -256,7 +256,7 @@ describe('the in-memory index (D4b, D16, D17)', () => {
     // Taken back: still a recorded child, but no longer "handed over" — the owner is pinged again.
     await updateSuperState(root, (s) => { s.enabled = false; });
     expect(isSuperChild('c-1')).toBe(false);
-    expect(superRootOfChild('c-1')).toBe(root);
+    expect(superOfChild('c-1')).toEqual({ root: resolve(root), superId: 'main' });
   });
 
   // Review W1 Major: a read takes no lock, so it can start before a write and finish after it
@@ -399,7 +399,7 @@ describe('the in-memory index (D4b, D16, D17)', () => {
     symlinkSync(join(root, SUPER_STATE_REL), join(bad, SUPER_STATE_REL));
     await primeSuperIndex([root, bad]);
     expect(isSuperChild('c-9')).toBe(true);
-    expect(superIndex(bad)).toMatchObject({ session: null, enabled: false });
+    expect(superEntry(bad)).toMatchObject({ session: null, enabled: false });
   });
 });
 

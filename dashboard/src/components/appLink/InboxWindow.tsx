@@ -1,3 +1,4 @@
+import { AppIcon } from '../assistant/AppIcon';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
@@ -76,6 +77,7 @@ export function InboxWindow() {
             onClick={() => openRow(row)}
           >
             <span className="inbox-row-head">
+              {row.app && <AppIcon vault={row.app.vault} slug={row.app.slug} name={row.title} className="inbox-row-icon" />}
               <span className="inbox-row-title">{row.title}</span>
               <span className="inbox-row-time">{relativeTime(row.at, now)}</span>
             </span>

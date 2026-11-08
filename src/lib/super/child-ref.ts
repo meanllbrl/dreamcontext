@@ -51,6 +51,7 @@ const CHILD_FIELDS: Record<string, { one?: string[]; many?: string[] }> = {
   brief: { one: ['child'] },
   read: { one: ['child'] },
   answer: { one: ['child'] },
+  allow: { one: ['child'] },
   send: { one: ['child'] },
   resume: { one: ['child'] },
   update: { one: ['child'] },

@@ -1,6 +1,9 @@
 import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
+import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
+import { SESSION_FILES_HELD_NOTE, SESSION_FILES_PULL_NOTE, SUPER_RECORD_PULL_NOTE, dropMachineLocalFromPushRange, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../super/pull-guard.js';
+import { parkSessionFiles, restoreLeftoverSessionPark, restoreSessionPark, settleSessionMerge, underSleepStateLock } from './session-merge.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -80,7 +83,11 @@ export type SyncAction =
   /** A merge is mid-flight that dreamcontext did NOT start (the user's own `git merge`/`rebase`). */
   | 'user-merge-in-progress'
   /** full-repo only: a real code file conflicts — defer to the human's editor, never semantically merge. */
-  | 'code-conflict';
+  | 'code-conflict'
+  /** A commit to push holds app data (`_dream_context/apps/`, plan-veri): the push waits. */
+  | 'app-data-held'
+  /** A commit to push carries a Super or session file: the push waits (2026-11-07). */
+  | 'session-files-held';
 
 export interface SyncOptions {
   /** Absolute path to `_dream_context/` (what `ensureContextRoot()` returns). */
@@ -173,6 +180,25 @@ export interface SyncEngineDeps {
   resolvePendingRestores: typeof resolvePendingRestores;
   /** B1-2: this machine's ignored agent files the staging pass will force-add (agent sync confirmed). */
   pendingOwnAgentFiles: typeof pendingOwnAgentFiles;
+  /** plan-veri K2: the push gate (a commit of the range holding app data). */
+  appDataInPushRange: typeof appDataInPushRange;
+  /** plan-veri K2: the pull gate (incoming app data). */
+  incomingAppData: typeof incomingAppData;
+  /** The pull gate for Super Agent records (they never sync). */
+  incomingSuperRecords: typeof incomingSuperRecords;
+  /** What the team's update does to this Mac's session files (sleep state, digests, peer mail). */
+  sessionChanges: typeof sessionChanges;
+  /** The merge's defuse around them: park this Mac's copies, settle the index, put them back. */
+  parkSessionFiles: typeof parkSessionFiles;
+  settleSessionMerge: typeof settleSessionMerge;
+  restoreSessionPark: typeof restoreSessionPark;
+  restoreLeftoverSessionPark: typeof restoreLeftoverSessionPark;
+  /** The push gate for a Super or session file in a commit the push would send. */
+  machineLocalInPushRange: typeof machineLocalInPushRange;
+  /** A brain repo's repair for it: the unpushed commits become one without those files. */
+  dropMachineLocalFromPushRange: typeof dropMachineLocalFromPushRange;
+  /** The sleep-state lock held over the park window. */
+  underSleepStateLock: typeof underSleepStateLock;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -191,6 +217,17 @@ const defaultDeps: SyncEngineDeps = {
   guardPullCollisions,
   resolvePendingRestores,
   pendingOwnAgentFiles,
+  appDataInPushRange,
+  incomingAppData,
+  incomingSuperRecords,
+  sessionChanges,
+  parkSessionFiles,
+  settleSessionMerge,
+  restoreSessionPark,
+  restoreLeftoverSessionPark,
+  machineLocalInPushRange,
+  dropMachineLocalFromPushRange,
+  underSleepStateLock,
 };
 
 /** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
@@ -210,6 +247,12 @@ function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
   if (scope === 'brain') ctx.d.git.stagePath(ctx.gitCwd, '_dream_context');
   else ctx.d.git.stageAll(ctx.gitCwd);
   ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
+  // App data never enters git, a `git add -f` included (plan-veri K2): out of the index again.
+  appDataStagePass(ctx.gitCwd, ctx.contextRoot);
+  // The Super Agent's record and session rosters, and every session file (sleep state, digests,
+  // peer mail), never enter a sync commit, whatever a pulled `.gitignore` says or an old install
+  // committed (2026-11-03 and 2026-11-07 leaks): out of the index again.
+  superStagePass(ctx.gitCwd, ctx.contextRoot);
 }
 
 interface Ctx {
@@ -456,6 +499,9 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
 
   try {
+    // Session files a crashed sync parked go back first, whatever this sync goes on to do (a pull
+    // may not come for days); under the brain lock, so never another sync's live park.
+    d.restoreLeftoverSessionPark(contextRoot);
     let result: SyncResult;
     if (opts.continue) result = await continueMerge(ctx);
     else if (opts.resume) result = await resumeHandoff(ctx);
@@ -562,6 +608,43 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
   // B1-2: incoming NEW agent files landing where this machine holds an untracked one of the same
   // name park the local one first (moved, so git never refuses the merge).
+  // App data never comes in from the team either: a pull that carries any stops here, before
+  // git could overwrite or delete this Mac's data (plan-veri K2). A guard that cannot answer stops too.
+  const incomingApps = d.incomingAppData(gitCwd, contextRoot, ctx.remoteRef);
+  if (incomingApps === null || incomingApps.length > 0) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingApps === null ? 'Skipped the pull: could not check whether the team\'s update carries app data. It is retried at the next sync.' : APP_DATA_PULL_NOTE }, needsTaskSync: false };
+  }
+  // A Super Agent record never comes in either: a pulled member record could start that Super
+  // on this Mac with a job a teammate wrote. A guard that cannot answer stops too.
+  const incomingSuper = d.incomingSuperRecords(gitCwd, contextRoot, ctx.remoteRef);
+  if (incomingSuper === null || incomingSuper.length > 0) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingSuper === null ? 'Skipped the pull: could not check whether the team\'s update carries a Super Agent record. It is retried at the next sync.' : SUPER_RECORD_PULL_NOTE }, needsTaskSync: false };
+  }
+  // Another Mac's session files never land here and this Mac's are never overwritten (2026-11-07:
+  // its sleep state held the owner's Super lines). The pull does not stop for them, since an old
+  // install changes its tracked copy on every sync: the merge is defused around them instead
+  // (`session-merge.ts`). A guard that cannot answer stops the pull.
+  const sessions = d.sessionChanges(gitCwd, contextRoot, ctx.remoteRef);
+  if (sessions === null) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: 'Skipped the pull: could not check what the team\'s update does to this Mac\'s session files. It is retried at the next sync.' }, needsTaskSync: false };
+  }
+  if (sessions.length === 0) return mergeParked(ctx, opts, sessions);
+  // Park, merge, settle and put back under the sleep-state lock: a Stop hook waits instead of
+  // writing into the window (edge-case review r2).
+  return d.underSleepStateLock(contextRoot, () => {
+    const parks = d.parkSessionFiles(gitCwd, contextRoot, sessions);
+    if (parks === null) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: SESSION_FILES_PULL_NOTE }, needsTaskSync: false };
+    try {
+      return mergeParked(ctx, opts, sessions);
+    } finally {
+      d.restoreSessionPark(contextRoot, parks);
+    }
+  });
+}
+
+/** {@link mergeAndMaybeDefer} once this Mac's session files are parked. */
+function mergeParked(ctx: Ctx, opts: MergeAndMaybeDeferOpts, sessions: ReturnType<typeof sessionChanges> & object): MergeOutcome {
+  const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
   const guard = d.guardPullCollisions(gitCwd, contextRoot, ctx.remoteRef);
   if (!guard.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: guard.note }, needsTaskSync: false };
   let mergeResult: { clean: boolean; conflicts: string[] };
@@ -578,6 +661,15 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
       );
     }
     throw err;
+  }
+  // Every session path leaves the index (a modify/delete conflict on one included) and what the
+  // merge wrote there comes off the disk; this Mac's parked copies go back in `finally` above.
+  if (sessions.length > 0) {
+    const settled = d.settleSessionMerge(gitCwd, contextRoot, sessions);
+    if (!mergeResult.clean) {
+      const rest = mergeResult.conflicts.filter((c) => !settled.has(c.toLowerCase()));
+      mergeResult = { clean: rest.length === 0, conflicts: rest };
+    }
   }
 
   if (mergeResult.clean) {
@@ -682,6 +774,30 @@ async function pushWithRetry(
     return { action: 'no-remote', scrub, note: NO_TOKEN_NOTE };
   }
 
+  // The one door every push goes through (autoSync, push-only, --continue, resume): a commit of
+  // the range whose tree holds app data holds the push. A gate that cannot answer holds it too.
+  const appDataHeld = (): SyncResult | null => {
+    let hit: string | null;
+    try { hit = d.appDataInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef); } catch { hit = 'unknown'; }
+    return hit ? { action: 'app-data-held', scrub, note: APP_DATA_HELD_NOTE } : null;
+  };
+  // The same door for a Super or session file in a commit made outside the sync (2026-11-07).
+  // Repaired once when the unpushed commits are the brain's own: they become one without those
+  // files (an old install's checkpoints would otherwise hold every sync). Code commits are never
+  // squashed: the push waits for the owner.
+  const sessionFilesHeld = (): SyncResult | null => {
+    let hit: string | null;
+    try { hit = d.machineLocalInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef); } catch { hit = 'unknown'; }
+    if (hit && hit !== 'unknown') {
+      try {
+        if (d.dropMachineLocalFromPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef, authorFor(ctx))) hit = d.machineLocalInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef);
+      } catch { hit = 'unknown'; }
+    }
+    return hit ? { action: 'session-files-held', scrub, note: SESSION_FILES_HELD_NOTE } : null;
+  };
+  const held = appDataHeld() ?? sessionFilesHeld();
+  if (held) return held;
+
   const tryPush = async (): Promise<boolean> => {
     try {
       await s.run(async (env) => {
@@ -705,6 +821,8 @@ async function pushWithRetry(
   }
   const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return outcome.result;
+  const heldAfterMerge = appDataHeld() ?? sessionFilesHeld();
+  if (heldAfterMerge) return heldAfterMerge;
 
   if (await tryPush()) return { action: 'pushed', scrub, pushed: true };
 

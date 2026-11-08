@@ -28,6 +28,7 @@ import { sandboxDirFor, writeClaudeAccounts, type ClaudeAccount } from '../../sr
 import { SHARED_SANDBOX_ENTRIES } from '../../src/lib/claude-account-sandbox.js';
 import type { ClaudeAuthStatus } from '../../src/lib/claude-auth.js';
 import { claudeRejectionsFilePath, recordAccountRejection } from '../../src/lib/claude-limit-rejections.js';
+import { usageMeterFilePath } from '../../src/lib/claude-usage-meter.js';
 
 const HOME = mkdtempSync(join(tmpdir(), 'dc-probe-'));
 const REAL_HOME = process.env.HOME;
@@ -116,6 +117,9 @@ const noJudge = () => {
 };
 
 beforeEach(() => {
+  // A live report is now KEPT in the per-turn meter, which every later reading merges, so one
+  // test's report must not become the next test's "cache".
+  rmSync(usageMeterFilePath(HOME), { force: true });
   rmSync(SANDBOX, { recursive: true, force: true });
   rmSync(join(HOME, '.claude'), { recursive: true, force: true });
   writeRealHome();
@@ -242,7 +246,8 @@ describe('a live report can end a remembered refusal', () => {
     writeClaudeAccounts([{ ...registered, accountUuid: '' }], HOME);
     refuse();
     writeSandboxConfig({ oauthAccount: { accountUuid: 'uuid-x', emailAddress: 'someone-else@example.com' } });
-    expect((await probe(0)).status).toBe('ok');
+    // The email decides now (configDirIdentity): the reading is discarded before any spawn.
+    expect((await probe(0)).status).toBe('stale');
     expect(stillRefused()).toBe(true);
   });
 });
@@ -635,5 +640,87 @@ describe('probeAccountForDecision — one probe per account, never blinder than 
     spawn.release();
     const res = await probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: judge({ loggedIn: false }).fn, sleep: instant });
     expect(res.status).toBe('needs-relogin');
+  });
+});
+
+// Owner, 2026-11-03: "Refresh usage" sat for 85s on five accounts and refreshed nothing. On CLI
+// 2.1.317 `/usage` fetches the numbers ~6s in, then scans every local transcript for a minute or
+// more; on the old 20s budget every probe timed out. These pin the three things that fixed it.
+describe('a refresh probe is fast: no spawn for a current cache, stop once the cache lands', () => {
+  it('trustCurrentCache answers from a cache inside the write throttle WITHOUT spawning', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 60_000, percent: 21 }),
+    });
+    let spawned = 0;
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME, authStatus: noJudge as never, trustCurrentCache: true,
+      runProbe: async () => { spawned += 1; return { timedOut: false }; },
+    });
+    expect(spawned).toBe(0);
+    expect(res.status).toBe('ok');
+    if (res.status === 'ok') expect(res.limits.limits.find((l) => l.key === 'session')?.percent).toBe(21);
+  });
+
+  it('without trustCurrentCache (a switch decision) the same cache still spawns', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 60_000 }),
+    });
+    let spawned = 0;
+    await probeAccountUsage(SANDBOX, {
+      home: HOME, authStatus: noJudge as never,
+      runProbe: async () => { spawned += 1; return { timedOut: false, stdout: envelope(LIVE_REPORT) }; },
+    });
+    expect(spawned).toBe(1);
+  });
+
+  it('an OLD cache is not trusted: it spawns, and the child is told to stop once the cache moves', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 3 * 60 * 60_000 }),
+    });
+    const seen: boolean[] = [];
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME, authStatus: noJudge as never, trustCurrentCache: true,
+      runProbe: async (_dir, timeoutMs, stopWhen) => {
+        expect(timeoutMs).toBe(USAGE_PROBE_TIMEOUT_MS);
+        seen.push(stopWhen!());                     // nothing landed yet
+        writeSandboxConfig({                         // the CLI writes its fetch, ~6s in
+          oauthAccount: { accountUuid: ACCOUNT_UUID },
+          cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now(), percent: 66 }),
+        });
+        seen.push(stopWhen!());                     // landed: the child may be stopped
+        return { timedOut: false, stdout: '', stoppedEarly: true };
+      },
+    });
+    expect(seen).toEqual([false, true]);
+    expect(res.status).toBe('ok');
+    if (res.status === 'ok') expect(res.limits.limits.find((l) => l.key === 'session')?.percent).toBe(66);
+  });
+
+  it('the caller sets the budget (the refresh route asks for less than a decision)', async () => {
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    let budget = 0;
+    await probeAccountUsage(SANDBOX, {
+      home: HOME, authStatus: noJudge as never, timeoutMs: 15_000,
+      runProbe: async (_d, t) => { budget = t; return { timedOut: true }; },
+    });
+    expect(budget).toBe(15_000);
+  });
+
+  it('a folder signed in as ANOTHER account is never spawned: its report is that account\'s', async () => {
+    writeClaudeAccounts([{ ...registered, accountUuid: '' }], HOME);
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: 'uuid-x', emailAddress: 'someone-else@example.com' },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now(), accountUuid: 'uuid-x' }),
+    });
+    let spawned = 0;
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME, authStatus: noJudge as never, trustCurrentCache: true,
+      runProbe: async () => { spawned += 1; return { timedOut: false, stdout: envelope(LIVE_REPORT) }; },
+    });
+    expect(spawned).toBe(0);
+    expect(res.status).toBe('stale');
   });
 });

@@ -4,7 +4,7 @@ import { readLayoutPrefs, writeLayoutPrefs } from '../lib/launcherPrefs';
 import { appLinksDrained } from '../lib/appLink';
 import { findWindowForVault } from '../lib/windowRegistry';
 import { focusWindow, isDesktop, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
-import { useLauncherStatus, type VaultStatus } from '../hooks/useLauncher';
+import { useShellProjects, type ShellProject } from '../hooks/useShellProjects';
 import { UpgradeRelaunchBanner } from '../components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from '../components/search/ProjectSwitcher';
 import { WindowChrome } from '../components/layout/WindowChrome';
@@ -12,7 +12,7 @@ import { LauncherPage } from './LauncherPage';
 
 /** The order the launcher window tries projects in: the last one shown, then by recency.
  *  Only registered projects whose folder still exists. Pure, for launcher-root.test.ts. */
-export function launchCandidates(vaults: readonly VaultStatus[], lastVault: string | null): string[] {
+export function launchCandidates(vaults: readonly ShellProject[], lastVault: string | null): string[] {
   const live = vaults.filter((v) => v.exists);
   const byRecency = [...live].sort((a, b) => (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? '')).map((v) => v.name);
   const last = lastVault && live.some((v) => v.name === lastVault) ? [lastVault] : [];
@@ -50,7 +50,8 @@ function TodayLauncher() {
 export function LauncherRoot() {
   const mode = useShellMode();
   const newShell = mode === 'new';
-  const { data, isError } = useLauncherStatus(newShell);
+  // The tunnel's chosen projects, else the launcher's list.
+  const { data, isError } = useShellProjects(newShell);
   const [pick, setPick] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {

@@ -47,7 +47,12 @@ function ladderViolation(t: Record<Level, number>): Level | null {
   return null;
 }
 
-export function SleepSettings(): JSX.Element {
+/**
+ * `modelRow` (the Settings window, new layout): the specialists' model is chosen with one
+ * chip in Models, so the per-specialist selects give way to that row. Classic passes nothing
+ * and keeps its table.
+ */
+export function SleepSettings({ modelRow }: { modelRow?: JSX.Element } = {}): JSX.Element {
   const { t } = useI18n();
   const { data: config } = useConfig();
   const { data: shippedDefaults } = useSleepSpecialistDefaults();
@@ -184,6 +189,7 @@ export function SleepSettings(): JSX.Element {
         </div>
       </SettingGroup>
 
+      {modelRow ?? (
       <SettingGroup title={t('settings.sleep.specialists')} note={t('settings.sleep.specialists_note')}>
         <div className="sleep-specialists">
           {/* Column headers — two unlabelled dropdowns per row left you guessing
@@ -228,6 +234,7 @@ export function SleepSettings(): JSX.Element {
         </div>
         <SaveMark state={specialistSave.state} />
       </SettingGroup>
+      )}
 
       <AutoSleepBlock />
 

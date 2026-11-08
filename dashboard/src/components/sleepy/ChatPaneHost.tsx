@@ -1,10 +1,14 @@
-import { memo, type ReactNode, useCallback } from 'react';
+import { memo, type ReactNode, useCallback, useMemo } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
-import type { ChatAgentPick } from './chat/ComposerMenus';
+import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
+import { claudeState, codexState } from './chat/model-picker/pickerModel';
+import type { ChatTool } from '../../lib/chatToolBinding';
+import { useI18n } from '../../context/I18nContext';
+import { codexModelConfig, useAgentTools } from '../../hooks/useAgentCapabilities';
 import type { ChatFeed } from './chat/chatFeed';
 
 /**
@@ -54,6 +58,9 @@ export interface ChatSurfaceActions {
    *  Optional: a host whose agent is fixed (the Assistant's notch, a whiteboard card) has no
    *  picker, so the menu draws no Agent section there. */
   pickAgent?: (sid: string, agent: ChatAgentPick | null) => void;
+  /** Open a NEW chat on another tool (Track T W1): a conversation lives on one tool, so this
+   *  never moves this one; see AgentSurface's `pickChatTool`. Optional like `pickAgent`. */
+  pickTool?: (sid: string, tool: ChatTool, model?: string) => void;
   /** Move a RUNNING conversation to another Claude account. RESPAWNS at the turn boundary —
    *  an account is `CLAUDE_CONFIG_DIR`, read once at spawn, so there is nothing to switch
    *  live. Same shape as `changeMode` beside it for exactly that reason; see AgentSurface's
@@ -63,7 +70,7 @@ export interface ChatSurfaceActions {
    *  tab. Fired by a `develop` action button the plan agent wrote into its own message. */
   handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
   /** `vault` is set only by the dreamcontext Assistant's detail buttons (see `ChatAction`). */
-  openAppPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
+  openAppPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => void;
   /** Sign THIS conversation's account in again. Resolves once the terminal is open or the
    *  account is signed in and the chat resumed; rejects with the reason it could not. */
   signIn: (cs?: ChatSession) => Promise<void>;
@@ -71,7 +78,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer, feed,
+  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, feed, sendVia, quietResume,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -95,15 +102,21 @@ function ChatPaneHostInner({
   /** See ChatPane's `agentBound`: the full pane, bound to one agent (the AI Team page). */
   agentBound?: boolean;
   idlePlaceholder?: string;
+  /** The member a phone mirror shows (ChatPane's `superMember`). */
+  superMember?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
    *  A primitive, so the memo boundary holds. 'finished': no process left (transcriptSession.ts). */
-  readOnly?: boolean | 'finished';
+  readOnly?: boolean | 'finished' | 'silent';
   /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
   aboveComposer?: ReactNode;
+  sendVia?: (message: string) => boolean;
+  /** See ChatPane's `quietResume`. */
+  quietResume?: boolean;
   /** An agent's past sessions above the conversation (the AI Team stage). Its identity changes
    *  only when the feed does (the stage entry's snapshot), so the memo boundary holds. */
   feed?: ChatFeed;
 }) {
+  const { t } = useI18n();
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
   const onAccountChange = useCallback((accountId: string) => actions.changeAccount(session.id, accountId), [actions, session]);
@@ -118,16 +131,35 @@ function ChatPaneHostInner({
     (taskSlug: string) => actions.handoffToDevelop(session, taskSlug), [actions, session],
   );
   const onOpenAppPage = useCallback(
-    (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
+    (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
   );
   const onSignIn = useCallback(() => actions.signIn(session), [actions, session]);
+  // A Codex chat reads Codex's own models and efforts; a Claude chat is unchanged.
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((t) => t.tool === 'codex');
+  const antigravityInfo = tools?.find((t) => t.tool === 'antigravity');
+  const codexConfig = session.tool === 'codex' ? codexModelConfig(codexInfo) : session.tool === 'antigravity' ? codexModelConfig(antigravityInfo) : null;
+  const paneConfig = codexConfig ?? modelConfig;
+  const paneModel = codexConfig && !codexConfig.models.some((m) => m.id === model) ? codexConfig.defaultModel : model;
+  const paneEffort = codexConfig && !codexConfig.efforts.includes(effort) ? codexConfig.defaultEffort : effort;
+  const pickTool = actions.pickTool;
+  // The Super Agent is always Claude in the cape, and an agent's chat has no surface that could
+  // move it: both draw the same picker, with the other tools locked.
+  const lockNote = mode === 'super' ? t('chat.modelPicker.lock.super') : agentBound ? t('chat.modelPicker.lock.agent') : '';
+  const lockOpen = t('chat.modelPicker.lock.open');
+  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool || lockNote ? {
+    current: session.tool,
+    tools: [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])],
+    onPick: (tool, picked) => pickTool?.(session.id, tool, picked),
+    ...(lockNote ? { lock: { note: lockNote, openLabel: lockOpen } } : {}),
+  } : undefined), [pickTool, codexInfo, antigravityInfo, session, modelConfig, lockNote, lockOpen]);
 
   return (
     <ChatPane
       session={session}
-      modelConfig={modelConfig}
-      model={model}
-      effort={effort}
+      modelConfig={paneConfig}
+      model={paneModel}
+      effort={paneEffort}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onAccountChange={onAccountChange}
@@ -137,6 +169,7 @@ function ChatPaneHostInner({
       mode={mode}
       onModeChange={onModeChange}
       onAgentPick={actions.pickAgent ? onAgentPick : undefined}
+      toolPick={toolPick}
       onHandoffToDevelop={onHandoffToDevelop}
       onResume={onResume}
       automation={automation}
@@ -147,8 +180,11 @@ function ChatPaneHostInner({
       bare={bare}
       agentBound={agentBound}
       idlePlaceholder={idlePlaceholder}
+      superMember={superMember}
       readOnly={readOnly}
       aboveComposer={aboveComposer}
+      sendVia={sendVia}
+      quietResume={quietResume}
       feed={feed}
     />
   );

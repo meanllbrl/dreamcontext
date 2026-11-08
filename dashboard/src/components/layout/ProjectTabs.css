@@ -22,6 +22,12 @@
   flex: none;
 }
 
+/* A phone (body[data-phone], WindowChrome): the DYNAMIC viewport. On iOS Safari `vh` counts the
+   area under the collapsing URL bar, so a `100vh` window puts the composer under it. */
+body[data-phone] .window-chrome {
+  height: 100dvh;
+}
+
 .window-chrome-bar {
   position: relative;
   /* Above every project surface (agent overlay 20, its dock 25) so bar-anchored popovers —
@@ -938,11 +944,10 @@
   }
 }
 
-/* ───────────── A finger on Mac mode's tunnel (hands-free sekmeler W2) ─────────────
-   A landscape tablet or a touch computer reaching the Mac gets the desktop chrome with
-   touch-sized targets (WCAG 2.5.5): the project chips, the `+`, and every chat tab below. The bar
-   grows to hold them; `data-touch` is set by WindowChrome only on a remote screen with a coarse
-   pointer. */
+/* ───────────── A finger on the new shell (a coarse pointer) ─────────────
+   A landscape tablet or a touch computer gets touch-sized targets (WCAG 2.5.5): every chat tab
+   in the frame. The bar grows to hold them; `data-touch` is set by WindowChrome's new shell from
+   `(pointer: coarse)`. */
 .window-chrome[data-touch='true'] {
   --titlebar-height: var(--titlebar-height-touch);
 }

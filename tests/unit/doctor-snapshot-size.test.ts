@@ -3,8 +3,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { checkCoreFileSizes, checkPeople, checkSnapshotSize } from '../../src/cli/commands/doctor.js';
+import { ensureClaudeHooks } from '../../src/cli/commands/install-skill.js';
 import {
-  HARNESS_PERSIST_CHAR_LIMIT, DEFAULT_SNAPSHOT_BUDGET_TOKENS,
+  SNAPSHOT_DELIVERY_CHAR_LIMIT, DEFAULT_SNAPSHOT_BUDGET_TOKENS,
 } from '../../src/lib/snapshot-budget.js';
 import { CORE_FILE_CHAR_CEILING, CORE_FILE_LINE_CEILING } from '../../src/lib/core-index.js';
 import { measureSnapshot } from '../../src/cli/commands/snapshot.js';
@@ -82,6 +83,7 @@ beforeEach(() => {
   writePeople(root, { [ACTIVE_PERSON]: { name: 'Ada Doctor', emails: ['ada@doctor.invalid'] } });
   writePerson('---\nname: ada-doctor\ntype: person\n---\n\nPrefers brevity.\n');
   writeFileSync(join(root, 'core', '2.memory.md'), '---\nname: memory\n---\n\n## Active Memory\n\n- nothing yet\n', 'utf-8');
+  ensureClaudeHooks(projectRoot);
 
   // HOME leaks into the vault registry and linked-repo resolution, so pin it or
   // the real machine's vaults bleed into the measured snapshot.
@@ -110,7 +112,18 @@ describe('checkSnapshotSize — under the limit', () => {
     expect(results).toHaveLength(1);
     expect(results[0].status).toBe('ok');
     expect(results[0].message).toContain('Snapshot size');
-    expect(results[0].message).toMatch(/\d+% of the 20,000-char harness limit/);
+    expect(results[0].message).toMatch(/\d+% of the 28,500 chars the session hooks can carry/);
+  });
+});
+
+describe('checkSnapshotSize — a project without the part hooks', () => {
+  it('warns first and measures against what one hook can carry', () => {
+    rmSync(join(projectRoot, '.claude'), { recursive: true, force: true });
+    const results = checkSnapshotSize(root);
+    expect(results[0].code).toBe('doctor/snapshot-parts-missing');
+    expect(results[0].status).toBe('warn');
+    expect(results[0].message).toContain('dreamcontext update');
+    expect(results[1].message).toContain('9,800');
   });
 });
 
@@ -122,15 +135,15 @@ describe('checkSnapshotSize — over the harness limit', () => {
     // never-evict, so the same bulk in either is the ERROR band below.)
     writeMemory(incompressibleCore(400, 'memory'));
     const { text, budget } = measureSnapshot(root, { fireTriggers: false });
-    expect(text.length).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
-    expect(budget.neverEvictChars).toBeLessThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(text.length).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
+    expect(budget.neverEvictChars).toBeLessThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const results = checkSnapshotSize(root);
     expect(results).toHaveLength(1);
     expect(results[0].status).toBe('warn');
     expect(results[0].status).not.toBe('error');
-    expect(results[0].message).toContain('20,000-char harness limit');
-    expect(results[0].message).toContain('2,000-char blind preview');
+    expect(results[0].message).toContain('28,500 chars the session hooks can carry');
+    expect(results[0].message).toContain('its tail does not reach the agent');
     expect(results[0].message).toContain('Trim the core files flagged above');
   });
 
@@ -138,10 +151,10 @@ describe('checkSnapshotSize — over the harness limit', () => {
     // The designed alarm for a soul that has not had its conditional rules
     // extracted yet: it is never-evict, so the ladder has nothing to give and
     // doctor must say so on the FILE rather than blame the renderer.
-    writeSoul(incompressibleSoul(400));
+    writeSoul(incompressibleSoul(600));
 
     const { budget } = measureSnapshot(root, { fireTriggers: false });
-    expect(budget.neverEvictChars).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(budget.neverEvictChars).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
     expect(budget.demoted.map((d) => d.id)).not.toContain('soul');
 
     const results = checkSnapshotSize(root);
@@ -159,7 +172,7 @@ describe('checkSnapshotSize — over the harness limit', () => {
     writePerson(incompressibleCore(400, 'person'));
 
     const { budget } = measureSnapshot(root, { fireTriggers: false });
-    expect(budget.neverEvictChars).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(budget.neverEvictChars).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
     expect(budget.demoted.map((d) => d.id)).not.toContain('person');
 
     const results = checkSnapshotSize(root);
@@ -178,7 +191,7 @@ describe('checkSnapshotSize — over the harness limit', () => {
 
     const { text, budget } = measureSnapshot(root, { fireTriggers: false });
     expect(text).toContain('Retired layout');
-    expect(budget.neverEvictChars).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(budget.neverEvictChars).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
     expect(budget.demoted.map((d) => d.id)).not.toContain('person');
     expect(checkSnapshotSize(root)[0].status).toBe('error');
   });
@@ -199,7 +212,7 @@ describe('checkSnapshotSize — over the harness limit', () => {
         bookmarks: [],
         triggers: [{
           when: 'build-the-thing',
-          remind: 'R'.repeat(25_000),
+          remind: 'R'.repeat(35_000),
           fired_count: 0,
           max_fires: 3,
         }],
@@ -209,7 +222,7 @@ describe('checkSnapshotSize — over the harness limit', () => {
     );
 
     const { budget } = measureSnapshot(root, { fireTriggers: false });
-    expect(budget.neverEvictChars).toBeGreaterThan(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(budget.neverEvictChars).toBeGreaterThan(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const results = checkSnapshotSize(root);
     expect(results).toHaveLength(1);
@@ -225,26 +238,26 @@ describe('checkSnapshotSize — over the harness limit', () => {
 describe('checkSnapshotSize — the middle band (over the ladder target, still inline)', () => {
   it('names the 18,000-char ladder target, not the harness limit', () => {
     // Grow the incompressible soul until the render lands strictly between the
-    // ladder's 18,000-char target and the 20,000-char harness limit. Bounded and
+    // ladder's 18,000-char target and what the hooks can carry. Bounded and
     // deterministic — it re-calibrates if the surrounding format ever shifts.
     const budgetChars = DEFAULT_SNAPSHOT_BUDGET_TOKENS * 4;
     let landed = 0;
     for (let headings = 230; headings <= 300; headings++) {
       writeSoul(incompressibleSoul(headings));
       const len = measureSnapshot(root, { fireTriggers: false }).text.length;
-      if (len > budgetChars && len <= HARNESS_PERSIST_CHAR_LIMIT) {
+      if (len > budgetChars && len <= SNAPSHOT_DELIVERY_CHAR_LIMIT) {
         landed = len;
         break;
       }
     }
     expect(landed).toBeGreaterThan(budgetChars);
-    expect(landed).toBeLessThanOrEqual(HARNESS_PERSIST_CHAR_LIMIT);
+    expect(landed).toBeLessThanOrEqual(SNAPSHOT_DELIVERY_CHAR_LIMIT);
 
     const results = checkSnapshotSize(root);
     expect(results).toHaveLength(1);
     expect(results[0].status).toBe('warn');
     expect(results[0].message).toContain("past the ladder's 18,000-char target");
-    expect(results[0].message).toContain('still lands inline');
+    expect(results[0].message).toContain('still arrives whole');
     // NOT the harness-limit message.
     expect(results[0].message).not.toContain('blind preview');
     expect(results[0].message).not.toContain('Trim the core files');

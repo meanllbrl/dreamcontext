@@ -1,3 +1,4 @@
+import { agentSurfaceSettings } from '../../lib/agentSettings';
 import { agentCanSpawn } from '../../lib/agentReady';
 import type { AgentSettingsLite, ReadinessCheck, ReadinessReport } from '../../lib/onboardingTypes';
 
@@ -41,9 +42,9 @@ export function canStartClaude(report: ReadinessReport | undefined, settings: Ag
   return signedIn && agentCanSpawn({
     desktop: report.surface === 'desktop',
     claudeCli,
-    chatView: settings.chatView,
+    chatView: agentSurfaceSettings(settings).chatView,
     embeddedTerminal: terminal?.status === 'ok' && report.platform !== 'win32',
-    enabled: settings.enabled,
+    enabled: agentSurfaceSettings(settings).enabled,
   });
 }
 

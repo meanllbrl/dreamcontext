@@ -3,7 +3,7 @@
 Files in `dashboard/public/` are served at the site root, so a file here at
 `dashboard/public/media/brain.mp4` is reachable at `/media/brain.mp4`.
 
-The **"What is this?"** page (`dashboard/src/pages/AboutPage.tsx`) looks for the
+The About-section components (`dashboard/src/components/about/`, no longer routed) look for the
 files below. Every one is **optional** — if a file is missing, the page falls
 back gracefully (the hero shows an animated SVG brain instead of the video, and
 missing screenshots are hidden). Drop in real assets to light them up.

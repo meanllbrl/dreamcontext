@@ -11,8 +11,11 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda', 'member'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+/** A member stage's own cards (plan r4 K1, MIRROR of src/lib/super/types.ts): the owner's, pinned. */
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
 
 /** The agenda card's one ref (one agenda per stage) and the size it opens at. */
 export const AGENDA_REF = 'agenda';
@@ -334,11 +337,15 @@ export interface SuperChild {
   settling?: boolean;
   task?: string;
   stuckReason?: StuckReason;
+  /** Why this child never started, in the server's words. */
+  startError?: string;
   mode?: string;
   model?: string;
   effort?: string;
   /** The MCP servers it runs with (`delegate --mcp`): a delegated child is LEAN, only these. */
   mcp?: string[];
+  /** The tool it runs on (`delegate --tool`); absent = Claude. */
+  tool?: 'codex' | 'antigravity';
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
   /** The agenda (server-written): when its job last finished, and what the owner saw. */
@@ -349,13 +356,15 @@ export interface SuperChild {
 /** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
-export const STUCK_REASONS = ['error', 'stale'] as const;
+export const STUCK_REASONS = ['error', 'stale', 'no_start'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
 /** `owner`: a child left something only the owner can do (a `run` card, a `secret`, a
  *  `checklist`): his from birth, closed when his answer reaches the child. */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
+/** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
+ *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -380,6 +389,10 @@ export interface SuperQueueItem {
   brief?: string;
   /** An `approval` item's AI Team member (agent slug). */
   member?: string;
+  /** An `automation` item's automation slug and the owner's card decision (MIRROR of
+   *  src/lib/super/types.ts). */
+  automation?: string;
+  decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: the child's card he must act on. */
   wait?: { kind: OwnerWaitKind; id: string };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
@@ -387,9 +400,72 @@ export interface SuperQueueItem {
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
    *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
   direct?: true;
+  /** A Bypass child's permission its Super Agent decides first (MIRROR of src/lib/super/types.ts
+   *  `SuperQueueItem.toSuper`): no owner head, count or alarm while it holds. */
+  toSuper?: true;
   /** A Super `ask`'s report cards, read to answer it: his card points at them (MIRROR of
    *  src/lib/super/types.ts `SuperQueueItem.read`). */
   read?: string[];
+  /** A `request`'s job or a `reply`'s answer; a request's per-job model, effort, light flag, its
+   *  `team done` result and when its carrying turn ended; a reply's ask (MIRROR, plan-r10 1). */
+  text?: string;
+  model?: string;
+  effort?: string;
+  light?: true;
+  result?: string;
+  acceptedAt?: number;
+  answers?: string;
+  /** Whose work it is; absent = the owner's. */
+  workOrigin?: SuperWorkOrigin;
+}
+
+/** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own
+ *  (`main`) or an AI Team member's (`m:<member slug>`). Absent anywhere = `main`. MIRROR of
+ *  src/lib/super/types.ts. */
+export type SuperId = 'main' | `m:${string}`;
+export const MEMBER_SUPER_PREFIX = 'm:';
+/** The member slug charset (src/lib/agents/types.ts `isSafeAutomationSlug`: lowercase letters,
+ *  digits, single inner dashes, at most 100). The server's parser also refuses reserved slugs. */
+const MEMBER_SLUG_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,99}$/;
+/** A super id from the wire: absent / '' / `main` = main; `m:<slug>` = that member; else null. */
+export function parseSuperId(raw: unknown): SuperId | null {
+  if (raw === undefined || raw === null || raw === '' || raw === 'main') return 'main';
+  if (typeof raw !== 'string' || !raw.startsWith(MEMBER_SUPER_PREFIX)) return null;
+  const slug = raw.slice(MEMBER_SUPER_PREFIX.length);
+  return slug.length <= 100 && MEMBER_SLUG_RE.test(slug) ? `m:${slug}` : null;
+}
+
+/** Whose work a member Super's turn, child or question is (MIRROR of src/lib/super/types.ts). */
+export type SuperWorkOrigin = 'owner' | 'routine' | `main:${string}`;
+
+/** A member's Super: at most two live children; the vault-wide ceiling over every super. */
+export const MAX_MEMBER_LIVE_CHILDREN = 2;
+export const MAX_VAULT_LIVE_CHILDREN = 15;
+
+/** One member in `GET /api/agent/sessions?summary=1` `members` (plan-r10 1, 1f; MIRROR of
+ *  src/lib/super/types.ts `SuperMemberSummary`): owner and routine work only. */
+export interface SuperMemberSummary {
+  slug: string;
+  global: boolean;
+  enabled: boolean;
+  ownerWorking: number;
+  asking: boolean;
+  approval: boolean;
+  unread: number;
+  superOnly: boolean;
+  lastAt: number;
+  /** Main's `request`/`reply` items still waiting for this member's Super to be attached: the
+   *  window spawns a cold member's Super when above 0 and no live chat holds it. Not a count. */
+  pending: number;
+}
+
+/** A Super verb the window runs, as its frame names it (MIRROR of src/lib/window-control.ts):
+ *  `superId` absent = main's (a member's Super names itself). */
+export interface SuperWindowCommand {
+  id: string;
+  verb: SuperWindowVerb;
+  args: Record<string, unknown>;
+  superId?: SuperId;
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
@@ -434,6 +510,45 @@ export interface SuperTeamJob {
   open?: true;
   /** A stuck its watch concluded: the member left, or its turn was lost with the server. */
   concluded?: 'gone' | 'lost';
+  /** A follow-up on the member's conversation: the root job it continues (no card of its own). */
+  followUpOf?: string;
+  /** `super`: the Super Agent asked the same member again (MIRROR of `SuperTeamJob.by`). */
+  by?: 'super';
+  /** A job given to the member's OWN Super (plan-r10 1, Wave 2): its `request` item's id there. */
+  request?: string;
+  /** Window-only, derived when the record is read (`teamChainOf`), never stored: the member's one
+   *  card's whole story (plan-r10 1b). Set on a member's current root only. */
+  chain?: TeamChain;
+}
+
+/** What a member's one card says beyond its root job: how many jobs it holds ("3 iş"), the newest
+ *  one (its brief, model, whether it waits its turn) and the run before a rotation. */
+export interface TeamChain {
+  jobs: number;
+  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt'>;
+  /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
+  previous?: { id: string; runId: string; sessionId?: string };
+}
+
+/**
+ * A member's one card's chain (plan-r10 1b): every job of the member in the record (roots after a
+ * rotation and their follow-ups), its newest job, and the root before the current one. `team` is
+ * newest first, as the record keeps it. Pure.
+ */
+export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, prevSessionId?: string): TeamChain {
+  const mine = team.filter((j) => j.member === root.member);
+  const newest = mine[0] ?? root;
+  const roots = mine.filter((j) => !j.followUpOf);
+  const at = roots.findIndex((j) => j.id === root.id);
+  const prev = at >= 0 ? roots[at + 1] : undefined;
+  return {
+    jobs: Math.max(1, mine.length),
+    newest: {
+      id: newest.id, brief: newest.brief, queued: newest.queued, startedAt: newest.startedAt,
+      ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
+    },
+    ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
+  };
 }
 
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -466,6 +581,9 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  /** Children alive at turn-off: the owner's chats until the next hand-over (server types.ts). */
+  released?: string[];
+  formerAdopted?: string[];
   containers: SuperContainer[];
   groups: SuperGroup[];
   view: SuperView;
@@ -484,6 +602,70 @@ export interface SuperState {
   /** The owner's agenda: the super agent's own notepad (`super note`), oldest first. */
   pad?: SuperPadItem[];
   padSeq?: number;
+  /** A member Super's record: its slug (absent = main's). */
+  member?: string;
+  /** A member Super's main-origin turns (the owner's unread skips them). Absent = none. */
+  mainBatches?: string[];
+  /** What the Super still owes the owner (server owed.ts): open debts and the newest closed. */
+  owed?: SuperOwed[];
+}
+
+/** One thing the Super owes the owner. MIRRORS `SuperOwed` in src/lib/super/types.ts
+ *  (super-types-mirror.test.ts): the agenda's "Cevaplanmadı" rows read it. */
+export interface SuperOwed {
+  id: string;
+  kind: 'msg' | 'result';
+  ref: string;
+  parts?: string[];
+  seq: number;
+  at: number;
+  item?: string;
+  child?: string;
+  team?: string;
+  gist: string;
+  sent?: string[];
+  nudges: number;
+  parked?: 'stop' | 'limit';
+  parkedAt?: number;
+  closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+}
+/** Mirrors OWED_NUDGES and OWED_PARK_MS (server types.ts). */
+export const OWED_NUDGES = 2;
+export const OWED_PARK_MS = 10 * 60_000;
+/** Shown on his agenda: nudged OWED_NUDGES times, or parked by his Stop or a limit for
+ *  OWED_PARK_MS. MIRRORS `owedVisible` in src/lib/super/owed.ts. */
+export function owedVisible(d: Pick<SuperOwed, 'nudges' | 'parked' | 'parkedAt' | 'closed'>, now = Date.now()): boolean {
+  if (d.closed !== undefined) return false;
+  if (d.nudges >= OWED_NUDGES) return true;
+  return !!d.parked && d.parkedAt !== undefined && now - d.parkedAt >= OWED_PARK_MS;
+}
+/** The earliest moment a parked debt becomes visible, after `now`. MIRRORS owed.ts. */
+export function nextOwedReveal(owed: readonly Pick<SuperOwed, 'nudges' | 'parked' | 'parkedAt' | 'closed'>[] | undefined, now = Date.now()): number | null {
+  let at: number | null = null;
+  for (const d of owed ?? []) {
+    if (d.closed !== undefined || d.nudges >= OWED_NUDGES || !d.parked || d.parkedAt === undefined) continue;
+    const t = d.parkedAt + OWED_PARK_MS;
+    if (t > now && (at === null || t < at)) at = t;
+  }
+  return at;
+}
+/** A debt as the window reads it from a push or a digest: checked, the rest dropped. */
+export function readOwed(raw: unknown, max = 200): SuperOwed[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperOwed[] = [];
+  for (const d of raw) {
+    if (out.length >= max) break;
+    if (!isRecord(d) || typeof d.id !== 'string' || (d.kind !== 'msg' && d.kind !== 'result') || typeof d.ref !== 'string') continue;
+    if (typeof d.seq !== 'number' || typeof d.at !== 'number' || typeof d.gist !== 'string' || typeof d.nudges !== 'number') continue;
+    const o: SuperOwed = { id: d.id, kind: d.kind, ref: d.ref, seq: d.seq, at: d.at, gist: d.gist, nudges: d.nudges };
+    if (d.parked === 'stop' || d.parked === 'limit') { o.parked = d.parked; if (typeof d.parkedAt === 'number') o.parkedAt = d.parkedAt; }
+    if (Array.isArray(d.sent)) o.sent = d.sent.filter((x): x is string => typeof x === 'string');
+    if (isRecord(d.closed) && typeof d.closed.at === 'number' && (d.closed.by === 'mark' || d.closed.by === 'owner' || d.closed.by === 'takeback')) o.closed = { at: d.closed.at, by: d.closed.by };
+    if (typeof d.item === 'string') o.item = d.item;
+    if (typeof d.child === 'string') o.child = d.child;
+    out.push(o);
+  }
+  return out;
 }
 
 /** The agenda notepad (owner 2026-10-22 19:15): lines the super agent writes itself, in three
@@ -503,7 +685,7 @@ export const MAX_PAD = 40;
 export const MAX_PAD_TEXT = 160;
 /** The owner wrote about one agenda line: the header his message opens with (MIRRORED from the
  *  server, `src/lib/super/types.ts`, pinned by super-types-mirror.test.ts). */
-export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item|owed)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done|unanswered)\]/;
 export const MAX_ABOUT_LINE = 200;
 /** A message's reference: six base-36 characters derived from its words (MIRRORED from the
  *  server, which hashes what a turn received; the window hashes what it sent). */
@@ -527,21 +709,26 @@ export const MAX_REPLY_QUOTE = 100;
  * quote is what the page showed him: data, never his instruction. Not `[super `.
  */
 export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
+/** The task a member stage's strip is about (plan-r10 1c): the header alone, no second line. The
+ *  task-slug charset, no 64 cap (slugs reach ~100 characters). Never closes an open ask. */
+export const ABOUT_TASK_RE = /^\[About task ([a-z0-9][a-z0-9-]{0,251})\]/;
 export const MAX_SELECTION_QUOTE = 1000;
 
-/** At most this many references (agenda lines, replied messages) in one owner message; a
- *  header past the fifth is plain text. */
-export const MAX_MESSAGE_REFS = 5;
+/** A hidden technical ceiling on references (agenda lines, replied messages) in one owner
+ *  message, so a malformed or hostile message cannot make the parser walk without bound; a
+ *  header past it is plain text. Owner 2026-11-04: he never sees a limit, so it sits far above
+ *  any real message and no surface ever names it. */
+export const MAX_MESSAGE_REFS = 100;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'owed' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
  * one message). One rule on both sides of the wire: a header counts only at offset 0 or right
  * after a blank line (`\n\n`); a note's header must be followed by its well-formed `line:` JSON
  * line, a reply's and a card's by its `quote:` line; an item's header has no second line; and the block
- * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS. MIRRORED in
+ * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS (hidden). MIRRORED in
  * dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
  */
 export function aboutHeads(text: string): AboutHead[] {
@@ -554,12 +741,13 @@ export function aboutHeads(text: string): AboutHead[] {
     const s = text.slice(at);
     const a = ABOUT_AGENDA_RE.exec(s);
     const c = a ? null : ABOUT_CARD_RE.exec(s);
-    const r = a || c ? null : REPLY_TO_RE.exec(s);
-    if (!a && !c && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : 'reply';
-    let len = (a ?? c ?? r as RegExpExecArray)[0].length;
+    const t = a || c ? null : ABOUT_TASK_RE.exec(s);
+    const r = a || c || t ? null : REPLY_TO_RE.exec(s);
+    if (!a && !c && !t && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item' | 'owed') : c ? 'card' : t ? 'task' : 'reply';
+    let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item') {
+    if (kind === 'item' || kind === 'owed' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -567,7 +755,7 @@ export function aboutHeads(text: string): AboutHead[] {
       len += second[0].length;
     }
     if (len < s.length && s[len] !== '\n') continue;
-    out.push({ kind, id: a ? a[2] : (c ?? r as RegExpExecArray)[1], at, end: at + len });
+    out.push({ kind, id: a ? a[2] : (c ?? t ?? r as RegExpExecArray)[1], at, end: at + len });
   }
   return out;
 }
@@ -575,10 +763,10 @@ export function aboutHeads(text: string): AboutHead[] {
 /** Each part's reference, in order, for a message with two or more parts (`aboutHeads`): the
  *  message reference with `#<i>` hashed again. [] for a message with one part or none, whose
  *  sections the super marks with the message reference as before. MIRRORED in the window. */
-export function partRefs(text: string): string[] {
+export function partRefs(text: string, baseRef?: string): string[] {
   const n = aboutHeads(text).length;
   if (n < 2) return [];
-  const base = msgRef(text);
+  const base = baseRef && /^[0-9a-z]{6}$/.test(baseRef) ? baseRef : msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
 }
 /**
@@ -627,7 +815,7 @@ export interface SuperStateView extends SuperState {
   vault: string;
   /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
    *  member's thread. Absent when no team card is open. */
-  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string }>;
+  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string; sessionId?: string; resumable?: boolean; prevSessionId?: string }>;
   /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
    *  no second one. Absent: none. */
   bannered?: string[];
@@ -635,10 +823,10 @@ export interface SuperStateView extends SuperState {
   rotating?: boolean;
 }
 
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
 
 export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch', 'fresh'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
@@ -786,17 +974,28 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const queue = v.queue.filter((q): q is SuperQueueItem =>
     isRecord(q) && typeof q.id === 'string' && typeof q.sessionId === 'string' && oneOf(QUEUE_KINDS, q.kind)
     && oneOf(QUEUE_STATES, q.state) && typeof q.createdAt === 'number');
-  const team = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
+  const read = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
     isRecord(j) && typeof j.id === 'string' && typeof j.member === 'string' && typeof j.runId === 'string'
     && typeof j.brief === 'string' && typeof j.startedAt === 'number' && typeof j.queued === 'boolean'
     && (j.jobKind === 'run' || j.jobKind === 'reply'));
+  // A member's one card (plan-r10 1b): the root its card shows carries the chain, only when there
+  // is more than the root itself to say (a follow-up, or a root before it).
+  const shownRoots = new Set(containers.filter((c) => c.kind === 'team').map((c) => c.ref));
+  const liveRows = isRecord(v.teamLive) ? v.teamLive as Record<string, unknown> : {};
+  const team = read.map((j) => {
+    if (!shownRoots.has(j.id) || j.followUpOf) return j;
+    const row = liveRows[j.id];
+    const prevSession = isRecord(row) && typeof row.prevSessionId === 'string' ? row.prevSessionId : undefined;
+    const chain = teamChainOf(read, j, prevSession);
+    return chain.jobs > 1 || chain.previous ? { ...j, chain } : j;
+  });
   // Each team card's status now: only a known job, a known status and a string line survive.
   let teamLive: SuperStateView['teamLive'];
   if (isRecord(v.teamLive)) {
     teamLive = {};
     for (const j of team) {
       const row = (v.teamLive as Record<string, unknown>)[j.id];
-      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine };
+      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine, ...(typeof row.sessionId === 'string' ? { sessionId: row.sessionId } : {}), ...(row.resumable === true ? { resumable: true } : {}), ...(typeof row.prevSessionId === 'string' ? { prevSessionId: row.prevSessionId } : {}) };
     }
   }
   const children: Record<string, SuperChild> = {};
@@ -812,6 +1011,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const pool = Array.isArray(v.pool) ? v.pool.filter((p): p is SuperPoolItem =>
     isRecord(p) && typeof p.id === 'string' && typeof p.title === 'string' && typeof p.createdAt === 'number') : [];
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string') : [];
+  const mainBatches = Array.isArray(v.mainBatches) ? v.mainBatches.filter((b): b is string => typeof b === 'string') : [];
   const held = Array.isArray(v.held) ? v.held.filter((h): h is SuperHeldEvent => isRecord(h) && typeof h.item === 'string'
     && typeof h.child === 'string' && typeof h.at === 'number' && (h.kind === 'question' || h.kind === 'done' || h.kind === 'stuck' || h.kind === 'gone')) : [];
   // The agenda notepad: a known section, a string line, a number time (absent in an older push).
@@ -834,9 +1034,13 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
       : [],
     pool,
     ...(Array.isArray(v.formerChildren) ? { formerChildren: v.formerChildren.filter((x): x is string => typeof x === 'string') } : {}),
+    ...(Array.isArray(v.released) ? { released: v.released.filter((x): x is string => typeof x === 'string') } : {}),
     ownerBatches,
+    ...(mainBatches.length ? { mainBatches } : {}),
+    ...(typeof v.member === 'string' && v.member ? { member: v.member } : {}),
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
+    ...(Array.isArray(v.owed) && readOwed(v.owed).length ? { owed: readOwed(v.owed) } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),
@@ -848,7 +1052,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
 // ─── The phone's agenda digest (src/lib/super/phone-mirror.ts `superDigest`) ───────────
 
 /** Mirrors `SUPER_DIGEST_FIELDS` in src/lib/super/phone-mirror.ts (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'owed', 'key'] as const;
 
 /** What a phone mirror is told of the Super Agent's agenda (a `super_digest` frame): enough to
  *  draw the desktop's `SuperAgenda` and fold the event turns, never the record. */
@@ -858,8 +1062,13 @@ export interface SuperDigestWire {
    *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
   waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string }>;
   ownerBatches: string[];
+  /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
+   *  digest from an older server. */
+  mainBatches?: string[];
   /** Child session id → the Mac's job card title. */
   names: Record<string, string>;
+  /** The open debts (server owed.ts), read only. Absent in a digest from an older server. */
+  owed?: SuperOwed[];
   key: string;
 }
 
@@ -872,6 +1081,7 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
     && typeof q.id === 'string' && oneOf(QUEUE_KINDS, q.kind) && oneOf(QUEUE_STATES, q.state)
     && typeof q.createdAt === 'number' && typeof q.sessionId === 'string' && typeof q.text === 'string').slice(0, 40) : [];
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string').slice(-50) : [];
+  const mainBatches = Array.isArray(v.mainBatches) ? v.mainBatches.filter((b): b is string => typeof b === 'string').slice(-50) : [];
   const names: Record<string, string> = {};
   if (isRecord(v.names)) {
     for (const [sid, name] of Object.entries(v.names).slice(0, 40)) if (typeof name === 'string' && name) names[sid] = name;
@@ -884,6 +1094,9 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     })),
     waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
-    ownerBatches, names, key: v.key,
+    ownerBatches, mainBatches, names,
+    // Checked and capped; only open ones travel (the phone draws and never drops them).
+    ...(Array.isArray(v.owed) ? { owed: readOwed(v.owed, 40).filter((d) => d.closed === undefined) } : {}),
+    key: v.key,
   };
 }

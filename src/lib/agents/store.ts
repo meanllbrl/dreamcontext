@@ -1,7 +1,7 @@
 import { stopAgentTaskJobs } from './task-starter.js';
 import { chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { lockHolderPid } from '../file-lock.js';
+import { lockHolderPid, withFileLockSync } from '../file-lock.js';
 import fg from '../glob.js';
 import matter from 'gray-matter';
 import { ensureGitignoreEntries } from '../gitignore.js';
@@ -34,7 +34,9 @@ import {
   extractSection,
   getRunTarget,
   listManifestFiles,
+  listRunSlots,
   lockPathFor,
+  memberMutexPath,
   numberOrDefault,
   parseEffort,
   parseFlowSection,
@@ -53,7 +55,7 @@ import {
   type ManifestParts,
   type RecordLessonInput,
 } from '../automations/store.js';
-import { approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
+import { approvalFields, approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
 import { readWhiteboard, listWhiteboards } from '../whiteboards/store.js';
 import { liveElements } from '../whiteboards/ops.js';
 import { widgetPayloadOf } from '../whiteboards/widgets.js';
@@ -62,6 +64,7 @@ import { assertOwned, currentLogin, parseOwner } from './owner.js';
 import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
 import { readToolsOf } from './read-tools.js';
+import { toolFieldsOf } from '../automations/store.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
 import { normalizeTeamLabel, readTeamLabel, wouldCycle } from './tree.js';
@@ -159,12 +162,16 @@ export function readAgentFile(filePath: string, scope: AgentScope = 'project'): 
     learning: data.learning === true,
     pattern: extractSection(content, PATTERN_HEADING),
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
+    // `scope: board` only, and only beside a home board: anything else reads as unset. It is hashed,
+    // so a hand edit that drops or mangles it blocks the agent until it is approved again.
+    ...(isBoardScopeValue(data.scope) && typeof data.whiteboard === 'string' && data.whiteboard.trim() ? { boardOnly: true } : {}),
     shared: data.shared === true,
     reportsTo: typeof data.reports_to === 'string' && isSafeAutomationSlug(data.reports_to.trim()) ? data.reports_to.trim() : null,
     team: readTeamLabel(data.team),
     call: callSettings,
     autonomy: parseAutonomy(data.autonomy),
     ...(readToolsOf(data.read_tools).length ? { readTools: readToolsOf(data.read_tools) } : {}),
+    ...toolFieldsOf(data),
     face: parseFace(data.face),
     owner: parseOwner(data.owner),
     updated: strOrNull(data.updated),
@@ -359,22 +366,36 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   }
 }
 
-const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy']);
+const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'boardOnly', 'photo', 'autonomy', 'tool', 'account']);
+
+/** The frontmatter value that limits a home-board agent to its board: `scope: board`. */
+export function isBoardScopeValue(v: unknown): boolean {
+  return typeof v === 'string' && v.trim().toLowerCase() === 'board';
+}
 
 /** An identity patch at runtime too: a caller passing call settings (or anything
  *  else) through an untyped surface is refused, never silently dropped. */
 function assertIdentityPatch(patch: AgentIdentityPatch): void {
   for (const key of Object.keys(patch)) {
     if (!IDENTITY_PATCH_KEYS.has(key)) {
-      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo and autonomy.`);
+      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, board limit, photo, autonomy, tool and account.`);
     }
   }
 }
 
 /** `agent` with `patch` applied in memory, values normalised as a write stores them. */
 function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): AgentManifest {
+  const tool = patch.tool === undefined ? agent.tool : patch.tool ?? undefined;
+  const account = patch.account === undefined ? agent.account : patch.account ?? undefined;
+  const { tool: _t, account: _a, boardOnly: _b, ...rest } = agent;
+  const whiteboard = patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard;
+  // Limited to a board only while it has one: removing the board removes the limit with it.
+  const boardOnly = !!whiteboard && (patch.boardOnly === undefined ? agent.boardOnly === true : patch.boardOnly === true);
   return {
-    ...agent,
+    ...rest,
+    ...(boardOnly ? { boardOnly: true } : {}),
+    ...(tool ? { tool } : {}),
+    ...(tool && account ? { account } : {}),
     title: patch.title === undefined ? agent.title : patch.title.trim(),
     prompt: patch.prompt === undefined ? agent.prompt : patch.prompt.trim(),
     // The same normalisation the write applies, so `withRestamp`'s expected hash
@@ -383,7 +404,7 @@ function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): Ag
     model: patch.model === undefined ? agent.model : patch.model,
     effort: patch.effort === undefined ? agent.effort : patch.effort,
     learning: patch.learning === undefined ? agent.learning : patch.learning,
-    whiteboard: patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard,
+    whiteboard,
     photo: patch.photo === undefined ? agent.photo : patch.photo,
     autonomy: patch.autonomy === undefined ? agent.autonomy : parseAutonomy(patch.autonomy),
   };
@@ -423,8 +444,13 @@ function identityFrontmatter(a: AgentManifest): Record<string, unknown> {
     ...(a.effort ? { effort: a.effort } : {}),
     ...(a.learning ? { learning: true } : {}),
     ...(a.whiteboard ? { whiteboard: a.whiteboard } : {}),
+    // Only when set (and only beside a board), so every other agent's file is unchanged.
+    ...(a.whiteboard && a.boardOnly ? { scope: 'board' } : {}),
     // Only a level other than the default is written, so an ordinary agent's file is unchanged.
     ...(a.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: a.autonomy } : {}),
+    // Only off Claude, so an ordinary agent's file is unchanged.
+    ...(a.tool ? { tool: a.tool } : {}),
+    ...(a.tool && a.account ? { account: a.account } : {}),
   };
 }
 
@@ -451,10 +477,12 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     // ON for anything created from now on, exactly as a new automation.
     learning: input.learning ?? true,
     whiteboard: input.whiteboard ?? null,
+    ...(input.whiteboard && input.boardOnly ? { boardOnly: true } : {}),
     photo: input.photo ?? null,
     shared: input.shared === true,
     autonomy: parseAutonomy(input.autonomy),
   };
+  if (input.boardOnly && !input.whiteboard) throw new AutomationError('Only an agent with a home board can be limited to it: give it --whiteboard <board> too.');
   validateIdentity(contextRoot, draft);
   const path = agentPath(contextRoot, slug);
   if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your global agents.`);
@@ -550,6 +578,9 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (patch.boardOnly === true && !(patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard)) {
+    throw new AutomationError(`"${slug}" has no home board to be limited to: give it one with --whiteboard <board> first.`);
+  }
   if (agent.scope === 'global' && (patch.photo || patch.whiteboard)) {
     throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
   }
@@ -559,6 +590,10 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold an autonomy level: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
   }
 
+  if (next.tool && next.whiteboard) {
+    throw new AutomationError('An agent with a home board stays on Claude: Codex cannot keep it out of credential folders.');
+  }
+
   if (agent.implicit) {
     const fields: Record<string, unknown> = {};
     if (patch.title !== undefined) fields.title = next.title;
@@ -566,13 +601,16 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     if (patch.effort !== undefined) fields.effort = next.effort;
     if (patch.learning !== undefined) fields.learning = next.learning;
     if (patch.whiteboard !== undefined) fields.whiteboard = next.whiteboard;
+    if (patch.whiteboard !== undefined || patch.boardOnly !== undefined) fields.scope = next.boardOnly ? 'board' : null;
     if (patch.photo !== undefined) fields.photo = next.photo;
+    if (patch.tool !== undefined) fields.tool = next.tool ?? null;
+    if (patch.tool !== undefined || patch.account !== undefined) fields.account = next.account ?? null;
     if (Object.keys(fields).length > 0) patchManifestFrontmatter(agent.path, fields);
   } else {
     assertRegularFile(agent.path);
     const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
     const nextData: Record<string, unknown> = { ...data, title: next.title };
-    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy']) delete nextData[key];
+    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'scope', 'autonomy', 'tool', 'account']) delete nextData[key];
     rewriteManifestText(agent.path, matter.stringify(content, { ...nextData, ...identityFrontmatter(next) }));
   }
   if (patch.prompt !== undefined) {
@@ -610,6 +648,13 @@ export function upsertSectionAfter(raw: string, heading: string, body: string, a
 
 export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: string[] };
 
+/** The automations (by slug) that run as `slug` in this project: what `removeAgent` refuses on
+ *  (plan r4 F4: the member delete names and removes exactly these). Its own unsplit scheduled
+ *  manifest included. */
+export function routinesBoundTo(contextRoot: string, slug: string): string[] {
+  return readSlotFiles(contextRoot).filter((f) => boundJobOf(f, slug) !== null).map((f) => f.slug);
+}
+
 /**
  * Delete an agent. Refused (nothing written) while an automation runs as it —
  * its own unsplit scheduled manifest included. An unsplit on-call agent IS its
@@ -618,13 +663,16 @@ export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: st
  * `approvals[slug]` survives only as the current record of a scheduled
  * automation now in that slot.
  */
-export function removeAgent(contextRoot: string, slug: string, opts: { home?: string } = {}): RemoveAgentResult {
+export function removeAgent(contextRoot: string, slug: string, opts: { home?: string; ownSchedule?: boolean } = {}): RemoveAgentResult {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   assertOwned({ owner: agent.owner }, agent.title || slug);
+  // `ownSchedule`: the member delete removes the agent WITH its own unsplit scheduled manifest
+  // (that manifest is the agent), so it does not count as a routine still running as it.
   const usedBy = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
-    .map((f) => f.slug);
+    .map((f) => f.slug)
+    .filter((s) => !(opts.ownSchedule && s === slug && agent.implicit));
   if (usedBy.length > 0) return { removed: false, usedBy };
   if (agent.scope === 'global') return removeGlobalAgent(slug, opts);
 
@@ -667,7 +715,8 @@ export function removeGlobalAgent(slug: string, opts: { home?: string } = {}): R
   if (usedBy.length > 0) return { removed: false, usedBy };
   // A run of it in any project still holds its lock (in its folder, which the delete removes).
   for (const root of projects) {
-    const pid = lockHolderPid(lockPathFor(join(root, '_dream_context'), slug));
+    const ctx = join(root, '_dream_context');
+    const pid = lockHolderPid(lockPathFor(ctx, slug)) ?? listRunSlots(ctx, slug)[0]?.pid ?? null;
     if (pid !== null && pidAlive(pid)) throw new AutomationError(`"${slug}" is running in ${basename(root)}: delete it once that run ends.`);
   }
   // Every key's death BEFORE the file goes, while its paths still resolve to its own folder.
@@ -788,10 +837,14 @@ export function recordAgentLesson(contextRoot: string, slug: string, input: Reco
     return readGlobalAgent(slug) as AgentManifest;
   }
   // The lesson lands on the pattern as THIS machine adopted it (B1-6), and the result is adopted.
-  writeLessonToFile(agent.path, effectivePattern(contextRoot, slug, agent.pattern), input);
-  const after = getAgent(contextRoot, slug) as AgentManifest;
-  adoptIfSyncing(contextRoot, slug, after.pattern);
-  return after;
+  // Read inside the lock: two parallel turns of this agent can each learn something.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'lesson'), () => {
+    const now = getAgent(contextRoot, slug) as AgentManifest;
+    writeLessonToFile(now.path, effectivePattern(contextRoot, slug, now.pattern), input);
+    const after = getAgent(contextRoot, slug) as AgentManifest;
+    adoptIfSyncing(contextRoot, slug, after.pattern);
+    return after;
+  });
 }
 
 export interface AgentUsage {
@@ -860,11 +913,18 @@ export function withRestamp(
   patch: AgentIdentityPatch,
   home?: string,
   now: Date = new Date(),
+  opts: RestampOptions = {},
 ): AgentManifest {
   assertIdentityPatch(patch);
   const agent = getAgent(contextRoot, agentSlug);
   if (!agent) throw new AutomationError(`No agent named "${agentSlug}" in this project.`);
   const next = applyIdentityPatch(agent, patch);
+  // The change waits for the one approval card (plan-r10 1e): written, never stamped.
+  if (opts.stamp === false) return updateAgent(contextRoot, agentSlug, patch);
+  // Another tool means another vendor reads the prompt: only the owner's own save stamps it
+  // (Track T W4). His save on the dashboard IS that approval (`consent`, set only by an owner-page
+  // route); no other caller changes a tool, and one that did would wait for the card.
+  if ((next.tool ?? '') !== (agent.tool ?? '') && !opts.consent) return updateAgent(contextRoot, agentSlug, patch);
 
   const plan = restampTargets(contextRoot, agentSlug).map(({ kind, target }) => {
     const verdict = checkApproval(projectRoot, target, home, 'run');
@@ -880,6 +940,65 @@ export function withRestamp(
     if (reread && manifestHash(reread) === p.expected) approveAutomation(projectRoot, reread, now, home);
   }
   return updated;
+}
+
+/** How `withRestamp` stamps. Both absent = today's rule (re-stamp what was directly approved
+ *  before and is exactly what the edit produced; never across a tool change). */
+export interface RestampOptions {
+  /** false: write only. The change waits for the one approval card (a background process's risky
+   *  text, `localWriteStamps`). */
+  stamp?: boolean;
+  /** The owner's own save on an owner-page route: a tool change stamps too. Set ONLY by such a
+   *  route. The "approved as it stood before" precondition still holds. */
+  consent?: boolean;
+}
+
+/** The agent's call target as it would read once `patch` is written: what the approval rule
+ *  judges a change by (`widensAuthority`), computed in memory, nothing written. */
+export function previewCallTarget(contextRoot: string, agentSlug: string, patch: AgentIdentityPatch): { before: AutomationManifest; after: AutomationManifest } | null {
+  assertIdentityPatch(patch);
+  const agent = getAgent(contextRoot, agentSlug);
+  const before = getRunTarget(contextRoot, agentSlug, 'agent');
+  if (!agent || !before) return null;
+  return { before, after: withIdentity(before, applyIdentityPatch(agent, patch)) };
+}
+
+/** A run target as `widensAuthority` reads it: its review fields, `mode`, `enabled`, where it lives. */
+export function widenViewOf(m: AutomationManifest): Record<string, unknown> & { scope: 'project' | 'global' } {
+  return {
+    ...(approvalFields(m) as unknown as Record<string, unknown>),
+    mode: m.mode ?? 'call',
+    enabled: m.enabled !== false,
+    ...(m.fallbackTools?.length ? { fallbackTools: [...m.fallbackTools] } : {}),
+    scope: m.agentScope === 'global' ? 'global' : 'project',
+  };
+}
+
+/**
+ * Turn a member's calls on or off: `call.enabled` in its file and nothing else (unhashed, so the
+ * member stays exactly as approved). A global member's file is the global manifest (off in every
+ * project). The ONE write path behind the Ekip list's switch (`POST /api/agents/:slug/enabled`,
+ * owner page only, plan-r10 1d); an agent never reaches it.
+ */
+export function setAgentCallEnabled(contextRoot: string, slug: string, enabled: boolean): AgentManifest {
+  const agent = getAgent(contextRoot, slug);
+  if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (agent.implicit) {
+    // An unsplit on-call agent IS its legacy manifest: its own `enabled` is the call's.
+    patchManifestFrontmatter(agent.path, { enabled });
+  } else {
+    assertRegularFile(agent.path);
+    const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
+    const call = data.call && typeof data.call === 'object' && !Array.isArray(data.call) ? { ...(data.call as Record<string, unknown>) } : {};
+    if (enabled) delete call.enabled; else call.enabled = false;
+    const nextData: Record<string, unknown> = { ...data };
+    if (Object.keys(call).length > 0) nextData.call = call; else delete nextData.call;
+    rewriteManifestText(agent.path, matter.stringify(content, nextData));
+  }
+  const after = getAgent(contextRoot, slug);
+  if (!after) throw new AutomationError(`Agent "${slug}" could not be read back after the switch.`);
+  return after;
 }
 
 /** The agent's call target first, then every automation file that runs as it
@@ -900,8 +1019,11 @@ export function restampTargets(contextRoot: string, agentSlug: string): { kind: 
 /** `target` with the identity fields of `agent` — what it hashes to once the
  *  agent edit lands. Every identity field the hash covers comes from the agent. */
 function withIdentity(target: AutomationManifest, agent: AgentManifest): AutomationManifest {
+  // The board limit is identity too: carried only when set, dropped when the agent no longer has it.
+  const { boardOnly: _limit, ...rest } = target;
   return {
-    ...target,
+    ...rest,
+    ...(agent.whiteboard && agent.boardOnly ? { boardOnly: true } : {}),
     prompt: agent.prompt,
     soul: agent.soul,
     model: agent.model,
@@ -910,6 +1032,8 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     whiteboard: agent.whiteboard,
     autonomy: agent.autonomy,
     ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
+    ...(agent.tool ? { tool: agent.tool } : {}),
+    ...(agent.tool && agent.account ? { account: agent.account } : {}),
   };
 }
 

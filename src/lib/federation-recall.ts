@@ -103,7 +103,8 @@ export function crossVaultRecall(
   for (const target of opts.vaults) {
     let contextRoot: string;
     try {
-      contextRoot = resolveVaultContextRoot(target.name, home);
+      // The current vault is never a `--vault` argument: the Assistant searches its own memory so.
+      contextRoot = resolveVaultContextRoot(target.name, home, { ownAssistant: target.current === true });
     } catch (err) {
       if (err instanceof VaultError) {
         // Never-throw registry contract: a dead peer goes stale, warns once, and
@@ -137,7 +138,8 @@ export function crossVaultRecall(
       // connected, so an unconditional filter would have made `--types automation`
       // return nothing on exactly the machines that have automations.
       // Agents are prompts too (`agents/<slug>.md`): the same exclusion.
-      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent'));
+      // App tools (`app:<slug>/<id>`) are THIS Mac's installed apps: never read across a vault.
+      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent' && doc.type !== 'app'));
 
     const label = target.label ?? target.name;
     const vaultHits = bm25Search(query, corpus, topK, { now });

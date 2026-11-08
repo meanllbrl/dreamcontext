@@ -158,6 +158,8 @@ export function buildExplorer<T extends SwitcherBoard>(
   prefs: ExplorerPrefs,
   query: string,
   openSlug: string | null,
+  /** The owner's group order (`whiteboards/.groups.json`), top first; see {@link sortGroups}. */
+  groupOrder: readonly string[] = [],
 ): ExplorerView<T> {
   const words = fold(query).split(/\s+/).filter(Boolean);
   const searching = words.length > 0;
@@ -200,7 +202,7 @@ export function buildExplorer<T extends SwitcherBoard>(
       groups.push({ key, name: g, boards: [], collapsed: false, empty: true });
     }
   }
-  groups.sort((a, b) => a.name.localeCompare(b.name, 'tr', { sensitivity: 'base' }) || (a.name < b.name ? -1 : 1));
+  sortGroups(groups, groupOrder);
   ungrouped.sort(byName);
 
   const pick = (slugs: readonly string[]) => slugs.flatMap((s) => (bySlug.has(s) ? [bySlug.get(s)!] : []));
@@ -229,4 +231,51 @@ export function keepGroupIfEmptied(prefs: ExplorerPrefs, boards: readonly Switch
   if (others) return prefs;
   const spelling = groupSpelling(boards.filter((b) => b.group && fold(b.group) === key).map((b) => b.group!));
   return prefs.emptyGroups.some((g) => fold(g) === key) ? prefs : { ...prefs, emptyGroups: [...prefs.emptyGroups, spelling] };
+}
+
+/**
+ * Groups in the owner's order: the ones the order lists first, in its order (matched by fold),
+ * then every other group by name. Sorts in place and returns the array.
+ */
+export function sortGroups<G extends { key: string; name: string }>(groups: G[], order: readonly string[]): G[] {
+  const rank = new Map<string, number>();
+  order.forEach((g, i) => { const k = fold(g); if (!rank.has(k)) rank.set(k, i); });
+  return groups.sort((a, b) => {
+    const ra = rank.get(a.key);
+    const rb = rank.get(b.key);
+    if (ra !== undefined || rb !== undefined) {
+      if (ra === undefined) return 1;
+      if (rb === undefined) return -1;
+      if (ra !== rb) return ra - rb;
+    }
+    return a.name.localeCompare(b.name, 'tr', { sensitivity: 'base' }) || (a.name < b.name ? -1 : 1);
+  });
+}
+
+/**
+ * The order after moving group `key` to sit before (`after: false`) or after `target` among
+ * `shown` (every group, in screen order). Returns the names to store, or null when nothing moves.
+ */
+export function moveGroup(
+  shown: readonly { key: string; name: string }[],
+  key: string,
+  target: string,
+  after: boolean,
+): string[] | null {
+  if (key === target) return null;
+  const from = shown.findIndex((g) => g.key === key);
+  if (from < 0 || !shown.some((g) => g.key === target)) return null;
+  const rest = shown.filter((g) => g.key !== key);
+  const at = rest.findIndex((g) => g.key === target) + (after ? 1 : 0);
+  const next = [...rest.slice(0, at), shown[from], ...rest.slice(at)];
+  if (next.every((g, i) => g.key === shown[i].key)) return null;
+  return next.map((g) => g.name);
+}
+
+/** One step up (`-1`) or down (`1`): the keyboard's way to reorder (the group's ⋯ menu). */
+export function stepGroup(shown: readonly { key: string; name: string }[], key: string, dir: -1 | 1): string[] | null {
+  const i = shown.findIndex((g) => g.key === key);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= shown.length) return null;
+  return moveGroup(shown, key, shown[j].key, dir === 1);
 }

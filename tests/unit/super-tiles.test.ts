@@ -188,7 +188,7 @@ describe('the surface wiring (source rules)', () => {
 
   it('side by side, a task or a note shows its page body, read like a whiteboard\'s page popup', () => {
     expect(frame).toMatch(/case 'task':\n\s*case 'knowledge': \{/);
-    expect(frame).toMatch(/const path = targetPath\(\{ kind: c\.kind, ref: c\.ref \}\);/);
+    expect(frame).toMatch(/const path = targetPath\(\{ kind: c\.kind, ref: c\.ref \}\) \?\? \(c\.kind === 'knowledge' \? knowledgePath\(c\.ref\) : null\);/);
     expect(frame).toMatch(/<DocumentReader key=\{path\} path=\{path\} .* embedded vaultReads variant="page" \/>/);
   });
 
@@ -199,7 +199,7 @@ describe('the surface wiring (source rules)', () => {
     expect(frame).toMatch(/: <KindTile container=\{c\} title=\{p\.title\} viewReady=\{p\.viewReady\} wide=\{size === 'medium'\} \/>/);
     expect(frame).toMatch(/if \(SIZE_UNITS\[size\]\.h > 1 && c\.kind !== 'chat'\)/);
     expect(surface).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide';/);
-    expect(surface).toMatch(/const liveWeb = keptWebIds\(lru, webOnScreen, /);
+    expect(surface).toMatch(/const liveWeb = keptWebIds\(lru, heldOnScreen, /);
   });
 
   it('a card released on a tile groups: on a card a new group where it stood, on a group into it', () => {

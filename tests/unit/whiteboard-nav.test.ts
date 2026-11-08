@@ -438,6 +438,20 @@ describe('page search (pages.ts)', () => {
     expect(limited.truncated).toBe(true);
   });
 
+  it('filters by source and by several kinds on the server, before the limit', () => {
+    seed();
+    for (let i = 0; i < 70; i += 1) writeFileSync(join(root, 'knowledge', `note-${String(i).padStart(2, '0')}.md`), '---\nname: Note\n---\n');
+    clearPageIndexCache();
+    // More knowledge pages than a page of results: the files still make the list.
+    expect(searchPages(root, '', { limit: 60 }).pages.every((p) => p.source === 'knowledge')).toBe(true);
+    const files = searchPages(root, '', { limit: 60, source: 'file', kind: ['pdf', 'html'] });
+    expect(files.pages.map((p) => p.ref)).toEqual(['docs/site.html', 'docs/spec.pdf']);
+    expect(files.truncated).toBe(false);
+    const knowledge = searchPages(root, '', { limit: 200, source: 'knowledge' });
+    expect(knowledge.pages.every((p) => p.source === 'knowledge')).toBe(true);
+    expect(knowledge.pages).toHaveLength(72);
+  });
+
   it('never follows a symlink out of the project', () => {
     seed();
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'dc-wb-nav-out-')));

@@ -6,9 +6,11 @@ import { promisify } from 'node:util';
 import { activityOf, getChat } from '../assistant/chat-registry.js';
 import { heavySlotDir, heavySlotsHeld } from '../builder-tools.js';
 import type { MacThermalState } from '../handsfree/mac/contract.js';
-import { heavyLimitFor, readBagMode, readHeatLevel } from '../heat.js';
-import { MAX_LIVE_CHILDREN, type SuperState } from './types.js';
-import { superWorktreeRoot } from './store.js';
+import { heavyLimitFor, parseVmStat, readBagMode, readHeatLevel } from '../heat.js';
+
+export { parseVmStat };
+import { MAX_LIVE_CHILDREN, MAX_MEMBER_LIVE_CHILDREN, MAX_VAULT_LIVE_CHILDREN, type SuperState } from './types.js';
+import { listMemberSupers, readSuperState, superIdOfMember, superWorktreeRoot, type SanitizeOpts } from './store.js';
 
 /**
  * How much room this machine has for another child chat (plan-r7 D11, decision 5).
@@ -91,21 +93,6 @@ const defaultDeps = (): CapacityDeps => ({
 export const CAPACITY_TTL_MS = 60_000;
 const GB = 1024 ** 3;
 const round1 = (n: number) => Math.round(n * 10) / 10;
-
-/**
- * Available memory from a `vm_stat` sample: free + inactive + purgeable + speculative pages
- * times the page size the header names. Null when the sample is not one.
- */
-export function parseVmStat(text: string): number | null {
-  const size = /page size of (\d+) bytes/.exec(text);
-  if (!size) return null;
-  const pages = (label: string): number => {
-    const m = new RegExp(`^Pages ${label}:\\s+(\\d+)\\.?\\s*$`, 'm').exec(text);
-    return m ? Number(m[1]) : 0;
-  };
-  const total = pages('free') + pages('inactive') + pages('purgeable') + pages('speculative');
-  return total * Number(size[1]);
-}
 
 /** `sysctl vm.swapusage` → used and total GB: `total = 20480.00M  used = 19316.50M  free = …`. */
 export function parseSwapUsage(text: string): { usedGb: number; totalGb: number } | null {
@@ -415,7 +402,7 @@ export function machineNotes(room: MachineRoom, light?: LightMode, heat?: Machin
     else if (r.limit === 'light') notes.push(light ? lightModeNote(light) : lightModeNote({ on: true, reason: null, setting: 'auto' }));
   }
   if (heat?.heavyLimit === 1) {
-    notes.push(`the Mac is very hot (macOS thermal state ${heat.thermal ?? 'serious'}): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating`);
+    notes.push(`the Mac is very hot (macOS thermal state ${heat.thermal ?? 'critical'}): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating`);
   }
   if (heat?.bag) notes.push('the Mac is in a bag (hands-free Bag mode): heavy processes slow down while it is warm');
   return notes;
@@ -442,8 +429,31 @@ export function liveChildren(state: SuperState, now = Date.now()): string[] {
   });
 }
 
-/** May `super delegate` start one more child? Adoption never asks this. */
-export function delegationAllowed(state: SuperState, now = Date.now()): { ok: boolean; live: number; max: number } {
+/** One super's own cap (plan-r10 1): the project's Super 15, a member's Super 2. */
+export function superChildCap(state: Pick<SuperState, 'member'>): number {
+  return state.member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN;
+}
+
+/**
+ * May `super delegate` start one more child? Adoption never asks this. Two caps (plan-r10 1): the
+ * super's own (`superChildCap`), and, when `vaultLive` is given, the vault-wide safety ceiling: the
+ * live children of EVERY super record of the vault together (a young unregistered child counts:
+ * read from the records, `liveChildren`) stay at most MAX_VAULT_LIVE_CHILDREN.
+ */
+export function delegationAllowed(state: SuperState, now = Date.now(), vaultLive?: number): {
+  ok: boolean; live: number; max: number; vaultLive: number; vaultMax: number; bound: 'own' | 'vault' | null;
+} {
   const live = liveChildren(state, now).length;
-  return { ok: live < MAX_LIVE_CHILDREN, live, max: MAX_LIVE_CHILDREN };
+  const max = superChildCap(state);
+  const vault = vaultLive ?? live;
+  const bound = live >= max ? 'own' : vaultLive !== undefined && vault >= MAX_VAULT_LIVE_CHILDREN ? 'vault' : null;
+  return { ok: bound === null, live, max, vaultLive: vault, vaultMax: MAX_VAULT_LIVE_CHILDREN, bound };
+}
+
+/** The live children of every super record of a vault (main's and each member's), read from the
+ *  records themselves; a record that does not read counts none. */
+export async function vaultLiveChildren(contextRoot: string, now = Date.now(), opts: SanitizeOpts = {}): Promise<number> {
+  const ids = ['main' as const, ...(await listMemberSupers(contextRoot)).map(superIdOfMember)];
+  const counts = await Promise.all(ids.map((id) => readSuperState(contextRoot, id, opts).then((s) => liveChildren(s, now).length, () => 0)));
+  return counts.reduce((a, b) => a + b, 0);
 }

@@ -12,7 +12,7 @@ export const CARD_REF_TITLE_MAX = 60;
 
 /** A card kind's glyph: the stage's tiles and headers, and a card chip's room. */
 export const KIND_GLYPH: Record<ContainerKind, string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', pdf: '▥', video: '▶', browser: '◉', team: '◈', agenda: '☰',
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', pdf: '▥', video: '▶', browser: '◉', team: '◈', agenda: '☰', member: '◇',
 };
 /** A group of cards (a group's tile on the stage). */
 export const GROUP_GLYPH = '▤';

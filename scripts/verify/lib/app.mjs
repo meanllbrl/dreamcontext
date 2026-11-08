@@ -19,7 +19,7 @@ import { createServer } from 'node:net';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { distIndex, markAnnouncementsSeen, scratchDir, shotsDir } from './measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -46,7 +46,7 @@ const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.se
 /** Requests a dev server makes that are no finding about the app. */
 const NOISE = /\/@vite\/|\/__vite_ping|favicon\.ico|\/api\/.*\/ws\b/;
 
-export async function openApp({ suite = 'look', build = false } = {}) {
+export async function openApp({ suite = 'look', build = false, desktop = false } = {}) {
   const scratch = scratchDir(`dc-verify-${suite}-${process.pid}`); // two runs can overlap in the fast line
   rmSync(scratch, { recursive: true, force: true });
   const home = join(scratch, 'home');
@@ -62,6 +62,9 @@ export async function openApp({ suite = 'look', build = false } = {}) {
   chmodSync(join(bin, 'claude'), 0o755);
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
   const env = { ...clean, HOME: home, PATH: `${bin}:${process.env.PATH}`, npm_config_cache: join(process.env.HOME ?? home, '.npm'), DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_AUTO_DASHBOARD: '0' };
+  // `desktop` (needs `build`: the server must be this process's direct child): the server acts as
+  // the Mac app's own, with its loopback-only desktop routes and `desktop-server.json`, in the fake HOME.
+  if (desktop) Object.assign(env, { DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_PARENT_PID: String(process.pid) });
   const apiPort = await freePort();
   const shots = join(shotsDir(REPO, suite), String(process.pid));
   mkdirSync(shots, { recursive: true });
@@ -96,7 +99,8 @@ export async function openApp({ suite = 'look', build = false } = {}) {
       base = `http://127.0.0.1:${vitePort}`;
       await waitFor(base, 'the Vite dev server', vite);
     }
-    browser = await chromium.launch();
+    // DC_VERIFY_ENGINE=webkit: the engine the Mac app runner draws with.
+    browser = await (process.env.DC_VERIFY_ENGINE === 'webkit' ? webkit : chromium).launch();
   } catch (err) {
     killAll();
     throw err;

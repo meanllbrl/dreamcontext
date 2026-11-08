@@ -45,6 +45,41 @@ export function pillBubbles(r: Rollup): PillBubble[] {
   return bubbles.filter((b) => b.count > 0);
 }
 
+/**
+ * THE QUIET PILL (owner, 2026-11-01: "notch'u büyütmek yerine minimal kullanıp elegant kalmak").
+ * Folded with no peek, the pill draws ONE mark beside the camera housing and no words, most
+ * urgent first: something waits on the owner (a prompt or a proposal) → the filled count;
+ * anything at work (a chat's turn, an automation, the Assistant's own turn) → a breathing dot;
+ * unread news only → a dim dot; nothing → nothing, and the notch keeps the hardware's own size.
+ * The words come back only when the island is wide anyway: a peek, a hover, the open panel.
+ */
+export type QuietSignal =
+  | { kind: 'asking'; count: number }
+  | { kind: 'working' }
+  | { kind: 'unread' }
+  | null;
+
+export function quietSignal(r: Rollup, x: { running: number; inbox: number; busy: boolean }): QuietSignal {
+  const waits = r.asking + r.proposals;
+  if (waits > 0) return { kind: 'asking', count: waits };
+  if (r.working + r.starting > 0 || x.running > 0 || x.busy) return { kind: 'working' };
+  if (x.inbox > 0) return { kind: 'unread' };
+  return null;
+}
+
+/** One quiet ear beside the housing, logical px: room for a 16px mark and its ring. */
+export const QUIET_EAR_W = 30;
+
+/** The quiet ear's width: 0 when there is nothing to say, so the island IS the housing. */
+export function quietEarWidth(s: QuietSignal): number {
+  return s ? QUIET_EAR_W : 0;
+}
+
+/** A count in a 16px bead: "9+" past nine, so the bead never outgrows its ear. */
+export function beadCount(n: number): string {
+  return n > 9 ? '9+' : String(n);
+}
+
 /** The same counts in words, for the aria-label and the tooltip: "1 working, 4 idle, 5 stale". */
 export function pillLabel(r: Rollup): string {
   const parts: string[] = [];
@@ -258,7 +293,37 @@ export interface AccountNotice {
   sessionId: string | null;
 }
 
-export type InboxNotice = FinishedNotice | AccountNotice;
+/** A dreamcontext App's notification: one row per app (src/lib/assistant/notch-inbox.ts). */
+export interface AppNotice {
+  id: string;
+  kind: 'app';
+  at: number;
+  vault: string;
+  slug: string;
+  name: string;
+  body: string;
+}
+
+export type InboxNotice = FinishedNotice | AccountNotice | AppNotice;
+
+/** The app's raster icon (never SVG: on this origin it would run script). */
+export function appIconUrl(vault: string, slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}/icon?vault=${encodeURIComponent(vault)}`;
+}
+
+/** Bring the app's window forward (or open it): the same Launch the Apps card uses. */
+export async function openAppWindow(vault: string, slug: string): Promise<boolean> {
+  try {
+    const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': vault },
+      body: JSON.stringify({ owner: true }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
 
 /** One unread thing an automation said: a post, a failed run's reason, a question for the owner. */
 export interface AutomationPost {
@@ -346,6 +411,8 @@ export function readInbox(raw: unknown): Inbox {
         id: e.id, kind: 'finished', at: num(e.at)!, sessionId: e.sessionId, vault: e.vault, mode: str(e.mode),
         title: unwrapUntrusted(e.title), lastText: unwrapUntrusted(e.lastText),
       });
+    } else if (e.kind === 'app' && typeof e.vault === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(str(e.slug))) {
+      notices.push({ id: e.id, kind: 'app', at: num(e.at)!, vault: e.vault, slug: str(e.slug), name: unwrapUntrusted(e.name) || str(e.slug), body: unwrapUntrusted(e.body) });
     } else if (e.kind === 'account' && typeof e.account === 'string') {
       const w = e.window === 'session' || e.window === 'weekly' || e.window === 'unknown' ? e.window : null;
       notices.push({

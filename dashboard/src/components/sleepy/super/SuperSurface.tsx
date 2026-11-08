@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
@@ -17,7 +17,7 @@ import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
-import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
+import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
@@ -27,17 +27,26 @@ import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
-import { useOwnerInbox } from '../../../hooks/useAgents';
-import { emitInstance, useVault } from '../../../context/VaultContext';
+import { useAgents, useOwnerInbox } from '../../../hooks/useAgents';
+import { useAutomations } from '../../../hooks/useAutomations';
+import { requestOpenAgents } from '../../../lib/openAgents';
+import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
+import { SuperApprovalBand } from './SuperApprovalBand';
+import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
-import { NewSessionButton } from './NewSessionButton';
+import { SuperHeadMenu } from './SuperHeadMenu';
+import { SuperAddMenu } from './SuperAddMenu';
+import { MENU_WIDTH } from './superAddMenuModel';
+import type { SuperOpenBody } from './superApi';
 import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
 import { pageFitKey, pageFitOf, pageFitsVersion, subscribePageFits } from '../../../lib/pageFit';
+import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberStageHead, type MemberStageInfo } from './MemberStage';
+import { TaskStrip } from './TaskStrip';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -68,7 +77,7 @@ export interface SuperSurfaceProps {
   miniRail?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
-  teamConversation?: (member: string) => ReactNode;
+  teamConversation?: (card: TeamCard) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -79,6 +88,8 @@ export interface SuperSurfaceProps {
   onReplyToSuper: () => void;
   /** The owner's "New session" (POST /api/super/fresh): true = queued; a refusal throws. */
   onNewSession: () => Promise<boolean>;
+  /** The stage's Turn off (asks, then takes the screen back). Absent on a remote screen. */
+  onTurnOff?: () => void;
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
   /** The slots the surface homes sessions into were (re)created: re-run the placement. */
   onSlotsChanged: () => void;
@@ -102,6 +113,11 @@ export interface SuperSurfaceProps {
   onKeepChild: (child: string) => void;
   /** The owner moved an agenda note by hand (Done / Put back). */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
+  onDropOwed?: (id: string) => void;
+  /** The owner opens a card himself (POST /api/super/open): the state is applied before it
+   *  resolves, a refusal throws. Absent where no window of his can open one (a remote screen). */
+  onOpenCard?: (body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>;
   /** Children waiting to be ended when their turn ends. */
   endPending: ReadonlySet<string>;
   /** Children whose end the server did not record (still running; the card says so). */
@@ -117,6 +133,10 @@ export interface SuperSurfaceProps {
    *  session, no terminals, no Allow/Deny; a card it cannot show draws "on the Mac". `touch`: a
    *  finger, whose stage floats cards down to {@link TOUCH_REMOTE_NARROW_STAGE_PX}. */
   remote?: { touch: boolean };
+  /** A MEMBER's stage (plan-r10 1, mockup r8-08): the same stage, the member's head (face, name,
+   *  model, Profil), its task strip and approval band above the chat, "Görevleri" in its agenda.
+   *  Absent = main's stage, exactly as before. */
+  member?: MemberStageInfo & { spawn: { model: string; effort: string } };
 }
 
 export interface StageShowChild { show: (sid: string) => void; showCard: (id: string) => void; ready: boolean }
@@ -139,31 +159,55 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
 }
 
 /**
- * The Super chat's head: the dreamcontext logo, its name ("Super Agent", owner 2026-10-31), and (as a column) the subtitle, the stage's Agenda button when one is given and
- * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
- * agenda is a stage card) and its two buttons as `actions`.
+ * The Super chat's head: the dreamcontext logo and its name ("Super Agent", owner 2026-10-31), the
+ * stage's Agenda button when one is given, the ⋯ menu (Add a card, New session, Turn off) and the
+ * head's own actions (the window buttons on the dock). Less text (owner 2026-11-05, 2026-11-07): no
+ * subtitle and no worded button; "+ Add" became the ⋯ menu's first row. The stage centre and the
+ * Super dock both draw it; the dock passes no agenda (the agenda is a stage card), no Turn off and
+ * no Add. A mini chat (a presentation's) keeps only Add in its ⋯.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, actions }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who }: {
   chat: string;
+  /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
+  who?: ReactNode;
   agenda?: ReactNode;
   pending: boolean;
   onNewSession: () => Promise<boolean>;
   /** A remote screen starts no session (hands-free sekmeler D5-D7). */
   noNewSession?: boolean;
+  /** Only the desktop's stage turns the Super Agent off: a remote screen, and the dock, do not. */
+  onTurnOff?: () => void;
+  /** Opens the stage's add menu under the ⋯ (absent: this head opens no card). */
+  onAdd?: (anchor: HTMLElement) => void;
   actions?: ReactNode;
 }) {
   const { t } = useI18n();
+  const column = chat === 'column';
   return (
     <div className="super-centre-head">
-      <BrandMark size={28} />
-      <span className="super-centre-name">{t('super.centre.name')}</span>
-      {chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
-      {chat === 'column' && agenda}
-      {chat === 'column' && !noNewSession && <NewSessionButton pending={pending} onPress={onNewSession} />}
+      {who ?? (
+        <>
+          <BrandMark size={28} />
+          <span className="super-centre-name">{t('super.centre.name')}</span>
+        </>
+      )}
+      {column && agenda}
+      {/* A chat folded to the bar hides its head: the ⋯ unmounts with it, so no menu stays open
+          (and keeps the arrow keys) out of sight. */}
+      {chat !== 'bar' && (column || onAdd) && (
+        <SuperHeadMenu
+          fresh={!column || noNewSession ? undefined : { pending, onPress: onNewSession }}
+          onTurnOff={column ? onTurnOff : undefined}
+          onAdd={onAdd}
+        />
+      )}
       {actions}
     </div>
   );
 }
+
+/** How long "Added to Others" stays up. */
+const ADD_NOTE_MS = 4000;
 
 /** Leaving a group's presentation reopens its panel only if the stage answers within this long. */
 const BACK_TO_GROUP_MS = 3000;
@@ -191,6 +235,27 @@ function CardSelectionScope({ id, onComment, onCommented, children }: {
 
 export function SuperSurface(props: SuperSurfaceProps) {
   const { state, pending, motion, superSession, onSlotsChanged } = props;
+  const member = props.member;
+  // The member's top area (task strip, approval band, refusal) takes its own room above the chat,
+  // in the column's flow; it grows after its task loads, so the chat is re-placed and re-pinned
+  // whenever its height changes (the slot's epoch), never left scrolled under it at 390.
+  const memberTopRef = useRef<HTMLDivElement | null>(null);
+  const slotsChangedRef = useRef(onSlotsChanged);
+  slotsChangedRef.current = onSlotsChanged;
+  const hasMember = !!member;
+  useEffect(() => {
+    const el = memberTopRef.current;
+    if (!hasMember || !el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h === last) return;
+      last = h;
+      slotsChangedRef.current();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasMember]);
   const remote = props.remote ?? null;
   // A remote screen's gestures pass the server's allowlist first (super/remoteStage.ts): what it
   // may not do (close, Others, group, a look) is not done here either, never applied for show.
@@ -271,7 +336,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const devicesKey = useWebDevices();
   // Each project page's measured width: a report's card takes it, the chat the rest.
   const fitsVersion = useSyncExternalStore(subscribePageFits, pageFitsVersion);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
     && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
   const items = useMemo(() => {
@@ -379,18 +444,26 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
   // Every card's readable name (superTitles.ts): a task by its title, a file by its name, never a path or slug.
   const { data: tasks } = useTasks();
-  const titleOf = useCallback((c: Container) => c.kind === 'agenda' ? t('super.agenda.label') : cardTitle(c, {
-    chat: props.titleFor,
-    team: (ref) => state.team.find((j) => j.id === ref)?.member,
-    task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
-  }), [props.titleFor, state.team, tasks, t]);
+  const titleOf = useCallback((c: Container) => {
+    if (c.kind === 'agenda') return t('super.agenda.label');
+    if (c.kind === 'member') return t(`superStage.member.cards.${c.ref}`);
+    const title = cardTitle(c, {
+      chat: props.titleFor,
+      team: (ref) => state.team.find((j) => j.id === ref)?.member,
+      task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
+    });
+    // A member's child doing main Super's work (plan-r10 1): marked "Super için" on its stage. The
+    // record names it by `workOrigin` (`main:<item>`); read through a cast, absent on older records.
+    const origin = c.kind === 'chat' && hasOwnKey(state.children, c.ref) ? (state.children[c.ref] as { workOrigin?: unknown }).workOrigin : undefined;
+    return typeof origin === 'string' && origin.startsWith('main:') ? `${title} · ${t('superStage.member.forSuper')}` : title;
+  }, [props.titleFor, state.team, state.children, tasks, t]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
     const job = state.team.find((j) => j.id === c.ref);
     if (!job) return undefined;
     const live = state.teamLive?.[job.id];
-    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '' };
+    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}) };
   }, [state.team, state.teamLive]);
   /** A remote stage's child (no live session here): the row its status is read from. Null on the Mac. */
   const remoteRowOf = (sid: string): RemoteRow | null => (remote && hasOwnKey(state.children, sid) ? state.children[sid] : null);
@@ -465,13 +538,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
       return cp.where !== 'float' || cp.size === 'large' || cp.size === 'wide';
     }).map((c) => c.id)
     : [];
-  // Every live page card, and the ones keeping their page now (on screen or parked off the stage).
-  const livePages = state.containers.filter(isLivePage).map((c) => c.id);
-  // A project file's frame is never parked: it counts only while on screen.
+  // Every page card, and the ones keeping their page now (on screen or parked off the stage). A
+  // project file is parked too: rebuilt, it reloads and loses its scroll (owner 2026-11-01).
+  const webCards = state.containers.filter((c) => c.kind === 'web').map((c) => c.id);
   // A group shown whole (owner 2026-10-28: "open all" means all): every page it presents loads,
   // and the extra frames come on top of the kept ones, so no parked page reloads for it.
-  const auto = autoFrames(!!shownGroup, webOnScreen.length);
-  const liveWeb = keptWebIds(lru, webOnScreen, [...livePages, ...webOnScreen.filter((id) => !livePages.includes(id))], auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
+  // Folded or hidden, the budget still answers for what was on screen: a fold must not evict it.
+  const lastOnScreen = useRef<string[]>([]);
+  if (props.visible) lastOnScreen.current = webOnScreen;
+  const heldOnScreen = props.visible ? webOnScreen : lastOnScreen.current;
+  const auto = autoFrames(!!shownGroup, heldOnScreen.length);
+  const liveWeb = keptWebIds(lru, heldOnScreen, webCards, auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
   cuesLiveWebRef.current = liveWeb;
   // A page that loaded on its own joins the recency list, so it stays alive when moved away.
   const liveKey = [...liveWeb].join(',');
@@ -480,7 +557,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Where each page card was last drawn: a parked one stays there, hidden, at its size.
   const lastRectRef = useRef(new Map<string, CardPlan>());
-  for (const id of livePages) { const cp = plan.cards[id]; if (cp && cp.where !== 'others' && cp.where !== 'tab') lastRectRef.current.set(id, cp); }
+  for (const id of webCards) { const cp = plan.cards[id]; if (cp && cp.where !== 'others' && cp.where !== 'tab') lastRectRef.current.set(id, cp); }
   for (const id of [...lastRectRef.current.keys()]) if (!byId.has(id)) lastRectRef.current.delete(id);
 
   // ── The live browser budget: at most two cards re-render on frames, only while this window is
@@ -533,6 +610,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
         requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('[data-testid="super-agenda-pill-btn"]')?.focus());
         return;
       }
+      // A member's own card is never closed (plan r4 K3, G4).
+      if (byId.get(id)?.kind === 'member') return;
       if (remote) return;
       closeCards([id]); focusAfter(id);
     },
@@ -631,7 +710,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (presentKeysRef.current.full) return;
       // A full-window viewer owns Esc; a PDF card's own embedded viewer is no such window.
       if (document.querySelector(PRESENT_KEY_OWNERS)) return;
-      if (document.querySelector('.super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
+      if (document.querySelector('.super-add-menu, .super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
       const p = presentKeysRef.current.plan;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
       // ←/→: the next big card of a filmstrip, the next tab of a narrow sheet.
@@ -645,6 +724,62 @@ export function SuperSurface(props: SuperSurfaceProps) {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [presenting, view.cards]);
+
+  // ── The add menu: the owner's own way to open a card ──
+  // `plan.phone` is a width, a window beside an open sidebar reaches it too; a real phone has no prop.
+  const canAdd = !!props.onOpenCard && !remote;
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number; byButton: boolean } | null>(null);
+  const addBtnRef = useRef<HTMLElement | null>(null);
+  const addBusy = useRef(false);
+  const addByButton = useRef(false);
+  addByButton.current = addMenu?.byButton ?? false;
+  const closeAddMenu = useCallback(() => {
+    // Focus goes back to the ⋯ only while it is on screen (a chat folded to the bar hides it).
+    const back = addBtnRef.current;
+    if (addByButton.current && back?.isConnected && back.offsetParent) back.focus();
+    setAddMenu(null);
+  }, []);
+  useEffect(() => { if (!props.visible || !canAdd) setAddMenu(null); }, [props.visible, canAdd]);
+  // The ⋯ it opened under left with the head: the menu goes too.
+  useEffect(() => { if (plan.chat === 'bar' && addByButton.current) setAddMenu(null); }, [plan.chat]);
+  // The head's ⋯ → Add a card: the menu opens under the ⋯, right-aligned to it, and gives focus
+  // back to the ⋯ when it closes. The ⋯ itself is no toggle of this menu: a press on it closes
+  // this one (an outside press) and opens the ⋯ menu.
+  const noToggle = useRef<HTMLElement | null>(null);
+  const openAddMenu = useCallback((anchor: HTMLElement) => {
+    const b = anchor.getBoundingClientRect();
+    const r = rootRef.current?.getBoundingClientRect();
+    if (!r) return;
+    addBtnRef.current = anchor;
+    setAddMenu({ x: b.right - r.left - MENU_WIDTH, y: b.bottom - r.top + 4, byButton: true });
+  }, []);
+  // Only the stage's own empty floor: a card, the chat, the agenda, Others and a page keep theirs.
+  const onStageContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !canAdd || drag || full || motion !== 'idle') return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    setAddMenu({ x: e.clientX - r.left, y: e.clientY - r.top, byButton: false });
+  };
+  // A card that landed in Others opens nothing the owner can see: one line says where it went.
+  // Asked of the plan that draws the answer, once the card has come out of the stage's hold.
+  const [opened, setOpened] = useState<{ id: string; groupId: string | null } | null>(null);
+  const [inOthersNote, setInOthersNote] = useState(0);
+  useEffect(() => {
+    if (!opened || !byId.has(opened.id) || stageCues.held.has(opened.id)) return;
+    setOpened(null);
+    // A card in a group is drawn by its group, whether or not this open put it there.
+    const group = opened.groupId ?? state.groups.find((g) => g.cards.includes(opened.id))?.id;
+    if (plan.cards[group ?? opened.id]?.where === 'others') setInOthersNote((n) => n + 1);
+  }, [opened, plan, byId, stageCues.held, state.groups]);
+  useEffect(() => {
+    if (!inOthersNote) return undefined;
+    const timer = setTimeout(() => setInOthersNote(0), ADD_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [inOthersNote]);
+  const openCard = useCallback(async (body: SuperOpenBody) => {
+    if (!props.onOpenCard) return;
+    setOpened(await props.onOpenCard(body));
+  }, [props.onOpenCard]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
   /** Every card of a group at once, in the layout its cards pick (2 compare, 3-4 grid, 5-8
@@ -665,7 +800,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     for (const gid of groupIds) {
       for (const id of groupsById.get(gid)?.cards ?? []) {
         const c = byId.get(id);
-        if (!c || seen.has(id) || c.kind === 'agenda') continue;
+        if (!c || seen.has(id) || c.kind === 'agenda' || c.kind === 'member') continue;
         seen.add(id);
         const live = c.kind === 'chat' && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null);
         if (!live) out.push(c);
@@ -762,7 +897,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // for the super session, notified only when one of them changes (superJobsStore).
   const superId = superSession?.claudeId ?? null;
   const titleKey = Object.keys(state.children).map((sid) => `${sid}=${props.titleFor(sid)}`).join('\u0001');
-  const batchKey = state.ownerBatches.join(',');
+  // A member's requests from main, by item (the live delivery chip's text comes from here).
+  const requestTexts = useMemo(() => {
+    const out: Record<string, { kind: 'request' | 'reply'; text: string }> = {};
+    for (const q of state.queue) {
+      if ((q.kind === 'request' || q.kind === 'reply') && typeof q.text === 'string' && q.text) out[q.id] = { kind: q.kind, text: q.text };
+    }
+    return out;
+  }, [state.queue]);
+  const requestKey = Object.entries(requestTexts).map(([id, r]) => `${id}:${r.kind}:${r.text.length}`).join(',');
+  const batchKey = `${state.ownerBatches.join(',')}|${(state.mainBatches ?? []).join(',')}|${requestKey}`;
   const titleForRef = useRef(props.titleFor);
   titleForRef.current = props.titleFor;
   // Published once the stage has landed, never mid-flight: a change re-renders the centre's
@@ -770,8 +914,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // super session's own chat reads it), so the next hand-over re-renders nothing.
   useEffect(() => {
     if (!superId || motion === 'running') return;
-    publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
-  }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
+    publishSuperEventContext(superId, {
+      ownerBatches: state.ownerBatches,
+      // A member's turns for main Super: "Super için" on its stage, never unread (plan-r10 1).
+      ...(state.mainBatches?.length ? { mainBatches: state.mainBatches } : {}),
+      ...(Object.keys(requestTexts).length ? { requests: requestTexts } : {}),
+      titleFor: (c) => titleForRef.current(c),
+    }, `${batchKey}\u0002${titleKey}`);
+  }, [superId, batchKey, titleKey, state.ownerBatches, state.mainBatches, requestTexts, motion]);
   // The agenda and the question band read the same record and the children's live sessions (0 requests).
   const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name') });
   // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
@@ -791,6 +941,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   if (props.stageShowChild) props.stageShowChild.current = { show: showChild, showCard: actions.onSideBySide, ready: plan.width > 0 && props.visible };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
+    // An AI Team approval: its row on the Super's own approval card.
+    const asked = state.queue.find((q) => q.id === item);
+    if (asked?.kind === 'approval' && asked.member && showMemberApproval(asked.member, rootRef.current ?? document)) return;
     if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
@@ -837,7 +990,46 @@ export function SuperSurface(props: SuperSurfaceProps) {
     : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
   const taskRows = (useOwnerInbox().data ?? []).filter((r) => r.kind.startsWith('task-'));
-  const { bus } = useVault();
+  // What waits for his approval on this Mac (owner 2026-11-06): asked here, on the main Super's
+  // screen, never only on the AI Team page. A member's own stage has its own band.
+  const teamAgents = useAgents({ enabled: !member, pollEveryMs: 15_000 }).data;
+  const teamAutomations = useAutomations({ enabled: !member, pollEveryMs: 15_000 }).data;
+  const approvals = useMemo(() => (member ? [] : superApprovals(teamAgents, teamAutomations)), [member, teamAgents, teamAutomations]);
+  // A member `super team ask` was refused for already has its own Waiting row (the queue's).
+  const agendaApprovals = agendaApprovalRows(approvals, state.queue);
+  // Its row on the card; when the card is not on screen (a presentation's folded chat, a folded
+  // stage), the member's AI Team stage, never a row that does nothing.
+  const showApproval = (key: string) => {
+    if (showApprovalRow(key, rootRef.current ?? document)) return;
+    const it = approvals.find((a) => a.key === key);
+    if (it) requestOpenAgents({ slug: it.member });
+  };
+  // The approval card takes room above the centre chat like a member's top area: the chat is
+  // re-placed when it comes, goes or changes height.
+  // The last decision's answer lives here, not in the card, so deciding the last row still says
+  // what happened where he is looking before the card goes.
+  const [approvalNote, setApprovalNote] = useState('');
+  useEffect(() => {
+    if (!approvalNote) return undefined;
+    const id = window.setTimeout(() => setApprovalNote(''), 4000);
+    return () => window.clearTimeout(id);
+  }, [approvalNote]);
+  const approvalsTop = !member && (approvals.length > 0 || approvalNote !== '');
+  useEffect(() => {
+    slotsChangedRef.current();
+    const el = memberTopRef.current;
+    if (!approvalsTop || !el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h === last) return;
+      last = h;
+      slotsChangedRef.current();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [approvalsTop]);
+  const { bus } = useVaultId();
   const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
     <SuperAgenda
       state={state}
@@ -849,8 +1041,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
       taskRows={taskRows}
+      approvals={agendaApprovals}
+      onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onMoveNote={props.onMoveNote}
+      onDropOwed={props.onDropOwed}
+      extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
   );
   const pillItem = (id: string): OthersItem => {
@@ -866,7 +1062,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
   const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
-  // The live jobs the rail's one column cannot hold, beside a page or a presentation.
+  // The live jobs with no room on the stage: beside a page or a presentation, or beside Others.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
 
   return (
@@ -874,6 +1070,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       ref={rootRef}
       className="super-surface"
       data-testid="super-surface"
+      data-super-id={member ? `m:${member.slug}` : 'main'}
       data-super-motion={motion}
       data-mode={plan.mode}
       data-narrow={plan.narrow ? 'true' : undefined}
@@ -881,6 +1078,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-dragging={drag ? 'true' : undefined}
       data-presenting={plan.mode === 'present' ? 'true' : undefined}
       data-layout={plan.layout ?? undefined}
+      onContextMenu={onStageContextMenu}
     >
       <div ref={underRef} className="super-stage-under" aria-hidden />
       {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
@@ -898,10 +1096,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-clip">
             <SuperCentreHead
               chat={plan.chat}
+              who={member ? <MemberStageHead info={member} spawn={member.spawn} /> : undefined}
               agenda={(
                 <>
                   {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
-                  {plan.phone && othersItems.length > 0 && (
+                  {plan.othersInHead && othersItems.length > 0 && (
                     <OthersButton count={othersItems.length} asking={othersItems.some((i) => i.status === 'asking')} open={openGroup === 'others'} buttonRef={stackRef} onToggle={toggleOthers} />
                   )}
                 </>
@@ -909,10 +1108,33 @@ export function SuperSurface(props: SuperSurfaceProps) {
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
-              actions={plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' ? (
-                <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
-              ) : undefined}
+              onTurnOff={remote ? undefined : props.onTurnOff}
+              // A narrow stage's page or presentation covers the centre: there the side bands' right click opens it.
+              onAdd={canAdd && !(plan.narrow && view.mode !== 'float') ? openAddMenu : undefined}
+              actions={(
+                <>
+                  {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
+                    <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
+                  )}
+                </>
+              )}
             />
+            {approvalsTop && (
+              <div className="super-member-top" ref={memberTopRef} data-testid="super-approvals-top">
+                <SuperApprovalBand items={approvals} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
+              </div>
+            )}
+            {member && (
+              <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
+                {member.task && (
+                  <TaskStrip key={member.task} task={member.task} member={member.slug} onOpenTask={member.onOpenTask} onClose={() => member.onTask(null)} />
+                )}
+                {(member.approval || member.refusal === 'unapproved') && <MemberApprovalBand slug={member.slug} />}
+                {member.refusal && <MemberRefusalLine slug={member.slug} refusal={member.refusal} onRetry={member.onRetry} />}
+                {/* Its routines' open questions, answered here (the Ekip row counts them). */}
+                {member.routineQuestions}
+              </div>
+            )}
             <div className="super-slot" data-super-slot="centre" />
           </div>
           {hot === 'centre' && <div className="super-ask-target" data-testid="super-ask-target" aria-hidden>{t('super.card.askAbout')}</div>}
@@ -925,7 +1147,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
           // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
           const off = !placed || placed.where === 'others' || placed.where === 'tab';
-          const parkedAt = !ghost && off && liveWeb.has(c.id) && isLivePage(c)
+          const parkedAt = !ghost && off && liveWeb.has(c.id)
             ? lastRectRef.current.get(c.id) : undefined;
           const parked = !!parkedAt;
           const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
@@ -970,6 +1192,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onPressResize={ghost ? undefined : onPressResize}
               remote={!!remote}
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
+              member={c.kind === 'member' ? props.member?.card : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
               // A report in the brain is a document, not a site: scaled down it read at 10 px.
               desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !cp.fitted && !c.ref.startsWith('_dream_context/')}
@@ -1060,8 +1283,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && !plan.phone && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      {!plan.phone && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {agendaPill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {!plan.othersInHead && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).
@@ -1100,6 +1323,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
+      {inOthersNote > 0 && <div className="super-add-note" role="status" data-testid="super-add-note" data-note={inOthersNote}>{t('super.add.inOthers')}</div>}
+      {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={noToggle} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
       {full && (
         <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
           <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />

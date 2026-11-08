@@ -2,6 +2,8 @@ import type {
   AgentActivity, AgentFeed, AutomationSummary, FeedMessage, RunAnswer, ThreadEntry, ThreadSummaryRow,
 } from '../../hooks/useAutomations';
 import type { AgentSummary } from '../../hooks/useAgents';
+import type { SuperMemberSummary } from '../../lib/superTypes';
+import type { AgentFace } from '../../../../src/lib/agents/figure.js';
 
 /**
  * THE AI TEAM, as data. Two pure functions and nothing that renders:
@@ -28,7 +30,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt' | 'boardQuestion'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -42,6 +44,8 @@ export interface TeamRow {
   status: TeamStatus;
   /** When `status === 'working'`: the turn's start, epoch ms. */
   workingSince: number | null;
+  /** How many turns of this member are in flight. */
+  workingCount: number;
   /** The last thing said in the conversation, one line; null before anything was. */
   preview: string | null;
   /** The newest message's time, ISO; null before anything was said. */
@@ -64,7 +68,7 @@ export interface TeamRow {
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
  *  automation runs as itself, so its own slug is the agent's. */
-function routineOf(a: TeamAutomation, agentSlug: string): boolean {
+export function routineOf(a: TeamAutomation, agentSlug: string): boolean {
   return a.runKind !== 'agent' && a.mode === 'sched' && (a.agent ?? a.slug) === agentSlug;
 }
 
@@ -137,11 +141,12 @@ export function buildRoster(
     const needs = mine.some((m) => m.question !== null || m.status === 'needs-you')
       || routines.some((r) => r.pendingQuestion !== null);
     const readOnly = agent.readOnly === true;
-    const approval = !readOnly && pendingApprovals(agent, routines).length > 0;
+    const approval = !readOnly && pendingApprovals(agent, routines).some((p) => p.kind !== 'board-scope');
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     // A member whose routines are all off raises no alarm: nothing will run, so nothing waits
     // on the owner. Its pending approval/question stays visible on the AI Team page itself.
-    const status: TeamStatus = since !== null ? 'working'
+    // A question outranks the clock: a run stopped on the owner stays in view beside its siblings.
+    const status: TeamStatus = since !== null ? (needs ? 'needs' : 'working')
       : paused ? 'paused'
         : needs ? 'needs'
           : approval ? 'approval'
@@ -151,7 +156,10 @@ export function buildRoster(
     const jobs = new Set(mine.filter((m) => m.superJob).map((m) => m.runId));
     const liveRuns: Array<string | null> = [];
     for (const s of slugs) {
-      if (working[s]) liveRuns.push(working[s].runId ?? null, ...(working[s].queued ?? []).map((q) => q.runId));
+      if (working[s]) {
+        const runs = working[s].runs?.map((r) => r.runId) ?? [working[s].runId ?? null];
+        liveRuns.push(...runs, ...(working[s].queued ?? []).map((q) => q.runId));
+      }
       else if (slots[s]) liveRuns.push(slots[s].runId);
     }
     const theirs = status === 'working' || status === 'needs';
@@ -171,6 +179,7 @@ export function buildRoster(
       routines,
       status,
       workingSince: since,
+      workingCount: since === null ? 0 : Math.max(1, [...slugs].reduce((n, s) => n + (working[s]?.count ?? (working[s] || slots[s] ? 1 : 0)), 0)),
       preview: last ? previewOf(last) : null,
       // A stage talk leaves no thread entry; the server's fact keeps a member of all projects listed.
       lastAt: [last?.at, agent.lastTalkAt].filter((x): x is string => !!x).sort().pop() ?? null,
@@ -196,15 +205,6 @@ export function buildRoster(
 }
 
 /**
- * WHERE A PICKED TEAMMATE OPENS: its conversation (the stage), where its whole history — every
- * routine run and every talk — is one flow above the composer (AI Team history, 2026-10-27).
- * Only an open routine QUESTION opens the activity, where its answer block lives.
- */
-export function openingView(row: Pick<TeamRow, 'status'>): 'stage' | 'activity' {
-  return row.status === 'needs' ? 'activity' : 'stage';
-}
-
-/**
  * ONE THING WAITING FOR THE OWNER'S APPROVAL ON THIS MAC.
  *
  * Every automation needs a machine-local approval of exactly what it is (its hash): that rule
@@ -217,7 +217,9 @@ export function openingView(row: Pick<TeamRow, 'status'>): 'stage' | 'activity' 
  *  - `routine`: one of its routines will not fire until approved (new here, or changed).
  */
 export type PendingApproval = {
-  kind: 'agent' | 'routine';
+  /** `board-scope`: the one question an older home-board agent owes (should it stay limited to
+   *  its board?). It blocks nothing: the agent works, limited, until it is answered. */
+  kind: 'agent' | 'routine' | 'board-scope';
   slug: string;
   title: string;
   /** Approving this is what lets the owner's next message through. */
@@ -265,7 +267,7 @@ export function amendmentDiff(before: string, after: string): Array<{ added: boo
 /** What waits for approval, in the order it matters: what blocks talking first, then the
  *  routines, then the call target's own runs (boards and tasks). Empty when all is approved. */
 export function pendingApprovals(
-  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason'>,
+  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'boardQuestion'>,
   routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason'>[],
 ): PendingApproval[] {
   // `say` runs the routine that shares the agent's slug when there is one, else the call target.
@@ -283,6 +285,10 @@ export function pendingApprovals(
     if (!r.approved) {
       out.push({ kind: 'routine', slug: r.slug, title: r.title, reason: r.approvalReason, blocksTalk: r.slug === agent.slug });
     }
+  }
+  // Asked only once it is approved as it stands: an approval card comes first.
+  if (agent.boardQuestion && agent.approvedToRun) {
+    out.push({ kind: 'board-scope', slug: agent.slug, title: agent.title, reason: null, blocksTalk: false });
   }
   return out.sort((x, y) => Number(y.blocksTalk) - Number(x.blocksTalk));
 }
@@ -306,7 +312,7 @@ export type ConversationItem =
   | { kind: 'ran'; key: string; title: string; at: string; durationMs: number | null; failed: boolean }
   /** Something the system recorded in the thread, said as an event ("Routine created · …"). */
   | { kind: 'event'; key: string; text: string; at: string; tone: 'good' | 'neutral' }
-  | { kind: 'you'; key: string; text: string; at: string }
+  | { kind: 'you'; key: string; text: string; at: string; app?: string }
   | {
     kind: 'agent';
     key: string;
@@ -360,7 +366,7 @@ export function buildConversation(
     const thread = threads[m.key];
     const startAt = m.ask?.at ?? m.at;
     day(startAt);
-    if (m.ask) out.push({ kind: 'you', key: `${m.key}:ask`, text: m.ask.text, at: m.ask.at });
+    if (m.ask) out.push({ kind: 'you', key: `${m.key}:ask`, text: m.ask.text, at: m.ask.at, ...(m.ask.app ? { app: m.ask.app } : {}) });
     else if (m.status !== 'skipped') {
       out.push({
         kind: 'ran',
@@ -412,7 +418,7 @@ export function buildConversation(
       for (const e of rest) {
         if (e.kind === 'user') {
           day(e.at);
-          out.push({ kind: 'you', key: `${m.key}:${e.id}`, text: e.text, at: e.at });
+          out.push({ kind: 'you', key: `${m.key}:${e.id}`, text: e.text, at: e.at, ...(e.via === 'app' && e.app ? { app: e.app } : {}) });
         } else if (e.kind === 'agent') {
           day(e.at);
           out.push({
@@ -577,4 +583,263 @@ export function overrideFor(
   if (pick.model && pick.model !== (agentDefault.model ?? '')) out.model = pick.model;
   if (pick.effort && pick.effort !== (agentDefault.effort ?? '')) out.effort = pick.effort;
   return out;
+}
+
+/** A working row's line: the clock, with how many jobs when there is more than one. */
+export function workingLine(row: Pick<TeamRow, 'workingCount'>, time: string, t: (key: string) => string): string {
+  return row.workingCount > 1
+    ? t('aiteam.workingMany').replace('{n}', String(row.workingCount)).replace('{time}', time)
+    : t('aiteam.working').replace('{time}', time);
+}
+
+// ── The Ekip row (plan-r10 1d, 1f) ──────────────────────────────────────────────────
+
+/** One member as `GET /agent/sessions?summary=1` `members` names it (MIRROR of
+ *  `SuperMemberSummary`, `lib/superTypes.ts`). Its `pending` (request and reply items still
+ *  waiting for delivery) is MAIN's work, never the owner's: nothing here reads it (AC45; it is
+ *  only the stage's spawn signal for a cold member). */
+export type EkipSummary = SuperMemberSummary & { pending?: number };
+
+/** Who a member is, from `GET /agents`: what the summary does not carry. */
+export interface EkipIdentity {
+  slug: string;
+  title: string;
+  hasPhoto: boolean;
+  global?: boolean;
+  /** The figure the owner picked for it (drawn when it has no photo). */
+  face?: AgentFace | null;
+}
+
+/** One member of a project's Ekip list, everything its row draws. */
+export interface EkipMember {
+  slug: string;
+  title: string;
+  hasPhoto: boolean;
+  /** Its picked figure; absent draws the bare hash of its slug. */
+  face?: AgentFace | null;
+  global: boolean;
+  enabled: boolean;
+  /** Owner-origin work running now (its children at work for the owner). */
+  ownerWorking: number;
+  /** A question waits on the owner. */
+  asking: boolean;
+  /** One approval card waits on the owner (a synced or widening change). */
+  approval: boolean;
+  /** Owner-origin turns the owner has not read. */
+  unread: number;
+  /** Everything it does now is the Super Agent's (`main:*`): listed with "Super için", no count. */
+  superOnly: boolean;
+  /** Epoch ms of its last work here; 0 never. */
+  lastAt: number;
+  /** The open question's words when the read knows them (a headless routine's), else null. */
+  question: string | null;
+}
+
+/** The drawer's headless rows (`teamRowsOf`) a project may still carry: in-flight headless
+ *  `team` jobs (Super's, before the member Super takes the request) and routine questions. */
+export interface EkipHeadless {
+  slug: string;
+  status: TeamStatus;
+  /** Only the Super's jobs make it busy. */
+  superOnly?: boolean;
+  preview?: string | null;
+}
+
+/** Does this member want the owner (a question, an approval card, unread, or work of his)? */
+export function ownerFacing(m: Pick<EkipMember, 'asking' | 'approval' | 'unread' | 'ownerWorking' | 'superOnly'>): boolean {
+  if (m.approval) return true;
+  if (m.superOnly) return false;
+  return m.asking || m.unread > 0 || m.ownerWorking > 0;
+}
+
+/** Which part of the list a member sits in: 0 owner-facing, 1 "Super için", 2 idle, 3 off. */
+export function ekipRank(m: EkipMember): number {
+  if (!m.enabled) return 3;
+  if (ownerFacing(m)) return 0;
+  if (m.superOnly) return 1;
+  return 2;
+}
+
+/**
+ * A project's members, in the list's order: owner-facing first (a question or an approval card
+ * before unread, unread before work), then "Super için", then idle, then off; within a part the
+ * newest work first, then by name. Built from the summary's `members` (the server counts
+ * owner and routine work only); the identity read adds the name and face; a headless row adds
+ * an in-flight headless job (working for the Super) or a routine's open question.
+ */
+export function buildEkip(
+  summaries: readonly EkipSummary[] | null | undefined,
+  identities: readonly EkipIdentity[] | null | undefined,
+  headless: readonly EkipHeadless[] = [],
+): EkipMember[] {
+  const who = new Map((identities ?? []).map((a) => [a.slug, a] as const));
+  const old = new Map(headless.map((h) => [h.slug, h] as const));
+  const out = (summaries ?? []).map((s): EkipMember => {
+    const id = who.get(s.slug);
+    const h = old.get(s.slug);
+    // A headless routine's question is the owner's; a headless team job is the Super's.
+    const headlessAsk = !!h && h.status === 'needs' && !h.superOnly;
+    const headlessSuper = !!h && !!h.superOnly && (h.status === 'working' || h.status === 'needs');
+    const asking = s.asking || headlessAsk;
+    const ownerWorking = Math.max(0, s.ownerWorking | 0);
+    const unread = Math.max(0, s.unread | 0);
+    // "Super için" only when nothing of the owner's is there.
+    // `pending` is main's requests and replies: it never makes a member the owner's.
+    const superOnly = (s.superOnly || headlessSuper) && !asking && unread === 0 && ownerWorking === 0;
+    return {
+      slug: s.slug,
+      title: id?.title || s.slug,
+      hasPhoto: !!id?.hasPhoto,
+      ...(id?.face ? { face: id.face } : {}),
+      global: s.global === true || id?.global === true,
+      enabled: s.enabled !== false,
+      ownerWorking,
+      asking,
+      approval: s.approval === true || h?.status === 'approval',
+      unread,
+      superOnly,
+      lastAt: typeof s.lastAt === 'number' && Number.isFinite(s.lastAt) ? s.lastAt : 0,
+      question: headlessAsk ? (h?.preview ?? null) : null,
+    };
+  });
+  const sub = (m: EkipMember) => (m.asking || m.approval ? 0 : m.unread > 0 ? 1 : 2);
+  return out.sort((a, b) => ekipRank(a) - ekipRank(b) || (ekipRank(a) === 0 ? sub(a) - sub(b) : 0)
+    || b.lastAt - a.lastAt || a.title.localeCompare(b.title));
+}
+
+/** The Ekip row's ONE number: owner-facing questions + owner-origin unread + approval cards.
+ *  A "Super için" member counts nothing (only its approval card, which is the owner's). */
+export function ekipCount(members: readonly EkipMember[]): number {
+  let n = 0;
+  for (const m of members) {
+    if (m.approval) n += 1;
+    if (m.superOnly || !m.enabled) continue;
+    if (m.asking) n += 1;
+    n += m.unread;
+  }
+  return n;
+}
+
+/** The row wears the question colour: a question or an approval card waits on the owner. */
+export function ekipAsking(members: readonly EkipMember[]): boolean {
+  return members.some((m) => m.approval || (m.asking && !m.superOnly && m.enabled));
+}
+
+/** Up to three faces, the ones at work first (for the owner, then for the Super), then the
+ *  list's order. */
+export function ekipFaces(members: readonly EkipMember[], max = 3): EkipMember[] {
+  const working = (m: EkipMember) => m.enabled && (m.ownerWorking > 0 || m.superOnly);
+  return [...members.filter(working), ...members.filter((m) => !working(m))].slice(0, max);
+}
+
+/**
+ * Who pops out under the folded Team row (plan r4 D4): a member with an approval card, a question
+ * or unread for the owner (enabled, not "Super için"), in the list's order, at most `max`; `more`
+ * = the rest, drawn as "+N daha". Working alone does not pop out: the row's ring says it.
+ */
+export function ekipPopOuts(members: readonly EkipMember[], max = 3): { shown: EkipMember[]; more: number } {
+  const news = members.filter((m) => m.approval || (m.enabled && !m.superOnly && (m.asking || m.unread > 0)));
+  return { shown: news.slice(0, max), more: Math.max(0, news.length - max) };
+}
+
+/** How many members work for the owner right now (the folded row's ring). */
+export function ekipWorkingCount(members: readonly EkipMember[]): number {
+  return members.filter((m) => m.enabled && !m.superOnly && m.ownerWorking > 0).length;
+}
+
+/** A project's own members (a member of all projects is in the Global ekip row instead). */
+export function projectEkip(members: readonly EkipMember[]): EkipMember[] {
+  return members.filter((m) => !m.global);
+}
+
+/** One member of the Global ekip list: its state summed over the open projects, and the project
+ *  a click opens it in. */
+export interface GlobalEkipMember extends EkipMember {
+  /** The project of its newest owner-facing item, or null when nothing faces the owner. */
+  project: string | null;
+  /** Where a click opens its stage (`globalOpenVault`). */
+  openIn: string | null;
+}
+
+/**
+ * Where a global member opens (plan-r10 1f): the project of its newest owner-facing item, else
+ * the project in view, else the project it last worked in, else the first open project.
+ */
+export function globalOpenVault(
+  slug: string,
+  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
+  inView: string | null,
+): { project: string | null; openIn: string | null } {
+  const mine = perProject.flatMap((p) => p.members.filter((m) => m.slug === slug).map((m) => ({ vault: p.vault, m })));
+  const facing = mine.filter((x) => ownerFacing(x.m) && x.m.enabled).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
+  if (facing) return { project: facing.vault, openIn: facing.vault };
+  if (inView && perProject.some((p) => p.vault === inView)) return { project: null, openIn: inView };
+  const last = mine.filter((x) => x.m.lastAt > 0).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
+  if (last) return { project: null, openIn: last.vault };
+  return { project: null, openIn: perProject[0]?.vault ?? inView ?? null };
+}
+
+/**
+ * The Global ekip row: each global member ONCE, its questions and unread summed over the open
+ * projects, its approval card counted once (one machine-wide bucket), enabled when its global
+ * manifest is (the same in every project), in the list's order.
+ */
+export function buildGlobalEkip(
+  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
+  inView: string | null,
+): GlobalEkipMember[] {
+  const by = new Map<string, EkipMember>();
+  for (const p of perProject) {
+    for (const m of p.members) {
+      if (!m.global) continue;
+      const had = by.get(m.slug);
+      if (!had) { by.set(m.slug, { ...m }); continue; }
+      by.set(m.slug, {
+        ...had,
+        title: had.title === had.slug ? m.title : had.title,
+        hasPhoto: had.hasPhoto || m.hasPhoto,
+        face: had.face ?? m.face,
+        enabled: had.enabled && m.enabled,
+        ownerWorking: had.ownerWorking + m.ownerWorking,
+        asking: had.asking || m.asking,
+        approval: had.approval || m.approval,
+        unread: had.unread + m.unread,
+        superOnly: had.superOnly && m.superOnly,
+        lastAt: Math.max(had.lastAt, m.lastAt),
+        question: had.question ?? m.question,
+      });
+    }
+  }
+  const rows = [...by.values()].map((m): GlobalEkipMember => {
+    // "Super için" holds only when no project has the owner's work for it.
+    const superOnly = m.superOnly && !m.asking && m.unread === 0 && m.ownerWorking === 0;
+    return { ...m, superOnly, ...globalOpenVault(m.slug, perProject, inView) };
+  });
+  const sub = (m: EkipMember) => (m.asking || m.approval ? 0 : m.unread > 0 ? 1 : 2);
+  return rows.sort((a, b) => ekipRank(a) - ekipRank(b) || (ekipRank(a) === 0 ? sub(a) - sub(b) : 0)
+    || b.lastAt - a.lastAt || a.title.localeCompare(b.title));
+}
+
+/** The one line under a member's name in the Ekip list (r8-06), as an i18n key and its fields. */
+export type EkipLine =
+  | { key: 'drawer.team.question'; text: string }
+  | { key: 'drawer.member.working'; n: number; q: number }
+  | { key: 'drawer.team.superWorking' }
+  | { key: 'drawer.team.off' }
+  | { key: 'drawer.member.idle'; when: number };
+
+export function ekipLine(m: EkipMember): EkipLine {
+  if (!m.enabled) return { key: 'drawer.team.off' };
+  if (m.asking && m.question) return { key: 'drawer.team.question', text: m.question };
+  // No owner-origin queue count exists (the summary's `pending` is main's): the "sırada" half is
+  // left out (q 0), never filled from main's requests.
+  if (!m.superOnly && m.ownerWorking > 0) return { key: 'drawer.member.working', n: m.ownerWorking, q: 0 };
+  if (m.superOnly) return { key: 'drawer.team.superWorking' };
+  return { key: 'drawer.member.idle', when: m.lastAt };
+}
+
+/** The switch: `POST /api/agents/:slug/enabled` (the owner page only; a global member's writes
+ *  its global manifest, so it is off in every project). */
+export function setMemberEnabled(api: { post<T>(path: string, body: unknown): Promise<T> }, slug: string, enabled: boolean): Promise<unknown> {
+  return api.post<unknown>(`/agents/${encodeURIComponent(slug)}/enabled`, { enabled });
 }

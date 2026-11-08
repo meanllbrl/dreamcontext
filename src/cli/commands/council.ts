@@ -42,6 +42,7 @@ import {
   VerdictsFile,
 } from '../../lib/council.js';
 import { renderChamberBoard, shiftMarker } from '../../lib/council-board.js';
+import { agentSessionId } from '../../lib/session-id.js';
 
 const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
 
@@ -1350,7 +1351,7 @@ function registerDemoLive(council: Command): void {
         const state: CouncilLiveState = {
           debate: 'council_demo',
           topic: 'Should we drop ClickUp sync?',
-          session: process.env.CLAUDE_CODE_SESSION_ID ?? '',
+          session: agentSessionId() ?? '',
           started: now,
           updated: now,
           phase,

@@ -7,12 +7,13 @@
  * order: a check only ever depends on checks listed before it.
  */
 
-export const CHECK_IDS = ['network', 'node', 'npm', 'cli', 'claude', 'claude-auth', 'git', 'github', 'gh', 'terminal'] as const;
+export const CHECK_IDS = ['network', 'node', 'npm', 'cli', 'claude', 'claude-auth', 'codex', 'codex-auth', 'git', 'github', 'gh', 'terminal'] as const;
 export type CheckId = typeof CHECK_IDS[number];
 
 export const FIX_IDS = [
   'node-shell-path', 'cli-install', 'cli-shell-path', 'claude-install', 'claude-path', 'claude-signin',
-  'git-install', 'gh-install', 'github-signin', 'gh-signin', 'pty-install',
+  'codex-install', 'codex-update', 'codex-signin', 'git-install', 'gh-install', 'github-signin', 'gh-signin', 'pty-install',
+  'antigravity-install', 'antigravity-signin',
 ] as const;
 export type FixId = typeof FIX_IDS[number];
 
@@ -21,7 +22,7 @@ export type CheckScope = 'machine' | 'agent';
 export type CheckStatus = 'ok' | 'missing' | 'needs-action' | 'blocked' | 'unknown' | 'unsupported';
 export type ReasonCode =
   | 'not-installed' | 'too-old' | 'not-on-path' | 'signed-out' | 'unverifiable' | 'offline' | 'needs-dialog'
-  | 'no-npm' | 'desktop-only' | 'platform' | 'symlink' | 'unsafe-path';
+  | 'no-npm' | 'desktop-only' | 'platform' | 'symlink' | 'unsafe-path' | 'wont-start' | 'needs-node';
 export type FixKind = 'auto' | 'browser' | 'device-code' | 'system-dialog' | 'manual';
 export type Surface = 'desktop' | 'browser' | 'cli';
 
@@ -103,11 +104,26 @@ export interface ExtraFacts {
   cliBinOffPath: string | null;
   /** `null` = not probed (no Claude here yet): the sign-in reads as still to do. */
   claudeAuth: { loggedIn: boolean | null; email?: string } | null;
+  /** Absent = not probed: both Codex rows read as unknown. */
+  codex?: CodexFacts;
   /** `null` = could not tell (gh missing, or offline). */
   ghAuthed: boolean | null;
   github: { connected: boolean; needsReconnect: boolean; login: string | null };
   /** `null` = not probed (not the desktop surface). */
   ptyPresent: boolean | null;
+}
+
+/** What Codex itself answered, in the environment a child of this process gets. */
+export interface CodexFacts {
+  bin: string | null;
+  runs: boolean;
+  version: string | null;
+  /** Older than dreamcontext was run against, or a managed install behind the pin. */
+  outdated: boolean;
+  /** A Node at the bridge floor exists here. */
+  nodeOk: boolean;
+  /** `null` = could not ask. */
+  signedIn: boolean | null;
 }
 
 export interface ProbeRunner {
@@ -155,6 +171,10 @@ export const CHECK_TIERS: Readonly<Record<CheckId, CheckTier>> = {
   cli: 'required',
   claude: 'required',
   'claude-auth': 'required',
+  // Optional (owner 2026-11-03): nothing needs Codex. "Set everything up" never installs it or
+  // asks for its sign-in, the "N left" count skips it, and its row offers its own button only.
+  codex: 'optional',
+  'codex-auth': 'optional',
   git: 'recommended',
   github: 'recommended',
   gh: 'recommended',
@@ -168,6 +188,8 @@ export const CHECK_DEPS: Readonly<Record<CheckId, readonly CheckId[]>> = {
   cli: ['npm', 'network'],
   claude: ['network'],
   'claude-auth': ['claude', 'network'],
+  codex: ['npm', 'network'],
+  'codex-auth': ['codex', 'network'],
   git: ['network'],
   github: ['network'],
   gh: ['network'],
@@ -181,6 +203,8 @@ export const CHECK_SCOPES: Readonly<Record<CheckId, readonly CheckScope[]>> = {
   cli: ['machine'],
   claude: ['machine', 'agent'],
   'claude-auth': ['machine', 'agent'],
+  codex: ['machine'],
+  'codex-auth': ['machine'],
   git: ['machine'],
   github: ['machine'],
   gh: ['machine'],

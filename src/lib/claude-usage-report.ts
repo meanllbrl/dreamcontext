@@ -195,7 +195,13 @@ export function parseUsageReport(text: string, now: number = Date.now()): UsageL
   const limits: UsageLimitWire[] = [];
   if (session) limits.push(toWire('session', session));
   if (weekly) limits.push(toWire('weekly', weekly));
-  return limits.length > 0 ? { limits, fetchedAtMs: now } : null;
+  if (limits.length === 0) return null;
+  // A report that states the week and says nothing about a session at all: the account has no
+  // 5-hour window (measured 2026-11-03: an idle Team account still prints "Current session: 0%
+  // used"; the account whose profile says "Ultra" prints only the week). Any line naming a
+  // session, even one we cannot parse, keeps the window "unknown" instead.
+  const noSession = !session && weekly !== null && !/\bsession\b/i.test(text.replace(/sessions on this machine/gi, ''));
+  return noSession ? { limits, fetchedAtMs: now, noSessionWindow: true } : { limits, fetchedAtMs: now };
 }
 
 /**
@@ -234,6 +240,7 @@ export function withLockedReasons(
   if (locks.size === 0) return live;
   return {
     fetchedAtMs: live.fetchedAtMs,
+    ...(live.noSessionWindow ? { noSessionWindow: true as const } : {}),
     limits: live.limits.map((l) => {
       const locked = locks.get(l.key);
       return locked ? { ...l, lockedReason: locked } : l;

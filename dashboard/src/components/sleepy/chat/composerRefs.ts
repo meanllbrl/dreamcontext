@@ -377,7 +377,7 @@ export interface PasteResult {
   restore: Attachment[];
   /** Ids of staged refs to flash: a pasted copy of a chip already in the box became text. */
   flash: string[];
-  /** A pasted chip would have made more than MAX_MESSAGE_REFS: it became text, the notice shows. */
+  /** A pasted chip would have passed the hidden MAX_MESSAGE_REFS ceiling: it became text (no notice). */
   max: boolean;
 }
 
@@ -386,7 +386,7 @@ export interface PasteResult {
  * id and label name a ref staged in, or in `recent` for, this conversation; (b) that id is not
  * in the draft outside the replaced range `[selStart, selEnd)`, nor earlier in this paste;
  * (c) no other staged ref outside that range names the same target; (d) the chip count after
- * the paste is at most MAX_MESSAGE_REFS (About chips only: pictures have their own cap). Evaluated
+ * the paste is at most the hidden MAX_MESSAGE_REFS ceiling (About chips only: pictures have their own cap). Evaluated
  * token by token, in order.
  */
 export function sanitizePaste(

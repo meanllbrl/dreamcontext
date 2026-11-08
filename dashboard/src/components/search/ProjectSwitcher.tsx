@@ -7,6 +7,7 @@ import { goToProject, openLauncherHome, openVaultWindow } from '../../lib/deskto
 import { useChrome } from '../layout/WindowChrome';
 import { CommandModal, useListKeyboardNav } from './CommandModal';
 import { VaultDot } from '../layout/VaultDot';
+import { markProjectSwitch } from '../../lib/projectSwitchPage';
 import './ProjectSwitcher.css';
 
 /**
@@ -112,6 +113,7 @@ export function ProjectSwitcher() {
       return;
     }
 
+    markProjectSwitch(v.name);
     void chrome.addTab(v.name).then((result) => {
       if (result === 'refused-ceiling') {
         // Every open project has a live session, so a new tab would have to evict
@@ -203,6 +205,7 @@ export function ProjectSwitcher() {
           const target = chrome.open[idx];
           if (!target) return;
           e.preventDefault();
+          markProjectSwitch(target.vault);
           chrome.activate(target.vault);
         }
       }

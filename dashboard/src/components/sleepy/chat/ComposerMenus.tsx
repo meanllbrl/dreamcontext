@@ -1,3 +1,6 @@
+import type { ChatTool } from '../../../lib/chatToolBinding';
+import type { PickerToolState } from './model-picker/pickerModel';
+import { requestOpenStats } from '../../../lib/openStats';
 import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
@@ -315,6 +318,17 @@ function ModelRow({
   );
 }
 
+/** What the r29 picker draws for an ordinary chat (Track T W4): every tool's models, and how to
+ *  open a chat on another tool. Absent = the plain menu below (AI Team, Super Agent). */
+export interface ToolPick {
+  current: ChatTool;
+  tools: PickerToolState[];
+  onPick: (tool: ChatTool, model: string) => void;
+  /** This chat cannot change tool (the Super Agent, an agent's chat): the other tools stay on
+   *  view, unpickable, with this line and a way to a new chat there. */
+  lock?: { note: string; openLabel: string };
+}
+
 export function ModelMenu({
   config, model, effort, onModelChange, onEffortChange, onSetDefault, savedDefault, close,
   head, foot, defaultId, defaultLine,
@@ -436,9 +450,15 @@ export interface AccountOption {
   email: string;
   organizationName: string;
   preferred: boolean;
-  state: 'ok' | 'needs-relogin';
+  state: 'ok' | 'needs-relogin' | 'other-account';
+  /** On `other-account`: whose credential its folder holds now. */
+  signedInAs?: string;
   /** 0-100, or null when nothing is cached for this account yet. */
   sessionPercent: number | null;
+  /** The account has no 5-hour window (its usage data says so): the row shows the week. */
+  noSessionWindow?: boolean;
+  /** 0-100, read only when `noSessionWindow`. */
+  weeklyPercent?: number | null;
 }
 
 export function UsageMenu({
@@ -614,16 +634,22 @@ export function UsageMenu({
           </div>
         )}
 
+        <button type="button" className="chat-cmp-usagedetails" onClick={requestOpenStats} data-testid="usage-details">Usage details ›</button>
+
         {accounts.length > 1 && (() => {
           const active = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
           const row = (a: AccountOption, isActive: boolean) => {
             const broken = a.state === 'needs-relogin';
-            const tight = a.sessionPercent !== null && a.sessionPercent >= CONTEXT_TIGHT_PCT;
+            // Its folder is signed in as SOMEONE ELSE: a chat there bills that other account.
+            const elsewhere = a.state === 'other-account';
+            // No 5-hour window on this account: the week is the only limit, so it is the number.
+            const shown = a.noSessionWindow ? (a.weeklyPercent ?? null) : a.sessionPercent;
+            const tight = shown !== null && shown >= CONTEXT_TIGHT_PCT;
             return (
               <span className="chat-cmp-acct-line">
                 <span className="chat-cmp-acct-name">{a.email || a.id}</span>
-                <span className="chat-cmp-acct-meta" data-warn={broken ? '' : undefined} data-tight={tight ? '' : undefined}>
-                  {broken ? 'sign in again' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                <span className="chat-cmp-acct-meta" data-warn={broken || elsewhere ? '' : undefined} data-tight={tight ? '' : undefined}>
+                  {broken ? 'sign in again' : elsewhere ? 'other account' : shown === null ? '—' : `${Math.round(shown)}%${a.noSessionWindow ? ' weekly' : ''}`}
                 </span>
                 {isActive && <span className="chat-cmp-acct-caret" aria-hidden>▾</span>}
               </span>
@@ -658,9 +684,11 @@ export function UsageMenu({
                       role="menuitemradio"
                       aria-checked={false}
                       className="chat-cmp-acct"
-                      disabled={!onAccountChange || a.state === 'needs-relogin'}
+                      disabled={!onAccountChange || a.state === 'needs-relogin' || a.state === 'other-account'}
                       title={a.state === 'needs-relogin'
                         ? `${a.email || a.id} — signed out, sign in again from Settings`
+                        : a.state === 'other-account'
+                          ? `${a.email || a.id} — its folder is signed in as ${a.signedInAs || 'a different account'}, so a chat there would bill that account`
                         : `${a.organizationName || a.email || a.id}${a.preferred ? ' · preferred account' : ''}`}
                       onClick={() => { setAcctOpen(false); onAccountChange?.(a.id); }}
                     >

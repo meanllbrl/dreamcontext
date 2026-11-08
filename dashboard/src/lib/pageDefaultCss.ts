@@ -12,7 +12,9 @@
  * Plain CSS text after the kit: the sandbox grant and the CSP do not move.
  *
  * Bare elements sit at zero specificity (`:where`), so a `dc-` class always beats them. The
- * tokens are the ones the host resolves into the frame (CHAT_KIT_TOKENS).
+ * tokens are the ones the host resolves into the frame (CHAT_KIT_TOKENS). The kit's own drawn
+ * svg is left out of the responsive default: the graph engine sizes it by its attributes, and
+ * `height: auto` (any CSS beats an svg attribute) took it to 0px, so no arrow showed.
  *
  * No React, no CSS imports: importable by root vitest with a `.js` specifier.
  */
@@ -61,7 +63,7 @@ ${ANY} :where(ul, ol) { padding-inline-start: 1.5em; }
 ${ANY} :where(li + li) { margin-top: var(--space-1); }
 ${ANY} :where(li > ul, li > ol) { margin: var(--space-1) 0 0; }
 ${ANY} :where(a) { color: var(--color-accent); }
-${ANY} :where(img, svg, video) { max-width: 100%; height: auto; }
+${ANY} :where(img, svg:not(.dc-graph-svg), video) { max-width: 100%; height: auto; }
 ${ANY} :where(hr) { margin: var(--space-6) 0; border: 0; border-top: 1px solid var(--color-border); }
 ${ANY} :where(blockquote) {
   padding-inline-start: var(--space-3);

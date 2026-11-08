@@ -11,7 +11,7 @@ import {
 } from './sleep-consolidation.js';
 import { effectiveDebt } from './sleep-consolidation.js';
 import {
-  readSetupConfig, readBrainLocal, isSleepSpecialist, type BrainLocalState,
+  readSetupConfig, readBrainLocal, isSleepSpecialist, effectiveSpecialist, type BrainLocalState,
 } from './setup-config.js';
 import { resolveMaxNewTasksPerCycle } from './sleep-settings.js';
 import { readManifest } from './manifest.js';
@@ -200,7 +200,7 @@ export function currentAutoSleepFingerprint(projectRoot: string): string {
         specialists[name] = RETIRED_FINGERPRINT_ENTRY;
         continue;
       }
-      const override = config?.sleep?.specialists?.[name] ?? {};
+      const override = effectiveSpecialist(config?.sleep, name) ?? {};
       const relPath = `.claude/agents/${name}.md`;
       const installedPath = join(projectRoot, relPath);
       // 'none' when the file is ours as installed; the canonical hash when a

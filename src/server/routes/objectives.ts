@@ -47,6 +47,9 @@ function toPublicObjective(o: Objective) {
     feature: o.feature,
     impact: o.impact,
     effort: o.effort,
+    reach: o.reach,
+    confidence: o.confidence,
+    score: o.score,
     status: o.status,
     metric: o.metric,
     created_at: o.created_at,
@@ -168,6 +171,8 @@ export async function handleObjectivesCreate(
     feature: typeof body.feature === 'string' && body.feature.trim() ? body.feature.trim() : null,
     impact: numOrNull(body.impact),
     effort: numOrNull(body.effort),
+    reach: numOrNull(body.reach),
+    confidence: numOrNull(body.confidence),
     metric: metric.present ? (metric.value ?? null) : null,
     why: typeof body.why === 'string' ? body.why : undefined,
   };
@@ -219,6 +224,8 @@ export async function handleObjectivesUpdate(
   if (target.present) patch.target_date = target.value;
   if ('impact' in body) patch.impact = numOrNull(body.impact);
   if ('effort' in body) patch.effort = numOrNull(body.effort);
+  if ('reach' in body) patch.reach = numOrNull(body.reach);
+  if ('confidence' in body) patch.confidence = numOrNull(body.confidence);
   if ('feature' in body) patch.feature = typeof body.feature === 'string' && body.feature.trim() ? body.feature.trim() : null;
   if ('status' in body) patch.status = body.status === null ? null : (String(body.status) as UpdateObjectiveInput['status']);
   const metric = readMetric(body);

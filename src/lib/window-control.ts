@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { SuperId } from './super/types.js';
+import { HUB_VERBS, type HubResult, type HubVerb } from './telegram/contract.js';
 
 /**
  * Window control: how a chat's own agent drives the chat surface it is drawn in — open a
@@ -35,6 +37,9 @@ export interface WindowChannel {
   contextRoot?: string;
   sessionId?: string;
   mode?: string;
+  /** Which super a `super`-mode chat speaks for (plan-r10 1): the project's own (`main`) or an AI
+   *  Team member's (`m:<slug>`). Absent = `main`. The verb routes read the record by it. */
+  superId?: SuperId;
 }
 
 /** What a token says about its chat — never the `send` function. */
@@ -43,10 +48,12 @@ export interface WindowIdentity {
   contextRoot: string;
   sessionId: string;
   mode: string;
+  /** Always set: `main` when the channel named none. */
+  superId: SuperId;
 }
 
 /** Which frame a command travels as, and which result frame may settle it. */
-export type CommandSubtype = 'window_command' | 'super_command';
+export type CommandSubtype = 'window_command' | 'super_command' | 'hub_command';
 
 interface Pending {
   token: string;
@@ -115,7 +122,7 @@ function settle(id: string, r: WindowResult): boolean {
 export function identityOf(token: string): WindowIdentity | null {
   const c = channels.get(token);
   if (!c || !c.vault || !c.contextRoot || !c.sessionId || !c.mode) return null;
-  return { vault: c.vault, contextRoot: c.contextRoot, sessionId: c.sessionId, mode: c.mode };
+  return { vault: c.vault, contextRoot: c.contextRoot, sessionId: c.sessionId, mode: c.mode, superId: c.superId ?? 'main' };
 }
 
 /** The live token of the chat with pin id `sessionId`, or null. The server uses it to push a
@@ -163,9 +170,35 @@ function sendCommand(
     timer.unref?.();
     const p: Pending = { token, subtype, resolve, timer, sent: false, ...(channel.sessionId ? { sessionId: channel.sessionId } : {}) };
     pending.set(id, p);
-    if (channel.send({ subtype, id, verb, args })) p.sent = true;
+    // A member Super's verb names its super (plan-r10 1); main's frame stays exactly as before.
+    const superId = subtype === 'super_command' && channel.superId && channel.superId !== 'main' ? { superId: channel.superId } : {};
+    if (channel.send({ subtype, id, verb, args, ...superId })) p.sent = true;
     else settle(id, noWindow(subtype, false));
   });
+}
+
+/**
+ * A verb only the Telegram hub sends (A2, B3): `answer_pending`, `render_card`, `run_report`,
+ * `super_handover`, `interrupt`. Its own frame subtype and result frame, server-internal (no
+ * HTTP surface; never in `WINDOW_VERBS`), by token (`superTokenOfSession` / `tokenOfSession`),
+ * never by root. A verb outside the pinned set is refused before anything is sent.
+ */
+export async function sendHubCommand(
+  token: string,
+  verb: HubVerb,
+  args: Record<string, unknown>,
+  opts: { timeoutMs?: number } = {},
+): Promise<HubResult> {
+  if (!HUB_VERBS.includes(verb)) return { ok: false, error: 'unknown_verb' };
+  const r = await sendCommand('hub_command', token, verb, args, opts);
+  if (!r.ok) return { ok: false, error: r.error, ...(r.sent !== undefined ? { sent: r.sent } : {}) };
+  const res = r.result;
+  return res && typeof res === 'object' && !Array.isArray(res) ? { ok: true, ...(res as Record<string, unknown>) } : { ok: true, result: res };
+}
+
+/** The window's `hub_command_result`, accepted only from the socket the command went to. */
+export function deliverHubResult(token: string, id: unknown, result: HubResult): boolean {
+  return deliver('hub_command', token, id, result.ok ? { ok: true, result } : { ok: false, error: String(result.error ?? 'failed').slice(0, 300) });
 }
 
 /** Send one verb down the token's chat socket and wait for the window's answer. */

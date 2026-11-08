@@ -37,9 +37,12 @@ import {
 // `buildSegments`. Imported rather than re-typed: the rule has one home.
 import { LINK_DEF_RE } from '../../../lib/markdownBlocks';
 
-export type ChatActionKind = 'task' | 'knowledge' | 'core' | 'file' | 'board' | 'reveal' | 'ask' | 'url' | 'develop';
+export type ChatActionKind = 'task' | 'knowledge' | 'core' | 'file' | 'board' | 'reveal' | 'ask' | 'url' | 'develop' | 'app-install';
 
-const ACTION_KINDS = new Set<string>(['task', 'knowledge', 'core', 'file', 'board', 'reveal', 'ask', 'url', 'develop']);
+const ACTION_KINDS = new Set<string>(['task', 'knowledge', 'core', 'file', 'board', 'reveal', 'ask', 'url', 'develop', 'app-install']);
+
+/** A GitHub `owner/name`, the only payload an `app-install` button carries (catalog.ts's rule). */
+export const APP_REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 export interface ChatAction {
   label: string;
@@ -55,6 +58,8 @@ export interface ChatAction {
   text?: string;
   /** External URL to hand to the OS browser — `url`. `https:` only. */
   url?: string;
+  /** `owner/name` — `app-install`: opens the Apps page's install sheet, never installs. */
+  repo?: string;
 }
 
 /** One rendered block, in the order the answer wrote it. */
@@ -231,6 +236,7 @@ export function toAction(raw: unknown): ChatAction | null {
   const path = typeof o.path === 'string' ? o.path.trim() : '';
   const text = typeof o.text === 'string' ? o.text : '';
   const url = typeof o.url === 'string' ? o.url.trim() : '';
+  const repo = typeof o.repo === 'string' ? o.repo.trim() : '';
 
   // Each kind has exactly one payload it can act on. A button with nothing behind it is a
   // dead end the user still clicks, so it is dropped rather than rendered inert.
@@ -256,6 +262,10 @@ export function toAction(raw: unknown): ChatAction | null {
       return text.trim() ? { label, action: 'ask', text } : null;
     case 'url':
       return isHttpsUrl(url) ? { label, action: 'url', url } : null;
+    // An app the project has and this Mac does not (app-araclari §5): the Apps page opens on
+    // its install sheet only when the repo is shared with this account; the click installs nothing.
+    case 'app-install':
+      return APP_REPO_RE.test(repo) && repo.length <= 140 ? { label, action: 'app-install', repo } : null;
     default:
       return null;
   }

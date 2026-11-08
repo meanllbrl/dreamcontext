@@ -540,16 +540,42 @@
   box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 .chat-cmp-hl-thumb {
+  position: relative;
   padding-block: 0.12em;
   background-color: var(--color-bg-tertiary);
-  background-size: cover;
-  background-position: center;
   border-radius: var(--radius-sm);
 }
+/* The picture itself, laid over the glyph's room (owner 2026-11-07: the thumbnail was an empty
+   grey box in the Mac app). An <img>, not a background: WebKit does not paint a background
+   image on this inline run. Absolute, so the line box and the textarea's caret are untouched. */
+.chat-cmp-hl-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  pointer-events: none;
+}
+/* A picture chip's hover card: the picture whole, floating by the chip, never moving the text. */
+.chat-pic-peek {
+  position: fixed;
+  /* With the chip popover (1150): over the agent overlay (1100), under the viewers (1200). */
+  z-index: 1150;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--color-bg-elevated);
+  outline: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: chat-pic-peek-in 160ms ease-out;
+}
+.chat-pic-peek img { display: block; width: 100%; height: 100%; object-fit: contain; }
+@keyframes chat-pic-peek-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-pic-peek { animation: none; } }
 /* An inline chip with no thumbnail (a file, a folder, a board item, an element with no picture,
    owner 2026-10-30): its kind's icon, centred in the same room. The mirror's text is
    transparent, so the icon names its own colour. */
-.chat-cmp-hl-thumb[data-icon] { position: relative; }
 .chat-cmp-hl-thumb[data-icon]::after {
   content: attr(data-icon);
   position: absolute;
@@ -608,7 +634,7 @@
   cursor: pointer;
 }
 .chat-cmp-ref-pop-btn:hover { background: var(--color-bg-tertiary); }
-/* The sixth ↩: one line under the field, for three seconds. */
+/* A composer notice (Attach files… opened nothing): one line under the field. */
 .chat-cmp-ref-notice {
   padding: 0 var(--space-2) var(--space-1);
   font-size: var(--font-size-xs);
@@ -707,23 +733,6 @@
   cursor: pointer;
 }
 .chat-cmp-send.is-enabled:hover { filter: brightness(1.15); }
-
-/* Queue (⇡) — its OWN disc beside Send while a turn runs, since ⏎/↑ now steer into that
-   turn and "hold it for the next one" needs somewhere to live (see Composer.tsx's `commit`).
-   Outlined in the accent rather than filled, because the filled solid belongs to "this goes
-   now" — and it sits between the red Stop and the solid Send, so it is also what keeps those
-   two discs from reading as one control with a broken half. */
-.chat-cmp-send.is-queue:not(:disabled) {
-  opacity: 1;
-  background: transparent;
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  cursor: pointer;
-}
-.chat-cmp-send.is-queue:not(:disabled):hover {
-  filter: none;
-  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-}
 
 .chat-cmp-send.is-stop {
   opacity: 1;
@@ -921,9 +930,18 @@
 
 /* The MODE trigger: its name and the version of its brief, as plain text (owner 2026-10-30: no
    face on a calm text button). It is the control that decides how the agent works (owner,
-   2026-10-12: "I want people to click it once"); the first-run ring below still says so. */
+   2026-10-12: "I want people to click it once"). It carries no border or ring in any state;
+   keyboard focus is a background tint, never an outline. */
 .chat-cmp-modetrigger { position: relative; gap: 6px; }
 .chat-cmp-modetrigger .chat-cmp-modeltrigger-model { color: var(--color-text); }
+/* Mouse focus (after a click) draws nothing; keyboard focus is a light background change, not a
+   border or the global outline. Scoped to this trigger: the model pill keeps the global ring. */
+.chat-cmp-modetrigger:focus { outline: none; }
+.chat-cmp-modetrigger:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
 .chat-cmp-modetrigger-version {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -936,26 +954,6 @@
   content: '·';
   margin-right: 5px;
   color: var(--color-text-tertiary);
-}
-/* First run only: a soft accent ring that breathes until the menu has been opened once on
-   this machine (Composer's MODE_MENU_SEEN_KEY), then is gone for good. */
-.chat-cmp-modetrigger.is-unseen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 1.5px var(--color-accent), 0 0 0 5px color-mix(in srgb, var(--color-accent) 18%, transparent);
-  pointer-events: none;
-  opacity: 0.8;
-  animation: var(--dc-motion-ambient-name, chat-cmp-modetrigger-breathe) 2.4s ease-in-out infinite;
-  animation-play-state: var(--dc-motion-play, running);
-}
-@keyframes chat-cmp-modetrigger-breathe {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-cmp-modetrigger.is-unseen::after { animation: none; opacity: 0.8; }
 }
 
 /* Attach — the row's only icon-only control, so it needs no label to avoid reading as a
@@ -2109,3 +2107,7 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
 }
+
+/* The usage panel's way to the Stats page. */
+.chat-cmp-usagedetails { display: block; width: 100%; padding: 6px 0 2px; font-size: calc(12px * var(--zoom)); font-weight: 600; color: var(--color-accent-ink); text-align: left; }
+.chat-cmp-usagedetails:hover { text-decoration: underline; }

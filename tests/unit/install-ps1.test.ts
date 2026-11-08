@@ -197,7 +197,9 @@ describe.skipIf(!PWSH)('install.ps1 under PowerShell (private Node.js download)'
       + `try { Invoke-Expression (Get-Content -Raw -LiteralPath '${p.replace(/'/g, "''")}') } catch { 'caught: ' + $_.Exception.Message }; `
       + `'after: ' + $ErrorActionPreference + ' ' + $ProgressPreference`;
     const r = await runPwsh(['-Command', cmd], env({ DREAMCONTEXT_INSTALL_NO_NODE: '1' }));
-    expect(r.out).toMatch(/caught: dreamcontext install: Node\.js >= 18 is required/);
+    // The floor the installer names is the one the package declares (engines.node).
+    const floor = (JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as { engines: { node: string } }).engines.node.replace(/^>=\s*/, '');
+    expect(r.out).toContain(`caught: dreamcontext install: Node.js >= ${floor} is required`);
     expect(r.out).toMatch(/after: Continue Continue/);
   }, 150_000);
 });

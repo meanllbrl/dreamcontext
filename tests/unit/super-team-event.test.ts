@@ -11,7 +11,7 @@
  *  - the item rides the normal `[super events]` batch with the team line and the member's last
  *    line fenced; a later ending replaces a question; the record keeps the fields only in shape.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 
 vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -55,8 +55,9 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
 import { AWAITED_LINE, TEAM_LINE, _resetSuperInbox, heldBlock, markSuperEventTurn, nextBatch, noteHeld, superBatchText, writeSuper } from '../../src/lib/super/inbox.js';
-import { noteTeamJobEnd, teamJobStatus, teamLiveRows } from '../../src/lib/super/team.js';
-import { TEAM_JOB_WATCH_MS, checkTeamJob, handleSuperVerb } from '../../src/server/routes/super.js';
+import { noteTeamFollowUp, setTeamLiveSource, teamJobAnswer, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, teamItemLines, teamJobStatus, teamJobTrailing, teamLiveRows } from '../../src/lib/super/team.js';
+import { noteRunSession, runningSessionFor } from '../../src/lib/automations/run-session.js';
+import { TEAM_JOB_WATCH_MS, checkTeamJob, handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { createQuestion, listQuestions, noteResolution, resolveQuestion } from '../../src/lib/automations/hitl.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAutomation, getRunTarget, lockPathFor } from '../../src/lib/automations/store.js';
@@ -72,6 +73,11 @@ let root: string;
 let token = '';
 const SUPER = 'sup-1';
 const RUN = '2026-10-21T01:00:00.000Z';
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-team-')));
@@ -253,18 +259,19 @@ describe('the team item in a [super events] batch', () => {
     expect(nextBatch(s)).toMatchObject({ items: [], drop: [s.queue[0].id] });
   });
 
-  it('while the owner has a question open it is held, and told with his answer as the team line', () => {
+  it('while the owner has a question open it is NOT held (D1): it goes to the Super at once, ref= named', () => {
     const ask = entry(1, { runId: RUN, kind: 'user', text: 'go', via: 'super' });
     entry(2, { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner' });
     const s = state(job({ entryId: ask.id, awaited: true }));
     s.queue.push({ id: 'q-ask', sessionId: SUPER, kind: 'ask', state: 'escalated', createdAt: 1, ownerText: 'Which plan?' });
     noteTeamJobEnd(root, s, 'team-abc', null);
-    expect(noteHeld(s)).toBe(true);
+    expect(noteHeld(s)).toBe(false);
+    expect(s.held).toBeUndefined();
     const item = s.queue.find((q) => q.team)!;
-    expect(s.held).toEqual([{ item: item.id, child: SUPER, kind: 'done', at: item.createdAt }]);
-    expect(heldBlock(root, s)?.text).toContain(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner`);
-    s.team = [];
-    expect(heldBlock(root, s)?.text).toContain(`- item=${item.id} team=team-abc event=done moved-on`);
+    const { items } = nextBatch(s);
+    expect(items.map((q) => q.id)).toEqual([item.id]);
+    expect(superBatchText(root, s, items, 'b-2')).toMatch(new RegExp(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner status=\\S+ ref=[0-9a-z]{6}`));
+    expect(heldBlock(root, s)).toBeNull();
   });
 
   it('no super session: nothing queued', () => {
@@ -426,13 +433,13 @@ describe('a member\'s question stays the member\'s', () => {
     writeFileSync(file, '---\n: : not yaml\n');
     expect(await checkTeamJob(root, job)).toBe(true);
     expect(await checkTeamJob(root, job)).toBe(true);
-    expect(await teamItems()).toEqual([]);
+    expect((await teamItems()).filter((q) => !q.partial)).toEqual([]);
     rmSync(file);
     // Gone on one tick only: not yet.
     expect(await checkTeamJob(root, job)).toBe(true);
-    expect(await teamItems()).toEqual([]);
+    expect((await teamItems()).filter((q) => !q.partial)).toEqual([]);
     expect(await checkTeamJob(root, job)).toBe(false);
-    expect((await teamItems()).map((q) => [q.kind, q.state])).toEqual([['stuck', 'pending']]);
+    expect((await teamItems()).filter((q) => !q.partial).map((q) => [q.kind, q.state])).toEqual([['stuck', 'pending']]);
     expect(superBatchText(root, await stored(), (await teamItems()), 'b-g')).toMatch(/Last line: The member is no longer in the AI Team\./);
     expect(await checkTeamJob(root, job)).toBe(false);
   });
@@ -628,7 +635,7 @@ describe('a member\'s question stays the member\'s', () => {
     expect(await checkTeamJob(root, job)).toBe(false);
     expect((await teamItems()).map((q) => [q.kind, q.state])).toEqual([['question', 'done'], ['done', 'pending']]);
     expect((await stored()).team[0]).toMatchObject({ told: 'done', awaited: true });
-    expect(await checkTeamJob(root, job)).toBe(false);
+    expect(await checkTeamJob(root, job)).toBe(true);
     expect(await teamItems()).toHaveLength(2);
   });
 
@@ -763,5 +770,220 @@ describe('the record keeps the team fields only in shape', () => {
     expect(s.queue.find((q) => q.id === 'q-1')?.team).toBe('team-abc');
     expect(s.queue.find((q) => q.id === 'q-2')?.team).toBeUndefined();
     expect(s.queue.find((q) => q.id === 'q-3')?.team).toBeUndefined();
+  });
+});
+
+describe('every answer of a team job reaches the super once (brief ai-team-atomik)', () => {
+  const entryId = (ms: number, tail: string) => `${ms.toString(36).padStart(9, '0')}_${tail}`;
+  const t0 = Date.parse('2026-11-01T17:20:16.657Z');
+  function vault() {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'team-posts-')));
+    const runId = new Date(t0).toISOString();
+    const dir = join(root, 'automations', 'threads', 'fake-member');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, '2026-11-01-e3964db27a54.md');
+    writeFileSync(file, '---\nslug: fake-member\ndate: 2026-11-01\nversion: 1\n---\n');
+    const post = (ms: number, text: string, extra: Record<string, unknown> = {}) => {
+      const id = (extra.id as string) ?? entryId(ms, 'aaaaaa');
+      const e = { id, runId, kind: 'agent', at: new Date(ms).toISOString(), text, ...extra };
+      writeFileSync(file, `${readFileSync(file, 'utf-8')}\n<!-- dc-thread-entry -->\n\`\`\`json\n${JSON.stringify(e)}\n\`\`\`\n`);
+      return id;
+    };
+    const ask = post(t0, 'send them', { kind: 'user' });
+    const s = emptySuperState();
+    s.enabled = true; s.session = '11111111-1111-4111-8111-111111111111';
+    const job: SuperTeamJob = { id: 'team-abc-000001', member: 'fake-member', runId, entryId: ask, jobKind: 'run', queued: false, brief: 'send', startedAt: t0, open: true, awaited: true };
+    s.team = [job];
+    return { root, s, job, post };
+  }
+  const lines = (root: string, s: SuperState) => s.queue.filter((q) => q.state === 'pending').map((q) => teamItemLines(root, 'V', s, q).join('\n'));
+  const ok = (post: ReturnType<typeof vault>['post'], ms: number) => post(ms, 'Finished', { kind: 'system', event: 'ok', via: 'runner', id: entryId(ms, 'bbbbbb') });
+
+  it('replays the real shape: the first post is an event while the run waits, the ending carries only the second', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 64_000, 'FIRST 5/5 gone');
+    expect(noteTeamJobPosts(root, s, job.id, t0 + 70_000)).toBe(false); // a run's end usually follows at once
+    expect(noteTeamJobPosts(root, s, job.id, t0 + 110_000)).toBe(true);
+    expect(noteTeamJobPosts(root, s, job.id, t0 + 125_000)).toBe(false); // never twice
+    const [a] = lines(root, s);
+    expect(a).toContain('event=answer'); expect(a).toContain('FIRST'); expect(a).toContain('awaited=owner');
+    post(t0 + 345_000, 'SECOND reply came');
+    ok(post, t0 + 359_000);
+    expect(noteTeamJobEnd(root, s, job.id, null, t0 + 359_500)).toBe(true);
+    const all = lines(root, s);
+    expect(all).toHaveLength(2); // the answer queued earlier survives the ending
+    expect(all[1]).toContain('event=done'); expect(all[1]).toContain('SECOND'); expect(all[1]).not.toContain('FIRST');
+  });
+
+  it('a done with nothing new says so, and a post after the ending is one more event', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'all of it');
+    noteTeamJobPosts(root, s, job.id, t0 + 60_000);
+    ok(post, t0 + 61_000);
+    noteTeamJobEnd(root, s, job.id, null, t0 + 62_000);
+    expect(lines(root, s)[1]).toContain('No new answer');
+    expect(teamJobTrailing(job, t0 + 63_000)).toBe(true);
+    post(t0 + 200_000, 'LATE');
+    expect(noteTeamJobPosts(root, s, job.id, t0 + 260_000)).toBe(true);
+    const late = lines(root, s).at(-1) as string;
+    expect(late).toContain('LATE'); expect(late).not.toContain('all of it');
+  });
+
+  it('what the owner writes on the run is a follow-up: no card, his words, only the new answer', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'old answer');
+    ok(post, t0 + 2_000);
+    noteTeamJobEnd(root, s, job.id, null, t0 + 3_000);
+    for (const q of s.queue) q.state = 'done';
+    const ask = post(t0 + 10_000, 'owner says hi', { kind: 'user', via: 'dashboard', id: entryId(t0 + 10_000, 'cccccc') });
+    const fu = recordTeamFollowUp(root, s, { member: 'fake-member', runId: job.runId, entryId: ask, jobId: 'rj_1', text: 'owner says hi' }) as SuperTeamJob;
+    expect(fu.followUpOf).toBe(job.id);
+    expect(s.containers.filter((c) => c.ref === fu.id)).toEqual([]);
+    expect(recordTeamFollowUp(root, s, { member: 'other', runId: job.runId, entryId: ask, jobId: 'rj_2', text: 'x' })).toBeNull();
+    post(t0 + 12_000, 'new answer');
+    expect(noteTeamJobEnd(root, s, fu.id, { kind: 'reply', status: 'ok', phase: 'delivering', deliveredAt: t0 + 10_500, endedAt: t0 + 13_000 }, t0 + 13_000)).toBe(true);
+    const [item] = lines(root, s);
+    expect(item).toContain('followup=owner'); expect(item).toContain('owner says hi'); expect(item).toContain('new answer');
+    expect(item).not.toContain('old answer'); expect(item).not.toContain('awaited=owner');
+  });
+
+  it('a final message in the run document reaches the super after an earlier answer', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'progress note');
+    noteTeamJobPosts(root, s, job.id, t0 + 60_000);
+    const dir = join(root, 'automations', 'output', 'fake-member');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-11-01-run.md');
+    writeFileSync(doc, 'FINAL REPORT in the document\n');
+    mkdirSync(join(root, 'automations', 'cache'), { recursive: true });
+    writeFileSync(join(root, 'automations', 'cache', 'fake-member.json'), JSON.stringify({ history: [{ firedAt: job.runId, status: 'ok', outputPath: doc }] }));
+    ok(post, t0 + 61_000);
+    noteTeamJobEnd(root, s, job.id, null, t0 + 62_000);
+    const done = lines(root, s)[1];
+    expect(done).toContain('FINAL REPORT'); expect(done).not.toContain('No new answer'); expect(done).not.toContain('progress note');
+  });
+
+  it('a note and an end inside the settle window: the document still leads, and super read has all of it', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'a short note');
+    const dir = join(root, 'automations', 'output', 'fake-member');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-11-01-run.md');
+    writeFileSync(doc, `FINAL ${'x'.repeat(900)} TAIL\n`);
+    mkdirSync(join(root, 'automations', 'cache'), { recursive: true });
+    writeFileSync(join(root, 'automations', 'cache', 'fake-member.json'), JSON.stringify({ history: [{ firedAt: job.runId, status: 'ok', outputPath: doc }] }));
+    ok(post, t0 + 2_000);
+    noteTeamJobEnd(root, s, job.id, null, t0 + 3_000);
+    expect(lines(root, s)[0]).toContain('FINAL');
+    const whole = teamJobAnswer(root, job, null);
+    expect(whole).toContain('TAIL'); expect(whole).toContain('a short note');
+  });
+
+  it('a run the owner answered: the resumed post leads, not the first turn\'s document', () => {
+    // The clock sits a few seconds after the run, as when this was written: the run is days old
+    // otherwise, past the 24 h trail, and the ending is never read.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(t0 + 5_000);
+    onTestFinished(() => { vi.useRealTimers(); });
+    const { root, s, job, post } = vault();
+    const dir = join(root, 'automations', 'output', 'fake-member');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-11-01-run.md');
+    writeFileSync(doc, 'STALE waiting for approval\n');
+    mkdirSync(join(root, 'automations', 'cache'), { recursive: true });
+    writeFileSync(join(root, 'automations', 'cache', 'fake-member.json'), JSON.stringify({ history: [{ firedAt: job.runId, status: 'ok', outputPath: doc }] }));
+    expect(teamJobAnswer(root, job, null)).toContain('STALE');
+    const q = createQuestion(root, { slug: 'fake-member', runFiredAt: job.runId, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
+    resolveQuestion(root, q, 'yes', 'dashboard');
+    post(t0 + 9_000, 'RESUMED published');
+    const whole = teamJobAnswer(root, job, null);
+    expect(whole.indexOf('RESUMED')).toBeLessThan(whole.indexOf('STALE'));
+    // That post went out early and the turn ends with nothing new: the done never carries the stale text.
+    noteTeamJobPosts(root, s, job.id, t0 + 60_000);
+    post(t0 + 70_000, 'Question answered via dashboard', { kind: 'system', event: 'replied', via: 'runner', id: entryId(Date.now() + 1_000, 'eeeeee') });
+    expect(noteTeamJobEnd(root, s, job.id, null, Date.now())).toBe(true);
+    const done = lines(root, s).at(-1) as string;
+    expect(done).toContain('event=done'); expect(done).not.toContain('STALE'); expect(done).toContain('No new answer');
+  });
+
+  it('a stuck delivers the posts it claimed', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'said just before failing');
+    post(t0 + 2_000, 'Failed', { kind: 'system', event: 'failed', via: 'runner', id: entryId(t0 + 2_000, 'bbbbbb') });
+    noteTeamJobEnd(root, s, job.id, null, t0 + 3_000);
+    expect(lines(root, s)[0]).toContain('event=stuck');
+    expect(lines(root, s)[0]).toContain('Answer: said just before failing');
+  });
+
+  it('an open follow-up beats the finished cache, and a noted session is not resumable', () => {
+    const { root, s, job, post } = vault();
+    post(t0 + 1_000, 'old');
+    ok(post, t0 + 2_000);
+    noteTeamJobEnd(root, s, job.id, null, t0 + 3_000); // toldEndAt long past: the row is cached
+    s.containers = [{ id: 'team-x', kind: 'team', ref: job.id, shape: 'square', place: 'float' }];
+    noteRunSession(root, 'fake-member', job.runId, '6f02f3ed-0e2e-434e-b0b3-b4f606e32879');
+    const transcripts = join(process.env.HOME as string, '.claude', 'projects', 'fake');
+    mkdirSync(transcripts, { recursive: true });
+    writeFileSync(join(transcripts, '6f02f3ed-0e2e-434e-b0b3-b4f606e32879.jsonl'), '{}\n');
+    const first = (teamLiveRows(root, s) as Record<string, { status: string; sessionId?: string; resumable?: true }>)[job.id];
+    expect(first).toMatchObject({ status: 'done', sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879' });
+    expect(first.resumable).toBeUndefined();
+    const ask = post(t0 + 10_000, 'more', { kind: 'user', id: entryId(t0 + 10_000, 'cccccc') });
+    s.team = [{ id: 'team-abc-000002', member: 'fake-member', runId: job.runId, entryId: ask, jobKind: 'reply', jobId: 'rj_x', queued: false, brief: 'more', startedAt: t0 + 10_000, open: true, followUpOf: job.id }, ...s.team];
+    settle.live.set('rj_x', { status: 'running', phase: 'delivering' });
+    setTeamLiveSource((_r, j) => (j.jobId === 'rj_x' ? { kind: 'reply', status: 'running', phase: 'delivering' } : null));
+    expect((teamLiveRows(root, s) as Record<string, { status: string }>)[job.id].status).toBe('running');
+  });
+
+  it('the posts range and the follow-up survive the record', () => {
+    const clean = sanitizeSuperState({ ...emptySuperState(), session: 'x', team: [{ id: 'team-abc-000001', member: 'm', runId: '2026-11-01T17:20:16.657Z', jobKind: 'reply', brief: 'b', startedAt: 1, toldPost: 'e1', toldEndAt: 5, followUpOf: 'team-abc-000002' }],
+      queue: [{ id: 'q-mvy3q918-9fe92d2d', sessionId: 'x', kind: 'done', state: 'pending', createdAt: 1, team: 'team-abc-000001', partial: true, posts: { after: 'e1', upto: 'e2' } }] });
+    expect(clean.team[0]).toMatchObject({ toldPost: 'e1', toldEndAt: 5, followUpOf: 'team-abc-000002' });
+    expect(clean.queue[0]).toMatchObject({ partial: true, posts: { after: 'e1', upto: 'e2' } });
+  });
+
+  it('a run names its session as it starts', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'run-session-')));
+    const id = '6f02f3ed-0e2e-434e-b0b3-b4f606e32879';
+    noteRunSession(root, 'fake-member', 'r1', id);
+    expect(runningSessionFor(root, 'fake-member', 'r1')).toBe(id);
+    expect(runningSessionFor(root, 'fake-member', 'r2')).toBeNull();
+  });
+});
+
+describe('the route to the record: what the owner sends on a job reaches the super', () => {
+  it('the follow-up note writes the record, and its settled reply queues one event with his words', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'team-posts-')));
+    const runId = '2026-11-01T17:20:16.657Z';
+    const t0 = Date.parse(runId);
+    const id = (ms: number, tail: string) => `${ms.toString(36).padStart(9, '0')}_${tail}`;
+    const dir = join(root, 'automations', 'threads', 'doctor');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, '2026-11-01-e3964db27a54.md');
+    writeFileSync(file, '---\nslug: doctor\ndate: 2026-11-01\nversion: 1\n---\n');
+    const add = (e: Record<string, unknown>) => writeFileSync(file, `${readFileSync(file, 'utf-8')}\n<!-- dc-thread-entry -->\n\`\`\`json\n${JSON.stringify({ runId, at: runId, ...e })}\n\`\`\`\n`);
+    add({ id: id(t0, 'aaaaaa'), kind: 'user', text: 'go' });
+    add({ id: id(t0 + 1000, 'aaaaaa'), kind: 'agent', text: 'first' });
+    add({ id: id(t0 + 2000, 'aaaaaa'), kind: 'system', event: 'ok', via: 'runner', text: 'Finished' });
+    const s = emptySuperState();
+    s.enabled = true; s.session = '11111111-1111-4111-8111-111111111111';
+    s.team = [{ id: 'team-abc-000001', member: 'doctor', runId, entryId: id(t0, 'aaaaaa'), jobKind: 'run', queued: false, brief: 'b', startedAt: t0, told: 'done', toldEndAt: Date.now(), toldPost: id(t0 + 1000, 'aaaaaa') }];
+    mkdirSync(dirname(join(root, SUPER_STATE_REL)), { recursive: true });
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(s));
+    const ask = id(t0 + 60_000, 'cccccc');
+    add({ id: ask, kind: 'user', via: 'dashboard', text: 'which step?' });
+    let finish: (v: unknown) => void = () => {};
+    settle.replies.set('rj_9', new Promise((r) => { finish = r; }));
+    noteTeamFollowUp(root, { member: 'doctor', runId, entryId: ask, jobId: 'rj_9', text: 'which step?' });
+    await vi.waitFor(async () => expect((await readSuperState(root)).team.some((j) => j.followUpOf === 'team-abc-000001')).toBe(true));
+    add({ id: id(t0 + 61_000, 'dddddd'), kind: 'agent', text: 'step two' });
+    finish({ status: 'ok', finishedAt: new Date(t0 + 62_000).toISOString(), deliveredAt: new Date(t0 + 60_500).toISOString() });
+    await vi.waitFor(async () => {
+      const after = await readSuperState(root);
+      const items = after.queue.filter((q) => q.state === 'pending' || q.batch);
+      expect(items).toHaveLength(1);
+      const text = teamItemLines(root, 'V', after, items[0]).join('\n');
+      expect(text).toContain('followup=owner'); expect(text).toContain('which step?'); expect(text).toContain('step two'); expect(text).not.toContain('first');
+    });
   });
 });

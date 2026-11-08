@@ -104,6 +104,24 @@ describe('memory recall default-span (cross-project read by default)', () => {
     expect(keys.some((k) => k.startsWith('cur::'))).toBe(true);
   });
 
+  // An app's chat runs this verb with no card, so it never reaches another project's brain.
+  it('stays in this project inside an app chat, connections or not', async () => {
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
+    writeKnowledge(cur, 'cur-doc', 'rate limiting middleware design for the gateway');
+    writeKnowledge(peer, 'peer-doc', 'rate limiting middleware design for the gateway');
+    addConnection(join(cur, '_dream_context'), 'cur', 'peer', 'both', null, home);
+    process.chdir(cur);
+    process.env.DREAMCONTEXT_AGENT_CHAT = 'app-yuk';
+    try {
+      const out = await capture(() => runMemory(['memory', 'recall', 'rate limiting middleware', '--plain']));
+      expect(out).toContain('cur-doc');
+      expect(out).not.toContain('peer-doc');
+    } finally {
+      delete process.env.DREAMCONTEXT_AGENT_CHAT;
+    }
+  });
+
   // (b) default recall with NO eligible connections stays local-only and is
   //     byte-identical to the legacy single-vault recall path.
   it('stays local-only (byte-identical legacy path) when there are no eligible connections', async () => {

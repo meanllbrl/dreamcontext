@@ -38,6 +38,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { chatShown, drawerShape, drawerShown, openSuper, submit } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-super-reply-phone');
@@ -231,30 +232,19 @@ try {
   phone.on('response', (r) => { if (r.status() === 403) forbidden.push(`${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`); });
   phone.on('websocket', (w) => phoneSockets.push(w.url()));
   const vis = (sel) => phone.locator(`${sel}:visible`);
-  const onList = async () => (await vis('[data-testid="phone-list"]').count()) === 1;
-  const listShape = () => phone.evaluate(() => {
-    const el = [...document.querySelectorAll('[data-testid="phone-list"]')].find((e) => e.getBoundingClientRect().height > 0);
-    return {
-      super: el?.getAttribute('data-super') === 'true',
-      rows: [...(el?.querySelectorAll('.mlist-row') ?? [])].map((r) => ({ kind: r.getAttribute('data-kind'), id: r.getAttribute('data-id'), text: (r.textContent || '').replace(/\s+/g, ' ').trim() })),
-      search: !!el?.querySelector('[data-testid="list-search"]'),
-      chips: !!el?.querySelector('[data-testid="list-filter-all"]'),
-      newChat: !!el?.querySelector('[data-testid="list-new"]'),
-      overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
-    };
-  });
+  const listShape = () => drawerShape(phone, 'proj');
   const wire = () => phone.evaluate(async () => (await fetch('/api/agent/live-chats', { credentials: 'same-origin', headers: { 'X-Dreamcontext-Vault': 'proj' } })).json());
 
-  console.log('\n── 1. Super OFF: the old list');
+  console.log('\n── 1. Super OFF: the drawer');
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in through the phone listener, landed in the project', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
   report.check('the page is the Mac phone surface (its meta flag)', await until(() => phone.evaluate(() => document.querySelector('meta[name="dreamcontext-surface"]')?.getAttribute('content') === 'mac'), 10000));
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-  report.check('the phone opens on the Sohbetler list', await until(onList, 20000));
+  report.check('the phone opens with the drawer open', await until(() => drawerShown(phone), 20000));
   let shape;
-  report.check('super off: search, chips, New chat, and the Mac\'s running chat as a row', await until(async () => {
+  report.check('super off: the Mac\'s running chat is a drawer row, no Super row', await until(async () => {
     shape = await listShape();
-    return !shape.super && shape.search && shape.chips && shape.newChat && shape.rows.some((r) => r.id === MAC_ID);
+    return !shape.super && shape.rows.some((r) => r.id === MAC_ID);
   }, 20000), JSON.stringify(shape));
   const w0 = await wire();
   report.check('super off: the wire is today\'s (no supers field)', Array.isArray(w0.chats) && !('supers' in w0), JSON.stringify(w0).slice(0, 200));
@@ -266,25 +256,24 @@ try {
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   const win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
-  report.check('super on: ONE row, the Super Agent; no search, no chips, no New chat, no other chat', await until(async () => {
+  report.check('super on: the Super Agent row, and New chat stays (its one chat is the Super\'s child now)', await until(async () => {
     shape = await listShape();
-    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.rows[0].id === SUPER
-      && /Super Agent/.test(shape.rows[0].text) && !shape.search && !shape.chips && !shape.newChat && !shape.overflowX;
+    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.newChat && !shape.overflowX;
   }, 20000), JSON.stringify(shape));
   const w1 = await wire();
   report.check('super on: the wire lists no chat of the project and one live super row', Array.isArray(w1.chats) && w1.chats.length === 0
     && w1.supers?.length === 1 && w1.supers[0].conversationId === SUPER && w1.supers[0].live === true, JSON.stringify(w1).slice(0, 240));
-  const rowH = await phone.evaluate(() => Math.round(document.querySelector('[data-testid="super-row"]')?.getBoundingClientRect().height ?? 0));
+  const rowH = shape?.rows?.[0]?.h ?? 0;
   report.check(`the row is a touch target (${rowH}px >= 44)`, rowH >= 44);
   await phone.screenshot({ path: join(SHOTS, '390x844-super-on.png') });
 
   console.log('\n── 3. The mirror: two messages answered out of order');
-  await vis('[data-testid="super-row"]').click();
-  report.check('the Super Agent\'s chat opens over the list', await until(async () => !(await onList()) && (await vis('.chat-cmp-input').count()) > 0, 15000));
+  await openSuper(phone);
+  report.check('the Super Agent\'s chat opens, the drawer closed', await until(async () => (await chatShown(phone)) && (await vis('.chat-cmp-input').count()) > 0, 15000));
   await phone.waitForTimeout(1500);
   report.check('the phone has no hover (touch)', await phone.evaluate(() => matchMedia('(hover: none)').matches));
   const box = vis('.chat-cmp-input').first();
-  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await phone.keyboard.press('Enter'); };
+  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await submit(phone); };
   await sendText('Bir: giriş sayfası açılmıyor, düzelt.');
   await phone.waitForTimeout(1200);
   await sendText('İki: kartın adını Takım yap.');
@@ -325,7 +314,7 @@ try {
   await box.click();
   await phone.keyboard.type('teşekkürler');
   await phone.waitForTimeout(150);
-  await phone.keyboard.press('Enter');
+  await submit(phone);
   report.check('the reply reaches the super with its reference header and the quote, through the mirror', await until(async () => received().some((x) =>
     /^\[Reply to message ref=[0-9a-z]{6} from=super\]\nquote: "Birinci mesajına: giriş sayfası düzeldi\."\n\nteşekkürler$/.test(x.blocks[0])), 15000), JSON.stringify(received().slice(-1)));
   const bubble = vis('.chat-msg-user-row').last();
@@ -396,7 +385,7 @@ try {
   });
   await phone.reload({ waitUntil: 'domcontentloaded' });
   await phone.waitForTimeout(2500);
-  if (await onList()) await vis('[data-testid="super-row"]').click().catch(() => {});
+  if (await drawerShown(phone)) await openSuper(phone).catch(() => {});
   await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000);
   await phone.waitForTimeout(1200);
   const box2 = vis('.chat-cmp-input').first();
@@ -404,7 +393,7 @@ try {
   await box2.click();
   await box2.fill('GENIS bir cevap ver');
   await phone.waitForTimeout(150);
-  await phone.keyboard.press('Enter');
+  await submit(phone);
   await until(async () => (await vis('.chat-msg-assistant-row').filter({ hasText: 'WWWWWWWWWW' }).count()) > 0, 15000);
   for (const word of ['Birinci mesajına', 'İkinci mesajına']) {
     // The tap that shows the bar is proven in section 4; here the ↩ is pressed directly.
@@ -476,7 +465,7 @@ try {
   await phone.reload({ waitUntil: 'domcontentloaded' });
   await phone.waitForTimeout(3000);
   report.check('the Super conversation id is kept across the reload', await phone.evaluate((id) => (localStorage.getItem('dreamcontext-super-mirror-ids') ?? '').includes(id), SUPER));
-  if (await onList()) await vis('[data-testid="super-row"]').click().catch(() => {});
+  if (await drawerShown(phone)) await openSuper(phone).catch(() => {});
   report.check('after the reload the strip and the reply strip draw again from the replay', await until(async () => {
     const t = (await pane().innerText().catch(() => '')).replace(/\s+/g, ' ');
     return /To your message Bir: giriş sayfası/.test(t) && (await vis('[data-testid="chat-msg-reply"]').count()) >= 1 && !t.includes('<!--');

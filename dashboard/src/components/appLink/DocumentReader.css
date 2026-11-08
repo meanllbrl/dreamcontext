@@ -47,6 +47,8 @@
 }
 .doc-reader-notice-dismiss:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 
+/* Focusable only so a picture's viewer can take focus back from the page (releaseFrameFocus): no ring. */
+.doc-reader-html:focus { outline: none; }
 .doc-reader-html {
   display: flex;
   flex-direction: column;

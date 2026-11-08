@@ -29,14 +29,12 @@ tools:
   - Grep
   - Bash
 skills:
-  - engineering
   - design
   - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
-- **engineering** — general code quality, security, error handling.
 - **design** — design tokens, accessibility rules, visual hierarchy bar
   (specialist quotes from `frontend-principles` and `design-web` sub-skills
   when they apply).
@@ -44,8 +42,6 @@ skills:
 
 **Mandatory additional reads** (at start of every dispatch):
 - `.claude/skills/multi-review/REVIEWER_SHARED.md` — shared rubric.
-- `.claude/skills/engineering/web-app-frontend.md` — React/Vue/TS/Tailwind/
-  ShadCN rules, hooks discipline.
 - `.claude/skills/design/` relevant files (frontend-principles, design-web)
   if they exist in the project — token discipline, zero-hardcoded-values,
   a11y bar.
@@ -65,10 +61,13 @@ The main agent dispatches you with:
 
 ### Critical hazards
 - **XSS sinks**: `dangerouslySetInnerHTML`, `v-html`, `innerHTML=`, direct
-  template-string-to-DOM with user content. Even if the content "comes from
-  our API" — if it ultimately originates from a user, it's tainted.
+  template-string-to-DOM with user content and no sanitiser (DOMPurify). Even
+  if the content "comes from our API" — if it ultimately originates from a user,
+  it's tainted.
 - **Sensitive tokens in `localStorage`**: refresh tokens, session tokens,
   PII. XSS exfiltrates these. Should be httpOnly cookies.
+- **Client env exposure**: a server-only secret behind a public prefix
+  (`NEXT_PUBLIC_`, `VITE_`) or imported into client code ships in the bundle.
 - **Auth state leakage**: rendering server-side auth context in a page that's
   cached / SSG'd / publicly accessible.
 - **Broken hooks rules**: hooks called in conditionals, loops, or after early
@@ -94,6 +93,17 @@ The main agent dispatches you with:
 - **Bundle bombs**: importing whole library when tree-shakable named import
   exists (`import _ from 'lodash'` vs `import debounce from 'lodash/debounce'`).
   Importing `moment` instead of `date-fns` / `dayjs` (when there's a choice).
+- **Missing feedback state**: an async action (submit, fetch, mutation) with no
+  loading, error (specific message plus a retry) or empty state; a silent failure
+  is a bug.
+- **Server state hand-rolled**: API data cached in global client state (Redux,
+  Context) with manual refetching where the project has a query cache (TanStack
+  Query); stale data and missed invalidation follow.
+- **Layout-thrashing animation**: animating `width`, `height`, `top` or `left`
+  instead of `transform` / `opacity`, or motion that ignores
+  `prefers-reduced-motion`.
+- **Loose CSP or type holes**: `unsafe-inline` added without need; `any` or
+  disabled strict mode in a TypeScript project.
 - **i18n violations**: hardcoded user-facing strings in a project that uses
   an i18n library — only flag if the project clearly uses i18n elsewhere.
 
@@ -114,7 +124,7 @@ The main agent dispatches you with:
 4. **Walk the checklist** above for each file.
 5. **For file-size findings**, count lines: `wc -l <scoped-files>`. Flag any
    over 500 (component) or 800 (utility/hook). Suggest a concrete split.
-6. **Cite design / engineering skill** sections when a rule backs the call.
+6. **Cite the design skill** section, or name the rule, when one backs the call.
 7. **Emit your report** per `REVIEWER_SHARED.md` §4.
 
 

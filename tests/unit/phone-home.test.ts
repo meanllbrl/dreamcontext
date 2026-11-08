@@ -1,20 +1,20 @@
 /**
- * The phone's one list over every chosen project (hands-free sekmeler W3, AC15/AC16):
- * sections in order waiting → working → idle → closed, a project tag on every row, the Super row
- * for a handed-over project, "Proje ▾" narrowing, the swipe order across projects, the back
- * badge and the waiting toast.
+ * The device shell's chat rows over every chosen project (hands-free sekmeler W3, AC15/AC16, kept
+ * by hands-free W2 for the drawer and the chat screen): sections in order waiting → working →
+ * idle, a project tag on every row, the Super row for a handed-over project, the swipe order across
+ * projects, the drawer toggle's waiting count and the waiting toast. Past chats are not rows any
+ * more (History lists them).
  */
 import { describe, it, expect } from 'vitest';
-import {
-  homeRows, homeSections, narrowTo, newlyWaiting, swipeTarget, waitingElsewhere,
-} from '../../dashboard/src/components/sleepy/phoneHome.js';
+import { homeRows, newlyWaiting, swipeTarget, HOME_SECTIONS } from '../../dashboard/src/components/sleepy/phoneHome.js';
+import { readFileSync } from 'node:fs';
+import { buildDrawerRows, buildGlobalTeam, deviceChatsOf, deviceWaitingCount, ekipByProject } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import type { LiveChatWire, LiveChatsWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 
 const live = (conversationId: string, vault: string, state: LiveChatWire['state'], title = conversationId): LiveChatWire => ({
   conversationId, vault, title, busy: state === 'working', state, lastLine: `${title} line`, updatedAt: 1,
 });
-const past = (id: string, title = id) => ({ id, title, preview: `${title} preview`, updatedAt: 5, startedAt: 1, sizeBytes: 1, gitBranch: '' });
 const tab = (id: string, claudeId: string, kind: string): StackTab => ({
   id, paneId: 'p1', title: `tab ${id}`, claudeId, attention: false, info: { kind, label: kind } as StackTab['info'],
 });
@@ -28,44 +28,38 @@ const LIVE: LiveChatsWire = {
 };
 
 describe('homeRows', () => {
-  const rows = homeRows({
-    vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta', 'gamma'], live: LIVE,
-    pastByVault: { acme: [past('a-old')], beta: [past('b-old'), past('b-ask')], gamma: [past('g-old')] },
-  });
+  const rows = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta', 'gamma'], live: LIVE });
 
-  it('every chosen project in one list, sections waiting → working → idle → closed, each row tagged', () => {
+  it('every chosen project in one list, sections waiting → working → idle, each row tagged; no closed section', () => {
+    expect(HOME_SECTIONS).toEqual(['waiting', 'working', 'idle']);
     expect(rows.map((r) => [r.section, r.vault])).toEqual([
       ['waiting', 'acme'], ['waiting', 'beta'], ['working', 'acme'], ['idle', 'beta'],
-      ['closed', 'acme'], ['closed', 'beta'], ['closed', 'gamma'],
     ]);
-    expect(homeSections(rows).map((s) => s.section)).toEqual(['waiting', 'working', 'idle', 'closed']);
   });
 
-  it('a chat the Mac runs is never also a closed row; a draining one is in neither', () => {
-    const keys = rows.map((r) => r.key);
-    expect(keys.some((k) => k.endsWith('past:b-ask'))).toBe(false);
-    expect(keys.some((k) => k.includes('c-gone'))).toBe(false);
+  it('a draining chat is no row', () => {
+    expect(rows.some((r) => r.key.includes('c-gone'))).toBe(false);
   });
 
-  it('"Proje ▾" narrows to one project', () => {
-    expect(narrowTo(rows, 'beta').every((r) => r.vault === 'beta')).toBe(true);
-    expect(narrowTo(rows, null)).toHaveLength(rows.length);
-  });
-
-  it('a handed-over project contributes its one Super row and nothing else', () => {
+  it('a handed-over project contributes its one Super row beside its own chats', () => {
     const r = homeRows({
       vault: 'acme', tabs: [], projects: ['acme', 'beta'],
-      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true }] }, pastByVault: { beta: [past('b-old')] },
+      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true, jobs: [], runningIds: [], childIds: [] }] },
     });
     const beta = r.filter((x) => x.vault === 'beta');
-    expect(beta.map((x) => [x.kind, x.section])).toEqual([['super', 'waiting']]);
+    expect(beta[0].kind).toBe('super');
+    expect(beta[0].section).toBe('waiting');
+    expect(beta.length).toBe(1 + LIVE.chats.filter((c) => c.vault === 'beta').length);
+  });
+
+  it('a mounted project\'s tabs come from otherTabs; an unmounted one shows only the Mac\'s chats', () => {
+    const r = homeRows({ vault: 'acme', tabs: [], otherTabs: { beta: [tab('bt', 'b-tab', 'working')] }, projects: ['acme', 'beta'], live: { chats: [], draining: [] } });
+    expect(r.map((x) => [x.vault, x.kind, x.section])).toEqual([['beta', 'open', 'working']]);
   });
 });
 
 describe('the chat screen across projects', () => {
-  const rows = homeRows({
-    vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: LIVE, pastByVault: {},
-  });
+  const rows = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: LIVE });
   const keyOf = (part: string) => rows.find((r) => r.key.includes(part))!.key;
 
   it('a swipe moves to the next / previous OPEN chat in the list\'s order, across projects', () => {
@@ -76,9 +70,14 @@ describe('the chat screen across projects', () => {
     expect(swipeTarget(rows, 'nowhere', 1)).toBeNull();
   });
 
-  it('the back badge counts chats waiting elsewhere', () => {
-    expect(waitingElsewhere(rows, keyOf('t1'))).toBe(1);
-    expect(waitingElsewhere(rows, keyOf('a-work'))).toBe(2);
+  it('an offline Super row is never a swipe target', () => {
+    const r = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: { chats: [], draining: [], supers: [{ ...live('sup', 'beta', 'idle'), live: false, jobs: [], runningIds: [], childIds: [] }] } });
+    expect(swipeTarget(r, r[0].key, 1)).toBeNull();
+  });
+
+  it('the drawer toggle counts chats waiting, the one on screen excluded', () => {
+    expect(deviceWaitingCount({ rows }, { vault: 'acme', chatId: 't1' })).toBe(1);
+    expect(deviceWaitingCount({ rows }, null)).toBe(2);
   });
 
   it('the toast names a chat that STARTED waiting since the last look, never the one on screen', () => {
@@ -93,9 +92,53 @@ describe('a tab whose chat another screen holds', () => {
   it('waits when the Mac says that chat is asking (the tab itself was closed 4409)', () => {
     const rows = homeRows({
       vault: 'acme', tabs: [tab('t9', 'held-there', 'taken')], projects: ['acme'],
-      live: { chats: [live('held-there', 'acme', 'asking')], draining: [] }, pastByVault: {},
+      live: { chats: [live('held-there', 'acme', 'asking')], draining: [] },
     });
     expect(rows.map((r) => [r.kind, r.section])).toEqual([['open', 'waiting']]);
-    expect(waitingElsewhere(rows, null)).toBe(1);
+    expect(deviceWaitingCount({ rows }, null)).toBe(1);
+  });
+});
+
+describe('phone 390 Sohbetler: the Ekip rows and the Global ekip group (plan-r10 1d, 1f, 2.4; AC9)', () => {
+  const m = (slug: string, o: Record<string, unknown> = {}) => ({
+    slug, global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 0, ...o,
+  });
+  const live = {
+    chats: [], draining: [],
+    supers: [{ conversationId: 's1', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: 'Rota sana bir fiyat sorusu sordu.', updatedAt: 1, live: true, jobs: [], runningIds: [], childIds: [] }],
+    members: [
+      { vault: 'acme', members: [m('rota', { asking: true }), m('mira', { unread: 1 }), m('atlas', { global: true, asking: true, lastAt: 9 })] },
+      { vault: 'payments', members: [m('deniz', { unread: 1 })] },
+    ],
+  } as any;
+  const device = deviceChatsOf({ activeVault: 'acme', projects: ['acme', 'payments'], tabsByVault: {}, live, tunnel: true, liveAnswered: true });
+  const projects = ['acme', 'payments'].map((name) => ({ name, logo: false, logoStamp: null, mounted: name === 'acme', asleep: false, otherWindow: false, rollup: null }));
+
+  it('main\'s Super row, then ONE Ekip row per project with its own members; no member rows', () => {
+    const rows = buildDrawerRows({ projects, activeVault: 'acme', expanded: ['acme', 'payments'], facts: {}, fanout: {}, device });
+    expect(rows[0].children.map((c) => c.kind === 'chat' ? `chat:${c.row.kind}` : c.kind)).toEqual(['chat:super', 'new-chat', 'team']);
+    const acme = rows[0].children.find((c) => c.kind === 'team') as any;
+    expect(acme.members.map((x: any) => x.slug)).toEqual(['rota', 'mira']);
+    expect(acme.count).toBe(2);
+    expect(acme.asking).toBe(true);
+    expect((rows[1].children.find((c) => c.kind === 'team') as any).count).toBe(1);
+  });
+
+  it('the Global ekip group: each member of all projects once, opening in its project', () => {
+    const g = buildGlobalTeam(ekipByProject({ projects, facts: {}, fanout: {}, device }), 'acme')!;
+    expect(g.members.map((x) => x.slug)).toEqual(['atlas']);
+    expect(g.members[0]).toMatchObject({ project: 'acme', openIn: 'acme' });
+    expect(g.count).toBe(1);
+  });
+
+  it('the rows and the sheet carry the phone test ids; a sheet has the switch and no "Üyeleri yönet"', () => {
+    const drawer = readFileSync(new URL('../../dashboard/src/components/layout/newshell/ChatDrawer.tsx', import.meta.url), 'utf8');
+    const list = readFileSync(new URL('../../dashboard/src/components/layout/newshell/TeamList.tsx', import.meta.url), 'utf8');
+    expect(drawer).toContain("p.device ? 'phone-team-row' : 'drawer-team-row'");
+    expect(drawer).toContain("p.device ? 'phone-global-team-row' : 'drawer-global-team-row'");
+    expect(drawer).toMatch(/const phone = !!p\.device \|\| !!p\.home;/);
+    expect(list).toContain("data-testid={p.sheet ? 'phone-team-sheet' : p.testid}");
+    expect(list).toContain('data-testid="team-member-switch"');
+    expect(list).toMatch(/\{!p\.sheet && p\.onManage && \(/);
   });
 });

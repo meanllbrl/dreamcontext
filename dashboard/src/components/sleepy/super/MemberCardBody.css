@@ -1,0 +1,59 @@
+/* A member stage's own cards (plan r4 K2): tokens only, 4px grid. Live controls on the card. */
+.mcb-body { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-height: 0; overflow-y: auto; height: 100%; box-sizing: border-box; }
+.mcb-tile { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); }
+.mcb-big { font-size: var(--font-size-2xl, 24px); font-weight: var(--font-weight-semibold); line-height: 1.1; color: var(--color-text); }
+.mcb-sub, .mcb-muted { font-size: var(--font-size-sm); color: var(--color-text-secondary); margin: 0; }
+.mcb-clip { font-size: var(--font-size-sm); color: var(--color-text-secondary); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.mcb-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.mcb-strong { font-weight: var(--font-weight-semibold); }
+.mcb-section { display: flex; flex-direction: column; gap: var(--space-1); }
+/* Instructions (owner 2026-11-06): one column. A quiet meta line with the pencil at the top
+   right, then the job, whole, in the card's own scroller: its opening paragraph as the lede, the
+   rest as markdown (paths as code chips), how it works under it. Fills every size. */
+.mcb-ins { gap: var(--space-2); overflow: hidden; padding-top: var(--space-2); }
+.mcb-ins-top { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; flex: none; }
+.mcb-ins-meta { flex: 1; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcb-icon {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); cursor: pointer;
+}
+.mcb-icon:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+.mcb-icon:disabled { opacity: 0.4; cursor: default; }
+.mcb-icon:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.mcb-ins-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: var(--space-3);
+  padding: 0 var(--space-1) var(--space-4) 0;
+  /* A cut line fades out: there is more below. The bottom padding lets the last line clear it. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-4)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-4)), transparent);
+}
+.mcb-ins-lede { margin: 0; font-size: var(--font-size-base); line-height: var(--line-height-relaxed); color: var(--color-text); overflow-wrap: anywhere; }
+.mcb-ins-md .md-preview { padding: 0; border: 0; background: transparent; overflow: visible; }
+.mcb-ins-md .markdown-body { overflow-wrap: anywhere; }
+.mcb-ins-md .markdown-body h1, .mcb-ins-md .markdown-body h2, .mcb-ins-md .markdown-body h3 {
+  font-size: var(--font-size-sm); margin: var(--space-3) 0 var(--space-1); padding: 0; border: 0;
+}
+.mcb-ins-md .markdown-body > :first-child { margin-top: 0; }
+.mcb-ins-soul { display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+.mcb-ins-state { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.mcb-ins-skeleton { display: flex; flex-direction: column; gap: var(--space-2); }
+.mcb-ins-skeleton span { display: block; height: 12px; border-radius: var(--radius-sm); background: var(--color-bg-tertiary); }
+.mcb-ins-skeleton span:nth-child(1) { width: 92%; }
+.mcb-ins-skeleton span:nth-child(2) { width: 78%; }
+.mcb-ins-skeleton span:nth-child(3) { width: 54%; }
+.mcb-h { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
+.mcb-text { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcb-new {
+  padding: var(--space-2); border: 1px dashed var(--color-border); border-radius: var(--radius-md);
+  background: transparent; color: var(--color-accent); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
+}
+.mcb-new:hover { background: var(--color-bg-tertiary); }
+.mcb-link { padding: 0; border: 0; background: transparent; color: var(--color-accent); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.mcb-link:hover { text-decoration: underline; }
+.mcb-danger, .agent-btn--danger {
+  align-self: flex-start; padding: var(--space-1) var(--space-3); border: 1px solid var(--color-error); border-radius: var(--radius-md);
+  background: transparent; color: var(--color-error); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
+}
+.mcb-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.mcb-new:focus-visible, .mcb-link:focus-visible, .mcb-danger:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.mcb-note { margin: 0; padding: var(--space-1) var(--space-3) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-secondary); }

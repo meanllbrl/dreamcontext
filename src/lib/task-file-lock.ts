@@ -57,7 +57,14 @@ export class TaskFileBusyError extends Error {
  * not leave the file locked for the next 30 seconds.
  */
 export function withTaskFileLock<T>(contextRoot: string, slug: string, fn: () => T): T {
-  const path = taskLockPath(contextRoot, slug);
+  return withLockFileAt(taskLockPath(contextRoot, slug), () => new TaskFileBusyError(slug), fn);
+}
+
+/**
+ * The same bounded-wait mutex at any lock path — for writers of other per-file
+ * stores (the roadmap objectives) that need a compare-and-write under one lock.
+ */
+export function withLockFileAt<T>(path: string, busy: () => Error, fn: () => T): T {
   const deadline = Date.now() + LOCK_WAIT_MS;
 
   let held = acquireFileLock(path, Date.now(), TASK_LOCK_STALE_MS, { verifyPidLiveness: true });
@@ -65,7 +72,7 @@ export function withTaskFileLock<T>(contextRoot: string, slug: string, fn: () =>
     sleepSync(POLL_MS);
     held = acquireFileLock(path, Date.now(), TASK_LOCK_STALE_MS, { verifyPidLiveness: true });
   }
-  if (!held) throw new TaskFileBusyError(slug);
+  if (!held) throw busy();
 
   try {
     return fn();

@@ -5,3 +5,9 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 "dreamcontext" — the name, logo, and brand — is a trademark of Mehmet Nuraydin.
 The Apache License does not grant rights to use these marks; see TRADEMARK.md.
+
+This product bundles the provider layer of T3 Code (https://github.com/pingdotgg/t3code),
+Copyright (c) 2026 T3 Tools Inc., licensed under the MIT License (see src/vendor/t3/LICENSE in
+the source; the notice is kept in each bundled file). Its generated Codex app-server schema is
+derived from the openai/codex app-server JSON schema (https://github.com/openai/codex),
+licensed under the Apache License, Version 2.0.

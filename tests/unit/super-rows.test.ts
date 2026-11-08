@@ -429,8 +429,8 @@ describe('instant events (owner 2026-10-27)', { timeout: 30_000 }, () => {
   });
 });
 
-describe('a single question (AC5)', { timeout: 30_000 }, () => {
-  it('while the super\'s own ask is open nothing is delivered, recap included; when it closes they go', async () => {
+describe('a single question (AC5, D1)', { timeout: 30_000 }, () => {
+  it('while the super\'s own ask is open only a child\'s question waits (D1, owner 2026-11-06): the recap and a finished job go', async () => {
     const { delivered } = await boot([], {
       children: { c1: child('c1', 'done') },
       queue: [
@@ -439,18 +439,14 @@ describe('a single question (AC5)', { timeout: 30_000 }, () => {
         { id: 'q-d', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 3 },
       ],
     });
-    await advance(5_000);
-    expect(delivered).toHaveLength(0);
-    superOwnerSpoke(SUPER);
-    await drain();
-    expect((await readSuperState(root)).queue.find((q) => q.id === 'q-ask')?.state).toBe('done');
-    await advance(OWNER_LEASE_MS + 200);
     await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
     expect(delivered[0].text).toMatch(/^\[super recap\]/);
     superTurnEnded(SUPER);
     await drain();
-    await vi.waitFor(() => expect(delivered).toHaveLength(2), W);
-    expect(delivered[1].event.items?.map((i) => i.item)).toEqual(['q-d']);
+    await vi.waitFor(() => expect(delivered.filter((d) => !d.text.startsWith('[super owed]'))).toHaveLength(2), W);
+    expect(delivered.filter((d) => !d.text.startsWith('[super owed]'))[1].event.items?.map((i) => i.item)).toEqual(['q-d']);
+    // His question is still open: nothing closed it.
+    expect((await readSuperState(root)).queue.find((q) => q.id === 'q-ask')?.state).toBe('escalated');
   });
 
   it('an escalation whose child stopped asking never blocks', async () => {

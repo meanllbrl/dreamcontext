@@ -52,7 +52,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, msgRef, type SuperState } from '../../src/lib/super/types.js';
 import { AWAITED_LINE, _resetSuperInbox, markSuperEventTurn, nextBatch, noteSuperOwnerMsg, superBatchText, superOwnerMsgRef } from '../../src/lib/super/inbox.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
@@ -67,6 +67,11 @@ let token = '';
 const SUPER = 'sup-1';
 const RUN = '2026-10-30T09:00:00.000Z';
 const ASK = 'Go through the Orbit inbox and answer what is left unanswered';
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-origin-')));

@@ -30,7 +30,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
-import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIndex } from '../../src/lib/super/store.js';
+import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superEntry } from '../../src/lib/super/store.js';
 import { MAX_ENDED_CHILDREN, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, noteChatStarted } from '../../src/lib/super/inbox.js';
 import { handleSuperEnd, handleSuperVerb } from '../../src/server/routes/super.js';
@@ -139,8 +139,8 @@ describe('super end', () => {
     expect(s.queue.find((q) => q.id === 'q-1')?.state).toBe('done');
     expect(s.queue.find((q) => q.kind === 'ended')).toMatchObject({ sessionId: 'c1', state: 'done', brief: 'db work' });
     // Out of the event index: no idle/gone turn will ever be queued for it.
-    expect(superIndex(root).children.has('c1')).toBe(false);
-    expect(superIndex(root).children.has('c2')).toBe(true);
+    expect(superEntry(root).children.has('c1')).toBe(false);
+    expect(superEntry(root).children.has('c2')).toBe(true);
   });
 
   it.each([
@@ -502,7 +502,7 @@ describe('end review round 1 fixes', () => {
   it('M7 an ended child the owner reopens himself is his again: no longer ended, adopted, its card and note back', async () => {
     makeVault();
     await verb('end', { children: ['c2'] });
-    expect(superIndex(root).children.has('c2')).toBe(false);
+    expect(superEntry(root).children.has('c2')).toBe(false);
     registerChat({ sessionId: 'c2', conversationId: null, vault: 'acme', mode: 'basic' });
     await noteChatStarted('c2');
     const s = await readSuperState(root);

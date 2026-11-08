@@ -119,32 +119,43 @@ function tabIdsOf(sessionId: string): Set<string> {
 export function superWindowRefusal(token: string, verb: WindowVerb, args: Record<string, unknown>): string | null {
   const who = identityOf(token);
   if (!who) return null;
-  const idx = superIndex(who.contextRoot);
-  if (!idx.session) return null;
-  const superTabs = tabIdsOf(idx.session);
-  const callerIsSuper = who.sessionId === idx.session && who.mode === 'super';
+  // Every super of the vault (plan-r10 1): main's and each member's, the same rules for each.
+  const supers = [...superIndex(who.contextRoot).values()].filter((e) => !!e.session);
+  if (!supers.length) return null;
+  const superTabs = new Set<string>();
+  for (const e of supers) for (const id of tabIdsOf(e.session as string)) superTabs.add(id);
+  const own = who.mode === 'super' ? supers.find((e) => e.session === who.sessionId) ?? null : null;
+  const callerIsSuper = !!own;
   const callerTabs = tabIdsOf(who.sessionId);
   const named = [args.tab, args.into].filter((t): t is string => typeof t === 'string' && !!t);
   const targetsSelfImplicitly = verb !== 'state' && verb !== 'new' && args.tab === undefined;
   const isSuperTab = (t: string) => superTabs.has(t);
-  const childTabs = new Set<string>();
-  for (const sid of idx.children) for (const id of tabIdsOf(sid)) childTabs.add(id);
+  const ownTabs = own ? tabIdsOf(own.session as string) : new Set<string>();
+  const childTabsOf = (e: { children: ReadonlySet<string> }) => {
+    const out = new Set<string>();
+    for (const sid of e.children) for (const id of tabIdsOf(sid)) out.add(id);
+    return out;
+  };
 
-  if (verb === 'mode' && (named.some(isSuperTab) || (targetsSelfImplicitly && (callerIsSuper || who.sessionId === idx.session)))) {
+  if (verb === 'mode' && (named.some(isSuperTab) || (targetsSelfImplicitly && (callerIsSuper || supers.some((e) => e.session === who.sessionId))))) {
     return 'the Super Agent\'s mode changes only with the owner\'s Take back button';
   }
-  if (!callerIsSuper && named.some(isSuperTab)) return 'the Super Agent\'s tab is not yours to drive';
-  if (callerIsSuper) {
-    if (idx.enabled && (verb === 'new' || verb === 'split')) return 'use `dreamcontext super delegate` to start a child (it counts against the cap)';
-    for (const t of named) if (!isSuperTab(t) && !childTabs.has(t)) return 'you drive only your own children (`dreamcontext super state` lists them)';
+  // Another super's tab is never this caller's (a member's is not main's, nor the reverse).
+  if (named.some((t) => isSuperTab(t) && !ownTabs.has(t))) return 'the Super Agent\'s tab is not yours to drive';
+  if (own) {
+    const childTabs = childTabsOf(own);
+    if (own.enabled && (verb === 'new' || verb === 'split')) return 'use `dreamcontext super delegate` to start a child (it counts against the cap)';
+    for (const t of named) if (!ownTabs.has(t) && !childTabs.has(t)) return 'you drive only your own children (`dreamcontext super state` lists them)';
     // `super update` is the one way to change a child's mode, model or effort: it keeps the
     // owner's own chats his (--force) and records the change for `super resume`.
-    if (idx.enabled && (verb === 'mode' || verb === 'model' || verb === 'effort') && named.some((t) => childTabs.has(t))) {
+    if (own.enabled && (verb === 'mode' || verb === 'model' || verb === 'effort') && named.some((t) => childTabs.has(t))) {
       return 'use `dreamcontext super update <child> --mode|--model|--effort` to change a child';
     }
     return null;
   }
-  if (idx.enabled && idx.children.has(who.sessionId)) {
+  const parent = supers.find((e) => e.enabled && e.children.has(who.sessionId));
+  if (parent) {
+    const childTabs = childTabsOf(parent);
     if (verb === 'new' || verb === 'split') return 'while the Super Agent leads this project, only it starts chats';
     for (const t of named) if (childTabs.has(t) && !callerTabs.has(t)) return 'a sibling chat is not yours to drive; ask the Super Agent';
   }
@@ -178,9 +189,11 @@ export async function handleWindowCommand(req: IncomingMessage, res: ServerRespo
   const r = await sendWindowCommand(token, verb, args);
   if (r.ok && verb === 'state') {
     const who = identityOf(token);
-    const session = who ? superIndex(who.contextRoot).session : null;
-    if (session && who && who.sessionId !== session) {
-      sendJson(res, 200, { ok: true, result: omitSuperTabs(r.result, tabIdsOf(session)) });
+    // Every super's tab but the caller's own is left out (a member's Super from main's state too).
+    const others = new Set<string>();
+    if (who) for (const e of superIndex(who.contextRoot).values()) if (e.session && e.session !== who.sessionId) for (const id of tabIdsOf(e.session)) others.add(id);
+    if (others.size) {
+      sendJson(res, 200, { ok: true, result: omitSuperTabs(r.result, others) });
       return;
     }
   }

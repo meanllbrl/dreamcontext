@@ -180,3 +180,29 @@ describe('applySleepSpecialistOverrides is scoped to what changed', () => {
     expect(applySleepSpecialistOverrides(root, [])).toEqual({ updated: [], skipped: [] });
   });
 });
+
+describe('the Sleep line reaches the agent files (effective value)', () => {
+  it('an unpinned specialist installs with the line; a pinned one keeps its own', () => {
+    writeFileSync(join(pkgAgents, 'sleep-state.md'), AGENT.replace('sleep-tasks', 'sleep-state'));
+    updateSetupConfig(root, {
+      sleep: { model: 'claude-haiku-4-5', effort: 'high', specialists: { 'sleep-state': { model: 'claude-sonnet-5', effort: 'low' } } },
+    });
+    install();
+    installAgentForPlatform('claude', root, join(pkgAgents, 'sleep-state.md'));
+    expect(installed()).toContain('model: claude-haiku-4-5');
+    expect(installed()).toContain('effort: high');
+    expect(installed('sleep-state')).toContain('model: claude-sonnet-5');
+    expect(installed('sleep-state')).toContain('effort: low');
+  });
+
+  it('a line change re-applied to a follower rewrites it; to a pinned one leaves its value', () => {
+    writeFileSync(join(pkgAgents, 'sleep-state.md'), AGENT.replace('sleep-tasks', 'sleep-state'));
+    updateSetupConfig(root, { sleep: { model: 'claude-haiku-4-5', specialists: { 'sleep-state': { model: 'claude-sonnet-5' } } } });
+    install();
+    installAgentForPlatform('claude', root, join(pkgAgents, 'sleep-state.md'));
+    updateSetupConfig(root, { sleep: { model: 'claude-opus-5', specialists: { 'sleep-state': { model: 'claude-sonnet-5' } } } });
+    applySleepSpecialistOverrides(root, ['sleep-tasks', 'sleep-state']);
+    expect(installed()).toContain('model: claude-opus-5');
+    expect(installed('sleep-state')).toContain('model: claude-sonnet-5');
+  });
+});

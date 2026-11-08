@@ -7,6 +7,7 @@ import { confirm } from '@inquirer/prompts';
 import { accountEnvFor, resolveConfigDir } from '../lib/claude-accounts.js';
 import { claudeAwarePath } from '../lib/claude-path.js';
 import { gitAvailable, initRepo } from '../lib/git-sync/git.js';
+import { codexAwarePath, codexCommand } from '../lib/codex-bin.js';
 import { CHECK_COPY, CLI_COPY, FIX_COPY, REASON_COPY } from '../lib/onboarding/copy.js';
 import { CLI_INTERACTIVE, runFix, type FixOutcome, type RunSink } from '../lib/onboarding/fixes.js';
 import { recordPendingGitInit, runPendingGitInits } from '../lib/onboarding/pending-git.js';
@@ -122,7 +123,7 @@ function withDirs(base: string, dirs: string[]): string {
 function defaultInteractiveEnv(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PATH: withDirs(claudeAwarePath(process.env.PATH ?? ''), [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']),
+    PATH: codexAwarePath(withDirs(claudeAwarePath(process.env.PATH ?? ''), [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'])),
   };
   let account: Record<string, string | undefined> = {};
   try {
@@ -287,8 +288,9 @@ async function runForeground(id: FixId, report: ReadinessReport, deps: TtyDeps):
   markFixActive(id);
   try {
     deps.print(`    ${chalk.dim(`${FIX_COPY[id].working}...`)}`);
-    if (id === 'claude-signin' || id === 'gh-signin') {
-      const code = await deps.runInteractive(CLI_INTERACTIVE[id] ?? [], { env: deps.interactiveEnv() });
+    if (id === 'claude-signin' || id === 'gh-signin' || id === 'codex-signin') {
+      const argv = CLI_INTERACTIVE[id] ?? [];
+      const code = await deps.runInteractive(id === 'codex-signin' ? [codexCommand(), ...argv.slice(1)] : argv, { env: deps.interactiveEnv() });
       return code === 0;
     }
     if (id === 'github-signin') {

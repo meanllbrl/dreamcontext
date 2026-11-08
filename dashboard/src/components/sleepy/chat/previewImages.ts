@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 
 /**
  * Project pictures inside an AskUserQuestion `preview`.
@@ -86,7 +86,7 @@ async function loadAsDataUrl(vault: string | null, path: string): Promise<string
  * one. A preview with no local pictures never changes.
  */
 export function usePreviewHtml(html: string | undefined): string | undefined {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // A lone clip or picture is drawn natively (see `loneMedia`) — never fetch it as a data URL.
   if (loneMedia(html)) html = undefined;
   const [inlined, setInlined] = useState<{ source: string; html: string } | null>(null);

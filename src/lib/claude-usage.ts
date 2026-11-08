@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { assertConfinedConfigDir } from './claude-accounts.js';
+import { join, resolve } from 'node:path';
+import { assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { mergeUsageReadings, readUsageMeter } from './claude-usage-meter.js';
 
 /**
@@ -75,6 +75,15 @@ export interface UsageLimitsResponse {
   limits: UsageLimitWire[];
   /** When the CLI last refreshed the cache. The client labels or hides a stale reading. */
   fetchedAtMs: number | null;
+  /**
+   * The SOURCE says this account has no 5-hour window at all (present only when true). Not "we
+   * could not read it": the cache states `five_hour: null` with no `session` entry, or the
+   * live report lists the week and no session line. Owner, 2026-11-03: the $200 plan (shown as
+   * "Ultra" in the account's own profile) dropped the 5-hour limit; a row drew a hatched
+   * "not measured" track for a limit that does not exist. Derived from the data, never from
+   * the plan name.
+   */
+  noSessionWindow?: true;
 }
 
 export const EMPTY_USAGE_LIMITS: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
@@ -210,6 +219,12 @@ export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
   // Repeated here on purpose — see note 2 in the header. A directory that is neither the real
   // HOME nor an account sandbox never gets read, whatever the caller believed.
   const dir = assertConfinedConfigDir(home);
+  // A folder signed in as ANOTHER account measures that other account. Owner, 2026-11-03: the
+  // machine's own account (gmail) drew the Team account's week, digit for digit, because the
+  // real HOME had been signed in to the Team account in a terminal. Neither the CLI's cache nor
+  // the per-turn meter says whose numbers they are, so the folder's sign-in decides: a row is
+  // shown, and decided on, only with its own account's usage.
+  if (otherAccountSignedIn(dir) !== null) return EMPTY_USAGE_LIMITS;
   // The CLI's cache is rewritten at most every five minutes and only on demand; every turn this
   // app runs states the account's usage exactly (claude-usage-meter.ts). Newest window wins.
   return mergeUsageReadings(readCliUsageCache(dir), readUsageMeter(dir));
@@ -255,6 +270,27 @@ function signedInAs(blob: Record<string, unknown> | null, account: AccountIdenti
   return !account.organizationUuid || !org || account.organizationUuid === org;
 }
 
+/**
+ * The email a REGISTERED account's folder is signed in as, when that is a DIFFERENT account;
+ * null when it is the account itself, signed out, unregistered, or unreadable. Never throws.
+ *
+ * Signed out is null on purpose: that is a different fact with its own surface (`needs-relogin`),
+ * and its cache, if any, still belongs to the account the register names.
+ */
+export function otherAccountSignedIn(configDir: string, home: string = homedir()): string | null {
+  try {
+    const dir = assertConfinedConfigDir(configDir, home);
+    const account = listClaudeAccounts(home).find((a) => (a.configDir === null
+      ? isRealHomeConfigDir(dir, home)
+      : resolve(a.configDir) === dir));
+    if (!account) return null;
+    const identity = configDirIdentity(account, home);
+    return identity.kind === 'other' ? identity.email || 'another account' : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Is `account`'s own directory signed in as that account right now? Never throws. */
 export function configDirSignedInAs(account: AccountIdentity, home: string = homedir()): boolean {
   try {
@@ -263,6 +299,34 @@ export function configDirSignedInAs(account: AccountIdentity, home: string = hom
   } catch {
     return false;
   }
+}
+
+/**
+ * WHO an account's directory is signed in as, compared with the row that names it.
+ *
+ *   • `match` — the directory holds the credential the register names;
+ *   • `other` — it holds a DIFFERENT account's credential (`email` says whose). Its cache, its
+ *     per-turn meter and its live report all describe that other quota pool;
+ *   • `none`  — no credential identity at all (signed out, or never signed in).
+ *
+ * Observed on the owner's machine, 2026-11-03: the machine's own `~/.claude` had been signed in
+ * again from a terminal and the browser picked another account, so the row named for one account
+ * drew the other's numbers, identical to that account's own row. `configDirSignedInAs` alone
+ * cannot tell `other` from `none`, and the two need different words on screen.
+ */
+export type DirIdentity = { kind: 'match' } | { kind: 'other'; email: string } | { kind: 'none' };
+
+export function configDirIdentity(account: AccountIdentity, home: string = homedir()): DirIdentity {
+  let blob: Record<string, unknown> | null;
+  try {
+    blob = readJsonSafe(join(assertConfinedConfigDir(account.configDir ?? home, home), '.claude.json'));
+  } catch {
+    return { kind: 'none' };
+  }
+  const oauth = asRecord(blob?.oauthAccount);
+  if (!trimmedString(oauth?.accountUuid)) return { kind: 'none' };
+  if (signedInAs(blob, account)) return { kind: 'match' };
+  return { kind: 'other', email: trimmedString(oauth?.emailAddress) };
 }
 
 /**
@@ -313,7 +377,29 @@ function usageFromBlob(blob: Record<string, unknown> | null): UsageLimitsRespons
 
   const limits = [toWire('session', session), toWire('weekly', weekly)]
     .filter((w): w is UsageLimitWire => w !== null);
-  return { limits, fetchedAtMs };
+  // `five_hour` PRESENT and null, and no `session` entry: the account has no such window. An
+  // absent key or an unreadable entry stays "unknown" (the bar is simply missing a reading).
+  const noSession = !limits.some((l) => l.key === 'session')
+    && Object.prototype.hasOwnProperty.call(util, 'five_hour') && util.five_hour === null
+    && !entries.some((e) => asRecord(e)?.kind === 'session');
+  return noSession ? { limits, fetchedAtMs, noSessionWindow: true } : { limits, fetchedAtMs };
+}
+
+/**
+ * The plan name the account's OWN profile states (`oauthAccount.planDisplayName`, e.g. "Ultra"),
+ * or null. Only for a folder signed in as that very account: another account's profile names
+ * another plan. Narrowed to a short plain string; nothing else from the profile is returned.
+ */
+export function accountPlanName(account: AccountIdentity, home: string = homedir()): string | null {
+  let blob: Record<string, unknown> | null;
+  try {
+    blob = readJsonSafe(join(assertConfinedConfigDir(account.configDir ?? home, home), '.claude.json'));
+  } catch {
+    return null;
+  }
+  if (!signedInAs(blob, account)) return null;
+  const name = trimmedString(asRecord(blob?.oauthAccount)?.planDisplayName);
+  return name && name.length <= 40 && /^[\p{L}\p{N} ._+-]+$/u.test(name) ? name : null;
 }
 
 /** `primary` when it has a percent, else whatever the fallback finds. */

@@ -48,4 +48,10 @@ describe('readZoomMessage', () => {
     expect(ZOOM_BRIDGE).toContain(`parent.postMessage({ ${ZOOM_MESSAGE_KEY}: m }, '*')`);
     expect(ZOOM_BRIDGE).not.toMatch(/fetch|XMLHttpRequest|location/);
   });
+
+  it('a ctrl/cmd + wheel the page already took (a dc-graph zooming itself) is not posted, so the card does not zoom with it', () => {
+    const at = ZOOM_BRIDGE.indexOf('if ((e.ctrlKey || e.metaKey) && e.defaultPrevented) return;');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(ZOOM_BRIDGE.indexOf("post({ kind: 'wheel'"));
+  });
 });

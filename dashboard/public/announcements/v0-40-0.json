@@ -1,0 +1,80 @@
+{
+  "hero": {
+    "eyebrow": "v0.40.0  ·  2 November 2026",
+    "headline": "Claude or Codex, in the same chat window",
+    "sub": "Everything since 0.36.1 in one release. Open a chat on Codex with the cards you know from Claude, give every app its own assistant, follow an AI Team member's runs in place, and find every setting in one new window.",
+    "shot": {
+      "src": "shots/v0-40-0/codex-chat.png",
+      "alt": "A Codex chat in the orbit demo project, on GPT-5-Codex. Above, a finished step list with a command it ran and its answer: two-source trials convert at 31%, single-source trials at 11%. Below, the owner asks 'Who should the day-1 prompt reach first? Ask me.' and Codex answers with a question card: 'Which trials should the day-1 prompt reach first?' with the options Single-source trials (Recommended), Every new trial and Other, and a Submit button.",
+      "caption": "A Codex chat asks with the same question card a Claude chat uses."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Pick the tool in the model menu",
+      "body": "The model menu lists Claude, Codex and Antigravity side by side. Pick a Codex model and the next chat runs on Codex.",
+      "shot": {
+        "src": "shots/v0-40-0/picker.png",
+        "alt": "A Claude chat in the orbit demo project with the model menu open. On its left, three tools: Claude, Codex and Antigravity. Codex is picked and shows one model, GPT-5-Codex, under the line 'Opens a new Codex chat with a summary of this one', with Effort High below it."
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "Your skills come along",
+      "body": "A Codex chat works on your project like a Claude chat does. Type / and it lists the project's skills. Its work shows as steps you can open, with every command it ran.",
+      "shot": {
+        "src": "shots/v0-40-0/codex-slash.png",
+        "alt": "A Codex chat named 'Trials by data sources'. The owner asked it to split last month's trials by data sources. A Working card lists its steps, including the command it ran, followed by its answer. In the composer the owner typed '/', and a menu lists /clear, /compact and the project's skills /pattern-metric-definitions-live-in, /pattern-onboarding-email-tone and /pattern-pricing-page-experiments. The model chip reads GPT-5-Codex High."
+      }
+    },
+    {
+      "kind": "note",
+      "text": "Codex chats were tried in real turns before this release. Codex work outside a chat (sleep, automations, AI Team, Super Agent jobs) is in beta and still being tested; its automations run with no network, and Develop builders start only from Claude. Antigravity is experimental everywhere: it cannot stop one sub-agent, rewind, or sign in to a tool server from chat, and a message sent mid-turn goes as the next turn."
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Every app gets its own assistant",
+      "body": "An app opens in its own window, and now it comes with its own chat, in the app's own colours. Ask it about what is on the screen.",
+      "shot": {
+        "src": "shots/v0-40-0/app.png",
+        "alt": "A demo app called Trial Board. On the left, a table of trials started in the last 14 days: Northwind and Kite Studio At risk, Lumen Labs and Harbor Analytics Likely to pay, Pine & Co Too early. On the right, the Trial Board assistant chat: the owner asked 'Which trials are at risk, and why?' and the assistant answered 'Northwind and Kite Studio. Both connected Stripe only, and single-source trials convert at 11%. A second source on day 1 is the fix the investigation points to.'"
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "AI Team: a member's runs open in place",
+      "body": "Pick a member and its whole history is there. Open a run's steps, read its full report or continue it, all on the AI Team page. A question it asked waits above the box with an Answer button.",
+      "shot": {
+        "src": "shots/v0-40-0/team.png",
+        "alt": "The AI Team page of the orbit demo project with the member Churn Watch open, under Needs you. One of its runs is open in place with Hide steps, Full report and Continue links: 'Reading last night's cancellations.', a command it ran, and 'Two of the three were monthly teams past month three. An annual plan would have kept them.' Above the composer, its question: 'Kite Studio cancelled an annual plan at renewal. Count it in this month's churn?' with an Answer button."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "A new Settings",
+      "body": "Settings is one window with a search box and a menu for each part of the app. Models sets the tool, model and effort each job runs on, with a tab for each tool.",
+      "shot": {
+        "src": "shots/v0-40-0/settings-models.png",
+        "alt": "The Settings window open on Agents, Models. A search box and a menu on the left: General, Chat, Voice, Models, Tools (MCP), Super Agent, Assistant, Memory search, Sleep, Tasks, Code repos, Team sync, Task mirroring, Connected projects, Hands-free and System. The Models page has tabs Defaults, Claude Code, Codex, Antigravity and OpenCode, and rows for Chat, Super Agent, Assistant and Sleep, each with its model and effort, then the Sleep helpers."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Rank the work with RICE",
+      "body": "Give tasks and objectives a Reach, Impact, Confidence and Effort. The roadmap works out the score and sorts the work into Now, Next and Later under each objective.",
+      "shot": {
+        "src": "shots/v0-40-0/roadmap.png",
+        "alt": "The Roadmap of the orbit demo project at the Tasks level, in Lanes. Columns for the objectives Reach 100 paying customers (score 7.5), Ship the public beta (1.5) and Unlinked. Rows Now, Next and Later: Investigate trial-to-paid drop scores 45.0 in Now; Annual plan on pricing page 10.5 and Churn exit survey 11.3 in Next; Usage dashboard 1.0 in Later; a Not scored row at the bottom."
+      }
+    }
+  ],
+  "closer": {
+    "title": "Get 0.40.0",
+    "body": "The app updates itself. New here? Download it from the latest GitHub release, or run npm i -g dreamcontext."
+  }
+}

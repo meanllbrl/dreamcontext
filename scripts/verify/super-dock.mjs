@@ -9,8 +9,9 @@
  * and WebKit, the real chat sockets and the real CLI run from INSIDE the spawned chats. `claude` is
  * a scripted stand-in (no tokens) that records every user frame it receives. It proves, per engine:
  *   - Super ON with the overlay folded: one pill (the stage's Others pill, the dreamcontext logo
- *     and name), never the old stack, on Tasks, Insights, an insight, Knowledge, a whiteboard and
- *     AI Team; nothing on the Chat screen; a reload never paints the old stack first;
+ *     and name), never the old stack, on Tasks, Insights, an insight, Knowledge and a whiteboard
+ *     (no AI Team page any more, plan-r10 1d); nothing on the Chat screen; a reload never paints
+ *     the old stack first;
  *   - the pill opens THE Super chat as a right-hand column (its container moved, no chat spawned),
  *     caret in the composer; Escape minimizes and focus returns to the pill; a draft survives
  *     minimize/re-open and Büyüt (the Chat screen, the chat in the stage centre);
@@ -21,7 +22,7 @@
  *     answered in the dock's card; a finished turn with the dock closed: the news dot;
  *   - a child's permission in the dock's band (one band in the page), allowed there; its name
  *     opens the stage with the child beside the agenda;
- *   - on a whiteboard (board open) and AI Team the pill and window stay >= 12 px clear of the page's
+ *   - on a whiteboard (board open) the pill and window stay >= 12 px clear of the page's
  *     bottom-right controls; the window never runs off the top at 1280 x 720;
  *   - take-back from this window: the old stack is back.
  * Screenshots at 1440 x 900 and 1280 x 800, light and dark, in tmp/verify-super-dock/<engine>/.
@@ -165,7 +166,7 @@ async function runEngine(engineName) {
   mkdirSync(join(PROJ, '_dream_context', 'lab', 'scripts'), { recursive: true });
   writeFileSync(join(PROJ, '_dream_context', 'lab', 'scripts', 'weekly-active-users.mjs'), wauScript);
   must('lab sync', dc('lab', 'sync', 'weekly-active-users'));
-  // One AI Team member, so the AI Team page draws its conversation and composer (criterion 16).
+  // One AI Team member (its old AI Team composer block is retired, plan-r10 Wave 3).
   must('agent', dc('agents', 'create', 'scout', '--title', 'Scout', '--prompt', 'You read the product funnel and name what moved.'));
 
   const port = await freePort();
@@ -275,7 +276,8 @@ async function runEngine(engineName) {
 
     console.log('── the pill on every page');
     const sessions0 = await page.locator('.agent-pane-chat').count();
-    for (const [label, page_] of [['Tasks', 'tasks'], ['Insights', 'lab'], ['Knowledge', 'knowledge'], ['Whiteboard', 'whiteboards'], ['AI Team', 'agents']]) {
+    // No AI Team row on the rail any more (plan-r10 1d): its pages are deep-link aliases.
+    for (const [label, page_] of [['Tasks', 'tasks'], ['Insights', 'lab'], ['Knowledge', 'knowledge'], ['Whiteboard', 'whiteboards']]) {
       await nav(label);
       const good = await until(page, async () => (await pill.count()) === 1 && (await oldStack.count()) === 0, 8000);
       ok(`${label}: exactly one pill, no old stack`, good, `${await pill.count()} pills, ${await oldStack.count()} old`);
@@ -375,25 +377,11 @@ async function runEngine(engineName) {
     if (await win.count()) await dock.locator('[data-testid="super-dock-minimize"]').click();
     await page.keyboard.press('Escape');
 
-    console.log('── AI Team: lifted above its composer');
-    await nav('AI Team');
-    // The only member opens by itself; otherwise pick it from the list. AI Team v2 opens a member
-    // on its stage (AgentStage, teamView 'stage'): the live chat's Composer (.chat-cmp) inside
-    // section[data-stage]. `.aiteam-composer` is the Activity view's (TeamConversation) only.
-    const teamComposer = page.locator('[data-stage="scout"] .chat-cmp').first();
-    if (!(await until(page, async () => (await teamComposer.count()) > 0, 5000))) await page.getByText('Scout', { exact: true }).first().click();
-    ok('AI Team: the member\'s conversation and its composer are on screen', await until(page, async () => (await teamComposer.count()) === 1 && (await teamComposer.isVisible()), 15000));
-    await page.waitForTimeout(800);
-    const cb = await teamComposer.boundingBox();
-    const pt = await pill.first().boundingBox();
-    ok('…the corner is lifted for AI Team (data-lift="team")', (await dock.getAttribute('data-lift')) === 'team');
-    ok('AI Team: the pill is >= 12 px clear of the composer (measured)', !!cb && !!pt && !overlaps(pt, cb, 12), JSON.stringify({ pt, cb }));
-    await pill.first().click();
-    await until(page, async () => (await win.count()) === 1, 5000);
-    const wt = await win.boundingBox();
-    ok('AI Team: the window is >= 12 px clear of the composer (measured)', !!cb && !!wt && !overlaps(wt, cb, 12), JSON.stringify({ wt, cb }));
-    await shotSet('09-dock-open-ai-team');
-    await dock.locator('[data-testid="super-dock-minimize"]').click();
+    // RETIRED (plan-r10 Wave 3, lane C): the AI Team block. There is no AI Team page with a
+    // member's conversation and composer any more: a member is talked to on its own Super stage
+    // (the chat area, where the dock is not drawn), and the `agents` page id only opens the
+    // "Üyeleri yönet" modal, which has no composer. The lift-above-the-composer measurement had
+    // nothing left to measure; scripts/verify/super-members.mjs covers the member stage.
 
     console.log('── a Super question: the pill asks and bounces until answered');
     await nav('Tasks');

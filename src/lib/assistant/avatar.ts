@@ -69,3 +69,10 @@ export function findAvatar(home: string = homedir()): { ext: AvatarExt; path: st
   }
   return null;
 }
+
+/** Remove the avatar (every whitelisted name). Returns whether one was there. Idempotent. */
+export function removeAvatar(home: string = homedir()): boolean {
+  const had = findAvatar(home) !== null;
+  for (const e of AVATAR_EXTS) rmSync(avatarPath(e, home), { force: true });
+  return had;
+}

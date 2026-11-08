@@ -16,7 +16,7 @@
  * mention's words, cardMention.ts).
  */
 import {
-  ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
 
@@ -201,6 +201,8 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
  *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
+  // A Bypass child's permission is its Super's to decide first; it is his once it falls to him.
+  if (item.kind === 'permission' && item.toSuper === true) return false;
   return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated' || directChildQuestion(item);
 }
 
@@ -275,6 +277,17 @@ export function presenceChatId(a: {
  *  the stage: the super chat is never a tab, so resuming it as one would fork it. */
 export function linkOpensSuperStage(claudeId: string, state: Pick<SuperState, 'enabled' | 'session'> | null | undefined): boolean {
   return !!state?.enabled && !!state.session && state.session === claudeId;
+}
+
+/**
+ * Which super's stage a session link opens (plan r4 D6b): main's, or a MEMBER's, whichever
+ * record holds that session while on. A member's finish banner, its notch row and its question
+ * banner all carry the session link; matched against EVERY super of the vault, never only the
+ * active one (usually main), so a member's never opens as a plain chat tab. Null = no super's.
+ */
+export function superStageOfLink(claudeId: string, records: ReadonlyArray<{ superId: string; record: Pick<SuperState, 'enabled' | 'session'> | null | undefined }>): string | null {
+  for (const r of records) if (linkOpensSuperStage(claudeId, r.record)) return r.superId;
+  return null;
 }
 
 /** The width a head's option buttons needed, learned the one time they overflowed the pill. */
@@ -472,14 +485,57 @@ export function toneOfRow(row: ChildRow): StatusTone {
   return 'idle';
 }
 
-/** "Opus · medium": the model a child really runs (its session's spawn values, else what the
- *  record stored), never a guess; null when neither is known. */
-export function modelChip(model: string | undefined | null, effort: string | undefined | null): string | null {
+/** "Opus · medium", "GPT-5.5 · high", "Gemini 3.8 Flash · high": the model a child really runs
+ *  (its session's spawn values, else what the record stored), never a guess; null when neither
+ *  is known. A Codex or Antigravity model reads as its vendor names it; Antigravity's effort is
+ *  the model id's own suffix, never a stored one. */
+export function modelChip(model: string | undefined | null, effort: string | undefined | null, tool?: string | null): string | null {
+  const p = modelChipParts(model, effort, tool);
+  return p ? (p.level ? `${p.name} · ${p.level}` : p.name) : null;
+}
+
+/** {@link modelChip} in two parts, so a narrow tile shortens the name and always keeps the level. */
+export function modelChipParts(model: string | undefined | null, effort: string | undefined | null, tool?: string | null): { name: string; level: string } | null {
   const m = (model ?? '').trim();
   if (!m) return null;
+  if (tool === 'antigravity' || tool === 'codex') return bridgeModelChip(m, tool === 'antigravity' ? null : effort);
   const family = /opus/i.test(m) ? 'Opus' : /sonnet/i.test(m) ? 'Sonnet' : /haiku/i.test(m) ? 'Haiku' : /fable/i.test(m) ? 'Fable' : m.replace(/^claude-/, '').slice(0, 16);
+  return { name: family, level: (effort ?? '').trim().toLowerCase() };
+}
+
+/**
+ * A child's chip from the model picker's own row label (the names the chat's picker shows, never
+ * a second map): "Gemini 3.8 Flash (High)" = "Gemini 3.8 Flash" · "high" (Antigravity names its
+ * level in the model, so a stored effort never overrides it); "GPT-5.5" or "Opus 5" keep the
+ * child's effort. No row (an id the picker does not list): the raw id, never nothing.
+ */
+export function chipFromPickerLabel(label: string | null | undefined, rawId: string, effort: string | undefined | null, tool?: string | null): { name: string; level: string } | null {
+  const id = rawId.trim();
+  const l = (label ?? '').trim();
+  if (!l && !id) return null;
+  const e = tool === 'antigravity' ? '' : (effort ?? '').trim().toLowerCase();
+  if (!l) return { name: id, level: e };
+  const paren = /^(.*\S)\s*\(([A-Za-z-]+)\)$/.exec(l);
+  if (paren) return { name: paren[1]!, level: paren[2]!.toLowerCase() };
+  return { name: l, level: e };
+}
+
+/** A Codex or Antigravity model id as a chip: `gemini-3.8-flash-high` = "Gemini 3.8 Flash · high",
+ *  `gpt-5.5` = "GPT-5.5"; an id it cannot read keeps its first 20 characters. */
+function bridgeModelChip(m: string, effort: string | undefined | null): { name: string; level: string } {
   const e = (effort ?? '').trim().toLowerCase();
-  return e ? `${family} · ${e}` : family;
+  const tail = /-(xhigh|high|medium|low|minimal)$/i.exec(m);
+  const level = tail ? tail[1]!.toLowerCase() : e;
+  const base = tail ? m.slice(0, tail.index) : m;
+  let name: string;
+  if (/^gemini-/i.test(base)) {
+    name = base.split('-').map((w, i) => (i === 0 ? 'Gemini' : /^[a-z]/.test(w) ? w[0]!.toUpperCase() + w.slice(1) : w)).join(' ');
+  } else if (/^gpt-/i.test(base)) {
+    name = `GPT-${base.slice(4)}`;
+  } else {
+    name = base.slice(0, 20);
+  }
+  return { name, level };
 }
 
 // ─── The agenda: the super agent's notepad (owner 2026-10-22 19:15) ──────────────
@@ -489,9 +545,11 @@ export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
 /** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
 export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou';
+/** A row's section: one of the notepad's three, or the unanswered lines above them (owed.ts). */
+export type AgendaRowSection = AgendaSection | 'unanswered';
 export interface AgendaRow {
   key: string;
-  section: AgendaSection;
+  section: AgendaRowSection;
   /** The line: a pad note's own words; for an open question, who asks. */
   text: string;
   /** An open question's own words (its second line). */
@@ -508,7 +566,21 @@ export interface AgendaRow {
   stale?: boolean;
   /** A child's own question (`directChildQuestion`): pressing it opens that child's chat. */
   direct?: boolean;
+  /** An unanswered line: the debt the Super still owes him (`SuperOwed.id`), and what it is. */
+  owed?: string;
+  owedKind?: 'msg' | 'result';
   at: number;
+}
+
+/**
+ * What the Super left unanswered (owed.ts): a debt nudged twice, or one his Stop or a limit left
+ * open for ten minutes. One row each, oldest first; the agenda draws them above Waiting on you as
+ * "Cevaplanmadı". `now` decides the parked ones (the card arms one timer for the next).
+ */
+export function superUnanswered(state: Pick<SuperState, 'owed'>, now = Date.now()): AgendaRow[] {
+  return (state.owed ?? []).filter((d) => owedVisible(d, now)).sort((a, b) => a.seq - b.seq).map((d) => ({
+    key: `o:${d.id}`, section: 'unanswered' as const, text: d.gist, owed: d.id, owedKind: d.kind, at: d.at,
+  }));
 }
 export interface JobLook {
   /** The child's live status kind in this window, or null when it has no session here. */
@@ -587,11 +659,18 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   return out;
 }
 
+/** What waits on the owner everywhere a count is drawn (the tile, the phone chip, the Agenda
+ *  button and pill): Waiting on you plus what the Super left unanswered. One rule, so no surface
+ *  reads "nothing" while a line is unanswered. */
+export function agendaWaitingCount(state: Pick<SuperState, 'queue' | 'pad' | 'owed'>, look: JobLook, now = Date.now()): number {
+  return superNotepad(state, look, now).waiting.length + superUnanswered(state, now).length;
+}
+
 // ─── Writing about one agenda line (owner 2026-10-23) ────────────────────────────
 
 /** What a message written about an agenda line names: a pad note (with the line as he saw it)
  *  or an open question's queue item (no words: they are a child's). */
-export interface AgendaAbout { kind: 'note' | 'item'; id: string; section: AgendaSection; line?: string }
+export interface AgendaAbout { kind: 'note' | 'item' | 'owed'; id: string; section: AgendaRowSection; line?: string }
 
 const ABOUT_ID = /^[A-Za-z0-9_-]{1,40}$/;
 
@@ -608,7 +687,9 @@ function aboutLine(text: string): string {
  * section: its words are a child's, and the super reads them fenced from `super state`.
  * '' for a row that names neither.
  */
-export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text'>): string {
+export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text' | 'owed'>): string {
+  // An unanswered line names its debt: the Super answers under that debt's ref.
+  if (row.owed && ABOUT_ID.test(row.owed)) return `[About agenda line owed=${row.owed} section=unanswered]`;
   if (row.note && ABOUT_ID.test(row.note)) {
     return `[About agenda line note=${row.note} section=${row.section}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
   }
@@ -626,6 +707,8 @@ export interface AboutWords {
   superQuestion: string;
   /** "a question": a question no longer open (whose it was is not known any more). */
   aQuestion: string;
+  /** "an unanswered line" (owed.ts). Absent: `aQuestion`. */
+  unanswered?: string;
 }
 export const ABOUT_WORDS_EN: AboutWords = { about: 'About', question: "{name}'s question", superQuestion: "Super's question", aQuestion: 'a question' };
 
@@ -634,8 +717,8 @@ const clip = (s: string, n: number) => { const a = Array.from(s); return a.lengt
 
 /** The About chip's name: "About: <the note>" (clipped), or for a question "About: <child>'s
  *  question" / "About: Super's question". The window's words only; never sent. */
-export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
-  if (row.note) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
+export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note || row.owed) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
   const who = row.sid ? words.question.replace('{name}', () => clip(aboutLine(row.text), 40)) : words.superQuestion;
   return `${words.about}: ${who}`;
 }
@@ -643,8 +726,8 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
 /** What an inline chip reads for an agenda row (owner 2026-10-24): the line's own words, or for
  *  a question "<child>'s question" / "Super's question". No "About:": the chip's ● says it, and
  *  the composer clips the name to its own width (composerRefs `refLabel`). */
-export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
-  if (row.note) return aboutLine(row.text);
+export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note || row.owed) return aboutLine(row.text);
   return row.sid ? words.question.replace('{name}', () => aboutLine(row.text)) : words.superQuestion;
 }
 
@@ -660,6 +743,7 @@ export function agendaAboutStrip(
   words: AboutWords = ABOUT_WORDS_EN,
 ): { label: string; text: string } {
   if (about.kind === 'note') return { label: words.about, text: about.line ?? '' };
+  if (about.kind === 'owed') return { label: words.about, text: words.unanswered ?? words.aQuestion };
   const q = open.find((x) => x.id === about.id && x.state !== 'done');
   if (!q) return { label: words.about, text: words.aQuestion };
   if (q.kind === 'ask' || q.kind === 'approval') return { label: words.about, text: words.superQuestion };
@@ -678,7 +762,7 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
   if (typeof text !== 'string') return { about: null, text: '' };
   const m = ABOUT_AGENDA_RE.exec(text);
   if (!m) return none;
-  const kind = m[1] as 'note' | 'item';
+  const kind = m[1] as 'note' | 'item' | 'owed';
   let rest = text.slice(m[0].length);
   if (rest !== '' && !rest.startsWith('\n')) return none;
   let line: string | undefined;
@@ -696,7 +780,7 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
     return none;
   }
   return {
-    about: { kind, id: m[2], section: m[3] as AgendaSection, ...(line !== undefined ? { line } : {}) },
+    about: { kind, id: m[2], section: m[3] as AgendaRowSection, ...(line !== undefined ? { line } : {}) },
     text: rest.replace(/^\n+/, ''),
   };
 }
@@ -1047,7 +1131,7 @@ export function delegateExpired(args: Record<string, unknown>, now: number = Dat
 /** The `delegate` command's arguments, validated: the mode is one an agent may spawn, the
  *  prompt is present. */
 export function delegateArgs(args: Record<string, unknown>): {
-  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string; mcp: string[];
+  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string; mcp: string[]; tool?: 'codex' | 'antigravity';
 } | { ok: false; error: string } {
   const prompt = typeof args.prompt === 'string' ? args.prompt : '';
   if (!prompt.trim()) return { ok: false, error: 'no_prompt' };
@@ -1055,7 +1139,7 @@ export function delegateArgs(args: Record<string, unknown>): {
   // eslint-disable-next-line no-control-regex
   const str = (v: unknown, n: number) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n) : '');
   const title = str(args.title, MAX_TITLE) || str(args.brief, MAX_TITLE);
-  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title, mcp: mcpNames(args.mcp) };
+  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title, mcp: mcpNames(args.mcp), ...(args.tool === 'antigravity' ? { tool: 'antigravity' as const } : args.tool === 'codex' ? { tool: 'codex' as const } : {}) };
 }
 
 // ─── Lean children (orchestration plan r5 D14) ──────────────────────────────────
@@ -1275,4 +1359,95 @@ export function superDockPill(opts: {
     asking,
     news: !asking && opts.superAttention,
   };
+}
+
+// ─── A member's stage (plan-r10 1, 1c) ─────────────────────────────────────────────
+
+/** The server's frame word for main Super's work on a member's stage (`REQUEST_FROM`, inbox.ts). */
+export const REQUEST_FROM = "Super Agent'tan";
+
+/** A `request` or `reply` delivery turn on a member's stage: main Super's words, in full. */
+export interface SuperRequestTurn { kind: 'request' | 'reply'; itemId: string; text: string }
+
+/** The server's three lines, in order, nothing before them (inbox.ts `superEventText`). */
+const REQUEST_HEAD = /^\[super events\] batch=[A-Za-z0-9_-]{1,80} items=1$/;
+const REQUEST_LINE = /^- item=([A-Za-z0-9_-]{1,80}) event=(request|reply)\b[^\n<]*\bfrom=super(?: [^\n<]*)?$/;
+const FENCE_OPEN = /^<untrusted-project-output vault="[^"\n]*">/;
+const FENCE_CLOSE = '</untrusted-project-output>';
+
+/**
+ * A member Super's delivery turn of main's `request` (or `reply`): its item and main's text, read
+ * from the server's own lines ONLY, at their fixed places (end review M4): line 1 the
+ * `[super events] batch=… items=1` head, line 2 the `- item=… event=request|reply … from=super`
+ * line, line 3 opening the fence whose text runs to the FIRST close. Nothing after that first fence
+ * is ever read, so a child's text in a later fence (or inside this one: its `<` is `‹`) can never
+ * pass for main's request. The `‹` goes back to `<` for reading (React escapes it). Null otherwise.
+ */
+export function superRequestOf(text: unknown): SuperRequestTurn | null {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  if (lines.length < 3 || !REQUEST_HEAD.test(lines[0]) ) return null;
+  const m = REQUEST_LINE.exec(lines[1]);
+  if (!m) return null;
+  const rest = lines.slice(2).join('\n');
+  const open = FENCE_OPEN.exec(rest);
+  if (!open) return null;
+  const close = rest.indexOf(FENCE_CLOSE, open[0].length);
+  if (close < 0) return null;
+  let body = rest.slice(open[0].length, close).replace(/\u2039/g, '<');
+  const answer = `${REQUEST_FROM}, the answer to your question: `;
+  if (body.startsWith(answer)) body = body.slice(answer.length);
+  else if (body.startsWith(`${REQUEST_FROM}: `)) body = body.slice(REQUEST_FROM.length + 2);
+  else return null;
+  return { kind: m[2] as 'request' | 'reply', itemId: m[1], text: body.trim() };
+}
+
+/** The window's own LIVE chip for a request/reply turn (`superEventText` of a `super_event` batch
+ *  frame): exactly the head and ONE item line, no fence (the text never rides the frame). */
+const LIVE_REQUEST_LINE = /^- item=([A-Za-z0-9_-]{1,80}) child=[A-Za-z0-9_-]{0,80} event=(request|reply)$/;
+
+/**
+ * A member's live delivery turn (the chip the window wrote from the frame, before any replay):
+ * its item and kind, read from the chip's two lines only. Its TEXT is the member record's own
+ * request item (`SuperEventContext.requests`), never anything in the turn. Null otherwise.
+ */
+export function superLiveRequestOf(text: unknown): { kind: 'request' | 'reply'; itemId: string } | null {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  if (lines.length !== 2 || !REQUEST_HEAD.test(lines[0])) return null;
+  const m = LIVE_REQUEST_LINE.exec(lines[1]);
+  return m ? { kind: m[2] as 'request' | 'reply', itemId: m[1] } : null;
+}
+
+/**
+ * The request block a turn draws, stored or live (end review / super-team.mjs T3): the stored
+ * turn's own fenced text, else the live chip's item looked up in the member's record. Null when
+ * neither says it is main's request (or the record no longer holds its text).
+ */
+export function requestTurnOf(text: unknown, requests?: Readonly<Record<string, { kind: 'request' | 'reply'; text: string }>>): SuperRequestTurn | null {
+  const stored = superRequestOf(text);
+  if (stored) return stored;
+  const live = superLiveRequestOf(text);
+  const known = live ? requests?.[live.itemId] : undefined;
+  return live && known && known.text ? { kind: live.kind, itemId: live.itemId, text: known.text } : null;
+}
+
+/** `[About task <slug>]` for a well-formed task slug, else '' (ABOUT_TASK_RE: no 64 cap). */
+export function aboutTaskHeader(slug: string | null | undefined): string {
+  if (!slug) return '';
+  const head = `[About task ${slug}]`;
+  const m = ABOUT_TASK_RE.exec(head);
+  return m && m[0] === head ? head : '';
+}
+
+/**
+ * The owner's message while a member's task strip is up: the task's header first, so the member
+ * reads it from the task (`dreamcontext tasks show <slug>`). A message that already carries THAT
+ * task's header is left as it is; an empty one stays empty.
+ */
+export function withAboutTask(text: string, slug: string | null | undefined): string {
+  const head = aboutTaskHeader(slug);
+  if (!head || !text.trim()) return text;
+  if (aboutHeads(text).some((h) => h.kind === 'task' && h.id === slug)) return text;
+  return `${head}\n\n${text}`;
 }

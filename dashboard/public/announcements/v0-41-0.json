@@ -1,0 +1,50 @@
+{
+  "hero": {
+    "eyebrow": "v0.41.0  ·  4 November 2026",
+    "headline": "Every AI Team member has a stage of its own",
+    "sub": "Everything since 0.40.0 in one release. Open a member and you work on its own stage, with its agenda, its instructions and its routines beside the chat, and the question it is waiting on at the top.",
+    "shot": {
+      "src": "shots/v0-41-0/member-stage.png",
+      "alt": "The orbit demo project with the AI Team member Churn Watch open on its own stage. In the left drawer, Churn Watch is the selected row under Team. On the stage: an Agenda card with Waiting, Now and Done at 0, an Instructions card reading 'Every night, read the cancellations and say which ones we could have kept.', a Routines card with No routines yet and + New routine, and in the middle the member's chat with its question at the top: 'Kite Studio cancelled an annual plan at renewal. Count it in this month's churn?' and an Answer button. The composer reads 'What should Churn Watch do?'.",
+      "caption": "The Team row opens under the project, each member one level below with a mark for what it needs from you. The open member is the selected row, and its question waits above its chat."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Put board groups in your order",
+      "body": "Drag a group in the Boards list to a new place, or open its menu and pick Move up or Move down. The order is kept with the brain, so another machine sees it too.",
+      "shot": {
+        "src": "shots/v0-41-0/board-groups.png",
+        "alt": "The Whiteboards page of the orbit demo project. In the Boards list, the groups Growth (Pricing experiments, Trial funnel) and Launch; the menu of the Launch group is open: Rename group, New board in Launch, Move up, Move down, Ungroup all. The board canvas is beside it."
+      }
+    },
+    {
+      "kind": "terminal",
+      "title": "The design skill comes with every project",
+      "lines": [
+        "$ dreamcontext install-skill",
+        "…",
+        "$ ls .claude/skills",
+        "apps  curator  design  dream-sync  dreamcontext  dreamcontext-agent-core",
+        "dreamcontext-deep-research  initializer  patterns",
+        "$ ls .claude/skills/design",
+        "SKILL.md  design-mobile.md  design-web.md  frontend-principles.md",
+        "onboarding-design.md  product-ui.md"
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "The engineering skill is retired: its rules now live inside the agents that build and review code. dreamcontext update removes a copy you never changed and keeps one you edited. A design file you edited is kept too, never overwritten."
+    },
+    {
+      "kind": "note",
+      "text": "Antigravity stays in beta. Its only account was out of quota while this release was built, so several of its paths were tested against a stand-in agent only. docs/tool-parity.md says row by row what was seen in a real turn, on Codex and on Antigravity."
+    }
+  ],
+  "closer": {
+    "title": "Get 0.41.0",
+    "body": "The app updates itself. New here? Download it from the latest GitHub release, or run npm i -g dreamcontext."
+  }
+}

@@ -125,8 +125,8 @@ describe('a chat respawn carries the composer draft', () => {
     expect(fromTerminal.map((s) => s.name)).toEqual(['openAgentInChat']);
     expect(
       fromChat.map((s) => s.name).sort(),
-      'expected exactly the mode switch, the agent pick (an empty tab reused) and the permission/resume fallback',
-    ).toEqual(['changeChatMode', 'pickChatAgent', 'resumeChatSession']);
+      'expected exactly the mode switch, the agent and tool picks (an empty tab reused) and the permission/resume fallback',
+    ).toEqual(['changeChatMode', 'pickChatAgent', 'pickChatTool', 'resumeChatSession']);
 
     for (const site of fromChat) {
       // 1. The draft is READ, and read BEFORE the dispose that ends the outgoing session.

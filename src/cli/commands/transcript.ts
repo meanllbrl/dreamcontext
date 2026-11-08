@@ -9,6 +9,7 @@ import {
 } from '../../lib/transcript-locate.js';
 import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 import { humanTurnText, isSystemNoiseMessage } from '../../lib/transcript-records.js';
+import { readTranscriptText } from '../../lib/codex-rollout.js';
 
 const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024; // 50MB safety cap
 
@@ -73,7 +74,7 @@ export function distillTranscript(transcriptPath: string, sinceTimestamp?: strin
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return result;
 
-    const content = readFileSync(transcriptPath, 'utf-8');
+    const content = readTranscriptText(transcriptPath);
     const lines = content.split('\n').filter(l => l.trim());
 
     for (const line of lines) {

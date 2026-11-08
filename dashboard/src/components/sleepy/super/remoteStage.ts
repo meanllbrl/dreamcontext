@@ -14,8 +14,9 @@
 import type { ApiClient } from '../../../api/client';
 import { RequestError } from '../../../api/client';
 import type { SuperRemoteView } from '../../handsfree/macContract';
-import { SUPER_STATE_VERSION, readSuperStateView, type SuperStateView } from '../../../lib/superTypes';
+import { SUPER_STATE_VERSION, readSuperStateView, type SuperId, type SuperStateView } from '../../../lib/superTypes';
 import type { LayoutPatch } from './superLayout';
+import { forSuper } from './superApi';
 
 /** The stage's state from the remote view. Null when the view is not one. */
 export function remoteStageState(view: unknown): SuperStateView | null {
@@ -42,7 +43,9 @@ export function remoteStageState(view: unknown): SuperStateView | null {
     dismissed: [],
     pool: [],
     ownerBatches: v.ownerBatches ?? [],
-    team: [],
+    // Only what a team card draws: the view never carries a job's brief.
+    team: (v.team ?? []).map((j) => ({ id: j.id, member: j.member, runId: j.runId, jobKind: 'run', queued: false, brief: '', startedAt: j.startedAt })),
+    teamLive: Object.fromEntries((v.team ?? []).map((j) => [j.id, { status: j.status, lastLine: j.lastLine, ...(j.sessionId ? { sessionId: j.sessionId } : {}), ...(j.resumable ? { resumable: true } : {}) }])),
     pad: v.pad ?? [],
     ...(v.rotating ? { rotating: true } : {}),
   });
@@ -50,7 +53,8 @@ export function remoteStageState(view: unknown): SuperStateView | null {
 
 /** `GET /api/agent/super-stage`: the stage, or `'off'` (the project is not handed over: a 409 that
  *  is an answer, never an error, e.g. during a take-back), or null (unreachable). */
-export async function fetchRemoteStage(api: ApiClient): Promise<SuperStateView | 'off' | null> {
+export async function fetchRemoteStage(api: ApiClient, superId: SuperId = 'main'): Promise<SuperStateView | 'off' | null> {
+  api = forSuper(api, superId);
   try {
     return remoteStageState(await api.get<unknown>('/agent/super-stage'));
   } catch (err) {
@@ -92,7 +96,8 @@ export function remoteLayoutPatch(patch: LayoutPatch): Record<string, unknown> |
 }
 
 /** `POST /api/agent/super-stage/layout`: the stage after the gesture (null: nothing to send). */
-export async function postRemoteLayout(api: ApiClient, patch: LayoutPatch): Promise<SuperStateView | null> {
+export async function postRemoteLayout(api: ApiClient, patch: LayoutPatch, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   const body = remoteLayoutPatch(patch);
   if (!body) return null;
   const r = await api.post<{ state?: unknown }>('/agent/super-stage/layout', body);

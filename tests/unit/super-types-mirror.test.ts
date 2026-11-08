@@ -11,6 +11,7 @@ import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import * as ownerWait from '../../src/lib/super/owner-wait.js';
 import * as phoneMirror from '../../src/lib/super/phone-mirror.js';
+import * as store from '../../src/lib/super/store.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -18,6 +19,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 describe('super types — server record <-> window mirror', () => {
   it('every list and limit matches, in order', () => {
     expect([...client.CONTAINER_KINDS]).toEqual([...server.CONTAINER_KINDS]);
+    expect([...client.MEMBER_CARD_REFS]).toEqual([...server.MEMBER_CARD_REFS]);
     expect([...client.PAD_SECTIONS]).toEqual([...server.PAD_SECTIONS]);
     expect([client.MAX_PAD, client.MAX_PAD_TEXT]).toEqual([server.MAX_PAD, server.MAX_PAD_TEXT]);
     expect([client.AGENDA_REF, client.AGENDA_SIZE]).toEqual([server.AGENDA_REF, server.AGENDA_SIZE]);
@@ -189,6 +191,48 @@ describe('super types — server record <-> window mirror', () => {
 
   it('the phone\'s agenda digest has the same fields on both sides', () => {
     expect(client.SUPER_DIGEST_FIELDS).toEqual(phoneMirror.SUPER_DIGEST_FIELDS);
+  });
+
+  it('plan-r10 Wave 2: superId, the request/reply kinds, [About task] and the caps are one contract on both sides', () => {
+    expect(String(client.ABOUT_TASK_RE)).toBe(String(server.ABOUT_TASK_RE));
+    expect(client.MEMBER_SUPER_PREFIX).toBe(server.MEMBER_SUPER_PREFIX);
+    expect(client.MAX_MEMBER_LIVE_CHILDREN).toBe(server.MAX_MEMBER_LIVE_CHILDREN);
+    expect(client.MAX_VAULT_LIVE_CHILDREN).toBe(server.MAX_VAULT_LIVE_CHILDREN);
+    expect(server.MAX_MEMBER_LIVE_CHILDREN).toBe(2);
+    expect(server.MAX_VAULT_LIVE_CHILDREN).toBe(15);
+    expect(server.QUEUE_KINDS).toContain('request');
+    expect(server.QUEUE_KINDS).toContain('reply');
+    for (const raw of [undefined, '', 'main', 'm:rota', 'm:ua-manager', 'm:..', 'm:a/b', 'm:', 'm:Rota', 'm:a--b', 'm:a-', 'x:rota', 42, null]) {
+      expect(client.parseSuperId(raw), String(raw)).toBe(store.parseSuperId(raw));
+    }
+    // A task header parses the same on both sides, never needs a second line, and a long slug passes.
+    const long = `a${'-b'.repeat(50)}`;
+    for (const t of [`[About task fix-login]\nwhy`, `[About task ${long}]`, `hi\n\n[About task x]\n\n[Reply to message ref=k3f9q0 from=super]\nquote: "q"\n\nok`, '[About task Bad]']) {
+      expect(client.aboutHeads(t)).toEqual(server.aboutHeads(t));
+      expect(client.partRefs(t)).toEqual(server.partRefs(t));
+    }
+    expect(server.aboutHeads(`[About task ${long}]`)).toEqual([{ kind: 'task', id: long, at: 0, end: long.length + 13 }]);
+    // A member record's own fields reach the window.
+    const view: server.SuperStateView = { ...server.emptySuperState(), vault: 'acme-app', session: 's-m', enabled: true, member: 'rota', mainBatches: ['b-1'] };
+    expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
+  });
+
+  it('plan-r10 Wave 3: the summary=1 member entry has the same fields on both sides, `pending` included', () => {
+    // The field names of `interface SuperMemberSummary { … }` in a file, sorted.
+    const fields = (file: string): string[] => {
+      const src = readFileSync(join(ROOT, file), 'utf-8');
+      const at = src.indexOf('export interface SuperMemberSummary {');
+      expect(at, file).toBeGreaterThan(-1);
+      const body = src.slice(at, src.indexOf('\n}', at));
+      return [...body.matchAll(/^\s+([a-zA-Z]+)\??:/gm)].map((m) => m[1]).sort();
+    };
+    const onServer = fields('src/lib/super/types.ts');
+    expect(fields('dashboard/src/lib/superTypes.ts')).toEqual(onServer);
+    expect(onServer).toEqual(['approval', 'asking', 'enabled', 'global', 'lastAt', 'ownerWorking', 'pending', 'slug', 'superOnly', 'unread']);
+    // Type-level: an entry of one side is an entry of the other.
+    const entry: server.SuperMemberSummary = { slug: 'rota', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: true, lastAt: 1, pending: 2 };
+    const mirrored: client.SuperMemberSummary = entry;
+    expect(mirrored.pending).toBe(2);
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {

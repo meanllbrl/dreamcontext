@@ -80,7 +80,7 @@ All pass → confirm briefly, execute. No ceremony.
 | `sleep-migration` | Conditionally during sleep fan-out, when `dreamcontext migrations pending` has output | Structure-only migrations (paths, frontmatter, fences) |
 | `sleep-learn` | Conditionally during sleep fan-out, when learning is enabled and a thesis is due | Theses (`theses/*.md`) |
 | `initializer` skill | Project lacks `_dream_context/` or it's sparse | Interactive, sub-agent-driven bootstrap — OFFER to ingest the user's material (docs/wiki/export) into the knowledge/feature/task hierarchy; don't silently scaffold. Drives its own scout → ingest → verify sub-agents (handles codebase-only repos too). |
-| `reviewer` (engineering pack, when installed) | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
+| `reviewer` (goal-skill pack, when installed) | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
 </sub_agents>
 
 </system_instructions>

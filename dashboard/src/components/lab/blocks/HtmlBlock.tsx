@@ -1,3 +1,5 @@
+import { useInAppChat } from '../../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../../sleepy/chat/ModelHtmlOff';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
@@ -121,7 +123,13 @@ function useDataTheme(): 'light' | 'dark' {
   return theme;
 }
 
-function HtmlBlockFrame({ html, declared, inputs, lang, title, stoppedText }: {
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+function HtmlBlockFrame(props: Parameters<typeof HtmlBlockFrameLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <HtmlBlockFrameLive {...props} />;
+}
+
+function HtmlBlockFrameLive({ html, declared, inputs, lang, title, stoppedText }: {
   html: string;
   declared: string[];
   inputs: Record<string, Frame> | undefined;

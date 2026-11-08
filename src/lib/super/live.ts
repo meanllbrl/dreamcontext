@@ -60,8 +60,9 @@ const shownIds = (s: Pick<SuperState, 'view'>): Set<string> =>
 /**
  * Bring the stage back to `target` floating items by putting the oldest NON-live items in Others:
  * pictures, tasks, pages, finished chats, groups without a live card. Never a live chat, the
- * agenda, what the view shows, or what the owner placed or sized while anything else may go.
- * All live: nothing moves (the cap gives way to live jobs). Mutates; returns the ids moved.
+ * agenda, what the view shows, or what the owner placed or sized (owner 2026-11-06: what he
+ * arranged is kept; a live job with no room waits in the stage's "more" pill instead). Nothing
+ * else left: nothing moves (the cap gives way to live jobs). Mutates; returns the ids moved.
  */
 export function stackForLive(s: SuperState, target: number, busy: BusyTest = chatIsBusy): string[] {
   const moved: string[] = [];
@@ -69,22 +70,22 @@ export function stackForLive(s: SuperState, target: number, busy: BusyTest = cha
   const shown = shownIds(s);
   const grouped = new Set(s.groups.flatMap((g) => g.cards));
   const byId = new Map(s.containers.map((c) => [c.id, c] as const));
-  type Item = { id: string; owner: boolean; at: number; put: () => void };
+  type Item = { id: string; at: number; put: () => void };
   const items: Item[] = [];
   s.containers.forEach((c, i) => {
-    if (c.place !== 'float' || c.min || grouped.has(c.id) || shown.has(c.id) || c.kind === 'agenda') return;
-    if (isLiveChatCard(s, c, busy)) return;
-    items.push({ id: c.id, owner: !!c.pos || c.sizeBy === 'owner', at: i, put: () => { c.place = 'others'; } });
+    if (c.place !== 'float' || c.min || grouped.has(c.id) || shown.has(c.id) || c.kind === 'agenda' || c.kind === 'member') return;
+    if (isLiveChatCard(s, c, busy) || c.pos || c.sizeBy === 'owner') return;
+    items.push({ id: c.id, at: i, put: () => { c.place = 'others'; } });
   });
   for (const g of s.groups) {
-    if (g.place !== 'float') continue;
+    if (g.place !== 'float' || g.pos) continue;
     const cards = g.cards.map((id) => byId.get(id)).filter((c): c is SuperContainer => !!c);
-    if (cards.some((c) => shown.has(c.id) || c.kind === 'agenda' || isLiveChatCard(s, c, busy))) continue;
+    if (cards.some((c) => shown.has(c.id) || c.kind === 'agenda' || c.kind === 'member' || isLiveChatCard(s, c, busy))) continue;
     const at = Math.min(...cards.map((c) => s.containers.indexOf(c)));
-    items.push({ id: g.id, owner: !!g.pos, at, put: () => { g.place = 'others'; } });
+    items.push({ id: g.id, at, put: () => { g.place = 'others'; } });
   }
-  // Oldest first; what the owner placed or sized only once nothing else is left.
-  items.sort((a, b) => Number(a.owner) - Number(b.owner) || a.at - b.at);
+  // Oldest first.
+  items.sort((a, b) => a.at - b.at);
   for (const it of items) {
     if (floatCount(s) <= target) break;
     it.put();

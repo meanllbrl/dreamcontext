@@ -109,6 +109,25 @@ export function matchesHotkey(e: KeyboardEvent, chord: Chord): boolean {
     && e.shiftKey === chord.shift;
 }
 
+/**
+ * Is this keydown the OS repeating a chord that is being held?
+ *
+ * A held key arrives as a stream of `repeat` keydowns, and each is a keystroke in its own
+ * right: left alone it types into the focused field (holding Shift+V wrote VVVVV). So a
+ * repeat is swallowed, never acted on. Two ways to qualify:
+ *   - `claimed`: this listener took the press. The base key alone decides, because the
+ *     modifier may already be up (Shift let go first, V still down, repeats now plain `v`)
+ *     and the owner may have clicked into another field mid-hold.
+ *   - otherwise the repeat must be the exact chord AND `owns()` must say yes: the press landed
+ *     before this window had focus. Without an owner a held Shift+V stays ordinary typing.
+ */
+export function isHeldChordRepeat(
+  e: KeyboardEvent, chord: Chord, claimed: boolean, owns: () => boolean,
+): boolean {
+  if (!e.repeat || e.code !== chord.code) return false;
+  return claimed || (matchesHotkey(e, chord) && owns());
+}
+
 /** Does releasing this key END a take started with `chord`? The base key or ANY of the
  *  chord's modifiers — letting go of ⌥ before the space bar is common enough that not
  *  handling it would strand the recorder open with the macOS mic indicator lit. */

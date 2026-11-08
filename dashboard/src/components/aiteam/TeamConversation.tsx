@@ -25,7 +25,7 @@ import {
 } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 import { TeamAmendments } from './TeamAmendments';
-import { TeamApproval } from './TeamApproval';
+import { OpenInMainApp, useEmbed } from '../embed/embedMode';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import '../sleepy/chat/cards.css';
@@ -58,7 +58,8 @@ function effortName(level: string): string {
 type ThreadRead = { entries: ThreadEntry[]; answer?: RunAnswer | null; rootId?: string | null; working?: AgentActivity | null };
 
 /**
- * ONE TEAMMATE, ONE CONVERSATION — the middle of the AI Team.
+ * ONE TEAMMATE, ONE CONVERSATION — an old-form app's embedded chat. On the AI Team page a teammate
+ * is its stage (`AgentStage`); this stays until no app of the old form is left.
  *
  * Every run this agent made, scheduled or asked for, in one stream oldest to newest (see
  * `buildConversation`). The composer at the bottom is Chat's own: by default it talks to the
@@ -72,7 +73,7 @@ type ThreadRead = { entries: ThreadEntry[]; answer?: RunAnswer | null; rootId?: 
 export function TeamConversation({
   row,
   agent,
-  messages,
+  messages: allMessages,
   panelOpen,
   onTogglePanel,
   onOpenRoutines,
@@ -83,7 +84,8 @@ export function TeamConversation({
   onFocusDone,
   managers = [],
   onSelectAgent,
-  onStage,
+  sendMessage,
+  runFilter,
 }: {
   row: TeamRow;
   agent: TeamAgent;
@@ -104,10 +106,14 @@ export function TeamConversation({
   managers?: { slug: string; title: string }[];
   /** Open another teammate (a manager on the path). */
   onSelectAgent?: (slug: string) => void;
-  /** Back to the agent's stage (this view is its activity: its routines' runs and posts). */
-  onStage?: () => void;
+  /** Replaces the send: an app's embedded chat speaks as the app, never as `say`. */
+  sendMessage?: (text: string) => Promise<void>;
+  /** Which runs this conversation shows: an embedded chat shows its own app's runs. */
+  runFilter?: (m: FeedMessage) => boolean;
 }) {
   const { t } = useI18n();
+  const embed = useEmbed();
+  const messages = useMemo(() => (runFilter ? allMessages.filter(runFilter) : allMessages), [allMessages, runFilter]);
   const api = useApi();
   const { vault } = useVault();
   const slug = agent.slug;
@@ -279,6 +285,10 @@ export function TeamConversation({
     stick.current = true;
     noteRef.current(null);
     setSending({ text, since: Date.now() });
+    if (sendMessage) {
+      sendMessage(text).then(() => { void landed(); }, fail);
+      return;
+    }
     const q = questionRef.current;
     if (q?.question) {
       const id = q.question.id;
@@ -289,7 +299,7 @@ export function TeamConversation({
       return;
     }
     say.mutate({ slug, text, ...overrideRef.current }, { onSuccess: () => { void landed(); }, onError: fail });
-  }, [answer, say, slug, queryClient]);
+  }, [answer, say, slug, queryClient, sendMessage]);
   const slashCommands = useProjectSlashCommands().data?.commands;
   const { host, note, setNote, restoreLastSent } = useAgentThreadHost(
     { slug, title: agent.title, runId: '' },
@@ -334,33 +344,36 @@ export function TeamConversation({
           {row.role && <span className="aiteam-convo-role">{row.role}</span>}
         </div>
         <span className="aiteam-spacer" />
-        {onStage && (
-          <button type="button" className="aiteam-pill" onClick={onStage} data-team-stage>{t('aiteam.stage.backToStage')}</button>
+        {embed && <OpenInMainApp grant={embed} page="agents" id={agent.slug} />}
+        {!embed && (
+          <button
+            type="button"
+            className={`aiteam-pill${panelOpen ? ' aiteam-pill--on' : ''}`}
+            onClick={onOpenRoutines}
+            data-team-routines={routineCount}
+          >
+            <TeamIcon name="clock" size={14} />
+            <span className="aiteam-pill-text">{routineCountLabel(routineCount, t)}</span>
+          </button>
         )}
-        <button
-          type="button"
-          className={`aiteam-pill${panelOpen ? ' aiteam-pill--on' : ''}`}
-          onClick={onOpenRoutines}
-          data-team-routines={routineCount}
-        >
-          <TeamIcon name="clock" size={14} />
-          <span className="aiteam-pill-text">{routineCountLabel(routineCount, t)}</span>
-        </button>
-        <button
-          type="button"
-          className="aiteam-iconbtn"
-          onClick={onTogglePanel}
-          aria-pressed={panelOpen}
-          aria-label={t('aiteam.details')}
-          title={t('aiteam.details')}
-        >
-          <TeamIcon name="panel" size={16} />
-        </button>
+        {!embed && (
+          <button
+            type="button"
+            className="aiteam-iconbtn"
+            onClick={onTogglePanel}
+            aria-pressed={panelOpen}
+            aria-label={t('aiteam.details')}
+            title={t('aiteam.details')}
+          >
+            <TeamIcon name="panel" size={16} />
+          </button>
+        )}
       </header>
 
-      <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
-      {agent.readOnly !== true && <TeamAmendments slug={agent.slug} onToast={onToast} />}
-      {!blocked && messages.length === 0 && dispatcher && !dispatcher.installed && (
+      {/* No approval strip here (plan-r10 1e): the member's ONE card is the stage's TeamApproval;
+          this was its duplicate. A blocked member still says so in its header tag. */}
+      {!embed && agent.readOnly !== true && <TeamAmendments slug={agent.slug} onToast={onToast} />}
+      {!embed && !blocked && messages.length === 0 && dispatcher && !dispatcher.installed && (
         <div className="aiteam-banner">
           <span className="auto-dispatch-pill"><span className="auto-dispatch-dot" aria-hidden="true" /><span className="auto-dispatch-pill-label">{t('aiteam.scheduler.off')}</span></span>
           <span><b>{t('aiteam.scheduler.lede')}</b> {t('aiteam.scheduler.sub')}</span>
@@ -397,7 +410,7 @@ export function TeamConversation({
       </div>
 
       <div className="aiteam-composer">
-        {question?.question && !blocked && (
+        {!embed && question?.question && !blocked && (
           <div className="aiteam-replying">
             <TeamIcon name="clock" size={12} />
             <span>
@@ -418,6 +431,7 @@ export function TeamConversation({
         )}
         <Composer
           session={host}
+          showModel={!embed}
           model={model}
           effort={effort}
           modelConfig={modelConfig}
@@ -443,7 +457,7 @@ export function TeamConversation({
           }}
           busy={false}
           connected
-          idlePlaceholder={question?.question
+          idlePlaceholder={!embed && question?.question
             ? t('aiteam.composer.answer').replace('{name}', agent.title)
             : t('aiteam.composer.message').replace('{name}', agent.title)}
           unavailable={blocked ? { reason: t('aiteam.composer.blocked').replace('{name}', agent.title) } : undefined}
@@ -503,6 +517,7 @@ function Item({
   onOpenFile: (path: string) => void;
   onToast: (msg: string) => void;
 }) {
+  const embed = useEmbed();
   const { t } = useI18n();
   const mark = { 'data-item-key': item.key, ...(flash ? { 'data-flash': '' } : {}) };
   switch (item.kind) {
@@ -527,7 +542,10 @@ function Item({
     case 'you':
       return (
         <div className="chat-msg-user-row" {...mark}>
-          <div className="chat-msg-user-bubble aiteam-you">{item.text}</div>
+          <div className="chat-msg-user-bubble aiteam-you">
+            {item.app && <span className="aiteam-you-app">{item.app} app</span>}
+            {item.text}
+          </div>
         </div>
       );
     case 'live':
@@ -551,7 +569,8 @@ function Item({
             {item.files.length > 0 && (
               <AgentFiles files={item.files.map((f) => ({ path: f, name: f.split('/').pop() ?? f }))} onOpenFile={onOpenFile} />
             )}
-            {item.question && (
+            {item.question && embed && <OpenInMainApp grant={embed} page="agents" id={item.message.slug} />}
+            {item.question && !embed && (
               <AgentQuestionBlock slug={item.message.slug} title={item.message.title} question={item.question} onToast={onToast} />
             )}
           </div>

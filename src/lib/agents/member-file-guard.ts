@@ -30,7 +30,7 @@ function isMemberFile(abs: string, home: string): boolean {
   return abs.startsWith(`${globalDir}/`) && abs.endsWith('.md') && !abs.slice(globalDir.length + 1).includes('/');
 }
 
-function expandHome(p: string, home: string): string {
+export function expandHome(p: string, home: string): string {
   if (p === '~' || p.startsWith('~/')) return `${home}/${p.slice(2)}`;
   if (p.startsWith('$HOME/')) return `${home}/${p.slice(6)}`;
   if (p.startsWith('${HOME}/')) return `${home}/${p.slice(8)}`;
@@ -38,7 +38,7 @@ function expandHome(p: string, home: string): string {
 }
 
 /** Where a relative path in this command may be anchored: the shell's folder and each `cd`. */
-function anchors(command: string, cwd: string, home: string): string[] {
+export function anchors(command: string, cwd: string, home: string): string[] {
   const out = [cwd];
   let at = cwd;
   for (const m of command.matchAll(/(?:^|[;&|\n(])[ \t]*cd[ \t]+(?:--[ \t]+)?("[^"\n]{1,512}"|'[^'\n]{1,512}'|[^\s;&|)]{1,512})/g)) {
@@ -67,7 +67,7 @@ function memberFileOf(word: string, dirs: readonly string[], home: string): stri
 }
 
 /** A heredoc's body is data, not commands: `cat > x <<EOF` keeps its first line. */
-function dropHeredocBodies(command: string): string {
+export function dropHeredocBodies(command: string): string {
   return command.replace(/(<<-?[ \t]*['"]?([\w-]{1,64})['"]?[^\n]*)\n[\s\S]*?\n[ \t]*\2(?=\n|$)/g, '$1');
 }
 
@@ -90,8 +90,44 @@ function maskQuotes(s: string): string {
   return out;
 }
 
+/**
+ * A segment's words as the shell reads them: a quoted run is one word with its quotes gone, so
+ * `mv "/My Project/_dream_context" x` names one folder, not `/My` and `Project/...`. A backslash
+ * keeps the next character outside single quotes; with `escapes` off it is a plain character, as
+ * PowerShell and a Windows path read it (`C:\p\_dream_context`).
+ */
+export function shellWords(segment: string, escapes = true): string[] {
+  const out: string[] = [];
+  let word = '';
+  let has = false;
+  let quote = '';
+  for (let i = 0; i < segment.length; i += 1) {
+    const c = segment[i];
+    if (quote) {
+      if (c === quote) quote = '';
+      else if (escapes && c === '\\' && quote === '"' && i + 1 < segment.length) { word += segment[i + 1]; i += 1; }
+      else word += c;
+    } else if (c === '"' || c === "'") { quote = c; has = true; }
+    else if (escapes && c === '\\' && i + 1 < segment.length) { word += segment[i + 1]; has = true; i += 1; }
+    else if (/\s/.test(c)) { if (has || word) out.push(word); word = ''; has = false; }
+    else { word += c; has = true; }
+  }
+  if (has || word) out.push(word);
+  return out;
+}
+
+/**
+ * Both ways a gate must read a segment: as bash (a backslash escapes) and as PowerShell or a
+ * Windows path (a backslash is a separator). A gate refuses when either reading names a guarded
+ * place, so neither shell's spelling is a way around it.
+ */
+export function shellReadings(segment: string): string[][] {
+  const bash = shellWords(segment);
+  return segment.includes('\\') ? [bash, shellWords(segment, false)] : [bash];
+}
+
 /** The shell's own segments of a command, as the original text. */
-function segmentsOf(command: string): string[] {
+export function segmentsOf(command: string): string[] {
   const masked = maskQuotes(command);
   const out: string[] = [];
   let from = 0;
@@ -106,18 +142,29 @@ function segmentsOf(command: string): string[] {
 const REMOVERS = new Set(['rm', 'unlink', 'truncate', 'shred', 'mv']);
 const COPIERS = new Set(['cp', 'install', 'ln']);
 
-/** The member file one shell segment writes, or null. */
-function segmentTarget(segment: string, dirs: readonly string[], home: string): string | null {
+/** Is this shell word a file we guard? The answer is the file. */
+type WordMatch = (word: string) => string | null;
+
+/** The guarded file one shell segment writes, or null. */
+function segmentTarget(segment: string, match: WordMatch): string | null {
   const masked = maskQuotes(segment);
-  for (const m of masked.matchAll(/>{1,2}\s*(['"]?)([^\s\0'"]{1,1024})/g)) {
-    const hit = memberFileOf(m[2], dirs, home);
+  for (const m of masked.matchAll(/>{1,2}\s*(?:(['"])([^'"]{1,1024})\1|([^\s\0'"]{1,1024}))/g)) {
+    const hit = match(m[2] ?? m[3]);
     if (hit) return hit;
   }
-  const words = segment.trim().split(/\s+/).filter((w) => w.length <= MAX_TOKEN);
+  for (const reading of shellReadings(segment)) {
+    const hit = wordsTarget(reading.filter((w) => w.length <= MAX_TOKEN), match);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The guarded file one reading of a segment's words writes, or null. */
+function wordsTarget(words: string[], match: WordMatch): string | null {
   while (words.length > 0 && (/^[A-Za-z_]\w*=/.test(words[0]) || words[0] === 'sudo' || words[0] === 'command')) words.shift();
   const verb = (words[0] ?? '').split('/').pop() ?? '';
   const args = words.slice(1);
-  const members = (list: readonly string[]) => list.map((w) => memberFileOf(w, dirs, home)).find(Boolean) ?? null;
+  const members = (list: readonly string[]) => list.map(match).find(Boolean) ?? null;
   if (verb === 'sed') return args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place' || a.startsWith('--in-place=')) ? members(args) : null;
   if (verb === 'perl') return args.some((a) => /^-(?![Mm])[a-zA-Z]*i/.test(a)) ? members(args) : null;
   if (REMOVERS.has(verb) || verb === 'tee') return members(args);
@@ -170,16 +217,16 @@ function scriptsIn(command: string): string[] {
   return out;
 }
 
-/** A script's write of a member file: the path often sits in a variable. */
-function scriptWriteTarget(script: string, dirs: readonly string[], home: string): string | null {
+/** A script's write of a guarded file: the path often sits in a variable. */
+function scriptWriteTarget(script: string, match: WordMatch): string | null {
   const named = new Map<string, string>();
   for (const m of script.matchAll(/\b([A-Za-z_$][\w$]{0,63})\s*=\s*(?:Path\(\s*|new URL\(\s*)?['"`]([^'"`\n]{1,1024})['"`]/g)) {
-    const file = memberFileOf(m[2], dirs, home);
+    const file = match(m[2]);
     if (file) named.set(m[1], file);
   }
   const fileIn = (expr: string): string | null => {
     for (const m of expr.matchAll(/['"`]([^'"`\n]{1,1024})['"`]/g)) {
-      const hit = memberFileOf(m[1], dirs, home);
+      const hit = match(m[1]);
       if (hit) return hit;
     }
     // The name itself, or `Path(name)`: never a name that only appears inside another expression.
@@ -226,15 +273,41 @@ export function memberFileWriteTarget(
   const command = typeof toolInput.command === 'string' ? toolInput.command : '';
   if (!command.includes('.md') || command.length > MAX_COMMAND) return null;
   const dirs = anchors(command, here, me);
+  return shellTarget(command, (word) => memberFileOf(word, dirs, me));
+}
+
+/** What this command's own words and scripts write, by `match`. */
+function shellTarget(command: string, match: WordMatch): string | null {
   for (const script of scriptsIn(command)) {
-    const hit = scriptWriteTarget(script, dirs, me);
+    const hit = scriptWriteTarget(script, match);
     if (hit) return hit;
   }
   for (const segment of segmentsOf(withShellVars(dropHeredocBodies(command)))) {
-    const hit = segmentTarget(segment, dirs, me);
+    const hit = segmentTarget(segment, match);
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * The file a shell command writes for which `guarded(absolutePath)` holds, or null: the same reading
+ * as a member file, for any other file a tool with no sandbox must not write. A path relative to
+ * the shell's folder or a `cd` in the command counts.
+ */
+export function shellWriteTarget(command: string, cwd: string, guarded: (abs: string) => boolean, home: string = homedir()): string | null {
+  if (command.length > MAX_COMMAND) return null;
+  const me = slashes(home);
+  const dirs = anchors(command, slashes(cwd), me);
+  return shellTarget(command, (word) => {
+    const raw = expandHome(slashes(word.replace(/^['"]|['"]$/g, '')), me);
+    if (!raw || raw.length > MAX_TOKEN) return null;
+    if (isAbsolute(raw) || /^[A-Za-z]:\//.test(raw)) return guarded(raw) ? raw : null;
+    for (const dir of dirs) {
+      const abs = slashes(resolve(dir, raw));
+      if (guarded(abs)) return abs;
+    }
+    return null;
+  });
 }
 
 /** The refusal the hook gives. It names the door, so the session does not hunt for another way. */

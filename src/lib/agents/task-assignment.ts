@@ -22,7 +22,8 @@ import { clampReviewCap, forgetTaskJob, REVIEW_CAP_DEFAULT, setResumeNote, write
 import { parseStartAt } from './task-starter.js';
 import { resolveLinkedRepos } from '../linked-repos.js';
 import { statusChangeEntry } from '../task-history.js';
-import { DEFAULT_AGENT_AUTONOMY } from '../automations/types.js';
+import { DEFAULT_AGENT_AUTONOMY, type RunTool } from '../automations/types.js';
+import { envelopeMode, envelopeRefusal } from '../t3-bridge/headless-envelope.js';
 
 /**
  * Assigning a task to an agent — the shared steps the dashboard route and the
@@ -57,7 +58,22 @@ export type AssignmentRefusal =
   | 'invalid_workspace'
   | 'no_repo'
   | 'unknown_reviewer'
-  | 'reviewer_is_agent';
+  | 'reviewer_is_agent'
+  | 'tool_unsupported';
+
+/**
+ * Whether a task step can run on `tool` (the envelope's `task-step` row): null = it can, else the
+ * envelope's reason. Derived, never a list of its own: the day the row gains a mode for a tool,
+ * that tool's members take tasks. Injectable so a test can hand it an envelope with a mode.
+ */
+export type TaskStepToolCheck = (tool: RunTool) => string | null;
+
+export const taskStepToolRefusal: TaskStepToolCheck = (tool) =>
+  envelopeMode('task-step', tool) === null ? envelopeRefusal('task-step', tool) || 'A task step runs on Claude only.' : null;
+
+function toolLabel(tool: RunTool): string {
+  return tool === 'antigravity' ? 'Antigravity' : 'Codex';
+}
 
 /** Where and when the job runs (AI Team v2 C1-2). */
 export interface JobOptions {
@@ -128,7 +144,14 @@ export function prepareAssignment(
   contextRoot: string,
   taskSlug: string,
   agentSlug: string,
-  opts: { note?: string; source: AssignmentSource; home?: string } & JobOptions,
+  opts: {
+    note?: string;
+    source: AssignmentSource;
+    home?: string;
+    /** A start from outside the app: an absent `reviewer` keeps the one the task already names. */
+    keepReviewer?: boolean;
+    toolCheck?: TaskStepToolCheck;
+  } & JobOptions,
 ): AssignmentPrep {
   const note = (opts.note ?? '').trim();
   if (note.length > ASSIGNMENT_NOTE_MAX_CHARS) {
@@ -153,9 +176,20 @@ export function prepareAssignment(
     return refuse('not_owner', `${title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here: only its owner can give it a task.`);
   }
   if (!verdict.approved) {
-    return refuse('agent_not_approved_to_run', `${title} is not approved to run on this machine. Approve it on the AI Team page.`);
+    return refuse('agent_not_approved_to_run', `${title} waits for its approval card on the AI Team page (a synced or widening change). Open it there, then assign again.`);
   }
-  const job = resolveJob(contextRoot, target.slug, opts);
+  const toolCheck = opts.toolCheck ?? taskStepToolRefusal;
+  const toolWhy = target.tool ? toolCheck(target.tool) : null;
+  if (target.tool && toolWhy) {
+    return refuse('tool_unsupported', `${title} runs on ${toolLabel(target.tool)} and cannot take a task step: ${oneDataLine(toolWhy, 200)}`);
+  }
+  let reviewerOpt = opts.reviewer;
+  if (opts.keepReviewer && (reviewerOpt === undefined || reviewerOpt === null || reviewerOpt === '')) {
+    // An outside start never drops a reviewer that was also set outside (a synced task file).
+    const named = task.raw?.reviewer;
+    reviewerOpt = typeof named === 'string' && isSafeAutomationSlug(named) && named !== target.slug ? named : null;
+  }
+  const job = resolveJob(contextRoot, target.slug, { ...opts, reviewer: reviewerOpt, toolCheck });
   if ('code' in job) return job;
   return {
     ok: true,
@@ -171,7 +205,7 @@ export function prepareAssignment(
 function resolveJob(
   contextRoot: string,
   agentSlug: string,
-  opts: JobOptions & { home?: string },
+  opts: JobOptions & { home?: string; toolCheck: TaskStepToolCheck },
 ): Extract<AssignmentPrep, { ok: true }>['job'] | Extract<AssignmentPrep, { ok: false }> {
   let startAt: string | null = null;
   if (opts.startAt !== undefined && opts.startAt !== null && opts.startAt !== '') {
@@ -208,7 +242,11 @@ function resolveJob(
     if (!v.approved && v.reason === 'not_owner') {
       return { ok: false, code: 'not_owner', message: `${rTitle} belongs to ${ownerLabel(v.owner)}, so it is read-only here: only its owner can make it a reviewer.` };
     }
-    if (!v.approved) return { ok: false, code: 'agent_not_approved_to_run', message: `${rTitle} is not approved to run on this machine. Approve it on the AI Team page.` };
+    if (!v.approved) return { ok: false, code: 'agent_not_approved_to_run', message: `${rTitle} waits for its approval card on the AI Team page (a synced or widening change). Open it there, then assign again.` };
+    const rWhy = r.tool ? opts.toolCheck(r.tool) : null;
+    if (r.tool && rWhy) {
+      return { ok: false, code: 'tool_unsupported', message: `${rTitle} runs on ${toolLabel(r.tool)} and cannot review a task step: ${oneDataLine(rWhy, 200)}` };
+    }
     reviewer = { slug: r.slug, title: rTitle };
   }
   return { startAt, workspace, repo, reviewer, reviewCap: clampReviewCap(opts.reviewCap ?? REVIEW_CAP_DEFAULT) };

@@ -43,7 +43,7 @@ export type PanelClose =
   | { kind: 'kept' };
 
 export function panelCloseOf(item: { kind: ContainerKind | 'group'; closable?: number; busy?: boolean; ending?: 'pending' | 'failed' }): PanelClose | null {
-  if (item.kind === 'agenda') return null;
+  if (item.kind === 'agenda' || item.kind === 'member') return null;
   if (item.kind === 'group') return (item.closable ?? 0) > 0 ? { kind: 'group', n: item.closable ?? 0 } : { kind: 'kept' };
   if (item.kind === 'chat') return { kind: 'end', whenDone: !!item.busy, ...(item.ending ? { ending: item.ending } : {}) };
   return { kind: 'now' };

@@ -24,7 +24,7 @@ function makeTmpDir(): string {
 }
 
 // computeUsedAssetsChanged only reads platforms + packs.
-const CONFIG = { platforms: ['claude'], packs: ['engineering'] } as unknown as SetupConfig;
+const CONFIG = { platforms: ['claude'], packs: ['growth'] } as unknown as SetupConfig;
 
 let projectRoot: string;
 
@@ -35,7 +35,7 @@ beforeEach(async () => {
   projectRoot = makeTmpDir();
   // Install exactly the canonical asset set this project "uses".
   await installCoreForPlatform('claude', projectRoot);
-  directPackInstall(['engineering'], projectRoot, ['claude'], emptyManifest());
+  directPackInstall(['growth'], projectRoot, ['claude'], emptyManifest());
 });
 
 afterEach(() => {
@@ -49,14 +49,14 @@ describe('computeUsedAssetsChanged', () => {
   });
 
   it('is true when an installed asset was modified on disk', async () => {
-    const skill = join(projectRoot, '.claude', 'skills', 'engineering', 'SKILL.md');
+    const skill = join(projectRoot, '.claude', 'skills', 'growth', 'SKILL.md');
     expect(existsSync(skill)).toBe(true);
     appendFileSync(skill, '\n<!-- local drift -->\n', 'utf-8');
     await expect(computeUsedAssetsChanged(projectRoot, CONFIG)).resolves.toBe(true);
   });
 
   it('is true when an installed asset is missing on disk', async () => {
-    const skill = join(projectRoot, '.claude', 'skills', 'engineering', 'SKILL.md');
+    const skill = join(projectRoot, '.claude', 'skills', 'growth', 'SKILL.md');
     rmSync(skill, { force: true });
     await expect(computeUsedAssetsChanged(projectRoot, CONFIG)).resolves.toBe(true);
   });

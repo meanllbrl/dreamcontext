@@ -284,11 +284,12 @@ export type ChatEvent =
   /** Which account the server ACTUALLY spawned this process on. Differs from the session's
    *  requested `accountId` when none was requested and the default skipped a full one. */
   | { kind: 'account-active'; accountId: string }
+  | { kind: 'app-chat' }
   | {
       kind: 'account-switch';
       switched: boolean;
       reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home';
+        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home' | 'resumed_at_reset';
       accountId: string;
       fromAccountId?: string;
       email?: string;
@@ -323,7 +324,17 @@ export type ChatEvent =
   /** `parentToolUseId` present ⇒ this is a result for a tool a SUB-AGENT called, not the
    *  main agent (the parent's own final Agent-tool result carries none — spike-verified),
    *  so the parent transcript must not open or close a card for it. */
-  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult; parentToolUseId?: string }
+  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult; parentToolUseId?: string;
+      /** EVERY `tool_result.tool_use_id` the frame carried, present only when it carried more
+       *  than this event's own (parallel tools answer in one frame). Read only to settle a
+       *  permission card whose tool already got its result (see `settledToolUseIds`). */
+      settledToolUseIds?: string[] }
+  /** A user frame whose FIRST block is not a tool_result but that still answers tools: only
+   *  the ids, so a permission card for one of them can be dropped. Never draws a card. */
+  | { kind: 'tool-uses-settled'; toolUseIds: string[] }
+  /** The CLI withdrew a `can_use_tool` request it sent (`control_cancel_request`), e.g. its
+   *  stdin closed ("Stream closed"): the card for it is dead and must go. */
+  | { kind: 'request-cancelled'; requestId: string }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
@@ -332,7 +343,7 @@ export type ChatEvent =
    *  nonetheless carried NEITHER a plan nor a single parseable question — the answerable
    *  fallback (see {@link fromControlRequest}). It is what tells the session never to
    *  auto-allow this one from "always allow this session": the CLI asked for a person. */
-  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean }
+  | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean; decisionReason?: string; decisionReasonType?: string; suppressAlwaysAllow?: boolean }
   /** `title` is the one-line context the card leads with; `source` is `metadata.source`
    *  (`"swipe"` asks for the swipe deck); `input` is the request verbatim, echoed back on
    *  answer so nothing the parser did not model is lost on the way to the tool. */
@@ -363,7 +374,9 @@ export type ChatEvent =
   /** A Super Agent verb only the window can run (`delegate`, `answer`), sent down the SUPER
    *  chat's own socket (src/lib/window-control.ts `sendSuperCommand`). Answered with a
    *  `super_command_result` frame. */
-  | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown> }
+  /** `superId` (plan-r10 1): which super's record the verb is for, `m:<member slug>` for a member's
+   *  own Super; absent = `main` (MIRROR of superTypes.ts `SuperId`; this file imports nothing). */
+  | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown>; superId?: 'main' | `m:${string}` }
   /** The server asks the window to PARK this chat under machine load (or `super end`): the
    *  window re-checks, answers `park_result`, and on yes closes the process and turns the tab
    *  dormant (src/server/chat-park.ts). Never a window verb, so no agent can name another tab.
@@ -931,7 +944,28 @@ function fromUserFrame(obj: Record<string, unknown>): ChatEvent {
     return { kind: 'compact-summary', text: message.content };
   }
   const ev = fromAssistant(obj);
-  return ev.kind === 'tool-result' ? ev : ignored('user:non_tool_result');
+  const ids = toolResultIds(message.content);
+  if (ev.kind === 'tool-result') {
+    return ids.length > 1 || (ids.length === 1 && ids[0] !== ev.toolUseId) ? { ...ev, settledToolUseIds: ids } : ev;
+  }
+  return ids.length ? { kind: 'tool-uses-settled', toolUseIds: ids } : ignored('user:non_tool_result');
+}
+
+/** Every `tool_result.tool_use_id` in a user frame's content, in order, without repeats. */
+export function toolResultIds(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const b of content) {
+    if (isRecord(b) && b.type === 'tool_result' && typeof b.tool_use_id === 'string' && b.tool_use_id && !out.includes(b.tool_use_id)) out.push(b.tool_use_id);
+  }
+  return out;
+}
+
+/** Every tool_use id a parsed event says got its result (empty for any other event). */
+export function settledToolUseIds(ev: ChatEvent): string[] {
+  if (ev.kind === 'tool-uses-settled') return ev.toolUseIds;
+  if (ev.kind === 'tool-result') return ev.settledToolUseIds ?? (ev.toolUseId ? [ev.toolUseId] : []);
+  return [];
 }
 
 // ─── control_request (permission prompts + AskUserQuestion) ───────────────────────
@@ -1030,6 +1064,12 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
     suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : undefined,
     toolUseId: str(request.tool_use_id),
     requiresInteraction: interactive || undefined,
+    // Why the CLI asks, in its own words (2.1.318: `safetyCheck` + "Dangerous rm operation not
+    // ruled out…" for a command it could not parse). `suppress_always_allow_rule`: the CLI will
+    // not let a remembered "always allow" answer this one, so neither may the session.
+    decisionReason: str(request.decision_reason),
+    decisionReasonType: str(request.decision_reason_type),
+    suppressAlwaysAllow: bool(request.suppress_always_allow_rule) || undefined,
   };
 }
 
@@ -1089,6 +1129,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       : [];
     return commands.length ? { kind: 'slash-commands', commands } : ignored('_meta:slash_commands');
   }
+  if (subtype === 'app_chat') return { kind: 'app-chat' };
   if (subtype === 'account_active') {
     const accountId = str(obj.accountId);
     return accountId ? { kind: 'account-active', accountId } : ignored('_meta:account_active');
@@ -1168,7 +1209,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       switched: obj.switched === true,
       reason: reason === 'limit_near' || reason === 'limit_hit' || reason === 'limit_known'
         || reason === 'needs_relogin' || reason === 'all_exhausted' || reason === 'stayed_put'
-        || reason === 'switch_stalled' || reason === 'come_home'
+        || reason === 'switch_stalled' || reason === 'come_home' || reason === 'resumed_at_reset'
         ? reason
         : 'auto_switch_disabled',
       accountId: str(obj.accountId) ?? '',
@@ -1217,7 +1258,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const id = str(obj.id);
     const verb = str(obj.verb);
     if (!id || !verb) return ignored('_meta:super_command');
-    return { kind: 'super-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+    // A member's Super names itself; anything else is main's (a malformed id is no member).
+    const sid = typeof obj.superId === 'string' && /^m:[a-z0-9][a-z0-9-]{0,99}$/.test(obj.superId) ? obj.superId as `m:${string}` : undefined;
+    return { kind: 'super-command', id, verb, args: isRecord(obj.args) ? obj.args : {}, ...(sid ? { superId: sid } : {}) };
   }
   if (subtype === 'super_state') {
     return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');
@@ -1352,6 +1395,12 @@ export function toChatEvent(obj: Record<string, unknown>): ChatEvent {
       return fromControlRequest(obj);
     case 'control_response':
       return fromControlResponse(obj);
+    // The CLI withdrew a request it had sent (Claude Code 2.1.316 does this when its stdin
+    // closes): the card for it is dead.
+    case 'control_cancel_request': {
+      const requestId = str(obj.request_id);
+      return requestId ? { kind: 'request-cancelled', requestId } : ignored('control_cancel_request:no_id');
+    }
     case 'result':
       return fromResult(obj);
     case '_meta':

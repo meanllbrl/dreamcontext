@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { ChatTextItem, ChatUserItem } from '../chatSession';
 
 /**
@@ -20,7 +21,7 @@ export interface FeedMeta {
   sessionKind: 'run' | 'talk';
   /** A run's routine title; a talk's agent name. */
   title: string;
-  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | 'waiting' | 'stopped' | null;
   /** The thread slug a run was posted in (its read mark is per slug). */
   source: string;
   /** The run's newest entry id (what its read mark advances to); null for a talk. */
@@ -34,8 +35,19 @@ export interface FeedMeta {
   missing?: boolean;
   /** A talk longer than the pane shows: its earlier part is in Chat. */
   truncated?: boolean;
-  /** A session with no row (a run that posted nothing): one placeholder carries its boundary. */
+  /** A session with no row (a run still working with nothing to show but its indicator): one
+   *  placeholder carries its boundary. */
   empty?: boolean;
+  /** This row is a silent run's body, not a post: what it is (`HistoryRow.origin`). */
+  origin?: 'answer' | 'failure' | 'note';
+  /** The run published a document here. */
+  hasDocument?: boolean;
+  /** The run's session, from this machine's own records: its steps can be opened. */
+  claudeId?: string;
+  /** A reply can resume that session. */
+  resumable?: boolean;
+  /** The run started on another machine. */
+  elsewhere?: boolean;
   readOnly: true;
 }
 
@@ -50,6 +62,8 @@ export interface FeedLabels {
   live: string;
   /** Under a routine run still in flight: Chat's working indicator says it. */
   working: string;
+  /** The pane's own words for a body row that only states the run's status; null keeps the row's. */
+  note: (meta: FeedMeta) => string | null;
   end: string;
   loading: string;
   error: string;
@@ -78,6 +92,8 @@ export interface ChatFeed {
   /** A run session's last row (or its boundary) has been on screen. */
   onSeen: (meta: FeedMeta) => void;
   onBoundary: (meta: FeedMeta) => void;
+  /** Drawn under a run's last row: its steps, report and Continue. The host owns what is open. */
+  runFoot?: (meta: FeedMeta) => ReactNode;
   /** A card in a routine run's row finished (a command the owner ran): its report goes back
    *  into THAT run — a reply in its thread, which resumes its session. Absent: not drawn. */
   onRunReport?: (meta: FeedMeta, text: string) => void;
@@ -105,6 +121,32 @@ export interface FeedMarks {
  */
 export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
   return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
+}
+
+/** Does this row end a run that has a report to open? */
+export function feedReportShown(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
+  return marks.last && meta.sessionKind === 'run' && (meta.origin === 'answer' || meta.hasDocument === true);
+}
+
+/** What can be opened under one run. Pure: the phone and the Mac draw the same answer. */
+export function runFootOf(meta: FeedMeta): { steps: boolean; report: boolean; noReport: boolean; canContinue: boolean; line: 'noSession' | 'otherMac' | null } {
+  const reportable = feedReportShown(meta, { last: true });
+  const report = reportable && meta.hasDocument === true;
+  const canContinue = !meta.elsewhere && (meta.resumable === true || meta.status === 'running');
+  const ended = meta.status === 'ok' || meta.status === 'failed' || meta.status === 'stopped';
+  return {
+    steps: !!meta.claudeId,
+    report,
+    noReport: reportable && !report,
+    canContinue,
+    line: meta.elsewhere ? 'otherMac' : !canContinue && ended ? 'noSession' : null,
+  };
+}
+
+/** A running run shows its steps by itself, until the owner closes them. */
+export function stepsOpen(meta: FeedMeta, opened: ReadonlySet<string>, closed: ReadonlySet<string>): boolean {
+  if (!meta.claudeId) return false;
+  return opened.has(meta.sessionKey) || (meta.status === 'running' && !closed.has(meta.sessionKey));
 }
 
 /** Any run in the feed still in flight: the host re-reads the history often until it ends. */

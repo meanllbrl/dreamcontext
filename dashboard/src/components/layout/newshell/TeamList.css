@@ -1,0 +1,354 @@
+/* The Ekip row and its list (plan-r10 1d, 1f; r8-05, r8-06, r8-12). Tokens only, 4px grid. */
+
+.ns-team-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-row:hover { background: var(--color-bg-tertiary); }
+.ns-team-row.is-sel { background: var(--color-accent-soft); }
+.ns-team-row:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
+.ns-team-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-team-faces { display: inline-flex; flex: none; }
+.ns-team-face {
+  display: inline-flex;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 2px var(--color-bg-secondary);
+}
+.ns-team-face + .ns-team-face { margin-left: calc(-1 * var(--space-1)); }
+.ns-team-face[data-off="true"] { opacity: 0.5; }
+/* No member yet (owner 2026-11-03): an empty slot where the faces go; the row opens the members flow. */
+.ns-team-face--empty {
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px dashed var(--color-text-tertiary);
+  box-shadow: none;
+}
+.ns-team-row[data-empty="true"] .ns-team-chev { visibility: hidden; }
+
+/* One count: the accent for unread, the question colour when a question or a card waits. */
+.ns-team-count {
+  flex: none;
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+  text-align: center;
+}
+.ns-team-count[data-asking="true"] { background: var(--mood-waiting); }
+
+/* The list: a popover beside the row (desktop), a bottom sheet (phone). */
+.ns-team-list {
+  position: fixed;
+  z-index: 61;
+  width: min(400px, calc(100vw - var(--space-4)));
+  max-height: calc(100vh - var(--space-16));
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+}
+.ns-team-list.is-sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: 70vh;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+}
+.ns-team-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--color-overlay, rgba(0, 0, 0, 0.32));
+}
+.ns-team-grip {
+  display: block;
+  width: var(--space-10);
+  height: var(--space-1);
+  margin: 0 auto var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+}
+
+.ns-team-head {
+  padding: var(--space-2) var(--space-3) var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.ns-team-rows { margin: 0; padding: 0; list-style: none; }
+
+.ns-team-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-md);
+}
+.ns-team-item[data-facing="true"] { background: var(--color-bg-secondary); }
+
+.ns-team-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-open:hover { background: var(--color-bg-tertiary); }
+.ns-team-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.ns-team-item[data-off="true"] .ns-team-open { color: var(--color-text-secondary); }
+
+.ns-team-text { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.ns-team-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.ns-team-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* "For Super": a small glyph on the face's corner, never a word that takes the name's room
+   (owner 2026-11-05); its tooltip and label say it. A plain fact, not an alert: secondary text
+   colour on a disc of the drawer's own surface, so it reads on a photo and on a figure. */
+.ns-team-mface { position: relative; flex: none; display: inline-flex; }
+.ns-team-super {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: inline-grid;
+  place-items: center;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+.ns-team-super svg { width: 9px; height: 9px; fill: currentColor; }
+.ns-team-tag {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+}
+
+.ns-team-chip {
+  flex: none;
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+  text-align: center;
+}
+.ns-team-chip[data-kind="question"],
+.ns-team-chip[data-kind="approval"] { background: var(--mood-waiting); }
+
+/* The on/off switch: the member's `call.enabled`. */
+.ns-team-switch {
+  position: relative;
+  flex: none;
+  width: calc(var(--space-8) + var(--space-1));
+  height: var(--space-5);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.ns-team-switch[aria-checked="true"] { background: var(--color-accent); border-color: var(--color-accent); }
+.ns-team-switch:disabled { opacity: 0.6; cursor: default; }
+.ns-team-switch:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.ns-team-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.ns-team-switch[aria-checked="true"] .ns-team-knob { transform: translateX(var(--space-4)); background: var(--color-bg-elevated); }
+
+.ns-team-manage {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-accent-strong);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-manage:hover { text-decoration: underline; }
+.ns-team-manage:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
+/* "Projelerden bağımsız": the Global ekip row's own section at the drawer's foot. */
+.ns-team-global {
+  flex: none;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.ns-team-global-head {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+/* The Team row that opens in place (plan r4 D1-D4): no popover, the list sits under the row. */
+.ns-team-sec {
+  /* Where the Team row's chevron starts, per host: the members hang from there (owner, 3 Nov).
+     The drawer and the classic rail set their own; this is a plain .ns-team-row's padding. */
+  --ns-team-in: var(--space-2);
+  --ns-team-mrow-h: 28px;
+  display: flex;
+  flex-direction: column;
+}
+.ns-team-chev {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--color-text-secondary);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--duration-fast, 120ms) ease;
+}
+.ns-team-chev.is-open { transform: rotate(90deg); }
+.ns-team-sec-row[data-asking="true"] .ns-team-label { color: var(--color-error); }
+.ns-team-mlist { margin: 0; padding: 0; list-style: none; }
+/* The members one level under the Team row: the drawer's nesting (a nested chat's indent and its
+   tree line), hung from the Team row's chevron. One box for the pop-outs, one for the open list
+   (search, rows, Manage members), so the line runs unbroken and never scrolls with the box. */
+.ns-team-sec > .ns-team-mlist,
+.ns-team-open-list {
+  position: relative;
+  margin-left: var(--ns-team-in);
+}
+.ns-team-sec > .ns-team-mlist::before,
+.ns-team-open-list::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+/* Over 8 members: a box 8 rows tall that scrolls INSIDE; the rows under it never move. */
+.ns-team-mlist.is-box { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.ns-team-mrow-li { display: block; }
+.ns-team-mrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--ns-team-mrow-h);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-mrow:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.ns-team-mrow:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.ns-team-mrow.is-pop { background: var(--color-bg-tertiary); }
+.ns-team-mrow.is-pop[data-asking="true"] { background: color-mix(in srgb, var(--mood-waiting) 14%, transparent); }
+.ns-team-mrow.is-sel { position: relative; background: var(--color-accent-soft); color: var(--color-text); font-weight: var(--font-weight-medium); }
+.ns-team-mrow.is-sel::before { content: ''; position: absolute; left: -0.5px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--color-accent); }
+.ns-team-mrow[data-off="true"] { color: var(--color-text-secondary); opacity: 0.6; }
+.ns-team-mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-team-more,
+.ns-team-sec-manage {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-more:hover, .ns-team-sec-manage:hover { text-decoration: underline; }
+.ns-team-search {
+  display: block;
+  width: calc(100% - var(--space-4));
+  margin: var(--space-1) 0 var(--space-1) var(--space-4);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+.ns-team-search:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -1px; }
+.ns-team-empty { padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4); color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+@media (prefers-reduced-motion: reduce) { .ns-team-chev { transition: none; } }

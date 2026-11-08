@@ -221,6 +221,26 @@ export function isDashboardLooking(row: ProcRow): boolean {
   return row.args.includes('dashboard') && (row.args.includes('dist/index.js') || row.args.includes('bin/dreamcontext'));
 }
 
+const DASHBOARD_SCRIPT_RE = /[^\s'"]*(?:dist\/index\.js|bin\/dreamcontext)/g;
+
+/**
+ * A dashboard-looking process that runs a JOB's own build: every dreamcontext entry its argv
+ * names is an absolute path strictly under the job worktree root (`~/.claude-worktrees/`), with
+ * no `..`. That is an agent's verify server, not the owner's: the installed CLI a hook launches
+ * (`spawnDashboard`) or a relative `node dist/index.js` (cwd unknown) never qualifies.
+ */
+export function isJobWorktreeDashboard(row: ProcRow, worktreeRoot: string): boolean {
+  return isDashboardLooking(row) && isUnderRoot(row, worktreeRoot);
+}
+
+/** Every dreamcontext entry the argv names is an absolute path strictly under `worktreeRoot`, no `..`. */
+function isUnderRoot(row: ProcRow, worktreeRoot: string): boolean {
+  const root = worktreeRoot.replace(/\/+$/, '');
+  if (!root.startsWith('/') || root.length < 2) return false;
+  const scripts = [...row.args.matchAll(DASHBOARD_SCRIPT_RE)].map((m) => m[0]);
+  return scripts.length > 0 && scripts.every((s) => s.startsWith(`${root}/`) && !s.split('/').includes('..'));
+}
+
 // ─── Groups ──────────────────────────────────────────────────────────────────
 
 const MAX_ANCESTRY = 64;
@@ -251,7 +271,19 @@ function selfAndAncestors(rows: Map<number, ProcRow>, pid: number): Set<number> 
   return out;
 }
 
-/** Rule 1: dead-leader, same-uid, claude-free process groups, keyed by pgid. */
+/**
+ * A LIVE group leader that still blocks a group: one whose parent is not launchd. A leader
+ * handed to launchd (ppid 1) has lost whatever started it: a Claude Code Bash shell (each one
+ * leads its own group) left waiting on a dev server after its claude exited, a detached spawn
+ * (a firebase emulator's java, a test's mock agent). Measured 2026-11-07: such groups lived
+ * for days because only a DEAD leader counted as escaped.
+ */
+export function leaderBlocks(rows: Map<number, ProcRow>, pgid: number): boolean {
+  const leader = rows.get(pgid);
+  return !!leader && leader.ppid !== 1;
+}
+
+/** Rule 1: same-uid, claude-free process groups whose leader is dead or handed to launchd, keyed by pgid. */
 export function escapedGroups(rows: Map<number, ProcRow>, uid: number): Map<number, ProcRow[]> {
   const byPgid = new Map<number, ProcRow[]>();
   for (const row of rows.values()) {
@@ -261,13 +293,66 @@ export function escapedGroups(rows: Map<number, ProcRow>, uid: number): Map<numb
   const escaped = new Map<number, ProcRow[]>();
   for (const [pgid, members] of byPgid) {
     if (!Number.isInteger(pgid) || pgid <= 1) continue;
-    if (rows.has(pgid)) continue; // leader alive
+    if (leaderBlocks(rows, pgid)) continue; // leader alive under a live parent
     if (members.some((r) => r.uid !== uid)) continue;
     if (members.some((r) => isOwnerClaude(r) || isLooseClaude(r))) continue;
     if (members.some((r) => hasClaudeAncestor(rows, r.pid))) continue;
     escaped.set(pgid, members);
   }
   return escaped;
+}
+
+/** Live processes OUTSIDE a group whose ppid chain passes through one of its members (bounded). */
+export function outsideDescendants(rows: Map<number, ProcRow>, members: readonly ProcRow[]): ProcRow[] {
+  const inGroup = new Set(members.map((r) => r.pid));
+  const out: ProcRow[] = [];
+  for (const r of rows.values()) {
+    if (inGroup.has(r.pid)) continue;
+    let cur = r.ppid;
+    for (let depth = 0; cur > 1 && depth < MAX_ANCESTRY; depth++) {
+      if (inGroup.has(cur)) { out.push(r); break; }
+      cur = rows.get(cur)?.ppid ?? 0;
+    }
+  }
+  return out;
+}
+
+/** The dreamcontext CLI itself (not a dashboard): `… bin/dreamcontext <verb>` or `… dist/index.js <verb>`. */
+export function isDreamcontextCli(row: ProcRow): boolean {
+  // Any path ending in `/dreamcontext` (global bin, npx's `.bin/dreamcontext`), a bare
+  // `dreamcontext`, or a `dist/index.js`. Matching too much only keeps more.
+  return /(?:^|[\s'"/])(?:dreamcontext|dist\/index\.js)(?=[\s'"]|$)/.test(row.args);
+}
+
+/** A live dreamcontext CLI under launchd, run from outside a job worktree: a job's host (`tasks run-job`). */
+function isLiveCliHost(leader: ProcRow, worktreeRoot: string | undefined): boolean {
+  return leader.ppid === 1 && isDreamcontextCli(leader) && !(worktreeRoot && isUnderRoot(leader, worktreeRoot));
+}
+
+/**
+ * Why a group whose live leader launchd holds is NOT a job's leftover, or null when it may be.
+ * A live leader can still be doing work nobody watches from a claude: a task job's host
+ * (`tasks run-job`, detached, its Codex step in a group of its own), a tmux server or an editor
+ * whose panes live in other groups. So such a group is a candidate only when
+ *  - its leader is not the dreamcontext CLI run from outside a job worktree, and
+ *  - it hosts nothing outside itself, except processes carrying the SAME tab id (the same dead
+ *    job's leftovers, e.g. an emulator's java); an unreadable outside descendant keeps it.
+ */
+function launchdLeaderKeeps(
+  rows: Map<number, ProcRow>,
+  env: Map<number, EnvMarkers>,
+  pgid: number,
+  members: readonly ProcRow[],
+  tabId: string,
+  worktreeRoot: string | undefined,
+): boolean {
+  const leader = rows.get(pgid);
+  if (!leader) return false; // dead leader: the original rule
+  if (isLiveCliHost(leader, worktreeRoot)) return true;
+  return outsideDescendants(rows, members).some((r) => {
+    const m = env.get(r.pid);
+    return !m?.readable || m.tabIds.length !== 1 || m.tabIds[0] !== tabId;
+  });
 }
 
 /** Dashboard-server rows of this uid: the strict predicate, plus this server's own row always. */
@@ -312,7 +397,11 @@ export async function takeSnapshot(
   for (const r of owners) list.add(r.pid);
   for (const pid of serverPids) list.add(pid);
   for (const r of hedge) list.add(r.pid);
-  for (const members of escapedGroups(rows, uid).values()) for (const r of members) list.add(r.pid);
+  for (const [pgid, members] of escapedGroups(rows, uid)) {
+    for (const r of members) list.add(r.pid);
+    // A live leader's group is judged by what it hosts outside itself too (launchdLeaderKeeps).
+    if (rows.has(pgid)) for (const r of outsideDescendants(rows, members)) list.add(r.pid);
+  }
 
   let envOut: string;
   try {
@@ -380,11 +469,13 @@ function liveIds(snapshot: Snapshot, selfPid: number, selfEnv: NodeJS.ProcessEnv
 
 /**
  * The reap rule. A group is a candidate only when ALL hold:
- *  1. escaped — dead leader, same uid, no claude member or ancestor (escapedGroups);
+ *  1. escaped — leader dead or handed to launchd, same uid, no claude member or ancestor (escapedGroups);
  *  2. attributed to ONE tab — a member carries SERVER_PID + TAB_SESSION, no member is ambiguous,
  *     and every SERVER_PID is this server or dead;
  *  3. that tab is not live (liveIds);
- *  4. no member is this server, its ancestor, or anything dashboard-looking.
+ *  4. no member is this server, its ancestor, an ancestor of a live claude, or dashboard-looking
+ *     (except a job worktree's own build: isJobWorktreeDashboard);
+ *  5. a live leader held by launchd passes launchdLeaderKeeps (not a host, not the CLI).
  * `paused` = groups kept ONLY because a SERVER_PID names another live process: the sweeper
  * keeps their grace frozen instead of resetting it.
  */
@@ -392,13 +483,34 @@ export function classifyOrphanGroups(
   snapshot: Snapshot,
   selfPid: number,
   selfEnv: NodeJS.ProcessEnv,
+  opts: { worktreeRoot?: string } = {},
 ): { candidates: OrphanGroup[]; paused: OrphanGroup[] } {
   const { rows, env, uid } = snapshot;
   const escaped = escapedGroups(rows, uid);
+  const worktreeRoot = opts.worktreeRoot;
+  // A server in an escaped group loses its pin when its leader is dead, or when it is a job
+  // worktree's own build. One that leads its own group under launchd from the installed CLI is
+  // the one a hook starts (`spawnDashboard`): it keeps pinning its launcher's tab.
   const escapedPids = new Set<number>();
-  for (const members of escaped.values()) for (const r of members) escapedPids.add(r.pid);
+  for (const [pgid, members] of escaped) {
+    for (const r of members) if (!rows.has(pgid) || (worktreeRoot && isJobWorktreeDashboard(r, worktreeRoot))) escapedPids.add(r.pid);
+  }
   const live = liveIds(snapshot, selfPid, selfEnv, escapedPids);
+  // A live job host (the CLI under launchd, e.g. `tasks run-job` on a Codex step: no claude
+  // carries its tab) keeps its tab live, so the job's own daemons stay too.
+  for (const [pgid, members] of escaped) {
+    const leader = rows.get(pgid);
+    if (!leader || !isLiveCliHost(leader, opts.worktreeRoot)) continue;
+    for (const r of members) for (const t of env.get(r.pid)?.readable ? env.get(r.pid)!.tabIds : []) live.add(t);
+  }
   const protectedPids = selfAndAncestors(rows, selfPid);
+  // A process that hosts a live claude (a verify dashboard serving a chat) is never reaped.
+  for (const r of rows.values()) {
+    if (r.uid !== uid || !(isOwnerClaude(r) || isLooseClaude(r))) continue;
+    for (const pid of selfAndAncestors(rows, r.pid)) if (pid !== r.pid) protectedPids.add(pid);
+  }
+  const dashboardKeeps = (r: ProcRow): boolean =>
+    isDashboardLooking(r) && !(worktreeRoot && isJobWorktreeDashboard(r, worktreeRoot));
 
   const candidates: OrphanGroup[] = [];
   const paused: OrphanGroup[] = [];
@@ -410,7 +522,8 @@ export function classifyOrphanGroups(
     if (tabs.length !== 1) continue;
     const tabId = tabs[0];
     if (live.has(tabId)) continue;
-    if (members.some((r) => protectedPids.has(r.pid) || isDashboardLooking(r))) continue;
+    if (members.some((r) => protectedPids.has(r.pid) || dashboardKeeps(r))) continue;
+    if (launchdLeaderKeeps(rows, env, pgid, members, tabId, worktreeRoot)) continue;
 
     const sessions = distinct(markers.flatMap((m) => m.sessionIds));
     const group: OrphanGroup = { pgid, members, tabId, sessionId: sessions.length === 1 ? sessions[0] : null };

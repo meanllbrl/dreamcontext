@@ -73,6 +73,18 @@ describe('runProjectCatchUp', () => {
     expect(readProjectUpdatesRecord(home)).toBeNull();
   });
 
+  it('refreshes the Codex and Antigravity kits for every project, current or not', async () => {
+    const refreshKits = vi.fn();
+    const a = project('a', '0.40.0');
+    const b = project('b', '0.39.0');
+    await runProjectCatchUp(deps([a, b], { refreshKits }));
+    expect(refreshKits).toHaveBeenCalledWith('0.40.0', [{ path: a.path, version: '0.40.0' }, { path: b.path, version: '0.39.0' }]);
+    __resetProjectCatchUp();
+    refreshKits.mockImplementation(() => { throw new Error('kit broke'); });
+    const r = await runProjectCatchUp(deps([a], { refreshKits }));
+    expect(r.message).toBe('Nothing to update.');
+  });
+
   it('keeps going past a failure, records it, retries only at the next process start', async () => {
     const bad = project('bad', '0.39.0');
     const good = project('good', '0.39.0');

@@ -180,7 +180,7 @@ pub fn run() {
             updater::start(&handle);
             // The opening screen plays while the server boots. A Login Item launch that
             // only seats the notch opens no Launcher, so it gets no splash either.
-            if !notch_only_launch() && !background_launch() {
+            if !notch_only_launch() && !background_launch() && !app_background_launch() {
                 splash::open(&handle);
             }
             // Boot OFF the main thread: returning from setup is what starts the run loop,
@@ -210,10 +210,26 @@ pub fn run() {
         // / dev-rebuild can terminate the app WITHOUT either event firing — that path
         // is covered server-side by the parent-death watchdog (src/server/lifecycle.ts),
         // for which we pass DREAMCONTEXT_PARENT_PID at spawn.
+        // The LAST window closed (code: None; never quit_app, Cmd-Q or an update restart, which
+        // all exit). A dreamcontext App window still open needs this server: keep running
+        // windowless, without reaping, until the owner quits (dreamcontext-apps plan r19 W1).
+        if let RunEvent::ExitRequested { code: None, api, .. } = &event {
+            if apps_window_count(app_handle) > 0 {
+                applog::log("[apps] last window closed with an app window open: staying up");
+                api.prevent_exit();
+                return;
+            }
+        }
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             if let Some(handle) = app_handle.try_state::<ChildHandle>() {
                 reap_server(handle.inner());
             }
+        }
+        // A Dock click with nothing on screen but the notch brings the Launcher back. Not while
+        // the boot is still running (no port yet): the boot opens it itself.
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = &event {
+            reopen_launcher(app_handle);
         }
         // Windows: a downloaded update installs as the app quits (src/updater.rs), once the
         // server is down. The installer ends this process before tauri's own restart step, so
@@ -758,7 +774,7 @@ fn poll_health(port: u16, timeout: Duration) -> Result<(), String> {
 }
 
 fn host_dashboard(app: AppHandle) -> Result<(), String> {
-    // No usable Node (none, or older than 18): the setup screen installs a private one and
+    // No usable Node (none, or older than 22.16): the setup screen installs a private one and
     // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
     // and the setup screen's own hand-over to the Launcher.
     let (node, node_version, fresh_install) = match node_runtime::resolve_usable_node() {
@@ -800,6 +816,10 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // The owner key comes down stdin, never the environment: every agent inherits that
         // (src/owner_key.rs).
         .env("DREAMCONTEXT_OWNER_KEY_STDIN", "1")
+        // dreamcontext Apps (src/lib/apps/bundle.ts): the runner each app bundle copies, and
+        // this shell's bundle id, stamped into every app bundle and desktop-server.json.
+        .envs(app_runner_path().map(|p| ("DREAMCONTEXT_APP_RUNNER".to_string(), p)))
+        .env("DREAMCONTEXT_APP_BUNDLE_ID", &app.config().identifier)
         .stdin(Stdio::piped())
         // The global CLI install the server's self-update upgrades (src/lib/self-update.ts),
         // also when the bundled copy is the one running. Absent = no global CLI found.
@@ -878,7 +898,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
 
         // An autostart (Login Item) launch opens ONLY the notch — the owner did not ask for
         // the Launcher, and the notch can open project windows itself.
-        let result = if notch_only_launch() {
+        let result = if notch_only_launch() || app_background_launch() {
+            // A Login Item notch launch, or an app window that opened dreamcontext behind
+            // itself (`--background`): no Launcher. A Dock click brings it later (Reopen).
             Ok(())
         } else if fresh_install {
             // The setup screen is up: it hands over to the Launcher the way the splash does.
@@ -905,6 +927,85 @@ fn notch_only_launch() -> bool {
 /// quietly in the background.
 fn background_launch() -> bool {
     cfg!(not(target_os = "macos")) && std::env::args().any(|a| a == "--autostart")
+}
+
+/// A dreamcontext App window started dreamcontext behind itself (`open -g -b <id> --args
+/// --background`, desktop/app-runner): the server boots, the notch seats, and no splash or
+/// Launcher shows. Distinct from `background_launch`, which is the Windows login start.
+fn app_background_launch() -> bool {
+    cfg!(target_os = "macos") && std::env::args().any(|a| a == "--background")
+}
+
+/// `Contents/MacOS/app-runner`, next to this executable (bundle.externalBin). Absent in a
+/// build without the runner: app windows then report the shell needs updating.
+fn app_runner_path() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().ok()?;
+        let runner = exe.parent()?.join("app-runner");
+        if runner.is_file() {
+            return Some(runner.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// How many dreamcontext App windows are heartbeating (GET /api/apps/running). 300 ms in
+/// all: a timeout, a refusal or a 404 (a server from before Apps) count as none.
+fn apps_window_count(app: &AppHandle) -> u64 {
+    let Some(port) = app.try_state::<DashboardPort>().map(|p| p.0) else {
+        return 0;
+    };
+    apps_running_count(port, Duration::from_millis(300)).unwrap_or(0)
+}
+
+fn apps_running_count(port: u16, budget: Duration) -> Option<u64> {
+    use std::io::{Read, Write};
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, budget).ok()?;
+    stream.set_read_timeout(Some(budget)).ok()?;
+    stream.set_write_timeout(Some(budget)).ok()?;
+    let req = format!("GET /api/apps/running HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut resp = Vec::new();
+    stream.take(64 * 1024).read_to_end(&mut resp).ok()?;
+    parse_running_count(&resp)
+}
+
+/// The `count` of a `200` answer; anything else is None.
+fn parse_running_count(resp: &[u8]) -> Option<u64> {
+    let text = std::str::from_utf8(resp).ok()?;
+    let (head, body) = text.split_once("\r\n\r\n")?;
+    let status = head.lines().next()?.split_whitespace().nth(1)?;
+    if status != "200" {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(body.trim()).ok()?.get("count")?.as_u64()
+}
+
+/// Reopen (a Dock click): when nothing but the notch is on screen and the boot is done,
+/// show the Launcher, building it again if it was closed.
+#[cfg(target_os = "macos")]
+fn reopen_launcher(app: &AppHandle) {
+    let Some(port) = app.try_state::<DashboardPort>().map(|p| p.0) else {
+        return; // still booting: the boot opens the Launcher itself
+    };
+    let something_visible = app
+        .webview_windows()
+        .iter()
+        .any(|(label, w)| label != assistant::NOTCH_LABEL && w.is_visible().unwrap_or(false));
+    if something_visible {
+        return;
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+        return;
+    }
+    if let Err(e) = open_launcher_window(app, port) {
+        applog::log(&format!("[reopen] could not open the Launcher: {e}"));
+    }
 }
 
 /// Build the Launcher window (label `main`, no vault pinned) at the dashboard port.
@@ -969,4 +1070,19 @@ pub(crate) fn launcher_builder(
 /// offers "Try again" and "Quit" instead of a read-only message.
 fn show_error_window(app: &AppHandle, msg: &str) {
     node_setup::show_error(app, msg);
+}
+
+#[cfg(test)]
+mod apps_running_tests {
+    use super::parse_running_count;
+
+    #[test]
+    fn counts_only_a_200_with_a_number() {
+        assert_eq!(parse_running_count(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"count\":2}"), Some(2));
+        assert_eq!(parse_running_count(b"HTTP/1.1 200 OK\r\n\r\n{\"count\":0}"), Some(0));
+        // A server from before Apps answers 404: no app windows.
+        assert_eq!(parse_running_count(b"HTTP/1.1 404 Not Found\r\n\r\n{\"error\":\"No route\"}"), None);
+        assert_eq!(parse_running_count(b"HTTP/1.1 200 OK\r\n\r\n{\"count\":\"2\"}"), None);
+        assert_eq!(parse_running_count(b"garbage"), None);
+    }
 }

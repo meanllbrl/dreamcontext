@@ -17,7 +17,7 @@ export function discoverVaults(root: string): string[] {
     absolute: true,
     onlyDirectories: true,
     deep: 6,
-    ignore: ['**/node_modules/**', '**/.git/**'],
+    ignore: ['**/node_modules/**', '**/.git/**', '**/_dream_context/apps/**'],
     suppressErrors: true,
   });
 
@@ -38,7 +38,7 @@ export async function discoverVaultsAsync(root: string): Promise<string[]> {
     absolute: true,
     onlyDirectories: true,
     deep: 6,
-    ignore: ['**/node_modules/**', '**/.git/**'],
+    ignore: ['**/node_modules/**', '**/.git/**', '**/_dream_context/apps/**'],
     suppressErrors: true,
   });
 

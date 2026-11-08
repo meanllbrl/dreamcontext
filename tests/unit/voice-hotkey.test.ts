@@ -19,6 +19,7 @@ import {
   readVoiceConfig, writeVoiceConfig, voiceStatus, clampSpeechRate,
   DEFAULT_PUSH_TO_TALK, DEFAULT_SPEECH_RATE, MIN_SPEECH_RATE, MAX_SPEECH_RATE,
 } from '../../src/lib/voice/config.js';
+import { parseHotkey as dashParse, isHeldChordRepeat } from '../../dashboard/src/lib/voice/hotkey.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -288,5 +289,48 @@ describe('the composer honours both ways of pressing it', () => {
 
   it('reads the capture state from a REF, so the listener is not rebuilt mid-take', () => {
     expect(composer).toMatch(/voiceStateRef\.current === 'recording'/);
+  });
+});
+
+// ── A held chord must not type ───────────────────────────────────────────────────────────
+describe('a held chord\'s repeats are swallowed, ordinary typing is not', () => {
+  const chord = dashParse('Shift+KeyV')!;
+  const key = (over: Partial<KeyboardEvent>) => ({
+    code: 'KeyV', key: 'V', repeat: true, shiftKey: true, metaKey: false, ctrlKey: false, altKey: false, ...over,
+  }) as KeyboardEvent;
+  const yes = () => true;
+  const no = () => false;
+
+  it('swallows every repeat of a press this composer took, wherever the owner went', () => {
+    expect(isHeldChordRepeat(key({}), chord, true, no)).toBe(true);
+  });
+
+  it('swallows the base key\'s repeats after the modifier was let go first', () => {
+    // Shift up, V still down: the repeats are a plain `v`, and hold mode has already ended the take.
+    expect(isHeldChordRepeat(key({ key: 'v', shiftKey: false }), chord, true, no)).toBe(true);
+  });
+
+  it('swallows a repeat whose press landed before the window had focus, when this composer owns it', () => {
+    expect(isHeldChordRepeat(key({}), chord, false, yes)).toBe(true);
+  });
+
+  it('leaves a held capital alone when no composer owns the chord', () => {
+    expect(isHeldChordRepeat(key({}), chord, false, no)).toBe(false);
+  });
+
+  it('leaves a held lowercase v alone: only a claimed press takes it', () => {
+    expect(isHeldChordRepeat(key({ key: 'v', shiftKey: false }), chord, false, yes)).toBe(false);
+  });
+
+  it('leaves another key\'s repeats and a first press alone', () => {
+    expect(isHeldChordRepeat(key({ code: 'KeyB', key: 'B' }), chord, true, yes)).toBe(false);
+    expect(isHeldChordRepeat(key({ repeat: false }), chord, true, yes)).toBe(false);
+  });
+
+  it('the composer asks this before it drops a repeat, and claims the press', () => {
+    const composer = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf-8');
+    expect(composer).not.toMatch(/if \(e\.repeat\) return;/);
+    expect(composer).toMatch(/if \(isHeldChordRepeat\(e, chord, chordClaimedRef\.current,/);
+    expect(composer).toMatch(/e\.preventDefault\(\);\s*\n\s*chordClaimedRef\.current = true;/);
   });
 });

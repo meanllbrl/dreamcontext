@@ -128,6 +128,8 @@ function seedBoard(name: string, texts: string[]): string {
   return slug;
 }
 
+// Every agent here is BOARD-ONLY (`scope: board`): since 2026-11-07 a home board alone does not
+// limit (board-presentation-scope.test.ts), and this file pins the envelope it opts into.
 function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: boolean; learning?: boolean } = {}): AutomationManifest {
   const m = createAutomation(contextRoot, {
     slug: opts.slug ?? 'board-pilot',
@@ -136,7 +138,7 @@ function makeAgent(opts: { slug?: string; whiteboard?: string | null; approve?: 
     prompt: 'Keep the board tidy.',
     review: 'agent',
     learning: opts.learning ?? false,
-    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board }),
+    ...(opts.whiteboard === null ? {} : { whiteboard: opts.whiteboard ?? board, boardOnly: true }),
   });
   if (opts.approve !== false) approveAutomation(projectRoot, m, NOW, home);
   return m;
@@ -168,7 +170,7 @@ function dropManifestLine(slug: string, key: string): void {
 }
 
 function runOpts(spawnImpl: SpawnImpl) {
-  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), sendTelegram: vi.fn(async () => {}), force: true };
+  return { home, now: () => NOW, spawnImpl, notify: vi.fn(), force: true };
 }
 
 beforeEach(() => {
@@ -220,6 +222,9 @@ describe('boardScopeArgs: the pinned scoped envelope', () => {
       'Bash(dreamcontext automations flow:*)',
       'Bash(dreamcontext agents list:*)',
       'Bash(dreamcontext agents show:*)',
+      'Bash(dreamcontext apps list:*)',
+      'Bash(dreamcontext apps tools:*)',
+      'Bash(dreamcontext apps status:*)',
       'Bash(dreamcontext whiteboard add northwind-ops:*)',
       'Bash(dreamcontext whiteboard update northwind-ops:*)',
       'Bash(dreamcontext whiteboard remove northwind-ops:*)',
@@ -355,7 +360,7 @@ describe('the scoped envelope on every spawn path', () => {
     expect(prompt.trimEnd().endsWith(`Why is hiring first?\n--- END MESSAGE ${nonce} ---`)).toBe(true);
   });
 
-  it('a Telegram message to a home agent carries the board and puts the message last', async () => {
+  it('a direct message to a home agent carries the board and puts the message last', async () => {
     makeAgent();
     bindSession();
     const { impl, calls } = fakeSpawn();
@@ -437,7 +442,7 @@ describe('refusals: no spawn, a named reason', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('removing `whiteboard` from an approved scoped manifest refuses the Telegram and the answer path', async () => {
+  it('removing `whiteboard` from an approved scoped manifest refuses the message and the answer path', async () => {
     makeAgent();
     const q = makeQuestion();
     dropManifestLine('board-pilot', 'whiteboard');
@@ -445,7 +450,7 @@ describe('refusals: no spawn, a named reason', () => {
     const { impl, calls } = fakeSpawn();
     const talked = await resumeWithMessage(contextRoot, 'board-pilot', 'hi', { home, spawnImpl: impl, now: () => NOW });
     expect(talked.status).toBe('refused');
-    const answered = await resumeWithAnswer(contextRoot, q, 'go', 'telegram', { home, spawnImpl: impl, now: () => NOW });
+    const answered = await resumeWithAnswer(contextRoot, q, 'go', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(answered.status).toBe('refused');
     expect(answered.error).toContain('manifest-changed');
     expect(calls).toHaveLength(0);

@@ -65,10 +65,30 @@ function eventKey(g: { kind: string; batch: string | null; items: ReadonlyArray<
 /** Every unit in the conversation, oldest first. `fold` is on when the pane folds event turns. */
 export function unreadUnits(
   items: readonly UnreadItem[],
-  opts: { fold: boolean; ownerBatches: readonly string[]; openQuestions: ReadonlyArray<{ id: string; createdAt: number }> },
+  opts: {
+    fold: boolean;
+    ownerBatches: readonly string[];
+    openQuestions: ReadonlyArray<{ id: string; createdAt: number }>;
+    /** A member Super's turns for main Super (plan-r10 1, `mainBatches`): main-handed work is never
+     *  the owner's to read, so nothing under such a batch (its event line, its prose) is a unit. */
+    mainBatches?: readonly string[];
+  },
 ): UnreadUnit[] {
   const folded = new Set<string>();
   const anchors = new Map<string, string>();
+  /** Items under a main batch: the event turn itself and every item up to the next user item. */
+  const forMain = new Set<string>();
+  if (opts.mainBatches?.length) {
+    const main = new Set(opts.mainBatches);
+    const { groups } = groupSuperEventTurns(items, { ownerBatches: opts.ownerBatches, expanded: new Set(items.map((it) => it.id)) });
+    let open: string | null = null;
+    for (const it of items) {
+      const g = groups.get(it.id);
+      if (g) { open = g.batch !== null && main.has(g.batch) ? g.anchor : null; if (open) forMain.add(it.id); continue; }
+      if (it.kind === 'user') open = null;
+      if (open) forMain.add(it.id);
+    }
+  }
   if (opts.fold) {
     const { groups } = groupSuperEventTurns(items, { ownerBatches: opts.ownerBatches, expanded: new Set() });
     const textIds = new Set(items.filter((it) => it.kind === 'text' && it.done && it.text?.trim()).map((it) => it.id));
@@ -85,7 +105,7 @@ export function unreadUnits(
   let opened = false;
   for (const it of items) {
     if (it.kind === 'user') opened = true;
-    if (!opened) continue;
+    if (!opened || forMain.has(it.id)) continue;
     const ts = it.ts ?? 0;
     const anchor = anchors.get(it.id);
     if (anchor) units.push({ key: anchor, ts, itemId: it.id, question: null });

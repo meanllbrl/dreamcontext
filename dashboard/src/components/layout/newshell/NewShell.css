@@ -199,11 +199,56 @@
   .ns-tb-word { display: none; }
 }
 
+/* The drawer toggle's count: chats waiting elsewhere (a device shell). */
+.ns-tb-btn { position: relative; }
+.ns-tb-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  /* The ink, not the fill: white on it is 5.39:1 in light mode; the dark theme's ink is bright. */
+  background: var(--color-warning-ink);
+  color: var(--color-bg);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: var(--space-4);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* A finger (`data-touch`, WindowChrome: a coarse pointer): 44 px targets, the notch cleared, no
+   traffic-light inset (a phone or a tablet has no window buttons). */
+.window-chrome[data-shell="new"][data-touch="true"] .ns-titlebar {
+  height: calc(var(--titlebar-height) + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(var(--space-2), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--space-2), env(safe-area-inset-right, 0px));
+}
+.window-chrome[data-shell="new"][data-touch="true"] .window-chrome-inset { display: none; }
+.window-chrome[data-shell="new"][data-touch="true"] .ns-tb-btn {
+  width: var(--touch-target);
+  height: var(--touch-target);
+}
+.window-chrome[data-shell="new"][data-touch="true"] .ns-tb-picker { min-height: var(--touch-target); }
+.window-chrome[data-shell="new"][data-touch="true"] .ns-titlebar .sleep-tracker {
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  justify-content: center;
+}
+
 /* ≤600: no zoom, and the picker gets the room. */
 @media (max-width: 600px) {
   .ns-zoom,
   .ns-tb-brand { display: none; }
   .ns-tb-picker { max-width: 160px; }
+  /* A phone's title bar holds the Mac chip and 44 px targets: the picker gives way (its name
+     ellipsizes) instead of sliding under the right-hand group with a long project name. */
+  .ns-tb-left { flex: 1 1 auto; }
+  .ns-tb-left .ns-tb-picker { flex: 0 1 auto; min-width: 0; }
+  .ns-tb-right { flex: none; }
 }
 
 /* ── The body row: [rail][drawer (W2)][instances] ───────────────────────────────────── */
@@ -323,6 +368,10 @@
     height: var(--space-11);
   }
 }
+
+/* The on-screen keyboard is up on a phone (`data-keyboard`, WindowChrome): the bottom bar steps
+   aside so the composer sits on the keyboard. A landscape phone keeps its left rail. */
+.window-chrome[data-shell="new"][data-keyboard="true"] .ns-rail[data-narrow="true"] { display: none; }
 
 /* ── Menus: the picker and More ─────────────────────────────────────────────────────── */
 

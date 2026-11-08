@@ -49,7 +49,7 @@ describe('decide — the full matrix', () => {
         const expected = autonomy === 'bypass' ? 'pass'
           // chat (and look, and an idle-only close) carry the owner's request only while nothing
           // untrusted was read since.
-          : verb === 'chat' || verb === 'look' || verb === 'close' ? (tainted ? 'propose' : 'pass')
+          : verb === 'chat' || verb === 'look' || verb === 'close' || verb === 'app-open' || verb === 'app-shot' ? (tainted ? 'propose' : 'pass')
             : !gated ? 'pass'
               : autonomy === 'ask' ? 'propose'
                 : tainted ? 'propose' : 'pass';

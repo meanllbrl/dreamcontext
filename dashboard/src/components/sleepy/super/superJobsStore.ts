@@ -1,3 +1,4 @@
+import type { PhonePermission } from './usePhoneSuperQuestions';
 import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
@@ -28,6 +29,11 @@ export function onOpenJobRow(fn: Listener): () => void {
 
 export interface SuperEventContext {
   ownerBatches: readonly string[];
+  /** A member Super's turns for main Super (plan-r10 1): marked "Super için", never unread. */
+  mainBatches?: readonly string[];
+  /** A member Super's open and recent `request`/`reply` items by id, with main's text: its live
+   *  delivery chip carries no text, so its framed block reads it here (plan-r10 1). */
+  requests?: Readonly<Record<string, { kind: 'request' | 'reply'; text: string }>>;
   titleFor: (child: string) => string;
 }
 const contexts = new Map<string, SuperEventContext>();
@@ -85,6 +91,11 @@ export interface SuperRemoteQuestions {
   /** Send the owner's answer. `ok`: the child has it; `retry`: it did not, and another tap may
    *  land (the window away, a socket down, a timeout); neither: stale, answered elsewhere. */
   answer: (item: SuperQueueItem, body: { picked: Record<string, string>; notes?: Record<string, string> } | { unclear: string }) => Promise<{ ok: boolean; retry: boolean }>;
+  /** A child's permission that waits for the owner: its tool and command, as the server read
+   *  them from the child (null: not a permission, or gone). */
+  permissionOf?: (itemId: string) => PhonePermission | null;
+  /** The owner's Allow or Deny on it, through the Mac window (`/api/agent/super-permission`). */
+  answerPermission?: (item: SuperQueueItem, choice: 'allow' | 'deny') => Promise<{ ok: boolean; retry: boolean; error?: string }>;
 }
 const questionViews = new Map<string, SuperQuestionView>();
 const questionKeys = new Map<string, string>();

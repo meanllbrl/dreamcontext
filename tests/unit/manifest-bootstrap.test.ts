@@ -47,19 +47,19 @@ describe('bootstrapManifestFromScan — allowlist', () => {
 
   it('T2: adopts only known claude skill dirs, never custom ones', () => {
     touch(join(tmp, '.claude', 'skills', 'dreamcontext', 'SKILL.md'));
-    touch(join(tmp, '.claude', 'skills', 'engineering', 'SKILL.md'));
+    touch(join(tmp, '.claude', 'skills', 'design', 'SKILL.md'));
     touch(join(tmp, '.claude', 'skills', 'my-custom-thing', 'SKILL.md'));
 
     const known: KnownArtifacts = {
       agentNames: new Set<string>(),
-      skillDirs: new Set(['dreamcontext', 'engineering']),
+      skillDirs: new Set(['dreamcontext', 'design']),
     };
     const m = bootstrapManifestFromScan(tmp, known);
 
     expect(m.files['.claude/skills/dreamcontext/SKILL.md']).toBeDefined();
     expect(m.files['.claude/skills/dreamcontext/SKILL.md'].kind).toBe('core');
-    expect(m.files['.claude/skills/engineering/SKILL.md']).toBeDefined();
-    expect(m.files['.claude/skills/engineering/SKILL.md'].kind).toBe('pack-skill');
+    expect(m.files['.claude/skills/design/SKILL.md']).toBeDefined();
+    expect(m.files['.claude/skills/design/SKILL.md'].kind).toBe('pack-skill');
     expect(m.files['.claude/skills/my-custom-thing/SKILL.md']).toBeUndefined();
   });
 
@@ -74,7 +74,7 @@ describe('bootstrapManifestFromScan — allowlist', () => {
     expect(known.agentNames.has('dreamcontext-explore')).toBe(true);
     // Skills: core + pack
     expect(known.skillDirs.has('dreamcontext')).toBe(true);
-    expect(known.skillDirs.has('engineering')).toBe(true);
+    expect(known.skillDirs.has('design')).toBe(true);
 
     // Custom + genuinely-removed are NOT in the allowlist
     expect(known.agentNames.has('watchlist-monitor')).toBe(false);

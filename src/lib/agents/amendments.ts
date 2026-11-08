@@ -5,10 +5,10 @@ import { readLocalJson, updateLocalJson } from '../local-store.js';
 import { approveAutomation, checkApproval, manifestHash } from '../automations/registry.js';
 import { getRunTarget, readManifestParts, updateAutomation } from '../automations/store.js';
 import { assertOwned } from './owner.js';
-import { agentUsage, getAgent, restampTargets, withRestamp } from './store.js';
+import { agentUsage, getAgent, previewCallTarget, restampTargets, widenViewOf, withRestamp } from './store.js';
 import { normalizeSoul } from './soul-templates.js';
-import type { AgentIdentityPatch } from './types.js';
-import type { InstructionField } from './instruction-fields.js';
+import type { AgentIdentityPatch, AgentManifest } from './types.js';
+import { localWriteStamps, widensAuthority, type InstructionField, type MemberActor } from './instruction-fields.js';
 
 /**
  * AMENDMENTS: the Super Agent corrects a member's instructions, the member stays approved, and the
@@ -63,11 +63,26 @@ export interface AmendmentChange {
   after: string;
 }
 
+/** Who wrote an amendment: the Super Agent (`super team amend`), an in-app chat session, or a
+ *  process that never talks to the owner (a member's run, a routine, a Super or member child). */
+export type AmendBy = Exclude<MemberActor, 'owner'>;
+
 export interface Amendment {
   id: string;
   at: string;
   member: string;
-  by: 'super';
+  /** `owner`: his own edit (dashboard or his terminal), traced and revertable like the rest, with
+   *  no caps, no daily ceiling and never a card (plan-r10 1e). */
+  by: MemberActor;
+  /** What the risk filter flagged (`amendmentRisks`). Super and an in-app session are applied and
+   *  stamped anyway (the owner talks to both); the trace row says what was flagged. */
+  risks?: string[];
+  /** What this change widened (`widensAuthority`), when it did. */
+  widened?: string[];
+  /** Written and NOT stamped: it waits for the one approval card. */
+  waits?: true;
+  /** A member an agent or a session created: no text to take back, the row is its trace. */
+  created?: true;
   /** The Super Agent session that made it. */
   session: string | null;
   why: string;
@@ -210,6 +225,14 @@ export interface AmendInput {
   job?: string;
   routine?: string;
   session?: string | null;
+  /** Who writes it. Default `super` (the `team amend` door). */
+  by?: AmendBy;
+  /** The member a member run belongs to (`DREAMCONTEXT_AGENT_SELF` / `DREAMCONTEXT_MEMBER_CREW`).
+   *  Informational since 2026-11-07: a member's run editing another member is made on this Mac too. */
+  self?: string | null;
+  /** Other identity fields written in the same change (a session's or an agent's `agents edit`):
+   *  judged by `widensAuthority`, never by the text checks. */
+  extra?: Omit<AgentIdentityPatch, 'prompt' | 'soul'>;
 }
 
 export interface AmendOptions {
@@ -220,14 +243,14 @@ export interface AmendOptions {
 /** The hash an agent target would keep through a job write, and the re-stamp. A sibling of
  *  `withRestamp` for the routine's own text: re-approved only when it was directly approved and
  *  the re-read hash is what this edit produced. */
-function writeJob(contextRoot: string, routine: string, job: string, home: string | undefined, now: Date): void {
+function writeJob(contextRoot: string, routine: string, job: string, home: string | undefined, now: Date, stamp = true): void {
   const projectRoot = dirname(contextRoot);
   const target = getRunTarget(contextRoot, routine, 'automation');
   if (!target) throw new AutomationError(`No routine named "${routine}".`);
   const verdict = checkApproval(projectRoot, target, home, 'run');
   const expected = manifestHash({ ...target, job });
   updateAutomation(contextRoot, routine, { job: job.trim() ? job : null });
-  if (!verdict.approved) return;
+  if (!stamp || !verdict.approved) return;
   const reread = getRunTarget(contextRoot, routine, 'automation');
   if (reread && manifestHash(reread) === expected) approveAutomation(projectRoot, reread, now, home);
 }
@@ -239,15 +262,17 @@ function applyChanges(
   changes: readonly { field: InstructionField; routine?: string; text: string }[],
   home: string | undefined,
   now: Date,
+  extra: Omit<AgentIdentityPatch, 'prompt' | 'soul'> = {},
+  stamp = true,
 ): void {
-  const patch: AgentIdentityPatch = {};
+  const patch: AgentIdentityPatch = { ...extra };
   for (const c of changes) {
     if (c.field === 'prompt') patch.prompt = c.text;
     if (c.field === 'soul') patch.soul = c.text;
   }
-  if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), member, patch, home, now);
+  if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), member, patch, home, now, { stamp });
   for (const c of changes) {
-    if (c.field === 'job' && c.routine) writeJob(contextRoot, c.routine, c.text, home, now);
+    if (c.field === 'job' && c.routine) writeJob(contextRoot, c.routine, c.text, home, now, stamp);
   }
 }
 
@@ -265,16 +290,15 @@ function currentJob(contextRoot: string, member: string, routine: string): strin
   return typeof target.job === 'string' ? target.job : '';
 }
 
-/** The member's targets as they stand: refused when one carries a change nobody reviewed, or when
- *  none is approved. An amendment keeps an approval; it never creates one or buries a review. */
+/** The member's targets as they stand: refused when one carries a change nobody reviewed (a synced
+ *  edit, or one waiting for his card): an amendment never buries it. A member never approved here
+ *  is no refusal any more (plan-r10 1e): the change is written and waits for the one card, since
+ *  `withRestamp` only re-stamps what was approved as it stood before the write. */
 function assertApprovedAsItStands(contextRoot: string, member: string, home?: string): void {
   const projectRoot = dirname(contextRoot);
   const verdicts = restampTargets(contextRoot, member).map(({ target }) => checkApproval(projectRoot, target, home, 'run'));
   if (verdicts.some((v) => !v.approved && (v.reason === 'manifest-changed' || v.reason === 'payload-format-changed'))) {
-    throw new AmendmentRefused('amend_unreviewed_change', 409, `"${member}" has a change the owner has not reviewed. He reviews it in AI Team first; an amendment never goes over it.`);
-  }
-  if (!verdicts.some((v) => v.approved)) {
-    throw new AmendmentRefused('amend_unapproved', 409, `"${member}" is not approved on this Mac. An amendment keeps an approval and never creates one: the owner approves it in AI Team.`);
+    throw new AmendmentRefused('amend_unreviewed_change', 409, `"${member}" has a change the owner has not reviewed. He reviews it on its approval card first; an amendment never goes over it.`);
   }
 }
 
@@ -295,15 +319,26 @@ function runsUnattended(contextRoot: string, member: string): boolean {
 }
 
 /**
- * Change a member's instructions and keep it approved. The trace is written FIRST, so a change
- * that lands always has its record; a write that fails takes the record back. Throws
- * {@link AmendmentRefused} for every refusal, with nothing written.
+ * Change a member's instructions (and, from a session's or an agent's `agents edit`, its other
+ * identity fields) through ONE door with `team amend`'s protections (plan-r10 1e): the section,
+ * size and daily ceilings, the revert hold, the risk filter and a trace the owner reads and undoes.
+ *
+ * Who decides the stamp (`localWriteStamps`, the owner's rule of 2026-11-07): a change made on this
+ * Mac is approved as written, by the Super Agent, an in-app session or a member's own run alike,
+ * widening or not; the trace row names what it widened and what the risk filter flagged. Only a
+ * process that never talks to him (`by: 'agent'`) writing text the risk filter flags is written and
+ * left for the one card.
+ * The trace is written FIRST, so a change that lands always has its record; a write that fails
+ * takes the record back. Throws {@link AmendmentRefused} for every refusal, with nothing written.
  */
 export function amendMember(contextRoot: string, input: AmendInput, opts: AmendOptions = {}): Amendment {
   const { home } = opts;
   const now = opts.now ?? new Date();
   const projectRoot = dirname(contextRoot);
   const member = input.member;
+  const by: AmendBy = input.by ?? 'super';
+  const extra = input.extra ?? {};
+  const hasExtra = Object.keys(extra).length > 0;
   const why = input.why.replace(/\s+/g, ' ').trim();
   if (!why) throw new AmendmentRefused('invalid_args', 400, 'say which mistake this fixes: --why is what the owner reads.');
   if (why.length > AMENDMENT_LIMITS.whyChars) throw new AmendmentRefused('invalid_args', 400, `--why is at most ${AMENDMENT_LIMITS.whyChars} characters.`);
@@ -311,8 +346,9 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
 
   const agent = getAgent(contextRoot, member, home);
   if (!agent) throw new AmendmentRefused('unknown_member', 404, `no AI Team member "${member}" in this project (\`dreamcontext agents list\`).`);
+  const global = agent.scope === 'global';
   // A global member runs in every project: one project's Super Agent does not reach all of them.
-  if (agent.scope === 'global') throw new AmendmentRefused('amend_global', 409, `"${member}" is a global agent, used by every project on this Mac: the owner edits it in AI Team.`);
+  if (global && by === 'super') throw new AmendmentRefused('amend_global', 409, `"${member}" is a global agent, used by every project on this Mac: the owner edits it in AI Team.`);
   assertOwned({ owner: agent.owner }, agent.title || member);
 
   const changes: AmendmentChange[] = [];
@@ -329,7 +365,7 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   }
   if (input.soul !== undefined) add('soul', agent.soul, normalizeSoul(input.soul));
   if (input.job !== undefined && input.routine) add('job', currentJob(contextRoot, member, input.routine), input.job.trim(), input.routine);
-  if (changes.length === 0) throw new AmendmentRefused('amend_no_change', 409, 'nothing changes: the text is already what you sent.');
+  if (changes.length === 0 && !hasExtra) throw new AmendmentRefused('amend_no_change', 409, 'nothing changes: the text is already what you sent.');
 
   assertApprovedAsItStands(contextRoot, member, home);
 
@@ -342,54 +378,156 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
     throw new AmendmentRefused('amend_too_large', 413, `this takes out ${removed} characters; an amendment takes out at most ${AMENDMENT_LIMITS.removedChars}. A rewrite is the owner's, in AI Team.`);
   }
   const risks = [...new Set(changes.flatMap((c) => amendmentRisks(c.before, c.after)))];
-  if (risks.length > 0) {
-    throw new AmendmentRefused('amend_needs_owner', 409, `this change brings ${risks.join(', ')}. Nothing was written: a change like that is the owner's. Tell him what you want to change and why; he edits it in AI Team.`);
-  }
 
-  const unattended = runsUnattended(contextRoot, member);
+  // Which way the member's reach moves (the identity part; a routine's job is text only).
+  const identityPatch: AgentIdentityPatch = { ...extra };
+  for (const c of changes) {
+    if (c.field === 'prompt') identityPatch.prompt = c.after;
+    if (c.field === 'soul') identityPatch.soul = c.after;
+  }
+  const preview = Object.keys(identityPatch).length > 0 ? previewCallTarget(contextRoot, member, identityPatch) : null;
+  const widened = preview
+    ? widensAuthority(widenViewOf(preview.before), widenViewOf(preview.after), by)
+    : global && by === 'agent' ? ['global'] : [];
+  // Made on this Mac, so approved as written (`localWriteStamps`): only a background process's risky
+  // text waits for the card. `widened` stays on the trace row, for the owner to read.
+  const stamp = localWriteStamps(by, risks);
+  // `withRestamp` stamps only what was approved as it stood: a member never approved here waits too.
+  const approvedBefore = approvedTargets(contextRoot, member, home).length > 0;
+
   const entry: Amendment = {
     id: `am_${randomBytes(6).toString('hex')}`,
     at: now.toISOString(),
     member,
-    by: 'super',
+    by,
     session: input.session ?? null,
     why,
     changes,
+    ...(risks.length ? { risks } : {}),
+    ...(widened.length ? { widened } : {}),
+    ...(stamp && approvedBefore ? {} : { waits: true as const }),
   };
 
-  // Inside the record's own lock, so two calls cannot both pass the ceiling.
-  updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
-    const members = { ...(cur.members ?? {}) };
-    const mine = clean(members[member]);
-    const held = now.getTime() - AMENDMENT_LIMITS.revertHoldDays * DAY_MS;
-    for (const c of changes) {
-      const key = textKey(c.after);
-      const same = mine.filter((a) => a.revertedAt).flatMap((a) => a.changes.filter((p) => p.field === c.field && p.routine === c.routine).map((p) => ({ p, at: a.revertedAt as string })));
-      if (same.some(({ p }) => textKey(p.after) === key)) throw new AmendmentRefused('owner_reverted', 409, `the owner took this exact ${c.field} back. Do not write it again; tell him what you saw.`);
-      if (same.some(({ at }) => Date.parse(at) > held)) throw new AmendmentRefused('owner_reverted', 409, `the owner took a change to this ${c.field} back in the last ${AMENDMENT_LIMITS.revertHoldDays} days, so it is his for now. Tell him what you saw.`);
-    }
-    const since = now.getTime() - DAY_MS;
-    const recent = (list: Amendment[]) => list.filter((a) => Date.parse(a.at) > since).length;
-    const ceiling = unattended ? AMENDMENT_LIMITS.perUnattendedMemberPerDay : AMENDMENT_LIMITS.perMemberPerDay;
-    if (recent(mine) >= ceiling) {
-      throw new AmendmentRefused('amend_limit', 429, `"${member}" had ${ceiling} amendment${ceiling === 1 ? '' : 's'} in the last 24 hours${unattended ? ' (it runs unattended, so one is the ceiling)' : ''}. Leave it, or tell the owner.`);
-    }
-    const all = Object.values(members).reduce((n, list) => n + recent(clean(list)), 0);
-    if (all >= AMENDMENT_LIMITS.perProjectPerDay) {
-      throw new AmendmentRefused('amend_limit', 429, `this project had ${AMENDMENT_LIMITS.perProjectPerDay} amendments in the last 24 hours. Tell the owner what is going on.`);
-    }
-    members[member] = [entry, ...mine].slice(0, AMENDMENT_LIMITS.keptPerMember);
-    return { members };
-  }, home);
+  // Only text has a trace to read and take back; a pure model or board change has none.
+  if (changes.length > 0) {
+    const unattended = runsUnattended(contextRoot, member);
+    // Inside the record's own lock, so two calls cannot both pass the ceiling.
+    updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
+      const members = { ...(cur.members ?? {}) };
+      const mine = clean(members[member]);
+      const held = now.getTime() - AMENDMENT_LIMITS.revertHoldDays * DAY_MS;
+      for (const c of changes) {
+        const key = textKey(c.after);
+        const same = mine.filter((a) => a.revertedAt).flatMap((a) => a.changes.filter((p) => p.field === c.field && p.routine === c.routine).map((p) => ({ p, at: a.revertedAt as string })));
+        if (same.some(({ p }) => textKey(p.after) === key)) throw new AmendmentRefused('owner_reverted', 409, `the owner took this exact ${c.field} back. Do not write it again; tell him what you saw.`);
+        if (same.some(({ at }) => Date.parse(at) > held)) throw new AmendmentRefused('owner_reverted', 409, `the owner took a change to this ${c.field} back in the last ${AMENDMENT_LIMITS.revertHoldDays} days, so it is his for now. Tell him what you saw.`);
+      }
+      const since = now.getTime() - DAY_MS;
+      // The owner's own edits and created members never count against an agent's ceiling.
+      const recent = (list: Amendment[]) => list.filter((a) => Date.parse(a.at) > since && !a.created && a.by !== 'owner').length;
+      const ceiling = unattended ? AMENDMENT_LIMITS.perUnattendedMemberPerDay : AMENDMENT_LIMITS.perMemberPerDay;
+      if (recent(mine) >= ceiling) {
+        throw new AmendmentRefused('amend_limit', 429, `"${member}" had ${ceiling} amendment${ceiling === 1 ? '' : 's'} in the last 24 hours${unattended ? ' (it runs unattended, so one is the ceiling)' : ''}. Leave it, or tell the owner.`);
+      }
+      const all = Object.values(members).reduce((n, list) => n + recent(clean(list)), 0);
+      if (all >= AMENDMENT_LIMITS.perProjectPerDay) {
+        throw new AmendmentRefused('amend_limit', 429, `this project had ${AMENDMENT_LIMITS.perProjectPerDay} amendments in the last 24 hours. Tell the owner what is going on.`);
+      }
+      members[member] = [entry, ...mine].slice(0, AMENDMENT_LIMITS.keptPerMember);
+      return { members };
+    }, home);
+  }
 
   try {
-    applyChanges(contextRoot, member, changes.map((c) => ({ field: c.field, text: c.after, ...(c.routine ? { routine: c.routine } : {}) })), home, now);
+    applyChanges(contextRoot, member, changes.map((c) => ({ field: c.field, text: c.after, ...(c.routine ? { routine: c.routine } : {}) })), home, now, extra, stamp);
   } catch (err) {
     // A record is dropped only for what did not land: half a change keeps its trace and its undo.
-    keepWhatLanded(contextRoot, member, entry, home);
+    if (changes.length > 0) keepWhatLanded(contextRoot, member, entry, home);
     throw err;
   }
   return entry;
+}
+
+/**
+ * The trace of a member an agent or a session created (plan-r10 1e): who, when, what the risk
+ * filter flagged over its prompt and soul, what it widened, and whether it waits for the card.
+ * No text to take back (the owner deletes a member he does not want). Best-effort: a create that
+ * landed is never undone because its trace could not be written.
+ */
+export function traceMemberCreate(
+  projectRoot: string,
+  input: { member: string; by: AmendBy; risks: string[]; widened: string[]; waits: boolean; session?: string | null; routine?: string },
+  opts: AmendOptions = {},
+): Amendment {
+  const now = opts.now ?? new Date();
+  const entry: Amendment = {
+    id: `am_${randomBytes(6).toString('hex')}`,
+    at: now.toISOString(),
+    member: input.member,
+    by: input.by,
+    session: input.session ?? null,
+    why: input.routine ? `created the routine "${input.routine}"` : 'created this member',
+    changes: [],
+    created: true,
+    ...(input.risks.length ? { risks: input.risks } : {}),
+    ...(input.widened.length ? { widened: input.widened } : {}),
+    ...(input.waits ? { waits: true as const } : {}),
+  };
+  try {
+    updateLocalJson<AmendmentFile>(projectRoot, FILE, EMPTY(), (cur) => {
+      const members = { ...(cur.members ?? {}) };
+      members[input.member] = [entry, ...clean(members[input.member])].slice(0, AMENDMENT_LIMITS.keptPerMember);
+      return { members };
+    }, opts.home);
+  } catch { /* the member exists; its trace is best-effort */ }
+  return entry;
+}
+
+/**
+ * The owner's own edit of a member (plan-r10 1e: "sahibin değişikliği iz bırakır, geri alınabilir"):
+ * written through `withRestamp` exactly as before, then traced with `by: 'owner'` when its text
+ * moved (prompt or soul), with what the risk filter flags named on the row. No size caps, no daily
+ * ceiling, never a card: his save is his consent. `agents revert` takes it back. The trace is
+ * best-effort: an edit that landed is never undone because its row could not be written.
+ */
+export function ownerEdit(
+  contextRoot: string,
+  member: string,
+  patch: AgentIdentityPatch,
+  opts: AmendOptions & { consent?: boolean; why?: string } = {},
+): AgentManifest {
+  const before = getAgent(contextRoot, member, opts.home);
+  const now = opts.now ?? new Date();
+  const updated = withRestamp(contextRoot, dirname(contextRoot), member, patch, opts.home, now, opts.consent ? { consent: true } : {});
+  if (!before) return updated;
+  const changes: AmendmentChange[] = [];
+  if (patch.prompt !== undefined && textKey(before.prompt) !== textKey(updated.prompt)) changes.push({ field: 'prompt', before: before.prompt, after: updated.prompt });
+  if (patch.soul !== undefined && textKey(before.soul) !== textKey(updated.soul)) changes.push({ field: 'soul', before: before.soul, after: updated.soul });
+  if (changes.length === 0) return updated;
+  const risks = [...new Set(changes.flatMap((c) => amendmentRisks(c.before, c.after)))];
+  const entry: Amendment = {
+    id: `am_${randomBytes(6).toString('hex')}`,
+    at: now.toISOString(),
+    member,
+    by: 'owner',
+    session: null,
+    why: (opts.why ?? 'edited by the owner').replace(/\s+/g, ' ').trim().slice(0, AMENDMENT_LIMITS.whyChars),
+    changes,
+    ...(risks.length ? { risks } : {}),
+  };
+  try {
+    updateLocalJson<AmendmentFile>(dirname(contextRoot), FILE, EMPTY(), (cur) => {
+      const members = { ...(cur.members ?? {}) };
+      members[member] = [entry, ...clean(members[member])].slice(0, AMENDMENT_LIMITS.keptPerMember);
+      return { members };
+    }, opts.home);
+  } catch { /* the edit landed; its trace is best-effort */ }
+  return updated;
+}
+
+/** The risks of a created member's text: everything in it is new. */
+export function createRisks(prompt: string, soul: string): string[] {
+  return [...new Set([...amendmentRisks('', prompt), ...(soul.trim() ? amendmentRisks('', soul) : [])])];
 }
 
 /** After a failed write: the record keeps the changes that are on disk, and goes if none is. */

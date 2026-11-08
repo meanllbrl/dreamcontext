@@ -1,7 +1,9 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readMachineIdentity } from '../machine-id.js';
-import { MAX_FILE_BYTES, SUPER_STATE_REL } from '../super/store.js';
+import { getAutomation } from './store.js';
+import { MAX_FILE_BYTES, superRecordPath } from '../super/store.js';
+import { bindingVerdict } from '../super/record-binding.js';
 import { listQuestions } from './hitl.js';
 import { parseDayFile, readThread, threadSlugDir } from './threads.js';
 import type { AutomationQuestion, ThreadEntry } from './types.js';
@@ -28,6 +30,8 @@ import type { AutomationQuestion, ThreadEntry } from './types.js';
  */
 
 const LOUD_EVENTS = new Set(['failed', 'timeout', 'skipped']);
+/** A run with one of these is no quiet success, whatever else it did. */
+const NEWS_EVENTS = new Set([...LOUD_EVENTS, 'asked']);
 /** A question stamped a moment outside the entries of the run that asked it (one clock). */
 const QUESTION_SLACK_MS = 2_000;
 
@@ -37,10 +41,13 @@ interface SuperRecord { enabled: boolean; open: Set<string> }
  *  oversize file is no record, and no record means notify. */
 function readRecord(contextRoot: string): SuperRecord | null {
   try {
-    const path = join(contextRoot, SUPER_STATE_REL);
+    const path = superRecordPath(contextRoot, 'main');
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown; queue?: unknown };
+    const text = readFileSync(path, 'utf-8');
+    const raw = JSON.parse(text) as { enabled?: unknown; team?: unknown; queue?: unknown };
+    // Another Mac's or another folder's record says nothing about this one (record-binding.ts).
+    if (bindingVerdict(raw, text, contextRoot, path) === 'foreign') return null;
     const team = Array.isArray(raw.team) ? raw.team as Array<{ id?: unknown; runId?: unknown; member?: unknown; told?: unknown }> : [];
     const queue = Array.isArray(raw.queue) ? raw.queue as Array<{ team?: unknown; state?: unknown }> : [];
     // The jobs whose ending the Super never heard: not told, or told and still waiting in its queue.
@@ -122,6 +129,41 @@ export function superJobReader(contextRoot: string): SuperJobReader {
 export function superQuietReader(contextRoot: string): QuietReader {
   const isJob = superJobReader(contextRoot);
   return (slug, run) => (isJob(slug, run) ? new Set(run.filter((e) => e.kind !== 'user').map((e) => e.id)) : NOTHING);
+}
+
+/**
+ * What of a run counts for NOBODY in an unread count: the Super's rule above, plus a healthy run of
+ * a routine the owner told not to notify (K3, owner 2026-11-01). An `ok` end with no post, nothing
+ * the owner wrote and no question asked is no news: its row is still drawn, it only raises no "new".
+ * A failure, a timeout, a skip and a question always count.
+ *
+ * COUNTS ONLY. A wrapper, never an edit inside `superQuietReader`: `superRunQuiet` reads that one
+ * to decide a banner, and a notify:false rule there would silence them.
+ */
+export function ownerQuietReader(contextRoot: string): QuietReader {
+  const superQuiet = superQuietReader(contextRoot);
+  const silent = new Map<string, boolean>();
+  const questions = new Map<string, AutomationQuestion[]>();
+  return (slug, run) => {
+    const quiet = superQuiet(slug, run);
+    if (quiet.size > 0) return quiet;
+    const said = run.some((e) => e.kind !== 'system' || (e.event && NEWS_EVENTS.has(e.event)));
+    if (said || !run.some((e) => e.kind === 'system' && e.event === 'ok')) return NOTHING;
+    if (!silent.has(slug)) {
+      let notify: boolean | undefined;
+      try { notify = getAutomation(contextRoot, slug)?.notify; } catch { notify = undefined; }
+      silent.set(slug, notify === false);
+    }
+    if (!silent.get(slug)) return NOTHING;
+    if (!questions.has(slug)) {
+      let all: AutomationQuestion[] = [];
+      try { all = listQuestions(contextRoot, slug); } catch { all = []; }
+      questions.set(slug, all);
+    }
+    const runId = run[0]?.runId;
+    if (questions.get(slug)!.some((q) => q.state === 'pending' && q.runFiredAt === runId)) return NOTHING;
+    return new Set(run.map((e) => e.id));
+  };
 }
 
 /** Would a banner about this run be noise: a Super job, with the project handed over right now?

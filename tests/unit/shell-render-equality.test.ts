@@ -4,6 +4,7 @@
  * they rendered on the merged base before any shell code. The fixtures were written by this file
  * running on that base (super/yeni-kabuk @a5a80264, UPDATE_SHELL_FIXTURES=1); W1 moved code out
  * of both components (useNavBadges, ProjectChipBubbles) and these prove the moves are pure.
+ * The sidebar-* fixtures were regenerated for 0.40.0 after 50308a20 (Apps, beta, above the alpha rows): a pure reorder.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -88,7 +89,6 @@ describe('classic sidebar renders as on the base', () => {
     ['sidebar-badges', () => { state.announcements = [{}, {}]; state.agentUnread = 3; state.learningEnabled = false; }, { activePage: 'automations', collapsed: false }],
     ['sidebar-synced', () => { state.signedIn = true; state.hasRemote = true; }, { activePage: 'agents', collapsed: false }],
     ['sidebar-nochat', () => { state.desktop = false; state.learningEnabled = undefined; }, { activePage: 'settings', collapsed: false }],
-    ['sidebar-phone', () => {}, { activePage: 'tasks', collapsed: false, phone: { open: true, onClose: noop } }],
   ];
   for (const [name, arrange, props] of cases) {
     it(name, () => {

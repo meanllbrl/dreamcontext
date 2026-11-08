@@ -34,8 +34,13 @@
  * The assistant's OWN session is never registered — it would be watching itself.
  */
 
+import { outwardAction } from '../super/owed.js';
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
+import {
+  parseTelegramPrefix, TG_PENDING_REF_TTL_MS,
+  type ChatInjector, type InjectedSource, type PendingTelegramRef, type PendingTelegramRefStore, type TelegramRefDropped,
+} from '../telegram/contract.js';
 
 export const CHAT_STATUSES = ['starting', 'working', 'asking', 'idle', 'gone'] as const;
 export type ChatStatus = typeof CHAT_STATUSES[number];
@@ -80,6 +85,16 @@ export interface PendingQuestion {
    *  and when the input is over {@link MAX_QUESTION_BYTES}: never cut, since a cut text would
    *  key an answer the CLI cannot match. */
   questions?: RegistryQuestion[];
+  /** The tool call this request is about (`request.tool_use_id`). A tool_result for it means
+   *  the CLI is no longer waiting on the request (it was rejected on a closed stream, say), so
+   *  the request settles like a `control_cancel_request`. Absent on an older CLI. */
+  toolUseId?: string;
+  /** A permission's own one-line description (`request.description`, the agent's words). */
+  description?: string;
+  /** Why the CLI asks (`decision_reason`, its own words) and the kind (`decision_reason_type`):
+   *  `safetyCheck` asks even in Bypass and takes no "always allow". */
+  reason?: string;
+  reasonType?: string;
 }
 
 export interface RegistryQuestionOption { label: string; description?: string; preview?: string }
@@ -132,6 +147,11 @@ export interface ChatEntry {
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
+  /** Present (true) only while the process runs `--permission-mode bypassPermissions`: its
+   *  residual permission requests go to its Super Agent first (super/inbox.ts
+   *  `permissionGoesToSuper`). Fail closed: once cleared (an init frame reporting another mode,
+   *  or {@link ChatHandle.notBypass}) it never comes back for this process. */
+  bypass?: true;
   /** How the last top-level turn ended, stamped BEFORE the move to `idle` is emitted: when, and
    *  whether the owner interrupted it. `resultSeq` is unique across the process (a respawned
    *  chat gets a fresh entry and must never repeat an earlier number). */
@@ -148,13 +168,22 @@ export interface ChatEntry {
 export interface ChatHandle {
   readonly sessionId: string;
   observe(frame: Record<string, unknown>): void;
-  userSent(text: string): void;
+  /** `source` = who wrote the turn (I4, J1): a Telegram text clears no owner wait and is never
+   *  "unheard" (a run or secret card is answered on the Mac or the phone, never by a chat text). */
+  userSent(text: string, opts?: { source?: InjectedSource }): void;
   answered(requestId?: string): void;
   /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
   interrupted(): void;
   /** The running (or just-ended) turn was refused on a usage limit and an account switch is
    *  under way: its end is not an error worth reporting. */
   markLimited(): void;
+  /** The bridge moved the process off `bypassPermissions` (it wrote `set_permission_mode`):
+   *  {@link ChatEntry.bypass} is cleared for good. */
+  notBypass(): void;
+  /** Stop settled with NO `result` (agent-chat settleAfterInterrupt): a running turn is stamped
+   *  ended and interrupted (every reader of the idle edge sees a stopped turn) and the entry goes
+   *  idle; an idle one is left alone. The interrupt flag is cleared either way, never kept. */
+  stopSettled(): void;
   exited(): void;
 }
 
@@ -167,6 +196,21 @@ export interface WatchResult {
   timedOut?: boolean;
   unknown?: boolean;
 }
+
+/**
+ * Who hears a chat's OUTWARD action that went through (a push, a publish, a PR, a deploy, an MCP
+ * send: owed.ts `outwardAction`), once per tool call: the Super inbox registers it (a registry
+ * never imports the Super). Told only on the call's non-error `tool_result`, so a push the owner
+ * denied is never told as sent.
+ */
+let outwardSink: ((sessionId: string, what: string, toolUseId: string) => void) | null = null;
+type OutwardSink = (sessionId: string, what: string, toolUseId: string) => void;
+/** Set the sink; returns the one it replaced (a test puts it back). */
+export function setOutwardSink(fn: OutwardSink | null): OutwardSink | null { const prev = outwardSink; outwardSink = fn; return prev; }
+/** Outward calls seen and not resolved yet, per chat (bounded). */
+const MAX_OUTWARD_OPEN = 64;
+/** Calls already told, per chat (bounded): a frame seen twice counts once. */
+const MAX_OUTWARD_TOLD = 256;
 
 const entries = new Map<string, ChatEntry>();
 /** Process-wide turn counter for {@link ChatEntry.lastTurn}. */
@@ -336,7 +380,7 @@ function settle(sessionId: string, w: Waiter, r: WatchResult): void {
 }
 
 /** Pull the plain text out of an `assistant` frame's content blocks. */
-function assistantText(frame: Record<string, unknown>): string {
+export function assistantText(frame: Record<string, unknown>): string {
   const msg = frame.message as { content?: unknown } | undefined;
   if (!msg || !Array.isArray(msg.content)) return '';
   return msg.content
@@ -417,6 +461,7 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
   if (!req || req.subtype !== 'can_use_tool' || typeof frame.request_id !== 'string') return null;
   const toolName = typeof req.tool_name === 'string' ? req.tool_name : 'tool';
   const input = (req.input && typeof req.input === 'object' ? req.input : {}) as Record<string, unknown>;
+  const toolUse = typeof req.tool_use_id === 'string' && req.tool_use_id ? { toolUseId: req.tool_use_id } : {};
   if (toolName === 'AskUserQuestion') {
     const qs = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
     const first = qs[0] ?? {};
@@ -426,12 +471,24 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
     const text = qs.map((q) => (typeof q.question === 'string' ? q.question : '')).filter(Boolean).join('\n');
     const images = imagesInPreviews(qs.map((q) => ({ options: Array.isArray(q.options) ? q.options as Array<{ label?: unknown; preview?: unknown }> : [] })));
     const questions = registryQuestions(qs);
-    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}) };
+    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}), ...toolUse };
   }
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path
       : typeof input.description === 'string' ? input.description : '';
-  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'] };
+  const why = {
+    ...(typeof req.description === 'string' && req.description.trim() ? { description: cap(req.description.trim(), 200) } : {}),
+    ...(typeof req.decision_reason === 'string' && req.decision_reason.trim() ? { reason: cap(req.decision_reason.trim(), 300) } : {}),
+    ...(typeof req.decision_reason_type === 'string' && /^[A-Za-z]{1,40}$/.test(req.decision_reason_type) ? { reasonType: req.decision_reason_type } : {}),
+  };
+  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'], ...toolUse, ...why };
+}
+
+/** Does its Super Agent decide this request first? Only a TOOL permission (never a question or a
+ *  plan approval) of a process that runs `bypassPermissions` right now (`ChatEntry.bypass`): the
+ *  residual asks Claude Code still raises in Bypass. Anything else is the owner's alone. */
+export function superDecidesPermission(entry: Pick<ChatEntry, 'bypass'> | null | undefined, q: Pick<PendingQuestion, 'isPermission' | 'toolName'> | null | undefined): boolean {
+  return entry?.bypass === true && !!q && q.isPermission && q.toolName !== 'ExitPlanMode' && q.toolName !== 'AskUserQuestion';
 }
 
 /** What a chat is about, in one line: its title, else the first line of its newest assistant
@@ -446,7 +503,7 @@ export function chatTopic(e: Pick<ChatEntry, 'title' | 'lastAssistantText'>, max
 /** Register a live chat. Returns the handle the bridge feeds. `seed` carries what an existing
  *  conversation is already about (a `--resume` respawn replays no history, chat-seed.ts reads it
  *  from disk); it sets title and texts only — never status or updatedAt. */
-export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
+export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; bypass?: boolean; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
   const existingDeath = deathTimers.get(init.sessionId);
   if (existingDeath) { clearTimeout(existingDeath); deathTimers.delete(init.sessionId); }
   const e: ChatEntry = {
@@ -462,6 +519,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     lastFrameAt: new Date().toISOString(),
     toolsInFlight: 0,
     ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
+    ...(init.bypass === true ? { bypass: true as const } : {}),
   };
   entries.set(init.sessionId, e);
   unheard.delete(init.sessionId);
@@ -469,6 +527,33 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   let interruptAsked = false;
   let limitAsked = false;
   const openTools = new Set<string>();
+  const outwardOpen = new Map<string, string>();
+  const outwardTold = new Set<string>();
+  /** Every assistant frame (top level and a sub-agent's): an outward call is remembered; every
+   *  user frame: its non-error result tells it, once. */
+  const noteOutward = (frame: Record<string, unknown>): void => {
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (!b || typeof b !== 'object') continue;
+      const blk = b as Record<string, unknown>;
+      if (frame.type === 'assistant' && blk.type === 'tool_use' && typeof blk.id === 'string') {
+        if (outwardTold.has(blk.id) || outwardOpen.has(blk.id)) continue;
+        const what = outwardAction(blk.name, blk.input);
+        if (!what) continue;
+        outwardOpen.set(blk.id, what);
+        if (outwardOpen.size > MAX_OUTWARD_OPEN) outwardOpen.delete(outwardOpen.keys().next().value as string);
+      } else if (frame.type === 'user' && blk.type === 'tool_result' && typeof blk.tool_use_id === 'string') {
+        const what = outwardOpen.get(blk.tool_use_id);
+        if (what === undefined) continue;
+        outwardOpen.delete(blk.tool_use_id);
+        if (blk.is_error === true) continue;
+        outwardTold.add(blk.tool_use_id);
+        if (outwardTold.size > MAX_OUTWARD_TOLD) outwardTold.delete(outwardTold.values().next().value as string);
+        try { outwardSink?.(e.sessionId, what, blk.tool_use_id); } catch { /* a sink never breaks the stream */ }
+      }
+    }
+  };
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
 
@@ -496,6 +581,10 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.session_id === 'string') {
         e.conversationId = frame.session_id;
       }
+      // The process says what it runs: anything but bypass clears the flag for good (fail closed).
+      if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.permissionMode === 'string' && frame.permissionMode !== 'bypassPermissions') {
+        delete e.bypass;
+      }
       if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
         const tasks = Array.isArray(frame.tasks) ? frame.tasks as unknown[] : [];
         const n = tasks.length;
@@ -512,6 +601,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         if (pendingRequest(e, frame.request_id)) settlePending(frame.request_id);
         return;
       }
+      if (frame.type === 'assistant' || frame.type === 'user') noteOutward(frame);
       const q = readPendingQuestion(frame);
       if (q) {
         const prevRequestId = e.pendingQuestion?.requestId;
@@ -531,6 +621,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // `null` and absent both mean top level: real CLI frames carry `parent_tool_use_id: null`
       // on `assistant` and omit it on `result`.
       const topLevel = frame.parent_tool_use_id == null;
+      // A tool_result for a request's tool call (top level or inside a sub-agent): the CLI is done
+      // with that call, so it waits on the request no more (a stream that closed under it, say).
+      if (frame.type === 'user' && pendingRequestIds(e).length) {
+        for (const id of blockIds(frame, 'tool_result')) {
+          const closed = [...(e.earlierPending ?? []), ...(e.pendingQuestion ? [e.pendingQuestion] : [])].find((p) => p.toolUseId === id);
+          if (closed) settlePending(closed.requestId);
+        }
+      }
       if (topLevel && (frame.type === 'assistant' || frame.type === 'stream_event') && (e.status === 'idle' || e.status === 'starting')) {
         setStatus(e, 'working');
       }
@@ -551,6 +649,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
             setOwnerWaits(e, [...keep, ...cards]);
           }
+          // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
+          emitAssistantText(e.sessionId, text);
           // The Super's reply mark (`<!-- re:<ref> -->`) is for the window, never a last line.
           e.lastAssistantText.push(cap(stripReplyMark(text)));
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
@@ -573,15 +673,17 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         setStatus(e, 'idle');
       }
     },
-    userSent(text) {
+    userSent(text, opts) {
       if (dead) return;
       alive();
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
+      emitUserSent(e.sessionId, text, opts?.source);
       // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
-      // Super Agent steering the child (a send the server noted for it) clears nothing.
-      if (!takeSuperSend(e.sessionId, text)) {
+      // Super Agent steering the child (a send the server noted for it) clears nothing. A
+      // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
+      if (opts?.source !== 'telegram-text' && !takeSuperSend(e.sessionId, text)) {
         if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
@@ -599,6 +701,21 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (e.status === 'idle' && e.lastTurn) { e.lastTurn = { ...e.lastTurn, limited: true }; return; }
       limitAsked = true;
     },
+    notBypass() {
+      delete e.bypass;
+    },
+    stopSettled() {
+      if (dead) return;
+      interruptAsked = false;
+      if (e.status !== 'working' && e.status !== 'asking') return;
+      e.pendingQuestion = null;
+      delete e.earlierPending;
+      openTools.clear();
+      syncTools();
+      e.lastTurn = { endedAt: new Date().toISOString(), interrupted: true, resultSeq: ++resultSeq };
+      limitAsked = false;
+      setStatus(e, 'idle');
+    },
     answered(requestId) {
       if (dead) return;
       alive();
@@ -610,9 +727,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       e.pendingQuestion = null;
       delete e.earlierPending;
       setStatus(e, 'gone');
+      // The child that wrote its Telegram refs is gone: their 30-minute clock starts again (F6).
+      restartWrittenRefClocks(init.sessionId);
       const t = setTimeout(() => {
         deathTimers.delete(init.sessionId);
-        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); }
+        // Only THIS entry's death drops its refs: an old child exiting after its successor
+        // registered under the same id never deletes the successor's (F5).
+        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); dropAllRefs(init.sessionId); }
       }, GONE_TTL_MS);
       t.unref?.();
       deathTimers.set(init.sessionId, t);
@@ -684,4 +805,183 @@ export function _resetChatRegistry(): void {
   listeners.clear();
   ownerListeners.clear();
   unheard.clear();
+  assistantListeners.clear();
+  userSentListeners.clear();
+  injectors.clear();
+  injectorListeners.clear();
+  tgRefs.clear();
+  tgDropListeners.clear();
+  tgWrittenListeners.clear();
+  if (tgSweepTimer) { clearInterval(tgSweepTimer); tgSweepTimer = null; }
+  tgNow = Date.now;
 }
+
+// ─── Assistant text, for whoever routes answers (W2) ────────────────────────
+
+const assistantListeners = new Set<(sessionId: string, text: string) => void>();
+
+/** Be told every top-level assistant text of every chat, whole (reply marks included). */
+export function onChatAssistantText(fn: (sessionId: string, text: string) => void): () => void {
+  assistantListeners.add(fn);
+  return () => { assistantListeners.delete(fn); };
+}
+
+function emitAssistantText(sessionId: string, text: string): void {
+  for (const fn of [...assistantListeners]) {
+    try { fn(sessionId, text); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+const userSentListeners = new Set<(sessionId: string, text: string, source: InjectedSource | undefined) => void>();
+
+/** Be told every owner turn a chat wrote, with who wrote it (a Telegram text or not). */
+export function onChatUserSent(fn: (sessionId: string, text: string, source: InjectedSource | undefined) => void): () => void {
+  userSentListeners.add(fn);
+  return () => { userSentListeners.delete(fn); };
+}
+
+function emitUserSent(sessionId: string, text: string, source: InjectedSource | undefined): void {
+  for (const fn of [...userSentListeners]) {
+    try { fn(sessionId, text, source); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+// ─── Chat injectors (plan "Injector", B1, D1) ───────────────────────────────
+
+const injectors = new Map<string, ChatInjector>();
+const injectorListeners = new Set<(sessionId: string) => void>();
+
+/** A live Super chat registers how the hub writes into it (beside the mirror wiring). Returns
+ *  the unregister, which removes only this injector (a successor's stays). */
+export function registerChatInjector(sessionId: string, injector: ChatInjector): () => void {
+  injectors.set(sessionId, injector);
+  for (const fn of [...injectorListeners]) {
+    try { fn(sessionId); } catch { /* a listener's failure is its own */ }
+  }
+  return () => { if (injectors.get(sessionId) === injector) injectors.delete(sessionId); };
+}
+
+/** The injector of the chat with pin id `sessionId`, or null. Server-internal: no route reads it. */
+export function chatInjector(sessionId: string): ChatInjector | null {
+  return injectors.get(sessionId) ?? null;
+}
+
+/** Be told when an injector registers (the hub waits for a reopened Super, A3). */
+export function onChatInjector(fn: (sessionId: string) => void): () => void {
+  injectorListeners.add(fn);
+  return () => { injectorListeners.delete(fn); };
+}
+
+// ─── The pending Telegram ref store (D1, E1, F2, F5, F6; contract.ts) ──────
+//
+// Keyed by chatRegistryId (the pin id, which survives the --resume restart). Written ONLY by
+// the hub and the run registry; no HTTP route reads or writes it. Every key has a death: an
+// unwritten ref after TG_PENDING_REF_TTL_MS, a written ref on its turn's clean result, after
+// the TTL once its child is gone (the clock restarts at the exit, F6), and with the registry
+// entry's own death.
+
+interface RefSlot extends PendingTelegramRef { clockAt: number }
+const tgRefs = new Map<string, Map<string, RefSlot>>();
+const tgDropListeners = new Set<TelegramRefDropped>();
+const tgWrittenListeners = new Set<(chatRegistryId: string, ref: string) => void>();
+let tgSweepTimer: ReturnType<typeof setInterval> | null = null;
+let tgNow: () => number = Date.now;
+
+function dropRef(chatRegistryId: string, ref: string): void {
+  const map = tgRefs.get(chatRegistryId);
+  const slot = map?.get(ref);
+  if (!map || !slot) return;
+  map.delete(ref);
+  if (!map.size) tgRefs.delete(chatRegistryId);
+  for (const fn of [...tgDropListeners]) {
+    try { fn(chatRegistryId, ref, slot.written); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+function dropAllRefs(chatRegistryId: string): void {
+  for (const ref of [...(tgRefs.get(chatRegistryId)?.keys() ?? [])]) dropRef(chatRegistryId, ref);
+}
+
+function restartWrittenRefClocks(chatRegistryId: string): void {
+  const now = tgNow();
+  for (const slot of tgRefs.get(chatRegistryId)?.values() ?? []) if (slot.written) slot.clockAt = now;
+}
+
+/** The TTL: a written ref is exempt while the child that wrote it lives (F5, F6). */
+export function sweepTelegramRefs(): void {
+  const now = tgNow();
+  for (const [id, map] of [...tgRefs]) {
+    const e = entries.get(id);
+    const childLives = !!e && e.status !== 'gone';
+    for (const [ref, slot] of [...map]) {
+      if (slot.written && childLives) continue;
+      if (now - slot.clockAt > TG_PENDING_REF_TTL_MS) dropRef(id, ref);
+    }
+  }
+  if (!tgRefs.size && tgSweepTimer) { clearInterval(tgSweepTimer); tgSweepTimer = null; }
+}
+
+function armSweep(): void {
+  if (tgSweepTimer) return;
+  tgSweepTimer = setInterval(sweepTelegramRefs, 60_000);
+  tgSweepTimer.unref?.();
+}
+
+export const telegramRefs: PendingTelegramRefStore & {
+  has(chatRegistryId: string, ref: string): boolean;
+  get(chatRegistryId: string, ref: string): PendingTelegramRef | null;
+  /** Fires once when `writeOwnerTurn` first honours a ref (the turn reached a live child). */
+  onTelegramRefWritten(listener: (chatRegistryId: string, ref: string) => void): () => void;
+  /** The hub gives up an UNWRITTEN ref (the injection never happened): no drop notice. */
+  forget(chatRegistryId: string, ref: string): void;
+  /** Test seam: the clock the TTL reads. */
+  _setNow(now: () => number): void;
+} = {
+  put(chatRegistryId, ref, entry) {
+    const map = tgRefs.get(chatRegistryId) ?? new Map<string, RefSlot>();
+    map.set(ref, { ...entry, clockAt: tgNow() });
+    tgRefs.set(chatRegistryId, map);
+    armSweep();
+  },
+  take(chatRegistryId, text) {
+    const { ref, body } = parseTelegramPrefix(text);
+    if (!ref) return { ref: null, entry: null, body };
+    sweepTelegramRefs();
+    const slot = tgRefs.get(chatRegistryId)?.get(ref);
+    if (!slot) return { ref: null, entry: null, body };
+    const first = !slot.written;
+    slot.written = true;
+    // The hub's journal follows (F5): a crash after this point yields "yazıldı ama tamamlanamadı".
+    if (first) for (const fn of [...tgWrittenListeners]) { try { fn(chatRegistryId, ref); } catch { /* its own */ } }
+    slot.clockAt = tgNow();
+    const { clockAt: _c, ...entry } = slot;
+    return { ref, entry: { ...entry }, body };
+  },
+  settle(chatRegistryId, ref) {
+    if (tgRefs.get(chatRegistryId)?.get(ref)?.written) dropRef(chatRegistryId, ref);
+  },
+  onTelegramRefDropped(listener) {
+    tgDropListeners.add(listener);
+    return () => { tgDropListeners.delete(listener); };
+  },
+  onTelegramRefWritten(listener) {
+    tgWrittenListeners.add(listener);
+    return () => { tgWrittenListeners.delete(listener); };
+  },
+  has(chatRegistryId, ref) {
+    return !!tgRefs.get(chatRegistryId)?.has(ref);
+  },
+  get(chatRegistryId, ref) {
+    const slot = tgRefs.get(chatRegistryId)?.get(ref);
+    if (!slot) return null;
+    const { clockAt: _c, ...entry } = slot;
+    return { ...entry };
+  },
+  forget(chatRegistryId, ref) {
+    const map = tgRefs.get(chatRegistryId);
+    if (!map?.get(ref) || map.get(ref)!.written) return;
+    map.delete(ref);
+    if (!map.size) tgRefs.delete(chatRegistryId);
+  },
+  _setNow(now) { tgNow = now; },
+};

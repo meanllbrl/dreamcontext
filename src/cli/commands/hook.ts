@@ -1,14 +1,31 @@
-import { directHeavy, shellQuote } from '../../lib/run-budget.js';
+import { noteRunSession } from '../../lib/automations/run-session.js';
+import { logHandoff } from '../../lib/usage-records.js';
+import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
+import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
+import { hookTool, setHookTool } from '../../lib/hook-tool.js';
+import { GATE_BEAT_ENV, antigravityCallAsClaude, antigravitySkillsCwd, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
+import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
+import { classifyFileTool } from '../../lib/apps/write-gate.js';
+import { appToolsBlock } from '../../lib/apps/tool-index.js';
+import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
+import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js';
+import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
   readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
+import { format as formatArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
-import { dirname, resolve, join, extname, basename, relative } from 'node:path';
+import { dirname, resolve, join, extname, basename, relative, sep } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import {
+  enterHookProject, fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
+  SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
+} from '../../lib/hook-delivery.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess, resolveRecallMode, type RecallMode } from './sleep.js';
 import {
@@ -43,10 +60,12 @@ import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
-import { memberFileRefusal, memberFileWriteTarget } from '../../lib/agents/member-file-guard.js';
+import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
+import { memberFileRefusal, memberFileWriteTarget, shellWriteTarget } from '../../lib/agents/member-file-guard.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -105,6 +124,11 @@ const SKILL_SCORE_THRESHOLD = 1.0;
  * Read JSON object from stdin (piped by Claude Code hooks).
  * Returns null if stdin is a TTY, empty, or invalid JSON.
  */
+/** An app's chat: sleep directives stay out of it, without the ledger paths a spawned marker moves. */
+function inAppChat(): boolean {
+  return (process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-');
+}
+
 function readStdin(): Record<string, unknown> | null {
   if (process.stdin.isTTY) return null;
   try {
@@ -193,7 +217,7 @@ export function analyzeTranscript(
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return ZERO_ANALYSIS;
     const scan = new TranscriptScan(sinceISO ?? null);
-    scan.consume(readFileSync(transcriptPath, 'utf-8'));
+    scan.consume(readTranscriptText(transcriptPath));
     return scan.result(subtractStartup);
   } catch {
     return ZERO_ANALYSIS;
@@ -611,6 +635,11 @@ export interface PromptRecall {
  */
 export async function selectPromptRecall(prompt: string, root: string, recallMode: RecallMode, deps: PromptRecallDeps = {}): Promise<PromptRecall> {
   const env = deps.env ?? process.env;
+  // The Haiku extractor is a `claude` call: under a Codex or Antigravity prompt hook it would spend
+  // the owner's Claude account behind that tool's back (row 30). BM25 there, and the header says so.
+  if (recallMode === 'haiku' && hookTool() !== null) {
+    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
+  }
   if (recallMode === 'haiku') {
     const result = (deps.haiku ?? haikuRecall)(prompt, root);
     if (result === 'skip') {
@@ -1132,7 +1161,8 @@ export function mergeAnalyses(main: TranscriptAnalysis, subs: TranscriptAnalysis
  */
 export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null, cache?: SessionAnalysisCache): TranscriptAnalysis {
   // With a cache (the Stop hook), each transcript is read from where the last Stop left off.
-  const analyze = (p: string, opts: { subtractStartup?: boolean } = {}) => (cache
+  // A Codex rollout is converted whole on every read (codex-rollout.ts): never resumed by offset.
+  const analyze = (p: string, opts: { subtractStartup?: boolean } = {}) => (cache && !isCodexRollout(p)
     ? analyzeTranscriptResumable(p, sinceISO, opts, cache)
     : analyzeTranscript(p, sinceISO, opts));
   const main = loc.mainPath ? analyze(loc.mainPath) : ZERO_ANALYSIS;
@@ -1973,7 +2003,22 @@ function spawnDashboard(port: number): void {
  * src/lib/proc.ts), the cycle's claude is hidden and not detached there, and the cancel path
  * kills the tree through `killPortable` instead of a POSIX process group.
  */
-function spawnAutoSleep(): void {
+/**
+ * The tool the turn that just ended ran on, so its background sleep runs there too (TABLO row 6).
+ * A Claude hook is Claude. A bridge or Codex hook (`--format codex`) is Codex unless the turn says
+ * Antigravity: its own `dc_tool`, or a transcript the bridge wrote from an Antigravity
+ * conversation (antigravity-conversation.ts).
+ */
+export function stopTurnTool(input: Record<string, unknown>, home: string = homedir()): 'codex' | 'antigravity' | null {
+  if (hookTool() === 'antigravity') return 'antigravity';
+  if (hookTool() !== 'codex') return null;
+  if (input.dc_tool === 'antigravity' || input.dc_tool === 'codex') return input.dc_tool;
+  const transcript = typeof input.transcript_path === 'string' ? resolve(input.transcript_path) : '';
+  const agTranscripts = resolve(antigravityTranscriptsDir(home));
+  return transcript && transcript.startsWith(agTranscripts + sep) ? 'antigravity' : 'codex';
+}
+
+function spawnAutoSleep(tool: 'codex' | 'antigravity' | null = null): void {
   const cliEntry = process.argv[1];
   if (!cliEntry) return;
   // THE BACKGROUND CYCLE IS TAB-LESS — it must not inherit the identity of the tab
@@ -1996,7 +2041,7 @@ function spawnAutoSleep(): void {
   delete env.CLAUDE_CODE_SESSION_ID;
   // Nor the chat's AI Team route: a headless cycle must never be told to `super team ask`.
   delete env.DREAMCONTEXT_TEAM_ROUTE;
-  const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
+  const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run', ...(tool ? ['--tool', tool] : [])], {
     detached: true,
     stdio: 'ignore',
     cwd: process.cwd(),
@@ -2089,10 +2134,162 @@ export function isMcpProbeChild(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.DREAMCONTEXT_MCP_PROBE === '1';
 }
 
+// ─── `--format codex`: the same hooks, printed in Codex's hook shape (Track T W3) ──────────
+
+/** Our hook subcommands → Codex's hook event names (`.codex/hooks.json`, Claude-compatible). */
+export const CODEX_HOOK_EVENTS: Readonly<Record<string, string>> = {
+  'session-start': 'SessionStart',
+  'user-prompt-submit': 'UserPromptSubmit',
+  'post-tool-use': 'PostToolUse',
+  'pre-tool-use': 'PreToolUse',
+  'pre-compact': 'PreCompact',
+  'subagent-start': 'SubagentStart',
+  stop: 'Stop',
+};
+
+/** Events whose plain-text answer Codex takes as `additionalContext`; the rest must answer in JSON. */
+const CODEX_CONTEXT_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'SubagentStart']);
+
+/**
+ * What a Codex hook prints for what our handler printed. A handler that already answers in JSON
+ * (a pre-tool-use deny, a stop block, a sub-agent briefing) is passed through; plain text becomes
+ * `hookSpecificOutput.additionalContext` on the events that can carry it, and nothing on the rest.
+ */
+export function codexHookAnswer(event: string, printed: string): string {
+  const text = printed.trim();
+  if (!text) return '';
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return text + '\n';
+    } catch { /* plain text that starts with a brace */ }
+  }
+  if (!CODEX_CONTEXT_EVENTS.has(event)) return '';
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }) + '\n';
+}
+
+/**
+ * `dreamcontext hook <name> --format codex`. Two rules, both only under this flag, so a Claude
+ * hook (no flag) is untouched byte for byte:
+ *   - DREAMCONTEXT_CONTEXT_BY=bridge (set on the `codex app-server` a desktop Codex chat runs): the
+ *     bridge already injects the brain, so a project's opt-in `.codex/hooks.json` stays quiet —
+ *     EXCEPT pre-tool-use, whose `.env` / member-file gates must always fire;
+ *   - everything the handler prints is collected and written once, at exit, in Codex's shape.
+ */
+function beginCodexHookFormat(name: string): void {
+  if (process.env.DREAMCONTEXT_CONTEXT_BY === 'bridge' && name !== 'pre-tool-use') process.exit(0);
+  const event = CODEX_HOOK_EVENTS[name] ?? '';
+  // The snapshot reads this for its per-tool ceiling (snapshot-budget.ts). Process memory, so no
+  // child of this hook (a background sleep, a headless Claude run) inherits it.
+  setHookTool('codex');
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    const out = codexHookAnswer(event, lines.join('\n'));
+    if (out) writeStdoutSync(out);
+  });
+}
+
+/**
+ * `dreamcontext hook pre-tool-use --format antigravity`: only the gate runs in this format. The
+ * agent reads `{decision, reason}`; empty stdout is an allow, anything else it cannot read a deny.
+ */
+function beginAntigravityHookFormat(name: string): void {
+  if (name !== 'pre-tool-use') process.exit(0);
+  setHookTool('antigravity');
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    if (!lines.length) return;
+    let reason = '';
+    try {
+      const out = (JSON.parse(lines.join('\n')) as { hookSpecificOutput?: { permissionDecision?: unknown; permissionDecisionReason?: unknown } }).hookSpecificOutput;
+      if (out?.permissionDecision === 'deny') reason = String(out.permissionDecisionReason ?? 'Denied by dreamcontext.');
+    } catch { reason = 'Denied by dreamcontext: the gate could not read its own answer.'; }
+    if (reason) writeStdoutSync(`${JSON.stringify({ decision: 'deny', reason })}\n`);
+  });
+}
+
+/**
+ * Claude's SessionStart: everything this hook prints is held, then cut for the part hooks at exit
+ * (an exit on any path, so a hook that stops early still releases them and the session does not
+ * wait on them). `parts` false: a project without the part hooks, one hook carries it all.
+ */
+function beginSessionStartDelivery(sessionId: string, parts: boolean): void {
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    const pieces = lines.length ? splitHookOutput(`${lines.join('\n')}\n`, parts ? SESSION_START_PARTS : 1) : [];
+    // Every start with an id leaves its slots, even with no part hooks expected: settings this hook
+    // misread would otherwise hold the session's start for a part hook's whole wait.
+    if (sessionId) {
+      try {
+        writeSessionStartParts(sessionId, parts ? pieces.slice(1) : []);
+      } catch (e) {
+        console.error('[dreamcontext] Could not hand the snapshot to its part hooks:', (e as Error).message);
+      }
+    }
+    if (pieces[0]) writeStdoutSync(pieces[0]);
+  });
+}
+
+/** One turn's output, held so it can be fitted under the limit at exit. Empty outside a Claude prompt. */
+let promptBlocks: PromptBlock[] | null = null;
+
+function beginPromptDelivery(sessionId: string): void {
+  const blocks: PromptBlock[] = [];
+  promptBlocks = blocks;
+  console.log = (...args: unknown[]) => { blocks.push({ kind: 'must', text: formatArgs(...args) }); };
+  process.once('exit', () => {
+    if (blocks.length === 0) return;
+    const fit = fitPromptContext(blocks);
+    let text = fit.text;
+    if (fit.overflow !== null) {
+      try {
+        text += promptOverflowNote(writePromptOverflow(sessionId, fit.overflow));
+      } catch (e) {
+        console.error('[dreamcontext] Could not keep the full prompt context:', (e as Error).message);
+      }
+    }
+    writeStdoutSync(`${text}\n`);
+  });
+}
+
+/** Print a block the turn can lose before its rules; `console.log` is `must`. */
+function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string): void {
+  if (promptBlocks) promptBlocks.push({ kind, text, compact });
+  else console.log(text);
+}
+
+/**
+ * A Codex tool call in the Claude shape the gates read: a patch becomes one Write/Edit per file,
+ * a shell call becomes Bash. Anything else is returned as it came.
+ */
+export function codexToolCallsAsClaude(toolName: string, toolInput: Record<string, unknown>): Array<{ toolName: string; toolInput: Record<string, unknown> }> {
+  const raw = [toolInput.command, toolInput.patch, toolInput.input, toolInput.cmd]
+    .map((v) => (Array.isArray(v) ? v.join(' ') : typeof v === 'string' ? v : ''))
+    .find((v) => v) ?? '';
+  if (toolName === 'apply_patch' || /\*\*\* Begin Patch/.test(raw)) {
+    const out: Array<{ toolName: string; toolInput: Record<string, unknown> }> = [];
+    const re = /^\*\*\* (Add|Update|Delete) File: (.+)$/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) out.push({ toolName: m[1] === 'Add' ? 'Write' : 'Edit', toolInput: { file_path: m[2]!.trim() } });
+    return out.length ? out : [{ toolName, toolInput }];
+  }
+  if (toolName === 'shell' || toolName === 'exec_command' || toolName === 'local_shell') return [{ toolName: 'Bash', toolInput: { command: raw } }];
+  return [{ toolName, toolInput }];
+}
+
 export function registerHookCommand(program: Command): void {
   const hook = program
     .command('hook')
     .description('Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)');
+  // `--format codex` (declared on each handler below the definitions): the Codex hook shape.
+  hook.hook('preAction', (_group, action) => {
+    const format = (action.opts() as { format?: unknown }).format;
+    if (format === 'codex') beginCodexHookFormat(action.name());
+    if (format === 'antigravity') beginAntigravityHookFormat(action.name());
+  });
 
   // --- hook stop ---
   hook
@@ -2338,7 +2535,7 @@ export function registerHookCommand(program: Command): void {
           currentFingerprint: currentAutoSleepFingerprint(projectRoot),
           nested,
         });
-        if (decision.start) spawnAutoSleep();
+        if (decision.start) spawnAutoSleep(stopTurnTool(input));
       } catch (autoErr) {
         // A bug here must never break a turn — the worst case is that the brain
         // does not consolidate itself and the user is nagged as before.
@@ -2438,6 +2635,7 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (isMcpProbeChild()) process.exit(0);
 
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
       const root = resolveContextRoot();
       if (!root) {
         // No brain at all. If cwd is a real project, surface the initializer
@@ -2454,6 +2652,14 @@ export function registerHookCommand(program: Command): void {
         process.exit(0);
       }
 
+      // A run's session, the moment it exists: the runner only learns it when the run ends, and a
+      // team card shows the real session from the start (run-session.ts).
+      {
+        const runSlug = process.env.DREAMCONTEXT_AUTOMATION_SLUG;
+        const runFired = process.env.DREAMCONTEXT_AUTOMATION_RUN;
+        if (root && runSlug && runFired && typeof input?.session_id === 'string') noteRunSession(root, runSlug, runFired, input.session_id);
+      }
+
       // ── Embedded-tab session tracking ────────────────────────────────────
       // The dashboard's embedded terminal exports DREAMCONTEXT_TAB_SESSION=<the tab's
       // roster id> into its `claude` process. A tab's LIVE conversation id rotates
@@ -2464,6 +2670,12 @@ export function registerHookCommand(program: Command): void {
       // screen, not the conversation frozen at the last rotation.
       const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
       if (sid) recordTabSessionFromHook(root, sid);
+
+      // Codex has its own limit and splitter; a session with no id has nothing to key the parts on.
+      const claudeHook = hookTool() !== 'codex';
+      const partsInstalled = claudeHook && !!sid && sessionStartPartsInstalled(hookSettingsRoot(dirname(root)));
+      if (claudeHook) beginSessionStartDelivery(sid, partsInstalled);
+      if (brainNote) console.log(brainNote);
 
       // Keep the per-pattern "/" entries in step with the vault, WITHOUT anybody
       // running a command. A pattern added, renamed, or retired since the last
@@ -2602,7 +2814,7 @@ export function registerHookCommand(program: Command): void {
       }
 
       // Generate and output snapshot
-      const snapshot = generateSnapshot();
+      const snapshot = generateSnapshot(undefined, { singleHook: claudeHook && !partsInstalled });
       if (!snapshot) process.exit(0);
 
       // Thresholds come from `.config.json` `sleep.thresholds` (defaults when
@@ -2612,7 +2824,7 @@ export function registerHookCommand(program: Command): void {
       const selfSpawn = selfSpawnMarker(root, sid || null, state);
       const directive = getConsolidationDirective(
         state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
-        { spawned: selfSpawn !== null },
+        { spawned: selfSpawn !== null || inAppChat() },
       );
       if (directive) {
         console.log(directive);
@@ -2682,7 +2894,12 @@ export function registerHookCommand(program: Command): void {
         if (picked) {
           console.log(renderHandoffBanner(picked.record));
           console.log('');
-          stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString() });
+          const consumedAt = new Date().toISOString();
+          stampHandoffRecord(root, picked.key, { consumedAt, ...(sid ? { toSession: sid } : {}) });
+          logHandoff(root, {
+            title: picked.record.title, at: picked.record.at, contextTokens: picked.record.contextTokens, fromSession: picked.record.fromSession,
+            consumedAt, ...(sid ? { toSession: sid } : {}), ...(picked.record.actedAt ? { actedAt: picked.record.actedAt } : {}),
+          });
         }
       } catch (handoffErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[context-handoff] banner error:', (handoffErr as Error).message ?? handoffErr);
@@ -2698,18 +2915,95 @@ export function registerHookCommand(program: Command): void {
       console.log(snapshot);
     });
 
+  // --- hook session-start-part <n> ---
+  hook
+    .command(`${SESSION_START_PART_HOOK} <n>`)
+    .description('Print one later piece of the context snapshot (runs beside session-start)')
+    .action(async (n: string) => {
+      const startedAt = Date.now();
+      const input = readStdin();
+      if (isMcpProbeChild()) process.exit(0);
+      enterHookProject();
+      const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
+      const part = Number.parseInt(n, 10);
+      if (!sid || !Number.isInteger(part) || part < 2 || part > SESSION_START_PARTS || !resolveContextRoot()) process.exit(0);
+      // Hooks reach the model in the order they finish: a later piece lets the earlier one go first.
+      const text = await takeSessionStartPart(sid, part, { startedAt });
+      if (!text) process.exit(0);
+      await new Promise((r) => setTimeout(r, (part - 2) * 60));
+      writeStdoutSync(text);
+    });
+
   // --- hook pre-tool-use ---
   hook
     .command('pre-tool-use')
     .description('Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)')
     .action(() => {
       const input = readStdin();
+      const deny = (reason: string): void => {
+        console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
+      };
+      // Antigravity has no sandbox: a call this gate cannot read is refused, never waved through.
+      const agy = hookTool() === 'antigravity' ? (input ? antigravityCallAsClaude(input) : null) : undefined;
+      if (agy === null) {
+        // Named, so a refusal in a sub-agent's row says which call the gate could not read.
+        const name = (input?.toolCall as { name?: unknown } | undefined)?.name;
+        deny(`Denied by dreamcontext: the gate could not read this tool call${typeof name === 'string' && /^[\w.-]{1,64}$/.test(name) ? ` (${name})` : ''}.`);
+        return;
+      }
+      if (agy && process.env[GATE_BEAT_ENV]) {
+        try { writeFileSync(process.env[GATE_BEAT_ENV], ''); } catch { /* a child without its beat stops itself */ }
+      }
+      // A shell in a skills folder instead of the project (a sub-agent's starts there): run it again in
+      // the project (antigravity-gate.ts antigravitySkillsCwd).
+      const projectCwd = agy && input ? antigravitySkillsCwd(input) : null;
+      if (projectCwd) {
+        deny(`Not run: this command would run in a skills folder, not in the project. Run it again with Cwd set to ${projectCwd}.`);
+        return;
+      }
       if (!input) process.exit(0); // allow — no input means nothing to gate
 
-      const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-      const toolInput = (typeof input.tool_input === 'object' && input.tool_input !== null)
+      let toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
+      let toolInput = (typeof input.tool_input === 'object' && input.tool_input !== null)
         ? input.tool_input as Record<string, unknown>
         : {};
+      // A Codex hook (`--format codex`): a patch or shell call is read as the Claude tool the gates
+      // know. A patch touching several files is judged by the one a gate refuses, if any.
+      if (hookTool() === 'codex') {
+        const calls = codexToolCallsAsClaude(toolName, toolInput);
+        const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+        const pick = calls.find((c) => isMarketingEnvPath(typeof c.toolInput.file_path === 'string' ? c.toolInput.file_path : ''))
+          ?? calls.find((c) => memberFileWriteTarget(c.toolName, c.toolInput, at))
+          ?? calls[0]!;
+        toolName = pick.toolName;
+        toolInput = pick.toolInput;
+      }
+      if (agy) {
+        toolName = agy.toolName;
+        toolInput = agy.toolInput;
+        input.cwd = agy.cwd;
+        const path = typeof toolInput.file_path === 'string' ? resolve(agy.cwd, toolInput.file_path) : '';
+        const command = toolName === 'Bash' && typeof toolInput.command === 'string' ? toolInput.command : '';
+        // Its own gate first: nothing below matters once the hook can be rewritten.
+        // A move, delete or copy-over of a protected file or a folder above it takes the file along.
+        const call = input.toolCall as { name: string; args?: unknown };
+        const raw = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
+        if (movesGuardedPlace(command ? 'Bash' : call.name, command ? toolInput : raw, agy.cwd)) {
+          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate or the Meta token file. Agents never do that; leave it and say so.');
+          return;
+        }
+        if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
+          deny('Blocked: this is dreamcontext\'s write gate for Antigravity. Agents never change it.');
+          return;
+        }
+        // No sandbox here, so the shell is read for the token file too: Claude's rule names file
+        // tools. Any brain's token file counts: the hook may run in another project.
+        const tokenFile = (p: string): boolean => isMarketingEnvPath(p, agy.cwd) || /\/_dream_context\/marketing\/\.env$/i.test(p);
+        if ((path && tokenFile(path)) || (command && (shellWriteTarget(command, agy.cwd, tokenFile) || shellTouchesGuarded(command)))) {
+          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
+          return;
+        }
+      }
 
       // Gate 1: block direct writes/edits to _dream_context/marketing/.env
       // (Edit, Write, MultiEdit). Token files must only be touched by `mk init`
@@ -2750,13 +3044,18 @@ export function registerHookCommand(program: Command): void {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
         const kind = directHeavy(command);
         if (!kind) process.exit(0); // allow
+        const suggested = heavySuggestion(command);
+        // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
+        // builds are not ours to hold. Our children and a project that opted in keep the limit.
+        if (hookTool() === 'codex' && !process.env.DREAMCONTEXT_CONTEXT_BY && !codexProjectOptedIn(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd())) process.exit(0); // allow
         console.log(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny',
             permissionDecisionReason: [
               `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
-              `Run it as: dreamcontext builder heavy -- ${shellQuote(command)}`,
+              `Run it as: ${suggested}`,
+              'A check that already passed on the same code prints its receipt instead of running (--fresh runs it anyway).',
               'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
             ].join(' '),
           },
@@ -2794,11 +3093,48 @@ export function registerHookCommand(program: Command): void {
       }));
     });
 
+  // --- hook app-bash-gate ---
+  // The Bash gate of an app's own assistant (lib/apps/bash-gate.ts). Unlike its neighbours it FAILS
+  // CLOSED: no input, a non-string command or an unreadable gate file exit 2, which blocks the
+  // tool, and every answer is exactly one JSON object.
+  hook
+    .command('app-bash-gate <gateFile>')
+    .description('Classify a Bash command of an app assistant (called by its per-chat PreToolUse hook)')
+    .action((gateFile: string) => {
+      const input = readStdin();
+      const toolInput = input?.tool_input as Record<string, unknown> | undefined;
+      const command = toolInput?.command;
+      if (typeof command !== 'string') process.exit(2);
+      let ctx: BashGateContext | null = null;
+      try { ctx = parseGateContext(readFileSync(gateFile, 'utf-8')); } catch { /* refused below */ }
+      if (!ctx) process.exit(2);
+      process.stdout.write(JSON.stringify(gateHookOutput(classifyBash(command, ctx))));
+    });
+
+  // --- hook app-write-gate ---
+  // The file gate of an app chat (lib/apps/write-gate.ts), own assistant and bound member alike.
+  // Fails CLOSED like app-bash-gate: no tool name or an unreadable gate file exit 2.
+  hook
+    .command('app-write-gate <gateFile>')
+    .description('Gate a file tool call of an app chat: writes only in its data folder, never another app\'s data (called by its per-chat PreToolUse hook)')
+    .action((gateFile: string) => {
+      const input = readStdin();
+      const tool = input?.tool_name;
+      if (typeof tool !== 'string') process.exit(2);
+      const toolInput = (input?.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>;
+      let ctx: BashGateContext | null = null;
+      try { ctx = parseGateContext(readFileSync(gateFile, 'utf-8')); } catch { /* refused below */ }
+      if (!ctx) process.exit(2);
+      const cwd = typeof input?.cwd === 'string' ? input.cwd : undefined;
+      process.stdout.write(JSON.stringify(gateHookOutput(classifyFileTool(tool, toolInput, ctx, cwd))));
+    });
+
   // --- hook subagent-start ---
   hook
     .command('subagent-start')
     .description('Inject context briefing into sub-agents (called by Claude Code SubagentStart hook)')
     .action(() => {
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
@@ -2809,7 +3145,7 @@ export function registerHookCommand(program: Command): void {
       console.log(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SubagentStart',
-          additionalContext: briefing,
+          additionalContext: brainNote ? `${brainNote}\n\n${briefing}` : briefing,
         },
       }));
     });
@@ -2822,6 +3158,9 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (isMcpProbeChild()) process.exit(0);
       if (!input) process.exit(0);
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
+      if (hookTool() !== 'codex') beginPromptDelivery(typeof input.session_id === 'string' ? input.session_id : '');
+      if (brainNote) console.log(brainNote);
 
       // ── Deferred first-message context ─────────────────────────────────────
       // The embedded terminal can park an initial prompt in a tmp file instead of
@@ -2876,6 +3215,17 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* advisory — must never break the prompt path */ }
 
+      // ── A chat carried over from another tool (Track T W4) ──────────────────
+      // Once: the owner's pick in the model picker left this pane the other tool's text. Every
+      // other turn finds no file and prints nothing. Nested-guarded like the lines above.
+      try {
+        if (process.env.DREAMCONTEXT_TAB_SESSION && !isNestedClaudeHook()) {
+          const { consumeToolHandoffSeed } = await import('../../lib/t3-bridge/tool-handoff.js');
+          const seed = consumeToolHandoffSeed(root, process.env.DREAMCONTEXT_TAB_SESSION);
+          if (seed) console.log(seed);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
+
       // ── A whiteboard agent card: the board, fresh, beside this message ────
       // Only a card session's child carries the two env vars (card-chat.ts), so
       // every other chat stays silent. Before the sleep-lock return: the board is
@@ -2893,6 +3243,8 @@ export function registerHookCommand(program: Command): void {
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a
       // prompt sent mid-sleep is exactly when the orchestrator is deciding whether
       // to dispatch the next specialist, and that is the turn that must not lose it.
+      // Every tool: Codex dispatches with `spawn_agent` (our agents are its roles), Antigravity with
+      // `invoke_subagent`; the flows that fan out are the same skills on each (TABLO row 10).
       console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
 
       const state = readSleepState(root);
@@ -2906,7 +3258,7 @@ export function registerHookCommand(program: Command): void {
       const selfSpawn = selfSpawnMarker(root, promptSessionId, state);
       const reminder = userPromptReminder(
         state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
-        { spawned: selfSpawn !== null },
+        { spawned: selfSpawn !== null || inAppChat() },
       );
       // A non-stale lock means a sleep is genuinely mid-cycle — short-circuit the
       // rest of the handler (initializer/recall gates) just like the reminder does.
@@ -3027,9 +3379,9 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          // The Super's `<super-team>` roster is never recall's input (team-roster.ts): without one
-          // the prompt is byte-identical.
-          const prompt = stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? ''));
+          // The Super's `<super-team>` roster and `<super-tools>` list are never recall's input
+          // (team-roster.ts, tools-block.ts): without them the prompt is byte-identical.
+          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
           if (prompt.trim().length >= 8) {
             const recallMode = resolveRecallMode(root);
 
@@ -3043,7 +3395,7 @@ export function registerHookCommand(program: Command): void {
               // re-ranking (see recallGatePasses).
               if (recallGatePasses(hits, haiku)) {
                 const lines = renderRecallBlock(hits, label);
-                console.log(lines.join('\n'));
+                emitPromptBlock('recall', lines.join('\n'));
                 hadRecallHits = true;
 
                 // C4: a recall hit on a knowledge doc IS an access — bump
@@ -3102,7 +3454,7 @@ export function registerHookCommand(program: Command): void {
                       '  (Live reference — recall the source vault directly with ' +
                         '`dreamcontext memory recall <q> --vault <name>`. Nothing is copied here.)',
                     );
-                    console.log(lines.join('\n'));
+                    emitPromptBlock('peers', lines.join('\n'));
                     hadRecallHits = true;
                   }
                 }
@@ -3132,6 +3484,20 @@ export function registerHookCommand(program: Command): void {
           } catch (teamErr) {
             if (process.env.DREAMCONTEXT_DEBUG) console.error('[team] error:', (teamErr as Error).message ?? teamErr);
           }
+        }
+      }
+
+      // ── App tools on this Mac (app-araclari plan r3 §3b) ──────────────────
+      // Independent of the recall tier and of the network: the installed apps' tools and the
+      // project catalog, BM25 over that small set, at most two lines. `must`, never dropped: the
+      // line is what stops the agent recomputing what an installed app already answers.
+      if (!isBackgroundAutoSleep()) {
+        try {
+          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
+          const block = appToolsBlock(prompt, root, homedir());
+          if (block) console.log(block);
+        } catch (appErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[app-tools] error:', (appErr as Error).message ?? appErr);
         }
       }
 
@@ -3182,6 +3548,7 @@ export function registerHookCommand(program: Command): void {
               // pointer form rather than dropping silently.
               const plan = selectForInjection(hits);
               const lines: string[] = ['', `— Project patterns (${hits.length} triggered) —`];
+              const allPointers = plan.inline.map((i) => i.match).concat(plan.pointers);
               lines.push(
                 '  ⛔ These are DECIDED ways of doing things in this project, not suggestions. ' +
                   'FOLLOW them; do not re-derive an approach one already settles.',
@@ -3241,7 +3608,13 @@ export function registerHookCommand(program: Command): void {
                 lines.push('  Also matched — READ these in full before acting (they did not fit inline):');
                 for (const h of plan.pointers) lines.push(`    ${h.pattern.relPath}  (${h.pattern.name})`);
               }
-              console.log(lines.join('\n'));
+              // What a turn too long for its rules gets instead: the same directives, every file by path.
+              const compact = [
+                ...lines.slice(0, 4),
+                '  READ these in full before acting (they did not fit this turn):',
+                ...allPointers.map((h) => `    ${h.pattern.relPath}  (${h.pattern.name})`),
+              ].join('\n');
+              emitPromptBlock('patterns', lines.join('\n'), compact);
               hadRecallHits = true;
             }
           }
@@ -3285,15 +3658,20 @@ export function registerHookCommand(program: Command): void {
       if (hadRecallHits || gatedSkills) {
         const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
         if (hadRecallHits) {
-          g.push('  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
+          // Any non-Claude turn (`--format codex`; hookTool() names the tool) has no Read or Skill tool: its words, not Claude's.
+          g.push(hookTool() !== null
+            ? '  • READ the related knowledge/feature file(s) recalled above in full — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.'
+            : '  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
         }
         if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
-          g.push('  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
+          g.push(hookTool() !== null
+            ? "  • REVIEW the skills in your skill list (dreamcontext's own and this project's) and OPEN the SKILL.md of any that fit this task before acting — do NOT limit yourself to a pre-selected few; scan them all and decide."
+            : '  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
         }
         g.push('  • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.');
         g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; if the work is untracked and non-trivial, create one.');
         g.push('  Act only once the relevant memory is in your context — be the agent that has seen the whole picture, not one re-deriving it blind.');
-        console.log(g.join('\n'));
+        emitPromptBlock('gate', g.join('\n'));
       }
     });
 
@@ -3531,4 +3909,8 @@ export function registerHookCommand(program: Command): void {
       }
       process.exit(0);
     });
+
+  // Every handler takes `--format codex` (read by the preAction hook above). Absent = Claude's
+  // output, unchanged.
+  for (const c of hook.commands) c.option('--format <format>', 'claude (default), codex or antigravity: print in that tool\'s hook shape');
 }

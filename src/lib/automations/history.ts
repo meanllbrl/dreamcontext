@@ -1,6 +1,7 @@
+import { readdirSync } from 'node:fs';
 import { getAgent } from '../agents/store.js';
 import { listSharedAgentSlugs, listSharedSlugs } from './sharing.js';
-import { listAutomationJobs } from './store.js';
+import { automationCacheDir, listAutomationJobs, readAutomationCache } from './store.js';
 import { plainPostText, readThread } from './threads.js';
 import type { ThreadEntry } from './types.js';
 import { threadEntriesHere } from '../agents/agent-sync.js';
@@ -43,6 +44,8 @@ export interface RecentHistoryOptions {
   /** The run this prompt is for: its own entries (the owner's message that started it) are
    *  already in the prompt as the ask, so they are not repeated as history. */
   excludeRunId?: string | null;
+  /** An app's run: only that app's own runs are its history, and nothing else the agent did. */
+  onlyApp?: string | null;
   /** Add this machine's TALKS with the agent (its stage and Chat-tab conversations). A new agent
    *  chat's briefing sets it; a scheduled run's prompt does not, so it stays as it was. */
   includeTalks?: boolean;
@@ -86,7 +89,10 @@ function lineFor(e: ThreadEntry & { source: string }, agentSlug: string, perItem
   let text = [plainPostText(e.text), rows].filter(Boolean).join(' — ');
   if (text.length > perItem) text = `${text.slice(0, Math.max(0, perItem - 1)).trimEnd()}…`;
   const where = e.source === TALK_SOURCE ? ' (in a chat with you)' : e.source === agentSlug ? '' : ` (in ${e.source})`;
-  const who = e.kind === 'user' ? `the owner${where}` : `you${where}`;
+  // An app's words are never the owner's, whoever typed them (dreamcontext-apps plan r19).
+  const who = e.kind === 'user'
+    ? e.via === 'app' ? `the app ${e.app ?? ''} (not the owner)${where}` : `the owner${where}`
+    : `you${where}`;
   return `${stamp(e.at)} · ${who}: ${text}`;
 }
 
@@ -98,7 +104,7 @@ export function buildRecentHistoryBlock(
   const {
     nonce, now = new Date(), days = HISTORY_DAYS, max = HISTORY_MAX_ITEMS,
     perItem = HISTORY_ITEM_CHARS, totalBytes = HISTORY_MAX_BYTES, excludeRunId = null,
-    includeTalks = false, excludeSession = null,
+    includeTalks = false, excludeSession = null, onlyApp = null,
   } = opts;
   if (totalBytes <= 0 || max <= 0) return '';
   try {
@@ -106,7 +112,7 @@ export function buildRecentHistoryBlock(
     if (!agent || agent.shared || listSharedAgentSlugs(contextRoot).includes(agentSlug)) return '';
 
     const since = now.getTime() - days * 86_400_000;
-    const entries: (ThreadEntry & { source: string })[] = [];
+    let entries: (ThreadEntry & { source: string })[] = [];
     for (const source of privateSources(contextRoot, agentSlug)) {
       // Once agents ride the brain sync, a thread can hold lines written on another machine: only
       // the entries THIS machine wrote reach the prompt (the M0 ledger; null = switch off, all ours).
@@ -122,9 +128,14 @@ export function buildRecentHistoryBlock(
         entries.push({ ...e, source });
       }
     }
+    if (onlyApp !== null) {
+      // By run, not by entry: the agent's own posts in those runs carry no app mark.
+      const ours = new Set(entries.filter((e) => e.kind === 'user' && e.via === 'app' && e.app === onlyApp).map((e) => `${e.source}\0${e.runId}`));
+      entries = entries.filter((e) => ours.has(`${e.source}\0${e.runId}`));
+    }
     // Ids sort as time across every thread, so one sort interleaves the sources.
     entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    if (includeTalks) {
+    if (includeTalks && onlyApp === null) {
       // Talks have no thread id: they join by time. Machine-local transcripts, so no ledger rule.
       for (const r of recentTalkRows(contextRoot, agentSlug, { sinceMs: since, excludeSession })) {
         const at = Date.parse(r.at);
@@ -157,4 +168,20 @@ export function buildRecentHistoryBlock(
   } catch {
     return '';
   }
+}
+
+/**
+ * True when a Claude session is an app's run. A transcript carries no `via`, so the run record
+ * says it: the cache's history names the session, and that run's thread says who started it.
+ */
+export function isAppRunSession(contextRoot: string, sessionId: string): boolean {
+  try {
+    for (const file of readdirSync(automationCacheDir(contextRoot))) {
+      if (!file.endsWith('.json')) continue;
+      const slug = file.slice(0, -5);
+      const run = readAutomationCache(contextRoot, slug)?.history.find((r) => r.sessionId === sessionId);
+      if (run) return readThread(contextRoot, slug, { runId: run.firedAt }).some((e) => e.kind === 'user' && e.via === 'app');
+    }
+  } catch { /* no cache: nothing says it was an app's */ }
+  return false;
 }

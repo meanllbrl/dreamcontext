@@ -1,7 +1,7 @@
 import type { OwnerInboxRow } from './useAgents';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { useApi, useVault } from '../context/VaultContext';
+import { useApi, useVaultId } from '../context/VaultContext';
 import { pollMs } from '../lib/windowActivity';
 import { buildStatusModel, DEFAULT_STATUSES, type StatusDef, type StatusModel } from '../lib/statusModel';
 
@@ -42,6 +42,12 @@ export interface Task {
   agent?: string | null;
   custom_fields?: Record<string, string | number | null>;
   rice: RiceFields | null;
+  /** The agent's RICE/link proposal (local-only); absent when none. Accept/dismiss: useObjectives.ts. */
+  priority_suggestion?: {
+    reach?: number; impact?: number; confidence?: number; effort?: number;
+    objective?: string; no_objective?: boolean; why?: string;
+    at: string; dismissed_at: string | null; accepted_at: string | null;
+  };
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -260,7 +266,7 @@ export function useUpdateTask() {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
       // A task's `objectives` link feeds the roadmap rollup (progress, member tasks,
       // forecast) — refresh it so the roadmap reflects the change immediately.
-      if (variables.updates.objectives !== undefined) {
+      if (variables.updates.objectives !== undefined || variables.updates.rice !== undefined) {
         queryClient.invalidateQueries({ queryKey: ['roadmap'] });
       }
       // A `related_feature` change writes through to the target/previous feature's
@@ -337,12 +343,13 @@ export type AssignAgentRefusal =
   | 'unknown_reviewer'
   | 'reviewer_is_agent'
   | 'not_owner'
+  | 'tool_unsupported'
   | 'assign_failed';
 
 const ASSIGN_REFUSALS: ReadonlySet<string> = new Set<AssignAgentRefusal>([
   'agent_not_approved_to_run', 'agent_disabled', 'agent_busy', 'unknown_task', 'unknown_agent',
   'note_too_long', 'missing_agent', 'invalid_note', 'invalid_path', 'invalid_start',
-  'invalid_workspace', 'no_repo', 'unknown_reviewer', 'reviewer_is_agent', 'not_owner', 'assign_failed',
+  'invalid_workspace', 'no_repo', 'unknown_reviewer', 'reviewer_is_agent', 'not_owner', 'tool_unsupported', 'assign_failed',
 ]);
 
 /**
@@ -465,7 +472,7 @@ export interface TaskAssetUploadProgress { name: string; loaded: number; total: 
  */
 export function useUploadTaskAsset(slug: string, onProgress?: (p: TaskAssetUploadProgress) => void) {
   const queryClient = useQueryClient();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // The target task rides in the VARIABLES, fixed when the upload starts: a batch keeps going to
   // the task it was dropped on even if the drawer moves to another task meanwhile.
   return useMutation<{ name: string; size: number }, Error, { file: Blob; name: string; target?: string }>({

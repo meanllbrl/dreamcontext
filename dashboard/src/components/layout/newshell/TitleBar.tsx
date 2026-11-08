@@ -3,6 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { startTitleBarDrag, toggleMaximizeWindow } from '../../../lib/desktop';
 import { BrandMark } from '../../brand/BrandMark';
 import { HandsfreeButton } from '../../handsfree/HandsfreeButton';
+import { PhoneChip } from '../../handsfree/phone/PhoneChip';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectPicker, type PickerRow } from './ProjectPicker';
 import { ZoomMenu } from './ZoomMenu';
@@ -18,6 +19,10 @@ interface TitleBarProps {
   /** The chrome's notice (the ceiling's eviction or refusal), in the new wording. */
   notice: string | null;
   onToggleDrawer: () => void;
+  /** Chats waiting on the owner elsewhere (a device shell): a badge on the drawer toggle. */
+  waiting?: number;
+  /** A finger: 44 px targets and no zoom menu (NewShell.css `[data-touch]`). */
+  touch?: boolean;
   zoom: number;
   zoomLevels: readonly number[];
   onZoom: (level: number) => void;
@@ -28,6 +33,9 @@ interface TitleBarProps {
    *  back/forward on the left, the sleep tracker and update badge on the right. */
   setLeftSlot: (el: HTMLElement | null) => void;
   setRightSlot: (el: HTMLElement | null) => void;
+  /** A device shell: no Hands-free button (Mac mode is the Mac's) and no New project. On the
+   *  tunnel the Mac's chip sits here instead, `remote` on a computer. */
+  device?: { tunnel: boolean; remote: boolean };
 }
 
 /**
@@ -38,8 +46,8 @@ interface TitleBarProps {
  * above the page, below every full-screen view.
  */
 export function TitleBar({
-  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer,
-  zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot,
+  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, waiting = 0, touch = false,
+  zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
 }: TitleBarProps) {
   const { t } = useI18n();
   const pickerRef = useRef<HTMLButtonElement>(null);
@@ -57,11 +65,13 @@ export function TitleBar({
           type="button"
           className="ns-tb-btn"
           data-no-drag
-          aria-label={t('shell.drawer.toggle')}
+          // The waiting count is part of the button's name (a badge's own text is never read).
+          aria-label={waiting > 0 ? `${t('shell.drawer.toggle')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(waiting))}` : t('shell.drawer.toggle')}
           title={t('shell.drawer.toggle')}
           data-testid="ns-drawer-toggle"
           onClick={onToggleDrawer}
         >
+          {waiting > 0 && <span className="ns-tb-badge" data-testid="ns-drawer-waiting" aria-hidden="true">{waiting}</span>}
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />
             <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
@@ -94,8 +104,9 @@ export function TitleBar({
 
       <div className="ns-tb-right">
         <div className="chrome-slot ns-tb-slot" ref={setRightSlot} />
-        <div className="ns-tb-hf" data-no-drag><HandsfreeButton vault={activeVault} /></div>
-        <ZoomMenu zoom={zoom} levels={zoomLevels} onZoom={onZoom} />
+        {!device && <div className="ns-tb-hf" data-no-drag><HandsfreeButton vault={activeVault} /></div>}
+        {device?.tunnel && <div className="ns-tb-hf" data-no-drag data-testid="ns-phone-chip"><PhoneChip remote={device.remote} /></div>}
+        {!touch && <ZoomMenu zoom={zoom} levels={zoomLevels} onZoom={onZoom} />}
         <button type="button" className="ns-tb-btn" data-no-drag onClick={onCycleTheme} title={`${t('shell.theme')}: ${themeLabel}`} aria-label={`${t('shell.theme')}: ${themeLabel}`}>
           {dark ? (
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 1zm0 10a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 11zm7-3a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 15 8zM5 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 5 8zm7.07-4.07a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 1 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zM6.05 10.66a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 0 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zm7.72 3.12a.5.5 0 0 1-.71 0l-1.41-1.41a.5.5 0 1 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM5.34 6.05a.5.5 0 0 1-.71 0L3.22 4.64a.5.5 0 0 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" /></svg>
@@ -107,7 +118,7 @@ export function TitleBar({
 
       {pickerOpen && (
         <ProjectPicker
-          onNewProject={onNewProject}
+          onNewProject={device ? undefined : onNewProject}
           anchor={pickerRef.current}
           rows={rows}
           onPick={(name) => { onPickerOpen(false); onPick(name); }}

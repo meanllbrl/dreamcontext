@@ -248,7 +248,7 @@ describe('a message to a working agent goes into its running thread, not back to
 
 describe('the thread says when its agent is working', () => {
   it('draws a live row from the agent activity, with the queued count', () => {
-    expect(panel).toMatch(/\{liveHere && activity && <LiveRow activity=\{activity\} waiting=\{queuedHere\.size\} \/>\}/);
+    expect(panel).toMatch(/\{liveHere && activity && <LiveRow activity=\{activity\} waiting=\{queuedHere\.size\} runId=\{message\.runId\} \/>\}/);
     expect(panel).toMatch(/'agents\.thread\.live'/);
   });
 

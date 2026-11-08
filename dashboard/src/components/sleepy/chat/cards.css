@@ -152,16 +152,18 @@
    which is the one text pairing in the app that fails to read at long-message length — the
    user's own words end up the HARDEST thing in the transcript to re-read. So the bubble
    borrows the sleep tracker's pill recipe (SleepDebtTracker.css): accent mixed a little
-   way into a surface for the fill, accent mixed further into the border for the edge, and
-   the ordinary primary text colour on top. Still unmistakably "mine, and violet" against
-   the ungutter'd assistant blocks, but now at full body-text contrast in both themes. */
+   way into a surface for the fill and the ordinary primary text colour on top. Still
+   unmistakably "mine, and violet" against the ungutter'd assistant blocks, but at full
+   body-text contrast in both themes. No visible edge (owner 2026-11-01): the 45% accent border
+   plus a fill mixed into grey read heavy and muddy; the transparent border stays so a forced-colors
+   display still draws the bubble. The small corner points at the sender. */
 .chat-msg-user-bubble {
   align-self: flex-end;
   max-width: 100%;
   padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-2xl);
-  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-tertiary));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  border-radius: var(--radius-bubble) var(--radius-bubble) var(--radius-sm) var(--radius-bubble);
+  background: var(--color-bubble-own);
+  border: 1px solid transparent;
   color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
   /* The user's own words are prose in the same column as the answer — a pasted three-paragraph
@@ -1235,7 +1237,41 @@ video.chat-msg-user-media-el { cursor: default; }
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
-.chat-permcard[data-mode='bypass'] .chat-permcard-explainer { color: var(--color-warning); }
+/* The lead: what happens, then ONE short line saying why it asks (permissionReason.ts). */
+.chat-permcard-lead { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-why {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+/* What it would run, folded by default behind one small text toggle (PermissionDetails). */
+.chat-permcard-details { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.chat-permcard-toggle:hover { color: var(--color-text); }
+.chat-permcard-toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-permcard-chevron { display: inline-block; width: 12px; transition: transform 180ms ease-out; }
+.chat-permcard-details[data-open] .chat-permcard-chevron { transform: rotate(90deg); }
+.chat-permcard-toggle-stat { margin-left: var(--space-1); }
+.chat-permcard-panel { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-permcard-panel .chat-m-terminal { max-height: 320px; overflow: auto; }
+.chat-permcard-panel-foot { display: flex; justify-content: flex-end; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-permcard-chevron { transition: none; }
+}
 
 /* ── Plan card (ExitPlanMode's approval gate) ─────────────────────────────────────── */
 
@@ -1464,6 +1500,10 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-entry { border-bottom: 1px solid var(--color-border); }
 .chat-subagents-entry:last-child { border-bottom: none; }
 .chat-subagents-entry > .chat-subagents-row { width: 100%; border-bottom: none; }
+/* The row and, while it runs, its own Stop: one sub-agent ends, the turn goes on. */
+.chat-subagents-line { display: flex; align-items: center; }
+.chat-subagents-line > .chat-subagents-row { flex: 1 1 auto; min-width: 0; border-bottom: none; }
+.chat-subagents-stop { flex: 0 0 auto; margin-right: var(--space-4); }
 
 /* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
    peer-session row does: the accent, on the chip that names the vault. The avatar slot
@@ -2407,10 +2447,13 @@ video.chat-msg-user-media-el { cursor: default; }
   color: inherit;
   white-space: nowrap;
   cursor: pointer;
+  /* Quieter than in the composer: on the bubble's own violet the composer's ring boxes the chip in. */
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 .chat-cmp-hl-img.is-sent:hover { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
 .chat-cmp-hl-img.is-sent:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 /* A stage card he named that is no longer on the stage (owner 2026-10-31): its title stays, quieter,
    and nothing to press. */
 .chat-cmp-hl-img.is-sent[data-state='gone'] { cursor: default; opacity: 0.62; }
-.chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }

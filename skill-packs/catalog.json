@@ -2,97 +2,6 @@
   "version": "1.0",
   "packs": [
     {
-      "name": "engineering",
-      "description": "Coding standards, security, backend architecture, web app implementation, Firebase services",
-      "tags": [
-        "coding",
-        "backend",
-        "api",
-        "serverless",
-        "firebase",
-        "security",
-        "testing",
-        "react",
-        "typescript"
-      ],
-      "alwaysApply": true,
-      "base": "Universal coding standards, security, testing, naming, error handling, architectural principles",
-      "subSkills": [
-        {
-          "name": "backend-principles",
-          "file": "backend-principles.md",
-          "description": "Backend/API/serverless architecture, production readiness, rate limiting"
-        },
-        {
-          "name": "web-app-frontend",
-          "file": "web-app-frontend.md",
-          "description": "Web apps with React, Vue, GSAP, ShadCN, Tailwind, TypeScript: state, animation, security"
-        },
-        {
-          "name": "firebase-cloud-functions",
-          "file": "firebase-cloud-functions/SKILL.md",
-          "description": "Cloud Functions for Firebase (2nd gen), idempotency, scaling, secrets",
-          "hasReferences": true
-        },
-        {
-          "name": "firebase-firestore",
-          "file": "firebase-firestore/SKILL.md",
-          "description": "Firestore provisioning, security rules, queries, indexing",
-          "hasReferences": true
-        }
-      ],
-      "relatedAgents": [
-        "reviewer"
-      ],
-      "crossPackDeps": [
-        "design (for UI work)"
-      ]
-    },
-    {
-      "name": "design",
-      "description": "Design system fundamentals, frontend principles, web/mobile design, onboarding UX",
-      "tags": [
-        "design",
-        "ui",
-        "ux",
-        "accessibility",
-        "mobile",
-        "web",
-        "typography",
-        "colors",
-        "frontend",
-        "tokens",
-        "i18n"
-      ],
-      "alwaysApply": true,
-      "base": "Universal design system: spacing (4px grid), typography, colors (HSL/OKLCH), visual hierarchy, layout, accessibility, emotional design",
-      "subSkills": [
-        {
-          "name": "frontend-principles",
-          "file": "frontend-principles.md",
-          "description": "Universal frontend rules: zero hardcoded values, token architecture, translations, components, a11y"
-        },
-        {
-          "name": "design-web",
-          "file": "design-web.md",
-          "description": "Web design: responsive layouts, landing pages, animation, conversion optimization"
-        },
-        {
-          "name": "design-mobile",
-          "file": "design-mobile.md",
-          "description": "Mobile design: haptics, native transitions, widgets, App Store, gamification"
-        },
-        {
-          "name": "onboarding-design",
-          "file": "onboarding-design.md",
-          "description": "Onboarding flows, paywalls, signup funnels, first-run UX, rating prompts"
-        }
-      ],
-      "crossPackDeps": [
-        "engineering (coding-principles prerequisite for frontend code)"
-      ]
-    },
-    {
       "name": "growth",
       "description": "Load when working on user acquisition, retention strategy, push notifications, TikTok/social distribution, content farming, paywall optimization, LTV, monetization, or organic viral loops",
       "tags": [
@@ -124,10 +33,7 @@
           "description": "Product analytics, KPIs, event schemas, Mixpanel, cohort/funnel analysis"
         }
       ],
-      "crossPackDeps": [
-        "design/onboarding-design (for paywall priming)",
-        "design/design-mobile (for widget/recording design)"
-      ]
+      "crossPackDeps": []
     },
     {
       "name": "brand-voice",
@@ -217,10 +123,7 @@
         "review-frontend",
         "review-edge-cases"
       ],
-      "crossPackDeps": [
-        "engineering (specialists auto-load engineering sub-skills)",
-        "design (frontend specialist loads design tokens + a11y)"
-      ]
+      "crossPackDeps": []
     },
     {
       "name": "goal-skill",
@@ -235,7 +138,7 @@
         "validation"
       ],
       "alwaysApply": false,
-      "base": "Subagent-driven goal completion: builders (planner, implementers) run as CLI sessions that fork once and resume per round, while judges (plan-reviewers, code reviewer, validator) stay clean and fresh each round, meeting the work only through the task doc. A tier router (S/M/L, with a hot-path override for auth/crypto/env/migrations) scales ceremony to goal size; a dependency-map table drives wave-parallel implementation; loops iterate to convergence by signal (new findings resume the builder, repeated findings trigger one re-fork, then escalate) rather than a fixed iteration count, until validation passes against user-agreed criteria. Reuses the engineering reviewer for code review and the dreamcontext task system as the working doc.",
+      "base": "Subagent-driven goal completion: builders (planner, implementers) run as CLI sessions that fork once and resume per round, while judges (plan-reviewers, code reviewer, validator) stay clean and fresh each round, meeting the work only through the task doc. A tier router (S/M/L, with a hot-path override for auth/crypto/env/migrations) scales ceremony to goal size; a dependency-map table drives wave-parallel implementation; loops iterate to convergence by signal (new findings resume the builder, repeated findings trigger one re-fork, then escalate) rather than a fixed iteration count, until validation passes against user-agreed criteria. Reuses the reviewer agent for code review and the dreamcontext task system as the working doc.",
       "subSkills": [],
       "relatedAgents": [
         "goal-planner",
@@ -250,7 +153,6 @@
         "review-edge-cases"
       ],
       "crossPackDeps": [
-        "engineering (planner/implementer/reviewer load engineering standards)",
         "multi-review (Phase 5 and Develop run the review-router and review-* specialists when builder review-pick names the team)"
       ],
       "assets": [
@@ -284,7 +186,6 @@
       "alwaysApply": false,
       "crossPackDeps": [
         "growth (post-build growth strategy)",
-        "design/design-web (landing page design)",
         "business-idea-validation (deep validation after discovery)"
       ]
     },
@@ -410,8 +311,7 @@
       ],
       "crossPackDeps": [
         "growth (marketing-video teardown handoff)",
-        "meta-marketing (ad-creative teardown handoff)",
-        "design/onboarding-design (app-demo / FTE reconstruction handoff)"
+        "meta-marketing (ad-creative teardown handoff)"
       ]
     },
     {
@@ -439,8 +339,7 @@
         "OPENROUTER_JEV_KEY (a dedicated OpenRouter key; env, ./.env or ~/.dreamcontext/.env)"
       ],
       "crossPackDeps": [
-        "goal-skill (Browser (jev-verify) validation method for goal-validator)",
-        "engineering (browser checks that judge what the user reads)"
+        "goal-skill (Browser (jev-verify) validation method for goal-validator)"
       ]
     }
   ],
@@ -448,7 +347,7 @@
     {
       "name": "reviewer",
       "file": "agents/reviewer.md",
-      "pack": "engineering",
+      "pack": "goal-skill",
       "description": "Critical code reviewer and final quality gate. Only flags Critical and Major issues (security, data loss, memory leaks, breaking changes). Returns PASS or FAIL.",
       "tags": [
         "code-review",

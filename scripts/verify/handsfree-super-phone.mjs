@@ -13,13 +13,12 @@
  * opens is a phone socket. The "window" is a laptop chat socket opened the way the desktop opens
  * the Super Agent's chat (`mode=super`, pin = the recorded session).
  *
- *   1. Super OFF: the Sohbetler list as before (search, chips, the Mac's running chat as a row).
- *   2. Super ON (POST /api/super/enable, the window's super socket live): ONE Super Agent row,
- *      no other chat of the project (the one list over every chosen project keeps its search and
- *      chips, hands-free sekmeler W3); the wire says the same.
+ *   1. Super OFF: the drawer (new shell, W2) lists the Mac's running chat as a row.
+ *   2. Super ON (POST /api/super/enable, the window's super socket live): a Super Agent row, the
+ *      adopted chat gone from the owner's rows (it is the Super's child), New chat on offer.
  *   3. A tap opens it as a MIRROR: the window's socket is not closed, the phone's message reaches
  *      the Super Agent and its answer comes back; the owner's words show on the other surface.
- *   4. Super OFF again (take-back): the old list returns.
+ *   4. Super OFF again (take-back): the Super row goes.
  *   Across the run: no console error, and no 403 on any request the phone made.
  *
  * FAILURE POLICY — collect, don't fail fast; exit 0 iff every check passed.
@@ -34,6 +33,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { back, chatShown, drawerShape, drawerShown, expand, openSuper, submit } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-super-phone');
@@ -180,30 +180,19 @@ try {
   phone.on('response', (r) => { if (r.status() === 403) forbidden.push(`${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`); });
   phone.on('websocket', (w) => phoneSockets.push(w.url()));
   const vis = (sel) => phone.locator(`${sel}:visible`);
-  const onList = async () => (await vis('[data-testid="phone-list"]').count()) === 1;
-  const listShape = () => phone.evaluate(() => {
-    const el = [...document.querySelectorAll('[data-testid="phone-list"]')].find((e) => e.getBoundingClientRect().height > 0);
-    return {
-      super: el?.getAttribute('data-super') === 'true',
-      rows: [...(el?.querySelectorAll('.mlist-row') ?? [])].map((r) => ({ kind: r.getAttribute('data-kind'), id: r.getAttribute('data-id'), text: (r.textContent || '').replace(/\s+/g, ' ').trim() })),
-      search: !!el?.querySelector('[data-testid="list-search"]'),
-      chips: !!el?.querySelector('[data-testid="list-filter-all"]'),
-      newChat: !!el?.querySelector('[data-testid="list-new"]'),
-      overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
-    };
-  });
+  const listShape = () => drawerShape(phone, 'proj');
   const wire = () => phone.evaluate(async () => (await fetch('/api/agent/live-chats', { credentials: 'same-origin', headers: { 'X-Dreamcontext-Vault': 'proj' } })).json());
 
-  console.log('\n── 1. Super OFF: the old list');
+  console.log('\n── 1. Super OFF: the drawer');
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in through the phone listener, landed in the project', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
   report.check('the page is the Mac phone surface (its meta flag)', await until(() => phone.evaluate(() => document.querySelector('meta[name="dreamcontext-surface"]')?.getAttribute('content') === 'mac'), 10000));
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-  report.check('the phone opens on the Sohbetler list', await until(onList, 20000));
+  report.check('the phone opens with the drawer open', await until(() => drawerShown(phone), 20000));
   let shape;
-  report.check('super off: search, chips, New chat, and the Mac\'s running chat as a row', await until(async () => {
+  report.check('super off: the Mac\'s running chat is a drawer row, no Super row', await until(async () => {
     shape = await listShape();
-    return !shape.super && shape.search && shape.chips && shape.newChat && shape.rows.some((r) => r.id === MAC_ID);
+    return !shape.super && shape.rows.some((r) => r.id === MAC_ID);
   }, 20000), JSON.stringify(shape));
   const w0 = await wire();
   report.check('super off: the wire is today\'s (no supers field)', Array.isArray(w0.chats) && !('supers' in w0), JSON.stringify(w0).slice(0, 200));
@@ -215,23 +204,21 @@ try {
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   const win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
-  // The list is the ONE list over every chosen project (hands-free sekmeler W3): its search and
-  // chips stay; the handed-over project contributes its one Super row and nothing else.
-  report.check('super on: ONE row, the Super Agent; no New chat, no other chat (the one list keeps its search)', await until(async () => {
+  // The handed-over project contributes its one Super row to the drawer and nothing else.
+  report.check('super on: the Super Agent row, and New chat stays (its one chat is the Super\'s child now)', await until(async () => {
     shape = await listShape();
-    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.rows[0].id === SUPER
-      && /Super Agent/.test(shape.rows[0].text) && shape.search && !shape.newChat && !shape.overflowX;
+    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.newChat && !shape.overflowX;
   }, 20000), JSON.stringify(shape));
   const w1 = await wire();
   report.check('super on: the wire lists no chat of the project and one live super row', Array.isArray(w1.chats) && w1.chats.length === 0
     && w1.supers?.length === 1 && w1.supers[0].conversationId === SUPER && w1.supers[0].live === true, JSON.stringify(w1).slice(0, 240));
-  const rowH = await phone.evaluate(() => Math.round(document.querySelector('[data-testid="super-row"]')?.getBoundingClientRect().height ?? 0));
+  const rowH = shape?.rows?.[0]?.h ?? 0;
   report.check(`the row is a touch target (${rowH}px >= 44)`, rowH >= 44);
   await phone.screenshot({ path: join(SHOTS, '390x844-super-on.png') });
 
   console.log('\n── 3. A tap opens it as a mirror');
-  await vis('[data-testid="super-row"]').click();
-  report.check('the Super Agent\'s chat opens over the list', await until(async () => !(await onList()) && (await vis('.chat-cmp-input').count()) > 0, 15000));
+  await openSuper(phone);
+  report.check('the Super Agent\'s chat opens, the drawer closed', await until(async () => (await chatShown(phone)) && (await vis('.chat-cmp-input').count()) > 0, 15000));
   report.check('the phone\'s socket names the super session', await until(async () => phoneSockets.some((u) => u.includes(SUPER)), 10000), JSON.stringify(phoneSockets));
   await phone.waitForTimeout(1500);
   report.check('the window keeps its socket (never 4409, still open)', win.closed === null && win.ws.readyState === 1, String(win.closed));
@@ -239,9 +226,13 @@ try {
   await box.click();
   await box.fill('what is running?');
   await phone.waitForTimeout(150);
-  await phone.keyboard.press('Enter');
+  await submit(phone);
   const paneText = async () => (await vis('.chat-pane').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-  report.check('the phone\'s message reaches the Super Agent and its answer comes back', await until(async () => (await paneText()).includes('ECHO what is running?'), 20000), (await paneText()).slice(-200));
+  const dom = () => phone.evaluate(() => [...document.querySelectorAll('.chat-pane, .chat-cmp-input')].map((e) => {
+    const r = e.getBoundingClientRect();
+    return { cls: e.className.split(' ')[0], tab: e.closest('[data-session-id], [data-tab-id], .agent-pane-chat')?.getAttribute('data-session-id') ?? e.closest('.agent-pane')?.getAttribute('data-pane-id') ?? null, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), text: (e.value ?? e.innerText ?? '').slice(0, 60) };
+  }));
+  report.check('the phone\'s message reaches the Super Agent and its answer comes back', await until(async () => (await paneText()).includes('ECHO what is running?'), 20000), JSON.stringify({ pane: (await paneText()).slice(-120), dom: await dom() }));
   report.check('the window sees the owner\'s words (owner_echo) and the answer', await until(async () =>
     win.frames.some((f) => f.type === '_meta' && f.subtype === 'owner_echo' && f.text === 'what is running?')
     && win.frames.some((f) => f.type === 'assistant' && JSON.stringify(f).includes('ECHO what is running?')), 10000));
@@ -252,18 +243,24 @@ try {
   }, 20000), (await paneText()).slice(-240));
   await phone.screenshot({ path: join(SHOTS, '390x844-super-chat.png') });
 
-  console.log('\n── 4. Super OFF again: the old list');
+  console.log('\n── 4. Super OFF again: the drawer');
   const dis = await api(port, 'POST', '/api/super/disable', {});
   report.check('take-back', dis.status === 200, JSON.stringify(dis.json).slice(0, 160));
-  await vis('[data-testid="chat-back"]').click().catch(async () => { await phone.goBack(); });
-  report.check('back on the list', await until(onList, 10000));
-  report.check('super off: search, chips and New chat are back; no super row', await until(async () => {
-    shape = await listShape();
-    return !shape.super && shape.search && shape.chips && shape.newChat && !shape.rows.some((r) => r.kind === 'super');
-  }, 20000), JSON.stringify(shape));
+  await back(phone);
+  report.check('back on the drawer', await until(() => drawerShown(phone), 10000));
+  // The phone's tab on the old Super conversation goes (the Mac refuses it there); the project is
+  // no longer handed over: the wire lists no Super, and the adopted chat is the owner's again.
+  report.check('super off: the wire lists no Super any more', await until(async () => !((await wire()).supers?.length), 20000), JSON.stringify(await wire()).slice(0, 200));
+  await expand(phone, 'proj');
+  await phone.locator('[data-drawer-project="proj"] [data-testid="drawer-chat-row"]').first().click();
+  report.check('super off: the project offers New chat again (the chat head\'s +)', await until(async () => (await vis('[data-testid="chat-head-new"]').count()) > 0, 15000));
+  await back(phone);
   await phone.screenshot({ path: join(SHOTS, '390x844-super-off-again.png') });
 
-  report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));
+  // The take-back's last gasp: the mirror's reconnect is refused until the next read drops its
+  // tab. Bounded (3 s of polling), where it used to retry for ever with the composer shut.
+  const real = errors.filter((e) => !e.includes(SUPER));
+  report.check('no console error on the phone, past the take-back\'s bounded refusal', real.length === 0 && errors.length <= 3, errors.slice(0, 5).join(' | '));
   report.check('no 403 on any request the phone made', forbidden.length === 0, forbidden.slice(0, 8).join(' | '));
 } catch (err) {
   report.check('the run completed', false, String(err?.stack ?? err).slice(0, 600));

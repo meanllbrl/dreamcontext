@@ -5,8 +5,11 @@ import { listClaudeAccounts } from '../claude-accounts.js';
 import { readAccountRejections } from '../claude-limit-rejections.js';
 import { getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
 import { isDelegatedSession } from './delegations.js';
-import { isSuperChild } from '../super/store.js';
-import { isHandedOverSuperSession, takeSuperEscalation } from '../super/inbox.js';
+import { isSuperChild, superOfSession } from '../super/store.js';
+import { isHandedOverSuperSession, isMainWork, memberTurnOrigin, setOwnerWatchProbe, takeSuperEscalation } from '../super/inbox.js';
+import { memberOfSuperId } from '../super/store.js';
+import { getAgent } from '../agents/store.js';
+import { NOTIFY_SOUND_OK } from '../automations/notifier.js';
 import { buildAppLink } from '../app-link.js';
 
 /**
@@ -65,6 +68,8 @@ export interface FinishedEvent {
   title: string;
   /** PROJECT text (the turn's last reply). */
   lastText: string;
+  /** A member Super's reply (plan r4 D6): the member's name, which titles the row and banner. */
+  member?: string;
 }
 
 export interface AccountEvent {
@@ -86,7 +91,20 @@ export interface AccountEvent {
   sessionId: string | null;
 }
 
-export type NotchEvent = FinishedEvent | AccountEvent;
+/** A dreamcontext App's notification (`dc.notify`, a schedule's failure). ONE row per app: the
+ *  id is fixed (`app:<vault>:<slug>`), a new one replaces it, so an app can never crowd the
+ *  finishes out of the capped list. `name`/`body` are PROJECT text: wrapped before they leave. */
+export interface AppEvent {
+  id: string;
+  kind: 'app';
+  at: number;
+  vault: string;
+  slug: string;
+  name: string;
+  body: string;
+}
+
+export type NotchEvent = FinishedEvent | AccountEvent | AppEvent;
 
 /** An account event as the notch draws it: ids resolved to the names the owner knows. */
 export type AccountEventView = AccountEvent & { account: string; toAccount: string | null };
@@ -123,6 +141,8 @@ export function lookingAtSession(now = Date.now()): string | null {
   if (!presence || now - presence.at > PRESENCE_TTL_MS) return null;
   return presence.sessionId;
 }
+// The Super inbox counts a member's reply he watched arrive as seen (plan r4 D7).
+setOwnerWatchProbe(() => lookingAtSession());
 
 // ─── Events ─────────────────────────────────────────────────────────────────────────
 
@@ -176,12 +196,18 @@ function onChange({ entry, from }: ChatChange): void {
   if (isSuperChild(id)) return;
   clearFinishTimer(id);
   if (isHandedOverSuperSession(id)) {
+    // A member's Super finishing a turn of main Super's work (`main:*`, plan-r10 1) is not his news.
+    if (isMainWork(memberTurnOrigin(id))) { takeSuperEscalation(id); return; }
+    // A member's own reply to him (plan r4 D6): its own name, with sound, its stage on a click.
+    if (entry.lastTurn?.interrupted) { takeSuperEscalation(id); return; }
     // Owner, 2026-10-21: the Super Agent's own reply is the ONE thing that reaches him, every
     // turn of it (the server-opened event turns too: the briefing makes them a sentence for
     // him), as a banner as well as a row. At once, not debounced: the queue pump may start its
     // next turn within the debounce and the reply would never be news. A turn that escalated a
     // question is not a second ping: the queue head raised the one alarm for it.
     if (takeSuperEscalation(id) || lookingAtSession() === id) return;
+    const member = memberNameOf(id);
+    if (member) { postMemberFinish(recordFinished(entry, Date.now(), member)); return; }
     postSuperFinish(recordFinished(entry));
     return;
   }
@@ -200,7 +226,7 @@ function onChange({ entry, from }: ChatChange): void {
 
 /** Posts a routable macOS banner (and its Notifications-window row). Set by the server at
  *  boot (desktop only: `notifyViaBundle`); null = no banners, only the notch row. */
-export type FinishBannerPoster = (title: string, body: string, link: string | null) => void;
+export type FinishBannerPoster = (title: string, body: string, link: string | null, sound?: string) => void;
 let finishBanner: FinishBannerPoster | null = null;
 
 export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
@@ -210,18 +236,38 @@ export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
 /** A banner body macOS shows whole. */
 const BANNER_BODY_CHARS = 180;
 
-function postSuperFinish(ev: FinishedEvent): void {
-  if (!finishBanner) return;
+function bannerParts(ev: FinishedEvent): { link: string | null; body: string } {
   let link: string | null = null;
-  // The click lands on the Super Agent's stage (AgentSurface opens it, never a second tab).
+  // The click lands on that Super's stage (AgentSurface opens it, never a second tab).
   try { link = buildAppLink({ kind: 'session', vault: ev.vault, claudeId: ev.sessionId }); } catch { link = null; }
   const flat = ev.lastText.replace(/\s+/g, ' ').trim();
   const body = flat.length > BANNER_BODY_CHARS ? `${flat.slice(0, BANNER_BODY_CHARS - 1).trimEnd()}…` : flat;
+  return { link, body };
+}
+
+function postSuperFinish(ev: FinishedEvent): void {
+  if (!finishBanner) return;
+  const { link, body } = bannerParts(ev);
   try { finishBanner(`Super Agent · ${ev.vault}`, body || 'Replied.', link); } catch { /* the notch row still stands */ }
 }
 
+/** A member Super's reply to him: titled with the member, with sound (plan r4 D6). */
+function postMemberFinish(ev: FinishedEvent): void {
+  if (!finishBanner) return;
+  const { link, body } = bannerParts(ev);
+  try { finishBanner(`${ev.member ?? 'Member'} · ${ev.vault}`, body || 'Replied.', link, NOTIFY_SOUND_OK); } catch { /* the notch row still stands */ }
+}
+
+/** The member a super session belongs to, by its title (slug when it has none); null for main's. */
+export function memberNameOf(sessionId: string): string | null {
+  const ref = superOfSession(sessionId);
+  const slug = ref ? memberOfSuperId(ref.superId) : null;
+  if (!ref || !slug) return null;
+  try { return getAgent(ref.root, slug)?.title?.trim() || slug; } catch { return slug; }
+}
+
 /** Exported for tests: a finished turn, recorded as if its debounce had already stood. */
-export function recordFinished(e: ChatEntry, now = Date.now()): FinishedEvent {
+export function recordFinished(e: ChatEntry, now = Date.now(), member?: string): FinishedEvent {
   const ev: FinishedEvent = {
     id: `fin:${e.sessionId}`,
     kind: 'finished',
@@ -231,6 +277,7 @@ export function recordFinished(e: ChatEntry, now = Date.now()): FinishedEvent {
     mode: e.mode,
     title: e.title,
     lastText: e.lastAssistantText[e.lastAssistantText.length - 1] ?? '',
+    ...(member ? { member } : {}),
   };
   push(ev);
   return ev;
@@ -312,7 +359,7 @@ function accountName(id: string, accounts: ReturnType<typeof listClaudeAccounts>
 }
 
 /** Every live event, newest first, account ids resolved to names. */
-export function listNotchEvents(home: string = homedir(), now = Date.now()): Array<FinishedEvent | AccountEventView> {
+export function listNotchEvents(home: string = homedir(), now = Date.now()): Array<FinishedEvent | AccountEventView | AppEvent> {
   prune(now);
   let accounts: ReturnType<typeof listClaudeAccounts> = [];
   try { accounts = listClaudeAccounts(home); } catch { accounts = []; }
@@ -326,6 +373,51 @@ export function dismissNotchEvent(id: string): boolean {
   const before = events.length;
   events = events.filter((e) => e.id !== id);
   return events.length < before;
+}
+
+// ─── App notifications ──────────────────────────────────────────────────────────────
+
+/** Record (or replace) an app's notch row. Muted apps record nothing. */
+export function recordAppEvent(
+  input: { vault: string; projectRoot: string; slug: string; name: string; body: string },
+  home: string = homedir(),
+  now = Date.now(),
+): AppEvent | null {
+  if (isAppMuted(input.projectRoot, input.slug, readMutedApps(home))) return null;
+  const e: AppEvent = { id: `app:${input.vault}:${input.slug}`, kind: 'app', at: now, vault: input.vault, slug: input.slug, name: input.name.slice(0, 60), body: input.body.slice(0, 500) };
+  push(e);
+  return e;
+}
+
+/** `~/.dreamcontext/notch-muted-apps.json` — `{ "<project root>": ["<app slug>", …] }`. Apps are
+ *  not automations (`app:<slug>` would not pass the automation slug check), so their own file. */
+export function notchMutedAppsPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'notch-muted-apps.json');
+}
+
+export function readMutedApps(home: string = homedir()): Record<string, string[]> {
+  try {
+    const v = JSON.parse(readFileSync(notchMutedAppsPath(home), 'utf-8')) as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [k, list] of Object.entries(v ?? {})) if (Array.isArray(list)) out[k] = list.filter((x): x is string => typeof x === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(x));
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function isAppMuted(projectRoot: string, slug: string, muted = readMutedApps()): boolean {
+  return (muted[projectRoot] ?? []).includes(slug);
+}
+
+export function setAppMuted(projectRoot: string, slug: string, mute: boolean, home: string = homedir()): void {
+  const all = readMutedApps(home);
+  const list = new Set(all[projectRoot] ?? []);
+  if (mute) list.add(slug); else list.delete(slug);
+  if (list.size) all[projectRoot] = [...list]; else delete all[projectRoot];
+  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  writeFileSync(notchMutedAppsPath(home), JSON.stringify(all, null, 2) + '\n');
+  if (mute) events = events.filter((e) => !(e.kind === 'app' && e.slug === slug));
 }
 
 // ─── Muted automations ──────────────────────────────────────────────────────────────

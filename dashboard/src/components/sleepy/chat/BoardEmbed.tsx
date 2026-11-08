@@ -1,6 +1,7 @@
+import { fileSessionParam } from '../../../lib/chatAppBinding';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import { boardFailure, boardRetryDelay, type BoardFailure } from '../../../lib/boardFailure';
 import { loadWhiteboardPictures, whiteboardSlugOf, type BoardPictureFile } from '../../../lib/boardFit';
 import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
@@ -61,7 +62,7 @@ async function downloadBoardPicture(slug: string, vault: string | null, id: stri
  */
 export function useBoardScene(path: string): BoardScene {
   const api = useApi();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const slug = whiteboardSlugOf(path);
   const whiteboard = slug !== null;
   const [scene, setScene] = useState<BoardScene>({
@@ -74,7 +75,7 @@ export function useBoardScene(path: string): BoardScene {
     let tries = 0;
     setScene({ content: null, assets: undefined, assetsLoading: false, failed: false, failure: null, whiteboard });
 
-    const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}`)
+    const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}${fileSessionParam()}`)
       .then((data) => {
         if (cancelled) return;
         const content = data?.content ?? '';

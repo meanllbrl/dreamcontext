@@ -8,6 +8,7 @@ import {
   useUploadAgentPhoto,
 } from '../../hooks/useAutomations';
 import { findAgent, useAgents } from '../../hooks/useAgents';
+import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { RequestError } from '../../api/client';
 import { requestOpenAgents } from '../../lib/openAgents';
 import { useI18n } from '../../context/I18nContext';
@@ -35,6 +36,8 @@ import './AutomationDialog.css';
  *  it, so it must not cost a row of height that grows as the dialog narrows. */
 const MODELS = ['opus', 'sonnet', 'fable', 'haiku'] as const;
 const EFFORTS = ['low', 'medium', 'high'] as const;
+/** What a Claude alias reads as on Codex: its account's own default. */
+const CODEX_DEFAULT = '';
 
 /** Day chips, in the order a week is read. Short labels so seven fit one row
  *  at every dialog width. */
@@ -198,6 +201,9 @@ export interface AutomationDialogInitial {
    *  Sent with the create and never shown as a field: the board the dialog was opened on IS
    *  the answer, and an edit never changes it. */
   whiteboard?: string;
+  /** A member's stage makes a routine FOR that member (plan r4 R3.1): the picker is hidden and
+   *  the create is bound to it; the server still refuses one the member is not approved for. */
+  agent?: string;
 }
 
 /**
@@ -267,13 +273,14 @@ export function AutomationDialog({
 
   /** Only a plain create picks an agent: an edit keeps what it runs as, and a whiteboard's
    *  create makes that board's own agent. */
-  const pickable = !editing && !start?.whiteboard;
-  const rosterQ = useAgents({ enabled: pickable });
+  const preset = !editing ? start?.agent : undefined;
+  const pickable = !editing && !start?.whiteboard && !preset;
+  const rosterQ = useAgents({ enabled: pickable || !!preset });
   // Only agents this machine owns take a routine (B1-4: a routine is a write to its agent).
   const roster = useMemo(() => ({ ...rosterQ, data: rosterQ.data?.filter((a) => !a.readOnly) }), [rosterQ]);
   // A starter arrives with its own description, so it opens on the self-contained form.
-  const [choice, setChoice] = useState<string>(start ? OWN_AGENT : '');
-  const bound = pickable && choice !== OWN_AGENT;
+  const [choice, setChoice] = useState<string>(preset ?? (start ? OWN_AGENT : ''));
+  const bound = (pickable || !!preset) && choice !== OWN_AGENT;
   const pickedAgent = bound ? findAgent(roster.data, choice) : null;
   /** The agent the server just refused (409 `agent_unapproved`), so the notice can stay up
    *  even when the roster still says otherwise. Cleared by picking again. */
@@ -323,6 +330,21 @@ export function AutomationDialog({
   const [rows, setRows] = useState<SlotRow[]>(() =>
     initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
   const [model, setModel] = useState(agent?.model ?? 'opus');
+  const [tool, setTool] = useState<'claude' | 'codex' | 'antigravity'>(agent?.tool ?? 'claude');
+  const [account, setAccount] = useState(agent?.account ?? '');
+  // A home board's read denies stay on Claude (Track T W4), and a Codex run cannot hold them.
+  const hasBoard = !!(start?.whiteboard || agent?.whiteboard);
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((t) => t.tool === 'codex');
+  const agyInfo = tools?.find((t) => t.tool === 'antigravity');
+  // The model list is the picked tool's own; a Claude model never goes to another vendor.
+  const toolInfo = tool === 'antigravity' ? agyInfo : codexInfo;
+  const codexAccounts = useCodexAccounts(tool === 'codex').data?.accounts ?? [];
+  const pickTool = (next: 'claude' | 'codex' | 'antigravity') => {
+    setTool(next);
+    setAccount('');
+    setModel(next !== 'claude' ? CODEX_DEFAULT : 'opus');
+  };
   const [effort, setEffort] = useState<string>(agent?.effort ?? 'medium');
 
   /** The photo bytes waiting to be uploaded once the slug exists, and a local
@@ -490,6 +512,8 @@ export function AutomationDialog({
       mode,
       ...(mode === 'sched' && !('error' in parsedSlots) ? { slots: parsedSlots.slots } : {}),
       model,
+      tool,
+      account: tool === 'codex' ? account : '',
       effort: effort as AutomationDraft['effort'],
       // Edit only: a changed Job ('' removes it). The server re-approves the edit like any other.
       ...(editsJob && job.trim() !== (jobSeed.current ?? '').trim() ? { job: job.trim() } : {}),
@@ -548,6 +572,7 @@ export function AutomationDialog({
     };
 
     if (editing && agent) {
+      // His save is his approval (nothing made on this Mac asks): no confirm step.
       updateAgent.mutate({ slug: agent.slug, draft }, {
         onSuccess: afterSave,
         onError: (err) => setError((err as Error).message),
@@ -753,9 +778,30 @@ export function AutomationDialog({
           <label className="agent-field">
             <span className="agent-label">Model</span>
             <select className="agent-select" value={model} onChange={(e) => setModel(e.target.value)}>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+              {tool !== 'claude'
+                ? <><option value={CODEX_DEFAULT}>Account default</option>{(toolInfo?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</>
+                : MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
+          {(codexInfo || agyInfo || tool !== 'claude') && !hasBoard && !bound && (
+            <label className="agent-field">
+              <span className="agent-label">Tool</span>
+              <select className="agent-select" value={tool} onChange={(e) => pickTool(e.target.value as 'claude' | 'codex' | 'antigravity')} data-testid="automation-tool">
+                <option value="claude">Claude</option>
+                <option value="codex" disabled={!codexInfo?.ready}>{codexInfo?.ready ? 'Codex' : 'Codex (sign in first)'}</option>
+                {(agyInfo || tool === 'antigravity') && <option value="antigravity" disabled={!agyInfo?.ready}>{agyInfo?.ready ? 'Antigravity' : 'Antigravity (sign in first)'}</option>}
+              </select>
+            </label>
+          )}
+          {tool === 'codex' && (
+            <label className="agent-field">
+              <span className="agent-label">Account</span>
+              <select className="agent-select" value={account} onChange={(e) => setAccount(e.target.value)} data-testid="automation-account">
+                <option value="">Picked per run</option>
+                {codexAccounts.filter((a) => !a.isPrimary).map((a) => <option key={a.id} value={a.id}>{a.email || a.id}</option>)}
+              </select>
+            </label>
+          )}
           <label className="agent-field">
             <span className="agent-label">Effort</span>
             <select className="agent-select" value={effort} onChange={(e) => setEffort(e.target.value)}>

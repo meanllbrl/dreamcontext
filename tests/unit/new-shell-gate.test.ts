@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 const SRC = join(__dirname, '..', '..', 'dashboard', 'src');
 function walk(dir: string): string[] {
@@ -14,7 +14,7 @@ function walk(dir: string): string[] {
     return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
   });
 }
-const files = walk(SRC).map((p) => ({ rel: relative(SRC, p), src: readFileSync(p, 'utf-8') }));
+const files = walk(SRC).map((p) => ({ rel: relative(SRC, p).split(sep).join('/'), src: readFileSync(p, 'utf-8') }));
 
 describe('the new shell gate', () => {
   it('only uxMode.ts reads the settled switch', () => {

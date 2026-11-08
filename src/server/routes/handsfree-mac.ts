@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { carriesOwnOrigin } from '../owner-page.js';
+import { hasOwnerKey } from '../owner-key.js';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -11,7 +13,7 @@ import { isLoopback } from './agent-spawn-shared.js';
 import { AUTH_COOKIE } from '../network-auth.js';
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { listVaults } from '../../lib/vaults.js';
-import { superIndex } from '../../lib/super/store.js';
+import { isHandedOverChild, superEntry } from '../../lib/super/store.js';
 import { deviceIdHash, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, macHandsfreeAuth, onDeviceSessionsChanged, onMacSignIn } from '../handsfree-auth.js';
 import { isPhoneSocket, macExposedVaults, macPublicOrigin, setMacExposedVaults, setMacProbeNonce, setMacPublicOrigin } from '../phone-origin.js';
 import { setMacPhoneSource } from '../handsfree-login.js';
@@ -22,6 +24,8 @@ import { loadOrCreateVapid, sendPush, type VapidKeys } from '../../lib/handsfree
 import { PushStore, setVerifyPushOrigin, subscriptionRefusal } from '../../lib/handsfree/mac/push-store.js';
 import { PushNotifier, type PushNotifierDeps } from '../../lib/handsfree/mac/push-notifier.js';
 import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
+import { isMainWork, memberTurnOrigin } from '../../lib/super/inbox.js';
+import { memberNameOf } from '../../lib/assistant/notch-inbox.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import { MAC_THERMAL_STATES, type MacErrorCode, type MacThermalState } from '../../lib/handsfree/mac/contract.js';
@@ -309,7 +313,13 @@ export const handsfreeMacRoutes = {
     }
     sendJson(res, 200, await macSession().start({ vaults, ...(typeof b?.bagMode === 'boolean' ? { bagMode: b.bagMode } : {}) }));
   }, 5 * 60_000),
-  stop: guarded(async (_req, res) => { await macSession().stop(); sendJson(res, 200, macSession().status()); }),
+  // Every end is announced to the bot that started it (E3): the Mac panel's own page says
+  // "Mac'ten kapatıldı"; a request with no Origin is an HTTP stop, keyed only with the owner key.
+  stop: guarded(async (req, res) => {
+    const fromPanel = carriesOwnOrigin(req);
+    await macSession().stop({ reason: fromPanel ? 'mac' : 'http', keyed: fromPanel || hasOwnerKey(req) });
+    sendJson(res, 200, macSession().status());
+  }),
   qr: guarded(async (_req, res) => { sendJson(res, 200, { url: macSession().mintQr() }); }),
   password: guarded(async (_req, res) => { sendJson(res, 200, { passphrase: await macSession().setPassword() }); }),
   devices: guarded(async (_req, res) => { sendJson(res, 200, { devices: macSession().devices() }); }),
@@ -373,8 +383,13 @@ export function armPushNotifier(): PushNotifier {
     superSession: (vault) => {
       const v = listVaults().find((x) => x.name === vault);
       if (!v) return null;
-      const idx = superIndex(join(v.path, '_dream_context'));
+      const idx = superEntry(join(v.path, '_dream_context'));
       return idx.enabled && idx.session ? idx.session : null;
+    },
+    superChild: (id) => isHandedOverChild(id),
+    memberOf: (sid) => {
+      const name = memberNameOf(sid);
+      return name ? { name, mainWork: isMainWork(memberTurnOrigin(sid)) } : null;
     },
     send: (sub, payload) => (pushSendOverride ?? ((x, p) => sendPush(x, p, { vapid: macVapid(), contact: macPublicOrigin() ?? 'mailto:handsfree@dreamcontext.ai' })))(sub, payload),
   });

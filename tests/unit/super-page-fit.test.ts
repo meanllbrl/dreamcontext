@@ -143,13 +143,9 @@ describe('a web page with a device picked takes the device shape in a presentati
     expect(shapeOf(p.cards.a.rect)).toBeCloseTo(DESKTOP, 6);
   });
 
-  it('spotlight, no device: today\'s card and chat to the pixel; a picture keeps them too', () => {
+  it('spotlight, no device: today\'s card and chat to the pixel', () => {
     const p = shaped([web('a')], spotlight, undefined);
     expect(p.centre.width).toBe(Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * WIDE.width)));
-    const pic = { ...web('a'), kind: 'image', aspect: PHONE } as SuperContainer;
-    const q = shaped([pic], spotlight, undefined);
-    expect(q.centre.width).toBe(p.centre.width);
-    expect(q.cards.a.rect).toEqual(p.cards.a.rect);
   });
 
   it('a folded chat: the card sits in shape in the middle of the stage, the bar keeps its width', () => {

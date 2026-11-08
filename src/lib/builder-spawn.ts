@@ -1,3 +1,4 @@
+import { assertNotAppChat } from './apps/chat-store.js';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
@@ -60,6 +61,7 @@ export type SessionMode =
  * The session id comes first so a process listing always shows it, the prompt last.
  */
 export function builderArgv(prompt: string, mode: SessionMode, id: SpawnIdentity): string[] {
+  if (mode.kind !== 'new') assertNotAppChat(mode.kind === 'fork' ? mode.from : mode.sessionId);
   const session = mode.kind === 'new'
     ? ['--session-id', mode.sessionId]
     : mode.kind === 'fork'

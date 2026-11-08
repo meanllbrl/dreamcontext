@@ -91,7 +91,7 @@ describe('buildSoulBlock', () => {
 
 describe('site A: composePrompt', () => {
   const run = (m: AutomationManifest, ask?: string | null, task?: { slug: string; name: string } | null) =>
-    composePrompt(m, '/p', NOW, '/o.md', undefined, null, ask ?? null, null, task ?? null);
+    composePrompt(m, '/p', NOW, '/o.md', undefined, ask ?? null, null, task ?? null);
 
   it('puts the soul after the prompt and before THIS JOB and the pattern', () => {
     const text = run(manifest());

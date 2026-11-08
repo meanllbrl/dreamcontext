@@ -66,6 +66,10 @@ import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { getExistingReleases } from '../../lib/release-discovery.js';
 import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
+import { SuggestionError, type SuggestionInput } from '../../lib/priority-suggestion.js';
+import { objectiveLiveness, touchScoring } from '../../lib/scoring-work.js';
+import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { agentGuardRefuses } from '../../lib/owner-guard-cli.js';
 import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
 import { loadTaskOverride, loadStatuses, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
 import { isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
@@ -97,6 +101,7 @@ import {
   type TaskFilter,
   type GroupBy,
 } from '../../lib/task-query.js';
+import { agentSessionId, inAgentSession } from '../../lib/session-id.js';
 
 function getStateDir(): string {
   const root = ensureContextRoot();
@@ -1059,7 +1064,8 @@ export function registerTasksCommand(program: Command): void {
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
     .option('--clear', 'Clear all RICE values on this task')
-    .action(async (name: string, opts: { reach?: string; impact?: string; confidence?: string; effort?: string; clear?: boolean }) => {
+    .option('--owner', 'The owner asked for this change in the conversation (needed to change an existing value from an agent session)')
+    .action(async (name: string, opts: { reach?: string; impact?: string; confidence?: string; effort?: string; clear?: boolean; owner?: boolean }) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
@@ -1071,6 +1077,20 @@ export function registerTasksCommand(program: Command): void {
       const existing = task.rice;
 
       const hasFlag = opts.reach !== undefined || opts.impact !== undefined || opts.confidence !== undefined || opts.effort !== undefined;
+
+      // An agent never overwrites an owner score: from an agent session, changing a
+      // RICE field that already holds a value needs --owner (the owner said so).
+      // Suggestions go through `tasks suggest`. This guard only sees CLAUDE_CODE_SESSION_ID.
+      if (agentGuardRefuses(
+        existing,
+        { reach: opts.reach, impact: opts.impact, confidence: opts.confidence, effort: opts.effort },
+        !!opts.clear,
+        !!opts.owner,
+      )) {
+        error(`Refused (owner_scored): ${slug} already has owner RICE values. Use \`dreamcontext tasks suggest ${slug} …\` to propose values, or --owner only when the owner asked for this change.`);
+        process.exitCode = 1;
+        return;
+      }
 
       if (opts.clear) {
         if (hasFlag) {
@@ -1113,6 +1133,50 @@ export function registerTasksCommand(program: Command): void {
       await backend.updateFields(slug, { rice: next, updated_at: today() });
       const scoreStr = next?.score === null || next?.score === undefined ? '— (incomplete)' : String(next.score);
       success(`RICE updated on ${slug} — score: ${scoreStr}`);
+    });
+
+  // Suggest RICE values and/or an objective link (the owner accepts on the priority board)
+  tasks
+    .command('suggest')
+    .argument('<name>', 'Task slug or name')
+    .description('Suggest RICE values and/or an objective link for a task; the owner accepts, edits or dismisses it on the Roadmap. Never overwrites owner values.')
+    .option('--reach <n>', 'Suggested reach (integer 1–10)')
+    .option('--impact <n>', 'Suggested impact (integer 1–5)')
+    .option('--confidence <n>', 'Suggested confidence (25, 50, 75, or 100)')
+    .option('--effort <n>', 'Suggested effort in weeks (> 0, ≤ 52)')
+    .option('--objective <slug>', 'Suggested objective link (a live, not-done objective)')
+    .option('--no-objective', 'Verdict: no live objective fits this task')
+    .option('--why <text>', 'One sentence: why these values (required, ≤ 280 chars)')
+    .option('--again', 'Re-suggest after the owner dismissed the last suggestion (only when asked to re-score)')
+    .action(async (name: string, opts: {
+      reach?: string; impact?: string; confidence?: string; effort?: string;
+      objective?: string | false; why?: string; again?: boolean;
+    }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const root = ensureContextRoot();
+      const input: SuggestionInput = { why: opts.why };
+      const num = (v: string | undefined): number | undefined => (v === undefined ? undefined : Number(v));
+      if (opts.reach !== undefined) input.reach = num(opts.reach);
+      if (opts.impact !== undefined) input.impact = num(opts.impact);
+      if (opts.confidence !== undefined) input.confidence = num(opts.confidence);
+      if (opts.effort !== undefined) input.effort = num(opts.effort);
+      if (typeof opts.objective === 'string') input.objective = opts.objective.trim();
+      if (opts.objective === false) input.no_objective = true;
+      try {
+        const liveness = objectiveLiveness(buildRoadmapModel(root));
+        await backend.suggestPriority(slug, input, liveness, { again: !!opts.again });
+        touchScoring(root);
+        success(`Suggestion stored on ${slug} — the owner accepts or dismisses it on the Roadmap.`);
+      } catch (err) {
+        if (err instanceof SuggestionError) {
+          error(err.message);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
     });
 
   // Delete a task (remote backends propagate the deletion on sync)
@@ -1244,7 +1308,7 @@ export function registerTasksCommand(program: Command): void {
         declinedAt: new Date().toISOString(),
         reason,
         // Best-effort provenance: an unset env records nobody rather than a placeholder.
-        ...(process.env.CLAUDE_CODE_SESSION_ID ? { session: process.env.CLAUDE_CODE_SESSION_ID } : {}),
+        ...(agentSessionId() ? { session: agentSessionId()! } : {}),
       });
       success(existing ? `Decline updated: ${key}` : `Declined: ${key}`);
       info(`No sleep cycle will re-file this. If the decision changes: dreamcontext tasks undecline ${key}`);
@@ -1665,7 +1729,7 @@ export function registerTasksCommand(program: Command): void {
         as,
         target,
         note,
-        by: process.env.CLAUDE_CODE_SESSION_ID ? 'agent' : 'owner',
+        by: inAgentSession() ? 'agent' : 'owner',
         via: 'agent',
         ...(opts.resume ? { resume: opts.resume } : {}),
       });

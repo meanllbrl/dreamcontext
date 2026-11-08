@@ -1,29 +1,30 @@
+import { useEmbed } from '../embed/embedMode';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
-import { useRemoteDesktop } from '../../hooks/useIsMobile';
+import { useIsMobile, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
-import { useApi, useVault } from '../../context/VaultContext';
+import { useApi, useVaultId } from '../../context/VaultContext';
 import { useAgentGoalLive, useHeadlessTeammates, useTaskProgress } from '../../hooks/useAgentCapabilities';
 import { normalizeGoalLive } from '../../lib/goalLive';
 import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
-import type { ChatAgentPick } from './chat/ComposerMenus';
+import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
 import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
+  nextStickToBottom, nextComposerFolded, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
   isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
-import { isDreamcontextCommand } from './chat/dreamCommand';
+import { isDreamcontextCommand, teamDoneRepeats, teamDoneText } from './chat/dreamCommand';
 import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/toolAction';
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
@@ -31,6 +32,7 @@ import { ItemView } from './chat/TranscriptItem';
 import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
+import { AppChatContext } from './chat/appChatContext';
 import { PermissionCard } from './chat/PermissionCard';
 import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
@@ -42,7 +44,7 @@ import { BrowserHostProvider, lastBrowserToolId } from './chat/browserHost';
 import { PeerSessionHolder } from './chat/PeerSessionCard';
 import { usePeerMentions } from '../../hooks/usePeerMentions';
 import type { PeerMention } from '../../lib/agentComposer';
-import { PinShelf } from './chat/PinShelf';
+import { CheckoutChips, PinShelf } from './chat/PinShelf';
 import { ChatFindBar } from './chat/ChatFindBar';
 import { isFindChord } from './chat/findInChat';
 import { useShelf } from './chat/useShelf';
@@ -74,11 +76,16 @@ import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, requestTurnOf, type SuperEventGroup } from './super/superHandover';
+import { SuperRequestBlock } from './super/MemberStage';
+import { memberSuperId } from './super/memberStageModel';
+import { chatAgentFor } from '../../lib/chatAgentBinding';
+import type { SuperId } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
+import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
@@ -649,9 +656,9 @@ interface PdfState { path: string; label?: string }
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, onAccountChange,
   taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
+  permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, feed, sendVia, quietResume = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -689,6 +696,8 @@ export function ChatPane({
   /** The composer's agent picker. Optional: a host that fixes the agent (a whiteboard card)
    *  or has none to offer omits it, and the menu draws no Agent section. */
   onAgentPick?: (agent: ChatAgentPick | null) => void;
+  /** Claude / Codex in the composer's model menu (Track T W1). */
+  toolPick?: ToolPick;
   /** A `develop` action button asked to hand this plan off. Opens a NEW Develop session
    *  carrying the slug and closes this tab (AgentSurface's `handoffToDevelop`). */
   onHandoffToDevelop: (taskSlug: string) => void;
@@ -707,7 +716,7 @@ export function ChatPane({
    *  link, which needs a Shell-level listener outside this task's file ownership. Omitted
    *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
    *  the button on `reference.appNav` existing at all). */
-  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
+  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => void;
   /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
    *  (this engine is headless; it answers `/login` with "isn't available in this environment").
    *  Fires from the SignInBanner and from typing `/login` into the composer. A conversation on
@@ -731,18 +740,26 @@ export function ChatPane({
   agentBound?: boolean;
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
+  /** A member's phone mirror (an ordinary chat mode, never bound to the member): whose Super it
+   *  shows, so its unread marks are the member's, never main's. */
+  superMember?: string;
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
    *  and writes only to the Super Agent, so the composer is replaced by one line saying so.
    *  'finished': a child with no process left, drawn from its transcript (transcriptSession.ts). */
-  readOnly?: boolean | 'finished';
+  readOnly?: boolean | 'finished' | 'silent';
   /** One line right above the composer, never over it (the phone's waiting toast, W3). */
   aboveComposer?: React.ReactNode;
+  /** The message goes here instead of this session: a run the owner continues. */
+  sendVia?: (message: string) => boolean;
+  /** Woken from a park: the replayed history carries no "resumed" divider (parking is never shown). */
+  quietResume?: boolean;
   /** An agent's PAST sessions drawn above this conversation (the AI Team stage, chatFeed.ts):
    *  read-only rows at the head of the window. Absent (every Chat tab): exactly as before. */
   feed?: ChatFeed;
 }) {
   // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2).
   const remoteDesktop = useRemoteDesktop();
+  const isPhone = useIsMobile();
   const [, force] = useReducer((n: number) => n + 1, 0);
   // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
   // session at most once a second and catches up the moment it is shown (hiddenRenderGate.ts).
@@ -751,7 +768,7 @@ export function ChatPane({
     const off = session.subscribe(gate.notify);
     return () => { off(); gate.dispose(); };
   }, [session]);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const api = useApi();
 
   const conv = session.getModel();
@@ -768,6 +785,16 @@ export function ChatPane({
   // question twice is how those two drift apart.
   const shelf = useShelf(session, vault);
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
+  /** A permission card waits on the owner: the Super view's live steps line says so. */
+  const waitingOnOwner = conv.pending.some((p) => p.kind === 'permission');
+  /** The Super view's landed runs the owner opened from their answer's "steps" link, by run key
+   *  (the run's last item, which a reveal of older entries never moves). */
+  const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleSteps = useCallback((key: string) => setOpenSteps((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  }), []);
   const askRouting = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
   /**
@@ -793,6 +820,9 @@ export function ChatPane({
   // expands one with a click. The phone's mirror folds too, from the Mac's digest (PhoneAgenda).
   // Any other chat has no context and draws nothing new.
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
+  /** Whose Super this chat is: a member's (`m:<slug>`, its chat is bound to that member) or main's. */
+  const paneMember = superMember || (session.mode === 'super' ? chatAgentFor(session.claudeId) : '');
+  const paneSuperId: SuperId = paneMember ? memberSuperId(paneMember) : 'main';
   const { t } = useI18n();
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
@@ -864,6 +894,8 @@ export function ChatPane({
   const restoreTopRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
+  /** The reader has scrolled up: the phone's composer folds (`nextComposerFolded`). */
+  const [composerFolded, setComposerFolded] = useState(false);
 
   /** In-flight re-assert frame, so a burst of pins during a stream schedules ONE. */
   const repinFrameRef = useRef(0);
@@ -915,6 +947,8 @@ export function ChatPane({
   const setStick = useCallback((next: boolean) => {
     stickRef.current = next;
     setPinned((prev) => (prev === next ? prev : next));
+    // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
+    if (next) setComposerFolded(false);
   }, []);
 
   // A scroll event carries no hint of what caused it, and the transcript is a surface whose
@@ -1160,9 +1194,19 @@ export function ChatPane({
     // — a task created, a status moved, knowledge written — and folding them into a collapsed
     // "12 steps" header hides the one class of row whose object the reader most needs to see.
     // Everything the run card was built for still holds for the reads and greps around them.
-    if (isDreamcontextCommand(bashCommand(item) ?? undefined)) return false;
+    //
+    // The Super view is the exception (owner 2026-11-06, draft A): there nearly every step IS a
+    // dreamcontext call, so this rule left a routine turn as seven cards above a two-line
+    // answer. There the whole stretch folds into one quiet line (`SuperStepsLine`) whose chip
+    // opens the same rows, and a failed step still stands under it in full. Only a member's
+    // answer to Super (`super team done`, drawn as a quote) keeps its own place.
+    const command = bashCommand(item) ?? undefined;
+    if (superView) return teamDoneText(command) === null;
+    if (isDreamcontextCommand(command)) return false;
     return true;
   };
+  /** In the Super view one step is already a run: the quiet line replaces every step card. */
+  const minToolRun = superView ? 1 : MIN_TOOL_RUN;
 
   // What renders as NOTHING (owner report 08-02) — the other half of `isPlainToolCard`, and
   // the reason grouping looked broken in the field. A thinking model opens a thinking block
@@ -1186,7 +1230,12 @@ export function ChatPane({
   const rendersNothing = (item: ChatItem): boolean => {
     // A party placed by time after this entry draws its card here, whatever the entry is.
     if (partyByAnchor.has(item.id)) return false;
-    if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
+    // The Super view draws no thinking at all (owner 2026-11-07, "hani nerede?"). What the CLI
+    // streams as thinking is a SUMMARY written by another model: it paraphrases the Super's own
+    // words and can carry the summarizer's note ("Bu üç blok da Claude'un kendi önceki metni…",
+    // Tilki transcript a4d8d7cb line 832). Shown, it read as the Super's answer while the real
+    // one was never written. Only the Super's text reaches the owner; the live line says "Thinking".
+    if (item.kind === 'thinking') return superView || !item.text; // ThinkingBlock's own null branch
     if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
     // A teammate registered on a bookkeeping call (`goal-live actor --session`, the one call
     // that names a detached builder's id) gets its party card THERE: the check above.
@@ -1245,7 +1294,7 @@ export function ChatPane({
       : i < feedLen + conv.history.length ? conv.history[i - feedLen] : conv.items[i - feedLen - conv.history.length]),
     isGroupable: isPlainToolCard,
     rendersNothing,
-    minRun: MIN_TOOL_RUN,
+    minRun: minToolRun,
   };
   // The CARD floor: how far back the following window has to reach for the transcript to hold
   // WINDOW_TAIL_CARDS things the reader can see. In an ordinary conversation this stops after
@@ -1531,15 +1580,17 @@ export function ChatPane({
     const layer = replyLinesRef.current;
     if (!inner || !layer) return;
     const base = inner.getBoundingClientRect().top;
-    const spans = new Map<string, { top: number; bottom: number }>();
+    const spans = new Map<string, { top: number; bottom: number; n: number }>();
     for (const el of Array.from(inner.querySelectorAll<HTMLElement>(':scope > [data-reply-strip], :scope > [data-reply-grp]'))) {
       const id = el.dataset.replyStrip ?? el.dataset.replyGrp ?? '';
       const r = el.getBoundingClientRect();
       if (!id || r.height === 0) continue;
       const span = spans.get(id);
-      spans.set(id, { top: Math.min(span?.top ?? Infinity, r.top - base), bottom: Math.max(span?.bottom ?? -Infinity, r.bottom - base) });
+      spans.set(id, { top: Math.min(span?.top ?? Infinity, r.top - base), bottom: Math.max(span?.bottom ?? -Infinity, r.bottom - base), n: (span?.n ?? 0) + 1 });
     }
-    const lines = [...spans.values()];
+    // A line joins the pieces of one answer group. A group that is one piece (a lone answer once
+    // its steps were put away, owner 2026-11-06) joins nothing, so it draws no line.
+    const lines = [...spans.values()].filter((l) => l.n > 1);
     while (layer.childElementCount > lines.length) layer.lastElementChild?.remove();
     while (layer.childElementCount < lines.length) layer.appendChild(document.createElement('div')).className = 'chat-reply-line';
     lines.forEach((l, i) => {
@@ -1906,7 +1957,7 @@ export function ChatPane({
       requestAnimationFrame(() => session.focus());
     },
   };
-  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
+  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards' | 'apps', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
   }, [onOpenAppPage]);
@@ -1943,6 +1994,11 @@ export function ChatPane({
         // THIS pane owns — it closes this pane and opens another — so it is the surface's
         // call, not ours; we only forward the slug the plan agent named.
         onHandoffToDevelop(action.id!);
+        break;
+      case 'app-install':
+        // The Apps page, on this repo: its install sheet when the repo is shared with this
+        // account, a plain "ask the publisher" note when not. Installing is the owner's click there.
+        handleNavApp('apps', `install:${action.repo!}`);
         break;
     }
   }, [handleNavApp, handleOpenFile, session, api, onHandoffToDevelop]);
@@ -1999,6 +2055,9 @@ export function ChatPane({
         explain={p.id === firstJudgePartyId}
         peers={peers}
         onDrillIn={handleDrillIn}
+        // One sub-agent stops alone on Claude (`stop_task`). T3's Codex and Antigravity adapters
+        // have no such call, so there Stop ends the whole turn and the row gets no button.
+        onStop={session.tool === 'codex' || session.tool === 'antigravity' ? undefined : handleStopShell}
         // The rail pins over ONE card: the one its chips summarize.
         rootRef={p === railParty ? setSubAgentCardEl : undefined}
         highlightRunId={jumped?.id ?? null}
@@ -2008,6 +2067,12 @@ export function ChatPane({
   };
 
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
+  /** Filled once the slices are known (below), read when the items are drawn. */
+  let doneRepeats = new Set<string>();
+  /** Super view: answer id -> the landed run put away behind its "steps" link (filled below). */
+  const stepsHost = new Map<string, string>();
+  const hostedRuns = new Set<string>();
+  const runKeyOf = (items: readonly ChatItem[]) => items[items.length - 1].id;
 
   const itemNode = (item: ChatItem, stretch: Stretch, accruing = false): React.ReactNode => {
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
@@ -2031,8 +2096,22 @@ export function ChatPane({
           </SuperRecapCard>
         );
       }
+      // Main Super's request (or its answer) on a member's stage: framed, in full (plan-r10 1).
+      // Stored (its fenced text) or live (the chip's item, its text from the member's record).
+      const request = requestTurnOf(item.text, superCtx?.requests);
+      if (request) return <SuperRequestBlock key={item.id} turn={request} itemId={item.id} />;
       if (group && superCtx) {
-        return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        const line = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        // A member's turn for main Super: marked "Super için" (never the owner's to answer).
+        if (group.batch && superCtx.mainBatches?.includes(group.batch)) {
+          return (
+            <div key={item.id} className="super-for-main-turn" data-testid="super-for-main">
+              <span className="super-for-main">{t('superStage.member.forSuper')}</span>
+              {line}
+            </div>
+          );
+        }
+        return line;
       }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
@@ -2047,6 +2126,7 @@ export function ChatPane({
     if (item.kind === 'user' && superView && parseSuperAnswer(item.text)) {
       return <SuperAnswerReceipt key={item.id} text={item.text} itemId={item.id} />;
     }
+    if (item.kind === 'text' && doneRepeats.has(item.id)) return null;
     const shape = shapeOf(item);
     switch (shape.draw) {
       case 'nothing': return null;
@@ -2077,6 +2157,9 @@ export function ChatPane({
         onReplyJump={superView ? handleReplyJump : undefined}
         replyHeads={replyHeads?.get(item.id)}
         onReplyTarget={superView ? handleReplyTarget : undefined}
+        stepsKey={stepsHost.get(item.id)}
+        stepsOpen={stepsHost.has(item.id) && openSteps.has(stepsHost.get(item.id)!)}
+        onToggleSteps={toggleSteps}
       />
     );
     if (!shape.parties.length && !shape.guarded) return view;
@@ -2096,6 +2179,8 @@ export function ChatPane({
    *  transcript is the lead's; a teammate's own steps live in its drill-in. */
   const probesOf = (seg: RunSegment<ChatItem>, accruing: boolean): StretchProbe[] => {
     if (seg.kind === 'run') {
+      // The Super view's quiet line carries no avatar: it ends a stretch like any other block.
+      if (superView) return [{ key: `run:${seg.items[0].id}`, step: false, invisible: false, actor: 'lead', running: false }];
       const running = accruing || seg.items.some((it) => it.kind === 'tool' && it.status === 'running');
       return [{ key: `run:${seg.items[0].id}`, step: true, invisible: false, actor: 'lead', running }];
     }
@@ -2123,6 +2208,21 @@ export function ChatPane({
   // pass). See the helper's own doc for why the accruing tail keys off its head instead.
   const renderSegment = (seg: RunSegment<ChatItem>, accruing: boolean, stretches: Map<string, NonNullable<Stretch>>): React.ReactNode => {
     if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id), accruing);
+    if (superView) {
+      return (
+        <SuperStepsLine
+          key={`run-${toolRunKeyItem(seg.items, accruing).id}`}
+          items={seg.items as ChatToolItem[]}
+          stillAccruing={accruing}
+          hidden={hostedRuns.has(runKeyOf(seg.items))}
+          open={openSteps.has(runKeyOf(seg.items))}
+          waiting={accruing && waitingOnOwner}
+          startedAt={conv.turnStartedAt}
+          onOpenFile={handleOpenFile}
+          replyGroup={replyMap?.get(seg.items[0].id)?.groupId}
+        />
+      );
+    }
     const stretch = stretches.get(`run:${seg.items[0].id}`);
     return (
       <ToolRunCard
@@ -2162,7 +2262,10 @@ export function ChatPane({
     let kept = piece;
     let drawn = piece;
     if (superCtx) {
-      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
+      // A request turn's answer is the member's reply to main Super: drawn, never folded away.
+      const requests = piece.filter((it) => it.kind === 'user' && requestTurnOf((it as { text?: string }).text, superCtx.requests) !== null).map((it) => it.id);
+      const expanded = requests.length ? new Set([...openEvents, ...requests]) : openEvents;
+      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded });
       for (const [k, g] of folded.groups) superGroups.set(k, g);
       const inCard = new Set<string>();
       for (const [k, g] of folded.groups) {
@@ -2170,7 +2273,7 @@ export function ChatPane({
         const ids = new Set(g.folded);
         for (const id of ids) inCard.add(id);
         const body = piece.filter((it) => ids.has(it.id));
-        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
       }
       kept = folded.kept;
       const keptIds = new Set(kept.map((it) => it.id));
@@ -2182,7 +2285,9 @@ export function ChatPane({
   };
   const historySlice = conv.history.slice(historyFrom);
   const liveSlice = conv.items.slice(itemsFrom);
-  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  // The member's closing words that repeat its answer to the Super Agent: drawn once (plan r4 E4).
+  doneRepeats = teamDoneRepeats([...historySlice, ...liveSlice] as never);
+  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem);
   // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
   // the newest message: the turns that followed belong below them (owner, 2026-10-10). The
   // live slice is cut at each one's place and segmented piece by piece, so a tool run never
@@ -2225,7 +2330,7 @@ export function ChatPane({
       notices.push({
         key: 'account-switch',
         cut,
-        node: <AccountSwitchBanner key="notice-account-switch" move={conv.accountSwitch} onDismiss={session.dismissAccountSwitch} />,
+        node: <AccountSwitchBanner key="notice-account-switch" move={conv.accountSwitch} onDismiss={session.dismissAccountSwitch} tool={session.tool === 'codex' ? 'codex' : ''} />,
       });
     }
   }
@@ -2251,11 +2356,11 @@ export function ChatPane({
   const liveSegments: RunSegment<ChatItem>[] = [];
   let pieceFrom = 0;
   for (const n of notices) {
-    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
     pieceFrom = Math.max(pieceFrom, n.cut);
     noticesAt.set(liveSegments.length, [...(noticesAt.get(liveSegments.length) ?? []), n]);
   }
-  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem));
   const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
     .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
   // One item asked twice across pieces: only its latest call is live (pieces are placed in
@@ -2288,6 +2393,29 @@ export function ChatPane({
     liveTail -= 1;
   }
   const accruingAt = (i: number) => i === liveTail && session.busy;
+  /** The Super view's live steps line is the turn's tail: it already says the turn is running,
+   *  with its clock, so no separate Working pill is drawn under it (owner 2026-11-07). */
+  const superLineLive = superView && liveTail >= 0 && liveSegments[liveTail].kind === 'run' && accruingAt(liveTail);
+  // A LANDED turn's steps in the Super view (owner 2026-11-06): once the answer is written the
+  // quiet line goes away and only the answer stays; a faint "steps" link on the answer's hover
+  // opens the rows again. Only a run whose next visible thing IS that answer is put away: with
+  // nothing to hang the link on (a turn that ended on a card, or on more steps) the chip stays.
+  for (const [segs, accruing] of [[historySegments, () => false], [liveSegments, accruingAt]] as const) {
+    if (!superView) break;
+    segs.forEach((seg, i) => {
+      if (seg.kind !== 'run' || accruing(i) || seg.items.some((it) => it.kind === 'tool' && it.status === 'running')) return;
+      // The run that holds the live browser keeps its line: the window must never vanish.
+      if (browserHostToolId && seg.items.some((it) => it.id === browserHostToolId)) return;
+      let j = i + 1;
+      while (j < segs.length && segs[j].kind === 'single' && rendersNothing((segs[j] as { item: ChatItem }).item)) j += 1;
+      const next = segs[j];
+      // An answer that draws nothing (whitespace only) cannot carry the link: the chip stays.
+      if (!next || next.kind !== 'single' || next.item.kind !== 'text' || !next.item.text?.trim() || doneRepeats.has(next.item.id)) return;
+      const key = runKeyOf(seg.items);
+      stepsHost.set(next.item.id, key);
+      hostedRuns.add(key);
+    });
+  }
   // Reply strips (owner 2026-10-23, pick 1A): ONE per answer group, its own transcript row,
   // before the first segment of the group this render SHOWS (a group cut by the window edge,
   // the history divider or a notice still gets exactly one). Decided once, in reading order,
@@ -2378,12 +2506,16 @@ export function ChatPane({
   // when the CLI exits on a failed-auth turn "Session ended · Resume" would send the user
   // round the same loop forever. The missing credential is the real state to report.
   const needsSignIn = !!conv.authRequired;
+  /** The Composer is what draws under the shelf: the negation of every banner branch below, in
+   *  the same order. The checkout chip rides in its bottom row only then. */
+  const composerDrawn = !needsSignIn && !session.handedOver && !(session.takenOver && !remoteDesktop)
+    && !ended && !hitlPending && !readOnly;
 
   // The turn is in flight but the transcript has nothing to show for it yet — before the
   // CLI's first frame (spawn + SessionStart brain preload), or in a gap between a tool
   // result and the next block. Without this the pane looks idle while it is working.
   const working = !ended && session.busy
-    && !turnHasVisibleProgress(conv.items, conv.pending.length);
+    && !turnHasVisibleProgress(conv.items, conv.pending.length, !superView);
   const isEmpty = !working
     && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0
     && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
@@ -2439,6 +2571,7 @@ export function ChatPane({
             onClick={() => feed.onBoundary(meta)}
           >
             {feed.labels.boundary(meta)}
+            <span className="chat-feed-boundary-go" aria-hidden>›</span>
           </button>,
         );
         if (meta.missing) feedNodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
@@ -2451,9 +2584,12 @@ export function ChatPane({
         }
       }
       if (!meta.empty) {
-        feedNodes.push(
-          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />,
-        );
+        const said = it.kind === 'text' ? feed.labels.note(meta) : null;
+        const row = <ItemView key={it.id} item={said !== null ? { ...it, text: said } : it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />;
+        feedNodes.push(meta.origin === 'failure' ? <div key={it.id} className="chat-feed-failure" data-feed-failure>{row}</div> : row);
+      }
+      if (marks.last && meta.sessionKind === 'run' && feed.runFoot) {
+        feedNodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta)}</Fragment>);
       }
       if (feedRunWorking(meta, marks)) {
         feedNodes.push(
@@ -2529,10 +2665,13 @@ export function ChatPane({
     // The view is null once taken back: the record is gone then, and the session may stay.
     enabled: !!superView && !!superQuestionView,
     vault: vault ?? null,
+    // A member's Super chat (mode super, bound to its member): its own marks and its own count.
+    superId: paneSuperId,
     api,
     items: unreadItems,
     fold: !!superCtx,
     ownerBatches: superCtx?.ownerBatches ?? NO_BATCHES,
+    mainBatches: superCtx?.mainBatches ?? NO_BATCHES,
     openQuestions: superQuestionView?.open ?? NO_QUESTIONS,
     scrollRef,
     contentRef,
@@ -2593,7 +2732,9 @@ export function ChatPane({
     if (lastUserItem) session.send(lastUserItem.text);
   };
 
+  const inAppFrame = useEmbed();
   return (
+    <AppChatContext.Provider value={!!session.appChat || !!inAppFrame}>
     <div className="chat-pane" ref={paneRef} data-status={session.status}>
       {!bare && (
         <ChatLiveRail
@@ -2621,6 +2762,7 @@ export function ChatPane({
               userDriven: userDriving(),
             };
             if (!jumpHeldRef.current) setStick(nextStickToBottom(stickRef.current, metrics));
+            setComposerFolded((prev) => nextComposerFolded(prev, stickRef.current, metrics));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
@@ -2779,7 +2921,7 @@ export function ChatPane({
             {showsHistory && (
               <>
                 {historyNodes}
-                {!feed && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
+                {!feed && !quietResume && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
               </>
             )}
             {liveNodes}
@@ -2812,9 +2954,17 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
-            {working && (
+            {working && !superView && (
               <WorkingIndicator
-                label={session.opened ? 'Working…' : 'Starting Claude…'}
+                label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'}
+                startedAt={conv.turnStartedAt}
+              />
+            )}
+            {/* The Super view never pops a Working pill (owner 2026-11-07): the live steps line
+                carries the clock, and with no steps line yet the same quiet line stands in. */}
+            {working && superView && !superLineLive && (
+              <SuperLiveLine
+                label={session.opened ? undefined : t('super.steps.starting').replace('{tool}', session.tool === 'codex' ? 'Codex' : session.tool === 'antigravity' ? 'Antigravity' : 'Claude')}
                 startedAt={conv.turnStartedAt}
               />
             )}
@@ -2894,7 +3044,9 @@ export function ChatPane({
           at all when it holds nothing (no zero-height strip), and one bare tag line at rest.
           `shelved` is the same question as the shell's own `has-rows`, which is why it comes
           off the shelf handle rather than being computed twice. */}
-      {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />}
+      {/* The checkout chip moves into the composer's bottom row whenever the composer is the
+          one drawn below (owner 2026-11-07); a banner in its place leaves the chip here. */}
+      {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} checkoutInComposer={composerDrawn} />}
       {/* An outdated or failed-to-update Claude Code CLI: one line above the composer, never in
           place of it (older CLIs run older models, which is worth knowing, not worth blocking). */}
       {!bare && <ClaudeUpdateChatNotice />}
@@ -2917,7 +3069,7 @@ export function ChatPane({
         // there is no bypass to close and "Resume" is still the right offer. This branch
         // only fires while the resumed run is actually live.
         <AutomationQuestionComposerLock />
-      ) : readOnly ? (
+      ) : readOnly === 'silent' ? null : readOnly ? (
         <SuperReadOnlyLine finished={readOnly === 'finished'} />
       ) : (
         <>
@@ -2926,13 +3078,16 @@ export function ChatPane({
         {session.takenOver && <TakenOverBanner onPhone writeTakes onTakeBack={() => void session.takeBack()} />}
         <Composer
           session={session}
+          folded={isPhone && composerFolded}
+          onFieldTap={isPhone ? goToLatest : undefined}
           model={model}
           effort={effort}
           modelConfig={modelConfig}
           onModelChange={onModelChange}
           onEffortChange={onEffortChange}
           activeAccountId={runningAccountId}
-          onAccountChange={onAccountChange}
+          // An agent's chat follows the default account: no row there could switch it.
+          onAccountChange={agentBound ? undefined : onAccountChange}
           contextHandoff={conv.contextHandoff}
           onContextHandoffChange={session.setContextHandoff}
           busy={session.busy}
@@ -2962,15 +3117,19 @@ export function ChatPane({
           onPermissionModeChange={bare || agentBound ? undefined : onPermissionModeChange}
           mode={mode}
           // The Super Agent's own chat has no mode menu and no agent picker: only the owner's
-          // Take it back leaves the mode (plan-r7 D4b), and it is always Claude in the cape.
+          // Take it back leaves the mode (plan-r7 D4b). It is always Claude in the cape: the
+          // model picker stays, with the other tools locked (ChatPaneHost's `toolPick`).
           onModeChange={bare || agentBound || mode === 'super' ? undefined : onModeChange}
           agent={session.agent}
           onAgentPick={bare || agentBound || mode === 'super' ? undefined : onAgentPick}
+          toolPick={bare ? undefined : toolPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
+          sendVia={sendVia}
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
+          checkoutChip={bare ? undefined : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
           // The Super view: a ↩ drops a reference chip into the text (several per message); a
           // reply chip's "Go to message" lands on the message it names.
           superView={superView}
@@ -3041,5 +3200,6 @@ export function ChatPane({
       {pdf && <PdfViewer path={pdf.path} label={pdf.label} onClose={() => setPdf(null)} />}
       {boardFull && <BoardFullscreen path={boardFull} onClose={() => setBoardFull(null)} />}
     </div>
+    </AppChatContext.Provider>
   );
 }

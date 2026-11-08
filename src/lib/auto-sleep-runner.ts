@@ -1,3 +1,8 @@
+import { toolRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
+import { toolText } from './tool-text.js';
+import { bridgeNode } from './t3-bridge/node-floor.js';
+import { linkedWritableRoots } from './t3-bridge/roots.js';
+import { noteSleepRunCost } from './usage-records.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { killPortable, recordedChildIsOurs } from './proc.js';
@@ -83,6 +88,9 @@ function readEpoch(contextRoot: string): string | null {
 }
 
 export interface RunAutoSleepOptions {
+  /** `codex` or `antigravity` runs the cycle there (`sleep auto-run --tool <tool>`), the tool the
+   *  chat that triggered it ran on. Absent = Claude, unchanged. */
+  tool?: HeadlessTool;
   /** Injected in tests so nothing actually spawns. */
   execImpl?: typeof executeClaudeDetached;
   /** `link` is the `dreamcontext://` link to this project's Sleep page, or null when the
@@ -134,19 +142,31 @@ export async function runAutoSleep(
     // The hands-off list is captured NOW, at dispatch — the set of tasks the
     // user is holding as the cycle begins.
     const handsOff = activeTaskSet(contextRoot, Date.now());
-    const prompt = sanitizeAutomationPrompt(buildAutoSleepPrompt(handsOff));
+    // Our text, in the words of the tool that reads it: its own sub-agent tool, never Claude's.
+    const prompt = sanitizeAutomationPrompt(opts.tool ? toolText(buildAutoSleepPrompt(handsOff), opts.tool) : buildAutoSleepPrompt(handsOff));
 
     const startedAt = now();
     const epochAtSpawn = readEpoch(contextRoot);
 
+    // Another tool (docs/tool-parity.md): one turn, its own sub-agents (Codex roles, Antigravity
+    // roles), and the brain's MCP verbs as the write path outside the project. Codex runs in its
+    // sandbox; Antigravity's bridge answers each request once its write gate has run.
+    const codexNode = opts.tool ? bridgeNode() : null;
+    const codexCli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+    if (opts.tool && (!codexNode || !codexCli)) {
+      return { started: false, status: 'refused', detail: `${opts.tool === 'antigravity' ? 'Antigravity' : 'Codex'} needs Node 22.16 or newer on this Mac.` };
+    }
     const execution = await exec(
-      [
-        '-p', prompt,
-        '--permission-mode', 'bypassPermissions',
-        '--output-format', 'json',
-        '--disallowedTools', AUTO_SLEEP_DISALLOWED_TOOLS,
-      ],
+      codexNode && opts.tool
+        ? toolRunArgs({ tool: opts.tool, surface: 'sleep', prompt, extraRoots: linkedWritableRoots(projectRoot) })
+        : [
+          '-p', prompt,
+          '--permission-mode', 'bypassPermissions',
+          '--output-format', 'json',
+          '--disallowedTools', AUTO_SLEEP_DISALLOWED_TOOLS,
+        ],
       {
+        ...(codexNode ? { command: { file: codexNode, prefix: [codexCli] } } : {}),
         cwd: projectRoot,
         timeoutMs: AUTO_SLEEP_TIMEOUT_MS,
         // DREAMCONTEXT_AUTO_SLEEP is the guard that stops this session's own
@@ -234,6 +254,7 @@ export async function runAutoSleep(
       return { started: true, status: 'failed', detail: tail, sessionId: result?.sessionId ?? null };
     }
 
+    noteSleepRunCost(contextRoot, result.sessionId, result.costUsd);
     const summary = (result.result ?? '').trim();
     patchAutoSleepSidecar(contextRoot, {
       status: 'ok',

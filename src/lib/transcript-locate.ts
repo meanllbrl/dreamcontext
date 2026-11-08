@@ -19,6 +19,7 @@ import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { resolveAgentSession } from './agent-session-map.js';
+import { antigravityTranscriptsDir } from './antigravity-conversation.js';
 import { listVaults } from './vaults.js';
 import { canonicalPath } from './paths.js';
 
@@ -180,8 +181,7 @@ export function findTranscriptBySessionId(ids: string[], home: string = homedir(
   if (wanted.length === 0) return null;
   try {
     const base = join(home, '.claude', 'projects');
-    if (!existsSync(base)) return null;
-    const dirs = readdirSync(base);
+    const dirs = existsSync(base) ? readdirSync(base) : [];
     for (const id of wanted) {
       for (const dir of dirs) {
         const p = join(base, dir, `${id}.jsonl`);
@@ -190,6 +190,11 @@ export function findTranscriptBySessionId(ids: string[], home: string = homedir(
     }
   } catch {
     /* an unreadable projects dir is a "not found", never a throw */
+  }
+  // An Antigravity thread: the bridge keeps it in the same shape (antigravity-conversation.ts).
+  for (const id of wanted) {
+    const p = join(antigravityTranscriptsDir(home), `${id}.jsonl`);
+    if (existsSync(p)) return p;
   }
   return null;
 }

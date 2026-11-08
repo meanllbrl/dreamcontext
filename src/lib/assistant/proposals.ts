@@ -12,9 +12,13 @@ import type { AssistantVerb } from './autonomy.js';
 
 export const PROPOSAL_TIMEOUT_MS = 10 * 60_000;
 
+/** Not an assistant verb: a dreamcontext App asking to use a project `.mcp.json` server
+ *  (src/lib/apps/mcp-bridge.ts). Never in ASSISTANT_VERBS, never in the assistant brief. */
+export type ProposalVerb = AssistantVerb | 'app-mcp-accept';
+
 export interface ProposalView {
   id: string;
-  verb: AssistantVerb;
+  verb: ProposalVerb;
   target: string;
   text: string;
   /** Why it is a proposal: `ask` level, taint, or a tool-permission answer. */

@@ -97,8 +97,9 @@ export function mirrorCarriesLine(line: string): boolean {
 }
 
 /** The `_meta` frame that shows the owner's words on the surfaces that did not type them. */
-export function ownerEchoFrame(text: string): string {
-  return JSON.stringify({ type: '_meta', subtype: 'owner_echo', text });
+export function ownerEchoFrame(text: string, meta?: { ref?: string; source?: 'telegram' }): string {
+  // A Telegram turn's echo names its ref and source (B1, C1); every other echo is unchanged.
+  return JSON.stringify({ type: '_meta', subtype: 'owner_echo', text, ...(meta?.ref ? { ref: meta.ref } : {}), ...(meta?.source ? { source: meta.source } : {}) });
 }
 
 /** At most this many pictures in one `stage_media` frame. */
@@ -180,9 +181,9 @@ export class MirrorSet<D> {
   }
 
   /** The owner's words, to every socket but the one that typed them (the holder included). */
-  echo(text: string, from: MirrorSocket | null): void {
+  echo(text: string, from: MirrorSocket | null, meta?: { ref?: string; source?: 'telegram' }): void {
     if (!this.mirrors.size) return;
-    const frame = ownerEchoFrame(text);
+    const frame = ownerEchoFrame(text, meta);
     const holder = this.opts.holder();
     if (holder && holder !== from) safeSend(holder, frame);
     for (const m of this.mirrors) if (m.ws !== from) safeSend(m.ws, frame);
@@ -267,43 +268,125 @@ export function phoneSuperOpen(o: {
   mode: string; resumeId: string; sessionId: string;
   index: { session: string | null; enabled: boolean };
   liveSuper: boolean;
+  /** Each member Super of THIS vault (plan-r10 2.4): its record's session, mirrored like main's
+   *  only when enabled, live on the Mac and the member is ready (on and approved). */
+  members?: ReadonlyArray<PhoneMemberSuper>;
 }): 'mirror' | 'refuse' | 'pass' {
+  return phoneSuperTarget(o).decision;
+}
+
+/** One member Super as the phone's open decision reads it (in memory, no disk). */
+export interface PhoneMemberSuper {
+  slug: string;
+  session: string | null;
+  enabled: boolean;
+  /** Its chat is live on the Mac, in this project, with a mirror to join. */
+  live: boolean;
+  /** The member is on and approved (`memberCallState` ready); asked only when its session is named. */
+  ready: () => boolean;
+}
+
+/** Does this open name `session` (resume or pin)? Case-blind: an id is a UUID, and an upper-case
+ *  copy must not slip past as "another chat". */
+export function opensSession(o: { resumeId: string; sessionId: string }, session: string | null | undefined): boolean {
+  const s = session?.toLowerCase();
+  return !!s && (o.resumeId.toLowerCase() === s || o.sessionId.toLowerCase() === s);
+}
+
+/**
+ * `phoneSuperOpen` with WHICH super it mirrors: main's (`slug` absent) or one member's. A member's
+ * recorded session is held exactly like main's: a phone mirrors it when it may, and is refused any
+ * other open of it (resume, spawn, reattach).
+ */
+export function phoneSuperTarget(o: Parameters<typeof phoneSuperOpen>[0]): { decision: 'mirror' | 'refuse' | 'pass'; slug?: string } {
   // The RECORDED session, handed over or parked: a phone never adopts, resumes or respawns it
   // (a parked super child it took would hold the session from the next hand-over).
-  // Case-blind: an id is a UUID, and an upper-case copy must not slip past as "another chat".
-  const session = o.index.session?.toLowerCase() ?? null;
-  const names = !!session && (o.resumeId.toLowerCase() === session || o.sessionId.toLowerCase() === session);
-  if (names) return o.index.enabled && o.liveSuper ? 'mirror' : 'refuse';
-  return o.mode === 'super' ? 'refuse' : 'pass';
+  if (opensSession(o, o.index.session)) return { decision: o.index.enabled && o.liveSuper ? 'mirror' : 'refuse' };
+  for (const m of o.members ?? []) {
+    if (!opensSession(o, m.session)) continue;
+    let ready = false;
+    try { ready = m.enabled && m.live && m.ready(); } catch { ready = false; }
+    return { decision: ready ? 'mirror' : 'refuse', slug: m.slug };
+  }
+  return { decision: o.mode === 'super' ? 'refuse' : 'pass' };
 }
 
 /** The live-chat row shapes this module needs (contract.ts `LiveChatWire`). */
 interface LiveRow { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null }
 
+/** At most this many jobs reach a phone: every one still running first, then the newest ended. */
+export const PHONE_JOBS_MAX = 12;
+/** An ended job stays on the phone's list this long ("just finished"). */
+export const PHONE_JOB_DONE_MS = 24 * 60 * 60 * 1000;
+
+/** A project's Super record as the phone's list reads it. */
+export interface PhoneSuperRecord {
+  /** Its recorded session: handed over, or parked after a take-back. */
+  session: string;
+  enabled: boolean;
+  /** Every child of the record, named as a remote screen is told it (`childDigestName`). */
+  children: ReadonlyArray<{ id: string; title: string; startedAt: number; endedAt?: number; adopted?: boolean }>;
+  /** Children pruned from the record: still the Super's (`formerChildren`). */
+  former?: readonly string[];
+}
+
+/** One line of a Super's work on the phone (`SuperJobWire`). */
+export interface PhoneJob { conversationId: string; title: string; state: 'working' | 'asking' | 'idle' | 'stopped' | 'done'; startedAt: number }
+
+type PhoneSuperRow = LiveRow & { vault: string; live: boolean; jobs: PhoneJob[]; runningIds: string[]; childIds: string[] };
+
 /**
- * The phone's live list with the Super Agent applied: a project whose Super Agent is handed over
- * (`handedOver`: vault name → its recorded super session) lists none of its chats, and ONE super
- * row instead (`live` false when the Mac runs no super child right now). Every other project's
- * rows are returned untouched, so with nothing handed over the answer is exactly today's.
+ * The phone's live list with the Super Agent applied. The Super Agent and the owner's chats live
+ * side by side in one project, so a handed-over project lists its own chats AND one super row
+ * (`live` false when the Mac runs no super chat right now), with the work it gave out on that row.
+ * Two things never list as a chat, because a phone may not take them over: a project's recorded
+ * super session, handed over OR parked after a take-back (`phoneSuperOpen` refuses the open, and a
+ * listed row would be a chat that never connects; `parked` names those for History), and the
+ * running children of a handed-over Super. Every other row is returned untouched.
  */
-export function phoneLiveChats<R extends LiveRow>(chats: readonly R[], handedOver: ReadonlyMap<string, string>): {
-  chats: R[]; supers: Array<LiveRow & { vault: string; live: boolean }>;
+export function phoneLiveChats<R extends LiveRow>(chats: readonly R[], records: ReadonlyMap<string, PhoneSuperRecord>, now = Date.now()): {
+  chats: R[]; supers: PhoneSuperRow[]; parked: string[];
 } {
-  if (!handedOver.size) return { chats: [...chats], supers: [] };
-  const supers: Array<LiveRow & { vault: string; live: boolean }> = [];
-  for (const [vault, session] of handedOver) {
-    const row = chats.find((c) => c.vault === vault && c.conversationId === session);
+  if (!records.size) return { chats: [...chats], supers: [], parked: [] };
+  const hidden = new Set<string>();
+  const supers: PhoneSuperRow[] = [];
+  const parked: string[] = [];
+  for (const [vault, record] of records) {
+    hidden.add(`${vault}\u0000${record.session.toLowerCase()}`);
+    if (!record.enabled) { parked.push(record.session); continue; }
+    const running = record.children.filter((c) => c.endedAt === undefined);
+    for (const c of running) hidden.add(`${vault}\u0000${c.id.toLowerCase()}`);
+    const runningIds = running.map((c) => c.id);
+    // An adopted chat the Super ended is the owner's again (`ownersChat`): History lists it.
+    const childIds = [...record.children.filter((c) => !(c.adopted && c.endedAt !== undefined)).map((c) => c.id), ...(record.former ?? [])];
+    const row = chats.find((c) => c.vault === vault && c.conversationId === record.session);
+    const jobs = phoneJobs(record.children, chats.filter((c) => c.vault === vault), now);
     supers.push(row
-      ? { conversationId: row.conversationId, vault, title: null, busy: row.busy, state: row.state, lastLine: row.lastLine, updatedAt: row.updatedAt, live: true }
-      : { conversationId: session, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false });
+      ? { conversationId: row.conversationId, vault, title: null, busy: row.busy, state: row.state, lastLine: row.lastLine, updatedAt: row.updatedAt, live: true, jobs, runningIds, childIds }
+      : { conversationId: record.session, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false, jobs, runningIds, childIds });
   }
-  return { chats: chats.filter((c) => !c.vault || !handedOver.has(c.vault)), supers };
+  return { chats: chats.filter((c) => !c.vault || !hidden.has(`${c.vault}\u0000${c.conversationId.toLowerCase()}`)), supers, parked };
+}
+
+/** The record's children with their state now: running ones first, then stopped, then ended,
+ *  newest first in each part; ended ones only while recent. Ended is the record's word, never the absence of a
+ *  process: a child with none that nobody ended is `stopped`. No name reads as the short id. */
+function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRow[], now: number): PhoneJob[] {
+  const stateOf = (c: PhoneSuperRecord['children'][number]): PhoneJob['state'] => {
+    if (c.endedAt !== undefined) return 'done';
+    return live.find((l) => l.conversationId === c.id)?.state ?? 'stopped';
+  };
+  const rows = children
+    .filter((c) => c.endedAt === undefined || now - c.endedAt < PHONE_JOB_DONE_MS)
+    .map((c): PhoneJob => ({ conversationId: c.id, title: c.title || c.id.slice(0, 8), state: stateOf(c), startedAt: c.startedAt }));
+  const rank = (j: PhoneJob) => (j.state === 'done' ? 2 : j.state === 'stopped' ? 1 : 0);
+  return rows.sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt).slice(0, PHONE_JOBS_MAX);
 }
 
 // ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────
 
 /** The digest's fields, mirrored by `dashboard/src/lib/superTypes.ts` (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'owed', 'key'] as const;
 export const DIGEST_MAX_PAD = 40;
 export const DIGEST_MAX_PAD_TEXT = 160;
 export const DIGEST_MAX_WAITING = 40;
@@ -311,14 +394,21 @@ export const DIGEST_MAX_OWNER_TEXT = 300;
 export const DIGEST_MAX_BATCHES = 50;
 export const DIGEST_MAX_NAMES = 40;
 export const DIGEST_MAX_NAME = 80;
+/** Open debts a digest carries (owed.ts), and how much of each gist. */
+export const DIGEST_MAX_OWED = 40;
+export const DIGEST_MAX_OWED_GIST = 160;
 
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true }>;
   ownerBatches: readonly string[];
+  /** A member Super's main-origin turns (plan-r10 1); absent = none. */
+  mainBatches?: readonly string[];
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
-  children: Readonly<Record<string, { brief: string; startedAt: number }>>;
+  children: Readonly<Record<string, { brief: string; startedAt: number; workOrigin?: string }>>;
+  /** What the Super still owes him (owed.ts); absent = none. */
+  owed?: ReadonlyArray<{ id: string; kind: string; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number; closed?: unknown }>;
 }
 
 /**
@@ -337,7 +427,12 @@ export interface SuperDigest {
    *  '' on a permission. */
   waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }>;
   ownerBatches: string[];
+  /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
+  mainBatches: string[];
   names: Record<string, string>;
+  /** The OPEN debts (owed.ts), so the phone draws "Cevaplanmadı" the way the desktop does. The
+   *  phone only reads them: no drop door is there. */
+  owed: Array<{ id: string; kind: 'msg' | 'result'; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number }>;
   /** Changes when (and only when) anything above changes. */
   key: string;
 }
@@ -373,13 +468,19 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     }))
     .filter((p) => p.id && p.text);
+  // Main Super's work in a member's Super (`main:*`, plan-r10 1) never waits on the owner.
+  const mainWork = (o: string | undefined) => typeof o === 'string' && o.startsWith('main:');
   const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
+    && !mainWork(q.workOrigin) && !mainWork(Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId].workOrigin : undefined)
+    // A Bypass child's permission its Super decides first (`toSuper`) waits on nobody's phone.
+    && !(q.kind === 'permission' && q.toSuper)
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
   const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
     id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
     text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
   }));
   const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
+  const mainBatches = (state.mainBatches ?? []).filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
   // The children the phone may name: the ones it waits on first, then the newest.
   const sids = [...new Set([
     ...waiting.map((w) => w.sessionId).filter((sid) => state.children[sid]),
@@ -390,11 +491,15 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     const name = childDigestName(state, sid);
     if (name) names[sid] = name;
   }
-  const body = { pad, waiting, ownerBatches, names };
+  const owed = (state.owed ?? []).filter((d) => d.closed === undefined && (d.kind === 'msg' || d.kind === 'result')).slice(-DIGEST_MAX_OWED).map((d) => ({
+    id: digestText(d.id, 12), kind: d.kind as 'msg' | 'result', ref: digestText(d.ref, 6), seq: d.seq, at: d.at, gist: digestText(d.gist, DIGEST_MAX_OWED_GIST), nudges: d.nudges,
+    ...(d.parked === 'stop' || d.parked === 'limit' ? { parked: d.parked, ...(typeof d.parkedAt === 'number' ? { parkedAt: d.parkedAt } : {}) } : {}),
+  }));
+  const body = { pad, waiting, ownerBatches, mainBatches, names, owed };
   return { ...body, key: fnv(JSON.stringify(body)) };
 }
 
 /** The `_meta` frame carrying `d` to a phone mirror. */
 export function superDigestFrame(d: SuperDigest): string {
-  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, names: d.names, key: d.key });
+  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, mainBatches: d.mainBatches, names: d.names, owed: d.owed, key: d.key });
 }

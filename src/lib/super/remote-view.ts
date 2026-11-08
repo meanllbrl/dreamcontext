@@ -1,8 +1,9 @@
 import type {
-  RemoteChild, RemoteContainer, RemoteGroup, RemoteView, SuperRemoteView,
+  RemoteChild, RemoteContainer, RemoteGroup, RemoteTeamJob, RemoteView, SuperRemoteView,
 } from '../handsfree/mac/contract.js';
 import { childDigestName, superDigest } from './phone-mirror.js';
 import { superQueueHead } from './inbox.js';
+import type { TeamLiveRow } from './team.js';
 import type { SuperState } from './types.js';
 
 /**
@@ -11,9 +12,11 @@ import type { SuperState } from './types.js';
  *
  * Built from an ALLOWLIST, field by field, so a field added to `SuperState` later never reaches
  * the tunnel by default. Never carried: a child's brief (beyond its 80-character name), branch, worktree, prompt, MCP servers or
- * settings; the pool; the AI Team's jobs; the dismissed list; notes; the held ledger; raw owner
- * text (the waiting rows carry the question as the owner reads it, as the phone's digest does);
- * an absolute path; a web address only the Mac can reach.
+ * settings; the pool; a team job's brief, origin, model or effort (`remoteTeamJob` carries who
+ * took it, its status, its last line and its session, and only for a card on the stage); the
+ * dismissed list; notes; the held ledger; raw owner text (the waiting rows carry the question as
+ * the owner reads it, as the phone's digest does); an absolute path; a web address only the Mac
+ * can reach.
  *
  * A web card shows an `https:` page on another host; anything else (loopback, private, link-local,
  * the tunnel's own host, an `http:` page, a project file) becomes a placeholder
@@ -107,6 +110,9 @@ function remoteContainer(c: SuperState['containers'][number], tunnelHost: string
       return ID_RE.test(c.ref) ? { ...base, ref: c.ref } : base;
     case 'agenda':
       return { ...base, ref: 'agenda' };
+    case 'member':
+      // A member's own card (plan r4 K7): its sub-type only, nothing else rides.
+      return { ...base, ref: c.ref };
     case 'web':
       return { ...base, ...remoteWeb(c.ref, tunnelHost) };
     case 'browser':
@@ -140,9 +146,27 @@ function remoteChild(sid: string, ch: SuperState['children'][string]): RemoteChi
   };
 }
 
+/** How much of a job's last line travels. */
+const TEAM_LINE_MAX = 160;
+
+function remoteTeamJob(j: SuperState['team'][number], live: TeamLiveRow | undefined): RemoteTeamJob | null {
+  if (!ID_RE.test(j.id) || !ID_RE.test(j.member)) return null;
+  return {
+    id: j.id, member: j.member, runId: j.runId, startedAt: j.startedAt,
+    status: live?.status ?? (j.queued ? 'queued' : 'running'),
+    lastLine: (live?.lastLine ?? '').slice(0, TEAM_LINE_MAX),
+    ...(live?.sessionId ? { sessionId: live.sessionId } : {}),
+    ...(live?.resumable ? { resumable: true as const } : {}),
+  };
+}
+
 /** The remote stage of `state`. Pure: `vault` is the project's registered name, `tunnelHost` the
- *  tunnel's own hostname (a web card pointing back at it is the Mac's own pages). */
-export function superRemoteView(state: SuperState, vault: string, tunnelHost: string | null, rotating = false): SuperRemoteView {
+ *  tunnel's own hostname (a web card pointing back at it is the Mac's own pages), `teamLive` what
+ *  each team card's job says now (`teamLiveRows`, the caller reads the threads). */
+export function superRemoteView(
+  state: SuperState, vault: string, tunnelHost: string | null, rotating = false,
+  teamLive: Record<string, TeamLiveRow> | undefined = undefined,
+): SuperRemoteView {
   const digest = superDigest(state);
   const head = superQueueHead(state);
   // The agenda's child names: the digest's, the same the `super_digest` frame carries.
@@ -152,6 +176,8 @@ export function superRemoteView(state: SuperState, vault: string, tunnelHost: st
   const groups: RemoteGroup[] = state.groups.map((g) => ({
     id: g.id, name: g.name, cards: [...g.cards], place: g.place, ...(g.pos ? { pos: { x: g.pos.x, y: g.pos.y } } : {}),
   }));
+  const cards = new Set(state.containers.filter((c) => c.kind === 'team').map((c) => c.ref));
+  const team = state.team.filter((j) => cards.has(j.id)).map((j) => remoteTeamJob(j, teamLive?.[j.id])).filter((j): j is RemoteTeamJob => j !== null);
   return {
     vault,
     session: state.session,
@@ -164,6 +190,7 @@ export function superRemoteView(state: SuperState, vault: string, tunnelHost: st
     waiting: digest.waiting,
     ownerBatches: digest.ownerBatches,
     names,
+    ...(team.length ? { team } : {}),
     head: head ? { item: head.id, kind: head.kind, text: digest.waiting.find((w) => w.id === head.id)?.text ?? '' } : null,
     ...(rotating ? { rotating: true as const } : {}),
   };

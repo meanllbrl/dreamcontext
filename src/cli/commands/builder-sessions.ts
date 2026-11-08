@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BASE_FRAMING,
@@ -43,10 +43,11 @@ import {
   type SessionMode,
   type SessionRecord,
 } from '../../lib/builder-spawn.js';
-import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
+import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
+import { describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, writeReceipt } from '../../lib/check-receipt.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
-import { recordCheck } from '../../lib/run-ledger.js';
+import { recordCheck, recordStart } from '../../lib/run-ledger.js';
 import {
   ownerOf,
   parseTestReport,
@@ -108,8 +109,10 @@ export interface SessionDeps {
   goalLive: (spec: string, opts: ActorOptions) => void;
   sleep: (ms: number) => Promise<void>;
   /** Run `npx <argv>` in `cwd` holding the repo's heavy lock, output to `logFile`. The exit
-   *  code, or null when NOTHING ran (lock stayed busy, could not start, killed by a signal). */
-  runCheck: (argv: string[], cwd: string, logFile: string) => Promise<number | null>;
+   *  code, or null when NOTHING ran (lock stayed busy, could not start, killed by a signal).
+   *  A green receipt for the same check on the same code (lib/check-receipt.ts) returns 0 with
+   *  its log and report copied in place, unless `fresh`. */
+  runCheck: (argv: string[], cwd: string, logFile: string, opts?: { fresh?: boolean }) => Promise<number | null>;
   print: (line: string) => void;
   printErr: (line: string) => void;
 }
@@ -136,39 +139,85 @@ function launchDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv
   }
 }
 
-async function runCheckLocked(argv: string[], cwd: string, logFile: string): Promise<number | null> {
+/** The check's receipt, copied to where `builder test` reads it; false when it cannot be used. */
+function useReceipt(argv: string[], cwd: string, logFile: string): boolean {
+  const planned = planArgvReceipt(cwd, argv);
+  if (!('plan' in planned)) return false;
+  const state = receiptState(planned.plan);
+  const hit = state ? findReceipt(planned.plan, state) : null;
+  if (!hit) return false;
+  const report = /^--outputFile=(.+)$/.exec(argv.find((a) => a.startsWith('--outputFile=')) ?? '')?.[1];
+  try {
+    // A test run is read from its report: a receipt without one cannot stand in for it.
+    if (report) {
+      if (!hit.receipt.report) return false;
+      copyFileSync(hit.receipt.report, report);
+    }
+    if (hit.receipt.log) copyFileSync(hit.receipt.log, logFile);
+    else writeFileSync(logFile, '');
+  } catch {
+    return false;
+  }
+  process.stderr.write(`builder test: ${describeHit(hit)}\n`);
+  return true;
+}
+
+async function runCheckLocked(argv: string[], cwd: string, logFile: string, opts: { fresh?: boolean } = {}): Promise<number | null> {
+  if (!opts.fresh && useReceipt(argv, cwd, logFile)) return 0;
   // The repo's heavy lock, then one of the machine's heavy slots (plan r5 D12; one while the
   // Mac is very hot, lib/heat.ts). Busy: the same message `builder heavy` prints.
   const command = argv.join(' ');
   const pick = queueOf(command, {}, (files) => countRelatedTests(cwd, files));
   const label = safeLabel(command);
   const asked = Date.now();
-  const { held, busy, line } = await acquireHeavyReporting({
+  const { held, busy, line, waits } = await acquireHeavyReporting({
     cwd, lockPath: heavyLockPath(cwd), slotDir: heavySlotDir(), ps: listProcesses,
     // The report's path is not the job: a retry of the same check must find its place.
-    job: { key: jobKey(cwd, command.replace(/--outputFile=\S+/, '')), size: pick.size, label, line: pick.line },
+    job: { key: jobKey(cwd, command.replace(/--outputFile=\S+/, '')), size: pick.size, label, line: pick.line, shared: pick.shared },
     note: (l) => { process.stderr.write(`builder test: ${l}\n`); },
   });
   if (!held) {
     const gaveUp = Date.now();
-    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran: gaveUp, ended: gaveUp, exit: null });
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran: gaveUp, ended: gaveUp, exit: null, waits });
     process.stderr.write(`builder test: ${busy}\n`);
     return null;
   }
+  // Queued behind the same check from another session: its receipt may be there now.
+  if (!opts.fresh && useReceipt(argv, cwd, logFile)) { held.release(); return 0; }
+  const planned = planArgvReceipt(cwd, argv);
+  const before = 'plan' in planned ? receiptState(planned.plan) : null;
   const ran = Date.now();
+  recordStart(cwd, { label, line: line ?? pick.line, asked, ran, waits });
   const fd = openSync(logFile, 'w');
   let exit: number | null = null;
+  // Killed mid-run: end the check, write its row and give the lock back, then die of the signal.
+  let killedBy: NodeJS.Signals | null = null;
+  const off: Array<() => void> = [];
   try {
     exit = await new Promise<number | null>((done) => {
-      const child = spawn('npx', argv, { cwd, stdio: ['ignore', fd, fd] });
+      // heavySpawnPlan: on Windows npx is npx.cmd, which only starts through cmd.exe.
+      const plan = heavySpawnPlan(['npx', ...argv])!;
+      const child = spawn(plan.file, plan.args, { cwd, stdio: ['ignore', fd, fd], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
+      for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+        const onSig = () => { killedBy = sig; child.kill(sig); };
+        process.on(sig, onSig);
+        off.push(() => { process.off(sig, onSig); });
+      }
       child.on('error', () => done(null));
       child.on('exit', (code, signal) => done(signal ? null : code ?? null));
     });
     return exit;
   } finally {
     closeSync(fd);
-    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit });
+    if (exit === 0 && before && 'plan' in planned) {
+      const report = /^--outputFile=(.+)$/.exec(argv.find((a) => a.startsWith('--outputFile=')) ?? '')?.[1];
+      writeReceipt(planned.plan, before, { exit, ms: Date.now() - ran, fresh: opts.fresh, log: logFile, report });
+    }
+    if (exit !== null && exit !== 0 && before && 'plan' in planned) dropReceipt(planned.plan, before);
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit, waits });
     held.release();
+    for (const f of off) f();
+    if (killedBy) process.kill(process.pid, killedBy);
   }
 }
 
@@ -561,7 +610,7 @@ export async function builderResume(
 
 // ─── wave-end checks ─────────────────────────────────────────────────────────
 
-export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[] }
+export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[]; fresh?: boolean }
 
 const MAX_PRINTED_FAILURES = 25;
 
@@ -614,7 +663,7 @@ export async function builderTest(deps: SessionDeps, slug: string, opts: TestOpt
 
   for (const pkg of plan.tsc) {
     const log = join(dir, `test-w${wave}-tsc-${tag(pkg)}.log`);
-    const code = await deps.runCheck(['tsc', '--noEmit', '-p', 'tsconfig.json'], join(root, pkg), log);
+    const code = await deps.runCheck(['tsc', '--noEmit', '-p', 'tsconfig.json'], join(root, pkg), log, { fresh: opts.fresh });
     if (code == null) { notRun.push(`tsc ${pkg}`); continue; }
     ranTsc.add(pkg);
     const text = existsSync(log) ? readFileSync(log, 'utf-8') : '';
@@ -632,7 +681,7 @@ export async function builderTest(deps: SessionDeps, slug: string, opts: TestOpt
       const out = join(dir, `test-w${wave}-${tag(t.pkg)}-${mode}.json`);
       const log = out.replace(/\.json$/, '.log');
       rmSync(out, { force: true });
-      const code = await deps.runCheck(testArgv(t.runner, mode, files, out), join(root, t.pkg), log);
+      const code = await deps.runCheck(testArgv(t.runner, mode, files, out), join(root, t.pkg), log, { fresh: opts.fresh });
       const label = `${t.runner} ${mode === 'related' ? 'related' : 'run'} (${t.pkg})`;
       if (code == null) { notRun.push(label); continue; }
       if (!existsSync(out)) {
@@ -781,6 +830,7 @@ export function registerBuilderSessionCommands(cmd: Command, deps: SessionDeps =
     .option('--related <files...>', 'Changed files: type-check their packages and run the tests that import them')
     .option('--failed', 'Re-run only what failed last time (plus --related when given)')
     .option('--also <tests...>', 'Test files related cannot see (they read files by path)')
+    .option('--fresh', 'Run every check even when a green receipt for the same code exists (the run is recorded)')
     .description(`Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), ${HEAVY_LOCK_BUSY_EXIT} a check did not run`)
     .action((slug: string, opts: TestOptions) => run(deps, () => builderTest(deps, slug, opts)));
 

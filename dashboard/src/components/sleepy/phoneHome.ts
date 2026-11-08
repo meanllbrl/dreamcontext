@@ -1,27 +1,27 @@
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
-import type { PastSession } from './ChatHistoryPicker';
-import { closedRows, openRows, superRowFor, type ClosedRow, type OpenRow } from './phoneList';
-import { heldIds, type StackTab } from './phoneStack';
+import { openRows, superRowFor, type OpenRow } from './phoneList';
+import type { StackTab } from './phoneStack';
 
 /**
- * The phone's ONE list over every chosen project (hands-free sekmeler W3, owner D1: direction B):
- * Seni bekliyor / Çalışıyor / Boşta / Kapalı, each row tagged with its project, a search over all
- * of them, "Proje ▾" narrowing. No new home page and no bottom tab bar: it is the Sohbetler list,
- * widened. Pure: every rule here is tested without React (phone-home.test.ts).
+ * Every chat row over the chosen projects, for a device shell's drawer and the phone's chat
+ * screen (swipe, waiting toast, the drawer toggle's count). Pure: every rule here is tested without
+ * React (phone-home.test.ts, device-shell.test.ts).
  *
- * - The project the phone is in contributes its rows as today (`openRows`, `closedRows`): its own
- *   tabs and the Mac's running chats, each once, and its past chats.
+ * - The project the phone is in contributes its open tabs and the Mac's running chats, each once.
  * - Every other chosen project contributes the Mac's running chats (from the one `live-chats`
- *   answer, which already spans the chosen projects) and its past chats.
- * - A handed-over project contributes its ONE Super row and nothing else (`superRowFor`).
+ *   answer, which already spans the chosen projects) and the tabs this window has mounted there.
+ * - A handed-over project also contributes its ONE Super row (`superRowFor`): the Super Agent and
+ *   the owner's chats live side by side. A tab holding the Super's conversation or one of its
+ *   children's is the Super's, never one of the owner's rows.
+ *
+ * Past chats are not rows: History lists them.
  */
 
-export const HOME_SECTIONS = ['waiting', 'working', 'idle', 'closed'] as const;
+export const HOME_SECTIONS = ['waiting', 'working', 'idle'] as const;
 export type HomeSection = typeof HOME_SECTIONS[number];
 
 export type HomeRow =
   | { key: string; vault: string; section: HomeSection; title: string; line: string; updatedAt: number | null; kind: 'open'; row: OpenRow }
-  | { key: string; vault: string; section: 'closed'; title: string; line: string; updatedAt: number | null; kind: 'closed'; row: ClosedRow }
   | { key: string; vault: string; section: HomeSection; title: string; line: string; updatedAt: number | null; kind: 'super'; row: SuperChatWire };
 
 const sectionOf = (dot: string): HomeSection => (dot === 'asking' ? 'waiting' : dot === 'working' || dot === 'starting' ? 'working' : 'idle');
@@ -31,14 +31,14 @@ export interface HomeInput {
   /** The project this phone is in, and its open tabs. */
   vault: string;
   tabs: readonly StackTab[];
+  /** Other projects this window has mounted, and their open tabs (the new shell's drawer). */
+  otherTabs?: Readonly<Record<string, readonly StackTab[] | undefined>>;
   /** The chosen projects, in their order. */
   projects: readonly string[];
   live: LiveChatsWire | undefined;
-  /** Each project's past chats (its own `chat-sessions` answer). */
-  pastByVault: Readonly<Record<string, readonly PastSession[] | undefined>>;
 }
 
-/** Every row of every chosen project, in section order (waiting → working → idle → closed);
+/** Every row of every chosen project, in section order (waiting → working → idle);
  *  within a section the active project's rows first, then each project in its order. */
 export function homeRows(i: HomeInput): HomeRow[] {
   const chats = i.live?.chats ?? [];
@@ -52,9 +52,10 @@ export function homeRows(i: HomeInput): HomeRow[] {
         key: `super:${vault}`, vault, kind: 'super', row: superRow, title: '', line: superRow.lastLine ?? '',
         section: superRow.live ? liveSection(superRow.state) : 'idle', updatedAt: superRow.updatedAt,
       });
-      continue;
     }
-    const tabs = vault === i.vault ? i.tabs : [];
+    const theirs = new Set(superRow ? [superRow.conversationId, ...superRow.runningIds] : []);
+    const held = (t: StackTab) => theirs.has(t.claudeId ?? '') || (!!t.altClaudeId && theirs.has(t.altClaudeId));
+    const tabs = (vault === i.vault ? i.tabs : (i.otherTabs?.[vault] ?? [])).filter((t) => !held(t));
     for (const r of openRows({ tabs, live: chats, draining, vault })) {
       rows.push({
         key: `${vault}:${r.key}`, vault, kind: 'open', row: r, title: r.title ?? '',
@@ -62,35 +63,14 @@ export function homeRows(i: HomeInput): HomeRow[] {
         updatedAt: r.kind === 'mac' ? r.chat.updatedAt : null,
       });
     }
-    const held = heldIds(tabs);
-    for (const r of closedRows({ past: i.pastByVault[vault] ?? [], live: chats, draining, openClaudeIds: held })) {
-      rows.push({ key: `${vault}:${r.key}`, vault, kind: 'closed', row: r, title: r.title, line: r.line, section: 'closed', updatedAt: r.updatedAt });
-    }
   }
   // Stable: within a section the projects keep their order and each project its own.
   return rows.sort((a, b) => HOME_SECTIONS.indexOf(a.section) - HOME_SECTIONS.indexOf(b.section));
 }
 
-/** The rows grouped by section, empty sections left out. */
-export function homeSections(rows: readonly HomeRow[]): Array<{ section: HomeSection; rows: HomeRow[] }> {
-  return HOME_SECTIONS.map((section) => ({ section, rows: rows.filter((r) => r.section === section) })).filter((s) => s.rows.length > 0);
-}
-
-/** "Proje ▾": only this project's rows (null: every project). */
-export function narrowTo(rows: readonly HomeRow[], project: string | null): HomeRow[] {
-  return project ? rows.filter((r) => r.vault === project) : [...rows];
-}
-
-/** The conversation a row stands for (a tab's or the Mac's chat, a past chat, the Super). */
-export function rowConversation(r: HomeRow): string {
-  if (r.kind === 'super') return r.row.conversationId;
-  if (r.kind === 'closed') return r.row.id;
-  return r.row.kind === 'tab' ? r.row.id : r.row.chat.conversationId;
-}
-
 /** The OPEN rows a swipe moves through, in the list's order across projects. */
 export function swipeRows(rows: readonly HomeRow[]): HomeRow[] {
-  return rows.filter((r) => r.kind !== 'closed' && !(r.kind === 'super' && !r.row.live));
+  return rows.filter((r) => !(r.kind === 'super' && !r.row.live));
 }
 
 /**
@@ -102,11 +82,6 @@ export function swipeTarget(rows: readonly HomeRow[], currentKey: string | null,
   const at = open.findIndex((r) => r.key === currentKey);
   if (at < 0) return null;
   return open[at + dir] ?? null;
-}
-
-/** The back button's badge: chats waiting on the owner other than the one on screen. */
-export function waitingElsewhere(rows: readonly HomeRow[], currentKey: string | null): number {
-  return rows.filter((r) => r.section === 'waiting' && r.key !== currentKey).length;
 }
 
 /**

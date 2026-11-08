@@ -40,6 +40,10 @@ function childFinished(s: SuperState, sid: string, live: LiveTest): boolean {
 }
 
 export function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boolean {
+  // A member's own cards are the owner's (plan r4 G5): never retired, Others or not.
+  if (c.kind === 'member') return false;
+  // The agenda never leaves the stage (owner 2026-10-22 23:44), wherever he put it.
+  if (c.kind === 'agenda') return false;
   if (c.kind === 'chat') return childFinished(s, c.ref, live);
   // Everything else rests in Others to go: a read-only view, or a card that belongs to something.
   if (c.place !== 'others') return false;
@@ -47,7 +51,10 @@ export function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boo
   if (c.kind === 'browser' && !childFinished(s, c.ref, live)) return false;
   if (c.kind === 'team') {
     const job = s.team.find((j) => j.id === c.ref);
-    return !job || job.endedAt !== undefined || job.outcome !== undefined;
+    if (!job) return true;
+    // A member's one card (plan-r10 1b) stays while a follow-up of its conversation is still open.
+    if (s.team.some((j) => j.followUpOf === job.id && j.open === true)) return false;
+    return job.endedAt !== undefined || job.outcome !== undefined;
   }
   return true;
 }

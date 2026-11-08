@@ -3,11 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { heavyLockPath, heavyRepoDir, heavySlotPaths } from '../../src/lib/builder-tools.js';
+import { fastSlotPaths, heavyLockPath, heavyRepoDir, heavySlotPaths } from '../../src/lib/builder-tools.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import { acquireHeavyReporting, heavyQueueDir, heavySlotQueueDir, queueReport } from '../../src/lib/heavy-acquire.js';
-import { QUEUE_KEEP_MS, QueuePlace, readTickets } from '../../src/lib/heavy-queue.js';
+import { QUEUE_KEEP_MS, QueuePlace, queueOf, readTickets } from '../../src/lib/heavy-queue.js';
 import { ledgerPath } from '../../src/lib/run-ledger.js';
 import { budgetPath } from '../../src/lib/run-budget.js';
 
@@ -124,7 +124,7 @@ describe('heavy lock per worktree', () => {
 
   it('the machine slots have a line: across worktrees the smaller job gets the freed slot first', async () => {
     mkdirSync(slots, { recursive: true });
-    for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
+    for (const p of heavySlotPaths(slots).slice(0, 2)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
     const got: string[] = [];
     const ask = (cwd: string, key: string, size: number) => acquireHeavyReporting({
       cwd, lockPath: heavyLockPath(cwd), slotDir: slots, maxWaitS: 8, heavyLimit: async () => 2, ps: () => '',
@@ -148,7 +148,7 @@ describe('heavy lock per worktree', () => {
 
   it('a slot wait that runs out keeps its place in the slot line, and the retry takes it back', async () => {
     mkdirSync(slots, { recursive: true });
-    for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
+    for (const p of heavySlotPaths(slots).slice(0, 2)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
     const job = { key: 'kept', size: 5, label: 'tests', line: 'heavy' as const };
     const first = await acquireHeavyReporting({ cwd: wtA, lockPath: heavyLockPath(wtA), slotDir: slots, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job });
     expect(first.held).toBeNull();
@@ -200,5 +200,59 @@ describe('heavy lock per worktree', () => {
     m.held!.release();
     expect(existsSync(join(shared, 'old-gone.json'))).toBe(false);
     expect(readTickets(shared, Date.now()).map((t) => t.key)).toEqual(['old-dead']);
+  });
+});
+
+describe('tests and type-checks take no turn on the checkout', () => {
+  it('a wait that ran out behind the lock says so, and a fast wait is not called full heavy slots', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dc-heavy-why-'));
+    const lockPath = join(root, 'repo.lock');
+    const slotDir = join(root, 'slots');
+    try {
+      expect(acquireFileLock(lockPath, Date.now(), 60_000)).toBe(true);
+      const job = { key: 'w', size: 3, label: 'build', line: 'heavy' as const };
+      const r = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 1, heavyLimit: async () => 2, ps: () => '', job });
+      expect(r.held).toBeNull();
+      expect(r.waits!.lockMs).toBeGreaterThanOrEqual(1000);
+      for (const p of fastSlotPaths(slotDir)) expect(acquireFileLock(p, Date.now(), 60_000)).toBe(true);
+      const f = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 1, heavyLimit: async () => 2, ps: () => '', machineBusy: () => false, job: { ...job, key: 'f', label: 'tsc', line: 'fast' } });
+      expect(f.waits).toMatchObject({ slotFullMs: 0, lockMs: 0 });
+      expect(f.waits!.fastMs).toBeGreaterThanOrEqual(1000);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('only checks are shared: a build or a script keeps the lock, and a shared job runs beside the lock holder', async () => {
+    expect(queueOf('npx vitest run tests/unit/a.test.ts').shared).toBe(true);
+    expect(queueOf('npx vitest run').shared).toBe(false); // a whole suite keeps its turn
+    expect(queueOf('npx tsc --noEmit').shared).toBe(true);
+    expect(queueOf('npm run build', { build: 'tsup' }).shared).toBe(false);
+    expect(queueOf('node scripts/verify/x.mjs').shared).toBe(false);
+    expect(queueOf('sleep 900').shared).toBe(false);
+    // Spelled with a folder or a config it is still a suite: it keeps its turn and its size.
+    for (const suite of ['npx vitest run tests/unit', 'npx vitest run tests/', 'npx vitest run -c vitest.t3.config.ts']) {
+      expect(queueOf(suite)).toMatchObject({ line: 'heavy', shared: false, size: 5 });
+    }
+    expect(queueOf('npm run test:t3', { 'test:t3': 'vitest run -c vitest.t3.config.ts' })).toMatchObject({ shared: false, size: 5 });
+    expect(queueOf('npm run build', { build: 'tsup' }).size).toBe(3);
+    // A related run past the fast line can reach everything: no pass, no place ahead of a build.
+    expect(queueOf('npx vitest related src/a.ts', {}, () => 99)).toMatchObject({ line: 'heavy', shared: false, size: 3 });
+    // A build in disguise.
+    expect(queueOf('npx tsc -b')).toMatchObject({ line: 'heavy', shared: false });
+    expect(queueOf('npm test tests/a.test.ts', { test: 'tsup && vitest run' })).toMatchObject({ line: 'heavy', shared: false });
+    const root = mkdtempSync(join(tmpdir(), 'dc-heavy-shared-'));
+    const lockPath = join(root, 'repo.lock');
+    const slotDir = join(root, 'slots');
+    try {
+      expect(acquireFileLock(lockPath, Date.now(), 5_000)).toBe(true);
+      const job = { key: 's', size: 3, label: 'tests', line: 'heavy' as const, shared: true };
+      const r = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job });
+      expect(r.held).not.toBeNull();
+      expect(r.waits!.lockMs).toBeLessThan(1000);
+      expect(r.waits!.limit).toBe(2);
+      r.held!.release();
+      expect(existsSync(lockPath)).toBe(true); // the holder's lock is not ours to drop
+      const blocked = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job: { ...job, key: 'b', shared: false } });
+      expect(blocked.held).toBeNull();
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

@@ -225,7 +225,7 @@ const GOAL_SKILL_FLOW: FlowSpec = {
 
 const SKILLS_FLOW: FlowSpec = pairFlow(
   'Skill packs: curated domain packs install a base skill plus on-demand sub-skills into the agent.',
-  { title: 'skill pack', sub: 'engineering · design · growth', variant: 'hook' },
+  { title: 'skill pack', sub: 'design · growth · goal-skill', variant: 'hook' },
   { title: 'agent gains', sub: 'base + sub-skills', variant: 'rem' },
 );
 
@@ -306,7 +306,7 @@ export const FEATURES: FeatureItem[] = [
     id: 'skill-packs',
     title: 'Skill packs',
     tagline: 'Curated, installable skills by domain — one command.',
-    body: 'Extend an agent with domain packs — engineering, design, growth, brand-voice and more — each a base skill plus on-demand sub-skills. Install interactively or name a pack directly; prerequisites resolve automatically.',
+    body: 'Extend an agent with domain packs — growth, brand-voice, council and more — each a base skill plus on-demand sub-skills. Install interactively or name a pack directly; prerequisites resolve automatically.',
     defaultOpen: true,
     tag: 'Skills',
     flow: SKILLS_FLOW,

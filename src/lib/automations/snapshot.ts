@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { listAutomations, readAutomationCache, readRunSidecar } from './store.js';
+import { listAutomations, listRunSidecars, readAutomationCache } from './store.js';
 import { listAgentTargets } from '../agents/store.js';
 import { checkApproval } from './registry.js';
 import { pendingQuestion } from './hitl.js';
@@ -212,8 +212,7 @@ export function buildAutomationsSnapshot(
     }
 
     // ─── Live orphan — independent of the last recorded cache event ────────
-    const sidecar = readRunSidecar(contextRoot, manifest.slug);
-    if (sidecar && !isAlive(sidecar.runnerPid) && isAlive(sidecar.childPgid)) {
+    if (listRunSidecars(contextRoot, manifest.slug).some((s) => !isAlive(s.runnerPid) && isAlive(s.childPgid))) {
       orphanLines.push(
         `- automation ${manifest.slug} may have an orphaned run — run \`dreamcontext automations kill ${manifest.slug}\``,
       );

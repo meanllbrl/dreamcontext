@@ -27,12 +27,14 @@ import { createRequire } from 'node:module';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
-const { chromium } = createRequire(join(REPO, 'package.json'))('playwright');
+const { chromium, webkit } = createRequire(join(REPO, 'package.json'))('playwright');
+// DC_VERIFY_ENGINE=webkit: the engine the Mac app draws with (the thumbnail bug of 2026-11-07 showed only there).
+const ENGINE = process.env.DC_VERIFY_ENGINE === 'webkit' ? 'webkit' : 'chromium';
 const SCRATCH = join(tmpdir(), `dreamcontext-verify-attach-picked-${process.pid}`);
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'orbit');
 const CLI = join(REPO, 'dist', 'index.js');
-const OUT = join(REPO, 'tmp', 'verify-composer-attach-picked');
+const OUT = join(REPO, 'tmp', `verify-composer-attach-picked${ENGINE === 'webkit' ? '-webkit' : ''}`);
 const LOGS = join(OUT, 'logs');
 const FRAMES = join(SCRATCH, 'frames.ndjson');
 const REPORTS = join(SCRATCH, 'reports.ndjson');
@@ -226,7 +228,7 @@ async function chipState(page, scope) {
       marks: marks.map((m) => {
         const th = m.querySelector('.chat-cmp-hl-thumb');
         const r = th.getBoundingClientRect();
-        return { state: m.getAttribute('data-state'), bg: getComputedStyle(th).backgroundImage.slice(0, 10), w: Math.round(r.width), h: Math.round(r.height), lines: m.getClientRects().length };
+        return { state: m.getAttribute('data-state'), img: !!th.querySelector('img.chat-cmp-hl-thumb-img')?.getAttribute('src'), w: Math.round(r.width), h: Math.round(r.height), lines: m.getClientRects().length };
       }),
       stripImages: root.querySelectorAll('.chat-cmp-attachments .chat-cmp-attachment-image').length,
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -276,22 +278,57 @@ async function bubbleState(page, scope) {
       lineH,
       pics: await Promise.all(pics.map(async (p) => {
         const th = p.querySelector('.chat-cmp-hl-thumb');
-        const bg = th ? getComputedStyle(th).backgroundImage : '';
-        const url = (/url\("?(.*?)"?\)/.exec(bg) || [])[1] || '';
+        // The thumbnail is an <img> in the glyph's room (WebKit paints no background image there).
+        const ti = th?.querySelector('img.chat-cmp-hl-thumb-img');
+        const url = ti?.getAttribute('src') || '';
         const r = th?.getBoundingClientRect();
         return {
           chip: p.tagName === 'MARK' && p.classList.contains('chat-cmp-hl-ref') && p.classList.contains('chat-cmp-hl-img'),
           loaded: url ? await load(url) : false,
+          // The chip's OWN thumbnail decoded, not just its URL (a URL can load while nothing paints).
+          painted: !!(ti && ti.complete && ti.naturalWidth > 0),
           w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0),
           lines: p.getClientRects().length,
           label: p.textContent.trim(),
           words: (p.nextElementSibling && !p.nextElementSibling.matches('[data-testid="chat-msg-picture"]') ? p.nextElementSibling.textContent : '').trim(),
-          imgs: p.querySelectorAll('img').length,
+          imgs: p.querySelectorAll('img:not(.chat-cmp-hl-thumb-img)').length,
         };
       })),
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
   }, scope);
+}
+
+/** The hover card, if one shows: where it is, whether its picture decoded, and whether it sits
+ *  inside the window. */
+const peekState = (page) => page.evaluate(() => {
+  const el = document.querySelector('[data-testid="chat-pic-peek"]');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const img = el.querySelector('img');
+  return {
+    x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height),
+    decoded: !!(img && img.complete && img.naturalWidth > 0),
+    inside: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight,
+  };
+});
+/** Hover the sent bubble's first picture chip: the card shows the picture, inside the window,
+ *  and nothing in the bubble moves; leaving hides it. */
+async function hoverSent(page, scope, label, file) {
+  const row = page.locator(`${scope} .chat-msg-user-row`).last();
+  const chip = row.locator('[data-testid="chat-msg-picture"]').first();
+  await chip.scrollIntoViewIfNeeded();
+  const before = await row.boundingBox();
+  await chip.hover();
+  const shown = await until(page, async () => (await peekState(page))?.decoded, 5000);
+  const pk = await peekState(page);
+  const after = await row.boundingBox();
+  ok(`${label}: hovering a sent picture shows it in a card, inside the window`, shown && pk?.inside && pk.w > 40 && pk.h > 40, JSON.stringify(pk));
+  ok(`${label}: the bubble does not move when the card shows`, before && after && Math.abs(before.y - after.y) < 1 && Math.abs(before.height - after.height) < 1, JSON.stringify({ before, after }));
+  ok(`${label}: no native tooltip over the card`, (await chip.getAttribute('title')) === null, String(await chip.getAttribute('title')));
+  await shot(page, file);
+  await page.mouse.move(2, 2);
+  ok(`${label}: leaving the chip hides the card`, await until(page, async () => (await peekState(page)) === null, 3000));
 }
 
 async function main() {
@@ -300,7 +337,7 @@ async function main() {
   const base = `http://127.0.0.1:${port}`;
   const srv = await startServer(port);
   log(`server on ${base}, scratch ${SCRATCH}`);
-  const browser = await chromium.launch();
+  const browser = await (ENGINE === 'webkit' ? webkit : chromium).launch();
   const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, colorScheme: 'dark', locale: 'en-US' });
   await context.addInitScript(() => { try { if (!localStorage.getItem('dreamcontext-theme')) localStorage.setItem('dreamcontext-theme', 'dark'); } catch {} });
   const page = await context.newPage();
@@ -344,7 +381,7 @@ async function main() {
     const one = await until(page, async () => { const s = await chipState(page, SCOPE); return s.marks.length === 1 && s.marks[0].state === 'ready'; }, 15000);
     const s1 = await chipState(page, SCOPE);
     ok('+ Attach files… with one picture: a chip IN the text, copied', one, JSON.stringify(s1));
-    ok('the chip shows its thumbnail, on one line', s1.marks.length === 1 && s1.marks[0].bg.startsWith('url(') && s1.marks[0].w >= 24 && s1.marks[0].lines === 1, JSON.stringify(s1.marks));
+    ok('the chip shows its thumbnail, on one line', s1.marks.length === 1 && s1.marks[0].img && s1.marks[0].w >= 24 && s1.marks[0].lines === 1, JSON.stringify(s1.marks));
     ok('no picture in the row above the box', s1.stripImages === 0, String(s1.stripImages));
     const v1 = await input.inputValue();
     ok('the chip stands at the caret, after the typed words', v1.startsWith(LONG) && /^ ?⁨[^⁩]*⁩/.test(v1.slice(LONG.length)), JSON.stringify(v1));
@@ -352,11 +389,20 @@ async function main() {
     await page.keyboard.type(' birinci yorum', { delay: 6 });
     await page.keyboard.press('Shift+Enter');
     await shot(page, '1-chat-one-picked-1440.png');
+    // The composer chip sits in the mirror BEHIND the textarea: the pointer over it shows the card too.
+    const cbox = await page.locator(`${SCOPE} .chat-cmp-hl mark.chat-cmp-hl-img`).first().boundingBox();
+    await page.mouse.move(cbox.x + 6, cbox.y + cbox.height / 2);
+    const cshown = await until(page, async () => (await peekState(page))?.decoded, 5000);
+    const cpk = await peekState(page);
+    ok('composer: hovering a picture chip shows the picture in a card, inside the window', cshown && cpk?.inside, JSON.stringify(cpk));
+    await shot(page, '1b-composer-peek-1440.png');
+    await page.mouse.move(2, 2);
+    ok('composer: leaving the chip hides the card', await until(page, async () => (await peekState(page)) === null, 3000));
 
     // 2. Three at once, plus a PDF: three chips in pick order; the PDF in the row.
     await attachVia(page, SCOPE, [pB, pC, pD]);
     await attachVia(page, SCOPE, [pdf]);
-    const four = await until(page, async () => { const s = await chipState(page, SCOPE); return s.marks.length === 4 && s.marks.every((m) => m.state === 'ready' && m.bg.startsWith('url(')); }, 15000);
+    const four = await until(page, async () => { const s = await chipState(page, SCOPE); return s.marks.length === 4 && s.marks.every((m) => m.state === 'ready' && m.img); }, 15000);
     const s2 = await chipState(page, SCOPE);
     ok('+ with three pictures: three more chips in the text, each with its thumbnail', four, JSON.stringify(s2));
     const rowFiles = await page.locator(`${SCOPE} .chat-cmp-attachments .chat-cmp-attachment-file`).count();
@@ -389,6 +435,7 @@ async function main() {
     const b = await bubbleState(page, SCOPE);
     writeFileSync(join(OUT, 'bubble-1440.json'), JSON.stringify(b, null, 2));
     ok('the sent bubble draws four pictures, each loaded', drawn, JSON.stringify(b));
+    ok('each sent chip\'s own thumbnail decoded (painted in this engine)', b && b.pics.length === 4 && b.pics.every((p) => p.painted), JSON.stringify(b?.pics));
     ok('each picture is the composer\'s chip (mark.chat-cmp-hl-ref.chat-cmp-hl-img), no big <img>', b && b.pics.every((p) => p.chip && p.imgs === 0), JSON.stringify(b?.pics));
     ok('each chip is small and on one line (thumbnail no taller than two text lines)', b && b.pics.every((p) => p.lines === 1 && p.w >= 16 && p.h <= b.lineH * 2 && p.w <= 60), JSON.stringify({ lineH: b?.lineH, pics: b?.pics }));
     ok('each chip wears the picture\'s name (the drop copy\'s, its time prefix dropped)', b && b.pics.map((p) => p.label).join('|') === 'kirmizi_ekran.png|mavi.png|yesil.png|mor.png', JSON.stringify(b?.pics.map((p) => p.label)));
@@ -404,6 +451,9 @@ async function main() {
     await shot(page, '4-chat-viewer-1440.png');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
+    await hoverSent(page, SCOPE, 'chat 1440', '3b-chat-peek-1440.png');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(800);
     const bp = await bubbleState(page, SCOPE);
@@ -411,6 +461,7 @@ async function main() {
     ok('at 390 px the bubble keeps its four chips on one line each, no horizontal overflow', bp && bp.pics.length === 4 && bp.pics.every((p) => p.lines === 1) && !bp.overflow, JSON.stringify(bp));
     await page.locator(`${SCOPE} .chat-msg-user-row`).last().scrollIntoViewIfNeeded();
     await shot(page, '5-chat-sent-bubble-390.png');
+    await hoverSent(page, SCOPE, 'chat 390', '5b-chat-peek-390.png');
     await page.setViewportSize({ width: W, height: H });
     await page.waitForTimeout(500);
 
@@ -425,7 +476,7 @@ async function main() {
     await centreIn.click();
     await page.keyboard.type('bu ekranda', { delay: 6 });
     await attachVia(page, SUPER, [pB]);
-    ok('Super: + Attach files… makes a chip in its text too', await until(page, async () => { const s = await chipState(page, SUPER); return s.marks.length === 1 && s.marks[0].state === 'ready' && s.marks[0].bg.startsWith('url(') && s.stripImages === 0; }, 15000), JSON.stringify(await chipState(page, SUPER)));
+    ok('Super: + Attach files… makes a chip in its text too', await until(page, async () => { const s = await chipState(page, SUPER); return s.marks.length === 1 && s.marks[0].state === 'ready' && s.marks[0].img && s.stripImages === 0; }, 15000), JSON.stringify(await chipState(page, SUPER)));
     await centreIn.evaluate((el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length); });
     await page.keyboard.type(' hero kesik görünüyor', { delay: 6 });
     await shot(page, '6-super-picked-1440.png');
@@ -441,6 +492,7 @@ async function main() {
     ok('Super: the sent bubble draws the same chip with its comment after it, no marker', sdrawn && sbub.pics[0].chip && sbub.pics[0].words === 'hero kesik görünüyor' && !/\[Picture/.test(sbub.text), JSON.stringify(sbub));
     await page.waitForTimeout(800);
     await shot(page, '7-super-sent-1440.png');
+    await hoverSent(page, SUPER, 'Super 1440', '7b-super-peek-1440.png');
 
     ok('zero page errors', errors.length === 0, errors.slice(0, 5).join(' | '));
   } catch (e) {

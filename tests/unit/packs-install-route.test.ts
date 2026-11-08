@@ -75,13 +75,13 @@ describe('POST /api/packs/:name/install', () => {
   it('B1: success → 200, installed non-empty, SKILL.md on disk, manifest written', async () => {
     seedConfig(['claude']);
     const { res, status, body } = makeRes();
-    await handlePackInstall(makeReq('POST'), res, { name: 'engineering' }, contextRoot);
+    await handlePackInstall(makeReq('POST'), res, { name: 'growth' }, contextRoot);
 
     expect(status()).toBe(200);
     const payload = body() as { name: string; installed: string[]; platforms: string[] };
-    expect(payload.name).toBe('engineering');
+    expect(payload.name).toBe('growth');
     expect(payload.installed.length).toBeGreaterThan(0);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(contextRoot, 'state', '.install-manifest.json'))).toBe(true);
   });
 
@@ -110,11 +110,11 @@ describe('POST /api/packs/:name/install', () => {
   it('B4: no config → defaults to claude', async () => {
     // No .config.json seeded.
     const { res, status, body } = makeRes();
-    await handlePackInstall(makeReq('POST'), res, { name: 'engineering' }, contextRoot);
+    await handlePackInstall(makeReq('POST'), res, { name: 'growth' }, contextRoot);
 
     expect(status()).toBe(200);
     expect((body() as { platforms: string[] }).platforms).toEqual(['claude']);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(tmpDir, '.agents'))).toBe(false);
   });
 
@@ -125,15 +125,15 @@ describe('POST /api/packs/:name/install', () => {
 describe('DELETE /api/packs/:name', () => {
   it('B6: install then DELETE → 200, removed non-empty, files gone', async () => {
     seedConfig(['claude']);
-    await handlePackInstall(makeReq('POST'), makeRes().res, { name: 'engineering' }, contextRoot);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
+    await handlePackInstall(makeReq('POST'), makeRes().res, { name: 'growth' }, contextRoot);
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
 
     const { res, status, body } = makeRes();
-    await handlePackUninstall(makeReq('DELETE'), res, { name: 'engineering' }, contextRoot);
+    await handlePackUninstall(makeReq('DELETE'), res, { name: 'growth' }, contextRoot);
 
     expect(status()).toBe(200);
     expect((body() as { removed: string[] }).removed.length).toBeGreaterThan(0);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering'))).toBe(false);
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth'))).toBe(false);
   });
 
   it('B7: unknown pack → 404 unknown_pack', async () => {
@@ -158,7 +158,7 @@ describe('DELETE /api/packs/:name', () => {
   it('B9: idempotent — uninstalling a never-installed valid pack → 200 removed:[]', async () => {
     seedConfig(['claude']);
     const { res, status, body } = makeRes();
-    await handlePackUninstall(makeReq('DELETE'), res, { name: 'engineering' }, contextRoot);
+    await handlePackUninstall(makeReq('DELETE'), res, { name: 'growth' }, contextRoot);
 
     expect(status()).toBe(200);
     expect((body() as { removed: string[] }).removed).toEqual([]);

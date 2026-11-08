@@ -56,10 +56,19 @@ describe('aboutHeads: one header rule on both sides', () => {
     expect(aboutHeads(ITEM('q-1')).map((h) => h.kind)).toEqual(['item']);
   });
 
-  it('reads at most five; a sixth is plain text and gets no part ref', () => {
-    const six = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'].map((id) => `${NOTE(id)}\n\nw`).join('\n\n');
-    expect(aboutHeads(six)).toHaveLength(server.MAX_MESSAGE_REFS);
-    expect(partRefs(six)).toHaveLength(5);
+  it('no visible limit (owner 2026-11-04): 8 and 12 references each get a part ref, in order', () => {
+    for (const n of [8, 12]) {
+      const ids = Array.from({ length: n }, (_, i) => `n${i + 1}`);
+      const msg = ids.map((id) => `${NOTE(id)}\n\nw`).join('\n\n');
+      expect(aboutHeads(msg).map((h) => h.id)).toEqual(ids);
+      expect(new Set(partRefs(msg)).size).toBe(n);
+    }
+  });
+
+  it('only a hidden technical ceiling far above a real message bounds the parser', () => {
+    expect(server.MAX_MESSAGE_REFS).toBeGreaterThanOrEqual(100);
+    const over = Array.from({ length: server.MAX_MESSAGE_REFS + 1 }, (_, i) => `${NOTE(`n${i}`)}\n\nw`).join('\n\n');
+    expect(aboutHeads(over)).toHaveLength(server.MAX_MESSAGE_REFS);
   });
 
   it('a block spans exactly the header and its second line', () => {
@@ -191,7 +200,7 @@ describe('composeOutgoing: the message in draft order', () => {
 });
 
 describe('insertRef: insert, never replace', () => {
-  it('adds a pending ref beside the others; the same target flashes instead; a sixth is refused', () => {
+  it('adds a pending ref beside the others; the same target flashes instead; a sixth and a twelfth go in', () => {
     expect(insertRef(CONV, about(NOTE('n1')))).toBe('added');
     expect(insertRef(CONV, about(REPLY('k3f9q0')))).toBe('added');
     expect(readScratch(CONV).attachments.map((a) => a.pending)).toEqual([true, true]);
@@ -202,8 +211,8 @@ describe('insertRef: insert, never replace', () => {
     expect(cur).toHaveLength(2);
     expect(cur[0].flash).toBeGreaterThan(0);
     for (const id of ['n3', 'n4', 'n5']) expect(insertRef(CONV, about(NOTE(id)))).toBe('added');
-    expect(insertRef(CONV, about(NOTE('n6')))).toBe('max');
-    expect(readScratch(CONV).attachments).toHaveLength(5);
-    expect(readScratch(CONV).refused).toBe(1);
+    for (let i = 6; i <= 12; i++) expect(insertRef(CONV, about(NOTE(`n${i}`)))).toBe('added');
+    expect(readScratch(CONV).attachments).toHaveLength(12);
+    expect('refused' in readScratch(CONV)).toBe(false);
   });
 });

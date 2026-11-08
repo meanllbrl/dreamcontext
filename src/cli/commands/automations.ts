@@ -1,7 +1,9 @@
 import { isTaskStepRunOf } from '../../lib/agents/task-delivery.js';
 import { Command } from 'commander';
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { getApp } from '../../lib/apps/registry.js';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -36,8 +38,10 @@ import {
   listAutomations,
   getAutomation,
   readAutomationCache,
+  listRunSidecars,
   readRunSidecar,
   createAutomation,
+  approveMadeHere,
   getRunTarget,
   setAutomationEnabled,
   setAutomationShared,
@@ -63,19 +67,15 @@ import {
   readThread,
   threadUnread,
 } from '../../lib/automations/threads.js';
+import { RUN_POST_STAMP_ENV, runPostStamp } from '../../lib/telegram/member-forward.js';
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
+import { approvalCardBlock, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
-import { getAgent, setAgentShared } from '../../lib/agents/store.js';
-import {
-  adoptGlobalTelegramConfig,
-  forgetTelegramConfigForSlug,
-  pollTelegram,
-  readTelegramConfigForSlug,
-  telegramConfigPathForSlug,
-  writeTelegramConfigForSlug,
-} from '../../lib/automations/telegram.js';
+import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js';
+import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
+import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
   allPendingQuestions,
   claimQuestion,
@@ -221,6 +221,75 @@ function boardExists(contextRoot: string, slug: string): boolean {
 }
 
 /**
+ * An agent run, a member's conversation or the Super Agent's crew (`createNeedsOwner`) may not open
+ * a member's slot (plan-r10 1e, security r8-2-3): `enable` would turn a member the owner switched
+ * off back on, `share` would publish it to every teammate. Both widen who and what runs, and
+ * neither goes through the approval hash. The owner does both in the app. Returns true when it refused.
+ */
+function refuseMemberSlotForAgent(root: string, slug: string, what: string): boolean {
+  if (!createNeedsOwner()) return false;
+  // A member's OWN slot only: a routine bound to a member shares as it always did.
+  let member = false;
+  try { member = getAgent(root, slug) !== null; } catch { member = true; }
+  if (!member) return false;
+  error(`${what[0].toUpperCase()}${what.slice(1)} is the owner's step, and this is an agent run or the Super Agent's crew. He does it in the app.`);
+  process.exitCode = 1;
+  return true;
+}
+
+/**
+ * An automation an agent run, a member's conversation or the Super Agent's crew created
+ * (`createNeedsOwner`), judged on the manifest as written, like `agents create`. It was made on this
+ * Mac, so it stamps (`localWriteStamps`, owner 2026-11-07) unless a process that never talks to the
+ * owner wrote text the risk filter flags (`createRisks` over its prompt, job and soul). What it
+ * widens against the default baseline (`widensAuthority(null, …)`; `shared` widens who sees it) no
+ * longer holds it: it goes on the trace row (`agents amendments`) for the owner to read.
+ */
+/** MIRROR of the store's `OUTPUT_INSTRUCTIONS_PLACEHOLDER` (not exported there): the body every new
+ *  manifest's `## Output instructions` starts with. A drift only makes an agent's create wait. */
+const OUTPUT_PLACEHOLDER = '(Optional — extra guidance for how the output should be formatted or where else it should go.)';
+
+export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env: NodeJS.ProcessEnv = process.env): { ok: boolean; risks: string[] } {
+  const actor = memberActorFromEnv(env).actor === 'agent' ? 'agent' as const : 'session' as const;
+  const risks = createRisks(m.prompt, [typeof m.soul === 'string' ? m.soul : '', typeof m.job === 'string' ? m.job : ''].join('\n'));
+  // A `## ` line in the prompt file opens another section of the manifest (output instructions, a
+  // flow): text an agent may not author unseen.
+  if (/^\s*##(?:\s|$)/m.test(m.prompt)) risks.push('a section heading in the prompt');
+  const { flow: _flow, ...view } = widenViewOf(m);
+  // The scaffold's own placeholder is no destination: it is what every new manifest starts with.
+  if (typeof view.outputInstructions === 'string' && view.outputInstructions.trim() === OUTPUT_PLACEHOLDER) view.outputInstructions = '';
+  const widened = widensAuthority(null, view, actor);
+  if (m.shared) widened.push('shared');
+  const ok = localWriteStamps(actor, risks);
+  traceMemberCreate(projectRoot, { member: m.slug, by: actor, risks, widened, waits: !ok });
+  return { ok, risks };
+}
+
+/** The risk filter over a routine's `## Job` an agent wrote at create: everything in it is new. */
+function jobRisks(job: string): string[] {
+  const risks = createRisks(job, '');
+  if (/^\s*##(?:\s|$)/m.test(job)) risks.push('a section heading in the job');
+  return risks;
+}
+
+/**
+ * What `create` says when the automation waits for the owner (an agent run or the Super Agent's
+ * crew created it, `createNeedsOwner`): it is NOT approved, nothing runs before his yes, and the
+ * card that gets it is the next thing to write. The card names only the slug: the app reads the
+ * rest from the manifest, so the owner approves what the file says, not a summary of it. Never a
+ * command: this output is read by the very session that may not approve.
+ */
+function printOwnerApprovalCard(slug: string, risks: readonly string[] = []): void {
+  const why = risks.length > 0 ? ` Its text has ${risks.join(', ')}, which this Mac never approves unseen.` : '';
+  warn(`Not approved yet: nothing runs until the owner approves it. You cannot approve it yourself.${why}`);
+  console.log('  Put this card in your reply to the owner, as it is. He approves or rejects it there with one tap,');
+  console.log('  and you get an event with its state and next run time. (The AI Team page works too.)');
+  console.log('');
+  console.log(approvalCardBlock(slug));
+  console.log('');
+}
+
+/**
  * `automations create --agent`: a JOB bound to an existing agent. The agent must
  * already be approved here for conversation; identity flags do not apply (they
  * are the agent's). The store approves the new automation on this machine —
@@ -232,7 +301,7 @@ function createBoundFromFlags(
   /** The owner consented to this write: his terminal, or his yes on a `propose --routine`. */
   stamp: boolean,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
-    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string },
+    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string; appTools?: string },
 ): AutomationManifest | null {
   try {
     const agentSlug = (opts.agent ?? '').trim();
@@ -252,6 +321,11 @@ function createBoundFromFlags(
     if (slotSpecs.length === 0 && (!opts.days || !opts.at)) {
       throw new AutomationError('An automation needs --slot (repeatable) or --days and --at.');
     }
+    // Made on this Mac, so approved as written (`localWriteStamps`, owner 2026-11-07): only a risky
+    // job from a process that never talks to the owner (an agent run, the Super Agent's crew) waits.
+    const risks = stamp ? [] : jobRisks(opts.job ?? '');
+    const actor = memberActorFromEnv().actor === 'agent' ? 'agent' as const : 'session' as const;
+    const approveNow = stamp || localWriteStamps(actor, risks);
     registerProject(projectRoot);
     const manifest = createAutomation(root, {
       slug,
@@ -268,14 +342,41 @@ function createBoundFromFlags(
       shared: !!opts.shared,
       notify: opts.notify,
       review: opts.review as ReviewMode | undefined,
-    }, stamp ? { approve: { now: new Date() } } : {});
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : '. It waits for the owner\'s approval on the AI Team page'}.`);
+      ...appOption(root, opts.app),
+      ...appToolsOption(opts.appTools),
+    }, approveNow ? { approve: { now: new Date() } } : {});
+    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${approveNow ? ' (approved on this machine)' : ''}.`);
+    // Made by an agent, the crew or a session: traced like `agents create`, whether it stamped or
+    // waits, with what it widened (it runs on a schedule), so the owner reads it on the member's page.
+    if (!stamp) {
+      traceMemberCreate(projectRoot, {
+        member: agentSlug, routine: manifest.slug, by: actor, risks, widened: opts.shared ? ['mode', 'shared'] : ['mode'], waits: !approveNow,
+      });
+    }
+    if (!approveNow) printOwnerApprovalCard(manifest.slug, risks);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
     return manifest;
   } catch (err) {
     handleAutomationsError(err);
     return null;
   }
+}
+
+/** `--app`: only an app registered to THIS project, so a job cannot name a brief that is not there. */
+/** `--app-tools a/b,c/d`: checked in the store's write path (`<app>/<tool>`). */
+function appToolsOption(raw: string | undefined): { appTools?: string[] } {
+  if (raw === undefined) return {};
+  const list = raw.split(',').map((x) => x.trim()).filter(Boolean);
+  return list.length ? { appTools: list } : {};
+}
+
+function appOption(root: string, slug: string | undefined): { app?: string } {
+  if (slug === undefined) return {};
+  const app = slug.trim();
+  if (!getApp(homedir(), projectRootFor(root), app)) {
+    throw new AutomationError(`There is no app "${app}" in this project. See \`dreamcontext apps list\`.`);
+  }
+  return { app };
 }
 
 /**
@@ -624,7 +725,7 @@ async function answerApprovalQuestion(root: string, question: AutomationQuestion
  * Answer a `'flow-hitl'` question — an already-approved run stopped
  * mid-flight to ask about its own work, so free text is the correct and only
  * shape of answer. `resumeWithAnswer` is the ONE path every channel (HTTP,
- * CLI, Telegram) uses for this, and it re-checks the kind itself before
+ * CLI) uses for this, and it re-checks the kind itself before
  * touching anything.
  */
 async function answerFlowHitlQuestion(root: string, question: AutomationQuestion, answerText: string): Promise<void> {
@@ -811,7 +912,7 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('create')
     .argument('<slug>', 'Kebab-case automation slug (e.g. eod-digest)')
-    .description('Scaffold a new automation manifest, auto-approved on this machine')
+    .description('Scaffold a new automation manifest. Approved on the spot: made on this Mac, by you, your Super Agent or a member. Only risky text an agent run wrote waits for the owner\'s yes (a card in the chat, or the AI Team page)')
     .requiredOption('--title <title>', 'Automation title')
     // Deliberately NOT `requiredOption` any more: an on-call agent has no
     // schedule, and demanding a placeholder one would write a lie into the
@@ -841,7 +942,10 @@ export function registerAutomationsCommand(program: Command): void {
       '--review <mode>',
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
-    .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
+    .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): where its work shows and its card lives')
+    .option('--board-only', 'With --whiteboard: limit it to that board (scope: board): no Bash, node, MCP or .env')
+    .option('--app <slug>', 'This job belongs to an app of this project: its run carries the app\'s brief')
+    .option('--app-tools <refs>', 'App tools this job may run to CHANGE something while nobody watches, comma-separated <app>/<tool> (approved with the job)')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
     .option(
@@ -852,7 +956,7 @@ export function registerAutomationsCommand(program: Command): void {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string;
+      learning?: boolean; review?: string; whiteboard?: string; boardOnly?: boolean; agent?: string; job?: string; answer?: string; app?: string; appTools?: string;
     }) => {
       const root = ensureContextRoot();
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
@@ -863,8 +967,9 @@ export function registerAutomationsCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      // An agent's run or the Super Agent's crew gets no approval by creating: only the owner's own
-      // chat or terminal, or his yes on a `propose --routine`, grants one.
+      // The owner's own chat or terminal, or his yes on a `propose --routine`, stamps outright. What an
+      // agent run or the Super Agent's crew creates is judged on what was written (`judgeAgentCreate`,
+      // `jobRisks`): made on this Mac, so it stamps unless a background process wrote risky text.
       const stamp = !createNeedsOwner() || gate.question !== null;
       if (opts.agent !== undefined) {
         const created = createBoundFromFlags(root, slug, stamp, opts);
@@ -935,6 +1040,9 @@ export function registerAutomationsCommand(program: Command): void {
           // refusal here rather than a gate the owner believes they installed.
           review: opts.review as ReviewMode | undefined,
           whiteboard,
+          ...(opts.boardOnly ? { boardOnly: true } : {}),
+          ...appOption(root, opts.app),
+          ...appToolsOption(opts.appTools),
         });
 
         // Every fresh automation gets a `## Flow` block that actually
@@ -951,9 +1059,14 @@ export function registerAutomationsCommand(program: Command): void {
 
         const projectRoot = projectRootFor(root);
         registerProject(projectRoot);
-        if (stamp) approveAutomation(projectRoot, manifest, new Date());
+        // An agent's create goes through the same door as `agents create`: made on this Mac, so it
+        // stamps, unless a background process wrote risky text (`judgeAgentCreate`).
+        const judged = stamp || !createNeedsOwner() ? null : judgeAgentCreate(projectRoot, manifest);
+        const stamped = stamp || (judged?.ok ?? false);
+        if (stamped) approveMadeHere(root, manifest, new Date());
 
-        success(`Automation created: automations/${manifest.slug}.md (${stamp ? 'auto-approved on this machine' : 'it waits for the owner\'s approval on the AI Team page'}).`);
+        success(`Automation created: automations/${manifest.slug}.md${stamped ? ' (approved on this machine)' : ''}.`);
+        if (!stamped) printOwnerApprovalCard(manifest.slug, judged?.risks ?? []);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -964,7 +1077,10 @@ export function registerAutomationsCommand(program: Command): void {
         if (!existsSync(dispatcherPlistPath())) {
           warn('The launchd dispatcher is not installed — run `dreamcontext automations install` so this can fire on schedule.');
         }
-        console.log(chalk.dim(`  Edit its ## Prompt / ## Output instructions, then \`dreamcontext automations run ${manifest.slug} --force\` to test it live.`));
+        // `run --force` never bypasses approval: offered only when it would actually run.
+        console.log(chalk.dim(stamped
+          ? `  Edit its ## Prompt / ## Output instructions, then \`dreamcontext automations run ${manifest.slug} --force\` to test it live.`
+          : '  Once the owner approves it, `run --force` tests it live.'));
 
         if (opts.shared) {
           const result = shareWithAgent(root, manifest.slug, manifest.agent);
@@ -1066,6 +1182,8 @@ export function registerAutomationsCommand(program: Command): void {
           cache,
           approved: approval.approved,
           approvalReason: approval.approved ? null : approval.reason,
+          // The last run's error is a refusal for want of an approval it has now: history only.
+          lastErrorStale: staleApprovalBlock(cache, approval.approved),
           sidecar,
           shareState,
         }, null, 2));
@@ -1145,6 +1263,9 @@ export function registerAutomationsCommand(program: Command): void {
         }
       }
       console.log(`  approval: ${approval.approved ? chalk.green('approved') : chalk.red(`NOT approved (${approval.reason})`)}`);
+      if (!approval.approved && approval.reason === 'never-approved') {
+        console.log(chalk.dim('    the owner approves it in its chat card or on the AI Team page'));
+      }
       {
         const { badge, warning } = describeShareState(shareState, slug);
         console.log(`  sharing: ${badge}`);
@@ -1155,8 +1276,14 @@ export function registerAutomationsCommand(program: Command): void {
       }
 
       if (cache) {
-        console.log(`  last run: ${cache.lastRunAt ?? '(never)'} · status: ${cache.status ?? '—'}`);
-        if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
+        if (staleApprovalBlock(cache, approval.approved)) {
+          // The last attempt was refused for want of the approval it has now: history, not an
+          // error of this automation. Nothing has run since; the next fire is the first real run.
+          console.log(`  last run: ${chalk.dim(`none since approval (an attempt at ${cache.lastRunAt ?? '?'} was refused before it)`)}`);
+        } else {
+          console.log(`  last run: ${cache.lastRunAt ?? '(never)'} · status: ${cache.status ?? '—'}`);
+          if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
+        }
         const recent = cache.history.slice(0, historyLimit);
         if (recent.length > 0) {
           console.log('  history:');
@@ -1468,6 +1595,10 @@ export function registerAutomationsCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        // A post from the run's own child is stamped with the run's key (plan Y3, AA3): only the
+        // parent runner, which minted the key, can verify it; nothing else forwards.
+        const stampKey = process.env[RUN_POST_STAMP_ENV];
+        const ownRun = !!stampKey && runId === process.env.DREAMCONTEXT_AUTOMATION_RUN?.trim();
         const entry = appendThreadEntry(root, slug, {
           runId,
           kind: 'agent',
@@ -1475,6 +1606,7 @@ export function registerAutomationsCommand(program: Command): void {
           files: opts.file,
           ...(opts.kv.length > 0 ? { summary: opts.kv } : {}),
           via: 'cli',
+          ...(ownRun ? { runStamp: (id: string, hash: string) => runPostStamp(stampKey!, id, hash) } : {}),
         });
         success(`Posted to "${slug}".`);
         console.log(chalk.dim(`  run ${runId} · entry ${entry.id}`));
@@ -1530,7 +1662,7 @@ export function registerAutomationsCommand(program: Command): void {
             lastRun = e.runId;
           }
           const when = e.at.slice(11, 16);
-          const who = e.kind === 'agent' ? chalk.bold(manifest.title) : e.kind === 'user' ? chalk.bold('you') : chalk.dim('·');
+          const who = e.kind === 'agent' ? chalk.bold(manifest.title) : e.kind === 'user' ? chalk.bold(e.via === 'app' ? `the app ${e.app ?? ''}` : 'you') : chalk.dim('·');
           const body = e.kind === 'system' ? chalk.dim(e.text) : e.text;
           console.log(`  ${chalk.dim(when)} ${who} ${body}`);
           if (e.files?.length) console.log(chalk.dim(`         ${e.files.join(', ')}`));
@@ -1632,102 +1764,6 @@ export function registerAutomationsCommand(program: Command): void {
       } catch (err) {
         handleAutomationsError(err);
       }
-    });
-
-  const telegram = automations
-    .command('telegram')
-    .description("Answer one automation's questions from your phone (a per-automation bot token; never synced)");
-
-  telegram
-    .command('setup')
-    .argument('<slug>', 'Automation slug — one bot per automation, so a leaked token can only answer this one')
-    .description('Point a Telegram bot at this automation so its questions reach you where you already are')
-    .requiredOption('--token <token>', 'Bot token from @BotFather')
-    .requiredOption('--chat <id>', "Your chat id — the ONLY chat allowed to answer this automation's questions")
-    .action((slug: string, opts: { token: string; chat: string }) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-      try {
-        const botToken = opts.token.trim();
-        const chatId = String(opts.chat).trim();
-        // The offset carries over from any existing config (per-slug, or one
-        // already adopted from the legacy global bot) rather than resetting
-        // to 0 — re-saving the same bot must not replay updates it already
-        // processed. Mirrors `handleAutomationsTelegramSet`'s own carry-over
-        // exactly.
-        const existing = readTelegramConfigForSlug(slug);
-        writeTelegramConfigForSlug(slug, { botToken, chatId, offset: existing?.offset ?? 0 });
-        success(`Telegram configured for "${slug}" — ${telegramConfigPathForSlug(slug)} (0600, machine-local, never synced).`);
-        console.log(chalk.dim('  This token can resume a bypassPermissions session on this machine.'));
-        console.log(chalk.dim('  It is deliberately NOT in the brain: a synced token would hand that to every teammate.'));
-        if (pendingQuestion(root, slug)) {
-          console.log(chalk.dim(`  A question is already waiting — it posts on the next tick, or run \`automations telegram test ${slug}\`.`));
-        }
-      } catch (err) {
-        handleAutomationsError(err);
-      }
-    });
-
-  telegram
-    .command('test')
-    .argument('<slug>', 'Automation slug')
-    .description("Post this automation's waiting question now and report what its bot can see")
-    .action(async (slug: string) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-
-      // `adoptGlobalTelegramConfig`, not a plain per-slug read: someone who ran
-      // the OLD global `telegram setup` (no slug) must not read as
-      // "unconfigured" for an automation that is, in fact, still answered by
-      // it — this migrates that legacy config onto this slug the first time
-      // it is asked about, so nobody is silently unconfigured by the rename.
-      const cfg = adoptGlobalTelegramConfig(slug);
-      if (!cfg) {
-        error(`Telegram is not configured for "${slug}" — run \`dreamcontext automations telegram setup ${slug} --token <t> --chat <id>\`.`);
-        process.exitCode = 1;
-        return;
-      }
-
-      console.log(header(`Telegram channel: ${slug}`));
-      console.log(`  chat: ${cfg.chatId}`);
-      console.log(`  question waiting: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
-
-      // Drives the SAME multi-bot fan-out a real dispatcher tick uses
-      // (`pollTelegram`) — telegram.ts exports no single-bot post/poll
-      // primitive, and this file must not duplicate that internal logic.
-      // Every bot it touches stays scoped to its own slug(s) internally
-      // (S5); this verb's REPORT is scoped to `slug`, its ACTION is a real
-      // tick's worth of delivery for every bot configured on this machine.
-      const result = await pollTelegram(root);
-      success(`Handled ${result.processed} update(s) across every configured bot on this machine.`);
-      if (result.unauthorized > 0) {
-        warn(`  ${result.unauthorized} update(s) came from a chat that is NOT yours and were dropped.`);
-      }
-      console.log(`  "${slug}" question waiting now: ${pendingQuestion(root, slug) ? 'yes' : 'no'}`);
-    });
-
-  telegram
-    .command('off')
-    .argument('<slug>', 'Automation slug')
-    .description("Forget this automation's bot token and stop its channel")
-    .action((slug: string) => {
-      const root = ensureContextRoot();
-      const manifest = requireAutomation(root, slug);
-      if (!manifest) return;
-      // Adopt first: a slug relying only on the legacy global bot must not
-      // read as "already off" when it is, in fact, still being answered —
-      // `off` has to actually stop that, not just check a per-slug file that
-      // never existed.
-      const cfg = adoptGlobalTelegramConfig(slug);
-      if (!cfg) {
-        console.log(chalk.dim(`  Telegram was not configured for "${slug}".`));
-        return;
-      }
-      forgetTelegramConfigForSlug(slug);
-      success(`Telegram channel off for "${slug}" — token removed from this machine.`);
-      console.log(chalk.dim('  Its questions are unaffected: the dashboard and `dreamcontext automations answer` still answer them.'));
     });
 
   automations
@@ -1956,28 +1992,40 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('schedule')
     .argument('<slug>', 'Automation slug')
-    .description("Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)")
+    .description("Show or edit an automation's fire slots and catch-up window — no YAML editing, no re-approval (neither is approval-hashed)")
     .option('--slot <spec>', 'Replace every slot with these (repeatable): mon-fri@16:30, 2w:mon@10:00, month:last@09:00, cron:…', collectSlot, [])
     .option('--add <spec>', 'Add a slot, keeping the others (repeatable)', collectSlot, [])
     .option('--remove <n>', 'Remove slot n (1-based, as numbered by this command), repeatable', collectSlot, [])
     .option('--days <daily|mon,wed>', 'One-slot shorthand, with --at: replace the schedule with one weekly slot')
     .option('--at <HH:MM>', 'One-slot shorthand, with --days')
+    .option('--catchup <hours>', `How long after a missed slot it may still run, in hours, 1-${MAX_CATCHUP_HOURS} (default ${DEFAULT_CATCHUP_HOURS})`)
     .option('--json', 'Emit the resulting schedule as JSON')
     .action((slug: string, opts: {
-      slot: string[]; add: string[]; remove: string[]; days?: string; at?: string; json?: boolean;
+      slot: string[]; add: string[]; remove: string[]; days?: string; at?: string; catchup?: string; json?: boolean;
     }) => {
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
         if (!manifest) return;
         const now = new Date();
-        const editing = opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0 || !!opts.days || !!opts.at;
+        const editingSlots = opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0 || !!opts.days || !!opts.at;
+        const editingCatchup = opts.catchup !== undefined;
+        const editing = editingSlots || editingCatchup;
+
+        let catchupHours: number | undefined;
+        if (editingCatchup) {
+          const n = Number(opts.catchup);
+          if (!Number.isInteger(n) || n < 1 || n > MAX_CATCHUP_HOURS) {
+            throw new AutomationError(`--catchup ${opts.catchup}: give whole hours between 1 and ${MAX_CATCHUP_HOURS}.`);
+          }
+          catchupHours = n;
+        }
 
         let updated = manifest;
-        if (editing) {
-          if (manifest.mode === 'call') {
-            throw new AutomationError(`"${slug}" is on-call — it has no schedule to edit. Recreate it with a schedule, or switch its mode in the dashboard.`);
-          }
+        if (editing && manifest.mode === 'call') {
+          throw new AutomationError(`"${slug}" is on-call — it has no schedule to edit. Recreate it with a schedule, or switch its mode in the dashboard.`);
+        }
+        if (editingSlots) {
           if ((opts.days || opts.at) && (opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0)) {
             throw new AutomationError('--days/--at replace the whole schedule with one slot — do not combine them with --slot, --add or --remove.');
           }
@@ -2011,13 +2059,16 @@ export function registerAutomationsCommand(program: Command): void {
           }
           // Validated by the store's one schedule validator on the way in.
           scheduleFromInput({ slots });
-          updated = updateAutomation(root, slug, { slots });
+          updated = updateAutomation(root, slug, { slots, catchupHours });
+        } else if (editingCatchup) {
+          updated = updateAutomation(root, slug, { catchupHours });
         }
 
         if (opts.json) {
           console.log(JSON.stringify({
             slug,
             schedule: updated.schedule,
+            catchupHours: updated.catchupHours,
             label: cadenceLabel(updated),
             nextFireAt: updated.schedule ? (nextFire(updated.schedule, now)?.toISOString() ?? null) : null,
           }, null, 2));
@@ -2038,7 +2089,8 @@ export function registerAutomationsCommand(program: Command): void {
         });
         const next = nextFireLabel(updated, now);
         console.log(next ? `  next fire: ${next}` : chalk.dim(updated.enabled ? '  no upcoming fire' : '  disabled — no upcoming fire'));
-        if (editing) success(`Schedule saved: ${cadenceLabel(updated)} (no re-approval needed).`);
+        console.log(`  catch-up: ${updated.catchupHours}h after a missed slot`);
+        if (editing) success(`Schedule saved: ${cadenceLabel(updated)}, catch-up ${updated.catchupHours}h (no re-approval needed).`);
       } catch (err) {
         handleAutomationsError(err);
       }
@@ -2050,6 +2102,7 @@ export function registerAutomationsCommand(program: Command): void {
     .description('Enable an automation (tick will consider it again)')
     .action((slug: string) => {
       const root = ensureContextRoot();
+      if (refuseMemberSlotForAgent(root, slug, 'turning a member back on')) return;
       try {
         setAutomationEnabled(root, slug, true);
         success(`"${slug}" enabled.`);
@@ -2080,6 +2133,7 @@ export function registerAutomationsCommand(program: Command): void {
       const root = ensureContextRoot();
       const manifest = requireAutomation(root, slug);
       if (!manifest) return;
+      if (refuseMemberSlotForAgent(root, slug, 'sharing a member')) return;
 
       try {
         setAutomationShared(root, slug, true);
@@ -2225,11 +2279,13 @@ export function registerAutomationsCommand(program: Command): void {
         return;
       }
 
-      const sidecar = readRunSidecar(root, slug);
-      if (!sidecar) {
+      const inFlight = listRunSidecars(root, slug);
+      if (!inFlight.length) {
         success(`"${slug}": no in-flight or orphaned run recorded — nothing to kill.`);
         return;
       }
+      // A member can run several turns at once: each is shown, confirmed and killed by itself.
+      for (const sidecar of inFlight) {
 
       const groupAlive = isAlive(sidecar.childPgid);
       const runnerAlive = isAlive(sidecar.runnerPid);
@@ -2254,24 +2310,25 @@ export function registerAutomationsCommand(program: Command): void {
         const confirmed = await confirm({ message: `SIGKILL process group ${sidecar.childPgid}?`, default: false });
         if (!confirmed) {
           warn('Not killed.');
-          return;
+          continue;
         }
       }
 
-      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force });
+      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force, slot: sidecar.slot ?? '' });
       if (!result.found) {
         success(`"${slug}": the run finished or the record cleared on its own — nothing to kill.`);
-        return;
+        continue;
       }
       if (result.refusedReason) {
         error(result.refusedReason);
         process.exitCode = 1;
-        return;
+        continue;
       }
       if (result.killed) {
         success(`"${slug}": process group ${result.childPgid} killed and cleared.`);
       } else {
         warn(`"${slug}": not killed.`);
+      }
       }
     });
 

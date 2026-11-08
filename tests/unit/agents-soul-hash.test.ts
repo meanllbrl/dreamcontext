@@ -163,12 +163,16 @@ describe('P4 position: soul is the LAST key and everything before it is byte-equ
 });
 
 describe('P5 lockstep: the review shows the soul', () => {
-  it('APPROVAL_DIFF_FIELDS equals approvalFields keys in order and ends with soul, autonomy, then readTools', () => {
+  it('APPROVAL_DIFF_FIELDS equals approvalFields keys in order and ends with soul, autonomy, readTools, tool, app, then boardOnly, then appTools', () => {
     const m = legacy({ soul: 'Be terse.' });
     expect([...APPROVAL_DIFF_FIELDS]).toEqual(Object.keys(approvalFields(m)));
-    expect(APPROVAL_DIFF_FIELDS.at(-1)).toBe('readTools');
-    expect(APPROVAL_DIFF_FIELDS.at(-2)).toBe('autonomy');
-    expect(APPROVAL_DIFF_FIELDS.at(-3)).toBe('soul');
+    expect(APPROVAL_DIFF_FIELDS.at(-1)).toBe('appTools');
+    expect(APPROVAL_DIFF_FIELDS.at(-2)).toBe('boardOnly');
+    expect(APPROVAL_DIFF_FIELDS.at(-3)).toBe('app');
+    expect(APPROVAL_DIFF_FIELDS.at(-4)).toBe('tool');
+    expect(APPROVAL_DIFF_FIELDS.at(-5)).toBe('readTools');
+    expect(APPROVAL_DIFF_FIELDS.at(-6)).toBe('autonomy');
+    expect(APPROVAL_DIFF_FIELDS.at(-7)).toBe('soul');
   });
 
   it('renderApprovalReview has a soul: line, and approvalFields reads an absent soul as empty', () => {

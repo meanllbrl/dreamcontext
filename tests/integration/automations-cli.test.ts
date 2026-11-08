@@ -258,7 +258,7 @@ describe('automations CLI (integration)', () => {
     for (const verb of [
       'create', 'list', 'show', 'run', 'tick', 'enable', 'disable', 'share', 'unshare',
       'approve', 'kill', 'remove', 'install', 'uninstall', 'logs',
-      'questions', 'answer', 'flow', 'telegram',
+      'questions', 'answer', 'flow',
     ]) {
       expect(out.stdout).toContain(verb);
     }
@@ -369,6 +369,34 @@ describe('automations CLI (integration)', () => {
     expect(run(['automations', 'list'], projectDir, home).stdout).toContain('mon–fri 16:30');
   }, 60_000); // a dozen real CLI subprocesses — the 5s default trips under a loaded full-suite run
 
+  it('schedule --catchup changes only the catch-up window and keeps the automation approved', () => {
+    run(['automations', 'create', 'late-digest', '--title', 'Late Digest', '--slot', 'mon@09:30'], projectDir, home);
+    const manifestPath = join(projectDir, '_dream_context', 'automations', 'late-digest.md');
+    expect(run(['automations', 'show', 'late-digest'], projectDir, home).stdout).toMatch(/approval:\s*approved/i);
+
+    const set = run(['automations', 'schedule', 'late-digest', '--catchup', '48'], projectDir, home);
+    expect(set.exitCode).toBe(0);
+    expect(set.stdout).toContain('catch-up: 48h');
+    expect(readFileSync(manifestPath, 'utf-8')).toMatch(/^catchup_hours: 48$/m);
+    const shown = run(['automations', 'show', 'late-digest'], projectDir, home).stdout;
+    expect(shown).toContain('catchup: 48h');
+    expect(shown).toMatch(/approval:\s*approved/i);
+    expect(shown).toContain('mon 09:30');
+
+    // With a slot edit in the same call, both land.
+    const both = run(['automations', 'schedule', 'late-digest', '--add', 'fri@17:00', '--catchup', '24', '--json'], projectDir, home);
+    const parsed = JSON.parse(both.stdout);
+    expect(parsed.catchupHours).toBe(24);
+    expect(parsed.schedule.slots).toHaveLength(2);
+
+    for (const bad of ['0', '169', '2.5', 'x']) {
+      const r = run(['automations', 'schedule', 'late-digest', '--catchup', bad], projectDir, home);
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toMatch(/--catchup .*whole hours between 1 and 168/);
+    }
+    expect(readFileSync(manifestPath, 'utf-8')).toMatch(/^catchup_hours: 24$/m);
+  }, 60_000);
+
   it('approve shows every hashed field after a manifest edit, and refuses non-interactively without --yes', () => {
     run(
       ['automations', 'create', 'weekly-report', '--title', 'Weekly Report', '--days', 'fri', '--at', '17:00'],
@@ -420,7 +448,10 @@ describe('automations CLI (integration)', () => {
     // 12 → 13 with `autonomy` (AI Team v2): Free runs bypassPermissions, so a synced move to it
     // must block; omitted when `balanced`, so every existing hash is unchanged.
     // 13 → 14 with `readTools`: the MCP tools a light job may call; omitted when none.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(14);
+    // 14 → 15 with `tool`: which vendor reads the prompt; omitted on Claude (Track T W4).
+    // 15 → 16 with `app` (dreamcontext Apps): the app a schedule runs for; omitted when none.
+    // 16 → 17 with `appTools`, 18 with `scope: board` (merged in 0.41.5): the app tools a run may change things with unattended; omitted when none.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(18);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }
@@ -1024,41 +1055,15 @@ describe('automations CLI (integration)', () => {
     });
   });
 
-  // ── telegram (per-automation) ──────────────────────────────────────────────
-  describe('telegram (per-automation)', () => {
-    it('setup refuses when no slug is given', () => {
-      const out = run(['automations', 'telegram', 'setup', '--token', 'tok', '--chat', '123'], projectDir, home);
-      expect(out.exitCode).not.toBe(0);
-      expect(out.stdout.toLowerCase()).toContain('slug');
-    });
-
-    it('setup requires an existing automation, writes a 0600 per-slug file, and test/off are slug-scoped', () => {
+  // ── telegram (retired) ──────────────────────────────────────────────────
+  describe('telegram (retired)', () => {
+    it('the per-routine telegram verb is gone: no verb in --help, setup is refused, no file is written', () => {
+      const help = run(['automations', '--help'], projectDir, home);
+      expect(help.stdout).not.toMatch(/^\s+telegram\b/m);
       run(['automations', 'create', 'telegram-test', '--title', 'Telegram Test', '--days', 'daily', '--at', '09:00'], projectDir, home);
-
-      const missingOut = run(['automations', 'telegram', 'setup', 'does-not-exist', '--token', 'tok', '--chat', '123'], projectDir, home);
-      expect(missingOut.exitCode).toBe(1);
-      expect(missingOut.stdout).toMatch(/no such automation/i);
-
-      const setupOut = run(['automations', 'telegram', 'setup', 'telegram-test', '--token', 'tok-123', '--chat', '999'], projectDir, home);
-      expect(setupOut.exitCode).toBe(0);
-      expect(setupOut.stdout).toMatch(/configured for "telegram-test"/i);
-
-      const cfgPath = join(home, '.dreamcontext', 'telegram', 'telegram-test.json');
-      expect(existsSync(cfgPath)).toBe(true);
-      const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
-      expect(cfg.chatId).toBe('999');
-
-      const offOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
-      expect(offOut.exitCode).toBe(0);
-      expect(offOut.stdout).toMatch(/off for "telegram-test"/i);
-      expect(existsSync(cfgPath)).toBe(false);
-
-      // Off on an automation that was never configured is a clean no-op, not
-      // an error — and it must not invent a config file.
-      const offAgainOut = run(['automations', 'telegram', 'off', 'telegram-test'], projectDir, home);
-      expect(offAgainOut.exitCode).toBe(0);
-      expect(offAgainOut.stdout).toMatch(/not configured/i);
-      expect(existsSync(cfgPath)).toBe(false);
+      const out = run(['automations', 'telegram', 'setup', 'telegram-test', '--token', 'tok-123', '--chat', '999'], projectDir, home);
+      expect(out.exitCode).not.toBe(0);
+      expect(existsSync(join(home, '.dreamcontext', 'telegram', 'telegram-test.json'))).toBe(false);
     });
   });
 

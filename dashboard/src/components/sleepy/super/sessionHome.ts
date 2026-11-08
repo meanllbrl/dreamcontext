@@ -10,13 +10,18 @@
  * The record's `formerChildren` keeps ownership past the hand-over that prunes an ended child.
  */
 import type { SuperState } from '../../../lib/superTypes';
+import type { SessionStatusKind } from '../agentStatus';
 import { isSuperSession, ownerQueueCount } from './superHandover';
 
 export type SessionHome = 'super' | 'chat';
 
-type Owned = Pick<SuperState, 'session' | 'children'> & { formerChildren?: readonly string[] };
+type Owned = Pick<SuperState, 'session' | 'children'> & { enabled?: boolean; formerChildren?: readonly string[]; released?: readonly string[] };
 
-/** Every conversation the record says is the Super Agent's, with the children being opened now. */
+/**
+ * Every conversation the record says is the Super Agent's, with the children being opened now.
+ * Turned off, the children it `released` are the owner's chats: without this a running chat has
+ * no window to be seen in. The record holds the list, so parking or a phone's take-over keeps it.
+ */
 export function superOwnedIds(
   state: Owned | null | undefined,
   delegated: ReadonlyMap<string, number> = new Map(),
@@ -26,6 +31,7 @@ export function superOwnedIds(
   if (state.session) ids.add(state.session);
   for (const id of Object.keys(state.children)) ids.add(id);
   for (const id of state.formerChildren ?? []) ids.add(id);
+  if (state.enabled === false) for (const id of state.released ?? []) if (id !== state.session) ids.delete(id);
   return ids;
 }
 
@@ -65,11 +71,51 @@ export function superLanding(
   return state?.containers.some((c) => c.kind === 'chat' && c.ref === claudeId) ? 'card' : 'transcript';
 }
 
-/** The Super Agent row's two marks, from the record alone. A child counts while it works (never an
- *  ended one, never a finished one); `asking`: the Super or a child waits on the owner. */
-export function superRowMarks(state: Pick<SuperState, 'children' | 'queue'> | null | undefined): { working: number; asking: boolean } {
+/** The children truly at work. The record's row alone can outlive its process (owner 2026-11-01:
+ *  a child that never started kept `row: working` and the Super row its ring), so a window that
+ *  holds the chats passes `liveOf`, a child's live state (null: no live chat here), and a row
+ *  counts only when that chat runs. No `liveOf` (a screen with no chats of its own): the record. */
+export function workingChildren(
+  children: SuperState['children'],
+  liveOf?: (sid: string) => SessionStatusKind | null,
+): string[] {
+  return Object.keys(children).filter((sid) => {
+    const c = children[sid];
+    if (c?.endedAt !== undefined || c.row !== 'working') return false;
+    if (!liveOf) return true;
+    const kind = liveOf(sid);
+    // `ready` with a working row and no settle window: its turn ended, its background work did
+    // not (a chat reattached after a reload has no roster of that work, the row does).
+    return kind === 'working' || kind === 'starting' || (kind === 'ready' && !c.settling);
+  });
+}
+
+/** Every child with something under way, for what Turn off says: at work, or alive and blocked
+ *  on someone (a question, an owner step). A child resting between jobs is not one. */
+export function busyChildren(
+  children: SuperState['children'],
+  liveOf: (sid: string) => SessionStatusKind | null,
+): string[] {
+  const working = new Set(workingChildren(children, liveOf));
+  return Object.keys(children).filter((sid) => {
+    const c = children[sid];
+    if (working.has(sid)) return true;
+    if (c?.endedAt !== undefined) return false;
+    const kind = liveOf(sid);
+    return kind === 'working' || kind === 'starting' || kind === 'asking'
+      || (kind === 'ready' && (c.row === 'asking' || c.row === 'waiting'));
+  });
+}
+
+/** The Super Agent row's two marks. A child counts while it works ({@link workingChildren});
+ *  `asking`: the Super or a child waits on the owner. */
+export function superRowMarks(
+  state: (Pick<SuperState, 'children' | 'queue'> & { enabled?: boolean }) | null | undefined,
+  liveOf?: (sid: string) => SessionStatusKind | null,
+): { working: number; asking: boolean } {
   if (!state) return { working: 0, asking: false };
-  const working = Object.values(state.children).filter((c) => c?.endedAt === undefined && c.row === 'working').length;
+  // Off, nothing works for the Super Agent: a child still running is an ordinary chat by now.
+  const working = state.enabled === false ? 0 : workingChildren(state.children, liveOf).length;
   return { working, asking: ownerQueueCount(state) > 0 };
 }
 

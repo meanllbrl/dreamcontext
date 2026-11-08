@@ -32,7 +32,8 @@ function filterBox(box: Element, words: readonly string[], head: string): boolea
   if (!rows.length) return textMatches(box.textContent ?? '', words);
   let any = false;
   for (const row of rows) {
-    const text = `${row.querySelector('.setting-row-title')?.textContent ?? ''} ${row.querySelector('.setting-row-hint')?.textContent ?? ''}`;
+    // `data-search-k` carries words a row is found by without drawing them (the Settings window).
+    const text = `${row.querySelector('.setting-row-title')?.textContent ?? ''} ${row.querySelector('.setting-row-hint')?.textContent ?? ''} ${row.getAttribute('data-search-k') ?? ''}`;
     if (textMatches(text, words)) any = true;
     else row.setAttribute(HIDDEN, '');
   }
@@ -40,10 +41,11 @@ function filterBox(box: Element, words: readonly string[], head: string): boolea
 }
 
 /** Apply the query to `root`; returns how many blocks still show. An empty query clears. */
-export function applySettingsSearch(root: HTMLElement, query: string): number {
+export function applySettingsSearch(root: HTMLElement, query: string, opts: { paint?: boolean } = {}): number {
+  const draw = opts.paint ?? true;
   const words = queryWords(query);
   for (const el of root.querySelectorAll(`[${HIDDEN}]`)) el.removeAttribute(HIDDEN);
-  paint(root, []);
+  if (draw) paint(root, []);
   const blocks = Array.from(root.children).filter((b) => !b.matches('.settings-search-empty'));
   if (!words.length) return blocks.length;
   let shown = 0;
@@ -62,8 +64,15 @@ export function applySettingsSearch(root: HTMLElement, query: string): number {
     if (any) shown++;
     else block.setAttribute(HIDDEN, '');
   }
-  paint(root, words);
+  if (draw) paint(root, words);
   return shown;
+}
+
+/** Paint the matches of `query` over everything still showing in `root`, once. The highlight is
+ *  one registry entry: a caller filtering several containers paints over their common root after,
+ *  or each call would erase the one before (the Settings window). */
+export function paintSettingsSearch(root: HTMLElement, query: string): void {
+  paint(root, queryWords(query));
 }
 
 /** Highlight every word in the visible text of `root`. A webview without the API shows the

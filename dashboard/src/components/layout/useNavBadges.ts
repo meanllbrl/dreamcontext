@@ -4,7 +4,7 @@ import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
 import { useInstanceEvent } from '../../context/VaultContext';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
-import { AGENT_SURFACE_EXPANDED_EVENT, onAgentSettings, readAgentSettings } from '../../lib/agentSettings';
+import { AGENT_SURFACE_EXPANDED_EVENT, agentSurfaceSettings, onAgentSettings, readAgentSettings } from '../../lib/agentSettings';
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 
@@ -37,8 +37,8 @@ export function useNavBadges() {
   // The Chat row shows under the SAME gate as the corner FAB — desktop, and the surface
   // enabled in Settings — so the rail never offers a launcher that opens nothing.
   const { data: caps } = useAgentCapabilities();
-  const [chatEnabled, setChatEnabled] = useState<boolean>(() => readAgentSettings().enabled);
-  useEffect(() => onAgentSettings((cfg) => setChatEnabled(cfg.enabled)), []);
+  const [chatEnabled, setChatEnabled] = useState<boolean>(() => agentSurfaceSettings(readAgentSettings()).enabled);
+  useEffect(() => onAgentSettings((cfg) => setChatEnabled(agentSurfaceSettings(cfg).enabled)), []);
   const showChat = !!caps?.desktop && chatEnabled;
   // Live chats in THIS project, and whether one of them wants you. The surface publishes the
   // rollup on change only; it starts at zero sessions, so a rail mounted with it never misses

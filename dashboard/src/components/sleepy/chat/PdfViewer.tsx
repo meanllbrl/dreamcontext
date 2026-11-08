@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { agentFileUrl } from '../../../api/client';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import { FileActions } from './FileActions';
 import { revealPath } from './chatEntities';
 
@@ -68,7 +68,7 @@ export function PdfViewer({
   embedded?: boolean;
 }) {
   const api = useApi();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [probe, setProbe] = useState<Probe>({ state: 'checking' });
   const [granting, setGranting] = useState(false);

@@ -215,3 +215,38 @@ describe('the reading rule', () => {
     expect(advanceDwell(back.started, ['k'], 1600).seen).toEqual(['k']);
   });
 });
+
+describe("a member Super's turns for main Super are never the owner's unread (plan-r10 1, mainBatches)", () => {
+  const ev = (id: string, batch: string, ts: number): UnreadItem => user(id, `[super events] batch=${batch} items=1\n- item=q1 event=request from=super`, ts);
+  const withMain = (items: UnreadItem[], main: string[], fold = true) => unreadUnits(items, { fold, ownerBatches: [], openQuestions: [], mainBatches: main });
+
+  it('skips the event line and every prose block under a main batch', () => {
+    const items = [ev('e1', 'B1', 10), text('r1', 'working on the request', 11), text('r2', 'done', 12)];
+    expect(withMain(items, ['B1'])).toEqual([]);
+  });
+
+  it('counts the owner\'s own turn after it as before', () => {
+    const items = [ev('e1', 'B1', 10), text('r1', 'for main', 11), user('u', 'owner asks', 20), text('o1', 'owner answer', 21)];
+    expect(withMain(items, ['B1']).map((u) => u.itemId)).toEqual(['o1']);
+  });
+
+  it('a batch not named main still counts', () => {
+    const items = [ev('e1', 'B1', 10), text('r1', 'reply', 11), ev('e2', 'B2', 30), text('r2', 'other', 31)];
+    expect(withMain(items, ['B2']).map((u) => u.itemId)).toEqual(['e1']);
+  });
+
+  it('skips main work with the fold off too (prose rows, not lines)', () => {
+    const items = [ev('e1', 'B1', 10), text('r1', 'for main', 11), user('u', 'mine', 20), text('o1', 'mine back', 21)];
+    expect(withMain(items, ['B1'], false).map((u) => u.itemId)).toEqual(['o1']);
+  });
+
+  it('no mainBatches = main Super exactly as before', () => {
+    const items = [ev('e1', 'B1', 10), text('r1', 'reply', 11)];
+    expect(unreadUnits(items, { fold: true, ownerBatches: [], openQuestions: [] })).toEqual(withMain(items, []));
+  });
+
+  it('an open question still counts under a main batch (it is the record\'s, the owner\'s own)', () => {
+    const got = unreadUnits([ev('e1', 'B1', 10)], { fold: true, ownerBatches: [], openQuestions: [{ id: 'q', createdAt: 11 }], mainBatches: ['B1'] });
+    expect(got.map((u) => u.question)).toEqual(['q']);
+  });
+});

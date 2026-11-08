@@ -349,6 +349,18 @@ export function useSetVaultLogo() {
   });
 }
 
+/** REMOVE a vault's logo: its `assets/logo.*` files go and every surface falls back. */
+export function useRemoveVaultLogo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<{ ok: true; logo: false; logoStamp: null }>(`/launcher/logo/remove?vault=${encodeURIComponent(name)}`, {}),
+    onSuccess: () => {
+      invalidateLauncher(queryClient);
+    },
+  });
+}
+
 /** Run `dreamcontext update` inside a project, then refresh status + graph. */
 export function useUpdateProject() {
   const queryClient = useQueryClient();

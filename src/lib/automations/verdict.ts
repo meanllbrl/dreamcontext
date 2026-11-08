@@ -24,12 +24,18 @@
  * The review-card half of this file (`resumeWithVerdict`, `applySteer`, and
  * everything they alone depended on) is retired: every surface that could
  * answer a card is gone (the CLI's `review` verb, the dashboard queue, the
- * server routes, Telegram), so `resumeWithAnswer` is now the ONE path an
+ * server routes, the old per-routine Telegram channel), so `resumeWithAnswer` is now the ONE path an
  * answer takes, whatever channel it arrived through.
  */
+import { assertNotAppChat } from '../apps/chat-store.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { pickToolRunAccount, toolRunAccountArg } from './codex-account.js';
+import { codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
+import { linkedWritableRoots } from '../t3-bridge/roots.js';
 import { homedir } from 'node:os';
 import { win32PowerShell } from '../proc.js';
 import { effectivePattern } from '../agents/agent-sync.js';
@@ -37,8 +43,8 @@ import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { automationAccountWithoutProbe, pickAutomationAccount, withoutOwnerOnly, type AutomationAccount } from './account.js';
-import { appendThreadEntry } from './threads.js';
-import { latestBoundSession, onlyTaskSessions, readAutomationSession, retireAutomationSession, taskBindingOf } from './session-registry.js';
+import { appendThreadEntry, listThreadRuns } from './threads.js';
+import { latestBoundSession, onlyTaskSessions, readAutomationSession, retireAutomationSession, sessionForRun, sessionNamesRun, taskBindingOf } from './session-registry.js';
 import { queueTaskAnswer, taskOfAnySession, taskSessionRefusal, waitingClaimFor } from '../agents/task-starter.js';
 import {
   backfillQuestionSession,
@@ -48,16 +54,21 @@ import {
   noteResolution as noteQuestionResolution,
   pendingQuestion,
   pendingQuestionFor,
+  pendingQuestionOfRun,
   refreshQuestion,
   reopenQuestion,
   runKindOf,
 } from './hitl.js';
 import {
   clearRunSidecar,
+  listRunSidecars,
+  listRunSlots,
   getAutomation,
   getRunTarget,
   lockPathFor,
   readRunSidecar,
+  runSlotKey,
+  slotLockPath,
   writeRunSidecar,
 } from './store.js';
 import {
@@ -80,7 +91,9 @@ import {
 } from './runner.js';
 import { LIGHT_JOB_BLOCK, lightRunArgs } from './light-run.js';
 import {
+  boardLimitReason,
   boardScopeArgs,
+  openBoardArgs,
   prepareScopePaths,
   resolveSpawnScope,
   scopeEnv,
@@ -92,7 +105,7 @@ import {
   type AutomationManifest,
   type AutomationQuestion,
   type BoardTurnInput,
-  type ReviewChannel,
+  type SettableReviewChannel,
   type SpawnModelOverride,
 } from './types.js';
 
@@ -226,8 +239,8 @@ export function proposeFromRun(
   input: ProposeInput,
   opts: { ancestryProbe?: AncestryProbe; callerPid?: number; nowISO?: string; sessionId?: string | null } = {},
 ): ProposeResult {
-  const sidecar = readRunSidecar(contextRoot, slug);
-  if (!sidecar) {
+  const inFlight = listRunSidecars(contextRoot, slug);
+  if (!inFlight.length) {
     return { ok: false, reason: `no run of "${slug}" is in flight — \`propose\` is for a run to call about itself` };
   }
   const ancestors = (opts.ancestryProbe ?? defaultAncestryProbe)(opts.callerPid ?? process.pid);
@@ -237,14 +250,19 @@ export function proposeFromRun(
     // decorative on any machine where the probe happens to break.
     return { ok: false, reason: 'could not verify the calling process — refusing to record a proposal' };
   }
-  if (!ancestors.includes(sidecar.childPid)) {
+  // The caller's own run among this member's parallel turns.
+  const sidecar = inFlight.find((s) => ancestors.includes(s.childPid));
+  if (!sidecar) {
     return {
       ok: false,
-      reason: `\`propose\` may only be called from inside "${slug}"'s own run (run pid ${sidecar.childPid})`,
+      reason: `\`propose\` may only be called from inside "${slug}"'s own run (run pid ${inFlight[0].childPid})`,
     };
   }
-  // This run's target only: the other half of a same-slug pair may be waiting on its own.
-  const open = pendingQuestionFor(contextRoot, slug, runKindOf(contextRoot, slug, sidecar.target === 'agent' ? 'agent' : undefined));
+  // This run's target only: the other half of a same-slug pair may be waiting on its own. A
+  // parallel turn holds only its own run: a sibling's open question is not in its way.
+  const open = sidecar.slot
+    ? pendingQuestionOfRun(contextRoot, slug, sidecar.fireAt)
+    : pendingQuestionFor(contextRoot, slug, runKindOf(contextRoot, slug, sidecar.target === 'agent' ? 'agent' : undefined));
   if (open) {
     return { ok: false, reason: `"${slug}" already has a question awaiting an answer (${open.id})` };
   }
@@ -301,48 +319,93 @@ function fenceCorrection(text: string): string {
 //      This is precisely the failure the sidecar-before-await contract exists
 //      to prevent, and it does not stop mattering because the spawn came from a
 //      human's tap instead of a timer.
-//   2. NO RUN LOCK ⇒ concurrent claude processes on one automation. Answering
-//      the question clears the review gate, so the very next tick is free to
-//      start a scheduled run while the resume is still going — two agents
-//      writing the same output directory, which is exactly the self-overlap
-//      the per-slug lock was added to prevent.
+//   2. NO LOCK ⇒ two claude processes in one session. A resume holds its
+//      conversation's slot, so turns of one session queue and sessions of one
+//      member run side by side. A scheduled fire may run beside an answer's
+//      resume: each has its own session and its own output file.
 
-/** Take the automation's run lock, or null if a run (or another resume) holds
- *  it. Same staleness window and liveness probe `runAutomation` uses. */
-function acquireRunLock(contextRoot: string, m: AutomationManifest, nowMs: number): string | null {
-  const lockPath = lockPathFor(contextRoot, m.slug);
+/** A conversation's turn holding its slot. */
+interface HeldTurn { lockPath: string; slot: string; sessionId: string }
+
+/**
+ * Is the turn this conversation must wait for still going? `run` names a thread: only that run
+ * counts, so a sibling's turn is no reason to wait. Without one (a message to the member's latest
+ * session) the exclusive run counts whatever it is, the behaviour every such caller always had.
+ */
+function conversationBusy(contextRoot: string, m: AutomationManifest, nowMs: number, run?: string): boolean {
+  if (run && listRunSlots(contextRoot, m.slug).some((s) => s.run === run)) return true;
+  const lock = lockPathFor(contextRoot, m.slug);
+  if (run) {
+    // The exclusive lock says which run holds it; only a lock from an older build leaves it to
+    // the sidecar. A dead holder holds nothing back from a conversation of its own.
+    const holder = exclusiveHolder(lock);
+    if (holder?.dead || (holder?.run && holder.run !== run)) return false;
+    const side = readRunSidecar(contextRoot, m.slug, '');
+    if (!holder?.run && side && side.fireAt !== run) return false;
+  }
+  if (!acquireFileLock(lock, nowMs, m.timeoutMinutes * 60_000 + 300_000, { verifyPidLiveness: true })) return true;
+  releaseFileLock(lock);
+  return false;
+}
+
+/** Who holds the exclusive lock, as its file says. Null when free or unreadable. */
+function exclusiveHolder(lock: string): { run: string | null; dead: boolean } | null {
+  try {
+    const info = JSON.parse(readFileSync(lock, 'utf-8')) as { pid?: unknown; run?: unknown };
+    let dead = false;
+    if (typeof info.pid === 'number') {
+      try { process.kill(info.pid, 0); } catch (err) { dead = (err as NodeJS.ErrnoException)?.code === 'ESRCH'; }
+    }
+    return { run: typeof info.run === 'string' ? info.run : null, dead };
+  } catch {
+    return null;
+  }
+}
+
+/** Take one conversation's slot, once what it waits for ended and its session is known. Same
+ *  staleness window and liveness probe `runAutomation` uses. */
+function acquireTurn(contextRoot: string, m: AutomationManifest, nowMs: number, sessionId: string, run?: string): HeldTurn | null {
+  if (conversationBusy(contextRoot, m, nowMs, run)) return null;
+  const slot = runSlotKey(`session:${sessionId}`);
+  const lockPath = slotLockPath(contextRoot, m.slug, slot);
   const staleMs = m.timeoutMinutes * 60_000 + 300_000;
-  return acquireFileLock(lockPath, nowMs, staleMs, { verifyPidLiveness: true }) ? lockPath : null;
+  const meta = run ? { run } : undefined;
+  return acquireFileLock(lockPath, nowMs, staleMs, { verifyPidLiveness: true, ...(meta ? { meta } : {}) }) ? { lockPath, slot, sessionId } : null;
 }
 
-/** Release the lock and clear the sidecar — but ONLY when the sidecar is this
- *  invocation's own, never unconditionally, or a still-live orphan from some
- *  other runner would lose its only record. Mirrors `runAutomation`'s finally. */
-function releaseRunLock(contextRoot: string, slug: string, lockPath: string): void {
-  releaseFileLock(lockPath);
-  const current = readRunSidecar(contextRoot, slug);
-  if (current && current.runnerPid === process.pid) clearRunSidecar(contextRoot, slug);
+/** Release the slot and clear ITS sidecar, only when this invocation wrote it: a still-live orphan
+ *  from some other runner keeps its only record. Mirrors `runAutomation`'s finally. */
+function releaseTurn(contextRoot: string, slug: string, turn: HeldTurn): void {
+  releaseFileLock(turn.lockPath);
+  const current = readRunSidecar(contextRoot, slug, turn.slot);
+  if (current && current.runnerPid === process.pid) clearRunSidecar(contextRoot, slug, turn.slot);
 }
 
-/** {@link acquireRunLock}, waiting up to `opts.lockWaitMs` for it. Zero (the default)
- *  is a single attempt, exactly the old behaviour. */
-async function acquireRunLockWaiting(
+/** {@link acquireTurn}, waiting up to `opts.lockWaitMs`. Zero (the default) is a single attempt.
+ *  `sessionOf` is asked at each attempt: the run a follow-up waits behind binds its session as it
+ *  ends. `'no-session'`: nothing is running and there is no session to resume. */
+async function acquireTurnWaiting(
   contextRoot: string,
   m: AutomationManifest,
   nowFn: () => Date,
   opts: VerdictOptions,
-): Promise<string | null> {
+  sessionOf: () => string | null,
+): Promise<HeldTurn | 'busy' | 'no-session'> {
   const waitMs = Math.max(0, opts.lockWaitMs ?? 0);
   const pollMs = Math.max(1, opts.lockPollMs ?? 2_000);
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let waited = 0;
   for (;;) {
-    const lockPath = acquireRunLock(contextRoot, m, nowFn().getTime());
-    if (lockPath) {
+    const now = nowFn().getTime();
+    const free = !conversationBusy(contextRoot, m, now, opts.run);
+    const sessionId = free ? sessionOf() : null;
+    if (free && !sessionId) return 'no-session';
+    const turn = sessionId ? acquireTurn(contextRoot, m, now, sessionId, opts.run) : null;
+    if (turn) {
       opts.onLockAcquired?.();
-      return lockPath;
+      return turn;
     }
-    if (waited >= waitMs) return null;
+    if (waited >= waitMs) return 'busy';
     await sleep(pollMs);
     waited += pollMs;
   }
@@ -364,6 +427,7 @@ export function buildResumeArgs(
 ): string[] {
   // A light job's envelope beats every other (`buildClaudeArgs`), on a resumed session too.
   const permission = override?.light ? lightRunArgs(m) : scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
+  assertNotAppChat(sessionId);
   const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
   // a bigger model or a higher effort than the hash covers. The one exception is
@@ -392,10 +456,10 @@ export interface VerdictOptions extends BoardTurnInput {
   timeoutMinutes?: number;
   /**
    * Where this resume's final message is DELIVERED, which is the only thing the
-   * preamble has to say differently. Default `'telegram'` so every existing caller
-   * is byte-for-byte unchanged.
+   * preamble has to say differently. Default `'direct'` (the reply goes straight back
+   * to whoever sent the message) so every existing caller is byte-for-byte unchanged.
    */
-  surface?: 'telegram' | 'thread';
+  surface?: 'direct' | 'thread';
   /**
    * The two run-binding HINTS, and NOTHING else.
    *
@@ -410,7 +474,7 @@ export interface VerdictOptions extends BoardTurnInput {
   env?: { DREAMCONTEXT_AUTOMATION_SLUG?: string; DREAMCONTEXT_AUTOMATION_RUN?: string };
   /**
    * How long a message may WAIT for the run lock before it gives up, in ms. Default 0:
-   * refuse at once, which is what Telegram wants (it says so and the human re-sends).
+   * refuse at once (the caller says so and the human re-sends).
    *
    * A thread reply waits instead. The owner answers a question and types a follow-up
    * seconds later; the answer's resume holds the lock, and refusing the follow-up in 0s
@@ -423,6 +487,12 @@ export interface VerdictOptions extends BoardTurnInput {
   lockPollMs?: number;
   /** The wait itself. Injectable so a test does not sleep in real time. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The thread run this message continues. It then reaches THAT run's session (`sessionForRun`),
+   * waits only behind that run, and only that run's open question stands in its way. Absent: the
+   * member's latest session.
+   */
+  run?: string;
   /** Called once, the moment this message stops WAITING and holds the run lock. A queued
    *  thread reply uses it to tell the reader "queued" from "being read". */
   onLockAcquired?: () => void;
@@ -446,10 +516,17 @@ function boardParts(turn: TurnBoardContext): string[] {
   return [turn.board, turn.refs].filter(Boolean).flatMap((block) => ['', block]);
 }
 
-/** A resume's permission envelope: null for an ordinary agent. */
+/** A resume's board-only envelope: null for any other agent. `held`: limited only until the
+ *  owner answers the old-agent question (`board-scope.ts` `boardLimited`). */
 interface ResumeScope {
   scope: BoardScope;
   paths: ScopePaths;
+  held: boolean;
+}
+
+/** A board-only resume that Claude Code denied a step: the named reason, else null. */
+function boardDenial(m: AutomationManifest, resume: ResumeScope | null, denials: number): string | null {
+  return resume && denials > 0 ? boardLimitReason(m.agentTitle || m.title, m.agent || m.slug, resume.held) : null;
 }
 
 /**
@@ -484,27 +561,28 @@ function resolveResumeScope(
   opts: VerdictOptions,
   /** The target the asking run recorded (`AutomationQuestion.target`). */
   recorded?: 'agent',
-): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null } | { ok: false; reason: string } {
+): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null; home: BoardScope | null } | { ok: false; reason: string } {
   const manifest = resumeTarget(contextRoot, slug, recorded);
   if (!manifest) return { ok: false, reason: `no such automation: ${slug}` };
   // Strict 'run' use: a resume EXECUTES the target (an agent's call target included),
   // so a binding's identity-only approval never lets it resume.
   const scoped = resolveSpawnScope(contextRoot, manifest, opts.home, 'run');
   if (!scoped.ok) return { ok: false, reason: scoped.reason };
-  if (!scoped.scope) return { ok: true, manifest, resume: null };
+  // The home board as a presentation surface: what the turn shows, whatever the envelope.
+  const home = scoped.homeBoard ? { board: scoped.homeBoard, self: manifest.slug } : null;
+  if (!scoped.scope) return { ok: true, manifest, resume: null, home };
   const prepared = prepareScopePaths(contextRoot, scoped.scope);
   if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
-  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths } };
+  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths, held: scoped.held }, home };
 }
 
 // ─── Questions ───────────────────────────────────────────────────────────────
 //
 // `resumeWithAnswer` is the ONE path an answer takes, whatever channel it
-// arrived through — the HTTP route, the CLI verb, and the Telegram handler all
-// land here. That placement is the whole point of R1: the CLI does not go
-// through the server (`cli/commands/automations.ts` imports this module
-// directly) and Telegram reaches it by a third, independent route, so a refusal
-// living in the HTTP handler would guard exactly one of three doors.
+// arrived through — the HTTP route and the CLI verb both land here. That
+// placement is the whole point of R1: the CLI does not go through the server
+// (`cli/commands/automations.ts` imports this module directly), so a refusal
+// living in the HTTP handler would guard only one of the doors.
 
 /**
  * THE KIND GATE. An `approval` question must never be resumed.
@@ -565,7 +643,7 @@ function buildAnswerPreamble(q: AutomationQuestion, answer: string, turn?: TurnB
  * `src/lib` must not depend on `src/server`.
  *
  * A MISSING roster means no tab was ever opened, which is the common case on a
- * machine that answers from Telegram or the CLI — so it correctly reports false
+ * machine that answers from a thread or the CLI — so it correctly reports false
  * and the binding retires. A CORRUPT roster reports false too, and that is the
  * deliberate trade: the cost is one session that cannot be reopened as a tab
  * (its output document still exists), against the cost of a standing
@@ -587,7 +665,7 @@ function sessionIsInTabRoster(contextRoot: string, sessionId: string): boolean {
  * The card store this replaces dropped its binding the instant a card stopped
  * being pending, because "a resolvable session is a capability, and it should
  * not outlive the decision it existed for". This store cannot do that: it is
- * deliberately plural, so Telegram can talk to the latest run and the app can
+ * deliberately plural, so a thread can talk to the latest run and the app can
  * reopen past ones as tabs. But retiring NOTHING would leave an automation that
  * fires daily with ~90 simultaneously resumable sessions — a widening of the old
  * model rather than a port of it.
@@ -607,13 +685,15 @@ function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: str
   if (pendingQuestion(contextRoot, q.slug)) return;
   // (b) never opened as a chat tab.
   if (sessionIsInTabRoster(contextRoot, sessionId)) return;
-  // (c) NOT the agent's latest session. The thread's reply box and Telegram both talk to
+  // (c) NOT the agent's latest session. The thread's reply box talks to
   // `latestBoundSession`, so retiring it leaves the conversation the owner is standing in
   // with nothing to reach ("no session to talk to yet" right after he answered). The
   // auto-opened chat tab used to keep it alive by accident, through (b); with that gone,
   // this is the rule said out loud. Older sessions still retire, so the grant stays one
   // live conversation per agent, not one per run.
   if (latestBoundSession(q.slug, home) === sessionId) return;
+  // (d) its thread still takes follow-ups: each run keeps its conversation until the TTL.
+  if (sessionNamesRun(q.slug, sessionId, home)) return;
   retireAutomationSession(q.slug, sessionId, home);
 }
 
@@ -631,7 +711,7 @@ export async function resumeWithAnswer(
   contextRoot: string,
   question: AutomationQuestion,
   answer: string,
-  via: ReviewChannel,
+  via: SettableReviewChannel,
   opts: VerdictOptions = {},
 ): Promise<QuestionOutcome> {
   const nowFn = opts.now ?? (() => new Date());
@@ -693,8 +773,10 @@ export async function resumeWithAnswer(
     return { question, status: 'refused', error: taskSessionRefusal(contextRoot, taskOwner.taskId), result: null };
   }
 
-  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
-  if (!lockPath) {
+  // Behind the run that asked, whatever else this member is running.
+  const turnOpts: VerdictOptions = { ...opts, run: question.runFiredAt };
+  const turn = await acquireTurnWaiting(contextRoot, manifest, nowFn, turnOpts, () => sessionId);
+  if (typeof turn === 'string') {
     return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
 
@@ -707,7 +789,7 @@ export async function resumeWithAnswer(
     resume = envelope.resume;
     // References expand fresh for the prompt; the ANSWER on record is the display text, so
     // no surface ever shows a raw `dcref:` token.
-    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    const { turn: boardTurn, display } = buildBoardTurn(contextRoot, resume?.scope ?? envelope.home, opts.board, text);
     const answerText = display ?? text;
 
     const claim = claimQuestion(contextRoot, question, answerText, via, nowFn().toISOString());
@@ -747,7 +829,7 @@ export async function resumeWithAnswer(
       : { ...opts, env: { DREAMCONTEXT_AUTOMATION_SLUG: question.slug, DREAMCONTEXT_AUTOMATION_RUN: question.runFiredAt } };
     const execution = await spawnSessionResume(
       contextRoot, envelope.manifest, question.runFiredAt, sessionId,
-      buildAnswerPreamble(question, answerText, turn), spawnOpts, resume,
+      buildAnswerPreamble(question, answerText, boardTurn), spawnOpts, resume, turn.slot, !resume && !!envelope.home,
     );
 
     if (!execution.spawned) {
@@ -787,6 +869,10 @@ export async function resumeWithAnswer(
       };
     }
 
+    const denied = boardDenial(envelope.manifest, resume, parsed.permissionDenials);
+    if (denied) {
+      return { question: noteQuestionResolution(contextRoot, claimed, { error: denied }), status: 'failed', error: denied, result: null };
+    }
     const note = (parsed.result ?? '').trim();
     return {
       question: noteQuestionResolution(contextRoot, claimed, { note: note.slice(0, REVIEW_BODY_MAX_CHARS) || null, error: null }),
@@ -796,7 +882,7 @@ export async function resumeWithAnswer(
     };
   } finally {
     resume?.paths.dispose();
-    releaseRunLock(contextRoot, manifest.slug, lockPath);
+    releaseTurn(contextRoot, manifest.slug, turn);
     retireIfDone(contextRoot, question, sessionId, home);
     // The channel's own record that this run's question was closed. BEST-EFFORT, like
     // every other thread write on a run path: a channel that cannot be written must not
@@ -839,6 +925,11 @@ function spawnSessionResume(
   opts: VerdictOptions,
   /** The home-board envelope, already resolved under the lock; null for an ordinary agent. */
   resume: ResumeScope | null = null,
+  /** The conversation's slot: its sidecar is this turn's own. */
+  slot?: string,
+  /** A home-board agent that is NOT board-only: a board-less member's envelope, `.env*` closed
+   *  to Read (`openBoardArgs`). */
+  openHome = false,
 ): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
   // Never a task step's session, whoever asks (C1-14): only its host resumes it.
@@ -865,13 +956,62 @@ function spawnSessionResume(
   // AFTER the hint filter, and built from the scope (manifest + approval entry), never from
   // the caller: nothing in `opts.env` can name a board, a self or a scratch folder.
   const scopeVars = resume ? scopeEnv(resume.scope, resume.paths) : {};
-  const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
+  const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : openHome ? openBoardArgs() : null;
   // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
   // it leaves the accounts they keep for themself alone; the threshold does not gate it.
+  if (m.tool === 'codex' || m.tool === 'antigravity') return spawnCodexResume(m.tool);
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
     ? spawnOn(withoutOwnerOnly(quick, { home: opts.home }))
     : pickAutomationAccount({ home: opts.home }).then((a) => spawnOn(withoutOwnerOnly(a, { home: opts.home })));
+
+  function spawnedSidecar(child: ChildProcess, startedAt: Date): void {
+    writeRunSidecar(contextRoot, m.slug, {
+      slug: m.slug,
+      runnerPid: process.pid,
+      childPid: child.pid as number,
+      childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+      // The thread this turn writes into when it has one: `propose` files its question there.
+      fireAt: opts.env?.DREAMCONTEXT_AUTOMATION_RUN ?? fireAt,
+      startedAt: startedAt.toISOString(),
+      timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
+      ...(slot ? { slot } : {}),
+      // A resumed agent call target stays the agent if it proposes again.
+      ...(m.runKind === 'agent' ? { target: 'agent' as const } : {}),
+      ...(opts.override?.light ? { light: true as const } : {}),
+    });
+  }
+
+  /** The thread lives in the shared `~/.codex`, so any signed-in account resumes it. */
+  // Antigravity keeps a conversation in its account's profile: the resume goes to the pinned
+  // account, else the first signed-in one, which is where an unpinned run went out too.
+  function spawnCodexResume(tool: 'codex' | 'antigravity'): Promise<ClaudeExecution> {
+    const at = nowFn();
+    const node = bridgeNode();
+    const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+    const pick = pickToolRunAccount(tool, { pinned: m.account, home: opts.home });
+    const name = tool === 'antigravity' ? 'Antigravity' : 'Codex';
+    if (resume || !node || !cli || !('account' in pick)) {
+      return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: resume ? 'A home board stays on Claude.' : `${name} cannot resume here: no signed-in account or no Node 22.16.`, startedAt: at, finishedAt: at, result: null });
+    }
+    const { model, effort } = spawnModel(m, opts.override);
+    const said = opts.override?.light ? `${LIGHT_JOB_BLOCK}\n\n${prompt}` : prompt;
+    return executeClaudeDetached(codexRunArgs({
+      surface: opts.override?.light ? 'light' : 'verdict', prompt: sanitizeAutomationPrompt(said), model: codexModelOf(model), effort,
+      ...(tool === 'antigravity' ? { tool: 'antigravity' as const } : {}),
+      account: toolRunAccountArg(tool, pick.account), resume: sessionId, extraRoots: linkedWritableRoots(dirname(contextRoot)),
+    }), {
+      command: { file: node, prefix: [cli] },
+      cwd: dirname(contextRoot),
+      env: hints,
+      timeoutMs,
+      spawnImpl: opts.spawnImpl,
+      killImpl: opts.killImpl,
+      log: opts.log,
+      now: nowFn,
+      onSpawned: spawnedSidecar,
+    });
+  }
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
@@ -885,25 +1025,13 @@ function spawnSessionResume(
       // dashboard process happened to be started under. The hints spread after it cannot
       // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
       env: { ...accountEnvFor(account.configDir, opts.home), ...hints, ...scopeVars },
-      sharedMcpHome: scopeArgs && !opts.override?.light ? undefined : opts.home ?? homedir(),
+      // Only a board-only envelope goes without MCP: a home board that does not limit keeps it.
+      sharedMcpHome: resume && !opts.override?.light ? undefined : opts.home ?? homedir(),
       spawnImpl: opts.spawnImpl,
       killImpl: opts.killImpl,
       log: opts.log,
       now: nowFn,
-      onSpawned: (child, startedAt) => {
-        writeRunSidecar(contextRoot, m.slug, {
-          slug: m.slug,
-          runnerPid: process.pid,
-          childPid: child.pid as number,
-          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-          fireAt,
-          startedAt: startedAt.toISOString(),
-          timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
-          // A resumed agent call target stays the agent if it proposes again.
-          ...(m.runKind === 'agent' ? { target: 'agent' as const } : {}),
-          ...(opts.override?.light ? { light: true as const } : {}),
-        });
-      },
+      onSpawned: spawnedSidecar,
     });
   }
 }
@@ -972,8 +1100,8 @@ function buildMessagePreamble(message: string, turn?: TurnBoardContext | null): 
  * The THREAD variant of the message preamble.
  *
  * A separate builder rather than a branch inside {@link buildMessagePreamble}: the
- * Telegram wording promises delivery to a phone, and that promise is load-bearing for
- * every existing caller. Here it is false — nothing publishes a thread reply's final
+ * direct wording promises delivery back to the human, and that promise is load-bearing
+ * for every existing caller. Here it is false — nothing publishes a thread reply's final
  * message, so an agent that answers and does not POST has answered into the void. The
  * two differ in exactly that claim, and saying so is the whole reason this exists.
  *
@@ -1022,7 +1150,7 @@ export function buildThreadMessagePreamble(
 
 /**
  * Send a human's free-form message into the automation's LATEST session and
- * return its reply — the "talk to the run" path behind a bare Telegram message.
+ * return its reply — the "talk to the run" path behind a bare message.
  *
  * The same trust chain as `resumeWithAnswer`, minus the question: the session
  * id comes from `latestBoundSession` (the machine-local store only the runner
@@ -1050,9 +1178,10 @@ export async function resumeWithMessage(
 
   // A pending question outranks a chat: the run stopped and is owed an ANSWER,
   // and a parallel conversation with the same session would race the answer's
-  // own resume. The Telegram handler already routes that case to the question;
-  // this guard covers every other caller.
-  if (pendingQuestion(contextRoot, slug)) {
+  // own resume. This guard covers every caller. A message that names its run answers
+  // to that run alone: a sibling's question is another conversation.
+  const openFor = () => (opts.run ? pendingQuestionOfRun(contextRoot, slug, opts.run) : pendingQuestion(contextRoot, slug));
+  if (openFor()) {
     return {
       status: 'refused',
       error: 'This agent is waiting for your answer to its own question, so answer that first.',
@@ -1074,16 +1203,20 @@ export async function resumeWithMessage(
     costUsd: null,
   };
   const waits = (opts.lockWaitMs ?? 0) > 0;
-  const sessionId = latestBoundSession(slug, home);
+  const boundSession = () => (opts.run
+    ? sessionForRun(contextRoot, slug, opts.run, home, listThreadRuns(contextRoot, slug, 1)[0]?.runId === opts.run)
+    : latestBoundSession(slug, home));
+  const sessionId = boundSession();
   // An agent that has only worked on tasks has no conversation of its own: its task sessions
-  // resume through their tasks, never from a thread or Telegram message (C1-14).
+  // resume through their tasks, never from a thread message (C1-14).
   if (!sessionId && onlyTaskSessions(slug, home)) {
     return { status: 'refused', error: 'This agent has only worked on tasks so far: reply on the task.', result: null, costUsd: null };
   }
   if (!sessionId && !waits) return noSession;
 
-  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
-  if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
+  const held = await acquireTurnWaiting(contextRoot, manifest, nowFn, opts, () => (waits ? boundSession() ?? sessionId : sessionId));
+  if (held === 'no-session') return noSession;
+  if (held === 'busy') return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
 
   let resume: ResumeScope | null = null;
   try {
@@ -1091,7 +1224,7 @@ export async function resumeWithMessage(
     // behind can have asked a question (the question outranks the chat, as above) or
     // bound a newer session (the conversation moved on to that one, and the reply
     // belongs there).
-    if ((opts.lockWaitMs ?? 0) > 0 && pendingQuestion(contextRoot, slug)) {
+    if ((opts.lockWaitMs ?? 0) > 0 && openFor()) {
       return {
         status: 'refused',
         error: 'This agent is waiting for your answer to its own question, so answer that first.',
@@ -1099,17 +1232,16 @@ export async function resumeWithMessage(
         costUsd: null,
       };
     }
-    const liveSessionId = waits ? latestBoundSession(slug, home) ?? sessionId : sessionId;
-    if (!liveSessionId) return noSession;
+    const liveSessionId = held.sessionId;
     const taskOwner = taskOfAnySession(contextRoot, liveSessionId, opts.home);
     if (taskOwner) return { status: 'refused', error: taskSessionRefusal(contextRoot, taskOwner.taskId), result: null, costUsd: null };
     const envelope = resolveResumeScope(contextRoot, slug, opts);
     if (!envelope.ok) return { status: 'refused', error: envelope.reason, result: null, costUsd: null };
     resume = envelope.resume;
-    const thread = (opts.surface ?? 'telegram') === 'thread';
+    const thread = (opts.surface ?? 'direct') === 'thread';
     // A thread reply always gets a nonce (its fence follows the agent's own notes); a
-    // Telegram message only in a board turn, so an ordinary one stays exactly as it was.
-    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    // direct message only in a board turn, so an ordinary one stays exactly as it was.
+    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? envelope.home, opts.board, text);
     const messageText = display ?? text;
     const execution = await spawnSessionResume(
       contextRoot,
@@ -1126,6 +1258,8 @@ export async function resumeWithMessage(
         : buildMessagePreamble(messageText, turn),
       opts,
       resume,
+      held.slot,
+      !resume && !!envelope.home,
     );
     if (!execution.spawned) {
       return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null, costUsd: null };
@@ -1147,9 +1281,11 @@ export async function resumeWithMessage(
       // unparseable one has none to give.
       return { status: 'failed', error: detail, result: null, costUsd: parsed?.costUsd ?? null };
     }
+    const denied = boardDenial(envelope.manifest, resume, parsed.permissionDenials);
+    if (denied) return { status: 'failed', error: denied, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
     return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
   } finally {
     resume?.paths.dispose();
-    releaseRunLock(contextRoot, manifest.slug, lockPath);
+    releaseTurn(contextRoot, manifest.slug, held);
   }
 }

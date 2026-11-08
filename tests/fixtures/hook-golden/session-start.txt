@@ -1,0 +1,63 @@
+exit=0
+--- stdout ---
+# Agent Context — Auto-loaded
+
+## Code lives outside the brain
+
+The brain's folder and repo hold NO project code. No code repo is linked yet: if code already lives next to the brain, say so once and offer to move it into its own repo and link it. A NEW project gets its own folder beside the brain, never inside it: `git init` it, then `dreamcontext link add <name> <path> --url <owner>/<repo>`. Asked to write code in the brain's repo? Push back once (every worktree of it forks `_dream_context/`) and do it only if the user explicitly insists.
+
+## Soul (Agent Identity, Principles, Rules)
+
+---
+name: "acme-shop"
+type: soul
+updated: "<DATE>"
+---
+
+## Project Identity
+
+A fictional storefront used as a hook fixture.
+
+## User (Preferences, Project Details, Rules)
+
+> ⚠️ Retired layout — run `dreamcontext update` to migrate to `people/`.
+---
+name: user
+type: user
+updated: "<DATE>"
+---
+
+Prefers short answers.
+
+## Memory (Technical Decisions, Known Issues, Session Log)
+
+---
+name: memory
+type: memory
+updated: "<DATE>"
+---
+
+- Checkout uses a three-step flow.
+
+> Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.
+
+**Note:** The CLI version (v0.41.5) is older than the last setup version (v1). This is unusual — consider upgrading the CLI.
+
+
+## Automations
+
+- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
+
+## Knowledge Index
+
+(+1 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
+
+## Marketing
+
+No active cohorts. Plan one with `mk cohort create <name> --hypothesis-file <path>`.
+
+**Last insights pull:** never — run `mk insights pull --campaign <id>`.
+
+**Performance Monitor:** no learnings recorded yet.
+
+--- stderr ---

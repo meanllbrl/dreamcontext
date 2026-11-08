@@ -24,6 +24,7 @@ import * as power from './power.js';
 import { readMacPrefs, writeMacPrefs } from './prefs.js';
 import * as thermal from './thermal.js';
 import * as tunnel from './tunnel.js';
+import type { HandsfreeChannel, HandsfreeEvent, StartedVia } from '../../telegram/contract.js';
 
 export class MacModeError extends Error {
   constructor(readonly code: MacErrorCode, message: string) { super(message); this.name = 'MacModeError'; }
@@ -46,7 +47,16 @@ export interface MacState {
   clamped?: thermal.LedgerEntry[];
   /** The run's Bag mode, for REPORTING only: boot recovery releases `clamped` whatever it says. */
   bagMode?: boolean;
+  /** `telegram` = power only (no listener, no tunnel), started from a Telegram tap; absent/`full`
+   *  = today's hands-free (W2, plan "Hands-free from Telegram"). */
+  channel?: HandsfreeChannel;
+  /** Written ONLY when the hub started this run after an authorized Telegram tap (E3): streaming
+   *  to that bot is derived from it while the live session is on. Never from an HTTP body. */
+  startedVia?: StartedVia;
 }
+
+/** The tick's marker (F4): it announced this run's end after a dead server (`{startedAt}`). */
+export function telegramEndedPathOf(home: string = homedir()): string { return join(macDirOf(home), 'telegram-ended.json'); }
 
 /** The SIGTERM path's release budget: the desktop shell SIGKILLs the server 1.5 s after SIGTERM. */
 export const MAC_SHUTDOWN_RELEASE_DEADLINE_MS = 800;
@@ -132,6 +142,15 @@ function writeState(home: string, s: MacState): void {
 
 function clearState(home: string): void {
   rmSync(statePathOf(home), { force: true });
+  rmSync(telegramEndedPathOf(home), { force: true });
+}
+
+/** The tick's marker for this state, if it already announced its end (F4, F6). */
+export function readTelegramEnded(home: string = homedir()): string | null {
+  try {
+    const v = JSON.parse(readFileSync(telegramEndedPathOf(home), 'utf8')) as { startedAt?: unknown };
+    return typeof v.startedAt === 'string' ? v.startedAt : null;
+  } catch { return null; }
 }
 
 /**
@@ -226,6 +245,12 @@ export class MacSession {
   /** The tunnel gave up while start was still arming: start ends Mac mode once it is on. */
   private gaveUpWhileStarting = false;
   private readonly home: string;
+  /** Hands-free events for the Telegram hub (D2, E3, E4): `ended` for EVERY channel. */
+  private listeners = new Set<(e: HandsfreeEvent) => void>();
+  /** A boot recovery's `ended`, held until a listener is there (the hub starts after it, D2). */
+  private heldEvents: HandsfreeEvent[] = [];
+  /** Why the next stop happens, and whether it carried the owner key (set by the caller). */
+  private stopWhy: { reason: string; keyed: boolean } | null = null;
 
   constructor(private readonly d: MacSessionDeps) {
     this.home = d.home ?? homedir();
@@ -233,6 +258,28 @@ export class MacSession {
 
   get macDir(): string { return macDirOf(this.home); }
   isOn(): boolean { return this.phase !== 'off'; }
+
+  /** The live run's `startedVia`, only while it is ON (F3): never read from disk. */
+  get startedVia(): StartedVia | null {
+    return this.phase === 'on' ? this.state?.startedVia ?? null : null;
+  }
+  get channel(): HandsfreeChannel | null {
+    return this.phase === 'off' ? null : this.state?.channel ?? 'full';
+  }
+
+  /** Subscribe to hands-free events; a held boot `ended` is delivered at once. */
+  onEvent(fn: (e: HandsfreeEvent) => void): () => void {
+    this.listeners.add(fn);
+    for (const e of this.heldEvents.splice(0)) this.emit(e);
+    return () => { this.listeners.delete(fn); };
+  }
+
+  private emit(e: HandsfreeEvent): void {
+    if (!this.listeners.size) { this.heldEvents.push(e); return; }
+    for (const fn of [...this.listeners]) {
+      try { fn(e); } catch { /* a listener's failure is its own */ }
+    }
+  }
   /** The thermal governor's last reading (`null` while it is not running). Read by dictation to
    *  unload its model while the Mac is hot, without taking a second reading. */
   thermalState(): string | null { return this.governor?.snapshot().state ?? null; }
@@ -331,7 +378,7 @@ export class MacSession {
   /** The tunnel gave up: nothing on the phone can press Return, so end Mac mode as Return does. */
   private endAfterGiveUp(): void {
     // Neither branch may reject: an unhandled rejection takes the whole server down with it.
-    void this.stop().then(() => {
+    void this.stop({ reason: 'tunnel', keyed: true }).then(() => {
       this.lastError = 'mac_tunnel_failed';
       try {
         this.d.notify('Hands-free ended: the tunnel stopped', endedBody('Your phone could not reach this Mac any more, so Mac mode ended.', this.lastEnd));
@@ -391,7 +438,7 @@ export class MacSession {
    *  those. The route validates the names against the registry; changing the set = stop + start.
    *  `bagMode` (omitted = the remembered choice) is remembered once the preflight passes, even
    *  when the tunnel then fails; changing it = stop + start. */
-  async start(opts: { vaults: string[]; bagMode?: boolean }): Promise<MacStatus> {
+  async start(opts: { vaults: string[]; bagMode?: boolean; startedVia?: StartedVia }): Promise<MacStatus> {
     if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Mac mode is already on.');
     await this.releasePendingThermal();
     await this.releasePendingPower();
@@ -426,6 +473,8 @@ export class MacSession {
           onUrl: (url, restarted) => {
             this.d.setPublicOrigin(new URL(url).origin);
             if (this.state) { this.state = { ...this.state, url, tunnelPid: this.supervisor?.pid ?? null }; writeState(this.home, this.state); }
+            // The BARE origin, never a login token (plan "Telegram + link").
+            if (restarted && this.state?.startedVia) this.emit({ type: 'url', origin: new URL(url).origin, startedVia: this.state.startedVia });
             if (restarted) this.d.notify('Hands-free: new address', 'The tunnel restarted. Show the new QR on your Mac to sign the phone in again.');
           },
           onGiveUp: () => {
@@ -452,7 +501,8 @@ export class MacSession {
       this.state = {
         on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: this.supervisor.pid, tunnelBin: bin,
         startedAt: new Date().toISOString(), priorLpm: null, sleepDisabledByUs: true, url, mode: fixed ? 'fixed' : 'quick',
-        exposedVaults: [...vaults], bagMode,
+        exposedVaults: [...vaults], bagMode, channel: 'full',
+        ...(opts.startedVia ? { startedVia: { scope: opts.startedVia.scope, target: opts.startedVia.target } } : {}),
       };
       writeState(this.home, this.state);
       this.governor = new thermal.ThermalGovernor({
@@ -472,6 +522,7 @@ export class MacSession {
         onFloor: (r) => {
           if (this.state) { this.state = { ...this.state, sleepDisabledByUs: false }; writeState(this.home, this.state); }
           this.d.notify('Hands-free: battery low', `Battery at ${r.percent ?? '?'}%. This Mac may sleep again when its lid is closed.`);
+          this.emit({ type: 'batteryFloor', ...(this.state?.startedVia ? { startedVia: this.state.startedVia } : {}) });
         },
       });
       this.battery.start();
@@ -493,11 +544,69 @@ export class MacSession {
     }
   }
 
+  /**
+   * Telegram-only hands-free (W2): power only, started after an authorized Telegram tap. Needs the
+   * sleep permission (not the passphrase); no listener, no tunnel, nothing exposed. State BEFORE
+   * power, like `start`; thermal and battery watch as usual; `isOn()` consumers stay correct.
+   */
+  async startPowerOnly(startedVia: StartedVia): Promise<MacStatus> {
+    if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Mac mode is already on.');
+    await this.releasePendingThermal();
+    await this.releasePendingPower();
+    this.assertMacOs();
+    if (!this.sudoersInstalled()) throw new MacModeError('mac_not_setup', 'Set Mac mode up first.');
+    const run = this.d.powerRun;
+    if (!(await power.sudoWorks(run))) throw new MacModeError('mac_sudo_missing', 'The sleep permission is missing; run setup again.');
+    this.phase = 'starting';
+    this.lastError = null;
+    let armed: power.LpmBySource | null = null;
+    let sleepDisabled = false;
+    try {
+      this.vaults = [];
+      this.bagMode = false;
+      this.heatPushed = false;
+      this.heatWarned = false;
+      this.state = {
+        on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: null, tunnelBin: null,
+        startedAt: new Date().toISOString(), priorLpm: null, sleepDisabledByUs: true, url: null, mode: 'quick',
+        exposedVaults: [], bagMode: false, channel: 'telegram', startedVia: { scope: startedVia.scope, target: startedVia.target },
+      };
+      writeState(this.home, this.state);
+      this.governor = new thermal.ThermalGovernor({
+        serverPid: this.d.serverPid ?? process.pid, home: this.home, run: this.d.thermalRun,
+        readThermal: this.d.readThermal, pollMs: this.d.thermalPollMs, filter: this.d.thermalFilter, clamp: false,
+        onState: (level) => { this.onHeatReading(level); if (!this.heatWarned && level && (HEAT_HOT as readonly string[]).includes(level)) { this.heatWarned = true; this.emit({ type: 'heat', level, startedVia: this.state?.startedVia }); } },
+        onChange: (clamped) => { if (this.state) { this.state = { ...this.state, clamped }; writeState(this.home, this.state); } },
+      });
+      this.governor.start();
+      sleepDisabled = true;
+      armed = await power.armPower(run);
+      this.state = { ...this.state, priorLpm: armed };
+      writeState(this.home, this.state);
+      this.battery = new power.BatteryWatch({
+        floorPercent: MAC_BATTERY_FLOOR_PERCENT, intervalMs: this.d.batteryPollMs ?? MAC_BATTERY_POLL_MS, run,
+        onFloor: () => {
+          if (this.state) { this.state = { ...this.state, sleepDisabledByUs: false }; writeState(this.home, this.state); }
+          this.emit({ type: 'batteryFloor', ...(this.state?.startedVia ? { startedVia: this.state.startedVia } : {}) });
+        },
+      });
+      this.battery.start();
+      this.phase = 'on';
+      return this.status();
+    } catch (e) {
+      this.lastError = e instanceof MacModeError ? e.code : 'mac_sudo_missing';
+      this.stopWhy = { reason: 'failed', keyed: true };
+      await this.teardown(armed, sleepDisabled);
+      throw e;
+    }
+  }
+
   /** Return. Safe to call twice; every step runs even when an earlier one failed. `shutdown`
    *  (the server's SIGTERM path) bounds the thermal release by
    *  {@link MAC_SHUTDOWN_RELEASE_DEADLINE_MS}; what it could not release waits in the pending file. */
-  async stop(o: { shutdown?: boolean } = {}): Promise<void> {
+  async stop(o: { shutdown?: boolean; reason?: string; keyed?: boolean } = {}): Promise<void> {
     if (this.phase === 'off') return;
+    if (!this.stopWhy) this.stopWhy = { reason: o.reason ?? (o.shutdown ? 'shutdown' : 'mac'), keyed: o.keyed ?? true };
     // A second stop never runs teardown again: the first one holds the governor and its ledger.
     if (this.stopping) return this.stopping;
     // The shutdown budget counts from here (SIGTERM), not from the release itself.
@@ -549,9 +658,16 @@ export class MacSession {
       // BEFORE clearState: a kill between the two still leaves state.clamped for boot recovery.
       thermal.addPendingThermal(thermal.thermalPendingPathOf(this.home), leftover);
     }
+    const ended = this.state;
     clearState(this.home);
     this.state = null;
     this.phase = 'off';
+    // EVERY end is announced (E3): the hub tells the bot that started it, if any.
+    if (ended) {
+      const why = this.stopWhy ?? { reason: 'failed', keyed: true };
+      this.emit({ type: 'ended', channel: ended.channel ?? 'full', reason: why.reason, keyed: why.keyed, ...(ended.startedVia ? { startedVia: ended.startedVia } : {}) });
+    }
+    this.stopWhy = null;
     return powerRestored;
   }
 
@@ -583,7 +699,12 @@ export class MacSession {
       const r = await thermal.releaseLedger(clamped, this.thermalReleaseOpts());
       thermal.addPendingThermal(thermal.thermalPendingPathOf(this.home), r.leftover);
     }
+    // The tick may have announced this end already (F1, F4): then no second Telegram message.
+    const announced = readTelegramEnded(this.home) === s.startedAt;
     clearState(this.home);
+    if (s.startedVia && !announced) {
+      this.emit({ type: 'ended', channel: s.channel ?? 'full', reason: 'crash', keyed: true, startedVia: s.startedVia });
+    }
     this.d.notify('Hands-free ended', endedBody('dreamcontext closed while Mac mode was on.', { revoked, powerRestored }));
     return true;
   }

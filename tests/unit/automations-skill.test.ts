@@ -70,7 +70,7 @@ const REGISTRY_TS = readFileSync(join(ROOT, 'src', 'lib', 'automations', 'regist
 
 const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
-  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
 };
 
 /** The Entity Router table's body rows, extracted between the section heading and
@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — fourteen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the fourteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy and readTools', () => {
+describe('approval surface — seventeen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the eighteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app, boardOnly and appTools', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -346,8 +346,16 @@ describe('approval surface — fourteen hashed fields, everywhere it is claimed'
       // The agent's autonomy level: the permission mode of its sessions. Appended after `soul`
       // and omitted at the default `balanced`, so every agent that exists keeps its hash.
       'autonomy',
-      // The MCP tools a light job of the agent may call. LAST, omitted when none.
+      // The MCP tools a light job of the agent may call. Omitted when none.
       'readTools',
+      // Which vendor reads the prompt and under which envelope it runs (Track T W4).
+      'tool',
+      // The app a job belongs to: which app's brief the run gets. Omitted when none.
+      'app',
+      // A board agent limited to its board (`scope: board`). LAST, omitted at the default.
+      'boardOnly',
+      // The app tools a run may use to CHANGE something unattended. LAST, omitted when none.
+      'appTools',
     ]);
   });
 
@@ -429,7 +437,7 @@ describe('dashboard approval-review surface — every hashed field reaches the h
 });
 
 /**
- * T22 — the flow graph, HITL questions, per-automation Telegram, the run queue,
+ * T22 — the flow graph, HITL questions, the retired per-routine Telegram, the run queue,
  * session bindings, and the three approval paths. This surface replaced the
  * review-card board entirely; these assertions are the lockstep guard for it,
  * the same role the twelve-hashed-fields block above plays for the approval
@@ -507,26 +515,18 @@ describe('skill/references/automations.md — Questions (the review-card board\'
   });
 });
 
-describe('skill/references/automations.md — Telegram is per-automation, never one bot for the project', () => {
+describe('skill/references/automations.md — the per-routine Telegram bot is retired', () => {
   const content = AUTOMATIONS_MD;
 
-  it('names the per-slug credential path, 0600, machine-local, never synced', () => {
-    expect(content).toContain('~/.dreamcontext/telegram/<slug>.json');
-    expect(content).toContain('mode 0600, machine-local, never synced');
+  it('says the old channel, verb and route are gone and old records still parse', () => {
+    expect(content).toContain('## Telegram: the per-routine bot is retired');
+    expect(content).not.toContain('dreamcontext automations telegram setup <slug>');
+    expect(content).toMatch(/still parse; nothing can write that value/);
   });
 
-  it('frames a bot token as a capability, not a preference', () => {
-    expect(content.toLowerCase()).toContain('a capability, not a preference');
-  });
-
-  it('states the blast radius of a leaked token is one automation, never the whole project', () => {
-    expect(content).toMatch(/blast radius to one job/i);
-  });
-
-  it('documents the telegram setup/test/off verbs with a required slug', () => {
-    expect(content).toContain('dreamcontext automations telegram setup <slug>');
-    expect(content).toContain('dreamcontext automations telegram test <slug>');
-    expect(content).toContain('dreamcontext automations telegram off <slug>');
+  it('names the one-time removal of the old token files and the new machine-local home', () => {
+    expect(content).toContain('`~/.dreamcontext/telegram.json`, `~/.dreamcontext/telegram/<slug>.json`');
+    expect(content).toContain('never a CLI verb or an agent');
   });
 });
 
@@ -584,11 +584,11 @@ describe('skill/references/automations.md — session bindings are the sole resu
   });
 });
 
-describe('skill/SKILL.md — Automations capabilities row names Flow, HITL questions, and per-slug Telegram', () => {
-  it('mentions the Flow graph, questions, and per-automation Telegram in the capabilities row', () => {
+describe('skill/SKILL.md — Automations capabilities row names Flow and HITL questions', () => {
+  it('mentions the Flow graph and questions, and no per-automation Telegram bot', () => {
     expect(SKILL_MD).toMatch(/## Flow` graph/);
     expect(SKILL_MD).toContain('a **question**');
-    expect(SKILL_MD).toMatch(/\*\*per-automation\*\* Telegram bot/);
+    expect(SKILL_MD).not.toMatch(/\*\*per-automation\*\* Telegram bot/);
   });
 });
 
@@ -597,14 +597,14 @@ describe('sleep docs — automations/hitl/ and its machine-local siblings are ex
     expect(SLEEP_MD).toContain('automations/hitl/<slug>/*.json');
   });
 
-  it('sleep.md names the per-slug Telegram credential and session-binding paths as out of bounds', () => {
-    expect(SLEEP_MD).toContain('~/.dreamcontext/telegram/<slug>.json');
+  it('sleep.md names the Telegram binding and session-binding paths as out of bounds', () => {
+    expect(SLEEP_MD).toContain('~/.dreamcontext/telegram/**');
     expect(SLEEP_MD).toContain('~/.dreamcontext/automations/<slug>.sessions.json');
   });
 
   it('agents/sleep-product.md domain table names hitl/ questions and the machine-local Telegram/session state', () => {
     expect(SLEEP_PRODUCT_MD).toMatch(/manifest\/cache\/output\/`hitl\/` questions/);
-    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/*.json');
+    expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/telegram/**');
     expect(SLEEP_PRODUCT_MD).toContain('~/.dreamcontext/automations/*.sessions.json');
   });
 });
@@ -676,16 +676,16 @@ describe('skill/references/automations.md — the channel: posting, attachments,
     // that cannot name them will invent a generic "failed" when asked what happened.
     for (const code of [
       'reply_disabled', 'reply_unapproved', 'bad_text',
-      'bad_run', 'stale_run', 'not_bound', 'question_pending', 'busy',
+      'bad_run', 'stale_run', 'not_bound', 'question_pending', 'say_busy',
     ]) {
       expect(content, `automations.md never names refusal "${code}"`).toContain(`\`${code}\``);
     }
     expect(content).toMatch(/writes \*\*nothing\*\*/i);
   });
 
-  it('distinguishes a call agent running once from a sched agent resuming its session', () => {
+  it('says a new message runs once and a thread follow-up resumes its own session', () => {
     expect(content).toMatch(/\*\*`call`\*\* agent.*\*\*runs once\*\*/is);
-    expect(content).toMatch(/\*\*`sched`\*\* agent with a bound session \*\*resumes that session\*\*/i);
+    expect(content).toMatch(/\*\*follow-up typed in a thread resumes that run's session\*\*/i);
   });
 
   it('states the open-question mention is refused ASYNCHRONOUSLY, not as a 409', () => {
@@ -727,12 +727,12 @@ describe('skill/references/cli-reference.md — post/propose rows carry the new 
   });
 });
 
-describe('skill/references/integrations.md — agent-thread is the eighth dream-view', () => {
+describe('skill/references/integrations.md — the dream-view count follows its type union', () => {
   const content = INTEGRATIONS_MD;
 
-  it('counts eight, not seven', () => {
-    expect(content).toMatch(/the eight things HTML must NOT be/);
-    expect(content).not.toMatch(/the seven things HTML must NOT be/);
+  it('counts seven: the Run progress view left in 0.36.8', () => {
+    expect(content).toMatch(/the seven things HTML must NOT be/);
+    expect(content).not.toMatch(/the eight things HTML must NOT be/);
   });
 
   it('carries agent-thread in the type union', () => {

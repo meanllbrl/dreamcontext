@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { builderHeavy, builderLane, type BuilderDeps } from '../../src/cli/commands/builder.js';
@@ -146,11 +146,12 @@ describe('builder heavy stops a run past the limit', () => {
     git('init', '-q', '-b', 'work'); git('-c', 'user.email=a@b.c', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'i');
     err = [];
     deps = { cwd: () => repo, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => join(repo, 'slots'), heavyLimit: async () => 2 };
-    writeFileSync(join(repo, 'build.sh'), 'echo ran >> ran.txt\nexit ${FAKE_EXIT:-0}\n');
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { build: 'sh build.sh' } }));
+    // A Node script, not `sh`: npm runs scripts through cmd.exe on Windows.
+    writeFileSync(join(repo, 'build.cjs'), "require('fs').appendFileSync('ran.txt', 'ran\\n'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { build: 'node build.cjs' } }));
   });
   afterEach(() => { delete process.env.FAKE_EXIT; rmSync(repo, { recursive: true, force: true }); });
-  const runs = () => { try { return execFileSync('wc', ['-l', 'ran.txt'], { cwd: repo, encoding: 'utf-8' }).trim().split(/\s+/)[0]; } catch { return '0'; } };
+  const runs = () => { try { return String(readFileSync(join(repo, 'ran.txt'), 'utf-8').split('\n').filter(Boolean).length); } catch { return '0'; } };
   const heavy = (o: { because?: string } = {}) => {
     const cwd = process.cwd(); process.chdir(repo);
     return builderHeavy(deps, ['npm', 'run', 'build', '--silent'], { maxWait: '5', ...o }).finally(() => process.chdir(cwd));

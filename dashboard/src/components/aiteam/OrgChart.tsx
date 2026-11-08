@@ -4,7 +4,7 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
 import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
-import { filterRoster, routineCountLabel, type TeamRow } from './teamModel';
+import { filterRoster, routineCountLabel, workingLine, type TeamRow } from './teamModel';
 import { teamCount } from './teamTree';
 import { edgePath, layoutOrgChart } from './orgLayout';
 import { TeamIcon } from './TeamIcons';
@@ -36,7 +36,8 @@ export function OrgView({
   onSelect: (slug: string) => void;
   onTalk: (slug: string) => void;
   onConversations: () => void;
-  onNew: () => void;
+  /** Absent in an embedded screen: a new member is made in the main app. */
+  onNew?: () => void;
   onToast: (msg: string) => void;
   nextRun: string;
 }) {
@@ -73,7 +74,7 @@ export function OrgView({
             aria-label={t('aiteam.org.find')}
           />
         </label>
-        {!headless && (
+        {!headless && onNew && (
           <button type="button" className="aiteam-newbtn" onClick={onNew}>
             <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
           </button>
@@ -264,7 +265,7 @@ function OrgCard({
         {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
         {working && (
           <span className="aiteam-org-live">
-            {t('aiteam.working').replace('{time}', (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '')}
+            {workingLine(row, (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '', t)}
           </span>
         )}
         {row.status === 'approval' && <span className="aiteam-tag"><TeamIcon name="lock" size={10} />{t('aiteam.tag.approval')}</span>}

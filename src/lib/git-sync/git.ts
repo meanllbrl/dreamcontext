@@ -726,7 +726,47 @@ export interface RawEntry {
   /** Git file modes as printed (`100644`, `120000`, `160000`; `000000` = absent on that side). */
   oldMode: string;
   newMode: string;
+  /** The object id on the new side (all zeros when absent there); set by {@link rawEntries}. */
+  newSha?: string;
 }
+
+// ─── App data helpers (plan-veri K2: app data never enters git) ────────────────────────────
+
+/** Every index entry under the pathspecs (repo-relative), NUL-split. THROWS when git cannot answer. */
+export function indexPaths(cwd: string, pathspecs: string[]): string[] {
+  return run(cwd, ['ls-files', '-z', '--cached', '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+/** Drop paths from the index only (the files stay on disk). THROWS when git cannot. */
+export function removeFromIndex(cwd: string, pathspecs: string[]): void {
+  run(cwd, ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...pathspecs]);
+}
+
+/** {@link removeFromIndex} with `-f`: also drops an entry whose staged copy differs from both HEAD
+ *  and the file (a live record staged a moment before it changed again). `--cached` never touches
+ *  the work tree, so `-f` loses nothing on disk. THROWS when git cannot. */
+export function removeFromIndexForce(cwd: string, pathspecs: string[]): void {
+  run(cwd, ['rm', '--cached', '-f', '-r', '-q', '--ignore-unmatch', '--', ...pathspecs]);
+}
+
+/** Does git's ignore machinery exclude `relPath` (repo-relative)? A path whose last matching rule
+ *  is a `!` negation is NOT ignored. Null when git cannot answer. */
+export function isIgnored(cwd: string, relPath: string): boolean | null {
+  try {
+    const out = run(cwd, ['check-ignore', '--no-index', '-v', '-n', '--', relPath]).trim();
+    const pattern = out.split('\t')[0].split(':').slice(2).join(':');
+    return pattern.length > 0 && !pattern.startsWith('!');
+  } catch {
+    return null;
+  }
+}
+
+/** The commits a push would send: `HEAD --not <remoteRef>`, or `--not --remotes` when it has none. THROWS. */
+export function commitsToPush(cwd: string, remoteRef: string | null): string[] {
+  const args = remoteRef ? ['rev-list', 'HEAD', '--not', remoteRef] : ['rev-list', 'HEAD', '--not', '--remotes'];
+  return run(cwd, args).split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
 
 /**
  * Every changed path of `range` (`HEAD...<remote>`) with its modes on both sides, renames split
@@ -735,6 +775,55 @@ export interface RawEntry {
  */
 export function rawEntries(cwd: string, range: string, pathspecs: string[] = []): RawEntry[] {
   const args = ['diff', '--raw', '-z', '--no-abbrev', '--no-renames', range];
+  const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
+  const out: RawEntry[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const m = parts[i].match(/^:(\d{6}) (\d{6}) [0-9a-f]+ ([0-9a-f]+) /);
+    if (!m) continue;
+    const path = parts[i + 1];
+    if (path) out.push({ path, oldMode: m[1], newMode: m[2], newSha: m[3] });
+    i++;
+  }
+  return out;
+}
+
+/** Is `a` an ancestor of (or the same commit as) `b`? False on any failure. */
+export function isAncestor(cwd: string, a: string, b: string): boolean {
+  try {
+    run(cwd, ['merge-base', '--is-ancestor', a, b]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Move HEAD to `ref`, the index and the work tree untouched (`reset --soft`). THROWS. */
+export function softReset(cwd: string, ref: string): void {
+  run(cwd, ['reset', '--soft', '-q', ref]);
+}
+
+/** Every path of `rev`'s tree under the pathspecs (pathspec magic allowed, unlike `ls-tree`).
+ *  Run from the repo's top folder. THROWS when git cannot answer. */
+export function treePathsMatching(cwd: string, rev: string, pathspecs: string[]): string[] {
+  const empty = run(cwd, ['hash-object', '-t', 'tree', process.platform === 'win32' ? 'NUL' : '/dev/null']).trim();
+  return run(cwd, ['diff', '--name-only', '-z', '--no-renames', empty, rev, '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+/** The blob id git would give the file at `absPath` (its filters applied), or null. */
+export function hashFile(cwd: string, absPath: string): string | null {
+  try {
+    return run(cwd, ['hash-object', '--', absPath]).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The changed paths of ONE commit against its first parent (a root commit against nothing), with
+ * both modes, renames split. Run from the repo's top folder. THROWS when git cannot answer.
+ */
+export function commitEntries(cwd: string, commit: string, pathspecs: string[] = []): RawEntry[] {
+  const args = ['diff-tree', '-r', '-z', '--raw', '--no-abbrev', '--no-renames', '--no-commit-id', '--root', '-m', '--first-parent', commit];
   const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
   const out: RawEntry[] = [];
   for (let i = 0; i < parts.length - 1; i++) {

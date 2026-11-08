@@ -12,7 +12,7 @@ import { AddCustomFieldForm } from '../AddCustomFieldForm';
 import { TaskField } from './TaskSection';
 import { TaskDateField } from './TaskDateField';
 import { RiceField } from './RiceField';
-import { TaskAgentFace } from '../AssignToAgentComposer';
+import { TaskFaceButton } from './AgentJobRow';
 import { findAgent, useAgents } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
 import { useSectionCollapse, type SectionId } from './useSectionCollapse';
@@ -159,11 +159,11 @@ export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, pa
         {task.agent && (
           <>
             <TaskField label={tr(t, 'tasks.job.agent', 'Agent')}>
-              <span className="prop-agent"><TaskAgentFace slug={task.agent} size={20} />{nameOf(task.agent)}</span>
+              <span className="prop-agent"><TaskFaceButton slug={task.agent} task={task.slug} role="doer" size={20} />{nameOf(task.agent)}</span>
             </TaskField>
             <TaskField label={tr(t, 'tasks.assignReviewer', 'Reviewer')}>
               <span className="prop-agent">{task.agent_job?.reviewer
-                ? <><TaskAgentFace slug={task.agent_job.reviewer} size={20} />{nameOf(task.agent_job.reviewer)}</>
+                ? <><TaskFaceButton slug={task.agent_job.reviewer} task={task.slug} role="reviewer" size={20} />{nameOf(task.agent_job.reviewer)}</>
                 : tr(t, 'tasks.assignReviewerYou', 'You review it')}</span>
             </TaskField>
             {task.agent_job?.workspace && (

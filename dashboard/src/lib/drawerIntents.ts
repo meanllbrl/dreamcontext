@@ -5,6 +5,8 @@
  * surface rings `DRAWER_SURFACE_EVENT`, the instance's `DrawerFactsBridge` adds the team rows
  * and hands the lot to the window. No instance ever portals into the drawer.
  */
+import type { HomeRow } from '../components/sleepy/phoneHome';
+import type { StackTab } from '../components/sleepy/phoneStack';
 
 /** Window → surface, on the instance bus. Detail: {@link DrawerIntent}. */
 export const DRAWER_INTENT_EVENT = 'dc-drawer-intent';
@@ -25,17 +27,38 @@ export type DrawerIntent =
   | { kind: 'open-window'; windowId?: string }
   /** A window row's Rename (inline in the drawer; a blank name reverts). */
   | { kind: 'rename-window'; windowId: string; name: string }
-  /** A window row's Close window: its tabs close; the last window empties to a fresh tab. */
+  /** A window row's Close window: its tabs close; nothing opens in their place, even in the last window. */
   | { kind: 'close-window'; windowId: string }
   /** A window row dragged: it lands before `before` (null = the end). Nothing else changes, not
    *  even which project is on screen. */
   | { kind: 'move-window'; windowId: string; before: string | null }
   /** A History row: reopen THAT chat in this project (the `OPEN_SESSION` path). */
   | { kind: 'open-session'; sessionId: string }
-  /** An AI Team member's conversation: opens in the chat area, never on the AI Team page. */
-  | { kind: 'member'; slug: string; title: string }
+  /** A chat row: show that chat. A tab is selected, a running chat of the Mac is ADOPTED (never
+   *  resumed beside it), a Super row opens the Super (`openChatPlan`). */
+  | { kind: 'open-chat'; row: HomeRow }
+  /** A chat row's close: the tab closes, as the tab strip's close does. Nothing else moves, not
+   *  even which project is on screen. */
+  | { kind: 'close-chat'; id: string }
+  /** An AI Team member's stage (plan-r10 1, 1c): its Super, its ONE conversation, in this project.
+   *  `task` (a task slug): the stage opens with that task's strip on top. */
+  | { kind: 'member'; slug: string; title: string; task?: string }
   /** Project Relations: a page of this project. */
   | { kind: 'page'; page: 'relations'; id?: string };
+
+/** A task slug a member intent may carry (the task-slug charset, no 64 cap: slugs reach ~100). */
+const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,251}$/;
+/** A member slug (the agents' charset). */
+const MEMBER_SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/** The member intent, checked: a bad slug is no intent, a bad task is dropped (the stage still opens). */
+export function memberIntent(slug: unknown, title: unknown, task?: unknown): Extract<DrawerIntent, { kind: 'member' }> | null {
+  if (typeof slug !== 'string' || !MEMBER_SLUG.test(slug)) return null;
+  const name = typeof title === 'string' && title.trim() ? title.trim() : slug;
+  return typeof task === 'string' && TASK_SLUG.test(task)
+    ? { kind: 'member', slug, title: name, task }
+    : { kind: 'member', slug, title: name };
+}
 
 export interface PendingDrawerIntent {
   intent: DrawerIntent;
@@ -56,10 +79,29 @@ export interface DrawerWindowFact {
   tabs: number;
 }
 
+/**
+ * Whether a drawer click covers the main area while it lands (the plain `agent-arriving` wait).
+ * Only for a project the click brings forward or that is still restoring: there the cover hides a
+ * page or chat the project would otherwise flash first. The project already on screen, ready, on
+ * its chat area keeps what it shows until the click has run (owner 2026-11-07: "Product Owner"
+ * under Team gave a blank white main area, the Super row still selected, before its stage came).
+ * A History pick travels by its own path and never waits.
+ */
+export function arrivalCovers(intent: DrawerIntent, shownReady: boolean): boolean {
+  return intent.kind !== 'open-session' && !shownReady;
+}
+
 /** A click that opens something on the chat area: the project lands on it from its first frame
  *  (`AgentSurface`'s arrival), never on the page it would otherwise start on. */
 export function landsOnChat(intent: DrawerIntent): boolean {
-  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'move-window' && intent.kind !== 'page';
+  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'move-window'
+    && intent.kind !== 'close-chat' && intent.kind !== 'page';
+}
+
+/** One chat tab a mounted project publishes for the drawer's chat rows: the phone stack's tab
+ *  fields (so the tunnel's `homeRows` reads the same shape) and the window it sits in. */
+export interface DrawerChatFact extends StackTab {
+  windowId: string;
 }
 
 export interface DrawerSurfaceState {
@@ -75,10 +117,16 @@ export interface DrawerSurfaceState {
   member?: string;
   /** The Super Agent row's marks (`superRowMarks`). */
   superMarks?: { working: number; asking: boolean };
+  /** The owner's chat tabs, each in its window (never a child of the Super). Absent until the
+   *  roster is restored, like `windows`. */
+  chats?: DrawerChatFact[];
+  /** The tab on screen in the window on screen. */
+  activeChatId?: string;
 }
 
 export function sameSurfaceState(a: DrawerSurfaceState | null, b: DrawerSurfaceState): boolean {
   return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected
     && a.activeWindowId === b.activeWindowId && a.member === b.member && JSON.stringify([a.shown, a.superMarks]) === JSON.stringify([b.shown, b.superMarks])
-    && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? []);
+    && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? [])
+    && a.activeChatId === b.activeChatId && JSON.stringify(a.chats ?? null) === JSON.stringify(b.chats ?? null);
 }

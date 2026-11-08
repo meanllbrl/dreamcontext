@@ -41,6 +41,11 @@ export function initialsFor(title: string): string {
  * `/api/automations/:slug/photo`, `'agent'` reads `/api/agents/:slug/photo`. An agent you only
  * call has no automation file of its own slug, so the Agents page, the pickers and a task's
  * agent face pass `of="agent"`.
+ *
+ * `vault` names the project the photo is read from, for a face drawn OUTSIDE any project's
+ * provider (the window's drawer lists every project): there `useVault()` is null, the request
+ * carries no `?vault=`, and the server answers for the root it was started in, a 404 for any
+ * other project's member (owner 2026-11-05). Inside a provider, leave it out.
  */
 export function AgentAvatar({
   slug,
@@ -50,6 +55,7 @@ export function AgentAvatar({
   version,
   of = 'automation',
   face,
+  vault: vaultOverride,
 }: {
   slug: string;
   title: string;
@@ -62,8 +68,11 @@ export function AgentAvatar({
   of?: 'agent' | 'automation';
   /** Its stamped figure; absent draws the bare hash of `slug`. */
   face?: AgentFace | null;
+  /** The project to read the photo from when this face sits outside that project's provider. */
+  vault?: string | null;
 }) {
-  const { vault } = useVault();
+  const ctx = useVault();
+  const vault = vaultOverride ?? ctx.vault;
   const [failed, setFailed] = useState(false);
   // The stamped face, when the caller did not pass one: read from the agents/automations lists
   // already in the query cache (no fetch of its own; outside a query client, the bare hash).

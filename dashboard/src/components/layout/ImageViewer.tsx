@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { usePanZoom, type View } from './usePanZoom';
@@ -23,6 +23,8 @@ interface Props {
    *  and any action belong to it; absent one, the viewer still says the picture didn't
    *  load rather than drawing a broken glyph. */
   fallback?: ReactNode;
+  /** Several pictures: ← / → (and the side buttons) step through them. `pos` is "2 / 5". */
+  step?: { onStep: (d: -1 | 1) => void; pos: string };
   onClose: () => void;
 }
 
@@ -32,9 +34,19 @@ const HARD_MAX = 8;
 /** One press of ＋ / − / the keyboard. */
 const STEP = 1.4;
 
+/** A ＋ or − drawn in the panel icon set's hand (24 grid, 1.75 stroke), not a text glyph. */
+function ToolGlyph({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden="true" focusable="false">
+      <path d={d} />
+    </svg>
+  );
+}
+
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+
 
 /**
  * A picture opened at full size: edge-to-edge over the whole window, zoomable to
@@ -53,7 +65,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * between here and the root — which is how a lightbox ends up trapped inside the
  * pane that opened it.
  */
-export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose }: Props) {
+export function ImageViewer({ src, alt = '', caption, actions, fallback, step, onClose }: Props) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -64,6 +76,10 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
    *  (see `Lightbox`: granting access re-requests the same file under a new URL). */
   const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
+  const footRef = useRef<HTMLDivElement | null>(null);
+  /** The toolbar's height: the stage (and so the picture, fitted or zoomed) ends where it starts.
+   *  Measured, not assumed, because the phone adds the home-indicator inset under it. */
+  const [footH, setFootH] = useState(0);
   // A new image is a new subject — never inherit the previous one's zoom or pan.
   useEffect(() => {
     setNatural(null);
@@ -74,6 +90,16 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
     const el = stageRef.current;
     if (!el) return;
     const measure = () => setStage({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = footRef.current;
+    if (!el) return;
+    const measure = () => setFootH(el.offsetHeight);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -122,6 +148,8 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
   fitRef.current = setView;
   useEffect(() => { fitRef.current(FIT); }, [src]);
 
+  const stepRef = useRef(step);
+  stepRef.current = step;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -148,7 +176,10 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
         else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
         return;
       }
-      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAround((s) => s * STEP); }
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && stepRef.current) {
+        e.preventDefault();
+        stepRef.current.onStep(e.key === 'ArrowLeft' ? -1 : 1);
+      } else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAround((s) => s * STEP); }
       else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomAround((s) => s / STEP); }
       else if (e.key === '0') { e.preventDefault(); setView(FIT); }
     };
@@ -177,6 +208,7 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
   const zoomed = view.scale > 1.01;
   const percent = Math.round(base * view.scale * 100);
 
+
   return createPortal(
     <div
       ref={rootRef}
@@ -190,6 +222,7 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
         ref={stageRef}
         className="image-viewer-stage"
         data-pinch-owner="true"
+        style={{ bottom: footH }}
         data-zoomed={zoomed || undefined}
         data-grabbing={(pz.grabbing && zoomed) || undefined}
         data-failed={failed || undefined}
@@ -220,45 +253,58 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
         )}
       </div>
 
-      <div className="image-viewer-foot">
-        {caption && <div className="image-viewer-caption">{caption}</div>}
-        {/* Above the zoom bar, not in it: these act on the FILE, the bar acts on the view. */}
-        {actions && <div className="image-viewer-actions">{actions}</div>}
-        {!failed && <div className="image-viewer-bar">
-          <button
-            type="button"
-            className="image-viewer-btn"
-            onClick={() => zoomAround((s) => s / STEP)}
-            disabled={view.scale <= 1}
-            aria-label={t('imageViewer.zoomOut')}
-            title={t('imageViewer.zoomOut')}
-          >
-            −
-          </button>
-          <button
-            type="button"
-            className="image-viewer-level"
-            onClick={() => (zoomed ? setView(FIT) : zoomAround(() => (actual > 1.01 ? actual : maxScale)))}
-            title={zoomed ? t('imageViewer.fit') : t('imageViewer.actual')}
-          >
-            {percent}%
-          </button>
-          <button
-            type="button"
-            className="image-viewer-btn"
-            onClick={() => zoomAround((s) => s * STEP)}
-            disabled={view.scale >= maxScale}
-            aria-label={t('imageViewer.zoomIn')}
-            title={t('imageViewer.zoomIn')}
-          >
-            ＋
-          </button>
-        </div>}
-        {/* Only while fitted: once you have zoomed you have already discovered the
-            gestures, and the hint is then just text over the thing you came to read. */}
-        {!zoomed && !failed && <p className="image-viewer-hint">{t('imageViewer.hint')}</p>}
+      {/* ONE solid row under the picture, never over it: file name on the left, the file's
+          own actions and the zoom group on the right. The stage ends at its top edge. */}
+      <div ref={footRef} className="image-viewer-toolbar" role="toolbar" aria-label={t('imageViewer.label')}>
+        <div className="image-viewer-toolbar-name" title={typeof caption === 'string' ? caption : undefined}>{caption}</div>
+        <div className="image-viewer-toolbar-tools">
+          {actions}
+          {actions && !failed && <span className="image-viewer-toolbar-divider" aria-hidden="true" />}
+          {!failed && (
+            <div className="image-viewer-zoom">
+              <button
+                type="button"
+                className="viewer-tool"
+                onClick={() => zoomAround((s) => s / STEP)}
+                disabled={view.scale <= 1}
+                aria-label={t('imageViewer.zoomOut')}
+                title={t('imageViewer.zoomOut')}
+              >
+                <ToolGlyph d="M6 12h12" />
+              </button>
+              <button
+                type="button"
+                className="viewer-tool viewer-tool--level"
+                onClick={() => (zoomed ? setView(FIT) : zoomAround(() => (actual > 1.01 ? actual : maxScale)))}
+                // The gesture hint lives here now: one tooltip instead of a line over the picture.
+                title={`${zoomed ? t('imageViewer.fit') : t('imageViewer.actual')} · ${t('imageViewer.hint')}`}
+              >
+                {percent}%
+              </button>
+              <button
+                type="button"
+                className="viewer-tool"
+                onClick={() => zoomAround((s) => s * STEP)}
+                disabled={view.scale >= maxScale}
+                aria-label={t('imageViewer.zoomIn')}
+                title={t('imageViewer.zoomIn')}
+              >
+                <ToolGlyph d="M6 12h12M12 6v12" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
+      {step && (
+        <>
+          <button type="button" className="image-viewer-btn image-viewer-step image-viewer-step--prev" onClick={() => step.onStep(-1)}
+            aria-label={t('imageViewer.prev')} title={t('imageViewer.prev')}>‹</button>
+          <button type="button" className="image-viewer-btn image-viewer-step image-viewer-step--next" onClick={() => step.onStep(1)}
+            aria-label={t('imageViewer.next')} title={t('imageViewer.next')}>›</button>
+          <span className="image-viewer-pos" aria-live="polite">{step.pos}</span>
+        </>
+      )}
       <button
         type="button"
         className="image-viewer-close"

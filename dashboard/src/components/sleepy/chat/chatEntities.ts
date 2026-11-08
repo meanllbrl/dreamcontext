@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { useOptionalI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
@@ -351,6 +351,25 @@ export function parseEditDiff(input: unknown): EditDiff | null {
   if (typeof obj.content === 'string') {
     const added = obj.content.length ? obj.content.split('\n') : [];
     return { removed: [], added, addedN: added.length, removedN: 0 };
+  }
+
+  // A unified diff (`Edit {patch}`): how a Codex file change arrives through the T3 bridge.
+  // Headers (`---`, `+++`, `@@`, `diff`, `index`) are not content lines.
+  if (typeof obj.patch === 'string') {
+    const removed: string[] = [];
+    const added: string[] = [];
+    let inHunk = false;
+    for (const line of obj.patch.split('\n')) {
+      // File headers (`---`/`+++`, `diff`, `index`) only come before the first hunk; inside one, a
+      // line starting `--` or `++` is content (a removed SQL comment, an added `++i`).
+      if (line.startsWith('@@')) { inHunk = true; continue; }
+      if (line.startsWith('\\ No newline')) continue;
+      if (!inHunk && /^(---|\+\+\+|diff |index )/.test(line)) continue;
+      if (line.startsWith('-')) removed.push(line.slice(1));
+      else if (line.startsWith('+')) added.push(line.slice(1));
+    }
+    if (!removed.length && !added.length) return null;
+    return { removed, added, addedN: added.length, removedN: removed.length };
   }
 
   return null;
@@ -1427,11 +1446,12 @@ export interface ProgressProbe {
  * has something to disclose), and a suppressed sub-agent-spawning tool still does (the
  * `SubAgentCard` that replaces its card carries its own running progress track).
  */
-export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0): boolean {
+export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0, thinkingShown = true): boolean {
   if (pendingCount > 0) return true;
   return items.some((it) => (
     (it.kind === 'text' && it.done === false)
-    || (it.kind === 'thinking' && it.done === false && !!it.text)
+    // The Super view draws no thinking (ChatPane's `rendersNothing`): there it never covers the turn.
+    || (thinkingShown && it.kind === 'thinking' && it.done === false && !!it.text)
     || (it.kind === 'tool' && it.status === 'running')
   ));
 }
@@ -1674,6 +1694,36 @@ export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
  */
 export function isAtBottom(m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' | 'clientHeight'>): boolean {
   return m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK;
+}
+
+/**
+ * How far above the bottom a phone's reader must be before the composer folds to one row.
+ *
+ * It has to clear what the fold itself gives back. Folding grows the scroller by the height the
+ * composer lost, `scrollTop` stays put, so the distance to the bottom DROPS by that much: fold any
+ * nearer than this and the view lands back inside {@link BOTTOM_SLACK}, the composer reopens, the
+ * scroller shrinks, and it flickers between the two for as long as the finger stays there.
+ */
+export const COMPOSER_FOLD_DISTANCE = 160;
+
+/**
+ * Should the phone's composer be folded? Scroll decides, and the keyboard is not an input: the
+ * old rule folded the moment the field lost focus, so tapping Opus (which closes the keyboard)
+ * folded away the very control under the finger.
+ *
+ * Pinned to the bottom is open, always. Far enough up is folded. In between keeps what it was,
+ * and that band is the hysteresis {@link COMPOSER_FOLD_DISTANCE} is sized for. A zero-height
+ * scroller is not measurable (see {@link nextStickToBottom}), so it keeps the previous state.
+ */
+export function nextComposerFolded(
+  prev: boolean,
+  pinned: boolean,
+  m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' | 'clientHeight'>,
+): boolean {
+  if (m.clientHeight === 0) return prev;
+  if (pinned) return false;
+  if (m.scrollHeight - m.scrollTop - m.clientHeight >= COMPOSER_FOLD_DISTANCE) return true;
+  return prev;
 }
 
 /**
@@ -2692,7 +2742,7 @@ export function useInlineMedia(
   // Which project's files these references name. Read here, in the hook, and threaded into the
   // module-level `rawUrl` below — the effect it feeds runs on every render, so it always builds
   // its `src` against the project whose transcript is on screen.
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // The hands-free phone (task hands-free-phone-shows-every-picture…): its outside pictures
   // follow its own rules (`needs_phone_grant` → "Show", `other_project` → no button), and it
   // never offers "Open ↗" — handing a file to the Mac's OS is laptop-only.

@@ -1,19 +1,25 @@
 import { useCallback, useState } from 'react';
 import { parseEditDiff } from './chatEntities';
-import { ToolBadge, DiffStat, CodeSentence } from './atoms';
-import { CardHeader, TerminalBlock, DiffView } from './molecules';
+import { ToolBadge, CodeSentence } from './atoms';
+import { CardHeader, TerminalBlock } from './molecules';
 import { InlineTerminal } from './InlineTerminal';
 import { buildRunReport } from './runReport';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
+import { useEmbed } from '../../embed/embedMode';
+import { useI18n } from '../../../context/I18nContext';
+import { allowAlertText, allowOffered, cleanAlertText } from './permissionAlert';
 import type { ChatSession, PendingPermission } from '../chatSession';
+import { looksInteractive, permissionReasonLine } from './permissionReason';
+import { PermissionDetails } from './PermissionDetails';
 
 /**
  * ORGANISM — permission request, state 6. Header (🔓 + tool badge), a human sentence
- * (backticked spans render as inline code via `CodeSentence`), a command/diff preview
- * (`TerminalBlock` for Bash, `DiffView` for Edit-shaped input), then the decision row:
- * "Always allow this session" (→ `session.alwaysAllow`) and Deny/Allow (→
- * `session.answer`), closed by a line naming the mode that let this reach you.
+ * (backticked spans render as inline code via `CodeSentence`), ONE short line saying why it
+ * asks (the CLI's own `decision_reason`, in plain words: permissionReason.ts), the command or
+ * diff folded behind "Show command" (owner 2026-11-05: the card was a code dump), then the
+ * decision row: "Always allow this session" (→ `session.alwaysAllow`; hidden when the CLI
+ * suppresses it for this request) and Deny/Allow (→ `session.answer`).
  *
  * On the design brief's "bypass variant": every `PendingPermission` this engine ever
  * surfaces is a REAL request still awaiting `session.answer` over the control channel —
@@ -54,15 +60,22 @@ export function PermissionCard({
   const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [running, setRunning] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
+  const embed = useEmbed();
+  const { t } = useI18n();
   const command = commandPreview(item.toolName, item.input);
   const diff = !command ? parseEditDiff(item.input) : null;
   const toolLabel = item.displayName ?? item.toolName;
   // Same gate the RUN card carries, for the same reason: the PTY bridge is desktop-only.
-  const canRunHere = !!command && isDesktop() && !!vault;
+  const canRunHere = !!command && isDesktop() && !!vault && !embed;
+  // An app's frame: the page around it can dress up the card, and it cannot cover a native alert,
+  // so the alert is where the yes happens. A text too long to read there is not offered at all.
+  const alertText = embed ? allowAlertText(item.toolName, item.input) : '';
+  const tooLong = !!embed && !allowOffered(item.toolName, item.input);
 
   const allow = () => {
-    if (alwaysAllow) session.alwaysAllow(item.toolName);
+    if (embed && !window.confirm(cleanAlertText(alertText))) return;
+    if (alwaysAllow && !embed && !item.suppressAlwaysAllow) session.alwaysAllow(item.toolName);
     session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input });
   };
   const deny = () => session.answer(item.requestId, { behavior: 'deny', message: 'Denied by user.' });
@@ -80,66 +93,69 @@ export function PermissionCard({
   if (running && command && vault) {
     return (
       <div className="chat-permcard" data-mode={permissionMode} data-running="">
-        <CardHeader glyph="▸" title="Running here" aside={<ToolBadge name={toolLabel} />} />
+        <CardHeader glyph="▸" title={t('perm.running')} aside={<ToolBadge name={toolLabel} />} />
         <div className="chat-permcard-body">
           <TerminalBlock command={command} />
           <InlineTerminal vault={vault} command={command} onExit={handleExit} />
-          <p className="chat-permcard-explainer">
-            Type here as you would in your own terminal. The agent is waiting and picks up the result when it exits.
-          </p>
+          <p className="chat-permcard-explainer">{t('perm.runningHint')}</p>
         </div>
       </div>
     );
   }
 
+  const reasonLine = permissionReasonLine({ reason: item.decisionReason, reasonType: item.decisionReasonType, mode: permissionMode });
+  const reason = !reasonLine ? '' : 'key' in reasonLine ? t(reasonLine.key) : reasonLine.text;
+  // "Run here" answers a command that asks at the keyboard; for any other it waits beside the
+  // command inside "Show command" (owner 2026-11-05: three buttons for a screenshot script).
+  const runUpFront = canRunHere && !!command && looksInteractive(command);
+  const runButton = (
+    <button
+      type="button"
+      className="chat-btn pill"
+      title={t('perm.runHereTitle')}
+      onClick={() => { setStartedAt(Date.now()); setRunning(true); }}
+    >
+      <span aria-hidden>▶</span> {t('perm.runHere')}
+    </button>
+  );
+  // The CLI will not take an "always allow" for this request: the box would promise nothing.
+  const offerAlways = !embed && !item.suppressAlwaysAllow;
+
   return (
     <div className="chat-permcard" data-mode={permissionMode}>
-      <CardHeader glyph="🔓" title="Permission needed" aside={<ToolBadge name={toolLabel} />} />
+      <CardHeader glyph="🔓" title={t('perm.title')} aside={<ToolBadge name={toolLabel} />} />
 
       <div className="chat-permcard-body">
-        <p className="chat-permcard-desc">
-          <CodeSentence text={item.description ?? `Claude wants to run \`${toolLabel}\`.`} />
-        </p>
+        <div className="chat-permcard-lead">
+          <p className="chat-permcard-desc">
+            <CodeSentence text={item.description ?? `Claude wants to run \`${toolLabel}\`.`} />
+          </p>
+          {reason && <p className="chat-permcard-why" data-testid="permission-why">{reason}</p>}
+        </div>
 
-        {command && <TerminalBlock command={command} />}
-        {diff && (
-          <div className="chat-permcard-diff">
-            <div className="chat-permcard-diff-head">
-              <DiffStat added={diff.addedN} removed={diff.removedN} />
-            </div>
-            <DiffView diff={diff} />
-          </div>
-        )}
-        {!command && !diff && item.input !== undefined && (
-          <pre className="chat-permcard-raw">{(() => { try { return JSON.stringify(item.input, null, 2); } catch { return String(item.input); } })()}</pre>
-        )}
+        <PermissionDetails
+          command={command}
+          diff={diff}
+          input={item.input}
+          extra={canRunHere && !runUpFront ? runButton : null}
+        />
 
         <div className="chat-permcard-decide">
-          <label className="chat-permcard-always">
-            <input type="checkbox" checked={alwaysAllow} onChange={(e) => setAlwaysAllow(e.target.checked)} />
-            Always allow this session
-          </label>
+          {offerAlways && (
+            <label className="chat-permcard-always">
+              <input type="checkbox" checked={alwaysAllow} onChange={(e) => setAlwaysAllow(e.target.checked)} />
+              {t('perm.always')}
+            </label>
+          )}
           <div className="chat-permcard-actions">
-            <button type="button" className="chat-btn pill" onClick={deny}>Deny</button>
-            {canRunHere && (
-              <button
-                type="button"
-                className="chat-btn pill"
-                title="Run it yourself in a terminal here — for anything that asks for a password or a y/n"
-                onClick={() => { setStartedAt(Date.now()); setRunning(true); }}
-              >
-                <span aria-hidden>▶</span> Run here
-              </button>
-            )}
-            <button type="button" className="chat-btn pill primary" onClick={allow}>Allow</button>
+            <button type="button" className="chat-btn pill" onClick={deny}>{t('perm.deny')}</button>
+            {runUpFront && runButton}
+            {!tooLong && <button type="button" className="chat-btn pill primary" onClick={allow}>{t('perm.allow')}</button>}
           </div>
         </div>
 
-        <p className="chat-permcard-explainer">
-          {permissionMode === 'bypass'
-            ? <><span aria-hidden>⚡</span> Bypass mode — this session auto-approves most actions; this one still needs you.</>
-            : <><span aria-hidden>🛡</span> Auto mode — edits auto-approved, risky commands still ask (like this one).</>}
-        </p>
+        {tooLong && <p className="chat-permcard-explainer">{t('embed.commandTooLong')}</p>}
+        {embed && <p className="chat-permcard-explainer">{t('embed.permissionHere')}</p>}
       </div>
     </div>
   );

@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <sub>Works with <strong>Claude Code</strong> today. Built agent-agnostic.</sub>
+  <sub>Works with <strong>Claude Code</strong>. <strong>Codex</strong> chats in the desktop app; <strong>Antigravity</strong> in beta.</sub>
 </p>
 
 <p align="center">
@@ -185,7 +185,7 @@ irm https://cdn.jsdelivr.net/npm/dreamcontext/install.ps1 | iex
 npm install -g dreamcontext
 ```
 
-> Requires **Node.js >= 18**. Currently supports **Claude Code**.
+> Requires **Node.js >= 18**. Full support for **Claude Code**; Codex and Antigravity chats run in the [desktop app](#desktop-app) (see [Works With](#works-with)).
 
 ```bash
 # One-shot setup: checks this machine first (Node.js, Claude and its sign-in,
@@ -352,7 +352,7 @@ dreamcontext app update       # Update the installed app to the latest release
 dreamcontext app status       # Show installed app version and state
 ```
 
-**One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots (green up-to-date / yellow needs-update / red folder-gone) let you update from the UI.
+**One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots show green up-to-date, yellow behind, red folder gone; when the CLI or the app changes version, every registered project updates itself on the next start, and one with an agent at work waits its turn.
 
 **Onboarding without a terminal.** The first launch sets your Mac up for you. No Node.js? The opening screen hands over to a short setup that downloads a private, checksum-verified copy just for dreamcontext, then the app starts. The Launcher greets you with a short welcome that says what dreamcontext is, then walks three steps. **This Mac** checks everything Claude needs (dreamcontext in Terminal, Claude and its sign-in, Git, GitHub) and fixes it with one **Set everything up** button: Git's install starts first and keeps going in the background, Claude signs in through your browser, GitHub through a short code (or reuses the GitHub command line tool's sign-in when it already has one). **Project** creates a new folder (making `~/projects` if it is missing), sets up a folder you already have (counting its documents for Claude to read in, and offering Git), or clones one of your GitHub repositories. **Start with Claude** opens the project and starts the conversation that builds its brain with you, so there is no prompt to copy and paste. Calm motion in the splash's style, and none at all with Reduce Motion on.
 
@@ -636,7 +636,7 @@ dreamcontext automations approve <slug>                 # required again any tim
 - **You can read what a run actually did.** `dreamcontext automations session <slug>` replays the headless session: every turn, every tool call and its argument, which ones failed, what it cost. The output document is the conclusion; this is the working. The dashboard has the same drill-in on every row of an automation's run history.
 - **Private to this machine by default.** A new automation, its run history, and its output all stay off your team's shared brain until you say otherwise with `dreamcontext automations share <slug>`. Sharing is easy to undo going forward, but not retroactive: anything already synced to your team stays in that history even after you unshare it, so `unshare` warns you plainly before doing it.
 - **A machine-local approval gates every run.** Because a scheduled run uses elevated permissions with nobody watching, an automation's prompt, timeout, model, reasoning effort, output directory, and whether it learns are hashed at approval time. A change to any of them (for example a synced edit from a teammate on a shared automation) blocks the automation from running here until it's reviewed again with `automations approve`. Approval never limits what a run is allowed to do once it starts, it only gates whether an unreviewed prompt gets to run at all, and it applies even to a private automation, since anyone with access to this machine could still edit it. Because approval is machine-local and shared automations have no cross-machine coordination, approving a shared one on a second machine would run it twice; every approval surface now says so first, reading the synced run history against this machine's own record to spot a run that happened somewhere else. It is advisory, never a block.
-- **A board agent acts only on its board.** An automation homed on a whiteboard (`--whiteboard <board>`, approval-hashed like the prompt) never gets elevated permissions: every run and every reply runs under Claude Code's own permission rules with an exact allowlist. It may read the brain, but it writes only to its own board, its own channel and its own output folder, never reads your credentials, and is refused, with the reason named, the moment anything about it stops matching what you approved.
+- **A home board shows an agent's work; it does not limit it.** An agent homed on a whiteboard (`--whiteboard <board>`, approval-hashed like the prompt) works by its autonomy level like any member, and never reads a `.env` with its Read tool. **A board-only agent acts only on its board.** Opt in with `--board-only` (`scope: board`, also approval-hashed) and every run and every reply runs under Claude Code's own permission rules with an exact allowlist: it may read the brain, but it writes only to its own board, its own channel and its own output folder, never reads your credentials, and is refused, with the reason named, the moment anything about it stops matching what you approved.
 - **A shared automation's output rides brain sync.** A shared run's result lands under `_dream_context/` like everything else, so it inherits the same secrets scrub that guards every commit and push (it blocks known credential shapes; it is not a general sensitive-data filter). Write automations whose output you'd be fine publishing to your team, or keep them private.
 - **Sleep reads new output and can fold real findings into your knowledge base.** During consolidation, the brain looks at what automations have written since the last cycle and, when something is genuinely new rather than a restatement of what it already knows, adds it to the right knowledge file. This applies even to private automations, since sleep is reading your own machine, not the shared brain. If that ever means a private automation's finding is about to become part of shared knowledge, consolidation pauses and asks you to look before it continues.
 - **No silent orphans.** If a run's process ever outlives the command that launched it (for instance the operator killed the wrong thing), the automation refuses to fire again until `dreamcontext automations kill <slug>` clears it, reported in the snapshot and in `show` so it is never invisible.
@@ -683,17 +683,18 @@ dreamcontext theses list                                   # board: draft → op
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
 
-Five more skills install with the core (no pack needed) and run only when the moment calls for them:
+More skills install with the core (no pack needed) and run only when the moment calls for them:
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
 - **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
 - **`patterns`** — the drift-free bridge to your project's documented patterns (`_dream_context/knowledge/patterns/`): `/patterns` lists them, `/patterns <slug>` loads one — so the agent reaches for a documented pattern before rebuilding something the project already solved.
+- **`design`** — universal UI rules for any screen an agent builds: hierarchy, every state designed, measured contrast, a 4px grid, a screen that tells the truth. Sub-files for app screens (`product-ui`), frontend code, web, mobile and onboarding. It gives principles, never a look, and `/apps` builds on it. An installed copy you edited is kept on `update`, never overwritten.
 
 ```bash
 dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs engineering design # Install specific packs directly
-dreamcontext install-skill --skill firebase-firestore # Install a single sub-skill or standalone skill
+dreamcontext install-skill --packs growth council    # Install specific packs directly
+dreamcontext install-skill --skill excalidraw        # Install a single sub-skill or standalone skill
 dreamcontext install-skill --list                     # See everything available
 ```
 
@@ -701,13 +702,11 @@ dreamcontext install-skill --list                     # See everything available
 
 | Pack | What it covers | Inside |
 |------|---------------|--------|
-| **engineering** _(always-on)_ | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
-| **design** _(always-on)_ | Design systems, typography, color, accessibility | frontend-principles, design-web, design-mobile, onboarding-design |
 | **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
 | **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
 | **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
 | **multi-review** | Multi-agent code review (router + niche specialists) | `review-router` + security / cloud-functions / frontend / edge-cases agents |
-| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator` agents |
+| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator`, `reviewer` agents |
 
 **Standalone skills** (install individually with `--skill <name>`):
 
@@ -916,7 +915,10 @@ dreamcontext notify <title> [body] [--session <id> | --session-stdin | --automat
 - **Web Dashboard & Desktop App** — ship with the package / desktop release ([Dashboard](#dashboard), [Desktop App](#desktop-app)).
 - **Obsidian** — `_dream_context/` opens as a vault with curated graph settings scaffolded at init.
 
-More agents coming soon — the brain is platform-neutral; only the thin hook/skill layer is per-platform.
+- **Codex**: chats in the desktop app with our skills, Claude's agents as Codex sub-agents, Plan mode, question and permission cards, stop and resume, all seen on a real account. Your tool servers reach its chats too. Work outside the chat (sleep, automations, AI Team agents) is experimental: built and tested, not yet proven on a real account. Automations run without network. Row by row: [`docs/tool-parity.md`](docs/tool-parity.md).
+- **Antigravity** _(beta, experimental)_: chats, a write gate and skills, proven on one account so far; sleep, automations and AI Team agents on it are tested only against a stand-in agent. It cannot stop a single sub-agent, take a message during a running turn (it goes in as the next turn) or sign in to a tool server from the chat.
+
+The brain is platform-neutral; only the thin hook/skill layer is per-platform.
 
 ## Why It's Built This Way
 

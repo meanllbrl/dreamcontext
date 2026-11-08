@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks } from '../../dashboard/src/components/sleepy/super/sessionHome';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren, busyChildren } from '../../dashboard/src/components/sleepy/super/sessionHome';
 import { adoptionBody, needsOwner } from '../../dashboard/src/components/sleepy/super/superHandover';
-import { planStage, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
+import { planStage, preferredCentre, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { buildDrawerRows } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import { drawerTogglePanel, PAGES_WITH_PANEL } from '../../dashboard/src/lib/uxMode';
 import { rosterSummary } from '../../src/server/routes/agent-sessions';
+import { releasedAtOff } from '../../src/lib/super/handover';
+import { SUPER_STATE_VERSION } from '../../src/lib/super/types';
+import { sanitizeSuperState } from '../../src/lib/super/store';
 import { superOwned } from '../../src/server/routes/agent-chat-sessions';
 import { partitionSuper } from '../../src/lib/transcript-sessions';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -80,18 +83,27 @@ describe('note 2: the Super stage has no bar and chat windows have no Super butt
 });
 
 describe('note 3: a team member opens in the chat area', () => {
-  it('the row sends a member intent, never the AI Team page', () => {
+  // Per-member rows became ONE Ekip row (plan-r10 1d): its list's member click sends the member
+  // intent (the member's stage, its one conversation), never the AI Team page.
+  it('the Ekip list\'s member click sends a member intent, never the AI Team page', () => {
     const d = src('dashboard/src/components/layout/newshell/ChatDrawer.tsx');
     expect(d).not.toContain("page: 'automations'");
-    expect(d).toContain("{ kind: 'member', slug: c.slug, title: c.title }");
+    expect(d).toContain("pick(vault, { kind: 'member', slug: m.slug, title: m.title })");
+    expect(d).toMatch(/onOpen=\{\(m\) => openMember\(teamOpen\.vault, m\)\}/);
   });
-  it('the drawer marks the member on screen', () => {
-    const rows = buildDrawerRows({
+  it('the drawer marks the Ekip row while a member is on screen', () => {
+    const build = (member?: string) => buildDrawerRows({
       projects: [{ name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null }],
       activeVault: 'acme', expanded: ['acme'], fanout: {},
-      facts: { acme: { superOn: true, superSelected: false, chatOpen: true, team: [{ slug: 'scout', title: 'Scout', hasPhoto: false, status: 'working' }], member: 'scout' } },
+      facts: { acme: {
+        superOn: true, superSelected: false, chatOpen: true, team: [],
+        members: [{ slug: 'scout', global: false, enabled: true, ownerWorking: 1, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 1 }],
+        identities: [{ slug: 'scout', title: 'Scout', hasPhoto: false }],
+        ...(member ? { member } : {}),
+      } },
     });
-    expect(rows[0].children.find((c) => c.kind === 'member')).toMatchObject({ selected: true });
+    expect(build('scout')[0].children.find((c) => c.kind === 'team')).toMatchObject({ selected: true });
+    expect(build()[0].children.find((c) => c.kind === 'team')).toMatchObject({ selected: false });
   });
 });
 
@@ -129,28 +141,15 @@ describe('note 7: the stage leans right beside the drawer', () => {
   const card = (id: string, o = {}) => ({ id, kind: 'chat', ref: id, shape: 'portrait', place: 'float', by: 'super', ...o });
   const plan = (cs: unknown[], w: number, leanRight: boolean) => planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: w, height: 900 }, { leanRight });
 
-  it('with the drawer open the chat widens and moves right, the right card reaches the margin', () => {
-    const cs = [agenda, card('a')];
-    const off = plan(cs, 1160, false);
-    const on = plan(cs, 1160, true);
-    expect(on.centre.width).toBeGreaterThan(off.centre.width);
-    expect(on.centre.x + on.centre.width).toBeGreaterThan(off.centre.x + off.centre.width);
-    const right = on.cards.a.rect ?? on.cards.ag.rect;
-    expect(on.cards.ag.size).toBe(off.cards.ag.size);
-    for (const c of Object.values(on.cards)) {
-      if (c.where !== 'float') continue;
-      const clear = c.rect.x + c.rect.width <= on.centre.x || c.rect.x >= on.centre.x + on.centre.width;
-      expect(clear).toBe(true);
-      expect(c.rect.x + c.rect.width).toBeLessThanOrEqual(1160 - STAGE.MARGIN + 1e-6);
+  it('the drawer open or closed, the chat keeps the width the stage gives it (owner 2026-11-06)', () => {
+    for (const cs of [[agenda, card('a')], [agenda, card('a'), card('b')]]) {
+      for (const w of [1160, 1400]) {
+        const off = plan(cs, w, false);
+        const on = plan(cs, w, true);
+        expect(on.centre.width, String(w)).toBeCloseTo(preferredCentre(w), 6);
+        expect(JSON.stringify(on), String(w)).toBe(JSON.stringify(off));
+      }
     }
-    expect(right).toBeTruthy();
-  });
-
-  it('closed, the plan is byte for byte the centred one', () => {
-    const cs = [agenda, card('a'), card('b')];
-    const a = plan(cs, 1400, false);
-    expect(a.centre.x + a.centre.width / 2).toBeCloseTo(700, 6);
-    expect(JSON.stringify(planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: 1400, height: 900 }, {}))).toBe(JSON.stringify(a));
   });
 
   it("a card the owner dropped keeps the stage as he arranged it", () => {
@@ -184,6 +183,50 @@ describe('note 9: the Super Agent row', () => {
     const st = record({ children: { a: child({ row: 'working' }), b: child({ row: 'working' }), c: child({ row: 'done' }), d: child({ row: 'working', endedAt: 3 }) } });
     expect(superRowMarks(st)).toEqual({ working: 2, asking: false });
     expect(superRowMarks(null)).toEqual({ working: 0, asking: false });
+  });
+  it('with the live chats at hand, a row with nothing running it does not count (owner 2026-11-01)', () => {
+    const st = record({ children: { busy: child({ row: 'working' }), starting: child({ row: 'working' }), ended: child({ row: 'working' }), settling: child({ row: 'working' }), closing: child({ row: 'working', settling: true }), none: child({ row: 'working' }) } });
+    const live = { busy: 'working', starting: 'starting', ended: 'ended', settling: 'ready', closing: 'ready' } as Record<string, 'working'>;
+    expect(superRowMarks(st, (sid) => live[sid] ?? null)).toEqual({ working: 3, asking: false });
+    expect(workingChildren((st as { children: never }).children, (sid) => live[sid] ?? null)).toEqual(['busy', 'starting', 'settling']);
+  });
+  it('turned off, the row has no ring and a running child is the owner\'s chat, the Super never', () => {
+    const st = record({ enabled: false, children: { busy: child({ row: 'working' }), old: child({ row: 'gone' }) } }) as { enabled: boolean; session: string; children: never; queue: never };
+    expect(superRowMarks(st).working).toBe(0);
+    expect(rosterSummary({ sessions: [] as never, windows: undefined as never }, st as never, () => true).superWorking).toBe(0);
+    const owned = superOwnedIds({ ...(st as object), released: ['busy', 'sup'] } as never);
+    expect([...owned].sort()).toEqual(['old', 'sup']);
+    // Handed over again, the list means nothing: every child is the Super's.
+    expect([...superOwnedIds({ ...(st as object), enabled: true, released: ['busy'] } as never)].sort()).toEqual(['busy', 'old', 'sup']);
+    expect(sessionHome({ claudeId: 'busy' }, owned, 'sup')).toBe('chat');
+  });
+  it('the list is taken once at turn-off, from what a process holds, and survives the record', () => {
+    const children = { up: child(), parked: child({ row: 'working' }), ended: child({ endedAt: 3 }) };
+    expect(releasedAtOff({ children } as never, (sid) => sid !== 'parked')).toEqual(['up']);
+    const id = '11111111-1111-4111-8111-111111111111';
+    expect(sanitizeSuperState({ v: SUPER_STATE_VERSION, enabled: false, released: [id, 3, id] } as never).released).toEqual([id]);
+    expect(rosterSummary({ sessions: [{ sessionId: 'up' }] as never, windows: undefined as never }, { enabled: false, session: 'sup', children: { up: child() }, released: ['up'] } as never).tabs).toBe(1);
+  });
+  it('Turn off counts every child with something under way, a question or an owner step too', () => {
+    const children = { work: child({ row: 'working' }), asks: child({ row: 'asking' }), waits: child({ row: 'waiting' }), rests: child({ row: 'done' }), ended: child({ row: 'asking', endedAt: 3 }), dead: child({ row: 'waiting' }) };
+    const live = { work: 'working', asks: 'asking', waits: 'ready', rests: 'ready', ended: 'asking' } as Record<string, 'working'>;
+    expect(busyChildren(children as never, (sid) => live[sid] ?? null).sort()).toEqual(['asks', 'waits', 'work']);
+  });
+  it("the server's count for a project not mounted asks the same question", () => {
+    const st = record({ children: { busy: child({ row: 'working' }), dead: child({ row: 'working' }), done: child({ row: 'done' }) } });
+    const count = (runs: (sid: string) => boolean) => rosterSummary({ sessions: [] as never, windows: undefined as never }, st, runs).superWorking;
+    expect(count((sid) => sid === 'busy')).toBe(1);
+    expect(rosterSummary({ sessions: [] as never, windows: undefined as never }, st).superWorking).toBe(0); // no process in the registry
+  });
+  it('Turn off asks through confirmAction, and a remote screen has none', () => {
+    const surface = src(SURFACE);
+    const off = surface.slice(surface.indexOf('const turnOffSuper'), surface.indexOf('A terminal in the Terminals row'));
+    expect(off).toMatch(/await confirmAction\(/);
+    expect(off).not.toMatch(/window\.confirm|[^a-zA-Z]confirm\(/);
+    expect(off).toMatch(/if \(ok\) await takeBack\(\)/);
+    expect(off).toMatch(/super\.off\.ownTurn/);
+    // A member's stage has no Turn off either (plan-r10 Wave 3): it turns off from the Ekip list.
+    expect(surface).toMatch(/onTurnOff=\{remoteDesktop \|\| stageMember \? undefined : turnOffSuper\}/);
   });
   it('asks while an item waits on the owner, and stops when it is done', () => {
     expect(superRowMarks(record({ queue: [q({ kind: 'owner' })] })).asking).toBe(true);
@@ -315,7 +358,7 @@ describe('note 11: History holds one Super Agent entry per project', () => {
   });
   it('the entry row is no session id, and classic never asks for grouping', () => {
     expect(superGroupRow('acme', { count: 2, lastAt: 9 }, 'Super Agent')).toMatchObject({ id: 'super-group:acme', superCount: 2 });
-    expect(src('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toContain('? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))\n');
+    expect(src('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toContain('? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, undefined, app))\n');
   });
 });
 

@@ -1,29 +1,34 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild, superWorktreeRoot } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
+import { mintCrewTicket, noteDelegating, vaultDelegating } from '../../lib/super/delegating.js';
+import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
+import { ensureMemberSuper } from '../../lib/super/member-birth.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
-import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL } from '../../lib/automations/light-run.js';
+import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL, wouldStickToSession } from '../../lib/automations/light-run.js';
 import { spawnModel } from '../../lib/automations/runner.js';
 import type { SpawnModelOverride } from '../../lib/automations/types.js';
-import { sayToAgent } from './automations.js';
-import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
+import { replyToAgent, sayToAgent, type SayResult } from './automations.js';
+import { runChatSession } from '../../lib/automations/run-chat.js';
+import { pendingQuestion, pendingQuestionOfRun } from '../../lib/automations/hitl.js';
+import { agentActivity, automationJobById, currentReplyJob, runIsActive, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
@@ -31,15 +36,17 @@ import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
-  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
-  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
+  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
+  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
-import { freshInFlight, isSuperEventTurn, superOwnerMsgRef, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { pinnedMemberCard } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
+import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
@@ -49,7 +56,7 @@ import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask
 import { askWarning } from '../../lib/super/ask-summary.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
-  CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
+  CLAUDE_SESSIONS_MEANS, delegationAllowed, vaultLiveChildren, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
 import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import {
@@ -59,6 +66,7 @@ import {
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
+import { IMAGE_EXT_RE, PDF_EXT_RE, VIDEO_EXT_RE, ownerFileTarget } from '../../lib/super/owner-file.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
 import { existsSync, statSync } from 'node:fs';
 import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
@@ -95,7 +103,7 @@ import { titleFromBrief } from '../../lib/super/remote-view.js';
  *    super token, a child's token: all refused. Vault-agnostic like `/api/window`: the token
  *    names the vault.
  *
- *  - `GET /api/super/state`, `POST /api/super/enable|disable|layout|activity|recap` — the
+ *  - `GET /api/super/state`, `POST /api/super/enable|disable|layout|activity|recap|open` — the
  *    OWNER's window. Desktop app + loopback + loopback Host (`requireLocalDesktop`), refused
  *    as a cross-site request (a foreign `Origin` or `Sec-Fetch-Site: cross-site`), and denied
  *    on the phone/tunnel surface by the route policy. Vault-bound: the window names its vault.
@@ -111,10 +119,6 @@ type Params = Record<string, string>;
 
 const MAX_TEXT = 100_000;
 const SLUG_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
-const PDF_EXT_RE = /\.pdf$/i;
-/** The clips the window's player takes (`MEDIA_KIND_BY_EXT` video in chatEntities.ts). */
-const VIDEO_EXT_RE = /\.(mp4|m4v|mov|webm)$/i;
 const DELEGATE_TIMEOUT_MS = 30_000;
 /** `super open <kind> <ref…>` takes at most this many refs at once. */
 const MAX_OPEN_REFS = 12;
@@ -181,17 +185,32 @@ async function closeGroupCards(c: SuperCaller, b: Record<string, unknown>, res: 
     groups = [g];
   }
   const ids = [...new Set(groups.flatMap((g) => g.cards))].filter((id) => c.state.containers.some((k) => k.id === id));
-  const skipped = liveCards(c.state, ids);
+  // A member's own card stays, like a live job's (plan r4 G1): the call is not refused for it.
+  const pinned = ids.filter((id) => c.state.containers.some((k) => k.id === id && k.kind === 'member'));
+  const skipped = [...liveCards(c.state, ids), ...pinned];
   const closing = ids.filter((id) => !skipped.includes(id));
   if (!all && !closing.length && skipped.length) { refuseLive(res, skipped, 'closed'); return; }
   if (closing.length) {
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const gone = new Set(closing);
       s.containers = s.containers.filter((x) => !gone.has(x.id));
       s.view = viewWithout(s.view, gone);
     });
   }
   ok(res, { closed: closing, skipped, groups: groups.map((g) => g.id) });
+}
+
+/**
+ * 403 pinned_card (plan r4 G1): a member stage's own cards (Rutinler, Talimatlar, Üye) are the
+ * owner's. No agent verb moves, resizes, groups, ungroups, halves or closes one; a group id stands
+ * for its cards. True = refused (the answer is sent).
+ */
+function refusePinned(c: Pick<SuperCaller, 'state'>, ids: readonly string[], res: ServerResponse): boolean {
+  const expanded = ids.flatMap((id) => c.state.groups.find((g) => g.id === id)?.cards ?? [id]);
+  const hit = pinnedMemberCard(c.state, expanded);
+  if (!hit) return false;
+  refuse(res, 403, 'pinned_card', `${hit} is one of the member's own cards: they are the owner's, never moved, resized, grouped or closed by an agent. Leave them as they are`, { card: hit });
+  return true;
 }
 
 /** 409 live_child: a live job's card stays a floating card (owner 2026-10-23). */
@@ -205,7 +224,28 @@ export interface SuperCaller {
   /** The calling chat's live window token (its own socket). */
   token: string;
   who: WindowIdentity;
+  /** Which super's record this caller reads and writes (the token's, plan-r10 1). */
+  superId: SuperId;
   state: SuperState;
+}
+
+/** What `openCards` reads of its caller: the agent's token and session play no part in a card. The
+ *  owner's door is main's (absent superId). */
+export type OpenCaller = Pick<SuperCaller, 'state'> & { who: Pick<WindowIdentity, 'contextRoot'>; superId?: SuperId };
+
+/** The super a caller's writes go to: its own, never another's. */
+const callerSuper = (c: { superId?: SuperId }): SuperId => c.superId ?? 'main';
+
+/** A chat POSITIVELY held by another super of the caller's vault (plan-r10 1). Unknown or
+ *  unresolved: false, so every other check keeps its order and answer. */
+function heldByAnotherSuper(c: { superId?: SuperId; who: { contextRoot: string } }, holder: { root: string; superId: SuperId } | null): boolean {
+  return !!holder && holder.root === resolve(c.who.contextRoot) && holder.superId !== callerSuper(c);
+}
+
+/** How `openCards` speaks: the one thing that differs between the agent's door and the owner's. */
+export interface OpenDoor {
+  full(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups'>, limit: 'stage' | 'record'): void;
+  done(res: ServerResponse, result: unknown, state: SuperState): void;
 }
 
 export type SuperVerbHandler = (caller: SuperCaller, body: Record<string, unknown>, res: ServerResponse) => Promise<void>;
@@ -220,15 +260,57 @@ export async function authorizeSuperAgent(req: IncomingMessage, res: ServerRespo
   if (!token) { sendError(res, 401, 'not_a_chat', 'only the Super Agent running in a dreamcontext chat can use these verbs (or that chat has ended)'); return null; }
   const who = identityOf(token);
   if (!who || who.mode !== 'super') { sendError(res, 403, 'not_the_super_agent', 'only the project\'s Super Agent can use `dreamcontext super`'); return null; }
-  let state: SuperState;
-  try {
-    state = await readSuperState(who.contextRoot, superSanitizeOpts());
-  } catch (err) { storeRefusal(res, err); return null; }
-  if (!state.session || state.session !== who.sessionId) {
-    sendError(res, 403, 'not_the_super_agent', 'this chat is not the project\'s recorded Super Agent');
+  // The record is the TOKEN's super (plan-r10 1): a member's Super reads and writes its own record
+  // only, never main's or another member's. A member gone from the project is no super: 404.
+  const superId = who.superId ?? 'main';
+  const member = memberOfSuperId(superId);
+  if (member !== null && !memberKnown(who.contextRoot, member)) {
+    sendError(res, 404, 'unknown_member', `no AI Team member "${member}" in this project`);
     return null;
   }
-  return { token, who, state };
+  let state: SuperState;
+  try {
+    state = await readSuperState(who.contextRoot, superId, superSanitizeOpts());
+  } catch (err) { storeRefusal(res, err); return null; }
+  if (!state.session || state.session !== who.sessionId) {
+    sendError(res, 403, 'not_the_super_agent', member === null ? 'this chat is not the project\'s recorded Super Agent' : 'this chat is not that member\'s recorded Super');
+    return null;
+  }
+  return { token, who, superId, state };
+}
+
+/**
+ * A member's Super starts or resumes work only while the member is ready (on, the owner's,
+ * approved): a member waiting for its approval card never spawns (review, Wave 2). False = refused.
+ */
+function requireMemberReady(c: Pick<SuperCaller, 'superId' | 'who'>, res: ServerResponse): boolean {
+  // Absent means main, as everywhere a super id is optional.
+  const member = memberOfSuperId(c.superId ?? 'main');
+  if (member === null) return true;
+  let state: string;
+  try { state = memberCallState(c.who.contextRoot, member).state; } catch { state = 'missing'; }
+  if (state === 'ready') return true;
+  const why = state === 'needs-approval' ? "waiting for the owner's approval" : state === 'off' ? 'turned off' : 'not available';
+  refuse(res, 409, 'member_not_ready', `AI Team member "${member}" is ${why}: nothing new starts until it is ready`, { state });
+  return false;
+}
+
+/** A member slot this project has (an agent manifest, project or global): its record may exist. */
+export function memberKnown(contextRoot: string, slug: string, home?: string): boolean {
+  try { return memberCallState(contextRoot, slug, home).state !== 'missing'; } catch { return false; }
+}
+
+/**
+ * A verb body that names a super (`superId`, plan-r10 1) must name the caller's own: 400 for a
+ * malformed one, 403 for another super's (a member token never reaches main's record, nor main's
+ * a member's). Sends the refusal; false = refused.
+ */
+export function callerOwnsSuper(c: Pick<SuperCaller, 'superId'>, body: Record<string, unknown>, res: ServerResponse): boolean {
+  if (body.superId === undefined) return true;
+  const named = parseSuperId(body.superId);
+  if (named === null) { refuse(res, 400, 'invalid_args', 'superId is `main` or `m:<member slug>`'); return false; }
+  if (named !== c.superId) { refuse(res, 403, 'not_your_super', 'a Super reads and writes only its own record'); return false; }
+  return true;
 }
 
 /** A recorded child of the caller's vault, or the refusal sent. */
@@ -268,8 +350,12 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       return hasChild(c.state, ref) ? { ref } : { error: 'a chat container shows one of your children: give its session id' };
     case 'browser':
       return hasChild(c.state, ref) ? { ref } : { error: 'a browser container shows one of your children\'s live browser: give its session id' };
-    case 'team':
-      return c.state.team.some((j) => j.id === ref) ? { ref } : { error: 'a team container shows one of your AI Team jobs: give its job id (`super state` lists them)' };
+    case 'team': {
+      // Any job of a member opens THAT member's one card, which shows its current root (plan-r10 1b).
+      const job = c.state.team.find((j) => j.id === ref);
+      if (!job) return { error: 'a team container shows one of your AI Team jobs: give its job id (`super state` lists them)' };
+      return { ref: memberRoot(c.state, job.member)?.id ?? job.id };
+    }
     case 'web': {
       const w = validateSuperWebUrl(ref, ownedLoopbackPorts());
       return w.ok
@@ -377,6 +463,25 @@ function tooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups
     { limit, ...counts, freeFloat, freeTotal });
 }
 
+/** The agent's door: `too_many_containers` spells out the limit, a success is the plain result. */
+const AGENT_DOOR: OpenDoor = { full: tooMany, done: (res, result) => ok(res, result) };
+
+/**
+ * The owner's 409 for a card that does not fit: one code per limit, because `RequestError` carries
+ * no `limit` to the window, and the window words the reason itself (in his language).
+ */
+function ownerTooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups'>, limit: 'stage' | 'record'): void {
+  const counts = cardCounts(s);
+  if (limit === 'record') { refuse(res, 409, 'record_full', RECORD_FULL_MESSAGE, { limit, ...counts }); return; }
+  refuse(res, 409, 'stage_full', `the stage is full: ${counts.floating} of ${MAX_FLOAT} floating cards or groups`, { limit, ...counts });
+}
+
+/** The owner's window applies the state in the answer: his request may have no socket to push on. */
+const ownerDoor = (contextRoot: string): OpenDoor => ({
+  full: ownerTooMany,
+  done: (res, result, state) => sendJson(res, 200, { ok: true, result, state: superStateView(contextRoot, state) }),
+});
+
 /** An insight the vault really has (a card naming none would draw an empty tile). */
 function insightExists(contextRoot: string, slug: string): boolean {
   try { return existsSync(insightPath(contextRoot, slug)); } catch { return false; }
@@ -401,8 +506,15 @@ function unknownWhiteboardMessage(contextRoot: string, slug: string): string {
     + 'create it first (`dreamcontext whiteboard create "<name>"`) or open it once its board is written';
 }
 
-/** `delegate` calls in flight per vault, counted against the cap until they settle. */
-const delegating = new Map<string, number>();
+/** `delegate` calls in flight per SUPER live in lib/super/delegating.ts (the chat spawn reads them
+ *  to mark a member's first child before its record lands). */
+
+/** The vault-wide live count the ceiling reads (every super record of the vault); tests swap it. */
+let readVaultLive: (root: string) => Promise<number> = (root) => vaultLiveChildren(root, Date.now(), superSanitizeOpts());
+export function setVaultLiveForTest(fn: ((root: string) => Promise<number>) | null): void {
+  readVaultLive = fn ?? ((root) => vaultLiveChildren(root, Date.now(), superSanitizeOpts()));
+}
+
 
 /** K10: a delegated child pins the dev server it starts, so its site card opens by itself (S1). */
 export const DEV_SERVER_LINE = 'If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site.';
@@ -573,11 +685,11 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string } = {}): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
-  const state = await writeSuper(root, (s) => {
+  const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
     if (have) { if (extra.held) have.held = true; out = { id: have.id, reused: true }; return; }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
@@ -589,6 +701,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
       ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.slug ? { slug: job.slug } : {}), ...(job.base ? { base: job.base } : {}),
       ...(job.mcp ? { mcp: job.mcp } : {}),
+      ...(job.tool ? { tool: job.tool } : {}),
       ...(extra.held ? { held: true } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
@@ -616,18 +729,37 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 /** Start `job` as a child (the cap, the worktree, the window), or keep it in the pool when the
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string): Promise<void> {
+/** {@link codexStartModel}, only when `super resume` would accept it back (sanitizeModel). */
+function safeCodexStartModel(): string {
+  try {
+    const m = codexStartModel();
+    return m.length <= 60 && sanitizeModel(m) === m ? m : '';
+  } catch { return ''; }
+}
+
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
-  const job: Job = jobIn.effort ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
+  // Antigravity names its effort in the model id (`-high`), so it gets none of ours.
+  // No --model: the tool's own default (an Antigravity account's choice included); the model it
+  // really runs on reaches the record from its first `system/init` (agent-chat.ts noteChildModel).
+  const job: Job = jobIn.effort || jobIn.tool === 'antigravity' ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
   // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
   // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
-  // No await between the cap check and the in-flight count, or parallel delegates all pass.
-  const inFlight = delegating.get(root) ?? 0;
-  const room = delegationAllowed(c.state);
-  if (room.live + inFlight >= room.max) {
-    const facts = { held: true, live: room.live + inFlight, max: room.max, reason: 'cap' };
-    const running = `${room.live + inFlight} children are running (at most ${room.max})`;
+  // The vault-wide count is read FIRST (its records); no await between the cap check and the
+  // in-flight count, or parallel delegates all pass.
+  const vaultLive = await readVaultLive(root).catch(() => 0);
+  const dKey = superKey(root, c.superId);
+  const inFlight = noteDelegating(dKey, 0);
+  const room = delegationAllowed(c.state, Date.now(), vaultLive + vaultDelegating(root));
+  const ownFull = room.live + inFlight >= room.max;
+  if (ownFull || room.bound === 'vault') {
+    const facts = ownFull
+      ? { held: true, live: room.live + inFlight, max: room.max, reason: 'cap' }
+      : { held: true, live: room.vaultLive, max: room.vaultMax, reason: 'vault_cap' };
+    const running = ownFull
+      ? `${room.live + inFlight} children are running (at most ${room.max})`
+      : `${room.vaultLive} children are running in this project across every Super (at most ${room.vaultMax} together)`;
     if (fromRow) {
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
@@ -638,7 +770,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true });
+    const kept = await keepInPool(root, job, { held: true }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
       return;
@@ -646,7 +778,14 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     refuse(res, 409, 'held', `${running}; the job is kept in the pool as ${kept.id}: start it with \`dreamcontext super delegate --from ${kept.id}\` when a slot frees`, { ...facts, pooled: kept.id, reused: kept.reused, kept: true });
     return;
   }
-  delegating.set(root, inFlight + 1);
+  // A member's child on Codex or Antigravity never runs wider than the member: refused before
+  // anything starts when the tool has no mode that narrow (security, end review).
+  const crewSlug = memberOfSuperId(c.superId);
+  const toolWhy = crewSlug ? crewToolRefusal(job.tool, narrowestMode('bypassPermissions', root, [crewSlug])) : null;
+  if (toolWhy) { refuse(res, 409, 'tool_too_wide', toolWhy); return; }
+  /** The delegate's own job reference (its crew ticket names it). */
+  const sid0 = newQueueId();
+  noteDelegating(dKey, 1);
   // Started in the owner's own turn (not an event turn), or named his message (`--origin`): he
   // waits on its result (`awaited`).
   const awaited = ownersTurn(c) || !!origin;
@@ -664,6 +803,11 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
       // The child runs LEAN (D14): only these of the user's MCP servers ([] = none).
       mcp: job.mcp ?? [],
+      ...(job.tool ? { tool: job.tool } : {}),
+      // A member Super's child (plan-r10 1): a one-time `crewTicket` the window passes on the
+      // child's connection, which ties it to EXACTLY this super from its first spawn (the
+      // `memberCrew` hint beside it only narrows). Main's frame carries neither, unchanged.
+      ...(memberOfSuperId(c.superId) ? { memberCrew: memberOfSuperId(c.superId), crewTicket: mintCrewTicket(root, c.superId, sid0) } : {}),
     }, { timeoutMs: DELEGATE_TIMEOUT_MS + DELEGATE_GRACE_MS });
     const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
@@ -675,7 +819,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       const unconfirmed = r.ok || (r.error === 'no_window' && r.sent !== false);
       if (unconfirmed) {
         if (fromRow) {
-          await writeSuper(root, (s) => {
+          await writeSuper(root, c.superId, (s) => {
             const p = s.pool.find((x) => x.id === fromRow.id);
             if (!p) return;
             p.maybeStarted = true;
@@ -695,34 +839,47 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     }
     let container: string | null = null;
     let noted: SuperPadItem | 'full' | null = null;
-    const after = await writeSuper(root, (s) => {
+    let startError: string | null = null;
+    // A Codex child with no --model runs the account's default (the bridge starts it on exactly
+    // this, main.ts): named in the record now, so its card says the model before any turn.
+    // Its own `system/init` corrects it if Codex reports another (agent-chat.ts noteChildModel).
+    const recordModel = job.model || (job.tool === 'codex' ? safeCodexStartModel() : '');
+    const after = await writeSuper(root, c.superId, (s) => {
       const now = Date.now();
       s.children[sid] = {
         sessionId: sid, brief: job.brief || job.title, adopted: false, startedAt: now, row: 'working', rowAt: now,
-        ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
+        ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(recordModel ? { model: recordModel } : {}), ...(job.effort ? { effort: job.effort } : {}),
         ...(job.mcp ? { mcp: job.mcp } : {}),
+        ...(job.tool ? { tool: job.tool } : {}),
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         ...(job.task ? { task: job.task } : {}),
         ...(awaited ? { awaited: true as const } : {}),
         ...(awaited && origin ? { origin } : {}),
+        ...(workOrigin ? { workOrigin } : {}),
       };
+      startError = takeStartError(sid);
+      if (startError) startFailedDraft(s, sid, startError, now);
       delete s.notes[sid];
-      container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
+      // A successor that never started takes nothing over: the old child keeps its work.
+      const heir = succeeds && !startError ? succeeds : undefined;
+      container = (heir ? succeedChild(s, heir, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
       // Havuz → Çalışıyor in ONE write: the row leaves the pool as the child enters the list.
-      if (fromRow) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
+      if (fromRow && !startError) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
       // One job, one owner: the agenda lines about the old child follow its successor (the old
       // one is ended, which would otherwise close a line whose work goes on).
-      if (succeeds) s.pad = s.pad?.map((p) => (p.for === succeeds ? { ...p, for: sid } : p));
+      if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
     });
-    const predecessor = succeeds ? await retirePredecessor(c, succeeds) : null;
+    // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
+    if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
+    const predecessor = succeeds && !startError ? await retirePredecessor(c, succeeds) : null;
     // A job that looks like a ready AI Team member's field: a warning, never a block (owner,
     // 2026-10-29). Not for a pool job: it was judged when it was kept.
     const hint = fromRow ? null : delegateTeamHint(root, job, sid);
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
-      sessionId: sid, ...cardOutcome(container, sid, after), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
+      sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
       ...(hint ? { teamHint: hint } : {}),
       ...(predecessor ? { predecessor } : {}),
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
@@ -731,8 +888,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
     storeRefusal(res, err);
   } finally {
-    const n = (delegating.get(root) ?? 1) - 1;
-    if (n > 0) delegating.set(root, n); else delegating.delete(root);
+    noteDelegating(dKey, -1);
   }
 }
 
@@ -785,11 +941,13 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
 
 /** His word reached the child (`send`, `resume` in his turn): its next result is his again, and
  *  answers the message he wrote in this turn. */
-async function markOwnersJob(c: SuperCaller, child: string): Promise<void> {
-  if (!ownersTurn(c)) return;
-  const origin = c.state.session ? superOwnerMsgRef(c.state.session) : undefined;
+async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, unknown> = {}): Promise<void> {
+  // `--origin <ref>` names his message even outside his turn (work sent from an event turn).
+  const named = b.origin !== undefined ? jobOrigin(c, b).ref : undefined;
+  if (!named && !ownersTurn(c)) return;
+  const origin = named ?? (c.state.session ? superOwnerMsgRef(c.state.session) : undefined);
   // Set inside the write, never from the caller's snapshot: a `gone` settled since may have cleared it.
-  await writeSuper(c.who.contextRoot, (s) => {
+  await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
     const x = s.children[child];
     if (!x) return;
     x.awaited = true;
@@ -845,19 +1003,465 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
   return note;
 }
 
-async function addPadNote(root: string, section: PadSection, text: string, forChild?: string): Promise<SuperPadItem | 'full'> {
+async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
-  await writeSuper(root, (s) => { out = putPadNote(s, section, text, forChild); });
+  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); });
   return out;
 }
 
+/**
+ * What opens a card, whoever asks (`SUPER_VERB_HANDLERS.open`, `SUPER_OWNER_HANDLERS.open`): one
+ * body, so the same ask makes the same record from either door. The door decides only how the
+ * answer is spoken.
+ */
+async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerResponse, door: OpenDoor = AGENT_DOOR): Promise<void> {
+  // One ref (`ref`) or several of one kind (`refs`, at most MAX_OPEN_REFS), optionally put in
+  // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
+  // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
+  // the same card (brought back from Others), and a group is one floating item.
+  let kind = str(b.kind);
+  const openable = CONTAINER_KINDS.filter((k) => k !== 'member');
+  if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${openable.join(' | ')}`); return; }
+  // A member's own cards are placed by its stage (plan r4 K3): never opened by a verb.
+  if (kind === 'member') { refuse(res, 400, 'invalid_args', 'the member\'s cards are placed by the stage; they are always there'); return; }
+  const look = shapeOrSize(b);
+  if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
+  const { shape: shapeArg, size: sizeArg } = look;
+  let rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
+  if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
+  // A whiteboard named through `board` (its slug, folder or file) opens as the whiteboard it
+  // is (board-ref.ts, 2026-10-29: a `board <slug>` card read "not in this project yet" forever).
+  let note: string | undefined;
+  if (kind === 'board') {
+    const slugs = rawRefs.map((r) => (typeof r === 'string' ? whiteboardSlugOfBoardRef(r, basename(c.who.contextRoot)) : null));
+    if (slugs.every((x): x is string => !!x)) {
+      kind = 'whiteboard';
+      rawRefs = slugs;
+      note = boardRerouteNote(slugs);
+    } else if (slugs.some(Boolean)) {
+      refuse(res, 400, 'invalid_ref', 'whiteboards and board files mixed in one open: open the whiteboards with `super open whiteboard <slug>` and the files with `super open board <path>`');
+      return;
+    }
+  }
+  // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
+  const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
+  if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
+  const refs: string[] = [];
+  const titles = new Map<string, string>();
+  for (const [i, raw] of rawRefs.entries()) {
+    const r = refFor(c, kind as ContainerKind, raw);
+    if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
+    if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
+    // The default board is made on first ask, as the whiteboards page makes it.
+    if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
+    if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', (note ? 'read as a whiteboard: ' : '') + unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
+    // A board file that is not there would draw a card retrying "not in this project yet" forever.
+    if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
+      refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
+      return;
+    }
+    if (!refs.includes(r.ref)) refs.push(r.ref);
+    const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
+    if (t && !titles.has(r.ref)) titles.set(r.ref, t);
+  }
+  const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
+  const titleOf = (ref: string): string | undefined => title ?? titles.get(ref);
+  const groupName = str(b.group) ? cleanGroupName(b.group) : '';
+  if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
+  // `--no-group`: the cards stand alone and the picture chain ends here.
+  const noGroup = b.group === false;
+  // `--for <child>`: pictures, PDFs or clips shown for that child's job, which go to Others once
+  // the job moves on (tidy.ts). Media cards only, and only one of the super's children.
+  const forChild = str(b.for);
+  if (b.for !== undefined && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--for links media only (kind image, pdf or video)'); return; }
+  if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
+    refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
+    return;
+  }
+  // `--present` (owner 2026-10-29: "why do you create the group but not present it"): media
+  // shown as a result open AND present in the same write, laid out as `present` lays them.
+  if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
+  const presentNow = b.present === true;
+  if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
+  // A team card is its member's one card (plan-r10 1b), whatever job of it was named.
+  const ids = refs.map((ref) => (kind === 'team' ? memberTeamCardId(c.state.team.find((j) => j.id === ref)?.member ?? ref) : containerIdFor(kind, ref)));
+  // A live job is never opened into a group: its card floats on its own (live.ts).
+  if (groupName && kind === 'chat') {
+    const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
+    if (live.length) { refuseLive(res, live, 'in a group'); return; }
+  }
+  const root = c.who.contextRoot;
+  const now = Date.now();
+  // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
+  const chainKey = kind === 'image' ? imageChainKey(root) : `${root}\0${kind}`;
+  // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
+  // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
+  const auto = (s: SuperState): ImageGroupPlan =>
+    isMediaKind(kind as ContainerKind) && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(chainKey), now, forChild, kind as ContainerKind) : null;
+  // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
+  const plan = (s: SuperState, before: SuperState = s): { fits: boolean; limit: 'stage' | 'record'; fresh: number; groupId: string | null; name: string; cards: string[] } => {
+    const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
+    const a = auto(s);
+    const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
+    // A named group resting in Others comes back to the stage: one more floating item.
+    let addFloat = groupName ? (target && target.place === 'float' ? 0 : 1) : fresh;
+    if (a) {
+      // A picture group counts net: the group (unless it already floats) minus each picked card
+      // that floated on its own until now (the lone previous picture, a re-opened one).
+      // A pulled picture was no item of its own: its group still stands where it was.
+      const grouped = new Set(before.groups.flatMap((g) => g.cards));
+      const loose = ('join' in a ? a.cards : a.make.cards)
+        .filter((id) => !grouped.has(id) && before.containers.some((k) => k.id === id && k.place === 'float')).length;
+      addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
+    }
+    // The record counts what is left once its oldest finished cards retire (room.ts).
+    const record = roomPossible(s, fresh, ids);
+    const stage = addFloat <= 0 || floatCount(before) + addFloat <= MAX_FLOAT;
+    const r = { fits: record && stage, limit: (record ? 'stage' : 'record') as 'stage' | 'record', fresh };
+    if (groupName) return { ...r, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
+    if (a && 'join' in a) return { ...r, groupId: a.join, name: '', cards: a.cards };
+    if (a) return { ...r, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
+    return { ...r, groupId: null, name: '', cards: ids };
+  };
+  // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
+  // first, to go with this job's new set (image-group.ts `picturesToPull`).
+  const pull = (s: SuperState): SuperState => {
+    if (isMediaKind(kind as ContainerKind) && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
+    return s;
+  };
+  const first = plan(pull(structuredClone(c.state)), c.state);
+  if (!first.fits) { door.full(res, c.state, first.limit); return; }
+  let refusedBy: 'stage' | 'record' = 'record';
+  let refused = false;
+  let groupId: string | null = null;
+  let autoGrouped = false;
+  // Cards whose size the owner chose: the agent's size is not written (decided inside the
+  // locked write, so an owner resize landing meanwhile still wins).
+  let kept: string[] = [];
+  // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
+  let layoutKept = false;
+  // Touched before the write too, so a tidy pass racing it never moves what is being opened.
+  touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
+  // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
+  // time, so a mockup overwritten at the same path gets its new shape.
+  const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
+  // The child `--for` named left the record meanwhile (an ended one past the history cap):
+  // refused, never opened unlinked as if for its job.
+  let childGone = false;
+  const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+    if (forChild && !hasChild(s, forChild)) { childGone = true; return; }
+    const check = plan(pull(structuredClone(s)), s);
+    if (!check.fits) { refused = true; refusedBy = check.limit; return; }
+    const p = plan(pull(s));
+    makeRoom(s, p.fresh, ids);
+    groupId = p.groupId;
+    autoGrouped = !!p.groupId && !groupName;
+    kept = [];
+    refs.forEach((ref, i) => {
+      const have = s.containers.find((k) => k.id === ids[i]);
+      if (have) {
+        // Re-opening brings it back from Others and keeps the owner's drop position.
+        if (shapeArg) have.shape = shapeArg;
+        if (have.sizeBy === 'owner') { if (sizeArg) kept.push(have.id); }
+        else {
+          // A page is never sized under large by an agent (owner 2026-10-22).
+          const next = atLeastSize(sizeArg ?? have.size ?? 'small', minSizeFor(have.kind));
+          if (next === 'small') delete have.size; else have.size = next;
+        }
+        have.place = 'float';
+        // A minimised agenda the agent opens is shown, not left in its pill (end review r1).
+        delete have.min;
+        if (titleOf(ref)) have.title = titleOf(ref);
+        // Shown again: for the job named now, else still for the one it was shown for.
+        if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
+        else if (have.forChild) have.forAt = now;
+        setAspect(have, aspects);
+        return;
+      }
+      // Its kind's opening size (the agenda, a clip, a PDF: defaultSizeFor), unless a size is named.
+      const size = atLeastSize(sizeArg ?? defaultSizeFor(kind as ContainerKind), minSizeFor(kind as ContainerKind));
+      s.containers.push({
+        id: ids[i], kind: kind as ContainerKind, ref,
+        shape: shapeArg ?? defaultShape(kind as ContainerKind),
+        ...(size !== 'small' ? { size } : {}),
+        place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
+        ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
+        ...(kind === 'image' && aspects.get(ref) !== undefined ? { aspect: aspects.get(ref) } : {}),
+      });
+    });
+    // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
+    // web page as a card it should show it side by side, directly"): the first one named,
+    // never inside a group, never over a presentation, and over a half page only when that
+    // shows another page (a chat or a picture he looks at stays).
+    const shownNow = s.view.mode === 'half' ? s.containers.find((k) => k.id === s.view.card) : undefined;
+    if (!groupId && isPageKind(kind as ContainerKind)
+      && (s.view.mode === 'float' || (s.view.mode === 'half' && (!shownNow || isPageKind(shownNow.kind))))) {
+      s.view = { mode: 'half', card: ids[0] };
+    }
+    // The cards design's own group mutation: a card leaves any other group (a group left
+    // with one card dissolves when the record is settled).
+    if (groupId) {
+      applyGroupOp(s, { id: groupId, cards: p.cards, name: p.name });
+      // The group is what the stage draws: it floats, wherever it rested.
+      const g = s.groups.find((x) => x.id === groupId);
+      if (g) g.place = 'float';
+    }
+    // `--present`: the group they went into is shown whole (as `super present <group>`), else
+    // the cards opened; no layout named, so the cards pick it.
+    if (presentNow) {
+      const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
+      const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
+      layoutKept = presentCards(s, shown).kept;
+    }
+    // The picture chain: the next image open within the window joins where this one went.
+    if (isMediaKind(kind as ContainerKind)) {
+      if (noGroup) imageChains.delete(chainKey);
+      else imageChains.set(chainKey, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
+    }
+  });
+  if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }
+  if (refused) { door.full(res, state, refusedBy); return; }
+  const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
+  if (made.length !== ids.length) { door.full(res, state, 'record'); return; }
+  // Opened by the super: touched now (tidy.ts), the group it went into too.
+  touchCards(root, groupId ? [...ids, groupId] : ids);
+  const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
+  // The phone has no stage: a picture opened here reaches a phone watching this Super Agent as
+  // a strip in its chat (lib/super/phone-mirror.ts stageMediaFrame). Never the holder.
+  if (kind === 'image' && state.session) {
+    const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
+    if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
+  }
+  door.done(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
+    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
+    ...(note ? { kind, note } : {}) }, state);
+}
+
 /** Each verb's work. */
+/**
+ * `--for <itemId|owner>` (plan-r10 1): whose work a member Super's child or question is: the
+ * owner's, or one of its open `request` items (main Super's work, `main:<item>`). The project's own
+ * Super has one audience and takes no `--for`. Absent = no origin named (the issuing turn's, A2).
+ */
+function workForArg(c: Pick<SuperCaller, 'superId' | 'state'>, b: Record<string, unknown>):
+  { origin?: SuperWorkOrigin } | { error: string; status: number; message: string } {
+  if (b.for === undefined) return {};
+  const raw = str(b.for);
+  if (c.superId === 'main') return { error: 'invalid_args', status: 400, message: '--for is a member Super\'s flag: the project\'s Super Agent works for the owner' };
+  if (raw === 'owner') return { origin: 'owner' };
+  const item = raw ? c.state.queue.find((q) => q.id === raw && q.kind === 'request') : undefined;
+  if (!item) return { error: 'unknown_item', status: 404, message: '--for names `owner` or one of your requests (`dreamcontext super state`)' };
+  if (item.state === 'done') return { error: 'already_done', status: 409, message: 'that request is already closed' };
+  const origin = parseWorkOrigin(`main:${item.id}`);
+  return origin ? { origin } : { error: 'unknown_item', status: 404, message: 'that request cannot be named' };
+}
+
+/**
+ * THE switch of `super team ask`. Live since Wave 3 (the window spawns a member's Super when its
+ * record holds `pending` items): `request` = a request in the member's OWN Super (plan-r10 1), shown
+ * on its stage as "Super Agent'tan", closed by its `super team done`. `say` = the Wave 1 headless
+ * chain, kept only for tests of that machinery: in-flight Wave 1 headless team jobs keep their own
+ * card and watch (`checkTeamJob`) until they end (plan-r10 5), whatever this says, and routines,
+ * apps and CLI `agents say` never came through here (plan-r10 4).
+ */
+export const TEAM_ASK_ROUTE: 'request' | 'say' = 'request';
+let teamAskRoute: 'request' | 'say' = TEAM_ASK_ROUTE;
+/** Tests pick a route explicitly; null puts TEAM_ASK_ROUTE back. */
+export function setTeamAskRouteForTest(route: 'request' | 'say' | null): void { teamAskRoute = route ?? TEAM_ASK_ROUTE; }
+
+// A member's name for its announce and its event lines (inbox.ts), read from its manifest.
+setMemberTitleSource((root, slug) => {
+  try { return memberCallState(root, slug).manifest?.title || slug; } catch { return slug; }
+});
+
+/**
+ * `super team ask` (plan-r10 1, Wave 2): a `request` item in the MEMBER's own Super queue. The
+ * member is judged on EVERY request the way `sayToAgent` judges it (missing 404, a colleague's 403,
+ * off 409 `say_disabled`, waiting for its card 409 `say_unapproved`): nothing is queued then. Its
+ * record is born on the first request; the 21st open request is 429 `member_queue_full`. Main's
+ * record gets a team job naming the request: the member's ONE card reads the member's record.
+ */
+async function teamAskRequest(
+  c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, member: string, text: string,
+  originRef: string | undefined, light: boolean, override: SpawnModelOverride | null,
+): Promise<void> {
+  const root = c.who.contextRoot;
+  const vault = vaultNameOf(root);
+  let call: ReturnType<typeof memberCallState>;
+  try { call = memberCallState(root, member); } catch (err) {
+    refuse(res, 409, 'say_refused', wrapUntrusted(vault, (err as Error).message));
+    return;
+  }
+  if (call.state === 'missing') {
+    await closeApprovalsFor(root, member);
+    refuse(res, 404, 'unknown_member', `no AI Team member "${member}" in this project (\`dreamcontext agents list\`)`);
+    return;
+  }
+  if (call.state === 'not_owner') { refuse(res, 403, 'not_owner', 'this member belongs to a teammate and is read-only here'); return; }
+  if (call.state === 'off') {
+    await closeApprovalsFor(root, member);
+    refuse(res, 409, 'say_disabled', wrapUntrusted(vault, `${call.manifest?.title || member} is turned off. Tell the owner; he turns it on.`));
+    return;
+  }
+  if (call.state === 'needs-approval') {
+    const ownerText = `${member} waits for its one approval card (on its stage, and in "Üyeleri yönet"), so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
+    let item: string | null = null;
+    await writeSuper(root, c.superId, (s) => { item = askOwnerToApprove(s, member, ownerText); });
+    refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, `${member} is not approved on this machine.`)} You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet"). His queue strip asks him now; give the job again once he says so.`, { item });
+    return;
+  }
+  const born = await ensureMemberSuper(root, member);
+  if (!born.ok) { refuse(res, born.status, born.error, born.message); return; }
+  const memberId = born.superId;
+  if (openRequests(born.state) >= MAX_OPEN_REQUESTS) {
+    refuse(res, 429, 'member_queue_full', `${member} already has ${MAX_OPEN_REQUESTS} open jobs from you; wait until it closes some`);
+    return;
+  }
+  let settings: { model: string | null; effort: string | null } = { model: null, effort: null };
+  try { settings = call.manifest ?? settings; } catch { /* its own pick stands */ }
+  const used = spawnModel(settings as Parameters<typeof spawnModel>[0], override);
+  const requestId = newQueueId();
+  let queued = false;
+  await writeSuper(root, memberId, (s) => {
+    if (!s.session || openRequests(s) >= MAX_OPEN_REQUESTS) return;
+    s.queue.push({
+      id: requestId, sessionId: s.session, kind: 'request', state: 'pending', createdAt: Date.now(), text,
+      ...(override?.model ? { model: override.model } : {}), ...(override?.effort ? { effort: override.effort } : {}),
+      ...(light ? { light: true as const } : {}),
+    });
+    queued = true;
+  });
+  if (!queued) { refuse(res, 429, 'member_queue_full', `${member} already has ${MAX_OPEN_REQUESTS} open jobs from you`); return; }
+  // The member's ONE conversation (plan-r10 1b): its request root, when it has one, is followed up
+  // on the same card; a Wave 1 headless root keeps its own card job and this one starts the chain.
+  const chainRoot = memberRoot(c.state, member);
+  const followUp = chainRoot?.request ? chainRoot : null;
+  const job: SuperTeamJob = {
+    id: newTeamJobId(), member, runId: new Date().toISOString(), jobKind: 'run', queued: false,
+    brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF), startedAt: Date.now(),
+    request: requestId, open: true,
+    ...(followUp ? { followUpOf: followUp.id, by: 'super' as const } : {}),
+    ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}), ...(light ? { light: true as const } : {}),
+    ...(ownersTurn(c) || originRef ? { awaited: true as const } : {}),
+    ...(originRef ? { origin: originRef } : {}),
+  };
+  await writeSuper(root, c.superId, (s) => recordTeamJob(s, job));
+  void pumpSuper(root, memberId);
+  ok(res, {
+    job: job.id, member, request: requestId, queued: true, status: 'queued',
+    ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
+  });
+}
+
+/**
+ * A member Super's question about main's request (plan-r10 1): its ask stays in its own queue
+ * (closed by main's reply) and a `question` item lands in MAIN's queue on the request's team job;
+ * nothing reaches the owner.
+ */
+async function askMainSuper(c: SuperCaller, res: ServerResponse, spec: SuperAskSpec, text: string, audience: `main:${string}`): Promise<void> {
+  const root = c.who.contextRoot;
+  const slug = memberOfSuperId(c.superId);
+  const requestId = audience.slice('main:'.length);
+  const req = c.state.queue.find((q) => q.id === requestId && q.kind === 'request' && q.state !== 'done');
+  if (!slug || !req) { refuse(res, 404, 'unknown_item', 'that request is not open in your queue'); return; }
+  const main = await readSuperState(root, 'main', superSanitizeOpts());
+  const job = main.team.find((j) => j.request === requestId && j.member === slug);
+  if (!main.enabled || !main.session || !job) { refuse(res, 409, 'no_super', 'the Super Agent that gave this job is not running; ask the owner (`--for owner`)'); return; }
+  const session = c.state.session as string;
+  const askId = newQueueId();
+  await writeSuper(root, c.superId, (s) => {
+    s.queue.push({ id: askId, sessionId: session, kind: 'ask', state: 'pending', createdAt: Date.now(), ownerText: text, ask: spec, workOrigin: audience });
+  });
+  let added = false;
+  await writeSuper(root, 'main', (s) => {
+    if (!s.enabled || !s.session || !s.team.some((j) => j.id === job.id)) return;
+    s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'question', state: 'pending', createdAt: Date.now(), team: job.id, answers: askId, text });
+    added = true;
+  });
+  if (added) void pumpSuper(root);
+  ok(res, { item: askId, asked: true, audience: 'main', reached: added });
+}
+
+/** Verbs only the project's own Super may run, and verbs only a member's Super may run. */
+const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
+  'team-ask': { error: 'member_cannot_assign', message: 'a member\'s Super does not give other members work: tell whoever gave you this job what it needs' },
+  'team-amend': { error: 'main_only', message: 'only the project\'s Super Agent proposes a member change' },
+  'team-answer': { error: 'main_only', message: 'only the project\'s Super Agent answers a member\'s question' },
+  adopt: { error: 'main_only', message: 'a member\'s Super never adopts a chat: open your own children with `super delegate`' },
+};
+const MEMBER_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
+  'team-done': { error: 'member_only', message: 'only a member\'s Super closes the request it was given' },
+};
+
+/** Why `superId` may not run `verb` (403), or null. */
+export function superVerbRefusal(superId: SuperId, verb: SuperVerb): { error: string; message: string } | null {
+  return (superId === 'main' ? MEMBER_ONLY_VERBS[verb] : MAIN_ONLY_VERBS[verb]) ?? null;
+}
+
 export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
+  'team-done': async (c, b, res) => {
+    // A member's Super closes a `request` main Super gave it (plan-r10 1): `done` + its result, once.
+    // Main's one event line about it is Wave 2 step A2.
+    const id = str(b.item);
+    const result = typeof b.result === 'string' ? b.result.trim() : '';
+    if (!id || !QUEUE_ID_RE.test(id)) { refuse(res, 404, 'unknown_item', 'name one of your requests (`dreamcontext super state`)'); return; }
+    if (!result) { refuse(res, 400, 'invalid_args', 'write the result in a few lines'); return; }
+    const have = c.state.queue.find((q) => q.id === id && q.kind === 'request');
+    if (!have) { refuse(res, 404, 'unknown_item', 'name one of your requests (`dreamcontext super state`)'); return; }
+    if (have.state === 'done') { refuse(res, 409, 'already_done', 'that request is already closed'); return; }
+    let closed = false;
+    let already = false;
+    await writeSuper(c.who.contextRoot, c.superId, (s) => {
+      const q = s.queue.find((x) => x.id === id && x.kind === 'request');
+      if (!q) return;
+      if (q.state === 'done') { already = true; return; }
+      q.state = 'done';
+      q.result = result.slice(0, MAX_REQUEST_RESULT);
+      // Its questions to main close with it: a later ask to main is never stuck on ask_open.
+      for (const a of s.queue) if (a.kind === 'ask' && a.state !== 'done' && a.workOrigin === `main:${id}`) a.state = 'done';
+      closed = true;
+    });
+    if (already) { refuse(res, 409, 'already_done', 'that request is already closed'); return; }
+    if (!closed) { refuse(res, 404, 'unknown_item', 'that request is gone'); return; }
+    // Main Super hears it once: one event line with the result (its card turns done).
+    const slug = memberOfSuperId(c.superId);
+    if (slug) await noteRequestDone(c.who.contextRoot, slug, id, result.slice(0, MAX_REQUEST_RESULT)).catch(() => false);
+    ok(res, { item: id, closed: true });
+  },
+  'team-answer': async (c, b, res) => {
+    // Main Super answers a member's question about a job it gave (plan-r10 1): the question lands in
+    // main's queue and the answer goes back as a `reply` item. Both halves are Wave 2 step A2; until
+    // then no member question exists in main's queue, so every item is unknown here.
+    const id = str(b.item);
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    if (!id || !QUEUE_ID_RE.test(id)) { refuse(res, 404, 'unknown_item', 'name a member\'s question in your queue (`dreamcontext super state`)'); return; }
+    if (!text) { refuse(res, 400, 'invalid_args', 'write the answer'); return; }
+    const item = c.state.queue.find((q) => q.id === id && q.kind === 'question' && !!q.team && !!q.answers);
+    const job = item ? c.state.team.find((j) => j.id === item.team && !!j.request) : undefined;
+    if (!item || !job) { refuse(res, 404, 'unknown_item', 'no member question with that id waits in your queue'); return; }
+    if (item.state === 'done') { refuse(res, 409, 'already_done', 'that question is already answered'); return; }
+    const root = c.who.contextRoot;
+    const memberId = superIdOfMember(job.member);
+    let replied = false;
+    // The reply goes to the MEMBER's queue (never a user message there); main's question closes.
+    await writeSuper(root, memberId, (s) => {
+      if (!s.session) return;
+      s.queue.push({
+        id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(),
+        text: text.slice(0, MAX_REQUEST_TEXT), answers: item.answers as string, workOrigin: `main:${job.request}`,
+      });
+      replied = true;
+    });
+    if (!replied) { refuse(res, 409, 'member_gone', 'that member has no Super record any more'); return; }
+    await writeSuper(root, c.superId, (s) => { const q = s.queue.find((x) => x.id === id); if (q) q.state = 'done'; });
+    void pumpSuper(root, memberId);
+    ok(res, { item: id, answered: true, member: job.member });
+  },
   state: async (c, _b, res) => {
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
     const now = Date.now();
-    const children: Record<string, SuperChild & Record<string, unknown>> = {};
+    const children: Record<string, Record<string, unknown>> = {};
     const status: Array<Record<string, unknown>> = [];
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
@@ -865,6 +1469,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const { line: last, limit } = childLastLine(e?.lastAssistantText ?? [], live);
       const row = {
         status: live,
+        // What it runs on: the tool (absent in the record = Claude) and the model its own
+        // `system/init` reported, else the one it was started with (`default`: not known yet).
+        tool: ch.tool ?? 'claude',
+        model: ch.model ?? 'default',
         ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
@@ -873,7 +1481,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
       };
       // The live row rides on the child itself; `status[]` stays for older readers.
-      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...row };
+      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...row };
       status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
@@ -927,6 +1535,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   delegate: async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
+    if (!requireMemberReady(c, res)) return;
     const root = c.who.contextRoot;
     // `--from <pool id>`: the job the pool kept, exactly as it was kept (plan r4 D9).
     const fromId = str(b.from);
@@ -957,251 +1566,40 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
     const origin = jobOrigin(c, b);
     if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+    const workFor = workForArg(c, b);
+    if ('error' in workFor) { refuse(res, workFor.status, workFor.error, workFor.message); return; }
     // With no brief of its own, the successor's card keeps the old one's title.
     if (succeeds && !job.brief && c.state.children[succeeds].brief) job.title = c.state.children[succeeds].brief.slice(0, MAX_TITLE);
-    const claimed = claims.get(root) ?? new Set<string>();
+    const claimKey = superKey(root, c.superId);
+    const claimed = claims.get(claimKey) ?? new Set<string>();
     if (fromId) {
       if (claimed.has(fromId)) { refuse(res, 409, 'claimed', 'that pool job is being started right now'); return; }
       claimed.add(fromId);
-      claims.set(root, claimed);
+      claims.set(claimKey, claimed);
     }
     try {
-      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref);
+      // A member's child does the work of the turn that started it unless `--for` names another.
+      const childOrigin = workFor.origin ?? (c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
+      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
-      if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(root); }
+      if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(claimKey); }
     }
   },
 
-  open: async (c, b, res) => {
-    // One ref (`ref`) or several of one kind (`refs`, at most MAX_OPEN_REFS), optionally put in
-    // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
-    // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
-    // the same card (brought back from Others), and a group is one floating item.
-    let kind = str(b.kind);
-    if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
-    const look = shapeOrSize(b);
-    if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
-    const { shape: shapeArg, size: sizeArg } = look;
-    let rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
-    if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
-    // A whiteboard named through `board` (its slug, folder or file) opens as the whiteboard it
-    // is (board-ref.ts, 2026-10-29: a `board <slug>` card read "not in this project yet" forever).
-    let note: string | undefined;
-    if (kind === 'board') {
-      const slugs = rawRefs.map((r) => (typeof r === 'string' ? whiteboardSlugOfBoardRef(r, basename(c.who.contextRoot)) : null));
-      if (slugs.every((x): x is string => !!x)) {
-        kind = 'whiteboard';
-        rawRefs = slugs;
-        note = boardRerouteNote(slugs);
-      } else if (slugs.some(Boolean)) {
-        refuse(res, 400, 'invalid_ref', 'whiteboards and board files mixed in one open: open the whiteboards with `super open whiteboard <slug>` and the files with `super open board <path>`');
-        return;
-      }
-    }
-    // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
-    const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
-    if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
-    const refs: string[] = [];
-    const titles = new Map<string, string>();
-    for (const [i, raw] of rawRefs.entries()) {
-      const r = refFor(c, kind as ContainerKind, raw);
-      if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
-      if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
-      // The default board is made on first ask, as the whiteboards page makes it.
-      if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
-      if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', (note ? 'read as a whiteboard: ' : '') + unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
-      // A board file that is not there would draw a card retrying "not in this project yet" forever.
-      if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
-        refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
-        return;
-      }
-      if (!refs.includes(r.ref)) refs.push(r.ref);
-      const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
-      if (t && !titles.has(r.ref)) titles.set(r.ref, t);
-    }
-    const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
-    const titleOf = (ref: string): string | undefined => title ?? titles.get(ref);
-    const groupName = str(b.group) ? cleanGroupName(b.group) : '';
-    if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
-    // `--no-group`: the cards stand alone and the picture chain ends here.
-    const noGroup = b.group === false;
-    // `--for <child>`: pictures, PDFs or clips shown for that child's job, which go to Others once
-    // the job moves on (tidy.ts). Media cards only, and only one of the super's children.
-    const forChild = str(b.for);
-    if (b.for !== undefined && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--for links media only (kind image, pdf or video)'); return; }
-    if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
-      refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
-      return;
-    }
-    // `--present` (owner 2026-10-29: "why do you create the group but not present it"): media
-    // shown as a result open AND present in the same write, laid out as `present` lays them.
-    if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
-    const presentNow = b.present === true;
-    if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
-    const ids = refs.map((ref) => containerIdFor(kind, ref));
-    // A live job is never opened into a group: its card floats on its own (live.ts).
-    if (groupName && kind === 'chat') {
-      const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
-      if (live.length) { refuseLive(res, live, 'in a group'); return; }
-    }
-    const root = c.who.contextRoot;
-    const now = Date.now();
-    // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
-    const chainKey = kind === 'image' ? imageChainKey(root) : `${root}\0${kind}`;
-    // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
-    // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
-    const auto = (s: SuperState): ImageGroupPlan =>
-      isMediaKind(kind as ContainerKind) && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(chainKey), now, forChild, kind as ContainerKind) : null;
-    // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
-    const plan = (s: SuperState, before: SuperState = s): { fits: boolean; limit: 'stage' | 'record'; fresh: number; groupId: string | null; name: string; cards: string[] } => {
-      const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
-      const a = auto(s);
-      const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
-      // A named group resting in Others comes back to the stage: one more floating item.
-      let addFloat = groupName ? (target && target.place === 'float' ? 0 : 1) : fresh;
-      if (a) {
-        // A picture group counts net: the group (unless it already floats) minus each picked card
-        // that floated on its own until now (the lone previous picture, a re-opened one).
-        // A pulled picture was no item of its own: its group still stands where it was.
-        const grouped = new Set(before.groups.flatMap((g) => g.cards));
-        const loose = ('join' in a ? a.cards : a.make.cards)
-          .filter((id) => !grouped.has(id) && before.containers.some((k) => k.id === id && k.place === 'float')).length;
-        addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
-      }
-      // The record counts what is left once its oldest finished cards retire (room.ts).
-      const record = roomPossible(s, fresh, ids);
-      const stage = addFloat <= 0 || floatCount(before) + addFloat <= MAX_FLOAT;
-      const r = { fits: record && stage, limit: (record ? 'stage' : 'record') as 'stage' | 'record', fresh };
-      if (groupName) return { ...r, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
-      if (a && 'join' in a) return { ...r, groupId: a.join, name: '', cards: a.cards };
-      if (a) return { ...r, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
-      return { ...r, groupId: null, name: '', cards: ids };
-    };
-    // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
-    // first, to go with this job's new set (image-group.ts `picturesToPull`).
-    const pull = (s: SuperState): SuperState => {
-      if (isMediaKind(kind as ContainerKind) && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
-      return s;
-    };
-    const first = plan(pull(structuredClone(c.state)), c.state);
-    if (!first.fits) { tooMany(res, c.state, first.limit); return; }
-    let refusedBy: 'stage' | 'record' = 'record';
-    let refused = false;
-    let groupId: string | null = null;
-    let autoGrouped = false;
-    // Cards whose size the owner chose: the agent's size is not written (decided inside the
-    // locked write, so an owner resize landing meanwhile still wins).
-    let kept: string[] = [];
-    // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
-    let layoutKept = false;
-    // Touched before the write too, so a tidy pass racing it never moves what is being opened.
-    touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
-    // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
-    // time, so a mockup overwritten at the same path gets its new shape.
-    const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
-    // The child `--for` named left the record meanwhile (an ended one past the history cap):
-    // refused, never opened unlinked as if for its job.
-    let childGone = false;
-    const state = await writeSuper(c.who.contextRoot, (s) => {
-      if (forChild && !hasChild(s, forChild)) { childGone = true; return; }
-      const check = plan(pull(structuredClone(s)), s);
-      if (!check.fits) { refused = true; refusedBy = check.limit; return; }
-      const p = plan(pull(s));
-      makeRoom(s, p.fresh, ids);
-      groupId = p.groupId;
-      autoGrouped = !!p.groupId && !groupName;
-      kept = [];
-      refs.forEach((ref, i) => {
-        const have = s.containers.find((k) => k.id === ids[i]);
-        if (have) {
-          // Re-opening brings it back from Others and keeps the owner's drop position.
-          if (shapeArg) have.shape = shapeArg;
-          if (have.sizeBy === 'owner') { if (sizeArg) kept.push(have.id); }
-          else {
-            // A page is never sized under large by an agent (owner 2026-10-22).
-            const next = atLeastSize(sizeArg ?? have.size ?? 'small', minSizeFor(have.kind));
-            if (next === 'small') delete have.size; else have.size = next;
-          }
-          have.place = 'float';
-          // A minimised agenda the agent opens is shown, not left in its pill (end review r1).
-          delete have.min;
-          if (titleOf(ref)) have.title = titleOf(ref);
-          // Shown again: for the job named now, else still for the one it was shown for.
-          if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
-          else if (have.forChild) have.forAt = now;
-          setAspect(have, aspects);
-          return;
-        }
-        // Its kind's opening size (the agenda, a clip, a PDF: defaultSizeFor), unless a size is named.
-        const size = atLeastSize(sizeArg ?? defaultSizeFor(kind as ContainerKind), minSizeFor(kind as ContainerKind));
-        s.containers.push({
-          id: ids[i], kind: kind as ContainerKind, ref,
-          shape: shapeArg ?? defaultShape(kind as ContainerKind),
-          ...(size !== 'small' ? { size } : {}),
-          place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
-          ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
-          ...(kind === 'image' && aspects.get(ref) !== undefined ? { aspect: aspects.get(ref) } : {}),
-        });
-      });
-      // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
-      // web page as a card it should show it side by side, directly"): the first one named,
-      // never inside a group, never over a presentation, and over a half page only when that
-      // shows another page (a chat or a picture he looks at stays).
-      const shownNow = s.view.mode === 'half' ? s.containers.find((k) => k.id === s.view.card) : undefined;
-      if (!groupId && isPageKind(kind as ContainerKind)
-        && (s.view.mode === 'float' || (s.view.mode === 'half' && (!shownNow || isPageKind(shownNow.kind))))) {
-        s.view = { mode: 'half', card: ids[0] };
-      }
-      // The cards design's own group mutation: a card leaves any other group (a group left
-      // with one card dissolves when the record is settled).
-      if (groupId) {
-        applyGroupOp(s, { id: groupId, cards: p.cards, name: p.name });
-        // The group is what the stage draws: it floats, wherever it rested.
-        const g = s.groups.find((x) => x.id === groupId);
-        if (g) g.place = 'float';
-      }
-      // `--present`: the group they went into is shown whole (as `super present <group>`), else
-      // the cards opened; no layout named, so the cards pick it.
-      if (presentNow) {
-        const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
-        const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
-        layoutKept = presentCards(s, shown).kept;
-      }
-      // The picture chain: the next image open within the window joins where this one went.
-      if (isMediaKind(kind as ContainerKind)) {
-        if (noGroup) imageChains.delete(chainKey);
-        else imageChains.set(chainKey, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
-      }
-    });
-    if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }
-    if (refused) { tooMany(res, state, refusedBy); return; }
-    const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
-    if (made.length !== ids.length) { tooMany(res, state, 'record'); return; }
-    // Opened by the super: touched now (tidy.ts), the group it went into too.
-    touchCards(root, groupId ? [...ids, groupId] : ids);
-    const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
-    // The phone has no stage: a picture opened here reaches a phone watching this Super Agent as
-    // a strip in its chat (lib/super/phone-mirror.ts stageMediaFrame). Never the holder.
-    if (kind === 'image' && state.session) {
-      const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
-      if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
-    }
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
-      ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
-      ...(note ? { kind, note } : {}) });
-  },
+  open: (c, b, res) => openCards(c, b, res),
 
   shape: async (c, b, res) => {
     const id = containerArg(c, b, res);
     if (!id) return;
+    if (refusePinned(c, [id], res)) return;
     const look = shapeOrSize(b);
     if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
     if (!look.shape && !look.size) { refuse(res, 400, 'invalid_args', `shape must be one of ${[...CONTAINER_SIZES, ...CONTAINER_SHAPES].join(' | ')}`); return; }
     // The owner's size wins: decided inside the locked write, never against the snapshot.
     let ownerSized = false;
     let drawn: ContainerSize | undefined;
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
       if (look.size && k.sizeBy === 'owner') { ownerSized = true; return; }
@@ -1220,13 +1618,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   half: async (c, b, res) => {
     // `--off` (no card): back to the floating stage.
     if (b.container === null || b.container === undefined || b.container === '') {
-      await writeSuper(c.who.contextRoot, (s) => { s.view = { mode: 'float' }; });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.view = { mode: 'float' }; });
       ok(res, { view: { mode: 'float' } });
       return;
     }
     const id = containerArg(c, b, res);
     if (!id) return;
-    const state = await writeSuper(c.who.contextRoot, (s) => {
+    if (refusePinned(c, [id], res)) return;
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
       k.place = 'float';
@@ -1238,7 +1637,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   present: async (c, b, res) => {
     const raw = Array.isArray(b.containers) ? b.containers : [];
     if (raw.length === 0) {
-      await writeSuper(c.who.contextRoot, (s) => { s.view = { mode: 'float' }; });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.view = { mode: 'float' }; });
       ok(res, { view: { mode: 'float' } });
       return;
     }
@@ -1276,7 +1675,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The presented pictures' shapes, read before the write (image-aspect.ts).
     const aspects = await imageAspects(dirname(c.who.contextRoot),
       c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
-    const state = await writeSuper(c.who.contextRoot, (s) => {
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, aspects);
       // A group presented whole comes out of Others: leaving the presentation finds it on the stage.
       for (const g of s.groups) if (raw.includes(g.id)) g.place = 'float';
@@ -1291,10 +1690,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const t = targetArg(c, b, res);
     if (!t) return;
     const id = t.id;
+    if (refusePinned(c, [id], res)) return;
     const live = liveCards(c.state, [id]);
     if (live.length) { refuseLive(res, live, 'in Others'); return; }
     if (t.group) {
-      await writeSuper(c.who.contextRoot, (s) => {
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
         const g = s.groups.find((x) => x.id === id);
         if (!g) return;
         g.place = 'others';
@@ -1303,7 +1703,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ok(res, { group: id, place: 'others' });
       return;
     }
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       // A card stacked on its own leaves its group.
       leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
@@ -1319,12 +1719,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const t = targetArg(c, b, res);
     if (!t) return;
     const id = t.id;
+    if (refusePinned(c, [id], res)) return;
     if (t.group) {
-      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) { g.place = 'float'; delete g.pos; } });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const g = s.groups.find((x) => x.id === id); if (g) { g.place = 'float'; delete g.pos; } });
       ok(res, { group: id, place: 'float' });
       return;
     }
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
@@ -1346,15 +1747,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const id = containerArg(c, b, res);
     if (!id) return;
+    if (refusePinned(c, [id], res)) return;
     // The agenda is never closed: it collapses to its pill in the bottom-left corner (owner
     // 2026-10-22 23:44); the owner's pill or the centre's Agenda button brings it back.
     if (c.state.containers.some((x) => x.id === id && x.kind === 'agenda')) {
-      await writeSuper(c.who.contextRoot, (s) => { if (minimiseAgendaCard(s)) s.view = viewWithout(s.view, new Set([id])); });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { if (minimiseAgendaCard(s)) s.view = viewWithout(s.view, new Set([id])); });
       ok(res, { closed: id, minimised: true });
       return;
     }
     // The store drops a closed card from the view (half → float; a presentation keeps the rest).
-    await writeSuper(c.who.contextRoot, (s) => { s.containers = s.containers.filter((x) => x.id !== id); });
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.containers = s.containers.filter((x) => x.id !== id); });
     ok(res, { closed: id });
   },
 
@@ -1372,6 +1774,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!c.state.containers.some((k) => k.id === id)) { refuse(res, 404, 'unknown_container', `no such card: ${id} (\`dreamcontext super state\` lists them)`); return; }
     }
     if (groupIds.length > 1) { refuse(res, 400, 'invalid_args', 'name at most one group; `super ungroup` the other first'); return; }
+    if (refusePinned(c, ids, res)) return;
     const live = liveCards(c.state, cards);
     if (live.length) { refuseLive(res, live, 'in a group'); return; }
     let id = groupIds[0];
@@ -1379,7 +1782,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (cards.length < MIN_GROUP_CARDS) { refuse(res, 400, 'invalid_args', `a group needs at least ${MIN_GROUP_CARDS} cards`); return; }
       id = newGroupId();
     } else if (!cards.length && !name) { refuse(res, 400, 'invalid_args', 'name cards to add to the group, or --name to rename it'); return; }
-    const state = await writeSuper(c.who.contextRoot, (s) => { applyGroupOp(s, { id, cards, name }); s.view = viewWithout(s.view, new Set(cards)); });
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { applyGroupOp(s, { id, cards, name }); s.view = viewWithout(s.view, new Set(cards)); });
     const made = state.groups.find((g) => g.id === id);
     if (!made) { refuse(res, 409, 'not_grouped', 'the cards could not be grouped (closed meanwhile?)'); return; }
     ok(res, { group: made });
@@ -1397,7 +1800,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         return;
       }
     }
-    const state = await writeSuper(c.who.contextRoot, (s) => {
+    if (refusePinned(c, ids, res)) return;
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       dissolveGroups(s, ids.filter((id) => s.groups.some((g) => g.id === id)));
       leaveGroups(s, ids);
     });
@@ -1412,7 +1816,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `--task <slug>` links the row to a task (it never replaces the task).
     const task = str(b.task);
     if (task && !(await taskFileOk(c.who.contextRoot, task))) { refuse(res, 404, 'unknown_task', `no task "${task}" in this project (state/<slug>.md)`); return; }
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const ch = s.children[child];
       if (!ch) return;
       const was = ch.brief;
@@ -1447,7 +1851,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const raw = typeof b.bytes === 'number' && Number.isFinite(b.bytes) && b.bytes > 0;
     const want = raw ? Math.min(b.bytes as number, MAX_READ_BYTES) : DEFAULT_READ_BYTES;
     const path = liveTranscriptPath(root, child);
-    if (!path) { refuse(res, 404, 'no_transcript', 'that child has no transcript yet'); return; }
+    if (!path) {
+      const never = c.state.children[child]?.startError;
+      refuse(res, 404, 'no_transcript', never ? wrapUntrusted(vaultNameOf(root), `that child never started: ${never}`) : 'that child has no transcript yet');
+      return;
+    }
     try {
       // The default is the child's last reply, whole; `--bytes` asks for the raw tail.
       if (!raw) {
@@ -1485,7 +1893,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // FAIL CLOSED (D7): only the plain question the registry names right now. A permission is
     // the owner's alone, whoever asks; anything else is stale.
     if (pq && pq.requestId === requestId && pq.isPermission) {
-      refuse(res, 403, 'permission_refused', 'a permission request is answered only by the owner, from the queue strip');
+      refuse(res, 403, 'permission_refused', 'a permission request is not a question: a Bypass child\'s permission is answered with `dreamcontext super allow <child> <request> [--deny --why <text>]`; any other permission is the owner\'s alone');
       return;
     }
     if (!asking || !pq || pq.requestId !== requestId || pq.isPermission || pq.toolName !== 'AskUserQuestion') {
@@ -1499,16 +1907,63 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!choices.length && !text) { refuse(res, 400, 'invalid_args', 'give an option label or --text'); return; }
     const r = await sendSuperCommand(c.token, 'answer', { child, requestId, choices, ...(text ? { text } : {}) });
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const q of s.queue) if (q.sessionId === child && q.requestId === requestId && q.kind === 'question') q.state = 'done';
     });
     ok(res, { child, requestId, answered: true });
+  },
+
+  // A Bypass child's residual permission, answered by its Super (task super-bypass-taki…). The
+  // Super of THAT child only (the door above), on the request the child holds open right now,
+  // still the Super's to decide (not escalated to the owner). Any other permission: the owner's.
+  allow: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const child = str(b.child);
+    if (!child || !SESSION_ID_RE.test(child) || !hasChild(c.state, child)) {
+      refuse(res, 403, 'not_your_child', 'only a permission of one of your own children (`dreamcontext super state` lists them)');
+      return;
+    }
+    const requestId = str(b.requestId);
+    if (!requestId || requestId.length > 200) { refuse(res, 400, 'invalid_args', 'name the permission request id'); return; }
+    if (phoneHeld(child)) { refusePhoneHeld(res); return; }
+    const chat = getChat(child);
+    const pq = pendingRequest(chat, requestId);
+    // The live chat must be this project's too (the record alone is a same-user file).
+    if (chat && chat.vault !== vaultNameOf(c.who.contextRoot)) {
+      refuse(res, 403, 'not_your_child', 'only a permission of one of your own children (`dreamcontext super state` lists them)');
+      return;
+    }
+    if (!chat || !pq || !pq.isPermission) {
+      refuse(res, 409, 'stale_request', 'that child is not asking this permission any more');
+      return;
+    }
+    if (!permissionGoesToSuper(chat, pq)) {
+      refuse(res, 403, 'owner_only', 'this child does not run in Bypass: its permissions are the owner\'s alone');
+      return;
+    }
+    const item = c.state.queue.find((q) => q.kind === 'permission' && q.sessionId === child && q.requestId === requestId && q.toSuper && q.state !== 'done');
+    if (!item) { refuse(res, 409, 'escalated', 'that permission is the owner\'s now (escalated, or past your time to decide): he answers it'); return; }
+    const deny = b.deny === true;
+    const why = oneLine(typeof b.why === 'string' ? b.why : '').slice(0, 300);
+    const behavior = deny ? 'deny' : 'allow';
+    const r = await sendSuperCommand(c.token, 'allow', {
+      child, requestId, behavior, ...(deny ? { message: `Denied by the Super Agent${why ? `: ${why}` : '.'}` } : {}),
+    });
+    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
+    // The caller's own record (a member's Super closes its own child's item, never main's).
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === child && q.requestId === requestId) q.state = 'done';
+    });
+    void pumpSuper(superKey(c.who.contextRoot, callerSuper(c)));
+    ok(res, { child, requestId, answered: behavior });
   },
 
   send: async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    // A child another super now holds is never this one's to write to (plan-r10 1).
+    if (heldByAnotherSuper(c, superOfChild(child))) { refuse(res, 409, 'other_super', 'that chat belongs to another Super; send only to your own children'); return; }
     if (c.state.children[child].endedAt !== undefined && !isLiveChat(child)) {
       refuse(res, 409, 'ended', 'that child was ended; `dreamcontext super resume <child>` reopens the same conversation');
       return;
@@ -1516,6 +1971,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
+    const originArg = jobOrigin(c, b);
+    if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     if (phoneHeld(child)) { refusePhoneHeld(res); return; }
     // A parked child has no process: one command wakes it (`resume`), then the message goes in.
     // The Super Agent never resumes by hand (field 2026-10-21: send, resume, sleep, send again).
@@ -1551,13 +2008,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // question or permission card) or 'sent' (a new turn).
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
-    if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
+    if (how === 'queued') await addToOutbox(superKey(c.who.contextRoot, c.superId), child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
     // The job moved on: the pictures shown for it before now go to Others (tidy.ts).
     const sentAt = Date.now();
     // The message already went in: a stamp that could not be written must not refuse (and resend) it.
-    await writeSuper(c.who.contextRoot, (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
-    await markOwnersJob(c, child);
+    await markOwnersJob(c, child, b);
     ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}), ...(notOpened ?? {}) });
   },
 
@@ -1575,9 +2032,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const id = str(b.item);
     const item = id ? c.state.queue.find((q) => q.id === id) : undefined;
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
-    if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
+    if (item.kind === 'permission') {
+      // A Bypass child's permission the Super was handed (`toSuper`): `queue ask` hands it to the
+      // owner (head, notch, phone), with the Super's words. Any other permission is his already.
+      if (!item.toSuper || item.state === 'done') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
+      // His card shows the child's own request, never your words (D7): say why in your turn's text.
+      if (!(await permissionToOwner(superKey(c.who.contextRoot, callerSuper(c)), item.id))) { refuse(res, 409, 'stale_request', 'that permission is no longer open, or the owner has it already'); return; }
+      void pumpSuper(superKey(c.who.contextRoot, callerSuper(c)));
+      ok(res, { item: id, escalated: true, permission: true, note: 'It is his now: his bar, the notch and his phone show the child\'s own request. Tell him in one line why it is his to decide.' });
+      return;
+    }
     if (item.kind !== 'question') { refuse(res, 400, 'not_a_question', 'only a child\'s question can be escalated'); return; }
-    if (item.team) { refuse(res, 400, 'team_question', 'an AI Team member\'s question is the owner\'s to answer in AI Team; tell him in your reply which member asks what'); return; }
+    if (item.team) {
+      // Never forwarded (plan-r10 1): a member's own Super asking about the job main gave it is
+      // main's to answer; a Wave 1 headless run's question is the owner's, on that member's card.
+      const ofRequest = c.state.team.some((j) => j.id === item.team && !!j.request);
+      refuse(res, 400, 'team_question', ofRequest
+        ? 'this member\'s Super asks YOU about the job you gave it: answer with `dreamcontext super team answer <item> "<answer>"`; if only the owner can say, ask him with your own `super ask`'
+        : 'an AI Team member\'s question is the owner\'s to answer on that member\'s card; tell him in your reply which member asks what');
+      return;
+    }
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
@@ -1592,7 +2066,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const batch = c.state.session ? superOpenBatch(c.state.session) : null;
     const now = Date.now();
     let shown: ReturnType<typeof applyAskShow> = null;
-    const state = await writeSuper(c.who.contextRoot, (s) => {
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
         q.state = 'escalated';
@@ -1617,8 +2091,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is closed only by the owner\'s answer'); return; }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
     if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
-    await writeSuper(c.who.contextRoot, (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
-    void pumpSuper(c.who.contextRoot);
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
+    void pumpSuper(c.who.contextRoot, callerSuper(c));
     ok(res, { item: id, done: true });
   },
 
@@ -1632,7 +2106,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
     if (mcpRefused(root, job, res)) return;
     const note = oneLine(str(b.note) ?? '').slice(0, MAX_BRIEF);
-    const kept = await keepInPool(root, job, { note });
+    const kept = await keepInPool(root, job, { note }, c.superId);
     if ('error' in kept) { refuse(res, 409, 'pool_full', `the pool is full (at most ${MAX_POOL} jobs, ${MAX_POOL_BYTES / 1024} KB); the job was NOT kept`); return; }
     ok(res, { pooled: kept.id, reused: kept.reused });
   },
@@ -1641,7 +2115,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const id = str(b.id);
     if (!id || !c.state.pool.some((p) => p.id === id)) { refuse(res, 404, 'unknown_pool_item', 'no such pool job (`dreamcontext super pool list`)'); return; }
     if (claims.get(c.who.contextRoot)?.has(id)) { refuse(res, 409, 'claimed', 'that pool job is being started right now'); return; }
-    await writeSuper(c.who.contextRoot, (s) => { s.pool = s.pool.filter((p) => p.id !== id); });
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.pool = s.pool.filter((p) => p.id !== id); });
     ok(res, { removed: id });
   },
 
@@ -1669,7 +2143,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const over = padJobOver(c.state, forChild);
       if (over) { refuse(res, 409, 'job_over', `that job is ${over}; a line about work that goes on: \`super note add now "<line>"\` without --for`); return; }
     }
-    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild);
+    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId);
     if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note: added });
   },
@@ -1679,7 +2153,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const id = str(b.id);
     if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
     let note: SuperPadItem | null = null;
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       s.pad = (s.pad ?? []).map((p) => {
         if (p.id !== id) return p;
         const { toldAt: _t, ...rest } = p;
@@ -1694,7 +2168,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const id = str(b.id);
     if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
     let note: SuperPadItem | null = null;
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const have = (s.pad ?? []).find((p) => p.id === id);
       if (!have) return;
       // Done goes to the end of the pad (the newest finished line), stamped now. The super moved
@@ -1710,7 +2184,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   'note-drop': async (c, b, res) => {
     const id = str(b.id);
     if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
-    await writeSuper(c.who.contextRoot, (s) => { s.pad = (s.pad ?? []).filter((p) => p.id !== id); });
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.pad = (s.pad ?? []).filter((p) => p.id !== id); });
     ok(res, { dropped: id });
   },
 
@@ -1718,7 +2192,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const section = str(b.section);
     if (section && !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
     let cleared = 0;
-    await writeSuper(c.who.contextRoot, (s) => {
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const pad = s.pad ?? [];
       const keep = section ? pad.filter((p) => p.section !== section) : [];
       cleared = pad.length - keep.length;
@@ -1732,8 +2206,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // open at a time, its options drawn and sent exactly as validated here.
     if (!requireHandedOver(c, res)) return;
     const session = c.state.session as string;
-    if (c.state.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) {
-      refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer');
+    // A member's Super names whose work the question is about (`--for <item|owner>`, plan-r10 1);
+    // its routing by audience is Wave 2 step A2.
+    const askFor = workForArg(c, b);
+    if ('error' in askFor) { refuse(res, askFor.status, askFor.error, askFor.message); return; }
+    // Its audience (plan-r10 1): a member's question goes where the turn's work came from (`--for`
+    // overrides): the owner, or main Super for a request it gave. One open ask per audience.
+    const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
+    const toMain = isMainWork(audience);
+    if (c.state.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain)) {
+      refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : 'you already have a question open with the owner; wait for his answer');
       return;
     }
     // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
@@ -1754,6 +2236,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       spec = askSpecFromLegacy(raw, legacy);
     }
     const { ownerText: raw, options } = askSummary(spec);
+    if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
     // Its pictures (task a-picture-question…): `--show`, the option previews, else the last set.
     const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
     if (!prep) return;
@@ -1762,12 +2245,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const now = Date.now();
     let pushed = false;
     let shown: ReturnType<typeof applyAskShow> = null;
-    const state = await writeSuper(c.who.contextRoot, (s) => {
+    const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       // Refused by a question already open: no card is opened, nothing mirrors (D6).
-      if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) return;
+      // One open ask per audience (plan-r10 1): a member's question to main Super never holds his.
+      if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin))) return;
       s.queue.push({
         id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
         ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
+        ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
       });
       pushed = true;
       noteOwnerBatch(s, batch ?? undefined);
@@ -1851,7 +2336,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const result = await applySweep(plan, fresh, {
       onRemoved: async (item) => {
         if (!item.child || item.category === 'build-output') return;
-        await writeSuper(root, (s) => { const x = s.children[item.child!]; if (x) { delete x.worktree; delete x.branch; } });
+        await writeSuper(root, c.superId, (s) => { const x = s.children[item.child!]; if (x) { delete x.worktree; delete x.branch; } });
       },
     });
     forgetLeftovers();
@@ -1871,7 +2356,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const repo = await repoOfWorktree(dirname(root), ch.worktree);
       if (!repo) { refuse(res, 409, 'worktree_not_listed', `${ch.worktree} is not a worktree of a linked repo`); return; }
       await removeChildWorktree({ repoPath: repo.path, worktree: ch.worktree, branch: ch.branch });
-      await writeSuper(root, (s) => { const x = s.children[child]; if (x) { delete x.worktree; delete x.branch; } });
+      await writeSuper(root, c.superId, (s) => { const x = s.children[child]; if (x) { delete x.worktree; delete x.branch; } });
       ok(res, { child, removed: ch.worktree, branchKept: ch.branch });
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
@@ -1925,8 +2410,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   resume: async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
+    if (!requireMemberReady(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    const originArg = jobOrigin(c, b);
+    if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     const root = c.who.contextRoot;
     const ch = c.state.children[child];
     // The owner's own chat, like `end`, `update` and `adopt`: reopened (or made a child again
@@ -1940,7 +2428,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // Ended yet running: the owner reopened it, and on his word it is a child again (his).
       // Its card: brought back for an ended one, made for one that somehow has none.
       let container: string | null = null;
-      const after = await writeSuper(root, (s) => {
+      const after = await writeSuper(root, c.superId, (s) => {
         const x = s.children[child];
         if (!x) return;
         if (phoneHeld(child)) throw new PhoneHeldError(child);
@@ -1949,7 +2437,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (wasEnded) { delete x.endedAt; x.adopted = true; }
         container = ensureChatContainer(s, child, x.brief, wasEnded);
       });
-      await markOwnersJob(c, child);
+      await markOwnersJob(c, child, b);
       ok(res, { child, resumed: false, running: true, ...cardOutcome(container, child, after) });
       return;
     }
@@ -1960,9 +2448,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const effort = str(b.effort) ?? ch.effort;
     if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
     // A resumed child is a live child again: the same cap as a delegate.
-    const room = delegationAllowed(c.state);
-    if (room.live >= room.max) {
-      refuse(res, 409, 'held', `${room.live} children are running (at most ${room.max}); end one first`, { held: true, live: room.live, max: room.max });
+    const room = delegationAllowed(c.state, Date.now(), (await readVaultLive(c.who.contextRoot).catch(() => 0)) + vaultDelegating(c.who.contextRoot));
+    if (!room.ok) {
+      const own = room.bound === 'own';
+      refuse(res, 409, 'held', own
+        ? `${room.live} children are running (at most ${room.max}); end one first`
+        : `${room.vaultLive} children are running in this project across every Super (at most ${room.vaultMax} together); end one first`,
+      { held: true, live: own ? room.live : room.vaultLive, max: own ? room.max : room.vaultMax, ...(own ? {} : { reason: 'vault_cap' }) });
       return;
     }
     if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
@@ -1976,21 +2468,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // reports nothing: the request.
       const used = usedSettings(r.result, { mode, model, effort });
       let container: string | null = null;
-      const after = await writeSuper(root, (s) => {
+      let startError: string | null = null;
+      const after = await writeSuper(root, c.superId, (s) => {
         const x = s.children[child];
         if (!x) return;
         if (phoneHeld(child)) throw new PhoneHeldError(child);
         delete x.endedAt;
+        setRow(x, 'working');
+        startError = takeStartError(child);
+        if (startError) startFailedDraft(s, child, startError);
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
         container = ensureChatContainer(s, child, x.brief, true);
       });
-      await markOwnersJob(c, child);
+      if (startError) void pumpSuper(root, c.superId); else if (!isLiveChat(child)) expectChild(root, child);
+      await markOwnersJob(c, child, b);
       const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
       const ignored = (['mode', 'model', 'effort'] as const).filter((k) => asked[k] && asked[k] !== used[k]);
       ok(res, {
-        child, resumed: true, mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
+        child, resumed: !startError, ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
         ...cardOutcome(container, child, after),
         ...(ignored.length ? { note: `it came back as it was parked (${ignored.join(', ')} unchanged); \`super update\` changes that` } : {}),
       });
@@ -2032,7 +2529,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (effort) steps.push({ verb: 'effort', args: { tab: child, level: effort } });
     if (mode) steps.push({ verb: 'mode', args: { tab: child, mode } });
     const applied: Record<string, unknown> = {};
-    const record = () => writeSuper(c.who.contextRoot, (s) => {
+    const record = () => writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const x = s.children[child];
       if (!x) return;
       if ('model' in applied && model) x.model = model;
@@ -2066,6 +2563,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 404, 'unknown_chat', 'name an open chat of this project by its session id (`dreamcontext window state` lists them)');
       return;
     }
+    // Another super's session or child is never this one's (plan-r10 1): refused, never taken over.
+    const owner = superOfChild(sid) ?? superOfSession(sid);
+    if (heldByAnotherSuper(c, owner)) {
+      refuse(res, 409, 'other_super', 'that chat belongs to another Super (a member\'s, or the project\'s own); it is never adopted');
+      return;
+    }
     const have = hasChild(c.state, sid) ? c.state.children[sid] : undefined;
     if (have && have.endedAt === undefined) { ok(res, { child: sid, adopted: false, already: true }); return; }
     if (adoptableChats([sid], vault).length !== 1) {
@@ -2082,11 +2585,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (phoneHeld(sid)) { refusePhoneHeld(res); return; }
     const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
     let container: string | null = null;
-    const after = await writeSuper(root, (s) => {
+    const after = await writeSuper(root, c.superId, (s) => {
       if (phoneHeld(sid)) throw new PhoneHeldError(sid);
       container = adoptChat(s, sid, brief);
     });
-    void pumpSuper(root);
+    void pumpSuper(root, c.superId);
     ok(res, { child: sid, adopted: true, ...cardOutcome(container, sid, after) });
   },
 
@@ -2110,6 +2613,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         amendment: a.id,
         changed: a.changes.map((x) => (x.routine ? `${x.routine}:${x.field}` : x.field)),
         approved: approvedTargets(root, member),
+        // Applied and stamped even when flagged (the owner talks to Super, plan-r10 1e); the trace
+        // row names what the risk filter saw, and he can take it back.
+        ...(a.risks?.length ? { flagged: a.risks } : {}),
+        ...(a.waits ? { waits: 'card' } : {}),
       });
     } catch (err) {
       if (err instanceof AmendmentRefused) { refuse(res, err.status, err.code, wrapUntrusted(vaultNameOf(root), err.message)); return; }
@@ -2120,9 +2627,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   'team-ask': async (c, b, res) => {
-    // A job for one of THIS project's AI Team members, through the AI Team's own say path
-    // (`sayToAgent`): the member's thread, model, approval and queue rule it. Nothing here starts
-    // a run any other way.
+    // A job for one of THIS project's AI Team members: a `request` in the member's OWN Super
+    // (`teamAskRequest`, live since Wave 3), its one conversation and main's one card for it
+    // (plan-r10 1, 1b; owner i74xj5: "aynı üyeye tek konuşma, tek kart"). The Wave 1 headless
+    // chain below (`replyToAgent` / `sayToAgent`) runs only when a test selects the `say` route.
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
@@ -2143,7 +2651,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const override: SpawnModelOverride | null = light
       ? { model: picked.override?.model ?? LIGHT_DEFAULT_MODEL, effort: picked.override?.effort ?? LIGHT_DEFAULT_EFFORT, light: true }
       : picked.override && { ...picked.override, oneJob: true as const };
-    const r = sayToAgent(root, { slug: member, text, via: 'super', ...(override ? { override } : {}) });
+    // Live (plan-r10 1, Wave 3): a request in the member's OWN Super. The headless say chain below
+    // is reached only when a test selects it (`setTeamAskRouteForTest('say')`).
+    if (teamAskRoute === 'request') { await teamAskRequest(c, b, res, member, text, origin.ref, light, override); return; }
+    // The member's conversation: its chain root, continued when it can be (`continueBlock`).
+    const chain = memberRoot(c.state, member);
+    let r: SayResult | null = null;
+    let continued = false;
+    if (chain && continueBlock(root, c.state, chain, member, light, override) === null) {
+      const rr = replyToAgent(root, { slug: member, runId: chain.runId, text, via: 'super', ...(override ? { override } : {}) });
+      if (rr.ok) { r = rr; continued = true; }
+      // The machine is full: the same 429 a fresh run would get, nothing queued.
+      else if (rr.code === 'say_at_limit') { refuse(res, 429, rr.code, rr.message); return; }
+      // Any other refusal (busy one-off, not bound, a question, a stale run): a fresh root below.
+    }
+    if (!r) {
+      // A new root on the member's card opens with where the conversation stood.
+      const preamble = chain ? chainPreamble(root, chain) : '';
+      const sayText = preamble && preamble.length + text.length <= TEAM_SAY_MAX ? `${preamble}${text}` : text;
+      r = sayToAgent(root, { slug: member, text: sayText, via: 'super', ...(override ? { override } : {}) });
+    }
     if (!r.ok) {
       if (r.code === 'not_found' || r.code === 'say_disabled') {
         // Gone or turned off: an approval question about it no longer waits on the owner.
@@ -2154,11 +2681,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         return;
       }
       if (r.code === 'say_unapproved') {
-        // The owner approves a member in AI Team; the super never can. His strip gets the question.
-        const ownerText = `${member} is not approved on this Mac, so the Super Agent cannot give it a job. Approve it in AI Team, then tell the Super Agent.`;
+        // A member waits for approval only when its ONE card does (a synced or widening change,
+        // plan-r10 1e): a local member never gets here. His strip points him at that card.
+        const ownerText = `${member} waits for its one approval card (on its stage, and in "Üyeleri yönet"), so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
         let item: string | null = null;
-        await writeSuper(root, (s) => { item = askOwnerToApprove(s, member, ownerText); });
-        refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, in AI Team. His queue strip asks him now; give the job again once he says so.`, { item });
+        await writeSuper(root, c.superId, (s) => { item = askOwnerToApprove(s, member, ownerText); });
+        refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet"). His queue strip asks him now; give the job again once he says so.`, { item });
         return;
       }
       // Its title can ride the refusal (a shared brain's text): fenced.
@@ -2166,7 +2694,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     const out = r.body as { runId?: unknown; entryId?: unknown; queued?: unknown; job?: { id?: unknown; kind?: unknown } };
-    const runId = typeof out.runId === 'string' ? out.runId : new Date().toISOString();
+    const runId = continued && chain ? chain.runId : typeof out.runId === 'string' ? out.runId : new Date().toISOString();
     // What it runs on, for its record and card. The job already started: a failed read costs the
     // member's half of that record, never the record.
     let settings: { model: string | null; effort: string | null } = { model: null, effort: null };
@@ -2180,7 +2708,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ...(used.effort ? { effort: used.effort } : {}),
       ...(light ? { light: true as const } : {}),
       ...(typeof out.entryId === 'string' ? { entryId: out.entryId } : {}),
-      jobKind: out.job?.kind === 'reply' ? 'reply' : 'run',
+      jobKind: continued || out.job?.kind === 'reply' ? 'reply' : 'run',
       ...(typeof out.job?.id === 'string' ? { jobId: out.job.id } : {}),
       queued: out.queued === true,
       brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF),
@@ -2191,18 +2719,55 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ...(origin.ref ? { origin: origin.ref } : {}),
       // Its ending is owed to the super until its done or stuck is told (watched until then).
       open: true,
+      // The same member again: its conversation goes on, on its one card, and it is Super's
+      // follow-up, never the owner's words (`teamItemLines`).
+      ...(continued && chain ? { followUpOf: chain.id, by: 'super' as const } : {}),
     };
-    await writeSuper(root, (s) => recordTeamJob(s, job));
+    await writeSuper(root, c.superId, (s) => recordTeamJob(s, job));
     if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
     // A run's ending is in its thread and run cache already: the write queues its event for the
     // super and pushes the window, so the job's card turns done or failed without a poll.
     if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => teamJobSettled(root, job.id)).catch(() => { /* best-effort */ });
     ok(res, {
       job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running',
+      ...(continued ? { continued: true, root: chain!.id } : {}),
       ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
     });
   },
 };
+
+/** The longest text a fresh say takes (`sayToAgent`'s own cap): a preamble that would push the ask
+ *  over it is left out, never the ask. */
+const TEAM_SAY_MAX = 2000;
+/** A member's conversation rotates to a fresh run (same card) after this many turns. */
+export const TEAM_CHAIN_MAX_TURNS = 20;
+/** At most this many follow-ups wait behind the conversation's turn: one more starts beside it. */
+export const TEAM_CHAIN_MAX_WAITING = 2;
+
+/**
+ * Why a member's conversation cannot be continued by this ask, or null when it can (plan-r10 1b):
+ * the root must be resumable or still running, with NO question of the owner's waiting (Super's
+ * words must never become his answer), not light (root or ask), with an override that would not
+ * stick to its session, under 20 turns and under 2 waiting follow-ups. Exported for tests.
+ */
+export function continueBlock(
+  root: string, s: Pick<SuperState, 'team'>, chain: SuperTeamJob, member: string, light: boolean, override: SpawnModelOverride | null,
+): string | null {
+  if (light || chain.light) return 'light';
+  let manifest: Parameters<typeof wouldStickToSession>[0] | null = null;
+  try { manifest = memberCallState(root, member).manifest ?? null; } catch { manifest = null; }
+  if (!manifest) return 'missing';
+  if (wouldStickToSession(manifest, override)) return 'override_sticks';
+  try {
+    if (pendingQuestionOfRun(root, member, chain.runId) || pendingQuestion(root, member)) return 'question_pending';
+  } catch { return 'question_pending'; }
+  if (chainTurns(s, chain) >= TEAM_CHAIN_MAX_TURNS) return 'turns';
+  if (waitingFollowUps(root, s, chain) >= TEAM_CHAIN_MAX_WAITING) return 'waiting';
+  let resumable = false;
+  try { resumable = runChatSession(root, member, chain.runId)?.resumable === true; } catch { resumable = false; }
+  if (!resumable && !runIsActive(agentActivity(root, member), chain.runId)) return 'not_resumable';
+  return null;
+}
 
 /** The say path's own job for a team job is still in flight (running, or a reply waiting). */
 function sayJobRuns(live: LiveSayJob | null): boolean {
@@ -2269,7 +2834,8 @@ function watchTeamJob(root: string, teamJobId: string): void {
   if (jobWatches.has(key)) return;
   const t = setInterval(() => {
     void checkTeamJob(root, teamJobId)
-      .then((keep) => { if (!keep) stop(); }, (err) => {
+      // An ending told stops this watch; the record may still want the late-post one.
+      .then((keep) => { if (!keep) { stop(); void readSuperState(root, superSanitizeOpts()).then((s) => armTeamJobWatches(root, s)); } }, (err) => {
         console.warn(`[super] team job ${teamJobId}: its ending could not be checked: ${(err as Error).message}`);
       });
   }, TEAM_JOB_WATCH_MS);
@@ -2284,7 +2850,13 @@ function watchTeamJob(root: string, teamJobId: string): void {
 export async function checkTeamJob(root: string, teamJobId: string): Promise<boolean> {
   const s = await readSuperState(root, superSanitizeOpts());
   const j = s.team.find((x) => x.id === teamJobId);
-  if (!j || !teamJobOwed(j) || !s.enabled || !s.session) return false;
+  if (!j || !s.enabled || !s.session) return false;
+  // Its ending was told: only a late post can still come.
+  if (!teamJobOwed(j)) {
+    if (!teamJobTrailing(j)) return false;
+    if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
+    return true;
+  }
   const key = `${root}\u0000${teamJobId}`;
   const live = liveSayJob(root, j);
   const end = teamJobEnding(root, j, live);
@@ -2293,7 +2865,7 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   // absent, never merely unreadable), or nothing runs the job and none of its endings was written
   // (its turn lost with the server: no lock held, no say job in memory).
   const seen = memberScope(root, j.member) === null ? 'gone'
-    : end.kind === null && !agentActivity(root, j.member) && !sayJobRuns(live) ? 'lost'
+    : end.kind === null && !runIsActive(agentActivity(root, j.member), j.runId) && !sayJobRuns(live) ? 'lost'
     : null;
   if (seen && suspect.get(key) === seen) {
     suspect.delete(key);
@@ -2307,10 +2879,30 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   const moved = end.kind === null ? standing
     : end.kind === 'question' ? j.told !== 'question' || j.toldQuestion !== end.question?.id
     : true;
-  if (!moved) return true;
+  if (!moved) {
+    // It said something and goes on: that answer is the super's now, not at the run's end.
+    if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
+    return true;
+  }
   await teamJobSettled(root, teamJobId);
   return end.kind === null || end.kind === 'question';
 }
+
+/** A post no ending carries becomes its own event. */
+async function teamJobPosted(root: string, teamJobId: string): Promise<void> {
+  let added = false;
+  await writeSuper(root, (s) => { added = noteTeamJobPosts(root, s, teamJobId); });
+  if (added) void pumpSuper(root);
+}
+
+/** The owner's reply on a job's own run: a job of its own, so it ends like one (`recordReplyEnding`). */
+const noteFollowUp: TeamFollowUpNote = (root, reply) => {
+  void (async () => {
+    let made: SuperTeamJob | null = null;
+    await writeSuper(root, (s) => { made = recordTeamFollowUp(root, s, reply); });
+    if (made) recordReplyEnding(root, (made as SuperTeamJob).id, reply.jobId);
+  })().catch((err) => console.warn(`[super] the owner's reply to ${reply.member} was not recorded: ${(err as Error).message}`));
+};
 
 /** Close the open approval questions about one member (it is gone or turned off). */
 async function closeApprovalsFor(root: string, member: string): Promise<void> {
@@ -2346,6 +2938,7 @@ async function settleApprovals(root: string, state: SuperState): Promise<SuperSt
 // server code).
 setTeamLiveSource(liveSayJob);
 setTeamJobWatcher(watchTeamJob);
+setTeamFollowUpNote(noteFollowUp);
 
 /** The say path's own job for a team job, while it is in memory. */
 function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {
@@ -2354,8 +2947,8 @@ function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {
     const r = currentReplyJob(j.jobId);
     return r ? { kind: 'reply', status: r.status, phase: r.phase, ...replyTimes(r) } : null;
   }
-  const run = currentAutomationJob(root, j.member);
-  return run && run.id === j.jobId ? { kind: 'run', status: run.status } : null;
+  const run = automationJobById(root, j.jobId);
+  return run ? { kind: 'run', status: run.status } : null;
 }
 
 /** A child's registry status right now; `gone` when nothing runs it. */
@@ -2461,7 +3054,7 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   } else {
     noProcess = true;
   }
-  await recordEnded(c.who.contextRoot, sid);
+  await recordEnded(superKey(c.who.contextRoot, c.superId), sid);
   return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
 }
 
@@ -2490,7 +3083,7 @@ export function armSuperSuccession(): void {
   if (successionArmed) return;
   successionArmed = onChatChange(({ entry, from }) => {
     if (entry.status !== 'idle' || from === 'idle') return;
-    const root = superRootOfChild(entry.sessionId);
+    const root = keyOfRef(superOfChild(entry.sessionId));
     if (root) void endSucceededChild(root, entry.sessionId).catch(() => undefined);
   });
 }
@@ -2577,6 +3170,10 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     return;
   }
   const raw = (await parseJsonBody(req)) ?? {};
+  if (!callerOwnsSuper(caller, raw as Record<string, unknown>, res)) return;
+  // Main-only and member-only verbs (plan-r10 1): refused by WHO calls, before anything runs.
+  const roleRefusal = superVerbRefusal(caller.superId, verb);
+  if (roleRefusal) { refuse(res, 403, roleRefusal.error, roleRefusal.message); return; }
   // A child may be named by the first characters of its id (child-ref.ts); resolved once, here.
   const expanded = expandChildRefs(caller.state, verb, raw as Record<string, unknown>);
   if ('error' in expanded) {
@@ -2721,6 +3318,8 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
   if (ungroup.length) dissolveGroups(s, ungroup);
   const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
+  // A member's own cards are never closed (plan r4 K3): a close naming one is ignored for it.
+  for (const k of s.containers) if (k.kind === 'member') gone.delete(k.id);
   // The agenda never leaves the stage (owner 2026-10-22 23:44): its close, or the owner's
   // minimise, collapses it to the pill in the bottom-left corner.
   const agendaId = s.containers.find((x) => x.kind === 'agenda')?.id;
@@ -2799,14 +3398,16 @@ export function applyOwnerSeen(s: SuperState, marks: ReadonlyArray<{ id: string;
 /** GET /api/super/state — the vault's record, for the window's first paint (pushed after). */
 export async function handleSuperStateGet(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
   if (!requireSuperOwner(req, res)) return;
+  const superId = ownerSuperId(req, res, contextRoot);
+  if (!superId) return;
   ensureTidy(contextRoot, TIDY_IO);
   try {
-    let state = await readSuperState(contextRoot, superSanitizeOpts());
+    let state = await readSuperState(contextRoot, superId, superSanitizeOpts());
     // The agenda is always on a shown stage (owner 2026-10-22 23:44): a record without one gets
     // it at its default place on this load.
     // A write that fails never fails the load: the window gets what was read.
     if (agendaMissing(state)) {
-      try { state = await writeSuper(contextRoot, (s) => { if (agendaMissing(s)) showAgendaCard(s); }); } catch (err) {
+      try { state = await writeSuper(contextRoot, superId, (s) => { if (agendaMissing(s)) showAgendaCard(s); }); } catch (err) {
         console.warn(`[super] ${contextRoot}: the agenda was not put on the stage: ${(err as Error).message}`);
       }
     }
@@ -2814,16 +3415,51 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad';
-export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open' | 'member' | 'owed';
+export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>, superId: SuperId) => Promise<void>;
+
+/** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
+const OWNER_OPEN_KINDS: readonly string[] = ['web', 'knowledge', 'task', 'insight', 'whiteboard'] satisfies ContainerKind[];
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
 export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
-  enable: async (_req, res, contextRoot, body) => {
+  // His "Gerek yok" on an unanswered line (owed.ts): the owner's door only; the Super has no verb
+  // that closes a debt.
+  owed: async (_req, res, contextRoot, body, superId) => {
+    const id = typeof body.id === 'string' && OWED_ID_RE.test(body.id) ? body.id : null;
+    if (!id) { sendError(res, 400, 'invalid_args', 'id is an unanswered line\'s id (o<n>)'); return; }
+    if (!(await dropOwed(contextRoot, superId, id))) { sendError(res, 404, 'not_found', 'no such unanswered line is open'); return; }
+    sendJson(res, 200, { dropped: id });
+  },
+  member: async (_req, res, contextRoot, body, superId) => {
+    // The owner opens a member and sends (plan-r10 1): its Super's record is born now (or read),
+    // so the window spawns the chat with THIS session id and the upgrade gate accepts it. An
+    // unapproved, turned-off or missing member gets no record (409 / 404).
+    const slug = typeof body.slug === 'string' ? body.slug : '';
+    const r = await ensureMemberSuper(contextRoot, slug);
+    if (!r.ok) { sendError(res, r.status, r.error, r.message); return; }
+    sendJson(res, 200, { superId: r.superId, session: r.session, born: r.born, state: superStateView(contextRoot, r.state) });
+  },
+  enable: async (_req, res, contextRoot, body, superId) => {
+    // A member's Super has no hand-over: "enable" is its birth (or its record as it stands).
+    const slug = memberOfSuperId(superId);
+    if (slug) {
+      const r = await ensureMemberSuper(contextRoot, slug);
+      if (!r.ok) { sendError(res, r.status, r.error, r.message); return; }
+      sendJson(res, 200, { session: r.session, state: superStateView(contextRoot, r.state), skipped: [] });
+      return;
+    }
     const { session, state, skipped } = await enableSuper(contextRoot, body);
     sendJson(res, 200, { session, state: superStateView(contextRoot, state), skipped });
   },
-  disable: async (_req, res, contextRoot) => {
+  disable: async (_req, res, contextRoot, _body, superId) => {
+    // A member's Super goes off: its record says so, its live chat stops, its keys die.
+    const offSlug = memberOfSuperId(superId);
+    if (offSlug) {
+      const state = await stopMemberSuper(contextRoot, offSlug);
+      sendJson(res, 200, { state: superStateView(contextRoot, state) });
+      return;
+    }
     const state = await disableSuper(contextRoot);
     // Read marks live as long as the hand-over: a failed delete must not fail the take-back.
     await clearReadMarks(contextRoot).catch(() => {});
@@ -2835,7 +3471,30 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     for (const sid of Object.keys(state.children)) findLiveChat(sid)?.closeMirrors?.();
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  layout: async (_req, res, contextRoot, body) => {
+  open: async (_req, res, contextRoot, body, superId) => {
+    // The owner opens a card himself: exactly `{ kind, ref }` or `{ path }` goes on to the agent's
+    // `open`, so where it lands, its size and its group are the agent's rules, not his gesture.
+    // No `group`, `for`, `present`, `shape`, `size`, `refs` or titles, and no owner stamp.
+    const state = await readSuperState(contextRoot, superId, superSanitizeOpts());
+    if (!state.enabled) { refuse(res, 409, 'not_handed_over', 'the Super Agent is not handed over'); return; }
+    const c: OpenCaller = { who: { contextRoot }, state, superId };
+    if (body.path !== undefined) {
+      if (body.kind !== undefined || typeof body.path !== 'string' || !body.path.trim()) {
+        refuse(res, 400, 'invalid_args', 'give { kind, ref } or { path: <text> }, not both');
+        return;
+      }
+      const target = ownerFileTarget(dirname(contextRoot), body.path);
+      if ('error' in target) { refuse(res, target.error === 'unknown_file' ? 404 : 400, target.error, 'this file does not open as a card'); return; }
+      await openCards(c, { kind: target.kind, ref: target.ref }, res, ownerDoor(contextRoot));
+      return;
+    }
+    if (typeof body.kind !== 'string' || !OWNER_OPEN_KINDS.includes(body.kind)) {
+      refuse(res, 400, 'invalid_args', `kind must be one of ${OWNER_OPEN_KINDS.join(' | ')}`);
+      return;
+    }
+    await openCards(c, { kind: body.kind, ref: body.ref }, res, ownerDoor(contextRoot));
+  },
+  layout: async (_req, res, contextRoot, body, superId) => {
     // The owner's gestures as a PATCH, applied inside the locked write (plan-r8 F3): a drop
     // (`pos`), a card stacked or brought back (`place`), a close, and — only from a gesture
     // that changes it — the view. It never replaces the list, so an agent `open`, `close`,
@@ -2854,50 +3513,50 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     if (touch.length) touchCards(contextRoot, touch);
     // A look alone writes only when it makes pictures his: it arrives after their job moved on.
     if (Object.keys(body).every((k) => k === 'touch')) {
-      const seen = await readSuperState(contextRoot, superSanitizeOpts());
+      const seen = await readSuperState(contextRoot, superId, superSanitizeOpts());
       const state = keepOwnerLooked(structuredClone(seen), touch).length
-        ? await writeSuper(contextRoot, (s) => { keepOwnerLooked(s, touch); })
+        ? await writeSuper(contextRoot, superId, (s) => { keepOwnerLooked(s, touch); })
         : seen;
       sendJson(res, 200, { state: superStateView(contextRoot, state) });
       return;
     }
-    const state = await writeSuper(contextRoot, (s) => { applyOwnerLayout(s, body); });
+    const state = await writeSuper(contextRoot, superId, (s) => { applyOwnerLayout(s, body); });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  activity: async (_req, res, contextRoot) => {
-    await noteOwnerActivity(contextRoot);
+  activity: async (_req, res, contextRoot, _body, superId) => {
+    await noteOwnerActivity(superKey(contextRoot, superId));
     sendJson(res, 200, { ok: true });
   },
-  end: async (_req, res, contextRoot, body) => {
+  end: async (_req, res, contextRoot, body, superId) => {
     // The owner closed a child's card with "end the session": his window already closed the tab
     // (his own click, so an adopted chat or a running one is his to end); this records it the
     // way `super end` does, so the card goes and no relaunch brings the tab back.
     const child = typeof body.child === 'string' ? body.child : '';
-    const current = await readSuperState(contextRoot, superSanitizeOpts());
+    const current = await readSuperState(contextRoot, superId, superSanitizeOpts());
     if (!SESSION_ID_RE.test(child) || !hasChild(current, child) || child === current.session) {
       sendError(res, 404, 'unknown_child', 'not a child of this project\'s Super Agent');
       return;
     }
-    await recordEnded(contextRoot, child);
-    sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
+    await recordEnded(superKey(contextRoot, superId), child);
+    sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superId, superSanitizeOpts())) });
   },
-  seen: async (_req, res, contextRoot, body) => {
+  seen: async (_req, res, contextRoot, body, superId) => {
     const marks = ownerSeenMarks(body);
     if ('error' in marks) { sendError(res, 400, 'invalid_body', marks.error); return; }
-    const state = await writeSuper(contextRoot, (s) => { applyOwnerSeen(s, marks.marks); });
+    const state = await writeSuper(contextRoot, superId, (s) => { applyOwnerSeen(s, marks.marks); });
     // The retire clock (tidy.ts) counts from his click: `seenAt` holds the finish key he saw,
     // not when he looked.
     noteSeenClick(contextRoot, marks.marks.map((m) => m.id));
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  pad: async (_req, res, contextRoot, body) => {
+  pad: async (_req, res, contextRoot, body, superId) => {
     // The owner moved an agenda line by hand (the card's Done / Put back): `by: 'owner'`, so the
     // server never moves it again (pad.ts; pattern: the agent must not undo what the owner did).
     const id = typeof body.id === 'string' ? body.id : '';
     const section = body.section === 'now' || body.section === 'done' ? body.section : null;
     if (!PAD_ID_RE.test(id) || !section) { sendError(res, 400, 'invalid_body', 'give { id: <note id>, section: now | done }'); return; }
     let found = false;
-    const state = await writeSuper(contextRoot, (s) => {
+    const state = await writeSuper(contextRoot, superId, (s) => {
       s.pad = (s.pad ?? []).map((p) => {
         if (p.id !== id) return p;
         found = true;
@@ -2911,11 +3570,11 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     if (!found) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  recap: async (_req, res, contextRoot) => {
-    const current = await readSuperState(contextRoot, superSanitizeOpts());
+  recap: async (_req, res, contextRoot, _body, superId) => {
+    const current = await readSuperState(contextRoot, superId, superSanitizeOpts());
     if (!current.enabled || !current.session || current.away.events < 1) { sendJson(res, 200, { queued: false }); return; }
     let queued = false;
-    await writeSuper(contextRoot, (s) => {
+    await writeSuper(contextRoot, superId, (s) => {
       if (!s.enabled || !s.session || s.away.events < 1) return;
       if (!s.queue.some((q) => q.kind === 'recap' && q.state === 'pending')) {
         s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'recap', state: 'pending', createdAt: Date.now() });
@@ -2923,14 +3582,14 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       s.away = { since: null, events: 0 };
       queued = true;
     });
-    if (queued) void pumpSuper(contextRoot);
+    if (queued) void pumpSuper(contextRoot, superId);
     sendJson(res, 200, { queued });
   },
-  fresh: async (_req, res, contextRoot) => {
+  fresh: async (_req, res, contextRoot, _body, superId) => {
     // The owner's "New session": ONE solo `[super fresh]` turn in which the super writes its
     // handoff file; its pane then rotates into a fresh session on the same stage (inbox.ts,
     // agent-chat.ts, super/fresh-session.ts). Children, pool, cards and queue stay.
-    let current = await readSuperState(contextRoot, superSanitizeOpts());
+    let current = await readSuperState(contextRoot, superId, superSanitizeOpts());
     const session = current.session;
     if (!current.enabled || !session || !findLiveChat(session)) {
       sendError(res, 409, 'off', 'the Super Agent is not running here');
@@ -2941,29 +3600,67 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       return;
     }
     // A leftover from before a restart frees the button; one still on its way refuses a second.
-    current = await sweepOrphanFresh(contextRoot, current);
-    if (freshInFlight(contextRoot, current)) {
+    current = await sweepOrphanFresh(superKey(contextRoot, superId), current);
+    if (freshInFlight(superKey(contextRoot, superId), current)) {
       sendError(res, 409, 'rotating', 'a fresh session is already on its way');
       return;
     }
     let queued = false;
-    await writeSuper(contextRoot, (s) => {
+    await writeSuper(contextRoot, superId, (s) => {
       if (!s.enabled || s.session !== session || s.queue.some((q) => q.kind === 'fresh' && q.state === 'pending')) return;
       s.queue.push({ id: newQueueId(), sessionId: session, kind: 'fresh', state: 'pending', createdAt: Date.now() });
       queued = true;
     });
-    if (queued) void pumpSuper(contextRoot);
+    if (queued) void pumpSuper(contextRoot, superId);
     sendJson(res, 200, { queued });
   },
 };
 
+/**
+ * Which super an owner route acts on (plan-r10 1, lane R's `?superId=m%3A<slug>`): absent = main,
+ * exactly as before; malformed 400; a member this project has no manifest of 404. A request that
+ * carries a window token is an agent's, never the owner's window: 403. Sends the refusal; null = refused.
+ */
+export function ownerSuperId(req: IncomingMessage, res: ServerResponse, contextRoot: string): SuperId | null {
+  if (req.headers[WINDOW_TOKEN_HEADER] !== undefined) { sendError(res, 403, 'forbidden', 'An agent\'s window token never reaches the owner\'s Super routes.'); return null; }
+  let raw: string | null = null;
+  try { raw = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('superId'); } catch { raw = null; }
+  const id = parseSuperId(raw ?? undefined);
+  if (id === null) { sendError(res, 400, 'invalid_super', 'superId is `main` or `m:<member slug>`'); return null; }
+  const slug = memberOfSuperId(id);
+  if (slug && !memberKnown(contextRoot, slug)) { sendError(res, 404, 'unknown_member', `no AI Team member "${slug}" in this project`); return null; }
+  return id;
+}
+
+/**
+ * A member's Super off (the owner's switch, or `POST /api/agents/:slug/enabled` false): its record
+ * says so; main hears ONCE per open request that it waits, undelivered (its card then reads failed:
+ * turned off); its live chat AND its live children stop; its in-memory keys die, but its index
+ * entry stays (`enabled: false`), so a respawn of one of its children is still its crew.
+ */
+export async function stopMemberSuper(contextRoot: string, slug: string): Promise<SuperState> {
+  const id = superIdOfMember(slug);
+  const state = await writeSuper(contextRoot, id, (s) => { s.enabled = false; });
+  await noteMemberOff(contextRoot, slug, state);
+  const live = [...(state.session ? [state.session] : []), ...Object.keys(state.children).filter((sid) => state.children[sid].endedAt === undefined)];
+  for (const sid of live) {
+    try { findLiveChat(sid)?.closeMirrors?.(); } catch { /* best-effort */ }
+    // The same stop every other path uses (the process group, the transcript stays resumable).
+    await stopLiveChat(sid).catch(() => false);
+  }
+  retireMemberSuper(contextRoot, slug, { keepIndex: true });
+  return state;
+}
+
 function ownerRoute(verb: SuperOwnerVerb) {
   return async (req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> => {
     if (!requireSuperOwner(req, res)) return;
+    const superId = ownerSuperId(req, res, contextRoot);
+    if (!superId) return;
     const body = (await parseJsonBody(req)) ?? {};
     ensureTidy(contextRoot, TIDY_IO);
     try {
-      await SUPER_OWNER_HANDLERS[verb](req, res, contextRoot, body as Record<string, unknown>);
+      await SUPER_OWNER_HANDLERS[verb](req, res, contextRoot, body as Record<string, unknown>, superId);
     } catch (err) {
       if (!res.headersSent) storeRefusal(res, err);
     }
@@ -2979,3 +3676,6 @@ export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');
+export const handleSuperOpen = ownerRoute('open');
+export const handleSuperMember = ownerRoute('member');
+export const handleSuperOwedDrop = ownerRoute('owed');

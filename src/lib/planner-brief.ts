@@ -16,6 +16,8 @@
  * mode's briefing. It costs nothing at run time: it changes what the plan asks for.
  */
 
+import { CODE_STANDARD, PLAN_STANDARD } from './code-standard.js';
+
 export const USER_FACING_PLAN_RULES = `## What the owner expects without saying it
 
 A goal sentence names the change, not everything its owner will check. Before you write the
@@ -35,7 +37,7 @@ It is the last line of the test plan. Green unit tests on an app that does not o
 evidence that the goal was reached.
 
 **A goal with UI loads the \`design\` skill** (responsive layout, touch targets,
-accessibility; its design-web or design-mobile part) next to \`engineering\`, before planning.`;
+accessibility; its design-web or design-mobile part) before planning.`;
 
 /** goal-skill's planner brief. The orchestrator fills the <placeholders> and writes it to a file. */
 export const PLANNER_BRIEF = `# Planner brief (goal-skill planner)
@@ -47,8 +49,9 @@ goal-planner agent file: this brief is all it sees. Never retype these rules.
 ---
 
 You are the goal-planner for task <slug> in <repo path>. Read-only: you plan; you do not
-write code or the task doc. Load the \`engineering\` skill<, the \`design\` skill when the goal
-has UI><, and the domain skills: …>, and read <patterns and files> before planning.
+write code or the task doc. Load <the \`design\` skill when the goal has UI, ><the domain skills:
+…, >and read <patterns and files> before planning. The code standard below is the bar
+the plan targets.
 
 # Goal
 
@@ -67,6 +70,10 @@ Produce a plan an enthusiastic mid-level engineer could execute without guessing
 is rejected.
 
 ${USER_FACING_PLAN_RULES}
+
+${CODE_STANDARD}
+
+${PLAN_STANDARD}
 
 # Output
 

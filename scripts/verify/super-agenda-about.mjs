@@ -618,7 +618,7 @@ async function main() {
     await chip(page).locator('.chat-cmp-chip-x').click();
     await page.waitForTimeout(3000);
 
-    // 7. Busy: Enter steers; ⇡ queues and the queued row shows the strip.
+    // 7. Busy: Enter steers; ⌥⏎ queues and the queued row shows the strip.
     await sayCentre(page, 'MESGUL');
     ok('the super is busy', await until(page, async () => reports().some((r) => r.kind === 'busy'), 15000));
     await iconOf(n1).click();
@@ -630,8 +630,8 @@ async function main() {
     await iconOf(n1).click();
     await centreInput(page).click();
     await page.keyboard.type('sırada bekle', { delay: 10 });
-    await centre(page).locator('[aria-label="Queue for the next turn"]').click();
-    ok('⇡ queue: the queued row shows the strip, not the raw block', await until(page, async () => {
+    await page.keyboard.press('Alt+Enter');
+    ok('⌥⏎ queue: the queued row shows the strip, not the raw block', await until(page, async () => {
       const row = centre(page).locator('.chat-queue-row').last();
       if (!(await row.count())) return false;
       const t = await row.innerText();

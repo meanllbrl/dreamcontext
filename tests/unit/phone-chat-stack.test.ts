@@ -1,12 +1,14 @@
-// AC19: the phone shows the project's open chats STACKED — one focused chat, every other open
-// chat (this phone's tabs AND the Mac's running chats, each once) a one-line row above it, waiting
-// first; a tap switches to a tab or adopts a Mac chat. The rows are plain functions (phoneStack.ts);
-// the wiring is checked against the source, like mac-phone-drawer.test.ts (root vitest runs under
-// plain Node). The live swap on a real phone is scripts/verify/handsfree-mobile.mjs.
+// AC19, kept by hands-free W2: the phone's stack is gone (the drawer switches chats), but its rules
+// live on in the device shell's rows of one project (`openRows`): every open chat, this phone's
+// tabs AND the Mac's running chats, each conversation once, waiting first, then working, then the
+// rest; a Mac chat of another project, an unregistered folder or a draining conversation is no row
+// here. The wire's lastLine and the phone's restore are checked against the source, like
+// mac-phone-drawer.test.ts (root vitest runs under plain Node).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chatLastLine, stackRows, stackTap, type StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
+import { openRows } from '../../dashboard/src/components/sleepy/phoneList.js';
+import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 import type { LiveChatWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import { liveChatLastLine } from '../../src/server/routes/agent-chat.js';
 import { fileURLToPath } from 'node:url';
@@ -19,77 +21,50 @@ const tab = (id: string, kind: 'working' | 'asking' | 'ready', claudeId?: string
 const live = (conversationId: string, state: LiveChatWire['state'], vault: string | null = 'proj', lastLine: string | null = null): LiveChatWire =>
   ({ conversationId, vault, title: `L ${conversationId}`, busy: state === 'working', state, lastLine, updatedAt: null });
 
-describe('stackRows (AC19)', () => {
-  it('one open chat and nothing on the Mac: no rows (today\'s single chat)', () => {
-    expect(stackRows({ tabs: [tab('a', 'ready')], activeId: 'a', live: [], vault: 'proj' })).toEqual([]);
+describe('openRows: one project\'s open chats (AC19 rules)', () => {
+  it('one open tab and nothing on the Mac: that tab only', () => {
+    expect(openRows({ tabs: [tab('a', 'ready')], live: [], vault: 'proj' }).map((r) => r.key)).toEqual(['tab:a']);
   });
 
-  it('the focused tab is not a row; the other tabs and this project\'s Mac chats are, waiting first, the rest in order', () => {
-    const rows = stackRows({
+  it('tabs and this project\'s Mac chats, waiting first, then working, the rest in order', () => {
+    const rows = openRows({
       tabs: [tab('a', 'ready'), tab('b', 'working'), tab('c', 'ready')],
-      activeId: 'a',
       live: [live('m1', 'idle'), live('m2', 'asking', 'proj', 'Ship it?')],
       vault: 'proj',
     });
-    expect(rows.map((r) => r.key)).toEqual(['mac:m2', 'tab:b', 'tab:c', 'mac:m1']);
+    expect(rows.map((r) => r.key)).toEqual(['mac:m2', 'tab:b', 'tab:a', 'tab:c', 'mac:m1']);
     expect(rows[0]).toMatchObject({ kind: 'mac', waiting: true, stateKey: 'handsfree.mac.state.asking', dot: 'asking', lastLine: 'Ship it?' });
     expect(rows[1]).toMatchObject({ kind: 'tab', waiting: false, stateKey: 'handsfree.mac.state.working', dot: 'working' });
-    expect(rows[3]).toMatchObject({ stateKey: 'handsfree.mac.state.idle', dot: 'ready', lastLine: '' });
+    expect(rows[4]).toMatchObject({ stateKey: 'handsfree.mac.state.idle', dot: 'ready', lastLine: '' });
   });
 
-  it('a waiting TAB sorts first too', () => {
-    const rows = stackRows({ tabs: [tab('a', 'ready'), tab('b', 'working'), tab('c', 'asking')], activeId: 'a', live: [], vault: 'proj' });
-    expect(rows.map((r) => r.id)).toEqual(['c', 'b']);
-    expect(rows[0]).toMatchObject({ waiting: true, stateKey: 'handsfree.mac.state.asking' });
-  });
-
-  it('each conversation once: a Mac chat this phone holds as a tab (focused or not) is not stacked again', () => {
-    const rows = stackRows({
+  it('each conversation once: a Mac chat this phone holds as a tab is not a second row', () => {
+    const rows = openRows({
       tabs: [tab('a', 'ready', 'conv-a'), tab('b', 'working', 'conv-b')],
-      activeId: 'a',
       live: [live('conv-a', 'idle'), live('conv-b', 'working'), live('conv-c', 'idle')],
       vault: 'proj',
     });
-    expect(rows.map((r) => r.key)).toEqual(['tab:b', 'mac:conv-c']);
+    expect(rows.map((r) => r.key)).toEqual(['tab:b', 'tab:a', 'mac:conv-c']);
   });
 
-  it('a tab holds its live id AND its roster id: a Mac chat under either is not stacked again', () => {
+  it('a tab holds its live id AND its roster id: a Mac chat under either is not a second row', () => {
     const t2: StackTab = { ...tab('b', 'working', 'live-b'), altClaudeId: 'roster-b' };
-    const rows = stackRows({ tabs: [tab('a', 'ready'), t2], activeId: 'a', live: [live('live-b', 'working'), live('roster-b', 'working')], vault: 'proj' });
+    const rows = openRows({ tabs: [t2], live: [live('live-b', 'working'), live('roster-b', 'working')], vault: 'proj' });
     expect(rows.map((r) => r.key)).toEqual(['tab:b']);
   });
 
-  it('another chosen project\'s chats, unregistered folders and draining conversations are not stacked here', () => {
-    const rows = stackRows({
-      tabs: [tab('a', 'ready')], activeId: 'a',
-      live: [live('x', 'asking', 'other'), live('y', 'idle', null), live('z', 'idle')],
-      draining: [],
-      vault: 'proj',
+  it('another chosen project\'s chats, unregistered folders and draining conversations are no row here', () => {
+    const rows = openRows({
+      tabs: [], live: [live('x', 'asking', 'other'), live('y', 'idle', null), live('z', 'idle'), live('d', 'working')],
+      draining: ['d'], vault: 'proj',
     });
     expect(rows.map((r) => r.id)).toEqual(['z']);
   });
-});
 
-describe('stackTap (AC19)', () => {
-  it('a tab row switches to that tab; a Mac row adopts the running chat (never a resume)', () => {
-    const [b, m] = stackRows({ tabs: [tab('a', 'ready'), tab('b', 'ready')], activeId: 'a', live: [live('m', 'working')], vault: 'proj' });
-    expect(stackTap(b)).toEqual({ select: { paneId: 'p1', id: 'b' } });
-    const d = stackTap(m);
-    expect('adopt' in d && d.adopt.conversationId).toBe('m');
-  });
-});
-
-describe('chatLastLine (a phone tab\'s row)', () => {
-  const text = (t: string) => ({ kind: 'text', id: t, index: 0, text: t, done: true, ts: 0 }) as const;
-  it('a waiting question shows the question; a permission shows only the tool', () => {
-    expect(chatLastLine({ items: [text('hi')], history: [], pending: [{ kind: 'question', requestId: 'r', toolName: 'AskUserQuestion', questions: [{ question: 'Delete the old ones?', options: [] }] }] })).toBe('Delete the old ones?');
-    expect(chatLastLine({ items: [], history: [], pending: [{ kind: 'permission', requestId: 'r', toolName: 'Bash', input: { command: 'rm -rf x' } }] as never })).toBe('Bash');
-  });
-  it('else the last line of the newest text, whitespace collapsed; else the history; else empty', () => {
-    expect(chatLastLine({ items: [text('first'), { kind: 'user', id: 'u', text: 'go', ts: 0 }, text('line one\n\n  14 found,   all old  \n')], history: [], pending: [] })).toBe('14 found, all old');
-    expect(chatLastLine({ items: [], history: [text('from before')], pending: [] })).toBe('from before');
-    expect(chatLastLine({ items: [], history: [], pending: [] })).toBe('');
-    expect(chatLastLine({ items: [text('x'.repeat(300))], history: [], pending: [] })).toHaveLength(140);
+  it('a tab whose chat the Mac says is asking waits too (its own state is not working)', () => {
+    const rows = openRows({ tabs: [tab('a', 'ready', 'held')], live: [live('held', 'asking')], vault: 'proj' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'tab', waiting: true, dot: 'asking' });
   });
 });
 
@@ -109,25 +84,9 @@ describe('liveChatLastLine (the wire\'s lastLine for a Mac chat)', () => {
   });
 });
 
-describe('the stack is wired on the phone (AC19-AC20)', () => {
+describe('the phone\'s rows are fed honestly (AC19-AC20)', () => {
   const surface = code('dashboard/src/components/sleepy/AgentSurface.tsx');
-  const stack = code('dashboard/src/components/sleepy/PhoneChatStack.tsx');
-  const css = code('dashboard/src/components/sleepy/MobileChat.css');
   const server = code('src/server/routes/agent-chat.ts');
-
-  it('mounts above the panes only on a phone without the list, switches with selectTab, adopts with adoptLiveChat', () => {
-    expect(surface).toMatch(/\{isMobile && !macPhone && \(\s*<PhoneChatStack[\s\S]*?onSelect=\{selectTab\}\s*onAdopt=\{adoptLiveChat\}[\s\S]*?\/>\s*\)\}\s*<div\s+ref=\{panesRowRef\}/);
-  });
-
-  // The owner, 2026-10-17: two screens, the list and one chat; the open chats live on the list.
-  it('Mac mode\'s phone shows a chat alone: no stack there, and the two screens move forward and back', () => {
-    expect(surface).not.toMatch(/\{isMobile && \(\s*<PhoneChatStack/);
-    expect(surface).toMatch(/data-phone-nav=\{macPhone && phoneNav \? phoneNav : undefined\}/);
-    expect(surface).toMatch(/setPhoneNav\(phoneView === 'chat' \? 'push' : 'pop'\)/);
-    expect(css).toMatch(/\[data-phone-nav="push"\] \.agent-panes \{ animation: mnavPush 220ms/);
-    expect(css).toMatch(/\[data-phone-nav="pop"\] \.mlist-screen > \* \{ animation: mnavPop 220ms/);
-    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s*\.agent-surface\[data-phone-nav\] \.agent-overlay-head,[\s\S]*?animation: none; \}/);
-  });
 
   // Review r1 (edge-cases): the pure filter alone left the restore's wiring untested.
   it('Mac mode\'s phone restores through phoneRestorable over live-chats, and keeps what it could not judge', () => {
@@ -141,29 +100,11 @@ describe('the stack is wired on the phone (AC19-AC20)', () => {
     expect(surface).toMatch(/isMacPhoneSurface\(\)\s*\? spawn\(m\.bypass, m\.sessionId, true, claudeKind, [^)]*'passive'\)\s*: spawn\(m\.bypass, m\.sessionId, true, claudeKind\)/);
   });
 
-  it('polls the Mac only while the phone chat is on screen; rows are labelled with the state words', () => {
-    expect(surface).toMatch(/polling=\{onScreenChatId !== ''\}/);
-    // 3 s base cadence through pollMs (slower when unfocused, none while hidden), only while polling.
-    expect(stack).toMatch(/enabled: polling,\s*refetchInterval: polling \? \(\) => pollMs\(3_000\) : false/);
-    expect(stack).toContain("t('handsfree.mac.stack')");
-  });
-
   it('the wire carries lastLine from the registry', () => {
     expect(server).toMatch(/lastLine: vault \? liveChatLastLine\(entries\) : null/);
   });
 
-  it('a row is a real button inside a list item (the button keeps its role for screen readers)', () => {
-    expect(stack).toMatch(/<ul className="mchat-stack"[\s\S]*?<li key=\{row\.key\} className="mchat-stack-item">\s*<button\s+className="mchat-stack-row"/);
-    expect(stack).not.toMatch(/role="listitem"/);
-  });
-
-  it('a Mac chat held by any roster tab (dormant too) is not stacked again: claudeId from the roster', () => {
+  it('a Mac chat held by any roster tab (dormant too) is not listed again: claudeId from the roster', () => {
     expect(surface).toMatch(/claudeId: sessions\.current\.get\(t\.id\)\?\.claudeId \|\| claudeIdOf\.get\(t\.id\),\s*altClaudeId: claudeIdOf\.get\(t\.id\)/);
-  });
-
-  it('rows are >= 44px; the swap is <= 250 ms and off under reduced motion', () => {
-    expect(css).toMatch(/\.mchat-stack-row \{[^}]*min-height: 44px;/);
-    for (const m of css.matchAll(/animation: mchat(?:Swap[AB]|RowIn) (\d+)ms/g)) expect(Number(m[1])).toBeLessThanOrEqual(250);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.mchat-stack-row,\s*\.agent-surface\[data-mobile\] \.agent-panes\[data-swap\] \{ animation: none; \}/);
   });
 });

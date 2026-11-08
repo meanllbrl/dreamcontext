@@ -43,10 +43,14 @@ export function rewriteWikilinks(
   // Build a fast lookup: oldSlug -> newSlug
   const remapMap = new Map<string, string>(remaps.map((r) => [r.from, r.to]));
 
+  // App data (`apps/<slug>/`) is never read or rewritten: it is the app's, not the brain's
+  // prose, and a link never leads the walk out of the brain.
   const files = fg.sync('**/*.md', {
     cwd: contextRoot,
     absolute: true,
-    ignore: ['node_modules/**'],
+    ignore: ['node_modules/**', 'apps/**'],
+    caseSensitiveMatch: false,
+    followSymbolicLinks: false,
   });
 
   const changed: string[] = [];

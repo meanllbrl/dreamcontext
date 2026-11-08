@@ -1,0 +1,72 @@
+# reason: T3 gives an ACP session only its own MCP server and tells the agent it runs in T3 Code, in a prompt text the bridge cannot reach. dreamcontext's brain server belongs to one chat's project and tab, so a bridge child hands its stdio servers to the session (session/new, load, resume) instead of a profile file shared by every project, and supplies the instruction text itself, so the agent says it runs in dreamcontext. T3's tool instructions stay tied to a real T3 MCP session. It also reports the model a configured session really runs on (the agent's own default included), so a chat's card names Antigravity's real model.
+--- a/packages/provider-acp/src/server/adapter.ts
++++ b/packages/provider-acp/src/server/adapter.ts
+@@ -597,13 +597,31 @@ interface AcpMcpContext {
+   readonly endpoint?: string;
+   readonly authorization?: string;
+ }
++
++/** A dreamcontext bridge child runs one chat: what that chat's sessions are given and told. */
++let bridgeMcpServers: ReadonlyArray<EffectAcpSchema.McpServer> = [];
++let bridgePrompt: typeof t3AcpPromptWithInstructions | undefined;
++let bridgeRuntimeInstructions: typeof buildRuntimeInstructions | undefined;
++let bridgeOnModel: ((model: string) => void) | undefined;
++export const setBridgeAcp = (bridge: {
++  readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
++  readonly promptWithInstructions: typeof t3AcpPromptWithInstructions;
++  readonly runtimeInstructions: typeof buildRuntimeInstructions;
++  /** The model a configured session really runs on, the agent's own default included. */
++  readonly onModel?: (model: string) => void;
++}): void => {
++  bridgeMcpServers = bridge.mcpServers;
++  bridgePrompt = bridge.promptWithInstructions;
++  bridgeRuntimeInstructions = bridge.runtimeInstructions;
++  bridgeOnModel = bridge.onModel;
++};
+ 
+ function acpMcpContext(
+   session: McpProviderSession.McpProviderSessionConfig | undefined,
+   self: SelfInvocation,
+ ): AcpMcpContext {
+   if (session === undefined) {
+-    return { servers: [], acpServers: [] };
++    return { servers: bridgeMcpServers, acpServers: [] };
+   }
+   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers; bridge through stdio instead.
+   return {
+@@ -6739,6 +6757,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdap
+               };
+             });
+           }
++          const runsOn = appliedModel ?? startResult.sessionSetupResult.models?.currentModelId;
++          if (runsOn) bridgeOnModel?.(runsOn);
+           const optionSelections = (modelSelection.options ?? []).map((selection) =>
+             selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
+           );
+@@ -7188,7 +7208,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdap
+           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+           const instructionState = {
+             interactionMode: turnInput.runtimePolicy.interactionMode,
+-            hasT3Mcp: acpMcpContext(mcpSession, self).servers.length > 0,
++            hasT3Mcp: mcpSession !== undefined,
+             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+           } satisfies T3AcpInstructionState;
+           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
+@@ -7211,7 +7231,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdap
+             resolveExtractedTextPath: host.resolveExtractedTextPath,
+           });
+           const isNativeSlashCommand = userText.trimStart().startsWith("/");
+-          const text = t3AcpPromptWithInstructions({
++          const text = (bridgePrompt ?? t3AcpPromptWithInstructions)({
+             prompt: messageText,
+             state: instructionState,
+             ...(previousInstructionState === undefined || compactionMarker !== undefined
+@@ -7284,7 +7304,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdap
+           if (!isNativeSlashCommand) {
+             prompt.push({
+               type: "text",
+-              text: buildRuntimeInstructions({
++              text: (bridgeRuntimeInstructions ?? buildRuntimeInstructions)({
+                 harness: flavor.runtimeHarness ?? driver,
+                 model: turnInput.modelSelection.model,
+               }),

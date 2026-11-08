@@ -100,7 +100,9 @@ export function ReadinessChecklist({ scope, onReady, showSkip = true, onBusyChan
 
   const rows = useMemo(() => visibleChecks(checks), [checks]);
   const required = rows.filter((c) => c.tier === 'required');
-  const recommended = rows.filter((c) => c.tier !== 'required');
+  const recommended = rows.filter((c) => c.tier === 'recommended');
+  // Codex and the terminal: nothing needs them, so they sit under their own quiet label.
+  const optional = rows.filter((c) => c.tier === 'optional');
   const surface = report?.surface ?? 'desktop';
   const running = scope === 'machine' ? setup.running : agentRunning;
   // The fix the sequence is on right now. While "Set everything up" runs, every other row's
@@ -269,6 +271,12 @@ export function ReadinessChecklist({ scope, onReady, showSkip = true, onBusyChan
             <section className="ob-group ob-group--quiet" aria-label={t('onboarding.checklist.recommended')}>
               <h3 className="ob-group-label">{t('onboarding.checklist.recommended')}</h3>
               <ul className="ob-rows">{recommended.map(renderRow)}</ul>
+            </section>
+          )}
+          {optional.length > 0 && (
+            <section className="ob-group ob-group--quiet" aria-label={t('onboarding.checklist.optional')}>
+              <h3 className="ob-group-label">{t('onboarding.checklist.optional')}</h3>
+              <ul className="ob-rows">{optional.map(renderRow)}</ul>
             </section>
           )}
         </>

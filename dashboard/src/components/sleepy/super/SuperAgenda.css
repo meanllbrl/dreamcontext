@@ -155,6 +155,11 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .super-agenda-move:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 @media (hover: none) { .super-agenda-move { opacity: 1; } }
 
+/* What the Super left unanswered (owed.ts): above Waiting on you, only when there is one. Its dot
+   is the warning colour (it should have been said); "Not needed" is always shown, never on hover. */
+.super-agenda-row[data-state='unanswered'] .super-agenda-dot { background: var(--color-warning); }
+.super-agenda-sec--unanswered .super-agenda-move { opacity: 1; }
+
 /* The counts tile (a small or medium agenda card): what waits on him, what runs, what is done.
    Waiting is the waiting colour (--mood-waiting) here too, as a tint behind ordinary text. */
 .super-agenda--tile {
@@ -187,7 +192,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 
 /* "Agenda" in the centre's head, while the card is off the stage: its badge counts what waits. */
 .super-agenda-open { margin-left: auto; }
-.super-agenda-open + .super-fresh { margin-left: 0; }
+.super-agenda-open + .super-head-more { margin-left: 0; }
 .super-agenda-open + .super-agenda-open { margin-left: 0; }
 .super-agenda-open-n {
   min-width: 20px;

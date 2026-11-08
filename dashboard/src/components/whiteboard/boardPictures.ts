@@ -24,6 +24,8 @@ export interface PictureFile {
   id: string;
   mimeType: string;
   dataURL: string;
+  /** The bytes as they came down, for a preview (pictureLod.ts). */
+  blob?: Blob;
 }
 
 export interface PictureDeps {

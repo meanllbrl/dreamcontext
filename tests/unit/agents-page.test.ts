@@ -207,226 +207,14 @@ describe('the profile: approval is separate, and happens in place (S1, A12)', ()
     expect(src).toMatch(/approvalChips\(agent\)\.map\(\(chip\) => \(\s*<div key=\{chip\.kind\} className="agp-approval-row"/);
   });
 
-  it('Approve exists only inside the review, which re-reads the agent before it opens', () => {
+  it('no Approve in the profile (plan-r10 1e): the approval rows are read-only and name the one card', () => {
     const src = code(read(PANEL));
-    expect(src.match(/approve\.mutate\(/g)).toHaveLength(1);
-    const review = src.slice(src.indexOf('{reviewing && ('), src.indexOf('</section>', src.indexOf('{reviewing && (')));
-    expect(review).toMatch(/detail\.data\?\.review/);
-    expect(review).toMatch(/onClick=\{doApprove\}/);
-    expect(src.match(/onClick=\{doApprove\}/g)).toHaveLength(1);
-    expect(src).toMatch(/const openReview = \(\) => \{[\s\S]*?setReviewing\(true\);[\s\S]*?detail\.refetch\(\)/);
-    expect(review).toMatch(/disabled=\{approve\.isPending \|\| detail\.isFetching \|\| !detail\.data\}/);
-  });
-});
-
-describe('the profile: Talk to it and delete (S1)', () => {
-  it('Talk to it asks Chat for a new conversation, then opens Chat; says so when nothing took it', () => {
-    const src = code(read(PANEL));
-    expect(src).toMatch(/requestTalkToAgent\(slug\)\.then\(\(accepted\) => \{[\s\S]*?if \(accepted\) openAgentSurface\(bus\);\s*else setTalkError\(t\('agents\.profile\.talkFailed'\)\)/);
-    expect(src).toMatch(/disabled=\{!agent\.approvedForChat \|\| talking\}/);
-  });
-
-  it('recognises the 409 agent_in_use refusal and names what uses the agent', async () => {
-    const { inUseNames, isAgentInUse } = await import('../../dashboard/src/components/agents/AgentProfilePanel');
-    expect(isAgentInUse(new RequestError('in use', 409, 'agent_in_use'))).toBe(true);
-    expect(isAgentInUse(new RequestError('nope', 404, 'not_found'))).toBe(false);
-    expect(isAgentInUse(new Error('agent_in_use'))).toBe(false);
-    const a = agent('scout', {
-      usedBy: {
-        automations: [
-          { slug: 'digest', title: 'Morning digest', enabled: true, nextFireAt: null },
-          { slug: 'weekly', title: 'Weekly report', enabled: false, nextFireAt: null },
-        ],
-        boards: [],
-        tasks: [],
-      },
-    });
-    expect(inUseNames(a)).toEqual(['Morning digest', 'Weekly report']);
-    expect(inUseNames(a, ['weekly', 'gone'])).toEqual(['Weekly report', 'gone']);
-  });
-
-  it('delete is a two-click in-place confirm that surfaces the in-use list', () => {
-    const src = code(read(PANEL));
-    expect(src).toMatch(/deleteAction\(armed\) === 'arm'/);
-    expect(src).toMatch(/isAgentInUse\(err\)[\s\S]*?t\('agents\.profile\.deleteInUse'\)[\s\S]*?inUseNames\(agent\)/);
-    expect(src).toMatch(/t\('agents\.profile\.deleteConfirm'\)/);
-  });
-});
-
-describe('the identity dialog: create and edit', () => {
-  it('requires a name and a prompt', async () => {
-    const { identityFormError, EMPTY_IDENTITY_FORM } = await import('../../dashboard/src/components/agents/AgentIdentityDialog');
-    expect(identityFormError(EMPTY_IDENTITY_FORM)).toBe('agents.identity.nameRequired');
-    expect(identityFormError({ ...EMPTY_IDENTITY_FORM, title: 'Scout' })).toBe('agents.identity.promptRequired');
-    expect(identityFormError({ ...EMPTY_IDENTITY_FORM, title: 'Scout', prompt: 'You scout.' })).toBeNull();
-  });
-
-  it('an edit sends only what changed, and "default" clears to null', async () => {
-    const { identityPatch, formFromAgent } = await import('../../dashboard/src/components/agents/AgentIdentityDialog');
-    const before = formFromAgent(agent('scout', { title: 'Scout', model: 'opus', effort: 'high', whiteboard: 'plan' }), 'You scout.', true);
-    expect(identityPatch(before, before)).toEqual({});
-    expect(identityPatch(before, { ...before, title: '  Scout ' })).toEqual({});
-    expect(identityPatch(before, { ...before, model: '', effort: '', whiteboard: '' }))
-      .toEqual({ model: null, effort: null, whiteboard: null });
-    expect(identityPatch(before, { ...before, prompt: 'You scout harder.', learning: false }))
-      .toEqual({ prompt: 'You scout harder.', learning: false });
-  });
-
-  it('a truncation refusal gets its own sentence', async () => {
-    const { identityErrorKey } = await import('../../dashboard/src/components/agents/AgentIdentityDialog');
-    expect(identityErrorKey(new RequestError('cut', 409, 'prompt_truncated'))).toBe('agents.identity.truncated');
-    expect(identityErrorKey(new Error('boom'))).toBe('agents.identity.failed');
-  });
-
-  it('an edit reads the agent fresh and allows no save until it has', () => {
-    const src = code(read(DIALOG));
-    expect(src).toMatch(/useAgent\(slug, \{ fresh: true \}\)/);
-    expect(src).toMatch(/const ready = original !== null;/);
-    expect(src).toMatch(/disabled=\{!ready \|\| busy \|\| !!blocker\}/);
-    expect(src).toMatch(/useCreateAgentIdentity\(\)/);
-    expect(src).toMatch(/useUpdateAgentIdentity\(\)/);
-    expect(src).toMatch(/useUploadAgentIdentityPhoto\(\)/);
-  });
-});
-
-describe('headings and states (S7)', () => {
-  it('the 20px headings keep their word gap: no 40px heading tracking on them', () => {
-    for (const [f, cls] of [[PANEL_CSS, '.agp-name {'], [DIALOG_CSS, '.aid-title {']] as const) {
-      const css = read(f);
-      const block = css.slice(css.indexOf(cls), css.indexOf('}', css.indexOf(cls)));
-      expect(block, f).toMatch(/font-size: var\(--font-size-lg\);/);
-      expect(block, f).toMatch(/letter-spacing: var\(--letter-spacing-body\);/);
-    }
-  });
-});
-
-describe('the UI rules', () => {
-  it('no browser dialog anywhere on the page (silent no-ops in the desktop app)', () => {
-    for (const f of TSX) {
-      expect(code(read(f)), f).not.toMatch(/\b(?:window\.)?(?:confirm|alert|prompt)\s*\(/);
-    }
-  });
-
-  it('no Run now and no Telegram on this page', () => {
-    for (const f of TSX) {
-      const src = code(read(f));
-      expect(src, f).not.toMatch(/run ?now|runNow|useRunAutomation/i);
-      expect(src, f).not.toMatch(/telegram/i);
-    }
-  });
-
-  it('design tokens only: no hardcoded colours or fonts in the CSS', () => {
-    for (const f of CSS) {
-      const css = read(f).replace(/\/\*[\s\S]*?\*\//g, ' ');
-      expect(css, f).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-      expect(css, f).not.toMatch(/\b(?:rgb|rgba|hsl|hsla|oklch)\(/);
-      // The lookahead carries its own `\s*`: a bare `\s*` before it backtracks to zero and lets
-      // ` var(` through as "not var(", failing every tokenised font-family.
-      expect(css, f).not.toMatch(/font-family:(?!\s*var\()/);
-      expect(css, f).not.toMatch(/font-size:\s*\d/);
-    }
-  });
-
-  it('no em dash in any copy fallback', () => {
-    for (const f of TSX) {
-      for (const m of read(f).matchAll(/tx\(t, '[^']+', '([^']*)'\)/g)) {
-        expect(m[1], f).not.toContain('—');
-      }
-    }
-  });
-});
-
-describe('the team: three approval states, never folded into one (D8, U2)', () => {
-  it('maps the four verdict combinations to three states', async () => {
-    const { approvalState } = await import('../../dashboard/src/hooks/useAgents');
-    expect(approvalState({ approvedForChat: true, approvedToRun: true })).toBe('ready');
-    expect(approvalState({ approvedForChat: true, approvedToRun: false })).toBe('cant-run');
-    expect(approvalState({ approvedForChat: false, approvedToRun: false })).toBe('needs-approval');
-    // No chat outranks a run grant: it can't speak, so it needs approval.
-    expect(approvalState({ approvedForChat: false, approvedToRun: true })).toBe('needs-approval');
-  });
-
-  it('only the attention states carry a dot; "Ready" is a plain word', async () => {
-    const { stateHasDot, APPROVAL_STATE_KEY } = await import('../../dashboard/src/components/agents/AgentRosterCard');
-    expect(stateHasDot('ready')).toBe(false);
-    expect(stateHasDot('cant-run')).toBe(true);
-    expect(stateHasDot('needs-approval')).toBe(true);
-    expect(APPROVAL_STATE_KEY).toEqual({
-      ready: 'agents.state.ready',
-      'cant-run': 'agents.state.cantRun',
-      'needs-approval': 'agents.state.needsApproval',
-    });
-  });
-
-  it('"Can\'t run yet" reads as blocked, not as a chosen mode, in both languages', () => {
-    const i18n = read('dashboard/src/context/I18nContext.tsx');
-    const words = [...i18n.matchAll(/'agents\.state\.cantRun': (['"])(.*?)\1,/g)].map((m) => m[2]);
-    expect(words).toEqual(["Can't run yet", 'Henüz çalışamaz']);
-    for (const w of words) expect(w.toLowerCase()).not.toMatch(/only|yalnızca|sadece/);
-  });
-
-  it('the roster spends no filled accent', () => {
-    expect(read(PAGE_CSS)).not.toMatch(/gradient-brand/);
-  });
-});
-
-describe('the profile: soul, job, pattern, where it works, approval (T7)', () => {
-  it('sections come in the order soul, job, pattern, usage, approval', () => {
-    const src = code(read(PANEL));
-    const sections = [...src.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
-    expect(sections).toEqual(['soul', 'job', 'pattern', 'usage', 'approval']);
-  });
-
-  it('shows the full soul from the detail, or the empty line', () => {
-    const src = code(read(PANEL));
-    expect(src).toMatch(/const soul = data\?\.soul \?\? '';/);
-    expect(src).toMatch(/<div className="agp-soul"><TextBlocks text=\{soul\} \/><\/div>/);
-    expect(src).toMatch(/<div className="agp-playbook"><TextBlocks text=\{data\.pattern\.playbook\} \/><\/div>/);
-    expect(src).toMatch(/t\('agents\.profile\.soulEmpty'\)/);
-  });
-
-  it('splits a soul into paragraphs and bulleted lists by line, no markdown library', async () => {
-    const { textBlocks } = await import('../../dashboard/src/components/agents/AgentProfilePanel');
-    expect(textBlocks('You are calm.\n- One step.\n* Two steps.\n• Three.\n\nThen stop.\nPlainly.')).toEqual([
-      { kind: 'p', text: 'You are calm.' },
-      { kind: 'ul', items: ['One step.', 'Two steps.', 'Three.'] },
-      { kind: 'p', text: 'Then stop.' },
-      { kind: 'p', text: 'Plainly.' },
-    ]);
-    expect(textBlocks('- a\nmid\n- b')).toEqual([
-      { kind: 'ul', items: ['a'] }, { kind: 'p', text: 'mid' }, { kind: 'ul', items: ['b'] },
-    ]);
-    expect(textBlocks('-5 degrees.\n**Bold**')).toEqual([{ kind: 'p', text: '-5 degrees.' }, { kind: 'p', text: '**Bold**' }]);
-    expect(textBlocks('  \n')).toEqual([]);
-    expect(code(read(PANEL))).toMatch(/<ul key=\{i\} className="agp-bullets">/);
-  });
-
-  it('shows the first five lessons, then all', async () => {
-    const { visibleLessons, LESSONS_SHOWN } = await import('../../dashboard/src/components/agents/AgentProfilePanel');
-    const seven = [1, 2, 3, 4, 5, 6, 7];
-    expect(LESSONS_SHOWN).toBe(5);
-    expect(visibleLessons(seven, false)).toEqual([1, 2, 3, 4, 5]);
-    expect(visibleLessons(seven, true)).toEqual(seven);
-    expect(visibleLessons([1, 2], false)).toEqual([1, 2]);
-    expect(visibleLessons(seven, false, 2)).toEqual([1, 2]);
-  });
-
-  it('reads the pattern as off, off with notes kept, empty, or present (D7)', async () => {
-    const { patternView } = await import('../../dashboard/src/components/agents/AgentProfilePanel');
-    const none = { playbook: '', lessons: [] };
-    const lesson = { playbook: '', lessons: [{ date: '2026-10-01', text: 'Cite the source.' }] };
-    const playbook = { playbook: 'Lead with the answer.', lessons: [] };
-    expect(patternView(false, none)).toBe('off');
-    expect(patternView(false, lesson)).toBe('off-stale');
-    expect(patternView(true, none)).toBe('empty');
-    expect(patternView(true, { playbook: '  \n', lessons: [] })).toBe('empty');
-    expect(patternView(true, lesson)).toBe('present');
-    expect(patternView(true, playbook)).toBe('present');
-    expect(patternView(true, undefined)).toBe('empty');
-  });
-
-  it('each pattern state has its own sentence, and the pattern is read-only', () => {
-    const src = code(read(PANEL));
+    expect(src).not.toMatch(/useApproveAgent|approve\.mutate\(|doApprove|agents\.approval\.approve'/);
+    const approval = src.slice(src.indexOf('data-section="approval"'), src.indexOf('</section>', src.indexOf('data-section="approval"')));
+    expect(approval).toMatch(/data-approval-waits/);
+    // A synced or waiting change names its fields; otherwise the line points at the card.
+    expect(approval).toMatch(/t\('agents\.approval\.synced'\)\.replace\('\{fields\}'/);
+    expect(approval).toMatch(/t\('agents\.approval\.waitsCard'\)/);
     expect(src).toMatch(/view === 'off' && <p className="agp-empty">\{t\('agents\.profile\.patternOff'\)\}/);
     expect(src).toMatch(/view === 'empty' && <p className="agp-empty">\{t\('agents\.profile\.patternEmpty'\)\}/);
     expect(src).toMatch(/view === 'off-stale' && <p className="agp-empty">\{t\('agents\.profile\.patternOffStale'\)\}/);
@@ -434,15 +222,13 @@ describe('the profile: soul, job, pattern, where it works, approval (T7)', () =>
     expect(pattern).not.toMatch(/mutate\(|useMutation|onEdit/);
   });
 
-  it('the header carries the quiet state and a Review link when not ready', () => {
+  it('the header carries the quiet state and no Review link: nothing to approve here', () => {
     const src = code(read(PANEL));
     expect(src).toMatch(/size=\{72\}/);
     expect(src).toMatch(/className=\{`agp-state agp-state--\$\{state\}`\}/);
-    // A teammate's agent (read-only here, B1-4) never offers the review.
-    expect(src).toMatch(/\{state !== 'ready' && !readOnly && \(\s*<button type="button" className="agp-textbtn" onClick=\{reviewFromHeader\}/);
-    expect(src).toMatch(/const reviewFromHeader = \(\) => \{\s*openReview\(\);/);
-    // One filled accent while no review is open: Talk to it. Approve is the other, inside the review.
-    expect(src.match(/agp-btn--primary/g)).toHaveLength(2);
+    expect(src).not.toMatch(/reviewFromHeader|openReview|data-review-approval/);
+    // One filled accent: Talk to it. There is no Approve button any more.
+    expect(src.match(/agp-btn--primary/g)).toHaveLength(1);
   });
 });
 

@@ -213,5 +213,58 @@
       "0.34.5",
       "0.34.6"
     ]
+  },
+  {
+    "id": "v0-40-0",
+    "date": "2026-11-02",
+    "version": "0.40.0",
+    "title": "Claude or Codex, in the same chat window",
+    "summary": "Everything since 0.36.1 in one release. Chats can run on Codex with the same question cards, step lists and project skills, every app gets its own assistant, an AI Team member's runs open in place, Settings is one new window, and the roadmap ranks work with RICE. Codex work outside a chat is in beta, and Antigravity is experimental.",
+    "tags": [
+      "chat",
+      "codex",
+      "apps",
+      "agents",
+      "settings"
+    ],
+    "story": "v0-40-0.json",
+    "covers": [
+      "0.36.2",
+      "0.36.3",
+      "0.36.4",
+      "0.36.5",
+      "0.36.6",
+      "0.36.7",
+      "0.36.8",
+      "0.36.9",
+      "0.36.10",
+      "0.36.11",
+      "0.36.12",
+      "0.36.13",
+      "0.36.14",
+      "0.36.15"
+    ]
+  },
+  {
+    "id": "v0-41-0",
+    "date": "2026-11-04",
+    "version": "0.41.0",
+    "title": "Every AI Team member has a stage of its own",
+    "summary": "Everything since 0.40.0 in one release. Each AI Team member opens on its own stage with its agenda, instructions and routines, the Team row sits under each project in the drawer, board groups take your order, and the design skill comes with every project while the engineering skill is folded into the agents. Antigravity stays in beta.",
+    "tags": [
+      "agents",
+      "whiteboards",
+      "skills"
+    ],
+    "story": "v0-41-0.json",
+    "covers": [
+      "0.40.1",
+      "0.40.2",
+      "0.40.3",
+      "0.40.4",
+      "0.40.5",
+      "0.40.6",
+      "0.40.7"
+    ]
   }
 ]

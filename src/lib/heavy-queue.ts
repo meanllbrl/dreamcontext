@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import path, { posix, type PlatformPath } from 'node:path';
 import { FAST_SLOTS } from './builder-tools.js';
 import { heavyStep, shellSegments, type HeavyStep } from './run-budget.js';
 
@@ -43,15 +43,21 @@ export function fastSlotLimit(heatLimit: number, machineBusy: boolean): number {
   return machineBusy ? 1 : FAST_SLOTS;
 }
 
-export interface QueuePick { line: QueueLine; size: number; why: string }
+/** `shared`: only tests and type-checks, which need no turn on the checkout (the fast line never took one). */
+export interface QueuePick { line: QueueLine; size: number; why: string; shared: boolean }
 
 const SIZE = { check: 1, look: 2, unknown: 3, build: 3, browser: 4, suite: 5 } as const;
 
 /** Shell glue that runs nothing long around a real step. */
 const GLUE = /^(?:cd\s|export\s|true$|echo\s|tail\b|head\b|grep\b|tee\b|wc\b|cat$)/;
 
+/** A test run that names no plain files (`vitest run tests/unit`) can be the whole suite. */
+const unbounded = (step: HeavyStep): boolean =>
+  step.kind === 'check' && step.target !== 'tsc' && step.scoped === undefined && !step.related;
+
 function stepSize(step: HeavyStep): number {
   if (step.kind === 'browser') return step.scoped ? SIZE.look : SIZE.browser;
+  if (unbounded(step)) return SIZE.suite;
   return SIZE[step.kind];
 }
 
@@ -61,7 +67,7 @@ export type RelatedCount = (sources: string[]) => number | null;
 function isFast(step: HeavyStep, countRelated?: RelatedCount): boolean {
   if (step.kind === 'browser') return step.scoped === 1;
   if (step.kind !== 'check') return false;
-  if (step.target === 'tsc') return true;
+  if (step.target === 'tsc') return !step.emits;
   if (step.related) {
     // Three source files can be a central module's whole import graph (648 tests, measured here).
     const n = step.related.length > 0 ? countRelated?.(step.related) ?? null : null;
@@ -72,6 +78,17 @@ function isFast(step: HeavyStep, countRelated?: RelatedCount): boolean {
 
 const IMPORT = /(?:from\s+|import\s*\(\s*|import\s+|require\(\s*|vi\.mock\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const TEST_FILE = /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * A source as `git ls-files` names it: relative to the repo root, `/`-separated. Null outside the
+ * repo. On Windows git prints the root as `D:/a/repo` and a source may come as `src\\x.ts` or
+ * `D:\\a\\repo\\src\\x.ts`; both resolve through the platform's own path rules first.
+ */
+export function repoRelativeSource(root: string, cwd: string, source: string, p: PlatformPath = path): string | null {
+  const rel = p.relative(p.resolve(root), p.resolve(cwd, source));
+  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) return null;
+  return rel.split(p.sep).join('/');
+}
 
 /**
  * The test files that reach `sources` through relative imports, read from the tracked files with
@@ -91,13 +108,13 @@ export function countRelatedTests(cwd: string, sources: readonly string[], cap: 
       let text: string;
       try { text = readFileSync(join(root, f), 'utf-8'); } catch { continue; }
       for (const m of text.matchAll(IMPORT)) {
-        const target = byStem.get(noExt(resolve('/', dirname(f), m[1]).slice(1)));
+        const target = byStem.get(noExt(posix.resolve('/', posix.dirname(f), m[1]).slice(1))); // git paths are always /
         if (target) importers.set(target, [...(importers.get(target) ?? []), f]);
       }
     }
     const seen = new Set<string>();
     const tests = new Set<string>();
-    const todo = sources.map((s) => (s.startsWith('/') ? s.slice(root.length + 1) : join(cwd, s).slice(root.length + 1))).filter((s) => known.has(s));
+    const todo = sources.map((s) => repoRelativeSource(root, cwd, s)).filter((s): s is string => s !== null && known.has(s));
     if (todo.length === 0) return null;
     while (todo.length > 0) {
       const f = todo.pop()!;
@@ -141,10 +158,14 @@ export function queueOf(command: string, scripts: Record<string, string> = {}, c
     else if (!GLUE.test(s)) unknown = true;
   }
   const size = Math.max(steps.length === 0 || unknown ? SIZE.unknown : 0, ...steps.map(stepSize));
-  if (unknown || steps.length === 0) return { line: 'heavy', size, why: 'not a known short check' };
+  if (unknown || steps.length === 0) return { line: 'heavy', size, why: 'not a known short check', shared: false };
+  // What cannot touch a build's output: a type-check that writes nothing, or tests named by file.
+  // A related run or a folder can reach the whole suite, so it keeps its turn on the checkout.
+  const shared = steps.every((s) => s.kind === 'check' && (s.target === 'tsc' ? !s.emits : (s.scoped ?? 0) > 0));
   const long = steps.find((s) => !isFast(s, countRelated));
-  if (long) return { line: 'heavy', size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}` };
-  return { line: 'fast', size, why: steps.map((s) => s.target).join(' + ') };
+  // A check too big for the fast line is no small job: it does not pass a build in the slot line.
+  if (long) return { line: 'heavy', size: long.kind === 'check' ? Math.max(size, SIZE.build) : size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}`, shared };
+  return { line: 'fast', size, why: steps.map((s) => s.target).join(' + '), shared };
 }
 
 /** The same command from the same checkout is the same job: that is what keeps its place. */

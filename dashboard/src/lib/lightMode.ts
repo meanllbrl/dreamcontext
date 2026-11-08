@@ -14,6 +14,7 @@
  * (`GET /api/app/machine`) — no server round trip decides it. Until the facts arrive, or when
  * the route fails, Auto knows nothing about the machine and stays off.
  */
+import { phoneAllows } from './phoneSurface';
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import { agentSettingsReady, onAgentSettings, type LightModeSetting } from './agentSettings';
@@ -114,7 +115,8 @@ export interface LightModeDeps {
 }
 
 const defaultDeps = (): LightModeDeps => ({
-  fetchMachine: () => api.get<MachineFacts>('/app/machine'),
+  // Not served to a phone: nothing is asked (a phone's machine is not the Mac's anyway).
+  fetchMachine: () => (phoneAllows('GET', '/api/app/machine') ? api.get<MachineFacts>('/app/machine') : Promise.reject(new Error('not on the phone'))),
   ready: agentSettingsReady,
 });
 

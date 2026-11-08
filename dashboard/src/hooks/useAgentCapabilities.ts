@@ -168,9 +168,15 @@ export interface ClaudeAccountWire {
   tier: string;
   preferred: boolean;
   isPrimary: boolean;
-  state: 'ok' | 'needs-relogin';
+  /** `other-account`: its directory is signed in as `signedInAs`, so no reading is drawn. */
+  state: 'ok' | 'needs-relogin' | 'other-account';
+  signedInAs?: string;
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
+  /** The usage data says this account has no 5-hour window (absent on an older server). */
+  noSessionWindow?: true;
+  /** The plan as the account's own profile names it ("Ultra"); `tier` is the sign-in type. */
+  planName?: string;
   /** The API refused this account; it stays out until then (epoch ms). */
   refusedUntil?: number;
   refusedWindow?: 'session' | 'weekly';
@@ -233,6 +239,72 @@ export function useClaudeAccounts(enabled: boolean) {
     staleTime: 20_000,
     retry: false,
     placeholderData: NO_ACCOUNTS,
+  });
+}
+
+// ─── Codex accounts (Track T W2) ─────────────────────────────────────────────────────
+// MIRRORED from `src/server/routes/agent-tool-accounts.ts` (`ToolAccountWire`).
+
+/** One T3 usage window as read (monthly and credit windows included), for the Stats screen. */
+export interface ToolUsageWindow {
+  id: string;
+  kind: string;
+  label: string;
+  usedPercent: number;
+  resetsAt?: string;
+  windowDurationMins?: number;
+}
+
+export interface ToolAccountWire {
+  id: string;
+  tool: 'codex' | 'antigravity';
+  email: string;
+  planType: string;
+  isPrimary: boolean;
+  preferred: boolean;
+  state: 'ok' | 'needs-relogin';
+  limits: UsageLimitWire[];
+  fetchedAtMs: number | null;
+  windows: ToolUsageWindow[];
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
+}
+
+export interface ToolAccountsResponse {
+  tool: 'codex' | 'antigravity';
+  accounts: ToolAccountWire[];
+  nextSessionAccountId?: string | null;
+  autoSwitch?: boolean;
+  /** `~/.codex` was removed from the list and is still signed in: it can be added back. */
+  primaryHidden?: boolean;
+  /** Signed-in account folders with no row (a sign-in that outlived its server); adopt brings them in. */
+  orphans?: number;
+}
+
+/** A Google account's name here: the sign-in stays unread, so a stable part of its id tells them
+ *  apart. Never its position: the owner reorders these, and a number would then point elsewhere. */
+export function googleAccountLabel(a: Pick<ToolAccountWire, 'id' | 'isPrimary'>, t: (key: string) => string): string {
+  return a.isPrimary ? t('settings.antigravityAccounts.thisMachine') : t('settings.antigravityAccounts.named').replace('{id}', a.id.slice(-4));
+}
+
+const NO_TOOL_ACCOUNTS: ToolAccountsResponse = { tool: 'codex', accounts: [] };
+
+/** Every Codex account with its cached windows. The route never probes; Refresh does. */
+export function useCodexAccounts(enabled: boolean) {
+  return useToolAccounts('codex', enabled);
+}
+
+/** The same, for any tool with accounts of its own. */
+export function useToolAccounts(tool: 'codex' | 'antigravity', enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: [`agent-${tool}-accounts`],
+    queryFn: () => api.get<ToolAccountsResponse>(`/agent/accounts/${tool}`),
+    enabled,
+    refetchInterval: enabled ? () => pollMs(30_000) : false,
+    staleTime: 20_000,
+    retry: false,
+    placeholderData: NO_TOOL_ACCOUNTS,
   });
 }
 
@@ -437,4 +509,52 @@ export function useAgentCouncilLive(claudeId: string | undefined, enabled: boole
     retry: false,
     placeholderData: COUNCIL_LIVE_INACTIVE,
   });
+}
+
+/** One tool a chat can run on (`GET /api/agent/tools`, src/lib/t3-bridge/registry.ts). */
+export interface AgentToolInfo {
+  tool: 'claude' | 'codex' | 'antigravity';
+  label: string;
+  ready: boolean;
+  installed: boolean;
+  signedIn: boolean;
+  /** A Node at the bridge floor exists on this machine. Absent on an older server. */
+  nodeOk?: boolean;
+  /** Codex's file is there and `--version` answered. */
+  runs?: boolean;
+  /** Older than dreamcontext was run against. */
+  outdated?: boolean;
+  defaultModel: string | null;
+  models: { id: string; label: string; efforts: string[]; defaultEffort: string | null }[];
+}
+
+/**
+ * The tools a chat can run on (Track T W1: Claude and Codex) with their readiness and models.
+ * Read from disk on the server (no process, no model call), so a 30 s poll is cheap; an
+ * unreachable endpoint (an older server) is an empty list, and the menu then shows Claude only.
+ */
+export function useAgentTools() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-tools'],
+    queryFn: () => api.get<{ tools: AgentToolInfo[] }>('/agent/tools').then((r) => r.tools),
+    staleTime: 10_000,
+    refetchInterval: () => pollMs(30_000),
+    retry: false,
+    placeholderData: [] as AgentToolInfo[],
+  });
+}
+
+/** Codex's models as the composer's model menu reads them (its efforts are its own). */
+export function codexModelConfig(info: AgentToolInfo | undefined): ModelConfig | null {
+  if (!info || info.tool === 'claude' || info.models.length === 0) return null;
+  const efforts = [...new Set(info.models.flatMap((m) => m.efforts))];
+  const def = info.models.find((m) => m.id === info.defaultModel) ?? info.models[0]!;
+  return {
+    models: info.models.map((m) => ({ id: m.id, label: m.label })),
+    efforts,
+    defaultModel: def.id,
+    defaultEffort: def.defaultEffort ?? efforts[0] ?? '',
+    isToolList: true,
+  };
 }

@@ -40,6 +40,25 @@
 .mcpm-table tbody tr:last-child td { border-bottom: none; }
 .mcpm-acc { text-align: center !important; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 
+/* The server's name stays in view when the columns scroll: scrolled, a row was a line of dots
+   with no name. A group title spans every column, so its inner text is what sticks. */
+.mcpm-table thead th:first-child,
+.mcpm-row > td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--color-bg);
+}
+.mcpm-cell--codex { text-align: center; white-space: nowrap; }
+@media (max-width: 600px) {
+  .mcpm-table thead th:first-child,
+  .mcpm-row > td:first-child { max-width: 132px; }
+}
+.mcpm-group-title { position: sticky; left: var(--space-3); display: inline-block; }
+
 .mcpm-group th {
   background: var(--color-bg-secondary);
   font-size: 11px;
