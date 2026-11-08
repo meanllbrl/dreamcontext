@@ -180,7 +180,7 @@ describe('goal-skill: the orchestrator asks every exiting builder whether it rep
 
 describe('goal-skill: light wave gates, one heavy final gate, nothing run twice', () => {
   const phase4 = section(SKILL, '### Phase 4');
-  const FINAL_GATE = [/full unit suite/, /`build` \/ `build:cli`/, /integration suite/, /`gen:\*`/, /gen:cli-manifest/, /browser verification/];
+  const FINAL_GATE = [/the tests of the whole diff/, /`build` \/ `build:cli`/, /CLI-spawn and integration tests it touches/, /`gen:\*`/, /gen:cli-manifest/, /browser verification/];
 
   it('no line anywhere still promises a build+test gate between waves', () => {
     expect(SKILL).not.toMatch(/build\s*\+\s*test gate/i);
@@ -216,7 +216,7 @@ describe('goal-skill: light wave gates, one heavy final gate, nothing run twice'
   it('the flow diagram draws both gates', () => {
     const flow = SKILL.slice(SKILL.indexOf('```mermaid'), SKILL.indexOf('```', SKILL.indexOf('```mermaid') + 3));
     expect(flow).toMatch(/GATE\{wave gate, orchestrator once: type-checks \+ the wave's tests\}/);
-    expect(flow).toMatch(/FG\{final gate, once, load below cores: full suite, build, integration, generators, browser\}/);
+    expect(flow).toMatch(/FG\{final gate, once, load below cores: tests of the whole diff, build, generators, browser; the full suite only at a release cut\}/);
     expect(flow).toMatch(/FG -->\|PASS\| P5/);
   });
 
@@ -334,7 +334,7 @@ describe('Develop fan-out (opt-in since 2026-10-11): builders run no checks, the
     expect(final.indexOf('dreamcontext builder load --reap')).toBeGreaterThan(-1);
     expect(final.indexOf('dreamcontext builder load --reap')).toBeLessThan(final.indexOf('goal-live phase done'));
     expect(final).toMatch(/for at most 15 min/);
-    expect(final).toMatch(/The\s+full suite runs only when the Validation method names it/);
+    expect(final).toMatch(/A run's own\s+proof is the tests of its whole diff, the type checks and the build; the full suite is not\s+a run's check\. It runs once per release cut, after its build/);
   });
 });
 

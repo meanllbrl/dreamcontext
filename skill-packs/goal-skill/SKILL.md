@@ -255,7 +255,7 @@ flowchart TD
     GATE -->|FAIL| R2[RESUME the owning implementer]
     R2 --> P4
     GATE -->|pass, more waves| P4
-    GATE -->|pass, last wave done| FG{final gate, once, load below cores: full suite, build, integration, generators, browser}
+    GATE -->|pass, last wave done| FG{final gate, once, load below cores: tests of the whole diff, build, generators, browser; the full suite only at a release cut}
     FG -->|FAIL| R2
     FG -->|PASS| P5{Phase 5 — the review the diff picks, reviewer or multi-review team, clean: PASS?}
     P5 -->|FAIL, new findings| R3[RESUME the owning implementer]
@@ -292,7 +292,7 @@ skip this question.** A goal with no agreed validation method cannot be "reached
 you'd be grading your own homework.
 
 If you are running fully autonomously with no user available, default the validation
-method to "the project's existing test suite must pass (`npm test`) plus a build",
+method to "the tests related to the change pass (`dreamcontext builder test --related`) plus tsc and a build" (the full suite belongs to the release cut, not to a goal),
 record that you chose it, and surface it for confirmation.
 
 ### Phase 1 — PLAN (builder, fork once)
@@ -529,7 +529,8 @@ Wave execution rules (mirrors the dependency map exactly):
   same script red 3 times in a row → stop and report to the user; do not loop on it (measured
   2026-10-25: 15-71 runs per job, ~31% red, mostly the script's own bugs).
 - **Heavy steps run once, at the final gate**, after the last wave and before Phase 5:
-  the full unit suite, `build` / `build:cli`, the integration suite, `gen:*` scripts
+  the tests of the whole diff (`builder test <slug> --wave final --related <every changed file>`,
+  plus the CLI-spawn and integration tests it touches), `build` / `build:cli`, `gen:*` scripts
   (e.g. `gen:cli-manifest`), browser verification (a verify script runs through the heavy
   lock, in the background: `dreamcontext builder heavy --max-wait 1200 -- node
   scripts/verify/<x>.mjs`, never beside tests), and the **observed check** whenever a
@@ -540,6 +541,8 @@ Wave execution rules (mirrors the dependency map exactly):
   works from source, so a wave gate does not need them. The one exception: a task whose `depends on` cell the
   planner marked with a compiled artifact (`+ build:cli`) gets that build pulled forward
   into the gate of the wave before it.
+- **The full suite is the release cut's, not a goal's.** The full suite runs once per release cut, after its build, started with `builder heavy --detach` and followed with `--wait <id>`; a red full run is never run again: its red files are kept, and `dreamcontext builder test --failed` (no task needed) reruns only them plus the tests related to what changed since. A failing
+  gate re-runs only what failed (`--failed`), never the whole chain.
 - **Never twice.** The final gate runs every heavy step the change needs, in dependency
   order: the build first whenever integration tests or a browser check need compiled
   output. Phase 6 then never re-runs a step the final gate already ran on the same tree: a
@@ -897,8 +900,8 @@ Standalone viewer and demo:
   review-pick`; one `reviewer`, or the multi-review team for a Full tier, a hot path, or UI
   plus another area. You merge a team's reports but never drop or downgrade a Critical or
   Major.
-- **Heavy steps run once, at the final gate** (full suite, `build` / `build:cli`,
-  integration, `gen:*`, browser), on a quiet machine (`dreamcontext builder load`, bounded
+- **Heavy steps run once, at the final gate** (tests of the whole diff, `build` / `build:cli`,
+  integration, `gen:*`, browser; the full suite only at a release cut, detached, its reds rerun by `builder test --failed`), on a quiet machine (`dreamcontext builder load`, bounded
   wait), the build before anything that needs compiled output, and never a second time:
   Phase 6 cites the final gate's run of a step the validation method names. Only a
   `depends on` cell marked with a compiled artifact pulls a build forward.

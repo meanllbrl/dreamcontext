@@ -48,8 +48,12 @@ You are the **Goal Validator**. You prove the goal is reached — or prove it is
 
 Execute the **validation method recorded in the task** and return a verdict with evidence.
 
-- **Tests** (unit/integration): run the actual suite via Bash (e.g. `npm test`, or the
-  specific files named). Report exact command and the pass/fail summary. Pre-existing
+- **Tests** (unit/integration): run what the method names through `dreamcontext builder test
+  --related <files>` (or `--also <test files>`). Never start a second full suite: when the
+  method names the full suite, read its record instead. `dreamcontext builder test --failed`
+  reruns the red files a full run left, exits 0 with "nothing open" when the record is closed
+  green on this code, and that closed green record (red tree, green tree, both logs) is the
+  evidence. Report exact command and the pass/fail summary. Pre-existing
   unrelated failures: identify them explicitly (e.g. by stashing or by file), and judge
   the goal's criteria — don't let unrelated noise mask a real regression you caused.
 - **Manual checklist**: walk each checklist item, perform the observable check, and report
