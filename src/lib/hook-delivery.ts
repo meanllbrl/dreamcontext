@@ -44,16 +44,6 @@ export function writeStdoutSync(text: string): void {
 }
 
 /**
- * The session moved out of the brain's folder (a code worktree, with the brain isolated from the
- * code): the hook runs in that folder and finds no `_dream_context/`, so it used to end silently
- * and the agent got nothing. CLAUDE_PROJECT_DIR is where the session started, and where the
- * settings that started this hook live. Measured 2026-11-01 on Claude Code 2.1.316; about 750 of 1,800
- * sub-agents in ten days of transcripts got no briefing this way.
- *
- * Returns the line that tells the agent, when the hook had to move: the agent's own `dreamcontext`
- * commands still run in the code folder, and there they fail with "_dream_context/ not found".
- */
-/**
  * The brain a tool hook (Pre/PostToolUse) reads, WITHOUT moving the process: the hook's cwd first,
  * else the session's project dir. A Super child works in a code worktree with no brain, and its
  * tool hooks run there: measured 2026-11-08, every nudge a child ever got came from
@@ -68,6 +58,17 @@ export function hookContextRoot(env: NodeJS.ProcessEnv = process.env): string | 
   if (!dir) return null;
   try { return resolveContextRoot(dir); } catch { return null; }
 }
+
+/**
+ * The session moved out of the brain's folder (a code worktree, with the brain isolated from the
+ * code): the hook runs in that folder and finds no `_dream_context/`, so it used to end silently
+ * and the agent got nothing. CLAUDE_PROJECT_DIR is where the session started, and where the
+ * settings that started this hook live. Measured 2026-11-01 on Claude Code 2.1.316; about 750 of 1,800
+ * sub-agents in ten days of transcripts got no briefing this way.
+ *
+ * Returns the line that tells the agent, when the hook had to move: the agent's own `dreamcontext`
+ * commands still run in the code folder, and there they fail with "_dream_context/ not found".
+ */
 
 export function enterHookProject(env: NodeJS.ProcessEnv = process.env): string | null {
   try {
