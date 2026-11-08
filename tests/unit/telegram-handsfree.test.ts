@@ -175,7 +175,7 @@ describe('the hub adapter', () => {
     it('a Telegram message arms power-only once, marked auto; a second message is a no-op', async () => {
       const { hub } = fakeHub();
       const s = fakeSession();
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => null, hidPollMs: 60_000 });
+      const a = handsfreeAdapter(() => s as never);
       a.onPresence!(hub, KEY, 'telegram');
       a.onPresence!(hub, KEY, 'telegram');
       await settle();
@@ -190,7 +190,7 @@ describe('the hub adapter', () => {
     it('a message typed on the Mac disarms it and tells him once', async () => {
       const { hub, replies } = fakeHub();
       const s = fakeSession();
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => null, hidPollMs: 60_000 });
+      const a = handsfreeAdapter(() => s as never);
       a.wire(hub);
       a.onPresence!(hub, KEY, 'telegram');
       await settle();
@@ -207,7 +207,7 @@ describe('the hub adapter', () => {
       const s = fakeSession();
       const real = s.startPowerOnly as (v: unknown) => Promise<unknown>;
       s.startPowerOnly = vi.fn((v: unknown) => new Promise((r) => { release = () => r(real(v)); })) as never;
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => null, hidPollMs: 60_000 });
+      const a = handsfreeAdapter(() => s as never);
       a.onPresence!(hub, KEY, 'telegram');
       a.onPresence!(hub, KEY, 'mac');
       release();
@@ -215,28 +215,22 @@ describe('the hub adapter', () => {
       expect(s.isOn()).toBe(false);
     });
 
-    it('real input on the Mac after the start (HIDIdleTime drops) disarms it', async () => {
-      const { hub, replies } = fakeHub();
+    it('keyboard or mouse input on the Mac never ends it; only a Mac-typed message does', async () => {
+      const { hub } = fakeHub();
       const s = fakeSession();
-      let t = 1_000_000;
-      let idle = 600_000; // untouched for 10 minutes when it starts
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => idle, hidPollMs: 5, now: () => t });
+      const a = handsfreeAdapter(() => s as never);
       a.wire(hub);
       a.onPresence!(hub, KEY, 'telegram');
       await settle();
-      t += 60_000; idle += 60_000; // a minute later, still untouched
-      await settle();
+      await new Promise((r) => setTimeout(r, 60));
       expect(s.isOn()).toBe(true);
-      idle = 1_000; // he touched the keyboard
-      await vi.waitFor(() => expect(s.isOn()).toBe(false));
-      expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true });
-      expect(replies).toEqual([HF_LINES.back]);
+      expect(s.stop).not.toHaveBeenCalled();
     });
 
     it('a run he started by the button is never disarmed by a Mac message or input', async () => {
       const { hub } = fakeHub();
       const s = fakeSession();
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => 0, hidPollMs: 5 });
+      const a = handsfreeAdapter(() => s as never);
       await a.onCallback!(hub, KEY, {} as never, 0);
       a.onPresence!(hub, KEY, 'telegram');
       a.onPresence!(hub, KEY, 'mac');
@@ -249,7 +243,7 @@ describe('the hub adapter', () => {
     it('no sleep permission: one line to Telegram, no crash, no second line', async () => {
       const { hub, replies } = fakeHub();
       const s = fakeSession({ startPowerOnly: vi.fn(async () => { throw Object.assign(new Error('x'), { code: 'mac_sudo_missing' }); }) });
-      const a = handsfreeAdapter(() => s as never, { readHidIdleMs: async () => null });
+      const a = handsfreeAdapter(() => s as never);
       a.onPresence!(hub, KEY, 'telegram');
       await settle();
       a.onPresence!(hub, KEY, 'telegram');
