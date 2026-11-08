@@ -132,7 +132,9 @@ describe('background work keeps a child working (field: 6 done events in 18 minu
     }
     expect(await items('done', 'c1')).toHaveLength(0);
     expect(delivered).toHaveLength(0);
-    // The Monitor ends; the CLI opens its notification turn at once and that turn ends.
+    // The last check-in ends; then the Monitor ends and the CLI opens its notification turn, which
+    // ends. (A roster that shrinks DURING a turn still owes a turn after it: super-owner-wait.)
+    h.observe({ type: 'result' });
     roster(h, 0);
     h.observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'deploy finished' }] } });
     h.observe({ type: 'result' });

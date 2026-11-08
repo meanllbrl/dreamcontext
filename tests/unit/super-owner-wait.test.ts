@@ -36,8 +36,8 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
-  startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, type SuperEventFrame, type SuperInbox,
+  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
+  reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn } from '../../src/lib/super/owner-wait.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -437,6 +437,64 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     roster(hs[0], []);
     await advance(STALE_SWEEP_MS + DONE_SETTLE_MS + 5_000);
     expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  // Field 2026-11-08 (children f1d6800c, 2cdfc88d): the job ended, the CLI started the turn its
+  // notification owes, but that turn showed no output for 14-21 s (prompt hooks, first token on
+  // a cold cache). The 60 s stale sweep landed in that gap: the row read idle with an empty
+  // roster, `done` went out at once, and the Super nudged a child already working.
+  it('a job that ends is not done while the turn its notification owes has not shown yet', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'dreamcontext builder test (moved to background)' }]);
+    say(hs[0], 'Testler arka planda koşuyor, sonucu bekliyorum.');
+    hs[0].observe({ type: 'result' });
+    await advance(5 * 60_000, 30_000);
+    roster(hs[0], []);
+    await advance(3_000, 1_000);
+    await reconcileRows(root); // the stale sweep's tick, landing in the gap
+    await advance(15_000, 1_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    expect((await state()).children.c1.row).toBe('working');
+    // The notification turn's first output (18 s after the job ended).
+    hs[0].observe({ type: 'stream_event', event: { type: 'message_start' } });
+    await advance(60_000, 5_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    expect(delivered.some((d) => d.text.includes('child=c1') && d.text.includes('event=done'))).toBe(false);
+    // That turn ends with its work done: done, at the short window.
+    say(hs[0], 'Testler yeşil, commit ettim.');
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 3_000, 1_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  it('a job that ends and no turn follows is done once BACKGROUND_WAKE_MS passes, never held', async () => {
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'Run live exploration script' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(60_000, 10_000);
+    roster(hs[0], []);
+    await advance(3_000, 1_000);
+    await reconcileRows(root);
+    await advance(BACKGROUND_WAKE_MS - 10_000, 5_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(0);
+    await advance(STALE_SWEEP_MS + 5_000, 5_000);
+    expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  it('the registry: a roster that shrinks owes a turn, one that grows does not, a turn start pays it, a shrink during a turn still owes', () => {
+    const h = reg('w1');
+    h.userSent('go');
+    roster(h, [{ desc: 'Run tests' }]);
+    expect(getChat('w1')?.wakeOwedAt).toBeUndefined();
+    h.observe({ type: 'result' });
+    roster(h, []);
+    expect(getChat('w1')?.wakeOwedAt).toBeDefined();
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Okuyorum.' }] } });
+    expect(getChat('w1')?.wakeOwedAt).toBeUndefined();
+    roster(h, [{ desc: 'Run tests' }, { desc: 'Run build' }]);
+    roster(h, [{ desc: 'Run tests' }]); // one ended mid-turn: its notification may still come after
+    h.observe({ type: 'result' });
+    expect(getChat('w1')?.wakeOwedAt).toBeDefined();
   });
 
   it('a dev server does not hold the row past the quiet bar, whatever the reply says (review round 1)', async () => {
