@@ -13,7 +13,7 @@ import './AutomationsDispatcherBar.css';
  * distinguishes matter because each one fails differently:
  *
  *   off              — nothing fires, ever. The default the feature ships in.
- *   on               — the dispatcher wakes every 5 minutes and runs what's due.
+ *   on               — the dispatcher wakes every minute and runs what's due.
  *   stale            — installed, but the baked wrapper points at a CLI that
  *                      has since moved; it wakes and fails. Reinstall fixes it.
  *   not registered   — installed and healthy, but this project was never added
@@ -214,7 +214,7 @@ export function AutomationsDispatcherBar({
       </div>
       <button
         className="auto-dispatch-btn"
-        title="Installs one background job that wakes every 5 minutes and runs whatever is due. It never runs an automation you haven't approved on this machine."
+        title="Installs one background job that wakes every minute and runs whatever is due. It never runs an automation you haven't approved on this machine."
         onClick={() => doInstall(false)}
         disabled={busy}
       >

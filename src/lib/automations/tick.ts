@@ -1,6 +1,6 @@
 /**
  * Automations — the dispatcher's tick. This is the ONE function the generated
- * launchd wrapper execs every 5 minutes (`dreamcontext automations tick --all`,
+ * launchd wrapper execs every minute (`dreamcontext automations tick --all`,
  * see the launchd.ts wrapper + the task's dispatcher-resolution design): it
  * must stay cheap when nothing is due, because a long-running tick eats the
  * NEXT `StartInterval` firing (macOS `man launchd.plist`: a job still running
@@ -350,7 +350,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   }
 
   // AFTER the runs, so a card a run just proposed is posted and answerable in
-  // this same pass rather than waiting five minutes for the next one.
+  // this same pass rather than waiting for the next one.
   //
   // This lives in the tick — not in the server, not in a daemon — because that
   // is the only process guaranteed to be alive when an automation fires. The

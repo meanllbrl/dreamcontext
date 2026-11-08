@@ -68,7 +68,7 @@ import {
   threadUnread,
 } from '../../lib/automations/threads.js';
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
-import { approvalCardBlock, staleApprovalBlock } from '../../lib/automations/approval-card.js';
+import { approvalCardBlock, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
@@ -104,7 +104,6 @@ import {
   formatSchedule,
   formatSlot,
   formatLocalFire,
-  nextFire,
   parseSlot,
   parseSlotSpec,
   slotSpec,
@@ -457,10 +456,10 @@ function parseSlotFlags(specs: string[], now: Date): ScheduleSlot[] {
 }
 
 /** "next: Mon 2026-09-28 16:30" for an enabled scheduled agent, else null. */
-function nextFireLabel(m: AutomationManifest, now: Date): string | null {
-  if (m.mode === 'call' || !m.enabled || m.schedule === null) return null;
-  const next = nextFire(m.schedule, now);
-  return next ? formatLocalFire(next) : null;
+function nextFireLabel(m: AutomationManifest, now: Date, projectRoot: string): string | null {
+  // A fire still owed (its time passed, not run yet) is the next one: `nextFireIso`.
+  const next = nextFireIso(m, now, { projectRoot });
+  return next ? formatLocalFire(new Date(next)) : null;
 }
 
 /** `--mode <sched|call>` → a validated {@link AutomationMode}. Same boundary
@@ -1122,9 +1121,7 @@ export function registerAutomationsCommand(program: Command): void {
         const now = new Date();
         const rows = manifests.map((m) => ({
           ...m,
-          nextFireAt: m.mode === 'call' || !m.enabled || m.schedule === null
-            ? null
-            : (nextFire(m.schedule, now)?.toISOString() ?? null),
+          nextFireAt: nextFireIso(m, now, { projectRoot }),
           cache: readAutomationCache(root, m.slug),
           approved: checkApproval(projectRoot, m, undefined, 'run').approved,
           shareState: shareStateFor(root, m),
@@ -1149,7 +1146,7 @@ export function registerAutomationsCommand(program: Command): void {
         // `cadenceLabel`, not `formatSchedule`: an on-call agent genuinely has
         // no schedule, and printing "no schedule" next to it would report a
         // deliberate choice as a malformed manifest.
-        const next = nextFireLabel(m, now);
+        const next = nextFireLabel(m, now, projectRoot);
         const cadence = m.scheduleError && m.mode !== 'call' ? chalk.red(cadenceLabel(m)) : cadenceLabel(m);
         console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadence}${next ? ` · next ${next}` : ''}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
         if (warning) warn(`    ${warning}`);
@@ -1183,9 +1180,7 @@ export function registerAutomationsCommand(program: Command): void {
       if (opts.json) {
         console.log(JSON.stringify({
           manifest,
-          nextFireAt: manifest.mode === 'call' || !manifest.enabled || manifest.schedule === null
-            ? null
-            : (nextFire(manifest.schedule, new Date())?.toISOString() ?? null),
+          nextFireAt: nextFireIso(manifest, new Date(), { projectRoot }),
           cache,
           approved: approval.approved,
           approvalReason: approval.approved ? null : approval.reason,
@@ -1206,7 +1201,7 @@ export function registerAutomationsCommand(program: Command): void {
         });
       }
       {
-        const next = nextFireLabel(manifest, new Date());
+        const next = nextFireLabel(manifest, new Date(), projectRoot);
         if (next) console.log(`  next fire: ${next}`);
       }
       console.log(`  enabled: ${manifest.enabled}`);
@@ -2168,7 +2163,7 @@ export function registerAutomationsCommand(program: Command): void {
             schedule: updated.schedule,
             catchupHours: updated.catchupHours,
             label: cadenceLabel(updated),
-            nextFireAt: updated.schedule ? (nextFire(updated.schedule, now)?.toISOString() ?? null) : null,
+            nextFireAt: nextFireIso(updated, now, { projectRoot: projectRootFor(root) }),
           }, null, 2));
           return;
         }
@@ -2185,7 +2180,7 @@ export function registerAutomationsCommand(program: Command): void {
         updated.schedule.slots.forEach((slot, i) => {
           console.log(`  ${i + 1}. ${formatSlot(slot)}  ${chalk.dim(`--slot "${slotSpec(slot)}"`)}`);
         });
-        const next = nextFireLabel(updated, now);
+        const next = nextFireLabel(updated, now, projectRootFor(root));
         console.log(next ? `  next fire: ${next}` : chalk.dim(updated.enabled ? '  no upcoming fire' : '  disabled — no upcoming fire'));
         console.log(`  catch-up: ${updated.catchupHours}h after a missed slot`);
         if (editing) success(`Schedule saved: ${cadenceLabel(updated)}, catch-up ${updated.catchupHours}h (no re-approval needed).`);
@@ -2479,7 +2474,7 @@ export function registerAutomationsCommand(program: Command): void {
 
   automations
     .command('install')
-    .description('Install the launchd dispatcher (ticks every 5 minutes)')
+    .description('Install the launchd dispatcher (ticks every minute)')
     .option('--check', 'Inspect only — writes nothing')
     .option('-f, --force', 'Install even if the resolved CLI does not match the one running this command')
     .action(async (opts: { check?: boolean; force?: boolean }) => {

@@ -38,7 +38,7 @@ import { GLOBAL_REGISTRY_KEY } from '../agents/scope.js';
  *    (create/approve/revoke/register), so a lock-free read→mutate→rename is
  *    safe here exactly as it is in linked-repos.json.
  *  - `~/.dreamcontext/automations-tick.json` — the dispatcher heartbeat.
- *    Written automatically every ~5 minutes by `tick`. Putting that on the
+ *    Written automatically every ~minute by `tick`. Putting that on the
  *    SAME file as `approvals` would let a lost update (tick reads {A}, a user
  *    approves B and writes {A,B}, tick writes back its stale {A}) silently
  *    revert an approval the user just made — a worse instance of the exact

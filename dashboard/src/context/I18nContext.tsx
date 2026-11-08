@@ -1238,7 +1238,7 @@ const translations: Record<string, Record<string, string>> = {
     'agents.empty.starters': 'Start from one of these',
     'agents.empty.blank': 'Start from scratch',
     'agents.empty.safety': "Nothing runs until you turn the scheduler on and approve each agent. Change an agent's instructions and it waits for your approval again.",
-    'agents.empty.showcaseAria': 'Several agents, a daily digest, a Friday report and a research run, feed one scheduler that wakes every five minutes and runs what is due. Only an approved agent runs; it writes a dated report, tells you what it found, and keeps a note the next run reads back.',
+    'agents.empty.showcaseAria': 'Several agents, a daily digest, a Friday report and a research run, feed one scheduler that wakes every minute and runs what is due. Only an approved agent runs; it writes a dated report, tells you what it found, and keeps a note the next run reads back.',
     'agents.starter.digest.title': "Morning digest of yesterday's insights",
     'agents.starter.digest.sub': 'Every weekday at 09:00',
     'agents.starter.digest.prompt': 'Every weekday at 09:00, read the insights that changed yesterday and post a short digest: what moved, by how much, and what is worth a closer look.',

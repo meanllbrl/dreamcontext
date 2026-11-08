@@ -1,8 +1,10 @@
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { checkApproval } from './registry.js';
+import { placement } from '../agents/active.js';
 import { dispatcherPlistPath } from './launchd.js';
-import { cadenceLabel } from './store.js';
-import { nextFire } from './schedule.js';
+import { cadenceLabel, readAutomationCache } from './store.js';
+import { upcomingFire } from './schedule.js';
 import { storeServers } from '../mcp-store.js';
 import type { AutomationCache, AutomationManifest, ReviewMode } from './types.js';
 
@@ -76,9 +78,31 @@ export function doesLine(text: string): string {
   return joined.length > DOES_MAX_CHARS ? `${joined.slice(0, DOES_MAX_CHARS - 1).trimEnd()}…` : joined;
 }
 
-export function nextFireIso(m: Pick<AutomationManifest, 'mode' | 'enabled' | 'schedule'>, now: Date = new Date()): string | null {
+/**
+ * Every surface's "next run" (cards, the routines list, the CLI): a fire still owed (time passed,
+ * the dispatcher not there yet, or the run in flight) before the next one on the clock
+ * (`upcomingFire`). Reads this machine's run cache and approval; both failing reads fall back
+ * to the clock.
+ */
+export function nextFireIso(
+  m: AutomationManifest,
+  now: Date = new Date(),
+  where: { projectRoot: string; home?: string } | null = null,
+): string | null {
   if (m.mode === 'call' || !m.enabled || m.schedule === null) return null;
-  return nextFire(m.schedule, now)?.toISOString() ?? null;
+  let lastFireAt: string | null = null;
+  let approved = false;
+  if (where) {
+    try { lastFireAt = readAutomationCache(join(where.projectRoot, '_dream_context'), m.slug)?.lastFireAt ?? null; } catch { lastFireAt = null; }
+    // Owed only where it runs: the tick skips a routine whose agent lives on another machine
+    // (`runs-elsewhere`), and this machine's cache never learns that machine ran it.
+    try {
+      const contextRoot = join(where.projectRoot, '_dream_context');
+      approved = checkApproval(where.projectRoot, m, where.home, 'run').approved
+        && placement(contextRoot, m.agent || m.slug, m.owner ?? null, where.home, now).here;
+    } catch { approved = false; }
+  }
+  return upcomingFire(m.schedule, lastFireAt, now, m.catchupHours, m.mode, approved)?.toISOString() ?? null;
 }
 
 export function approvalCardFacts(
@@ -109,7 +133,7 @@ export function approvalCardFacts(
     approved: approval.approved,
     approvalReason: approval.approved ? null : approval.reason,
     enabled: m.enabled,
-    nextFireAt: nextFireIso(m, opts.now),
+    nextFireAt: nextFireIso(m, opts.now, { projectRoot, home: opts.home }),
   };
 }
 

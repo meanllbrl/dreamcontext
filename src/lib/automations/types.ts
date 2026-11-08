@@ -246,7 +246,7 @@ export const FLOW_EDGE_LABEL_MAX_CHARS = 24;
  * WHEN an automation runs, as a first-class manifest field.
  *
  * `'sched'` is every automation that has ever existed: a wall-clock schedule
- * the dispatcher evaluates every five minutes. `'call'` is an agent that has
+ * the dispatcher evaluates every minute. `'call'` is an agent that has
  * NO schedule at all — it runs only when a human asks for it (a manual run
  * now, and from step 4, an @mention). The dispatcher must never fire one.
  *
@@ -1210,7 +1210,13 @@ export const STDERR_TAIL_BYTES = 4_096;
  *  process group immediately. */
 export const KILL_GRACE_MS = 10_000;
 export const DISPATCHER_LABEL = 'com.dreamcontext.automations';
-export const TICK_INTERVAL_SECONDS = 300;
+/**
+ * How often the dispatcher wakes. A minute, not five (owner 2026-11-08): a routine set for 15:45
+ * started at 15:48:57, because the dispatcher had last woken at 15:42:33 and woke again only at
+ * 15:47:33. An idle wake reads the registry and the manifests and spawns nothing; launchd never
+ * starts a second one while a wake is still running a job, so a short interval cannot overlap.
+ */
+export const TICK_INTERVAL_SECONDS = 60;
 /** Dispatcher log rotates (renamed to `.log.1`) past this size. */
 export const LOG_ROTATE_BYTES = 1_048_576;
 /** Manifests are flat at `automations/<slug>.md`, so these sibling directory

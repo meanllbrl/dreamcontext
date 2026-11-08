@@ -57,7 +57,7 @@ import {
   registerProject,
   renderApprovalReview,
 } from '../../lib/automations/registry.js';
-import { nextFire } from '../../lib/automations/schedule.js';
+import { nextFireIso } from '../../lib/automations/approval-card.js';
 import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
@@ -242,9 +242,7 @@ export function summarizeAgent(
       automations: usage.automations.flatMap((slug) => {
         const m = getRunTarget(contextRoot, slug, 'automation');
         if (!m) return [];
-        const nextFireAt = m.mode === 'call' || !m.enabled || m.schedule === null
-          ? null
-          : (nextFire(m.schedule, now)?.toISOString() ?? null);
+        const nextFireAt = nextFireIso(m, now, { projectRoot, home });
         return [{ slug: m.slug, title: m.title, enabled: m.enabled, nextFireAt }];
       }),
       boards: usage.boards,
@@ -1008,7 +1006,7 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
       slug: m.slug,
       title: m.title,
       enabled: m.enabled,
-      nextFireAt: !m.enabled || m.schedule === null ? null : (nextFire(m.schedule, now)?.toISOString() ?? null),
+      nextFireAt: nextFireIso(m, now, { projectRoot: dirname(contextRoot) }),
       cadence: cadenceLabel(m),
       face: faceOf(m.slug, parseFace(readManifestFrontmatter(m.path)?.data.face)),
     })),

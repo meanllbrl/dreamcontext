@@ -4,7 +4,7 @@ import { makeLink, type Box } from '../about/flow-geometry';
 /**
  * Automations' signature diagram — the cadence, left-to-right, closing on itself.
  * Several manifests (each one a plain-language prompt plus a `{days, at}` schedule)
- * feed the ONE dispatcher, which wakes every five minutes and asks what is due.
+ * feed the ONE dispatcher, which wakes every minute and asks what is due.
  * Nothing crosses to the run until the machine-local SHA256 approval matches, so
  * the gate is drawn ON the wire, not beside it. The run is a headless
  * `claude -p` session under `bypassPermissions`; it writes a dated markdown file
@@ -46,7 +46,7 @@ const STAGES: {
   sub: string | string[];
   variant: 'rem' | 'accent' | 'hook' | 'region';
 }[] = [
-  { id: 'disp', x: 174, y: 78, w: 134, h: 104, title: 'dispatcher', sub: ['↻ every 5 min', 'what’s due'], variant: 'rem' },
+  { id: 'disp', x: 174, y: 78, w: 134, h: 104, title: 'dispatcher', sub: ['↻ every minute', 'what’s due'], variant: 'rem' },
   // The run is the star of the diagram, so it takes the `hook` variant (accent
   // stroke + glow) rather than `agent` (flat onyx fill): the dark card reads as a
   // black slab in light mode but sinks into the stage's own dark panel at night.
@@ -78,7 +78,7 @@ export const AUTOMATIONS_SHOWCASE: FlowSpec = {
   // 30 units of air top and bottom.
   viewBox: '0 0 700 358',
   ariaLabel:
-    'Several automation manifests — a daily digest, a Friday report, a Tuesday research run — feed one dispatcher that wakes every five minutes and asks what is due. Only an approved manifest crosses to a headless claude session, which writes a dated markdown file and a notification saying what it found, and records what it learned in a bounded pattern the next run reads back.',
+    'Several automation manifests — a daily digest, a Friday report, a Tuesday research run — feed one dispatcher that wakes every minute and asks what is due. Only an approved manifest crosses to a headless claude session, which writes a dated markdown file and a notification saying what it found, and records what it learned in a bounded pattern the next run reads back.',
   nodes: [
     ...SOURCES.map((s) => ({
       id: s.id,
