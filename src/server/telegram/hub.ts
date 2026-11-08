@@ -534,8 +534,16 @@ export class TelegramHub implements TelegramHubApi {
     let text = inboundTurnText(msg, paths);
     if (spoken) text = `🎙 ${spoken}${text ? `\n\n${text}` : ''}`;
     if (!text.trim()) { drop(); return; }
+    if (!(await this.injectText(ab, updateId, text, sessionId))) drop();
+  }
+
+  /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
+   *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
+   *  status and typing begun. False = it did not reach the Super (the owner was told). */
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string): Promise<boolean> {
+    const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
-    if (!inj) { drop(); await this.reply(ab, LINES.cannotOpen); return; }
+    if (!inj) { await this.reply(ab, LINES.cannotOpen); return false; }
     const ref = this.mintRef(ab);
     telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: 'text' });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
@@ -552,8 +560,20 @@ export class TelegramHub implements TelegramHubApi {
       this.endTurn(ref);
       drop();
       await this.reply(ab, LINES.notWritten);
+      return false;
     }
+    return true;
   }
+
+  /** The Super binding of a project by vault name, or null. */
+  superBindingOfVault(vault: string): ActiveBinding | null {
+    for (const ab of this.active.values()) if (ab.target === 'super' && !ab.disabled && ab.projectName === vault && ab.contextRoot) return ab;
+    return null;
+  }
+
+  /** A synthetic update id for turns the hub writes from a button (no Telegram message behind them). */
+  private synth = 0;
+  syntheticUpdateId(): number { this.synth -= 1; return this.synth; }
 
   /** A fresh 6-char base-36 ref, never one already in turns.json (B1). */
   private mintRef(ab: ActiveBinding): string {
@@ -776,7 +796,7 @@ export class TelegramHub implements TelegramHubApi {
 
   private async handleButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
     if (rec.kind === 'handsfree') return this.deps.handsfree?.onCallback?.(this, ab.key, rec, idx) ?? LINES.stale;
-    if (rec.kind === 'permission' || rec.kind === 'question') {
+    if ((rec.kind === 'permission' || rec.kind === 'question') && rec.data?.queue !== true) {
       const sessionId = rec.sessionId ?? '';
       const entry = getChat(sessionId);
       const pending = [entry?.pendingQuestion, ...(entry?.earlierPending ?? [])].find((p) => p?.requestId === rec.requestId);

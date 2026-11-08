@@ -4,6 +4,7 @@
  */
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { setTelegramHub, telegramHub, TelegramHub, type HubDeps } from './hub.js';
+import { wireTelegramAsks } from './asks.js';
 
 export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<TelegramHub> {
   const have = telegramHub();
@@ -13,6 +14,7 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
     ...extra,
   });
   setTelegramHub(hub);
+  wireTelegramAsks(hub);
   await hub.start();
   return hub;
 }
