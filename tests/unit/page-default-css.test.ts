@@ -63,7 +63,9 @@ describe('pageDefaultCss', () => {
   it('both page surfaces carry the kit runtime with the kit CSS (graph and tabs work as in a chat block)', () => {
     const reader = read('dashboard/src/components/appLink/DocumentReader.tsx');
     expect(reader).toMatch(/headScript: \[HEIGHT_BRIDGE,[^\n]*KIT_BEHAVIOUR\]\.join/);
-    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain("${ZOOM_BRIDGE}\\n${KIT_BEHAVIOUR}`");
+    // The file viewer builds its page through buildReportSrcdoc (shared with the Telegram kit).
+    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('buildReportSrcdoc(html, ');
+    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain("${ZOOM_BRIDGE}\\n${KIT_BEHAVIOUR}`");
     // The sandbox does not move with it.
     for (const p of ['dashboard/src/components/appLink/DocumentReader.tsx', 'dashboard/src/components/layout/FrameViewer.tsx']) {
       const src = read(p);
@@ -75,6 +77,7 @@ describe('pageDefaultCss', () => {
 
   it('both page surfaces use it', () => {
     expect(read('dashboard/src/components/appLink/DocumentReader.tsx')).toContain('overrideCss: pageDefaultCss(fill)');
-    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('overrideCss: pageDefaultCss(true)');
+    expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('buildReportSrcdoc(html, ');
+    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain('overrideCss: pageDefaultCss(true)');
   });
 });

@@ -135,7 +135,10 @@ describe('the sandbox is unchanged and both project-page frames use the inlining
     it(`${file} reads the page through useProjectHtml and loads the link guard`, () => {
       const src = readFileSync(file, 'utf8');
       expect(src).toMatch(/useProjectHtml\(path/);
-      expect(src).toContain('LINK_GUARD');
+      // FrameViewer builds its page through buildReportSrcdoc, which carries the guard.
+      const builder = file.endsWith('FrameViewer.tsx') ? readFileSync('dashboard/src/lib/reportSrcdoc.ts', 'utf8') : src;
+      if (file.endsWith('FrameViewer.tsx')) expect(src).toContain('buildReportSrcdoc(html, ');
+      expect(builder).toContain('LINK_GUARD');
     });
   }
 
