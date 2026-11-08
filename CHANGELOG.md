@@ -8,6 +8,28 @@ All notable changes to dreamcontext will be documented in this file.
 - **The drawing rules load at the right moment.** Any drawing request gets a one-line reminder to load `draw`; in the Chat view a passing sketch stays an inline diagram and a drawing you keep goes through `draw`. On Claude, hand-writing an Excalidraw file is stopped with "draw first". The whiteboard commands, sub-agents and the chat all name `draw`.
 - **The old `excalidraw` pack moves over safely.** Nothing you edited is lost (an edited guide is kept as `SKILL.md.pre-draw`), no second skill stays, and scripts that use the old path keep working. Nothing changes until `draw` is really installed.
 
+## [0.41.6] - 2026-11-08
+
+Patch on 0.41.5: seventeen finished jobs built together. Local build; not published.
+
+- **Planning and Develop work in loops that settle.** A plan keeps a ledger of what the reviewers found, stops when the same kind of finding survives a revision, and shows you one stop card. Every way into Develop passes the same plan gate. Waves that do not depend on each other start together, and each review round runs through one command.
+- **A Super answer carries its cards.** The cards a turn put on the stage sit under the answer as small chips, and one click brings a card back, even one you closed. A run's document opens in the side file panel instead of a "Full report" link.
+- **Stage cards behave like Mac windows.** Red closes, yellow minimizes, green goes full screen, and the ask button is clearer.
+- **A question card that points at something it does not show goes back to the agent.** A card that says "like in the example" and carries no example never reaches you.
+- **The Super answers in your language.** Only your own words decide it, and every turn names it. A send that waits behind a question card says it has not been read yet.
+- **A finished job is not "done" too early.** A job whose background work ends later is shown done only after the turn its notification owes. A local slash command's result no longer reads as a turn end.
+- **The Super stage does not lose the Super.** A second bridge for the pin no longer silences the first, and a finished answer no longer has a hover "steps" link over the "To your message" line.
+- **The Super picks the model per job.** The cheapest model that fits, haiku only for read-only research, sonnet or opus for anything that writes.
+- **One draw skill.** Excalidraw and whiteboards become a single built-in draw skill, installed with every setup, and agents load it at the right moment. Older copies are migrated safely.
+- **Routines start within a minute of their slot.** No card calls today's owed run "tomorrow", a member's routine runs show on its page (live while running, the result after), and the scheduler interval changed: the app shows "Refresh scheduler" once after the update.
+- **The mic is always there.** The mic and spoken replies are one split button with a setup menu.
+- **An answer card ends at its padding.** No empty gap under its last line.
+- **The Working pill keeps its place for the whole turn,** so the chat stops jumping at every step.
+- **The Apps page uses the full window width.** "Install from a link" sits at the right edge.
+- **Your own Share click is never refused.** On your Apps page, Share is no longer rejected as "not the owner".
+- **Safer owner key.** The app asks for it only from frames on its own port.
+- **Builder fixes.** A review round's paths are checked against git, a harm that was written is always found, and a verify script goes through the heavy-step line however it is spelled.
+
 ## [0.41.5] - 2026-11-08
 
 Patch on 0.41.4: one batch of fixes and small features, built together. Local build; not published.
