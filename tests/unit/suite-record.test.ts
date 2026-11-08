@@ -275,6 +275,19 @@ describe('builder heavy keeps a suite record; builder test --failed reruns only 
     expect(line).toBe(`cd ${repo} && npm test`);
     expect(await builderHeavy(deps(root), [line], {})).toBe(1);
     expect(record()).toMatchObject({ state: 'red', files: ['tests/a.test.ts', 'tests/b.test.ts'] });
+    // Reached through a cd from a folder with no package.json, the repo's OWN test script decides:
+    // one that narrows (--dir) keeps no record, and so does one that cannot be read at all.
+    writeFileSync(join(repo, 'package.json'), `${JSON.stringify({ name: 'demo-app', version: '1.0.0', scripts: { test: 'vitest run --dir tests/unit' } }, null, 2)}\n`);
+    rmSync(join(realpathSync(join(repo, '.git')), 'dc-receipts'), { recursive: true, force: true });
+    err = [];
+    await builderHeavy(deps(root), [line], {});
+    expect(record()).toBeNull();
+    expect(err.join('\n')).toMatch(/not provably the whole suite \(--dir\)/);
+    writeFileSync(join(repo, 'package.json'), `${JSON.stringify({ name: 'demo-app', version: '1.0.0' }, null, 2)}\n`);
+    err = [];
+    await builderHeavy(deps(root), [line], {});
+    expect(record()).toBeNull();
+    expect(err.join('\n')).toMatch(/its "test" script cannot be read/);
     // A chained test script cannot be told whole.
     expect(heavyStep('npm test', { test: 'tsc --noEmit && vitest run --dir tests/unit' })).toMatchObject({ kind: 'suite', partial: expect.stringMatching(/chains/) });
     expect(heavyStep('npm test', { test: 'vitest' })!.partial).toBeUndefined();

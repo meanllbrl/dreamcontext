@@ -237,6 +237,21 @@ function heaviest(segments: string[], scripts: Record<string, string>): HeavySte
 export const classifyHeavy = (command: string): HeavyKind | null => heavyStep(command)?.kind ?? null;
 
 /**
+ * The npm script a command's suite runs (`npm test`, `pnpm run test:unit`) when that script is
+ * not in `scripts`: what it runs cannot be read, so it is no provable whole suite. null when the
+ * suite is not an npm script, or its script is there.
+ */
+export function suiteScriptUnread(command: string, scripts: Record<string, string>): string | null {
+  for (const seg of shellSegments(command)) {
+    if (stepOfSegment(seg, scripts)?.kind !== 'suite') continue;
+    const npm = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(\S+)/.exec(seg.trim().replace(/^[({]\s*/, '').replace(ENV_PREFIX, '').replace(WRAPPER, ''));
+    const name = npm?.[1] === 't' ? 'test' : npm?.[1];
+    if (name && scripts[name] === undefined) return name;
+  }
+  return null;
+}
+
+/**
  * The whole-suite step anywhere in a command line, also inside an npm script that chains it
  * (`"test:all": "npm run build && vitest"`), whatever the line's heaviest step is. A suite in a
  * chain must not slip past its record because a build ranks heavier.

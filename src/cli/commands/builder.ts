@@ -29,7 +29,7 @@ import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-q
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
   BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
-  recordRed, recordStart, refusal, shellQuote, shellSegments, suiteInCommand, validReason, type BudgetKind, type BudgetScope,
+  recordRed, recordStart, refusal, shellQuote, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
@@ -300,6 +300,11 @@ function suiteRunDir(command: string, cwd: string): string | null {
   return dir;
 }
 
+/** The package.json scripts of the folder a command runs in: its cds followed from `cwd`. */
+function runScripts(command: string, cwd: string): Record<string, string> {
+  return packageScripts(suiteRunDir(command, cwd) ?? cwd);
+}
+
 /** A suite run's record context: the worktree, branch and target its record is keyed by. */
 interface SuiteCtx { top: string; branch: string | null; target: string; config?: string; /** Where the suite runs (vitest prints paths from here). */ runDir: string }
 
@@ -444,7 +449,7 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
     // Read again before calling it dead: the runner may have written its end and exited in between.
     if (!(deps.alive ?? alive)(s.pid) && readCheckState(deps.cwd(), id)?.state !== 'done') {
       // Nothing will write its end: a running suite record of that runner is incomplete now.
-      const ctxStep = heavyStep(s.command, packageScripts(deps.cwd()));
+      const ctxStep = heavyStep(s.command, runScripts(s.command, deps.cwd()));
       const ctx = ctxStep?.kind === 'suite' ? suiteCtxOf(suiteRunDir(s.command, deps.cwd()) ?? deps.cwd(), ctxStep.target) : null;
       if (ctx) {
         const path = suiteRecordPath(ctx.top, ctx.branch, ctx.target);
@@ -472,7 +477,7 @@ async function heavyWait(deps: BuilderDeps, id: string, opts: HeavyOptions): Pro
  * record and no gate: it runs on its own line, after the build, or not at all. True = refused.
  */
 function chainRefused(deps: BuilderDeps, command: string): boolean {
-  const scripts = packageScripts(deps.cwd());
+  const scripts = runScripts(command, deps.cwd());
   if (heavyStep(command, scripts)?.kind === 'suite' || !suiteInCommand(command, scripts)) return false;
   deps.printErr('builder heavy: a full test suite inside a chain runs with no record of its red files. NOTHING ran. Run the parts on their own lines:');
   deps.printErr('  dreamcontext builder heavy -- <the build or check>, then dreamcontext builder heavy --detach -- <the suite alone>, then --wait <id>');
@@ -525,10 +530,12 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   const maxRunMs = Math.round(maxRunMin * 60_000);
   const command = argv.join(' ');
-  const step = heavyStep(command, packageScripts(deps.cwd()));
+  // The scripts of the folder the command runs in (its own cds followed), never the caller's.
+  const scripts = runScripts(command, deps.cwd());
+  const step = heavyStep(command, scripts);
   if (chainRefused(deps, command)) return 2;
   // The receipt comes first: a check that already passed on this code costs no queue and no budget.
-  const planned = step && step.kind !== 'browser' ? planShellReceipt(deps.cwd(), command, packageScripts(deps.cwd())) : null;
+  const planned = step && step.kind !== 'browser' ? planShellReceipt(deps.cwd(), command, scripts) : null;
   const receiptPlan = planned && 'plan' in planned ? planned.plan : null;
   if (planned && 'skip' in planned) deps.printErr(`builder heavy: no receipt for this run (${planned.skip}); it runs every time`);
   if (receiptPlan && !opts.fresh && printReceipt(deps, receiptPlan, tail)) return 0;
@@ -541,7 +548,8 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   // nothing but allow-listed flags (run-budget.ts wholeSuiteArgs). Anything else is partial.
   const notWhole = !suite ? null : step?.partial
     ?? (runDir === null ? 'a cd that cannot be resolved here' : null)
-    ?? (suite.runDir !== suite.top ? `run in ${relative(suite.top, suite.runDir) || suite.runDir}, not the repo root` : null);
+    ?? (suite.runDir !== suite.top ? `run in ${relative(suite.top, suite.runDir)}, not the repo root` : null)
+    ?? (suiteScriptUnread(command, scripts) ? `its "${suiteScriptUnread(command, scripts)}" script cannot be read in ${suite.runDir}` : null);
   const recordable = suite !== null && !notWhole;
   if (suite && notWhole) deps.printErr(`builder heavy: not provably the whole suite (${notWhole}): it keeps no suite record, and cannot close one`);
   if (suite) {
@@ -551,8 +559,8 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
   const target = step?.target ?? '';
   const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
-  const pick = queueOf(command, packageScripts(deps.cwd()), (files) => countRelatedTests(deps.cwd(), files));
-  const label = safeLabel(command, packageScripts(deps.cwd()));
+  const pick = queueOf(command, scripts, (files) => countRelatedTests(deps.cwd(), files));
+  const label = safeLabel(command, scripts);
   const budget = budgetPath(deps.cwd());
   // A build of changed inputs is not a repeat: the exit-5 hint "build first" must never be refused.
   const top = kind === 'build' ? gitToplevel(deps.cwd()) : null;
