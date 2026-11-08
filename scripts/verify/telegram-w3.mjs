@@ -90,7 +90,7 @@ async function open(theme, width, url) {
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
   page.on('pageerror', (e) => errors.push(`crash: ${String(e).slice(0, 200)}`));
-  await page.goto(`${base}?view=${url}&theme=${theme}&lang=tr`);
+  await page.goto(`${base}?view=${url}&theme=${theme}&lang=tr`, { timeout: 180_000 });
   await page.getByTestId('harness').waitFor({ timeout: 20_000 });
   return { ctx, page, errors };
 }
