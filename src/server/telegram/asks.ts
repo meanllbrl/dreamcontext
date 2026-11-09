@@ -50,7 +50,12 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
       const ab = hub.superBindingOfVault(vault);
       if (!ab || sentItems.has(item.id)) return !!ab;
       sentItems.add(item.id);
-      void sendItem(hub, ab, sessionId, item).catch(() => { sentItems.delete(item.id); });
+      // The Super's own ask that LANDS is its turn speaking (no "göndermeden bitti" after it); sent
+      // in line with its texts. A child's item or an approval is not the Super's turn speaking.
+      hub.queueSend(sessionId, () => sendItem(hub, ab, sessionId, item).then(
+        (landed) => item.kind === 'ask' && landed,
+        () => { sentItems.delete(item.id); return false; },
+      ));
       return true;
     },
   });
@@ -62,7 +67,9 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   return () => { off(); setOwnerQuestionSinks({ telegram: () => false }); hub.extraButton = prev; };
 }
 
-async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<void> {
+/** Sends one queue item. For the Super's own ask: true only when a message of it LANDED on
+ *  Telegram (a swallowed failure is nothing landed); every other kind answers false. */
+async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<boolean> {
   if (item.kind === 'ask') {
     const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
     const card = simpleCard(spec);
@@ -70,15 +77,16 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       await hub.sendButtons(ab, formatAskQuestionHtml(card.card, { title: spec.title }), card.labels.map((l) => [l.slice(0, 60)]),
         { kind: 'question', requestId: item.id, sessionId: superSession, singleUse: true },
         { queue: true, item: item.id, itemKind: 'ask', session: superSession, question: card.question, labels: card.labels, questions: spec.questions });
-      return;
+      return true;
     }
-    if (rich && await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
+    if (rich && await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }).catch(() => false)) return true;
+    const landed = (html: string) => hub.send(ab, html).then(() => true, () => false);
     if (spec.questions.length) {
-      for (const html of formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html).catch(() => {});
-      return;
+      let any = false;
+      for (const html of formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })) any = (await landed(html)) || any;
+      return any;
     }
-    await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`);
-    return;
+    return landed(escapeHtml(`❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`));
   }
   if (item.kind === 'question') {
     const pq = getChat(item.sessionId)?.pendingQuestion;
@@ -88,19 +96,20 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       await hub.sendButtons(ab, formatAskQuestionHtml(card.card, { title: pq?.title, lead: item.ownerText }), card.labels.map((l) => [l.slice(0, 60)]),
         { kind: 'question', requestId: item.requestId, sessionId: item.sessionId, singleUse: true },
         { queue: true, item: item.id, itemKind: 'question', question: card.question, labels: card.labels, questions: qs });
-      return;
+      return false;
     }
-    if (rich && item.requestId && qs.length && await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title ?? item.ownerText, lead: pq?.title ? item.ownerText : undefined, sessionId: superSession, itemId: item.id }).catch(() => false)) return;
+    if (rich && item.requestId && qs.length && await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title ?? item.ownerText, lead: pq?.title ? item.ownerText : undefined, sessionId: superSession, itemId: item.id }).catch(() => false)) return false;
     if (qs.length) {
       for (const html of formatAskCardMessages(qs, { title: pq?.title, lead: item.ownerText, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html).catch(() => {});
-      return;
+      return false;
     }
     await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? pq?.text ?? 'Bir iş soru soruyor')}\n${LINES.waitingOnMac}`);
-    return;
+    return false;
   }
   // Approvals (G1) and jobs that need him: shown, answered on the Mac in W2.
   const line = item.kind === 'approval' ? `✋ Onay bekliyor: ${item.member ?? 'ekip üyesi'}` : `✋ ${item.ownerText ?? 'Bir iş seni bekliyor'}`;
   await hub.reply(ab, `${redactSecrets(line)}\n${LINES.waitingOnMac}`);
+  return false;
 }
 
 /** A child of a bound Super starts asking a permission: buttons, once per request (A4). */

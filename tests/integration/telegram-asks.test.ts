@@ -83,6 +83,42 @@ describe('the Super\'s own ask', () => {
   });
 });
 
+describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
+  it('the card reaching Telegram is the turn speaking: no "göndermeden bitti" line after it', async () => {
+    const item = { id: 'ask-2', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Ne zaman?', ask: { questions: [{ question: 'Ne zaman?', options: [{ label: 'Uzaktayken' }, { label: 'Her zaman' }] }] } };
+    await writeState({});
+    const sent: string[] = [];
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { sent.push(t); return { ok: true }; }, interrupt: () => {} });
+    tg.push(TOKEN, textUpdate(OWNER, 'normal mi?'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'dreamcontext super ask' } }] } });
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    await vi.waitFor(() => expect(buttonMsg('Uzaktayken')).toBeTruthy());
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(tg.texts().some((t) => t.startsWith('Bu tur sana yazı göndermeden bitti'))).toBe(false);
+  });
+
+  it('an ask card whose send fails is not the turn speaking: the silent line still comes', async () => {
+    const item = { id: 'ask-3', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Ne düşünüyorsun?', ask: { questions: [{ question: 'Ne düşünüyorsun?', options: [] }] } };
+    await writeState({});
+    const sent: string[] = [];
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { sent.push(t); return { ok: true }; }, interrupt: () => {} });
+    tg.push(TOKEN, textUpdate(OWNER, 'ne dersin?'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'dreamcontext super ask' } }] } });
+    await writeState({ queue: [item] });
+    tg.failOnce.set('sendMessage', 400);
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await vi.waitFor(() => expect(tg.delivered.some((t) => t.startsWith('Bu tur sana yazı göndermeden bitti'))).toBe(true), { timeout: 3000 });
+    expect(tg.delivered.some((t) => t.includes('Ne düşünüyorsun?'))).toBe(false);
+  });
+});
+
 describe('a child\'s permission (A4)', () => {
   it('İzin ver (bir kez) goes through the window\'s super allow, by the owner; the item closes', async () => {
     await writeState({

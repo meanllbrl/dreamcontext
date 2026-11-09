@@ -200,6 +200,9 @@ export class TelegramHub implements TelegramHubApi {
   private superSessions = new Map<string, BindingKey>();
   /** Per Super chat: what the running turn's owner inputs were (fallback rule, plan "Which answer"). */
   private turnInputs = new Map<string, { telegram: Set<string>; mac: boolean }>();
+  /** Per Super chat: its texts still being sent, chained so they reach Telegram in the order the
+   *  Super wrote them; a turn's end waits on it before it may call the turn silent. */
+  private textChains = new Map<string, Promise<void>>();
   /** Per Super binding: where the owner's LATEST message came from (`onTelegram`).
    *  DERIVED, never set by an agent: `injectText` (an authorized Telegram message or a button the
    *  hub turned into a turn) marks `telegram`; his own words typed on the Mac in ANY dreamcontext
@@ -224,7 +227,7 @@ export class TelegramHub implements TelegramHubApi {
     if (this.started) return;
     this.started = true;
     this.unsubs.push(
-      onChatAssistantText((sid, text) => { void this.onAssistantText(sid, text).catch(() => { /* best-effort */ }); }),
+      onChatAssistantText((sid, text) => this.queueAssistantText(sid, text)),
       onChatChange((c) => this.onChatChange(c.entry, c.from)),
       onChatUserSent((sid, _text, source) => this.noteUserSent(sid, source)),
       onOwnerAtMac((at) => this.backAtMac(at)),
@@ -853,11 +856,14 @@ export class TelegramHub implements TelegramHubApi {
     if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     if (entry.status === 'idle' && from !== 'idle') {
       this.turnInputs.delete(entry.sessionId);
+      // Every text of this turn was emitted before its `result`: the ones still sending are here.
+      const sending = this.textChains.get(entry.sessionId);
       for (const t of [...this.turns.values()]) {
         if (t.sessionId !== entry.sessionId) continue;
         this.endTurn(t.ref);
         if (!ab) continue;
         void (async () => {
+          await sending;
           await this.refreshStatus({ ...t, lastEditAt: 0 }).catch(() => {});
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
@@ -927,34 +933,68 @@ export class TelegramHub implements TelegramHubApi {
     return !!p && p.via === 'telegram' && this.now() - p.at < TURN_ROUTABLE_MS;
   }
 
-  async onAssistantText(sessionId: string, text: string): Promise<void> {
+  private turnsOf(sessionId: string): TgTurn[] {
+    return [...this.turns.values()].filter((t) => t.sessionId === sessionId);
+  }
+
+  /**
+   * One send for this Super chat, after the ones before it (a text, a card, a text: in that order).
+   * The running turn is read NOW, as the Super writes; it counts as having spoken only when `send`
+   * says a message LANDED on Telegram (a failed send leaves the turn silent, so its end says so).
+   * The turn's end waits on this chain before it judges.
+   */
+  queueSend(sessionId: string, send: (turns: TgTurn[]) => Promise<boolean>): void {
+    const turns = this.turnsOf(sessionId);
+    const next = (this.textChains.get(sessionId) ?? Promise.resolve())
+      .then(() => send(turns))
+      .then((landed) => { if (landed) for (const t of turns) t.answered = true; })
+      .catch(() => { /* best-effort: nothing landed, the turn stays silent */ });
+    this.textChains.set(sessionId, next);
+    void next.then(() => { if (this.textChains.get(sessionId) === next) this.textChains.delete(sessionId); });
+  }
+
+  /** One Super text: its turn's inputs read now, as it is written, never after a send. */
+  private queueAssistantText(sessionId: string, text: string): void {
+    const inputs = this.turnInputs.get(sessionId);
+    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs }));
+  }
+
+  /** True when a message of this text landed on Telegram. */
+  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined }): Promise<boolean> {
+    const turns = at?.turns ?? this.turnsOf(sessionId);
+    const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
-    if (!ab || ab.disabled || ab.target !== 'super') return;
+    if (!ab || ab.disabled || ab.target !== 'super') return false;
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
-      if (all.trim()) { await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode()); await this.answerExtras?.(ab, all, sessionId); }
-      return;
+      if (!all.trim()) return false;
+      await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode());
+      await this.answerExtras?.(ab, all, sessionId).catch(() => {});
+      return true;
     }
     const sections = splitReplySections(text);
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
     // under a Mac ref, an owed answer); each section once, through this one sender.
     const wide = this.onTelegram(ab);
     let sent = false;
+    let tried = false;
     for (const s of sections) {
       const hit = s.refs.find((r) => this.routable(ab!, r));
       if ((!hit && !wide) || !s.text.trim()) continue;
-      await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode());
-      await this.answerExtras?.(ab, s.text, sessionId);
-      const t = hit ? this.turns.get(hit) : undefined;
-      if (t) t.answered = true;
+      tried = true;
+      // One section that does not land does not stop the next.
+      try { await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode()); } catch { continue; }
       sent = true;
+      await this.answerExtras?.(ab, s.text, sessionId).catch(() => {});
     }
-    if (sent || sections.some((s) => s.refs.length)) return;
+    // A section tried (landed or not) is this text's one way out: never sent again as a whole.
+    if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
-    const inputs = this.turnInputs.get(sessionId);
-    const tgTurn = [...this.turns.values()].some((t) => t.sessionId === sessionId);
-    if (tgTurn && !inputs?.mac && text.trim()) { await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode()); await this.answerExtras?.(ab, text, sessionId); for (const t of this.turns.values()) if (t.sessionId === sessionId) t.answered = true; }
+    if (!turns.length || inputs?.mac || !text.trim()) return false;
+    await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode());
+    await this.answerExtras?.(ab, text, sessionId).catch(() => {});
+    return true;
   }
 
   // ── Buttons (plan "Button integrity") ──
