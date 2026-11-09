@@ -61,7 +61,7 @@ beforeEach(async () => {
   root = join(project, '_dream_context');
   mkdirSync(join(root, 'agents'), { recursive: true });
   mkdirSync(join(root, 'automations'), { recursive: true });
-  writeFileSync(join(root, 'agents', 'ua-manager.md'), '---\nname: UA Manager\n---\nYou run UA.\n');
+  writeFileSync(join(root, 'agents', 'ua-manager.md'), '---\ntitle: UA Manager · Kampanya yöneticisi\n---\n## Prompt\n\nYou run UA.\n');
   tg = new FakeTelegram(); tg.addBot(MANAGER, 'acme_mgr_bot'); tg.addBot(MEMBER, 'ua_bot');
   tg.addBot('555:NEWTOKENNEWTOKENNEWTOKENNEWTOKEN12', 'ua_manager_x1y2_bot');
   hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
@@ -114,7 +114,8 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     const first = (await call('POST', '/api/telegram/ua-manager/creation/request', PAGE)).json.creationId;
     expect((await call('POST', `/api/telegram-creation/${first}/start`, PAGE)).status).toBe(403);
     const a = (await call('POST', `/api/telegram-creation/${first}/start`, KEYED)).json;
-    expect(a.link).toMatch(/^https:\/\/t\.me\/newbot\/acme_mgr_bot\/ua_manager_[0-9a-z]{4}_bot\?name=ua-manager$/);
+    // The link carries the member's title as the app shows it, not its slug.
+    expect(a.link).toMatch(/^https:\/\/t\.me\/newbot\/acme_mgr_bot\/ua_manager_[0-9a-z]{4}_bot\?name=UA\+Manager\+%C2%B7\+Kampanya\+y%C3%B6neticisi$/);
     // A second start voids the first link.
     const second = (await call('POST', '/api/telegram/ua-manager/creation/request', PAGE)).json.creationId;
     await call('POST', `/api/telegram-creation/${second}/start`, KEYED);
@@ -131,7 +132,13 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect(tg.sent('getManagedBotToken')).toHaveLength(2);
     const b = readBinding(scopeOfContextRoot(root), 'ua-manager', home);
     expect(b.ok && b.binding.managed && b.binding.managerBotId === 900001 && b.binding.chatId === OWNER).toBe(true);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Ben ua-manager'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Ben UA Manager · Kampanya yöneticisi'))).toBe(true));
+    // The adopted bot takes the member's name and role line with ITS OWN token; no photo is set (none here).
+    const NEW = '555:NEWTOKENNEWTOKENNEWTOKENNEWTOKEN12';
+    await vi.waitFor(() => expect(tg.sent('setMyDescription').some((c) => c.token === NEW)).toBe(true));
+    expect(tg.sent('setMyName').filter((c) => c.token === NEW).map((c) => c.params.name)).toEqual(['UA Manager · Kampanya yöneticisi']);
+    expect(tg.sent('setMyShortDescription').find((c) => c.token === NEW)?.params.short_description).toBe('Kampanya yöneticisi · acme projesinin AI Team üyesi.');
+    expect(tg.sent('setMyProfilePhoto')).toHaveLength(0);
     // Kaldır: the token is revoked through the manager BEFORE the folder goes.
     expect((await call('DELETE', '/api/telegram/ua-manager', PAGE)).status).toBe(200);
     expect(tg.sent('replaceManagedBotToken')).toHaveLength(1);

@@ -58,6 +58,7 @@ import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } fr
 import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
+import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -134,6 +135,8 @@ export interface HubDeps {
   banner?: (title: string, body: string) => void;
   /** Binding a bot makes sure the launchd dispatcher exists (lane B). */
   ensureDispatcher?: () => void;
+  /** A non-JPG member photo → JPG for `setMyProfilePhoto` (default: macOS `sips`; tests inject). */
+  toJpeg?: JpegConverter;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -243,6 +246,31 @@ export class TelegramHub implements TelegramHubApi {
       this.activate(row.scope, row.target, row.read.binding);
     }
     this.manager?.start();
+    // Bots already bound get their member's name and photo once, only where it differs.
+    void (async () => { for (const ab of [...this.active.values()]) await this.syncIdentity(ab); })();
+  }
+
+  /** Last identity issue per binding (name or photo not set), for the status row. */
+  private identityIssues = new Map<BindingKey, IdentityIssue>();
+  private identityChains = new Map<BindingKey, Promise<void>>();
+
+  /** Sets the bot's name, short line and photo from its member (identity.ts). Never throws. */
+  syncIdentity(ab: ActiveBinding): Promise<void> {
+    const prev = this.identityChains.get(ab.key) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      if (this.active.get(ab.key) !== ab || ab.disabled) return;
+      const issue = await syncBotIdentity({
+        scope: ab.scope, target: ab.target, botId: ab.binding.botId, transport: ab.transport, contextRoot: ab.contextRoot, projectName: ab.projectName,
+      }, this.home, this.deps.toJpeg).catch(() => undefined);
+      if (issue) this.identityIssues.set(ab.key, issue); else this.identityIssues.delete(ab.key);
+    });
+    this.identityChains.set(ab.key, next);
+    return next;
+  }
+
+  /** A member's title or photo changed: every bot bound to it takes the new one. */
+  refreshIdentity(target: TelegramTarget): void {
+    for (const ab of this.active.values()) if (ab.target === target) void this.syncIdentity(ab);
   }
 
   /** The device-level manager (manager.ts `wireManager`). */
@@ -348,6 +376,7 @@ export class TelegramHub implements TelegramHubApi {
       rows.push({
         scope: ab.scope, target: ab.target, state: ab.disabled ? 'disabled' : 'active', botUsername: ab.binding.botUsername,
         ...(ab.binding.managed ? { managed: true } : {}), ...(ab.disabled ? { disabledReason: ab.disabled } : {}),
+        ...(this.identityIssues.has(ab.key) ? { identityIssue: this.identityIssues.get(ab.key) } : {}),
       });
     }
     for (const p of this.pairings.values()) {
@@ -482,7 +511,7 @@ export class TelegramHub implements TelegramHubApi {
     const binding = writeBinding(live.scope, live.target, fields, this.home);
     const ab = this.activate(live.scope, live.target, binding);
     try { this.deps.ensureDispatcher?.(); } catch { /* the bind sheet names it; never fails the bind */ }
-    void this.afterBound(ab, live.target === 'super' ? `Super · ${live.projectName}` : live.target);
+    void this.afterBound(ab, displayNameFor(ab, this.home));
     return 'ok';
   }
 
@@ -495,6 +524,7 @@ export class TelegramHub implements TelegramHubApi {
   async afterBound(ab: ActiveBinding, who: string): Promise<void> {
     if (ab.target === 'super') await ab.transport.setMyCommands(TELEGRAM_COMMANDS).catch(() => {});
     await this.notice(ab, 'info', LINES.bound(who));
+    await this.syncIdentity(ab);
   }
 
   // ── Losing a binding (C3, D3) ──
