@@ -21,7 +21,7 @@ import { TelegramError, type TelegramTransport } from './transport.js';
 
 export const TELEGRAM_DROP_PREFIX = 'tg-';
 export const TELEGRAM_DROPS_TOTAL_CAP = 200 * 1024 * 1024;
-export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük; Telegram botların en fazla 20 MB indirmesine izin veriyor. Daha küçük bir dosya ya da link gönder.";
+export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük, Telegram botlara bundan fazlasını indirtmiyor; Mac'ten gönder ya da küçült.";
 export const TIMEOUT_LINE = "Telegram'dan indirme zaman aşımına uğradı; bir kez daha denedim, yine olmadı. Biraz sonra tekrar gönder.";
 export const NO_FILE_LINE = 'Telegram bu dosyayı vermedi. Tekrar göndermeyi dene.';
 const failedLine = (code: number): string => `Dosyayı Telegram'dan indiremedim (kod ${code}). Tekrar gönder.`;
@@ -144,7 +144,7 @@ export async function saveInbound(
     ensureTmpGitignored(contextRoot);
     pruneDrops(dir);
   } catch {
-    return { ok: false, reason: 'write_failed', line: 'Dosyayı Mac\'e yazamadım.' };
+    return { ok: false, reason: 'write_failed', line: "Dosyayı Mac'e yazamadım; tekrar gönder." };
   }
   if (telegramDropBytes(dir) + data.length > TELEGRAM_DROPS_TOTAL_CAP) {
     return { ok: false, reason: 'cap', line: "Mac'teki Telegram dosyaları 200 MB sınırında; eskiler silinince tekrar gönder." };
@@ -154,7 +154,7 @@ export async function saveInbound(
     const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeSync(fd, data); } finally { closeSync(fd); }
   } catch {
-    return { ok: false, reason: 'write_failed', line: 'Dosyayı Mac\'e yazamadım.' };
+    return { ok: false, reason: 'write_failed', line: "Dosyayı Mac'e yazamadım; tekrar gönder." };
   }
   return { ok: true, path, media };
 }

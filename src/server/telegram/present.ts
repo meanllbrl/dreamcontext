@@ -24,6 +24,7 @@ import type { SuperContainer, SuperState } from '../../lib/super/types.js';
 import { escapeHtml, splitReplySections } from '../../lib/telegram/format.js';
 import { cardOut, type CardContext, type CardOut } from './cards.js';
 import { caption, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { noticeHtml } from '../../lib/telegram/system-lines.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
 export const PRESENT_SETTLE_MS = 1_000;
@@ -51,7 +52,7 @@ interface Pending { key: string; verbs: StageVerbEvent[]; telegram: boolean }
 export type PhoneLink = { origin: string } | { why: 'telegram-only' | 'other' | 'starting' } | 'off';
 export const PHONE_LINES = {
   starting: 'Telefon linki hazırlanıyor; adres gelince buraya yazacağım.',
-  offer: 'Telefonda açmak için önce telefon linki gerekir.',
+  offer: 'Telefonda açmak için önce telefon linkini açmak gerekir.',
 } as const;
 
 /** Is a secret card pending in this chat (no picture then, L3)? */
@@ -92,17 +93,17 @@ export async function sendPhoneButton(hub: TelegramHub, ab: ActiveBinding, sessi
   // A button only where tapping it can do what it says (a link already up, or one a tap starts).
   // Never an unasked instruction to change hands-free mode: with the link unavailable the
   // fallback line ("<title> (Mac'te)") already says where the card is.
-  if (link !== 'off' && 'why' in link) { if (link.why === 'starting') await hub.reply(ab, PHONE_LINES.starting); return; }
+  if (link !== 'off' && 'why' in link) { if (link.why === 'starting') await hub.notice(ab, 'phone', PHONE_LINES.starting); return; }
   const url = link !== 'off' ? phoneChatUrl(link.origin, ab, sessionId) : null;
   if (link !== 'off' && !url) return;
   if (url) {
     const host = new URL(url).host;
-    await hub.send(ab, escapeHtml(`🔐 Mac'in kendi bağlantısı: ${host}\nŞifreni yalnız bu adrese yaz.`), {
+    await hub.send(ab, noticeHtml('access', `Telefon linki ${host}; şifreni yalnız bu adrese yaz.`), {
       reply_markup: { inline_keyboard: [[{ text: 'Telefonda aç', url }]] },
     }).catch(() => {});
     return;
   }
-  await hub.sendButtons(ab, escapeHtml(PHONE_LINES.offer), [['Telefon linkini aç']],
+  await hub.sendButtons(ab, noticeHtml('phone', PHONE_LINES.offer), [['Telefon linkini aç']],
     { kind: 'confirm', singleUse: true }, { action: 'phone-link' }).catch(() => {});
 }
 

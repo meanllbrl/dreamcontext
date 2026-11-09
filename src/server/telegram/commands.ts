@@ -36,13 +36,13 @@ const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.is
 export const CMD_LINES = {
   stopped: 'Durduruldu.',
   nothingRunning: 'Şu an çalışan bir iş yok.',
-  noWindow: "Super Mac'te açık değil.",
+  noWindow: "Super Mac'te açık değil; durduracak bir şey yok.",
   emptyAgenda: 'Gündem boş.',
-  writeNext: (line: string) => `Yaz: sonraki mesajın bu satır hakkında olacak (5 dk).\n«${line}»`,
-  superOpened: "Super açıldı. Açık sekmeler devredilmedi.",
+  writeNext: (line: string) => `Yaz: sonraki mesajın bu satır hakkında olacak (5 dk): «${line}»`,
+  superOpened: "Super açıldı; Mac'te açık olan sekmeler buraya devredilmedi.",
   tabCap: "Mac'te sekme sınırı dolu.",
-  reversing: "Mac'te geçiş sürüyor, birazdan tekrar dene.",
-  cannotOpen: "Super'i Mac'te açamadım. Mac'te uygulamaya bak.",
+  reversing: "Mac'te geçiş sürüyor; birazdan tekrar dene.",
+  cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar dene.",
 } as const;
 
 
@@ -110,31 +110,31 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
 
   async function stop(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
-    if (!s?.enabled || !s.session) { await hub.reply(ab, LINES.superOff); return; }
+    if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
     const chat = getChat(s.session);
-    if (!chat || chat.status === 'idle' || chat.status === 'gone') { await hub.reply(ab, CMD_LINES.nothingRunning); return; }
+    if (!chat || chat.status === 'idle' || chat.status === 'gone') { await hub.notice(ab, 'info', CMD_LINES.nothingRunning); return; }
     const token = superTokenOfSession(s.session);
     if (token) {
       const r = await sendHubCommand(token, 'interrupt', {}).catch(() => ({ ok: false as const, error: 'failed' }));
-      if (r.ok) { await hub.reply(ab, CMD_LINES.stopped); return; }
+      if (r.ok) { await hub.notice(ab, 'info', CMD_LINES.stopped); return; }
     }
     const inj = chatInjector(s.session);
-    if (!inj) { await hub.reply(ab, CMD_LINES.noWindow); return; }
+    if (!inj) { await hub.notice(ab, 'info', CMD_LINES.noWindow); return; }
     inj.interrupt();
-    await hub.reply(ab, CMD_LINES.stopped);
+    await hub.notice(ab, 'info', CMD_LINES.stopped);
   }
 
   async function status(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
-    if (!s?.enabled || !s.session) { await hub.reply(ab, LINES.superOff); return; }
+    if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
     await hub.send(ab, statusText(s, ab.contextRoot!));
   }
 
   async function agenda(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
-    if (!s?.enabled || !s.session) { await hub.reply(ab, LINES.superOff); return; }
+    if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
     const pad = (s.pad ?? []).filter((p) => p.text.trim());
-    if (!pad.length) { await hub.reply(ab, CMD_LINES.emptyAgenda); return; }
+    if (!pad.length) { await hub.notice(ab, 'info', CMD_LINES.emptyAgenda); return; }
     const sections: [string, string][] = [['now', 'Şimdi'], ['waiting', 'Seni bekliyor'], ['done', 'Bitti']];
     const lines: string[] = [];
     const open = pad.filter((p) => p.section !== 'done').slice(0, 10);
@@ -161,7 +161,7 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     const block = agendaNoteBlock(row.id, row.section, row.text);
     if (!block) return LINES.stale;
     capture.set(ab.key, { kind: 'about', block, at: now() });
-    await hub.reply(ab, CMD_LINES.writeNext(cleanTitle(row.text, 120)));
+    await hub.notice(ab, 'wait', CMD_LINES.writeNext(cleanTitle(row.text, 120)));
     return '✎ Yaz';
   }
 
@@ -178,14 +178,14 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
       const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
       while (!token && now() < until) { await sleep(500); token = vaultToken(ab.projectName); }
     }
-    if (!token) { await hub.reply(ab, CMD_LINES.cannotOpen); return '✗'; }
+    if (!token) { await hub.notice(ab, 'warn', CMD_LINES.cannotOpen, true); return '✗'; }
     const r = await sendHubCommand(token, 'super_handover', { adopt: [] }, { timeoutMs: 30_000 }).catch(() => ({ ok: false as const, error: 'failed' }));
     if (!r.ok) {
       const why = String((r as { reason?: unknown }).reason ?? r.error);
-      await hub.reply(ab, why === 'tab_cap' ? CMD_LINES.tabCap : why === 'reversing' ? CMD_LINES.reversing : CMD_LINES.cannotOpen);
+      await hub.notice(ab, 'warn', why === 'tab_cap' ? CMD_LINES.tabCap : why === 'reversing' ? CMD_LINES.reversing : CMD_LINES.cannotOpen, true);
       return '✗';
     }
-    await hub.reply(ab, CMD_LINES.superOpened);
+    await hub.notice(ab, 'info', CMD_LINES.superOpened);
     return "✓ Super'i aç";
   }
 

@@ -31,3 +31,12 @@ export function statusLineHtml(state: StatusState, name: string, note?: string):
 
 /** Status rows go out silently: only the real reply buzzes. */
 export const SILENT = { disable_notification: true } as const;
+
+/** A system notice: a meaning emoji, then one plain sentence in italic (what happened and, if any,
+ *  what he can do). The one shape every fixed warning/info line of every bot goes through. */
+export type NoticeKind = 'info' | 'warn' | 'file' | 'phone' | 'access' | 'wait';
+export const NOTICE_EMOJI: Record<NoticeKind, string> = { info: 'ℹ️', warn: '⚠️', file: '📎', phone: '📱', access: '🔒', wait: '⏳' };
+
+export function noticeHtml(kind: NoticeKind, sentence: string): string {
+  return `${NOTICE_EMOJI[kind]} <i>${escapeHtml(sentence.replace(/\s+/g, ' ').trim())}</i>`;
+}

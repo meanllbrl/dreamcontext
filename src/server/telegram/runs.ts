@@ -46,13 +46,13 @@ export const RUN_LINES = {
   stopHint: 'Durdurmak için:',
   stopped: '✓ Ctrl-C gönderildi',
   exited: (code: number | null) => (code === null ? 'Bitti (çıkış kodu yok).' : `Bitti · exit ${code}`),
-  refused: "Bu yanıtı komuta yazamam (şifre ya da gizli bir şey istiyor olabilir). Telefon linkinden gir.",
+  refused: "Bu yanıtı komuta yazamam (şifre ya da gizli bir şey istiyor olabilir); telefon linkinden gir.",
   changedOutput: 'Çıktı değişti, tekrar bak.',
   secretPrompt: 'Şifre istiyor: telefon linkinden gir.',
-  noPhone: "Telefon linki kapalı. /handsfree yazıp 'Telegram + telefon linki'ni seç; sonra bu karttaki düğme çalışır.",
+  noPhone: "Telefon linki kapalı; /handsfree yazıp 'Telegram + telefon linki'ni seçersen bu kartın düğmesi çalışır.",
   browser: "Mac'te tarayıcı açıldıysa giriş oradan yapılmalı.",
   secret: (title: string, file: string) => `🔑 Şifre gerekiyor: ${title} → ${file}`,
-  secretHere: 'Şifreyi buraya yazma; Şifreyi gir düğmesini kullan.',
+  secretHere: 'Şifreyi buraya yazma; kartın Şifreyi gir düğmesini kullan.',
 } as const;
 
 /** Characters a shown command may not hold (H3, I5): C0/C1, bidi and zero-width, and their kin. */
@@ -116,7 +116,8 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
   const sendPhoneLink = async (ab: ActiveBinding, rec: CardRecordEntry, line: string, label = 'Telefonda aç'): Promise<void> => {
     const extra = phoneButton(rec, label);
     if (extra) await hub.send(ab, escapeHtml(line), extra).catch(() => {});
-    else await hub.reply(ab, `${line}\n${RUN_LINES.noPhone}`);
+    // Loud: the agent waits on him here. The line's own leading emoji is dropped (the notice adds one).
+    else await hub.notice(ab, 'phone', `${line.replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')} ${RUN_LINES.noPhone}`, true);
   };
 
   const announceRun = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
@@ -187,7 +188,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       }
       if (!o.browserNoted && /https?:\/\/(?:localhost|127\.0\.0\.1)[:/]/.test(tail)) {
         o.browserNoted = true;
-        const t = setTimeout(() => { if (!run.ended()) void hub.reply(ab, RUN_LINES.browser); }, 5000);
+        const t = setTimeout(() => { if (!run.ended()) void hub.notice(ab, 'info', RUN_LINES.browser, true); }, 5000);
         t.unref?.();
       }
     }));
@@ -234,16 +235,16 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       const r = await relayLine(o.run, msg.text, o.editedSeq);
       if (r.ok) return true;
       const rec = getCard(o.run.sessionId, o.run.cardRef);
-      if (r.why === 'output_changed') { await editOutput(o); await hub.reply(ab, RUN_LINES.changedOutput); return true; }
+      if (r.why === 'output_changed') { await editOutput(o); await hub.notice(ab, 'info', RUN_LINES.changedOutput); return true; }
       if (rec) await sendPhoneLink(ab, rec, RUN_LINES.refused, 'Telefonda gir');
-      else await hub.reply(ab, RUN_LINES.refused);
+      else await hub.notice(ab, 'access', RUN_LINES.refused, true);
       return true;
     }
     // A plain message while a secret card waits: it goes on as a normal turn, never into a
     // file, and the owner is reminded where the value goes (G2).
     if (ab.target === 'super' && typeof msg.text === 'string' && !msg.text.startsWith('/')) {
       for (const [sid, key] of secretSessions) {
-        if (key === ab.key && openCards(sid, 'secret').length) { await hub.reply(ab, RUN_LINES.secretHere); break; }
+        if (key === ab.key && openCards(sid, 'secret').length) { await hub.notice(ab, 'access', RUN_LINES.secretHere, true); break; }
       }
     }
     return false;

@@ -101,7 +101,7 @@ describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
     await vi.waitFor(() => expect(buttonMsg('Uzaktayken')).toBeTruthy());
     h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
     await new Promise((r) => setTimeout(r, 150));
-    expect(tg.texts().some((t) => t.startsWith('Bu tur sana yazı göndermeden bitti'))).toBe(false);
+    expect(tg.texts().some((t) => t.includes('Bu tur cevap yazmadan bitti'))).toBe(false);
   });
 
   it('an ask card whose send fails is not the turn speaking: the silent line still comes', async () => {
@@ -117,7 +117,7 @@ describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
     tg.failOnce.set('sendMessage', 400);
     announceOwnerHead(() => vault, await readSuperState(root), item as never);
     h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
-    await vi.waitFor(() => expect(tg.delivered.some((t) => t.startsWith('Bu tur sana yazı göndermeden bitti'))).toBe(true), { timeout: 3000 });
+    await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('Bu tur cevap yazmadan bitti'))).toBe(true), { timeout: 3000 });
     expect(tg.delivered.some((t) => t.includes('Ne düşünüyorsun?'))).toBe(false);
   });
 });

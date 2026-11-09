@@ -36,6 +36,9 @@ export interface HandsfreeSessionLike {
   status(): { url: string | null };
 }
 
+/** Ends the owner caused himself: no line. */
+const OWN_ENDS = new Set(['mac', 'telegram', 'back']);
+
 const REASONS: Record<string, string> = {
   mac: "Mac'ten kapatıldı",
   http: 'istekle kapatıldı',
@@ -45,22 +48,20 @@ const REASONS: Record<string, string> = {
   shutdown: 'uygulama kapandı',
   crash: 'uygulama beklenmedik şekilde kapandı',
   failed: 'açılamadı',
-  back: "Mac'e döndün",
 };
 
 export const HF_LINES = {
   offer: 'Hands-free nasıl açılsın?',
-  macOn: "Hands-free zaten Mac'ten açık; Telegram'a akış için önce Mac'ten kapat.",
-  notSetup: "Önce Mac'te bir kez hands-free kurulumu gerekli.",
-  telegramOn: "Hands-free açık (yalnız Telegram). Mac kapağı kapalıyken de çalışır; bütün cevaplar buraya gelir.",
-  linkOn: (origin: string) => `🔐 Mac'in kendi bağlantısı: ${origin}\nŞifreni yalnız bu adrese yaz. Hands-free açık; bütün cevaplar buraya da gelir.`,
-  newLink: (origin: string) => `🔐 Mac'in kendi bağlantısı değişti: ${origin}\nŞifreni yalnız bu adrese yaz.`,
+  macOn: "Hands-free Mac'ten açık, cevaplar Telegram'a gelmiyor; Telegram'a almak için önce Mac'te kapatıp /handsfree yaz.",
+  notSetup: "Hands-free için önce Mac'te bir kez kurulum gerekli; Mac'te hands-free ayarlarını aç.",
+  telegramOn: "Hands-free açık: Mac kapağı kapalıyken de çalışır, bütün cevaplar buraya gelir.",
+  linkOn: (origin: string) => `Hands-free açık, cevaplar buraya da gelir. Telefon linki: ${origin} (şifreni yalnız bu adrese yaz).`,
+  newLink: (origin: string) => `Telefon linki değişti: ${origin} (şifreni yalnız bu adrese yaz).`,
   notOn: "Hands-free'yi buradan açmadın; kapatmak için Mac'e bak.",
-  ended: (why: string, keyed: boolean) => `Hands-free kapandı: ${why}${keyed ? '' : ' (anahtarsız istek)'}. Mac uyuyabilir.`,
-  battery: 'Pil düşük, Mac uyuyabilir.',
+  ended: (why: string, keyed: boolean) => `Hands-free kapandı: ${why}${keyed ? '' : ' (anahtarsız istek)'}; Mac artık uyuyabilir.`,
+  battery: 'Pil düşük; Mac uyuyabilir, işler durabilir.',
   heat: 'Mac çok ısındı; işler yavaşlayabilir.',
-  noGrant: "Mac'i uyanık tutamıyorum: izin Mac'te verilmeli",
-  back: "Mac'e döndün, Mac normal uykusuna döndü",
+  noGrant: "Mac'i uyanık tutamıyorum; izni Mac'te vermen gerekiyor.",
 } as const;
 
 export interface HandsfreeAdapterOpts {
@@ -106,12 +107,11 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
           if (backWhileArming) { backWhileArming = false; await endAuto(); }
         })
         .catch(async (err) => {
-          // He came back while it was starting and the hub left this bot's line to us: say it.
-          if (backWhileArming) { backWhileArming = false; await hub.reply(ab, LINES.back).catch(() => {}); }
+          backWhileArming = false;
           const code = (err as { code?: string }).code;
           if ((code === 'mac_not_setup' || code === 'mac_sudo_missing') && !noGrantTold.has(key)) {
             noGrantTold.add(key);
-            await hub.reply(ab, HF_LINES.noGrant).catch(() => {});
+            await hub.notice(ab, 'warn', HF_LINES.noGrant, true);
           }
         })
         .finally(() => { arming = false; });
@@ -134,10 +134,10 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
       const s = session();
       if (/\bkapat\b/i.test(text)) {
         if (s.isOn() && matches(s.startedVia, ab.scope, ab.target)) await s.stop({ reason: 'telegram', keyed: true });
-        else await hub.reply(ab, HF_LINES.notOn);
+        else await hub.notice(ab, 'info', HF_LINES.notOn);
         return true;
       }
-      if (s.isOn() && !s.startedVia) { await hub.reply(ab, HF_LINES.macOn); return true; }
+      if (s.isOn() && !s.startedVia) { await hub.notice(ab, 'phone', HF_LINES.macOn); return true; }
       await hub.sendButtons(ab, HF_LINES.offer, [['Yalnız Telegram'], ['Telegram + telefon linki']], { kind: 'handsfree', singleUse: true });
       return true;
     },
@@ -151,19 +151,19 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
       try {
         if (idx === 0) {
           await s.startPowerOnly(via);
-          await hub.reply(ab, HF_LINES.telegramOn);
+          await hub.notice(ab, 'info', HF_LINES.telegramOn);
           return '✓ Yalnız Telegram';
         }
         if (!ab.projectName) return LINES.stale;
         const st = await s.start({ vaults: [ab.projectName], startedVia: via });
         const origin = st.url ? new URL(st.url).origin : null;
-        if (origin) await hub.reply(ab, HF_LINES.linkOn(origin));
+        if (origin) await hub.notice(ab, 'phone', HF_LINES.linkOn(origin));
         return '✓ Telegram + telefon linki';
       } catch (err) {
         const code = (err as { code?: string }).code;
-        if (code === 'mac_not_setup' || code === 'mac_sudo_missing') { await hub.reply(ab, HF_LINES.notSetup); return '✗'; }
-        if (code === 'mac_already_on') { await hub.reply(ab, HF_LINES.macOn); return '✗'; }
-        await hub.reply(ab, "Hands-free açılamadı; Mac'e bak.");
+        if (code === 'mac_not_setup' || code === 'mac_sudo_missing') { await hub.notice(ab, 'warn', HF_LINES.notSetup, true); return '✗'; }
+        if (code === 'mac_already_on') { await hub.notice(ab, 'phone', HF_LINES.macOn); return '✗'; }
+        await hub.notice(ab, 'warn', "Hands-free açılamadı; Mac'e bakıp tekrar dene.", true);
         return '✗';
       }
     },
@@ -182,11 +182,13 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
         const ab = hub.active.get(keyOf(e.startedVia.scope, e.startedVia.target));
         if (!ab) return;
         if (e.type === 'ended') {
-          void hub.reply(ab, e.reason === 'back' ? HF_LINES.back : HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed || e.reason === 'mac'));
+          // Only an end he did not cause is news (the link dropped, the app quit, it failed to
+          // open); closing it himself, or coming back to the Mac, gets no note.
+          if (!OWN_ENDS.has(e.reason)) void hub.notice(ab, 'warn', HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed), true);
         }
-        else if (e.type === 'batteryFloor') void hub.reply(ab, HF_LINES.battery);
-        else if (e.type === 'heat') void hub.reply(ab, HF_LINES.heat);
-        else if (e.type === 'url') void hub.reply(ab, HF_LINES.newLink(e.origin));
+        else if (e.type === 'batteryFloor') void hub.notice(ab, 'warn', HF_LINES.battery, true);
+        else if (e.type === 'heat') void hub.notice(ab, 'warn', HF_LINES.heat, true);
+        else if (e.type === 'url') void hub.notice(ab, 'phone', HF_LINES.newLink(e.origin), true);
       });
     },
   };

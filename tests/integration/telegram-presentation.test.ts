@@ -129,7 +129,7 @@ describe('turn end sends no receipt', () => {
     tg.push(TOKEN, textUpdate(OWNER, 'selam'));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('yazı göndermeden bitti'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('cevap yazmadan bitti'))).toBe(true));
     expect(tg.texts().some((t) => t.includes('Bitti ·'))).toBe(false);
   });
 });
@@ -166,7 +166,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     endTurn(h);
     await vi.waitFor(() => expect(buttonMsg('Telefonda aç')).toBeTruthy());
     const msg = buttonMsg('Telefonda aç');
-    expect(String(msg.params.text)).toMatch(/^🔐 Mac'in kendi bağlantısı: quiet-fox\.trycloudflare\.com/);
+    expect(String(msg.params.text)).toMatch(/^🔒 <i>Telefon linki quiet-fox\.trycloudflare\.com; şifreni yalnız bu adrese yaz\.<\/i>$/);
     const url = (msg.params.reply_markup as { inline_keyboard: { url: string }[][] }).inline_keyboard[0][0].url;
     expect(url.startsWith('https://quiet-fox.trycloudflare.com/?vault=')).toBe(true);
     expect(JSON.stringify(tg.calls)).not.toContain('SECRETLOGIN');
@@ -308,7 +308,7 @@ describe('answers: blocks, late results (M1, M5, N7, S1, T3)', () => {
     expect(tg.texts().join('\n')).not.toContain('dream-html');
     const photos = tg.calls.filter((c) => c.method === 'sendPhoto').length;
     assistant(h, `<!-- re:${ref} -->\n\`\`\`dream-html\n<div class="dc-card"><h2>Anahtar</h2><p>${SECRET}</p></div>\n\`\`\``);
-    await vi.waitFor(() => expect(tg.texts()).toContain("Bu kart Mac'te: Anahtar"));
+    await vi.waitFor(() => expect(tg.texts()).toContain("ℹ️ <i>Bu kart Telegram'a gitmedi, Mac'te: Anahtar</i>"));
     expect(tg.calls.filter((c) => c.method === 'sendPhoto').length).toBe(photos);
   });
 
@@ -385,7 +385,7 @@ describe('a rich ask outlives an expired note capture (capture.ts)', () => {
       tg.push(TOKEN, { callback_query: { id: `cb${Math.random()}`, data: btn.callback_data, from: { id: OWNER }, message: { message_id: q2.result!.message_id, chat: { id: OWNER, type: 'private' }, text: q2Text, ...(edit ? { edit_date: 9 } : {}) } } });
     };
     press('Not ekle');
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Notunu yaz'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('⏳ <i>Notunu yaz'))).toBe(true));
     // Small steps: a jump past the poller's wake gap reads as the Mac waking from sleep (drained).
     for (let i = 0; i < 12; i++) { clock += 30_000; await drained(15); }
     tg.push(TOKEN, textUpdate(OWNER, 'başka bir şey: raporu at'));
@@ -415,7 +415,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     tg.push(TOKEN, textUpdate(OWNER, '/dur'));
     await vi.waitFor(() => expect(hubFrames.some((f) => f.verb === 'interrupt')).toBe(true));
-    await vi.waitFor(() => expect(tg.texts()).toContain('Durduruldu.'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('ℹ️ <i>Durduruldu.</i>'));
     expect(reg.chatInjector(SID)!.interrupt).not.toHaveBeenCalled();
     endTurn(h);
     await writeState({ children: { c1: { sessionId: 'c1', brief: 'Paywall testi', row: 'working', startedAt: 1, adopted: false } } });
@@ -432,7 +432,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     await vi.waitFor(async () => { resetSuperIndex(); expect((await readSuperState(root)).pad?.find((p) => p.id === 'n1')?.section).toBe('done'); });
     expect(sent).toHaveLength(0);
     tap(buttonMsg('2 Yaz'), 3);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Yaz:'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('⏳ <i>Yaz:'))).toBe(true));
     tg.push(TOKEN, textUpdate(OWNER, 'bunu yarına al'));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     expect(parseTelegramPrefix(sent[0]).body).toBe('[About agenda line note=n2 section=now]\nline: "Raporu yaz"\n\nbunu yarına al');
@@ -448,6 +448,6 @@ describe('commands (M4, N5, N6, P4)', () => {
     tap(buttonMsg("Super'i aç"), 0);
     await vi.waitFor(() => expect(frames.some((f) => f.verb === 'super_handover')).toBe(true));
     expect(frames.find((f) => f.verb === 'super_handover')!.args).toEqual({ adopt: [] });
-    await vi.waitFor(() => expect(tg.texts()).toContain('Super açıldı. Açık sekmeler devredilmedi.'));
+    await vi.waitFor(() => expect(tg.texts()).toContain("ℹ️ <i>Super açıldı; Mac'te açık olan sekmeler buraya devredilmedi.</i>"));
   });
 });

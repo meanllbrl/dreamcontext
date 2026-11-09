@@ -109,7 +109,7 @@ describe('binding', () => {
     expect(readFileSync(file, 'utf-8')).toContain(TOKEN);
     expect(JSON.stringify(readdirAll(project))).not.toContain(TOKEN);
     expect(hub.status()).toEqual([expect.objectContaining({ target: 'super', state: 'active', botUsername: 'acme_super_bot' })]);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Bağlandı'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('ℹ️ <i>Bağlandı'))).toBe(true));
     expect(await hub.confirmPairing(start.pairingId, { botId: 123456, userId: OWNER })).toBe('gone');
   });
 
@@ -125,7 +125,7 @@ describe('the Super target', () => {
   it('Super off → "Bu projede Super kapalı", nothing injected', async () => {
     await superOn(false);
     tg.push(TOKEN, textUpdate(OWNER, 'merhaba'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('Bu projede Super kapalı.'));
+    await vi.waitFor(() => expect(tg.texts()).toContain("ℹ️ <i>Bu projede Super kapalı; Mac'te açınca yazabilirsin.</i>"));
   });
 
   it('a stranger gets nothing and is counted', async () => {
@@ -153,7 +153,7 @@ describe('the Super target', () => {
     assistant(h, `<!-- re:abcdef -->\nMac'e cevap`);
     assistant(h, 'Sadece Mac için.');
     await new Promise((r) => setTimeout(r, 50));
-    expect(tg.texts().slice(n)).toEqual(["Mac'e döndün; cevaplar artık Mac'te."]);
+    expect(tg.texts().slice(n)).toEqual([]); // no unprompted "back" note
   });
 
   describe('on Telegram (presence): every owner-facing section goes, whatever ref it opens with', () => {
@@ -199,7 +199,8 @@ describe('the Super target', () => {
       await vi.waitFor(() => expect(tg.texts()).toContain('Hâlâ telefondasın.'));
       h.userSent('Mac\'ten yazdım');
       noteOwnerAtMac();
-      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      await new Promise((r) => setTimeout(r, 60));
+      expect(tg.texts().some((t) => t.includes('döndün'))).toBe(false);
       const n = tg.texts().length;
       assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
       await quiet();
@@ -236,7 +237,8 @@ describe('the Super target', () => {
       const h2 = reg.registerChat({ sessionId: NEW, conversationId: null, vault: 'acme', mode: 'super' });
       h2.userSent('yeni oturumda Mac\'ten yazdım');
       noteOwnerAtMac();
-      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      await new Promise((r) => setTimeout(r, 60));
+      expect(tg.texts().some((t) => t.includes('döndün'))).toBe(false);
       const n = tg.texts().length;
       assistant(h2, 'Yeni oturumda Mac cevabı.');
       await quiet();
@@ -272,7 +274,8 @@ describe('the Super target', () => {
       const other = reg.registerChat({ sessionId: '22222222-2222-4333-8444-555555555555', conversationId: null, vault: 'beta' });
       other.userSent('başka projede yazdım');
       noteOwnerAtMac(); // what the chat route calls for his composer send in ANY chat (back-at-mac.ts)
-      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      await new Promise((r) => setTimeout(r, 60));
+      expect(tg.texts().some((t) => t.includes('döndün'))).toBe(false);
       const n = tg.texts().length;
       assistant(h, '<!-- re:abc123 -->\nArtık Mac.');
       other.userSent('bir daha');
@@ -284,7 +287,8 @@ describe('the Super target', () => {
     it('a member chat on the Mac (the AI Team routes call noteOwnerAtMac) ends it too', async () => {
       const { h } = await onTelegram();
       noteOwnerAtMac();
-      await vi.waitFor(() => expect(tg.texts()).toContain("Mac'e döndün; cevaplar artık Mac'te."));
+      await new Promise((r) => setTimeout(r, 60));
+      expect(tg.texts().some((t) => t.includes('döndün'))).toBe(false);
       const n = tg.texts().length;
       assistant(h, '<!-- re:abc123 -->\nÜye işi bitti.');
       await quiet();
@@ -339,7 +343,7 @@ describe('the Super target', () => {
 
   it('the window never opens → "Super\'i Mac\'te açamadım"', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'aç'));
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith("Super'i Mac'te açamadım"))).toBe(true), { timeout: 5000 });
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith("⚠️ <i>Super Mac'te açılamadı"))).toBe(true), { timeout: 5000 });
   });
 
   it('a permission prompt becomes buttons; a forged tap is refused; the real tap answers through hub_command', async () => {
@@ -401,7 +405,7 @@ describe('the Super target', () => {
 
   it('unbind sends the last message first, then removes the folder; an unkeyed one says so', async () => {
     await hub.unbind(scopeOfContextRoot(root), 'super', { keyed: false });
-    expect(tg.texts().at(-1)).toBe('Telegram bağlantısı Mac\'te kaldırıldı (anahtarsız istek).');
+    expect(tg.texts().at(-1)).toBe("ℹ️ <i>Telegram bağlantısı Mac'te kaldırıldı (anahtarsız istek).</i>");
     expect(existsSync(bindingDir(scopeOfContextRoot(root), 'super', home))).toBe(false);
     expect(hub.status()).toEqual([]);
   });
@@ -414,7 +418,7 @@ describe('the Super target', () => {
     await hub.stop();
     hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
     await hub.start();
-    await vi.waitFor(() => expect(tg.texts()).toEqual(expect.arrayContaining(["Mesajın Mac'te yazılamadı, tekrar gönder.", "Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak."])));
+    await vi.waitFor(() => expect(tg.texts()).toEqual(expect.arrayContaining(["⚠️ <i>Mesajın Mac'e yazılamadı; tekrar gönder.</i>", "⚠️ <i>Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.</i>"])));
     expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([]);
   });
 
@@ -432,11 +436,11 @@ describe('the Super target', () => {
     const before = tg.texts().length;
     hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
     await hub.start();
-    await vi.waitFor(() => expect(tg.texts().slice(before)).toEqual(["Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak."]));
+    await vi.waitFor(() => expect(tg.texts().slice(before)).toEqual(["⚠️ <i>Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.</i>"]));
   });
 
   describe('a turn\'s texts and its end (owner report 2026-11-09)', () => {
-    const SILENT = "Bu tur sana yazı göndermeden bitti. Gerekirse Mac'e bak ya da tekrar yaz.";
+    const SILENT = "⚠️ <i>Bu tur cevap yazmadan bitti; tekrar yaz ya da Mac'e bak.</i>";
     const toolCall = (h: reg.ChatHandle) => h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'dreamcontext super ask --json {}' } }] } });
     const result = (h: reg.ChatHandle) => h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
     async function telegramTurn() {
@@ -457,7 +461,7 @@ describe('the Super target', () => {
       result(h);
       await vi.waitFor(() => expect(tg.delivered).toContain("Seçim kartı Telegram'a da düştü."), { timeout: 3000 });
       await new Promise((r) => setTimeout(r, 150));
-      const tail = tg.delivered.filter((t) => t === 'Evet, bu normal.' || t.startsWith('Seçim kartı') || t === SILENT);
+      const tail = tg.delivered.filter((t) => t === 'Evet, bu normal.' || t.startsWith('Seçim kartı') || t.includes('cevap yazmadan bitti'));
       expect(tail).toEqual(['Evet, bu normal.', "Seçim kartı Telegram'a da düştü."]);
     });
 
@@ -476,7 +480,7 @@ describe('the Super target', () => {
       tg.failOnce.set('sendMessage', 400);
       assistant(h, 'Bu metin gitmeyecek.');
       result(h);
-      await vi.waitFor(() => expect(tg.delivered).toContain(SILENT), { timeout: 3000 });
+      await vi.waitFor(() => expect(tg.delivered).toContain(SILENT.replace(/<[^>]+>/g, '')), { timeout: 3000 });
       expect(tg.delivered).not.toContain('Bu metin gitmeyecek.');
     });
 
@@ -555,7 +559,7 @@ describe('a held token lock (the tick, a crash inside the stale window)', () => 
     // The retry (2 s) takes the freed lock and drains what was queued before it: push after that.
     await new Promise((r) => setTimeout(r, 2_600));
     tg.push(TOKEN, textUpdate(OWNER, 'merhaba'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('Bu projede Super kapalı.'), { timeout: 8000 });
+    await vi.waitFor(() => expect(tg.texts()).toContain("ℹ️ <i>Bu projede Super kapalı; Mac'te açınca yazabilirsin.</i>"), { timeout: 8000 });
     expect(hub.active.get(again.key)?.disabled).toBeUndefined();
   }, 12_000);
 });
