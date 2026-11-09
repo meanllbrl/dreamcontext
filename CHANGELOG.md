@@ -6,12 +6,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [0.41.9] - 2026-11-09
 
-Patch on 0.41.8: four finished jobs built together. Local build; not published.
+Patch on 0.41.8: six finished jobs built together. Local build; not published.
 
 - **A quieter left menu.** Each row in a project shows one mark: a spinner while it works, a red count when it needs you, a plain count for unread. A small + on hover opens a new window. The old rings and badges are gone.
 - **Telegram questions explain themselves.** A question from the Super that arrives on Telegram shows its description and a note under each option, and a failed send is never sent twice.
 - **"Mac'e döndün" from any chat.** With Telegram's automatic part on, writing in any chat of any project on the Mac ends it, and so does answering a card or clicking Allow or Deny on a permission card. A run you started by hand is never ended this way.
 - **The tmp folder cleans itself daily.** Every project's `_dream_context/tmp` drops files older than 14 days once a day. A file something still links to is never deleted.
+- **Telegram asks you only when you are away.** The Super's questions and its children's permission requests reach Telegram only while you are away from the Mac; at the Mac the Mac card is the only one, and they are sent once you turn away.
+- **No false "göndermeden bitti" on Telegram.** A Super turn that already spoke never gets that line, and its messages arrive in the order it wrote them.
 
 ## [0.41.8] - 2026-11-09
 

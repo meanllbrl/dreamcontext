@@ -435,6 +435,61 @@ describe('the Super target', () => {
     await vi.waitFor(() => expect(tg.texts().slice(before)).toEqual(["Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak."]));
   });
 
+  describe('a turn\'s texts and its end (owner report 2026-11-09)', () => {
+    const SILENT = "Bu tur sana yazı göndermeden bitti. Gerekirse Mac'e bak ya da tekrar yaz.";
+    const toolCall = (h: reg.ChatHandle) => h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'dreamcontext super ask --json {}' } }] } });
+    const result = (h: reg.ChatHandle) => h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    async function telegramTurn() {
+      const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      tg.push(TOKEN, textUpdate(OWNER, 'normal mi?'));
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      return { h, ref: parseTelegramPrefix(sent[0]).ref! };
+    }
+
+    it('text, tool call, text: both reach Telegram in the order written, and the turn is not called silent', async () => {
+      const { h, ref } = await telegramTurn();
+      tg.slowSends.set('Evet, bu normal.', 120);
+      assistant(h, `<!-- re:${ref} -->\nEvet, bu normal.`);
+      toolCall(h);
+      assistant(h, "Seçim kartı Telegram'a da düştü.");
+      result(h);
+      await vi.waitFor(() => expect(tg.delivered).toContain("Seçim kartı Telegram'a da düştü."), { timeout: 3000 });
+      await new Promise((r) => setTimeout(r, 150));
+      const tail = tg.delivered.filter((t) => t === 'Evet, bu normal.' || t.startsWith('Seçim kartı') || t === SILENT);
+      expect(tail).toEqual(['Evet, bu normal.', "Seçim kartı Telegram'a da düştü."]);
+    });
+
+    it('an unmarked text sent while the turn ends is not followed by the silent line', async () => {
+      const { h } = await telegramTurn();
+      tg.slowSends.set('Kart düştü.', 100);
+      assistant(h, 'Kart düştü.');
+      result(h);
+      await vi.waitFor(() => expect(tg.delivered).toContain('Kart düştü.'), { timeout: 3000 });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(tg.texts()).not.toContain(SILENT);
+    });
+
+    it('a text whose send fails does not count: the turn still says the silent line', async () => {
+      const { h } = await telegramTurn();
+      tg.failOnce.set('sendMessage', 400);
+      assistant(h, 'Bu metin gitmeyecek.');
+      result(h);
+      await vi.waitFor(() => expect(tg.delivered).toContain(SILENT), { timeout: 3000 });
+      expect(tg.delivered).not.toContain('Bu metin gitmeyecek.');
+    });
+
+    it('a turn that truly wrote him nothing still gets the silent line, once', async () => {
+      const { h } = await telegramTurn();
+      toolCall(h);
+      result(h);
+      await vi.waitFor(() => expect(tg.texts()).toContain(SILENT), { timeout: 3000 });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(tg.texts().filter((t) => t === SILENT)).toHaveLength(1);
+    });
+  });
+
   it('a photo then a text reach the Super in that order, even when the photo downloads slowly', async () => {
     reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
     const { inj, sent } = fakeInjector();

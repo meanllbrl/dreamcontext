@@ -20,6 +20,10 @@ export class FakeTelegram {
   failOnce = new Map<string, number>();
   /** File ids whose download is slow (ms). */
   slowFiles = new Map<string, number>();
+  /** sendMessage calls whose text contains the key answer this many ms late. */
+  slowSends = new Map<string, number>();
+  /** sendMessage texts in the order they ANSWERED (what the phone shows), not the order sent. */
+  delivered: string[] = [];
 
   addBot(token: string, username: string): void {
     this.bots.set(token, { id: Number(token.split(':')[0]), username });
@@ -68,8 +72,12 @@ export class FakeTelegram {
       }
       case 'sendMessage': {
         const text = String(params.text ?? '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+        const call = this.calls[this.calls.length - 1];
+        const late = [...this.slowSends].find(([k]) => text.includes(k))?.[1];
+        if (late) await new Promise((r) => setTimeout(r, late));
         const result = { message_id: this.nextMessage++, chat: { id: params.chat_id }, text };
-        this.calls[this.calls.length - 1].result = result;
+        call.result = result;
+        this.delivered.push(text);
         return ok(result);
       }
       case 'getFile': return ok({ file_id: params.file_id, file_size: this.files.get(String(params.file_id))?.length ?? 1, file_path: String(params.file_id) });
