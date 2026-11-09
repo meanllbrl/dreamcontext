@@ -46,7 +46,7 @@ const RULE_TITLES = [
   'Skill triage before action — HARD RULE.',
   'Recall before grep.',
   'Single source of truth — check before creating, update over duplicate.',
-  "Work over ~5 minutes needs a task — but don't fork tasks.",
+  "A task only for big work, and don't fork tasks.",
   'Mark checkboxes as you go.',
   'Log every session',
   'Reuse before create.',

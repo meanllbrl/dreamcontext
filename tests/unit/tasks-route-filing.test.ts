@@ -181,11 +181,9 @@ describe('reads and the objection route', () => {
     expect((await call(handleTasksList, {})).status).toBe(200);
   });
 
-  it('readiness returns notes for a wave map with no wave sub-tasks, never as a gap', async () => {
+  it('readiness passes a multi-wave map with no wave sub-tasks and never asks for them (waves live inside the task)', async () => {
     writeTask('planned', { name: 'Planned' }, '## Why\nx\n\n## Acceptance Criteria\n\n- [ ] a\n- [ ] Validation method: tests\n\n## Technical Details\n\nWAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)\n');
     const r = await call(handleTasksReadiness, { slug: 'planned' });
-    expect(r.body.ready).toBe(true);
-    expect(r.body.gaps).toEqual([]);
-    expect(r.body.notes[0]).toMatch(/no wave sub-tasks exist yet/);
+    expect(r.body).toEqual({ ready: true, gaps: [] });
   });
 });

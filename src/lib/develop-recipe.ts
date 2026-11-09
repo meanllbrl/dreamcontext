@@ -182,29 +182,22 @@ what the owner sees, ticked with no screenshot, is FAIL.`;
  * tests/unit/develop-recipe.test.ts pins the load-bearing lines of both.
  */
 /**
- * Waves are sub-tasks (2026-10-23): a map of two or more waves on a top-level task runs each
- * wave as a child of the task (`filed_by: plan`), so its progress, ticks and close live on the
- * wave and the parent closes only after them (task-parent.ts waveChildren is the definition).
- * Three cases, because Plan mode may have opened them already, an older plan has none, and a
- * run from before this rule already logged `wN green` on the parent.
+ * Waves live inside the task (owner, 2026-11-09). From 2026-10-23 a map of two or more waves
+ * opened one sub-task per wave; agents then filed 39 tasks a day, 17 of them waves, each waiting
+ * on the owner's sign-off. Now the waves are logged on the ONE task and a wave sub-task opens
+ * only when the owner asks. Runs whose wave sub-tasks already exist keep using them
+ * (task-parent.ts waveChildren is still the definition), so the WAVE_ON_SUBTASK, WAVE_CLOSE_409
+ * and WAVE_REOPEN branches below stay for them.
  */
-const WAVE_SUBTASKS = `**Waves are sub-tasks** when the map has two or more waves and the task is not itself a
-sub-task (two levels max). Read them first:
+const WAVE_SUBTASKS = `**Waves live inside the task.** Each wave's progress, ticks and \`wN green\` line are logged
+on "$S"; never open a sub-task per wave (owner, 2026-11-09: a task only for big work, its
+waves inside it). Wave sub-tasks open only when the owner asked for them. Check once:
 
   dreamcontext tasks list --parent "$S" --json     # each child's \`wave\` (null = not a wave)
 
-(a) Wave sub-tasks exist: use them. (b) Two or more waves, no wave sub-tasks and no \`wN green\`
-line yet: open them before any code, one per wave, then add a NEW map naming their slugs (the
-newest map is the LAST "WAVE MAP" line in technical_details; wave order and the sleep-eval
-exemption read it):
-
-  dreamcontext tasks create "Wave N: <what it delivers>" --parent "$S" --basis plan --quote "<the WN part of the map>"
-  dreamcontext tasks insert "$S" technical_details -- "WAVE MAP: EXECUTION: lead | W1 <wave-1-slug> (<files>) | W2 <wave-2-slug> (<files>) | also run: <tests>"
-
-(c) \`wN green\` lines already exist (a run from before waves were tasks): finish it the old
-way, on "$S". A one-wave map, or a task that is itself a sub-task: progress stays on "$S".
-Children that are not waves (filed by sleep, the owner or an agent) are not yours to build,
-but they keep "$S" from closing.`;
+Wave sub-tasks already exist (an older plan, or the owner asked): use them, as the "With wave
+sub-tasks" lines below say. Children that are not waves (filed by sleep, the owner or an
+agent) are not yours to build, but they keep "$S" from closing.`;
 
 /** Where a wave's progress goes when it is a sub-task. */
 const WAVE_ON_SUBTASK = `With wave sub-tasks: \`dreamcontext tasks status <wave-N> in_progress\` when the wave starts;

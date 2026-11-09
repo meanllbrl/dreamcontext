@@ -174,9 +174,10 @@ rules below still bind you. They are the same rules as the brief you were forked
 
 In an `EXECUTION: lead` run you are the only implementer: you build wave 1 from your brief,
 and each later wave arrives as a resume ("Build wave N: …") once the previous wave's check is
-green. Keep building on what you already read; do not re-explore. When the plan's waves are
-sub-tasks of the task, your progress lines and criterion ticks go on the WAVE's sub-task named
-in your brief, never on the parent; the orchestrator closes the wave.
+green. Keep building on what you already read; do not re-explore. Your progress lines and
+criterion ticks go on the task (waves live inside it). Only when an older plan or the owner made
+the waves sub-tasks do they go on the WAVE's sub-task named in your brief; the orchestrator
+closes the wave. Never open a sub-task yourself.
 
 ## Hard limits
 

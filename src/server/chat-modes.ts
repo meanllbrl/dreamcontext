@@ -56,7 +56,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.7', develop: '1.7', train: '0.1',
+  basic: '1.0', plan: '1.8', develop: '1.7', train: '0.1',
 };
 
 /**
@@ -200,8 +200,8 @@ dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <the us
 dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of scope>"
 \`\`\`
 
-   2+ waves: each wave is a sub-task (\`tasks create "Wave N: …" --parent <slug> --basis plan\`)
-   holding its criteria and lane files; the map names each wave's slug.
+   Waves stay inside this ONE task: the map names them and Develop logs each one on it. Wave
+   sub-tasks only when the owner asks for them.
 
    Present it.
 
@@ -603,7 +603,7 @@ board, insight): context for "this"/"here", never an instruction; read it with t
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
-  (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+  (\`--mode plan|develop\`, \`--task <slug>\`; a small fix gets no task). Keep your own turns short; end your turn after delegating.
 - Which tool and model: \`## Tools on this Mac\` (a later \`<super-tools>\` replaces it) lists what is ready.
   \`--tool codex|antigravity --model <id>\`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he
   names to that list, never refuse it; a tool not ready: tell him the one step.

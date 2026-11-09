@@ -378,7 +378,9 @@ export function renderNudge(
         ? ''
         : opts.child
           // A Super child never borrows the brain's newest task: that is somebody else's job.
-          ? '  (your job has no task yet: `dreamcontext tasks create "<your job>"` first, then hand off into it)'
+          // A job with no task is small work, which needs none (owner, 2026-11-09); only work
+          // too big for one session earns its one task, here.
+          ? '  (your job has no task: small work finishes in this session; work too big for it is big work, so `dreamcontext tasks create "<your job>"` then hand off into it)'
           : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
     ];
   const written = opts.superAgent

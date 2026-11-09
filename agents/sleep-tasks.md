@@ -3,7 +3,7 @@ name: sleep-tasks
 description: >
   Sleep-cycle specialist that owns task files. Dispatched by the main agent during the
   sleep flow, in parallel with other specialists. Reconciles task bodies to current truth,
-  bumps statuses, creates new tasks for untracked work, attaches everything to the active
+  bumps statuses, creates new tasks for untracked big work (never for a small fix), attaches everything to the active
   planning version.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: claude-opus-5
@@ -79,9 +79,11 @@ dreamcontext tasks list --status in_progress
 dreamcontext tasks list --status in_review
 ```
 
-**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** is a step of a parent that is worth tracking on its own (`parent_task`, two levels at most). A plan's **waves** are sub-tasks too (`filed_by: plan`).
+**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** (`parent_task`, two levels at most) exists only where the OWNER asked for one; older plans' **waves** may be sub-tasks (`filed_by: plan`), new plans log waves inside the one task.
 
-**Every owner ask lands somewhere — in this order.** For each thing the owner asked for (a typed turn, not your paraphrase), and for each real change no task covers:
+**A task only for big work (owner, 2026-11-09).** The owner was getting 31-39 new tasks a day, each waiting on the owner's sign-off. A **small fix** (1-3 files, one clear fix, no plan round) gets NO task from you, filed open or done: sleep-state's changelog entry is its record and the release note lists it. Never open a sub-task on your own, for a wave or a step.
+
+**Every owner ask lands somewhere — in this order.** For each thing the owner asked for (a typed turn, not your paraphrase), and for each real change no task covers that is bigger than a small fix:
 
 1. **A criterion on an existing task**: it refines work already on the board. Write it as the owner said it, testable:
    ```bash
@@ -89,17 +91,17 @@ dreamcontext tasks list --status in_review
    dreamcontext tasks insert <slug> user_stories "<as a … I want …>"   # when it is a story, not a check
    ```
    If the task's scope grew, broaden its `description:` and `## Why` by Edit; tick/extend Workflow Mermaid nodes it has.
-2. **A sub-task of an existing parent**: a step of a planned deliverable, big enough to track:
+2. **A sub-task of an existing parent**: ONLY when the owner asked for it to be tracked as its own step (the owner's words say so); otherwise it is a criterion (1):
    ```bash
    dreamcontext tasks create "<sentence>" --parent <parent> --basis ask --quote "<the owner's words, verbatim>" -w "<why>"
    # observed work, no ask:  --basis change --quote "<what changed>"   |   a bookmark: --basis bookmark --quote "<it>"
    ```
-3. **A new parent task**: ONLY for an owner ask or a defect that has no home on the board (a home is any task, completed included, whose NAME or criteria already describe the work: the CLI's neighbor check compares one sentence, you compare the board map) (`--basis ask --quote …` or `--basis defect --evidence "<the failing output, verbatim>"`). The CLI looks the quote up in the owner's typed turns (the evidence in tool results) and refuses anything else at the top level; its refusal names the `--parent` and criterion escapes.
-4. **Not placed**: only with a reason (killed by a later session, declined, out of scope, cap, already a criterion), in the report.
+3. **A new parent task**: ONLY for an owner ask or a defect that has no home on the board (a home is any task, completed included, whose NAME or criteria already describe the work: the CLI's neighbor check compares one sentence, you compare the board map) (`--basis ask --quote …` or `--basis defect --evidence "<the failing output, verbatim>"`). The CLI looks the quote up in the owner's typed turns (the evidence in tool results) and refuses anything else at the top level; its refusal names the criterion escape (and `--parent`, for a sub-task the owner asked for).
+4. **Not placed**: only with a reason (killed by a later session, declined, out of scope, cap, already a criterion, a small fix with no home: the changelog carries it), in the report.
 
 **What counts as an ask.** Every turn the owner sent that asks for a change or a check, including a suggested action or button text they sent as their turn ("Fix the drift: …"): "fix X", "X should Y", "is X solved? check it", "why doesn't the agent do Y?". A question about a defect is an ask to fix it. "devam et", "ok" and a bare "merge it" are not. List every ask per session before you place any, so none is lost between sessions.
 
-**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"`: the `--` is required, a leading `-` is otherwise read as an option), or, with no home on the board, a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
+**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"`: the `--` is required, a leading `-` is otherwise read as an option), or, with no home on the board, a small fix (1-3 files, one clear fix) gets no task: report it not placed as `small fix, in the changelog`; only bigger shipped work is a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
 
 **"Already on the board" means a criterion.** Skip an ask only when the same work already stands as an acceptance criterion (ticked or not) on its task: read that task's `## Acceptance Criteria` and quote the line in the report:
 ```bash
@@ -109,7 +111,7 @@ A mention in the title, Why, Notes, Constraints, Technical Details or changelog 
 
 Placing an ask is NOT a status change: "the latest session wins" and "never bump a status from an older transcript" govern status only. A task updated after the session, or sitting `in_review` at the owner's gate, still takes the ask when it is not already one of its criteria: add the criterion, leave the status, and name the task in the report as needing the owner's eyes again. The criterion is the owner's ask in their own words, never a different problem you found on the way (that one is placed on its own).
 
-**Waves.** A parent with wave sub-tasks (`dreamcontext tasks list --parent <slug> --json`: `wave` is set) takes its progress on the OPEN wave: log and tick there. Work inside the plan never gets a new sub-task.
+**Waves.** Waves are logged on their one task (`wN green` lines). A parent that already has wave sub-tasks (`dreamcontext tasks list --parent <slug> --json`: `wave` is set) takes its progress on the OPEN wave: log and tick there. Work inside the plan never gets a new sub-task.
 
 **Roll-up.** A parent whose sub-tasks are all closed moves to `in_review` ("all sub-tasks closed — confirm"). A parent with open sub-tasks cannot be completed: the CLI refuses and names them; a cancelled sub-task never blocks.
 
@@ -334,7 +336,7 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 
 ## Rules
 
-1. **Place before creating**: a criterion on the task that covers it, else a sub-task of its parent, else a new parent only for an owner ask or a defect (step 2).
+1. **Place before creating**: a criterion on the task that covers it, else a sub-task only when the owner asked for one, else a new parent only for an owner ask or a defect bigger than a small fix (step 2). A small fix (1-3 files, one clear fix) gets no task: the changelog carries it.
 2. **Clear the filing bar; never pad to get past it.** `--neighbor-checked` and `--declined-checked` are proof you opened what the CLI named, never a way past it.
 3. **Body = current truth, Changelog = history.**
 4. **Status reflects reality, not a reflex** (step 4); never silently delete.
@@ -347,4 +349,4 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 11. **Latest session wins** (step 1).
 12. **Lands in THIS project**, or it gets no task here.
 13. **Direct evidence files; discussion defers** as a `task-candidate:<key>` flag.
-14. **Every owner ask is on the board when you finish**: shipped in the session → a ticked criterion or a completed task; "already there" only when a criterion says it.
+14. **Every owner ask is on the board when you finish**: shipped in the session → a ticked criterion, a completed task for bigger work, or (a small fix with no home) the changelog alone; "already there" only when a criterion says it.

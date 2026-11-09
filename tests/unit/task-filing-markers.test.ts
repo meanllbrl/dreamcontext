@@ -46,7 +46,8 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
   });
 
   it.each([
-    ['the model', 'A **sub-task** is a step of a parent'],
+    ['the model', 'A **sub-task** (`parent_task`, two levels at most) exists only where the OWNER asked for one'],
+    ['no task for a small fix', '**A task only for big work (owner, 2026-11-09).**'],
     ['the placement order', 'Every owner ask lands somewhere — in this order.'],
     ['the sub-task create', '--parent <parent> --basis ask --quote'],
     ['the top-level rule', 'ONLY for an owner ask or a defect'],
@@ -84,7 +85,8 @@ describe('skill/references — sub-tasks, objections and the asks line', () => {
     ['skill/references/tasks-and-features.md', 'tasks parent <slug> <parent-slug|clear>'],
     ['skill/references/tasks-and-features.md', 'tasks object <slug> --as subtask-of'],
     ['skill/references/tasks-and-features.md', 'tasks rules revert R2'],
-    ['skill/references/tasks-and-features.md', 'Waves are sub-tasks.'],
+    ['skill/references/tasks-and-features.md', 'Waves live inside the task'],
+    ['skill/references/tasks-and-features.md', '### A task only for big work'],
     ['skill/references/cli-reference.md', '`tasks objections [--unlearned] [--json]`'],
     ['skill/references/cli-reference.md', '--asks criterion=a,subtask=b,task=c,unplaced=d'],
     ['skill/references/sleep.md', "Relay sleep-tasks' `Owner asks:` line as `--asks`"],
@@ -99,7 +101,7 @@ describe('skill/SKILL.md — the awake half of the declined ledger', () => {
   const content = read('skill/SKILL.md');
 
   it('rule 5 tells the agent to record work the user drops', () => {
-    const rule5 = content.slice(content.indexOf('5. **Work over ~5 minutes needs a task'));
+    const rule5 = content.slice(content.indexOf('5. **A task only for big work'));
     expect(rule5.slice(0, rule5.indexOf('\n6.'))).toContain('tasks decline');
   });
 

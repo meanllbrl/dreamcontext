@@ -181,7 +181,10 @@ validators inside a flow keep their own models; never override them. On a subscr
 ratios burn quota.
 
 ## 4. Flow map
-Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one.
+Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one. A task only for big work: a small
+clear fix (1-3 files, one clear fix, no plan round) runs `basic` with no `--task`, its child opens
+no task, and the cut's release note carries it; big work is ONE task with its waves logged inside
+it, a sub-task only when the owner asks.
 
 **Who takes the job.** The project's AI Team is listed in your prompt (`## Your AI Team`, each
 member's field and state) and in `super state` (`members`); check it first for every job. A job in
@@ -193,7 +196,7 @@ about once, then do the plain way.
 |---|---|---|
 | Recurring, or a member's own field | that member: `super team ask <member> "<job>"` | a `doctor` member (system, logs, cost): "check last night's API errors and today's spend" |
 | Non-trivial build | a `plan` child, then a `develop` child with the slug (`--task`) | "POST /v1/invites in orbit-api" |
-| Small clear fix | `basic` + worktree; its brief requires a clean `reviewer` sub-agent pass | "the onboarding title typo" |
+| Small clear fix | `basic` + worktree, no task; its brief requires a clean `reviewer` sub-agent pass | "the onboarding title typo" |
 | A whole goal in one session | a `basic` child running `/goal-skill` | "invites end to end, with tests" |
 | Review a branch or PR | a child running `/multi-review` | "review super/invites before the merge" |
 | A decision with trade-offs | a child running `/council`; its verdict gates the build wave | "invite links: expiring or one-time?" |
@@ -223,7 +226,7 @@ child that spots a mistake tells you; only you amend. Each refusal says what to 
 - **Runtime proof of a server or UI** → a child running `/jev-verify` in that worktree.
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
 - **Release** → the release checklist pattern + `/announcements`; the publish step is outward (§2).
-- **Every code unit over ~5 minutes has a task** (Plan creates it). Recall before splitting. A metric →
+- **Every big code unit has ONE task** (Plan creates it); a small fix (1-3 files) has none. Recall before splitting. A metric →
   a Lab insight (never retyped). A board → `dreamcontext whiteboard` (an explanation on it is
   drawn, `whiteboard kit`; never a note stack). A recurring job → `dreamcontext automations`
   (approved as written; only risky text waits for his card). Sleep → offered after all children finish.
