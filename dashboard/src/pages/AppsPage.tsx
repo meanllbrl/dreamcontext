@@ -5,12 +5,13 @@ import { isDesktop } from '../lib/desktop';
 import { isPhoneSurface } from '../lib/phoneSurface';
 import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
 import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow } from '../components/apps/AppCard';
 import { InstallSheet, SharedApps, TrashList, type SharedList } from '../components/apps/ShareSheets';
 import { askAgent } from '../components/apps/askAgent';
+import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';
 import './AppsPage.css';
 
@@ -76,6 +77,23 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
       () => { if (asked.current === repo) setNote({ kind: 'failed', repo }); },
     );
   });
+
+  // Opening Apps checks the installed apps that follow an original, so an update shows on its
+  // tile without the owner hunting for it (the server's own sweep runs only every 6 hours).
+  // Once per project while the page is open, one app at a time, skipping one checked in the last 10 minutes.
+  const checkedOnOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (checkedOnOpen.current === (vault ?? '') || !canLaunch || !data) return;
+    checkedOnOpen.current = vault ?? '';
+    const due = updateCheckDue(data.apps ?? [], Date.now());
+    if (!due.length) return;
+    void (async () => {
+      for (const slug of due) {
+        try { await api.post(`/apps/${encodeURIComponent(slug)}/update/check`, {}); } catch { /* the card's own check says why */ }
+      }
+      void qc.invalidateQueries({ queryKey: ['apps', vault] });
+    })();
+  }, [api, canLaunch, data, qc, vault]);
 
   // Shared Apps is read once for the tab's count (pending invitations) and the tab itself.
   const sharedKey = ['apps-shared', vault, appsKey];

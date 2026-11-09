@@ -32,6 +32,9 @@ describe('runs with no card', () => {
     'dreamcontext apps tools --json',
     'dreamcontext apps status yuk',
     'dreamcontext apps logs yuk -n 20',
+    // An update is only CHECKED here; applying it stays the owner's click on the Apps page.
+    'dreamcontext apps update yuk',
+    'dreamcontext apps update yuk --json',
     `dreamcontext apps do yuk snapshot --input '{"q":"a;b"}'`,
   ])('%s', (c) => expect(verdict(c)).toBe('pass'));
   // Written with '/' as an agent writes it in a shell (Git Bash on Windows): a backslash is a
@@ -47,6 +50,8 @@ describe('runs with no card', () => {
 describe('raises one card', () => {
   const q = "'";
   it.each([
+    ['another app\'s update check', 'dreamcontext apps update other'],
+    ['a git pull of the app', 'git pull'],
     ['grep -r', 'grep -r TOKEN .'],
     ['git grep', 'git grep TOKEN'],
     ['git show', 'git show HEAD:.env'],

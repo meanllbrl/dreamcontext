@@ -57,6 +57,8 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
   { words: ['apps', 'logs'], ownSlug: true, flags: ['-n', '--lines'] },
   { words: ['apps', 'do'], ownSlug: true, action: true, flags: ['--input', '--json'] },
   { words: ['apps', 'learn'], ownSlug: true, flags: [] },
+  // Only checks: applying an update stays the owner's click on the Apps page.
+  { words: ['apps', 'update'], ownSlug: true, flags: ['--check', '--json'] },
 ];
 
 /** A verb's flags that reach past this chat's project: a card each. `memory recall --vault`. */
