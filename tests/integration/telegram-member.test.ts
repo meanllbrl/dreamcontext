@@ -68,7 +68,7 @@ describe('a member bot', () => {
   it('at the live limit: "şu an meşgul", then one delivery when a slot frees', async () => {
     sayResults = [{ ok: false, status: 429, code: 'say_at_limit', message: 'full' }, { ok: false, status: 429, code: 'say_at_limit', message: 'full' }];
     tg.push(TOKEN, textUpdate(OWNER, 'rapor'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('ua-manager şu an meşgul, bitince yazacağım.'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('⏳ <i>ua-manager şu an meşgul; boşalınca mesajını iletirim.</i>'));
     await vi.waitFor(() => expect(says).toHaveLength(3));
     expect(tg.texts().filter((t) => t.includes('meşgul'))).toHaveLength(1);
   });
@@ -93,7 +93,7 @@ describe('a member bot', () => {
 
   it('a command is not forwarded', async () => {
     tg.push(TOKEN, textUpdate(OWNER, '/handsfree'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('Bu botta komut yok; yazman yeterli.'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('ℹ️ <i>Bu botta komut yok; yazman yeterli.</i>'));
     expect(says).toEqual([]);
   });
 });
@@ -106,6 +106,6 @@ describe('a member bot keeps its own rule (owner 2026-11-09)', () => {
     await vi.waitFor(() => expect(says).toHaveLength(1));
     run = [entry('ask', 'user', 'rapor çıkar'), entry('q1', 'system', 'Hangi hafta?', 'asked'), entry('f1', 'system', 'kota doldu', 'failed')];
     await vi.waitFor(() => expect(tg.texts()).toContain('❓ Hangi hafta?'));
-    await vi.waitFor(() => expect(tg.texts()).toContain('Çalışamadı: kota doldu'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('⚠️ <i>Çalışamadı: kota doldu</i>'));
   });
 });

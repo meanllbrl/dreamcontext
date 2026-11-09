@@ -258,7 +258,7 @@ describe('native headers and answers mirror the Mac (N6, P3, P5)', () => {
     s.queue = [{ id: 'q1', sessionId: 'c1', kind: 'ask', state: 'pending', createdAt: 1, ownerText: 'Hangisi?' } as never];
     s.pool = [{ id: 'p1', title: 'Sonra: rapor', prompt: 'x', hash: 'h' } as never];
     const t = statusText(s, '/nowhere');
-    expect(t).toContain('⏳ Paywall testi · çalışıyor');
+    expect(t).toContain('⏳ <i>Paywall testi</i> · çalışıyor');
     expect(t).toContain('✋ Hangisi?');
     expect(t).toContain('Sonra: rapor');
   });
