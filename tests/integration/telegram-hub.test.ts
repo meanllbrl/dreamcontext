@@ -18,6 +18,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
+import { _openEventTurnForTests, markSuperEventTurn, superTurnEnded } from '../../src/lib/super/inbox.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
 import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -180,6 +181,58 @@ describe('the Super target', () => {
       // An unmarked text goes too.
       assistant(h, 'Onay verdim, iş sürüyor.');
       await vi.waitFor(() => expect(tg.texts()).toContain('Onay verdim, iş sürüyor.'));
+    });
+
+    describe('a server-opened event turn goes out only when it is for him (the Mac fold rule)', () => {
+      async function ownerBatches(...batches: string[]) {
+        writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SID, enabled: true, ownerBatches: batches }));
+        resetSuperIndex();
+        await readSuperState(root);
+      }
+      afterEach(() => markSuperEventTurn(SID, false));
+
+      it('a permission-only event turn sends nothing, marked or not', async () => {
+        const { h } = await onTelegram();
+        await ownerBatches();
+        _openEventTurnForTests(SID, 'b-perm', root);
+        const n = tg.texts().length;
+        assistant(h, 'İzni verdim: kendi worktree içinde git add.');
+        assistant(h, '<!-- re:abc123 -->\nBir not daha.');
+        await quiet();
+        expect(tg.texts().length).toBe(n);
+      });
+
+      it('an awaited=owner result (owner batch) under its ref sends', async () => {
+        const { h } = await onTelegram();
+        await ownerBatches('b-done');
+        _openEventTurnForTests(SID, 'b-done', root);
+        assistant(h, '<!-- re:abc123 -->\nİş bitti, sonuç hazır.');
+        await vi.waitFor(() => expect(tg.texts()).toContain('İş bitti, sonuç hazır.'));
+      });
+
+      it('a result written right before the turn ends still sends (the batch is read when the text is emitted)', async () => {
+        const { h } = await onTelegram();
+        await ownerBatches('b-late');
+        _openEventTurnForTests(SID, 'b-late', root);
+        assistant(h, '<!-- re:abc123 -->\nSon sonuç hazır.');
+        superTurnEnded(SID);
+        await vi.waitFor(() => expect(tg.texts()).toContain('Son sonuç hazır.'));
+      });
+
+      it('an event=owner notice (owner batch) sends', async () => {
+        const { h } = await onTelegram();
+        await ownerBatches('b-wait');
+        _openEventTurnForTests(SID, 'b-wait', root);
+        assistant(h, 'Bir iş senden bekliyor: tarayıcıda giriş yap.');
+        await vi.waitFor(() => expect(tg.texts()).toContain('Bir iş senden bekliyor: tarayıcıda giriş yap.'));
+      });
+
+      it('a reply to his own Telegram message sends', async () => {
+        const { h, ref } = await onTelegram();
+        await ownerBatches();
+        assistant(h, `<!-- re:${ref} -->\nBir de bunu ekledim.`);
+        await vi.waitFor(() => expect(tg.texts()).toContain('Bir de bunu ekledim.'));
+      });
     });
 
     it('no double send: a section under his Telegram ref and a Mac-ref section each go once', async () => {

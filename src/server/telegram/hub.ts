@@ -36,6 +36,7 @@ import {
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { listVaults } from '../../lib/vaults.js';
 import { readSuperState } from '../../lib/super/store.js';
+import { superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
@@ -1086,16 +1087,24 @@ export class TelegramHub implements TelegramHubApi {
   /** One Super text: its turn's inputs read now, as it is written, never after a send. */
   private queueAssistantText(sessionId: string, text: string): void {
     const inputs = this.turnInputs.get(sessionId);
-    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs }));
+    const mark = superTurnMark(sessionId);
+    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark }));
   }
 
   /** True when a message of this text landed on Telegram. */
-  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined }): Promise<boolean> {
+  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark }): Promise<boolean> {
     const turns = at?.turns ?? this.turnsOf(sessionId);
     const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
     if (!ab || ab.disabled || ab.target !== 'super') return false;
+    // A server-opened event turn the Mac folds into one quiet line (a permission decision, a
+    // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
+    // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
+    if (ab.contextRoot) {
+      const folds = await readSuperState(ab.contextRoot).then((st) => superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches), () => false);
+      if (folds) return false;
+    }
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;

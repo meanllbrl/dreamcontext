@@ -895,6 +895,26 @@ export function isSuperEventTurn(sessionId: string): boolean {
   return eventTurns.has(sessionId);
 }
 
+/**
+ * THE rule for whether a Super's running turn is shown to the owner or folded into one quiet
+ * line: a turn he started himself is his; a server-opened event turn is his only when its batch
+ * is in `ownerBatches` (a result he waits on, a job waiting on him, an owed answer). The Mac chat
+ * folds by this (dashboard `groupSuperEventTurns`), and Telegram sends by the same call, so the
+ * two surfaces never disagree.
+ */
+export interface SuperTurnMark { event: boolean; batch: string | null }
+
+/** The running turn as it is NOW, read synchronously where a text is emitted: the turn may end
+ *  (and forget its batch) before a later send decides, so the decision uses this snapshot. */
+export function superTurnMark(sessionId: string): SuperTurnMark {
+  return { event: isSuperEventTurn(sessionId), batch: superOpenBatch(sessionId) };
+}
+
+export function superTurnFolds(mark: SuperTurnMark, ownerBatches: readonly string[]): boolean {
+  if (!mark.event) return false;
+  return !mark.batch || !ownerBatches.includes(mark.batch);
+}
+
 /** The owner message the super session's running turn answers (its `<owner-msg ref>`), set by
  *  every owner message and dropped when an event turn opens: a job the super starts in his turn
  *  records it (`origin`), so its results link under that message. In memory, like the above. */
@@ -3146,6 +3166,12 @@ export async function _superInboxDrained(): Promise<void> {
 }
 
 /** Tests only. */
+/** Test seam: an event turn running in `sessionId` under `batch`, as `pump` opens one at delivery. */
+export function _openEventTurnForTests(sessionId: string, batch: string, root: string): void {
+  markSuperEventTurn(sessionId, true);
+  openBatch.set(sessionId, { batch, inboxId: 'test', root });
+}
+
 export function _resetSuperInbox(): void {
   for (const m of [settleTimers, goneTimers, regraceTimers, sweeps, browserTimers, graceTimers]) { for (const t of m.values()) clearTimeout(t); m.clear(); }
   for (const r of retry.values()) clearTimeout(r.t);
