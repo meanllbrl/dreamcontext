@@ -131,7 +131,7 @@ describe('a question behind another reaches Telegram at once (q-mw9bdhrk)', () =
 });
 
 describe('a refused send is not "sent" (q-mw9b0mye)', () => {
-  it('reached:false with Telegram\'s refusal, a log line, and the next write sends it again', async () => {
+  it('reached:false with Telegram\'s refusal and a log line; not re-sent inside its backoff; his next Telegram message sends it', async () => {
     tg.failOnce.set('sendMessage', 400);
     await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
     await afterWrite();
@@ -141,11 +141,32 @@ describe('a refused send is not "sent" (q-mw9b0mye)', () => {
     expect(reach.why).toMatch(/Telegram refused the message.*400/);
     const log = join(home, '.dreamcontext', 'logs', 'telegram-asks.log');
     await vi.waitFor(() => expect(existsSync(log) && readFileSync(log, 'utf8')).toMatch(/ask-1 ask FAILED/));
+    // A write inside the backoff sends nothing more (an outage does not burn every try at once).
     await afterWrite();
+    await quiet();
+    expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(0);
+    // His next Telegram message (turning away) proves he is reachable: it goes at once.
+    hub.flushAway();
+    await vi.waitFor(() => expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1));
     await settleOwnerReach('ask-1', 3000);
     expect(ownerQuestionReach(await readSuperState(root), 'ask-1')).toMatchObject({ reached: true, telegram: 'sent' });
     expect(withButton('Yeşil').filter((c) => c.result)).toHaveLength(1);
     expect(readFileSync(log, 'utf8')).toMatch(/ask-1 ask sent/);
+  });
+});
+
+describe('a send still on its way is not a reach (review r1)', () => {
+  it('the wait ends before Telegram answers: reached:false, telegram "sending", said plainly; then it lands', async () => {
+    tg.slowSends.set('Hangi renk?', 600);
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await settleOwnerReach('ask-1', 50);
+    const early = ownerQuestionReach(await readSuperState(root), 'ask-1');
+    expect(early).toMatchObject({ reached: false, telegram: 'sending' });
+    expect(early.via).not.toContain('telegram');
+    expect(early.why).toMatch(/still on its way/);
+    await settleOwnerReach('ask-1', 3000);
+    expect(ownerQuestionReach(await readSuperState(root), 'ask-1')).toMatchObject({ reached: true, telegram: 'sent' });
   });
 });
 

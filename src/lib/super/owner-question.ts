@@ -228,23 +228,31 @@ function announceHead(vault: string, session: string, state: { children?: SuperS
 // ─── Telegram: every open item, its real outcome, its close ──────────────────
 
 /** Telegram's part per item: the sink took it (and how the send went), or why it did not. */
-interface TgItem { vault: string; state: TelegramReach; why?: string; tries: number; settle?: Promise<void>; done?: () => void }
+interface TgItem { vault: string; state: TelegramReach; why?: string; tries: number; nextAt?: number; settle?: Promise<void>; done?: () => void }
 const tgItems = new Map<string, TgItem>();
-/** A send Telegram refused is offered again on later writes, at most this many times in all. */
+/** A send Telegram refused is offered again by record writes at most this many times, each no
+ *  sooner than its backoff; a proof that he is reachable (he turned away: his Telegram message,
+ *  a hands-free start) re-offers it with a fresh budget (review r1: an outage burnt every try in
+ *  seconds and nothing ever sent it again). */
 export const TG_TRIES = 3;
+/** The wait after a refusal: Telegram's `retry_after` when it gives one, else 15 s doubling. */
+export const TG_BACKOFF_MS = 15_000;
 
-function offerOpenItems(v: () => string, session: string, queue: readonly SuperQueueItem[]): void {
+function offerOpenItems(v: () => string, session: string, queue: readonly SuperQueueItem[], reachable = false): void {
+  const now = Date.now();
   for (const q of queue) {
-    if (!announces(q)) continue;
+    // A child's permission has its own Telegram card (İzin ver / Reddet), never this one.
+    if (!announces(q) || q.kind === 'permission') continue;
     const t = tgItems.get(q.id);
-    if (t && (t.state === 'sent' || t.state === 'sending' || (t.state === 'failed' && t.tries >= TG_TRIES))) continue;
+    if (t && (t.state === 'sent' || t.state === 'sending')) continue;
+    if (t?.state === 'failed' && !reachable && (t.tries >= TG_TRIES || now < (t.nextAt ?? 0))) continue;
     let took: TelegramTake = false;
     try { took = sinks.telegram({ vault: v(), sessionId: session, item: q }); } catch { took = false; }
     if (took === true) {
       let done: () => void = () => {};
       const settle = new Promise<void>((r) => { done = r; });
       tgItems.delete(q.id);
-      tgItems.set(q.id, { vault: v(), state: 'sending', tries: (t?.tries ?? 0) + 1, settle, done });
+      tgItems.set(q.id, { vault: v(), state: 'sending', tries: (reachable ? 0 : t?.tries ?? 0) + 1, settle, done });
     } else if (took === 'at_mac' || took === 'no_bot') {
       if (t?.state !== 'failed') tgItems.set(q.id, { vault: v(), state: took, tries: t?.tries ?? 0 });
     } else if (t && t.state !== 'failed') {
@@ -259,12 +267,17 @@ function offerOpenItems(v: () => string, session: string, queue: readonly SuperQ
  * Telegram refused it (said to the agent; offered again on a later write, at most
  * {@link TG_TRIES} sends in all); `skipped` = it closed before it went (nothing to tell).
  */
-export function noteTelegramSend(id: string, outcome: { ok: true } | { ok: false; why: string } | { skipped: true }): void {
+export function noteTelegramSend(id: string, outcome: { ok: true } | { ok: false; why: string; retryAfterS?: number } | { skipped: true }): void {
   const t = tgItems.get(id);
   if (!t) return;
   if ('skipped' in outcome) tgItems.delete(id);
-  else if (outcome.ok) { t.state = 'sent'; delete t.why; }
-  else { t.state = 'failed'; t.why = outcome.why; }
+  else if (outcome.ok) { t.state = 'sent'; delete t.why; delete t.nextAt; }
+  else {
+    t.state = 'failed';
+    t.why = outcome.why;
+    const wait = outcome.retryAfterS && outcome.retryAfterS > 0 ? outcome.retryAfterS * 1000 : TG_BACKOFF_MS * 2 ** Math.max(0, t.tries - 1);
+    t.nextAt = Date.now() + wait;
+  }
   t.done?.();
 }
 
@@ -296,11 +309,12 @@ function closeTelegramItems(v: () => string, queue: readonly SuperQueueItem[]): 
 export function offerOwnerItemsToTelegram(vault: string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'>): void {
   const v = (): string => vault;
   if (tgItems.size) closeTelegramItems(v, state.queue);
-  if (state.enabled && state.session) offerOpenItems(v, state.session, state.queue);
+  if (state.enabled && state.session) offerOpenItems(v, state.session, state.queue, true);
 }
 
-const TG_WHY: Record<Exclude<TelegramReach, 'sent' | 'sending'>, string> = {
-  failed: 'Telegram refused the message; it is tried again on the next change',
+const TG_WHY: Record<Exclude<TelegramReach, 'sent'>, string> = {
+  sending: 'the message is still on its way (it may land in a moment; nothing confirmed it yet)',
+  failed: 'Telegram refused the message; it is tried again after a short wait, and at once when he next writes from Telegram',
   at_mac: 'he is at the Mac, so Telegram gets nothing; it goes there the moment he writes from Telegram',
   no_bot: 'no Super Telegram bot is bound to this project',
 };
@@ -329,9 +343,10 @@ export function ownerQuestionReach(state: Pick<SuperState, 'queue'>, itemId: str
   const shown = !!known || ahead === 0;
   const via: OwnerChannel[] = [...(known?.via ?? [])];
   const t = tgItems.get(itemId);
-  if (t && (t.state === 'sent' || t.state === 'sending')) via.push('telegram');
+  // Only a send that LANDED is a reach (review r1): one still on its way is said as such.
+  if (t?.state === 'sent') via.push('telegram');
   const reached = via.some((x) => x !== 'notch');
-  const tg = t && t.state !== 'sent' && t.state !== 'sending' ? `Telegram: ${TG_WHY[t.state]}${t.why ? ` (${t.why})` : ''}` : null;
+  const tg = t && t.state !== 'sent' ? `Telegram: ${TG_WHY[t.state]}${t.why ? ` (${t.why})` : ''}` : null;
   let why: string | undefined;
   if (!reached) {
     why = [

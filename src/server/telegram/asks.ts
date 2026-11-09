@@ -49,7 +49,7 @@ interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askI
 const copies = new Map<string, Copy>();
 const COPIES_CAP = 200;
 
-type SendOutcome = { ok: true } | { ok: false; why: string } | { skipped: true };
+type SendOutcome = { ok: true } | { ok: false; why: string; retryAfterS?: number } | { skipped: true };
 
 /** The one card a W2 message can carry as buttons: one question, single-select, 1-8 options. */
 function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; labels: string[]; card: AskCardQuestion } | null {
@@ -85,9 +85,12 @@ function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item:
   // in line with its texts. A child's item or an approval is not the Super's turn speaking.
   hub.queueSend(sessionId, async () => {
     let outcome: SendOutcome;
-    try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) { outcome = { ok: false, why: failure(err) }; }
-    // A refused send is let go: the next offer (a write, his next Telegram message) tries again.
-    if (!('skipped' in outcome) && !outcome.ok) sentItems.delete(item.id);
+    try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) {
+      const retry = (err as { retryAfter?: unknown })?.retryAfter;
+      outcome = { ok: false, why: failure(err), ...(typeof retry === 'number' && retry > 0 ? { retryAfterS: retry } : {}) };
+    }
+    // Not sent (refused, or closed before it went): let go, so a later offer is a real send.
+    if ('skipped' in outcome || !outcome.ok) sentItems.delete(item.id);
     logSend(hub, item, outcome);
     noteTelegramSend(item.id, outcome);
     // Answered while it was going: close it at once.
