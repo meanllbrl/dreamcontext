@@ -129,8 +129,8 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
     await hub.send(ab, text, keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}).catch(() => {});
   }
   // The phone line belongs only to a presentation Telegram could not carry whole (a live card,
-  // a page, an unsent picture); one that arrived entirely as photos/documents needs no link.
-  if (lines.length || unsent.length) await sendPhoneButton(hub, ab, sessionId, deps.phoneLink?.(ab) ?? 'off');
+  // a page, an unsent or cut-off picture); one that arrived entirely as photos/documents needs no link.
+  if (lines.length || unsent.length || more > 0 || media.length > MAX_PRESENTED) await sendPhoneButton(hub, ab, sessionId, deps.phoneLink?.(ab) ?? 'off');
   return { photos: pics.length, album, texts: lines.length };
 }
 

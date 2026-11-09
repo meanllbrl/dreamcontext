@@ -238,6 +238,18 @@ describe('stage presentations (L1, L2, N1)', () => {
     expect(tg.sent().some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Telefon linkini aç'))).toBe(false);
   });
 
+  it('an all-photo presentation cut at the 10-card cap still offers the phone link', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: `image-m${i}`, kind: 'image', ref: 'a.png', shape: 'square', place: 'main', title: `M${i}` }));
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id), layout: 'grid' } });
+    present(many.map((c) => c.id));
+    endTurn(h);
+    await vi.waitFor(() => expect(buttonMsg('Telefon linkini aç')).toBeTruthy());
+  });
+
   it('an owner arrangement on the Mac sends nothing; outside a Telegram turn with streaming off nothing either', async () => {
     const { h } = chat();
     superWindow();
