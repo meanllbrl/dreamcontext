@@ -677,10 +677,11 @@ describe('modeBriefing', () => {
     expect(brief.length).toBeLessThanOrEqual(6500);
   });
 
-  it('plan: two or more waves become sub-tasks of the task, the map naming each', () => {
+  it('plan: waves stay inside the one task; wave sub-tasks only when the owner asks (2026-11-09)', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: true });
-    expect(brief).toContain('2+ waves: each wave is a sub-task (`tasks create "Wave N: …" --parent <slug> --basis plan`)');
-    expect(brief).toMatch(/the map names each wave's slug/);
+    expect(brief).toContain('Waves stay inside this ONE task');
+    expect(brief).toContain('Wave\n   sub-tasks only when the owner asks for them.');
+    expect(brief).not.toContain('each wave is a sub-task');
   });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

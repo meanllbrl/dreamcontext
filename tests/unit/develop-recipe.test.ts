@@ -560,15 +560,14 @@ describe('the end review the diff picks, in both recipes', () => {
   }
 });
 
-describe('waves are sub-tasks (both recipes)', () => {
+describe('waves live inside the task (both recipes, owner 2026-11-09)', () => {
   for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
-    it(`${name}: three cases, the wave carries its own progress and close, reopen reads \`wave\``, () => {
+    it(`${name}: no sub-task per wave; existing wave sub-tasks keep their progress, close and reopen`, () => {
+      expect(recipe).toContain('**Waves live inside the task.**');
+      expect(recipe).toMatch(/never open a sub-task per wave/);
+      expect(recipe).toMatch(/Wave sub-tasks open only when the owner asked for them/);
+      expect(recipe).not.toContain('tasks create "Wave N');
       expect(recipe).toContain('dreamcontext tasks list --parent "$S" --json');
-      expect(recipe).toMatch(/\(a\) Wave sub-tasks exist: use them\. \(b\) Two or more waves, no wave sub-tasks and no `wN green`/);
-      expect(recipe).toContain('dreamcontext tasks create "Wave N: <what it delivers>" --parent "$S" --basis plan --quote "<the WN part of the map>"');
-      expect(recipe).toMatch(/add a NEW map naming their slugs/);
-      expect(recipe).toMatch(/\(c\) `wN green` lines already exist/);
-      expect(recipe).toMatch(/a task that is itself a sub-task: progress stays on "\$S"/);
       expect(recipe).toContain('dreamcontext tasks status <wave-N> in_progress');
       expect(recipe).toContain('dreamcontext tasks complete <wave-N> "<the check\'s summary line>"');
       expect(recipe).toMatch(/A wave never closes\s+without a green check/);

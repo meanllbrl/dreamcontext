@@ -276,8 +276,10 @@ export type FilingDecision =
     }
   | { ok: false; code: 'basis_required' | 'top_level_needs_ask' | 'quote_too_thin' | 'quote_not_found' | 'invalid_basis'; message: string };
 
-const ESCAPE = 'Put it under the task it belongs to with --parent <slug>, '
-  + 'or add it to that task as a criterion: dreamcontext tasks insert <slug> acceptance_criteria "…".';
+// Criterion first (owner, 2026-11-09: a sub-task only when the owner asks; a small fix already
+// shipped needs no task at all, the release note carries it).
+const ESCAPE = 'Add it to the task it belongs to as a criterion: dreamcontext tasks insert <slug> acceptance_criteria "…" '
+  + '(a sub-task, --parent <slug>, only when the owner asked for one).';
 
 /** Who is this caller, and what may they file? Pure apart from reading transcripts. */
 export function decideFiling(input: FilingInput): FilingDecision {

@@ -152,14 +152,10 @@ describe('waves: list --parent --json, the close gate, readiness', () => {
     expect(fmOf('the-parent').status).toBe('completed');
   });
 
-  it('tasks ready never refuses an old map; it notes the missing wave sub-tasks only when there are none', async () => {
+  it('tasks ready passes a multi-wave map with no wave sub-tasks and never asks for them (waves live inside the task)', async () => {
     writeTask('old-plan', { name: 'Old Plan' }, '## Why\nx\n\n## Acceptance Criteria\n\n- [ ] works\n- [ ] Validation method: tests\n\n## Technical Details\n\nWAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)\n');
     expect(await cli('ready', 'old-plan')).toBe(0);
-    expect(printed()).toMatch(/no wave sub-tasks exist yet; Develop opens them/);
-    out = [];
-    await cli('create', '1. dalga: a', '--parent', 'old-plan', '--basis', 'plan');
-    expect(await cli('ready', 'old-plan')).toBe(0);
-    expect(printed()).not.toMatch(/no wave sub-tasks/);
+    expect(printed()).not.toMatch(/sub-task|--parent/);
   });
 
   it('a mapped wave is exempt from the sleep-eval close gate; an unmapped plan child is not', async () => {

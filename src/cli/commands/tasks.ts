@@ -44,7 +44,6 @@ import {
   contextHandoffGaps,
   renderHandoffEntry,
   developHandoffGaps,
-  developHandoffNotes,
   drawingFileCheck,
   formatGaps,
   type HandoffFields,
@@ -2340,14 +2339,6 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
       success(`${slug} is ready for development.`);
-      if (task) {
-        const children: TaskData[] = [];
-        for (const c of (await backend.list()).filter((t) => t.parent_task === slug)) {
-          const full = await backend.get(c.name);
-          if (full) children.push(full);
-        }
-        for (const note of developHandoffNotes(task, children)) info(note);
-      }
     });
 
   // Sync with the remote backend (no-op for local)

@@ -80,7 +80,7 @@ describe('the super session\'s handoff nudge', () => {
     expect(text).not.toContain('super-koordinasyon');
     expect(text).not.toContain('odev-ver-akisi');
     expect(text).toContain('tasks handoff <task-slug>');
-    expect(text).toContain('your job has no task yet');
+    expect(text).toContain('your job has no task: small work finishes in this session');
   });
 
   it('a child is found by its conversation too (a terminal child, a pane id missing), and its worktree is named', () => {
@@ -102,7 +102,7 @@ describe('the super session\'s handoff nudge', () => {
     // Only what the store itself accepts: one folder directly under ~/.claude-worktrees.
     expect(superChildContext(contextRoot, ['c2'])).toEqual({});
     const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c1' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
-    expect(text).toContain('your job has no task yet');
+    expect(text).toContain('your job has no task: small work finishes in this session');
     expect(text).not.toContain('rm -rf');
   });
 
@@ -110,7 +110,7 @@ describe('the super session\'s handoff nudge', () => {
     writeHandoffRecord(contextRoot, 'c2', { task: 'giris-ekrani-duzeltmesi', title: 'Giriş', at: '2026-11-08T10:00:00.000Z', contextTokens: 3100, fromSession: 'x', tab: 'c2' });
     const text = nudge({ DREAMCONTEXT_TAB_SESSION: 'c2' }, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee')!;
     expect(text).toContain('dreamcontext tasks handoff giris-ekrani-duzeltmesi --done');
-    expect(text).not.toContain('your job has no task yet');
+    expect(text).not.toContain('your job has no task: small work finishes in this session');
   });
 
   it('an ended child is no longer one; the super itself is not its own child', () => {

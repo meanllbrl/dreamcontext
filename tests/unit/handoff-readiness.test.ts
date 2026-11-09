@@ -9,7 +9,6 @@ import {
   contextHandoffGaps,
   renderHandoffEntry,
   developHandoffGaps,
-  developHandoffNotes,
   outcomeScope,
   outcomeApprovalGaps,
   HANDOFF_FIELDS,
@@ -164,20 +163,5 @@ describe("outcome approval — a UX/UI plan needs the owner's recorded yes", () 
 
   it('the newest declaration wins (a plan rewritten from ui to ux)', () => {
     expect(outcomeScope('UX/UI change: ui\n- src/a.ts\nUX/UI change: ux').scope).toBe('ux');
-  });
-});
-
-describe('developHandoffNotes — wave sub-tasks are a note, never a gap', () => {
-  const map = 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)';
-  it('notes a 2+ wave map on a top-level task with no wave children', () => {
-    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [])[0]).toMatch(/--parent p --basis plan/);
-  });
-  it('is silent with wave children, on a sub-task, and for a single wave', () => {
-    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [{ slug: 'w1', name: '1. dalga: a', filed_by: 'plan' }])).toEqual([]);
-    expect(developHandoffNotes({ slug: 'p', parent_task: 'q', technical_details: map }, [])).toEqual([]);
-    expect(developHandoffNotes({ slug: 'p', technical_details: 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts)' }, [])).toEqual([]);
-  });
-  it('a non-plan child does not count as a wave', () => {
-    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [{ slug: 's', name: 'bug', filed_by: 'sleep' }])).toHaveLength(1);
   });
 });

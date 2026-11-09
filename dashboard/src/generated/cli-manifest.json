@@ -1179,7 +1179,8 @@
         "--repo",
         "--lenses",
         "--start",
-        "--criteria-file"
+        "--criteria-file",
+        "--goal"
       ]
     },
     {

@@ -15,7 +15,7 @@ import { listObjectives } from '../../lib/objectives-store.js';
 import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-dates.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
-import { developHandoffGaps, developHandoffNotes, drawingFileCheck } from '../../lib/handoff-readiness.js';
+import { developHandoffGaps, drawingFileCheck } from '../../lib/handoff-readiness.js';
 import { planGateGaps } from '../../lib/plan-ledger.js';
 import { readPlanLedgers } from '../../lib/plan-store.js';
 import { getAgent } from '../../lib/agents/store.js';
@@ -1148,13 +1148,7 @@ export async function handleTasksReadiness(
   // The plan's gate (lib/plan-ledger.ts): an open Critical, an unaccepted open Major or a plan
   // not done refuses here exactly as it does in `tasks ready` and `plan link`.
   const gaps = [...developHandoffGaps(task, drawingFileCheck(contextRoot)), ...planGateGaps(readPlanLedgers(contextRoot), slug)];
-  const children: TaskData[] = [];
-  for (const c of childrenOf(await parentLinkTasks(backendFor(contextRoot)), slug)) {
-    const full = await backendFor(contextRoot).get(c.slug);
-    if (full) children.push(full);
-  }
-  // `notes` never refuse the button (developHandoffNotes): the dashboard may show them.
-  sendJson(res, 200, { ready: gaps.length === 0, gaps, notes: developHandoffNotes(task, children) });
+  sendJson(res, 200, { ready: gaps.length === 0, gaps });
 }
 
 /**
