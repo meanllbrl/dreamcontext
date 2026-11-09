@@ -60,7 +60,7 @@ describe('telegram system lines', () => {
   describe('every fixed line is one plain sentence with no emoji of its own and no old "back" note', () => {
     const fixed: string[] = [
       LINES.superOff, LINES.cannotOpen, LINES.notWritten, LINES.writtenNotDone, LINES.unknownCommand, LINES.conflict, LINES.tamper, LINES.endedSilent,
-      LINES.bound('Ali'), LINES.unbound(true),
+      LINES.bound('Ali'), LINES.unbound(),
       HF_LINES.macOn, HF_LINES.notSetup, HF_LINES.telegramOn, HF_LINES.linkOn('https://a.trycloudflare.com'), HF_LINES.newLink('https://a.trycloudflare.com'),
       HF_LINES.notOn, HF_LINES.ended('telefon bağlantısı koptu', true), HF_LINES.battery, HF_LINES.heat, HF_LINES.noGrant,
       ...Object.values(CMD_LINES).map((v) => (typeof v === 'function' ? v('x') : v)),

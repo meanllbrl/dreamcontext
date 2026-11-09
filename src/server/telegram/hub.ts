@@ -80,7 +80,7 @@ export const LINES = {
   waitingOnMac: "Mac'te seni bekliyor.",
   unknownCommand: 'Bu komut yok. Komutlar: /durum /gundem /dur /handsfree',
   bound: (who: string) => `Bağlandı: ${who}. Buradan yazabilirsin.`,
-  unbound: (keyed: boolean) => `Telegram bağlantısı Mac'te kaldırıldı${keyed ? '' : ' (anahtarsız istek)'}.`,
+  unbound: () => "Telegram bağlantısı Mac'te kaldırıldı.",
   conflict: "Bu bot başka yerde de dinleniyor, bağlantı durdu; BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
   endedSilent: "Bu tur cevap yazmadan bitti; tekrar yaz ya da Mac'e bak.",
@@ -474,7 +474,7 @@ export class TelegramHub implements TelegramHubApi {
     // A confirmed bind that replaces an active one: the old bot says its last word first (C3).
     const key = keyOf(live.scope, live.target);
     const old = this.active.get(key);
-    if (old && old.binding.botId !== live.botId) await this.lastMessage(old, 'info', LINES.unbound(true));
+    if (old && old.binding.botId !== live.botId) await this.lastMessage(old, 'info', LINES.unbound());
     if (old) this.halt(old);
     if (old && (old.binding.botId !== live.botId || old.binding.chatId !== user.chatId || old.binding.userId !== user.userId)) {
       removeBindingDir(live.scope, live.target, this.home);
@@ -504,7 +504,8 @@ export class TelegramHub implements TelegramHubApi {
     const ab = this.active.get(key);
     for (const [id, p] of [...this.pairings]) if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); }
     if (ab) {
-      await this.lastMessage(ab, 'info', LINES.unbound(opts.keyed), !opts.keyed);
+      // The route only takes the owner's own page (fromPageHeaders), whose Remove button never sends the key: an unkeyed unbind is his own click, so the last line is quiet.
+      await this.lastMessage(ab, 'info', LINES.unbound(), false);
       this.halt(ab);
       this.active.delete(key);
       this.deps.handsfree?.onBindingLost?.(scope, target);

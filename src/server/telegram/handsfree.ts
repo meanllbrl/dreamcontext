@@ -37,7 +37,8 @@ export interface HandsfreeSessionLike {
 }
 
 /** Ends the owner caused himself: no line. */
-const OWN_ENDS = new Set(['mac', 'telegram', 'back']);
+// 'failed' = a start that did not open: the caller that started it says so once, an ending line would double it (and repeat on every automatic retry).
+const OWN_ENDS = new Set(['mac', 'telegram', 'back', 'failed']);
 
 const REASONS: Record<string, string> = {
   mac: "Mac'ten kapatıldı",

@@ -403,9 +403,9 @@ describe('the Super target', () => {
     expect(tg.texts()).toContain('🎙 <i>Duyduğum</i>\n<blockquote expandable><i>merhaba dünya</i></blockquote>');
   });
 
-  it('unbind sends the last message first, then removes the folder; an unkeyed one says so', async () => {
+  it('unbind sends the last message first, then removes the folder; an unkeyed one (his own page click) stays quiet about it', async () => {
     await hub.unbind(scopeOfContextRoot(root), 'super', { keyed: false });
-    expect(tg.texts().at(-1)).toBe("ℹ️ <i>Telegram bağlantısı Mac'te kaldırıldı (anahtarsız istek).</i>");
+    expect(tg.texts().at(-1)).toBe("ℹ️ <i>Telegram bağlantısı Mac'te kaldırıldı.</i>");
     expect(existsSync(bindingDir(scopeOfContextRoot(root), 'super', home))).toBe(false);
     expect(hub.status()).toEqual([]);
   });
