@@ -60,7 +60,8 @@ import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '.
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, vaultLiveChildren, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
-import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { knownMcpServers, mcpNeedingSignIn, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { readStatusCache } from '../../lib/mcp-live.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
   worktreeStatus, type CreatedWorktree,
@@ -556,6 +557,19 @@ function worktreePreamble(w: CreatedWorktree): string {
     + 'cd there first, then work and commit only there. Never push and never merge into another branch.';
 }
 
+/** `super state`'s MCP part: the names `delegate --mcp` can grant, and among them the ones that
+ *  need the owner's sign-in (`mcpSignIn`, from the accounts' last live readings): a child given
+ *  one cannot use it, so that job waits on the owner, never on another delegate. */
+function mcpRows(root: string): { mcpServers: string[]; mcpSignIn?: string[]; mcpSignInDo?: string } {
+  const names = [...knownMcpServers(dirname(root)).keys()];
+  let signIn: string[] = [];
+  try { signIn = mcpNeedingSignIn(names, readStatusCache()); } catch { /* names only */ }
+  return {
+    mcpServers: names,
+    ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: 'only the owner can sign these in: tell him once (Settings → MCP → Connect), and hold the job until he has' } : {}),
+  };
+}
+
 /** `--mcp`: every name must be one of the user's MCP servers for this project (D14). The 400
  *  names the known ones so the agent can fix its call; names only, never a config. */
 function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
@@ -915,10 +929,15 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // A job that looks like a ready AI Team member's field: a warning, never a block (owner,
     // 2026-10-29). Not for a pool job: it was judged when it was kept.
     const hint = fromRow ? null : delegateTeamHint(root, job, sid);
+    // A named server that needs the owner's sign-in: a warning, never a block (the child may
+    // still do the rest of the job), so the agent asks him instead of delegating it again.
+    let signIn: string[] = [];
+    try { signIn = job.mcp?.length ? mcpNeedingSignIn(job.mcp, readStatusCache()) : []; } catch { /* no warning */ }
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
       ...(hint ? { teamHint: hint } : {}),
+      ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: `${signIn.join(', ')} needs the owner's sign-in (Settings → MCP → Connect); the child cannot use it until then. Tell him once; never delegate the job again hoping it appears` } : {}),
       ...(predecessor ? { predecessor } : {}),
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
     });
@@ -1571,7 +1590,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ...teamMembersRow(root, vault),
       // The MCP servers `delegate --mcp` can grant (D14): names only, each one the narrow
       // [a-z0-9_-] shape (a name of any other shape is never listed, so nothing here is prose).
-      mcpServers: [...knownMcpServers(dirname(root)).keys()],
+      ...mcpRows(root),
     });
   },
 

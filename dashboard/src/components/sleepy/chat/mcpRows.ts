@@ -1,4 +1,4 @@
-import type { McpConnectState, McpHome, McpLiveServer } from '../../../lib/mcpWire';
+import type { McpConnectState, McpHome, McpLiveServer, McpOverview } from '../../../lib/mcpWire';
 
 /**
  * Pure helpers the `/mcp` popover and the `mcp` chat card share (task mcp-management): what a
@@ -88,6 +88,36 @@ export function findServer(name: string, servers: readonly McpLiveServer[]): Mcp
   return servers.find((s) => s.name === name)
     ?? servers.find((s) => s.name.toLowerCase() === name.toLowerCase())
     ?? null;
+}
+
+/**
+ * What a card row says about a server the chat's live status does NOT hold, read from the
+ * Settings → MCP overview (the stores plus each account's last reading). Three truths, never
+ * "add it" for a server that is already set up (kitUP 2026-11-09: posthog was set up and only
+ * needed a sign-in, and the card sent the owner to add it):
+ *  - set up, and this chat's account (else any account) last read it as needing a sign-in →
+ *    `signIn`: the owner's one step is Connect in Settings → MCP;
+ *  - set up, but this chat was started without it (a Super child gets only `--mcp` names);
+ *  - set up nowhere → add it in Settings → MCP.
+ * `overview` null = not read yet (or it failed): say only that it is missing here.
+ */
+export function missingRow(
+  name: string,
+  overview: Pick<McpOverview, 'servers' | 'live' | 'cells'> | null,
+  accountId?: string,
+): { text: string; signIn: boolean } {
+  if (!overview) return { text: 'not in this chat: see Settings → MCP', signIn: false };
+  const lower = name.toLowerCase();
+  const def = overview.servers.find((s) => s.name === name) ?? overview.servers.find((s) => s.name.toLowerCase() === lower);
+  const conn = def ? null : overview.live.find((l) => l.name.toLowerCase() === lower);
+  if (!def && !conn) return { text: 'not set up yet: add it in Settings → MCP', signIn: false };
+  const home = def?.home ?? conn!.home;
+  const cells = overview.cells[def ? def.key : `${conn!.name}|${conn!.home}`] ?? {};
+  const mine = accountId ? cells[accountId]?.status : undefined;
+  const any = Object.values(cells).map((c) => c.status);
+  const needsSignIn = mine ? mine === 'needs-auth' : any.includes('needs-auth') && !any.includes('connected');
+  if (needsSignIn) return { text: `${homeLabel(home)} · needs your sign-in`, signIn: true };
+  return { text: `${homeLabel(home)} · this chat was started without it`, signIn: false };
 }
 
 /** Every named server is live and connected. */
