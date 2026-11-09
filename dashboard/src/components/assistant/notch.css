@@ -308,9 +308,10 @@ html:has(.dc-notch) #root {
   gap: var(--space-2);
   align-items: center;
   justify-content: space-between;
-  margin: 0 0 var(--space-2);
+  /* The list's own inset (.dc-proposals), so it lines up with the cards under it. */
+  margin: var(--space-2) var(--space-4) 0;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--color-warning-subtle);
   color: var(--color-text);
   font-size: var(--font-size-sm);
