@@ -517,17 +517,15 @@ function boardParts(turn: TurnBoardContext): string[] {
   return [turn.board, turn.refs].filter(Boolean).flatMap((block) => ['', block]);
 }
 
-/** A resume's board-only envelope: null for any other agent. `held`: limited only until the
- *  owner answers the old-agent question (`board-scope.ts` `boardLimited`). */
+/** A resume's board-only envelope: null for any other agent. */
 interface ResumeScope {
   scope: BoardScope;
   paths: ScopePaths;
-  held: boolean;
 }
 
 /** A board-only resume that Claude Code denied a step: the named reason, else null. */
 function boardDenial(m: AutomationManifest, resume: ResumeScope | null, denials: number): string | null {
-  return resume && denials > 0 ? boardLimitReason(m.agentTitle || m.title, m.agent || m.slug, resume.held) : null;
+  return resume && denials > 0 ? boardLimitReason(m.agentTitle || m.title, m.agent || m.slug) : null;
 }
 
 /**
@@ -576,7 +574,7 @@ function resolveResumeScope(
   if (!scoped.scope) return { ok: true, manifest, resume: null, home };
   const prepared = prepareScopePaths(contextRoot, scoped.scope);
   if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
-  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths, held: scoped.held }, home };
+  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths }, home };
 }
 
 // ─── Questions ───────────────────────────────────────────────────────────────

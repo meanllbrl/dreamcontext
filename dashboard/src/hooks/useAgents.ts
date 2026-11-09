@@ -316,7 +316,7 @@ export function useApproveAgent() {
   });
 }
 
-/** The owner's answer to "Should <agent> still be limited to its board?" (`agents board-scope`). */
+/** The owner's answer to "<agent> was limited to its board before. Keep it there?" (`agents board-scope`). */
 export function useAnswerBoardScope() {
   const queryClient = useQueryClient();
   const api = useApi();

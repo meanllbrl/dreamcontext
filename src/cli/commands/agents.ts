@@ -265,7 +265,7 @@ export function registerAgentsCommand(program: Command): void {
       if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}${agent.boardOnly ? '  (scope: board)' : ''}`);
       console.log(`  ${effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy))}`);
       if (envelope.question) {
-        console.log(chalk.yellow(`  Should ${agent.title} still be limited to its board? Answer on its AI Team page, or: dreamcontext agents board-scope ${slug} keep|lift`));
+        console.log(chalk.yellow(`  ${agent.title} was limited to its board before and now works by its autonomy. Keep it on its board? Answer on its AI Team page, or: dreamcontext agents board-scope ${slug} keep|lift`));
       }
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}${v.waits && v.run ? ' (on the last approved version)' : ''}`);
@@ -450,8 +450,8 @@ export function registerAgentsCommand(program: Command): void {
   agents
     .command('board-scope')
     .argument('<slug>', 'Agent slug')
-    .argument('<answer>', 'keep (stay limited to its board: writes scope: board) or lift (run under its autonomy level)')
-    .description('Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)')
+    .argument('<answer>', 'keep (limit it to its board: writes scope: board) or lift (keep running under its autonomy level)')
+    .description('Answer the one offer an older home-board agent carries: keep it limited to its board? It runs by its autonomy until then (refused inside a Claude session or an agent run)')
     .action((slug: string, answer: string) => {
       if (refuseSelfApproval(process.env)) return;
       if (answer !== 'keep' && answer !== 'lift') {

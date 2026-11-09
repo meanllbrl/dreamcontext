@@ -159,8 +159,10 @@ describe('prepareCardChat', () => {
     expect(prep.permissionArgs).toEqual(boardScopeArgs(
       { board, self: 'board-pilot' },
       { outputSelf: join(realpathSync(contextRoot), 'automations', 'output', 'board-pilot'), scratch },
+      'default',
     ));
-    expect(prep.permissionArgs?.slice(0, 4)).toEqual(['--permission-mode', 'dontAsk', '--setting-sources', 'project']);
+    // The owner is in the conversation: a step off the list is his card, never a silent dontAsk denial.
+    expect(prep.permissionArgs?.slice(0, 4)).toEqual(['--permission-mode', 'default', '--setting-sources', 'project']);
     expect(prep.briefing).toContain(`SCOPE: you act only on your whiteboard "${board}"`);
     prep.dispose();
     expect(existsSync(scratch)).toBe(false);
@@ -298,7 +300,7 @@ describe('prepareAgentChat', () => {
     expect(prep.env).toMatchObject({
       [CARD_AGENT_ENV]: 'board-pilot', [CARD_BOARD_ENV]: board, [AGENT_BOARD_ENV]: board, [AGENT_SELF_ENV]: 'board-pilot',
     });
-    expect(prep.permissionArgs?.slice(0, 2)).toEqual(['--permission-mode', 'dontAsk']);
+    expect(prep.permissionArgs?.slice(0, 2)).toEqual(['--permission-mode', 'default']);
     expect(prep.briefing).toContain(`SCOPE: you act only on your whiteboard "${board}"`);
     const turn = cardTurnContext(contextRoot, prep.env, 'What is left?') as string;
     expect(turn).toContain('Ship the Q4 plan');

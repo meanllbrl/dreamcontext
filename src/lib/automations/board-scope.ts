@@ -17,8 +17,9 @@ import {
 
 /**
  * The permission envelope of a BOARD-ONLY agent: one whose manifest names a `whiteboard` AND says
- * `scope: board` (or an old board agent the owner has not yet answered about, see
- * {@link boardLimited}).
+ * `scope: board` (or whose approval entry here marks it `board`, see {@link boardLimited}). An old
+ * board agent the owner has not answered about is NOT limited (2026-11-09): it runs by its
+ * autonomy like any member, and the old question only offers to keep it on its board.
  *
  * A home board alone is a presentation surface, never a permission scope (owner 2026-11-07): an
  * agent with a board and no `scope: board` gets exactly the envelope of a member without one (its
@@ -26,8 +27,10 @@ import {
  * its board only shows its work and hosts its card conversation.
  *
  * Every other agent runs under `bypassPermissions`. A board-only agent instead runs under
- * Claude Code's own rules (`dontAsk`, `--setting-sources project`, an exact allowlist), so
- * anything not listed is denied rather than asked about. It may read anything, act on its own
+ * Claude Code's own rules (`--setting-sources project`, an exact allowlist): unattended
+ * (`dontAsk`) anything not listed is denied with a named reason on the run; in a conversation
+ * the owner is in (`default`), anything not listed is asked as his permission card, never
+ * denied silently. It may read anything, act on its own
  * board through the `dreamcontext` CLI, post and learn as itself, and write files only into
  * its own output folder and a scratch folder made fresh for each spawn.
  *
@@ -67,16 +70,20 @@ export interface ScopePaths {
 
 export type SpawnScopeResult =
   /** `scope`: the board-only envelope, or null. `homeBoard`: the agent's home board whatever its
-   *  envelope (what its turns show and where its card lives), or null. `held`: board-only only
-   *  because the owner has not answered the old-agent question yet. */
-  | { ok: true; scope: BoardScope | null; homeBoard: string | null; held: boolean }
+   *  envelope (what its turns show and where its card lives), or null. */
+  | { ok: true; scope: BoardScope | null; homeBoard: string | null }
   | { ok: false; reason: string };
 
 /**
  * Whether a home-board agent is limited to its board: its manifest says `scope: board`, or an
- * approval entry here holds it (`boardHoldIn`: an old board agent the owner has not yet answered
- * about) or marks it `board`. The entry that approved this target and the agent's own entry both
- * count, so a routine follows its agent. Fails closed: any doubt keeps the limit.
+ * approval entry here marks it `board`. The entry that approved this target and the agent's own
+ * entry both count, so a routine follows its agent.
+ *
+ * `held` (`boardHoldIn`: an old board agent the owner has not answered about) does NOT limit
+ * (owner, 2026-11-09: "sub agent aksiyon alamıyor"). Holding it limited until he found and answered
+ * a question on another page left its own chat silently denied (`dontAsk`) on every Bash, MCP and
+ * out-of-board write. A board is not a permission (2026-11-07): such an agent runs by its autonomy,
+ * and `held` only offers him the choice to keep it on its board.
  */
 export function boardLimited(
   projectRoot: string,
@@ -87,9 +94,8 @@ export function boardLimited(
   if (m.boardOnly === true) return { limited: true, held: false };
   const own = entry ?? null;
   const agentEntry = getAgentEntry(projectRoot, m.agent || m.slug, home);
-  const held = boardHoldIn(own) || boardHoldIn(agentEntry);
   const marked = own?.boardScope === 'board' || agentEntry?.boardScope === 'board';
-  return { limited: held || marked, held };
+  return { limited: marked, held: !marked && (boardHoldIn(own) || boardHoldIn(agentEntry)) };
 }
 
 /** The env deny every home-board agent that is NOT board-only carries: it may run scripts that
@@ -253,11 +259,11 @@ export function resolveSpawnScope(
   const fromManifest = scoped.whiteboard ?? null;
   const fromEntry = approval.entry.whiteboard ?? null;
   const board = fromManifest ?? fromEntry;
-  if (!board) return { ok: true, scope: null, homeBoard: null, held: false };
-  const { limited, held } = boardLimited(dirname(root), scoped, approval.entry, home);
+  if (!board) return { ok: true, scope: null, homeBoard: null };
+  const { limited } = boardLimited(dirname(root), scoped, approval.entry, home);
   // A home board that does not limit: the agent runs as any member does, and the board is only
   // where its work shows. Nothing about the board can refuse the spawn then.
-  if (!limited) return { ok: true, scope: null, homeBoard: board, held: false };
+  if (!limited) return { ok: true, scope: null, homeBoard: board };
   if (fromManifest && fromEntry && fromManifest !== fromEntry) {
     return {
       ok: false,
@@ -272,7 +278,7 @@ export function resolveSpawnScope(
   } catch {
     return { ok: false, reason: `its board "${board}" does not exist or cannot be read` };
   }
-  return { ok: true, scope: { board, self: m.slug }, homeBoard: board, held };
+  return { ok: true, scope: { board, self: m.slug }, homeBoard: board };
 }
 
 /** The first symlink found at or below `dir`, dangling ones included, as a reason. */
@@ -416,14 +422,19 @@ export function credentialReadDenies(userHome?: string, platform: NodeJS.Platfor
  * The scoped permission argv, PURE. For a scoped agent it replaces
  * `--permission-mode bypassPermissions` wherever that sits, and nothing else changes.
  * `userHome` defaults to the real home; tests pass a fixed one so the rules are literal.
+ *
+ * `mode`: `dontAsk` for a run nobody watches (a denial ends it with {@link boardLimitReason});
+ * `default` for a conversation the owner is in, so a step outside the allowlist reaches him as a
+ * permission card instead of a silent denial. The allow and deny lists are the same in both.
  */
 export function boardScopeArgs(
   s: Pick<BoardScope, 'board' | 'self'>,
   p: Pick<ScopePaths, 'outputSelf' | 'scratch'> & { userHome?: string },
+  mode: 'dontAsk' | 'default' = 'dontAsk',
 ): string[] {
   const home = p.userHome ?? realHome();
   return [
-    '--permission-mode', 'dontAsk',
+    '--permission-mode', mode,
     '--setting-sources', 'project',
     '--allowedTools',
     ...BOARD_AGENT_TOOLS,
@@ -458,22 +469,20 @@ export function scopeRefusal(title: string, reason: string): string {
 
 /**
  * The named reason a board-only run or turn records when Claude Code denied it a step (the
- * `dontAsk` envelope): what is off, and how the owner lifts it. `held` names the old-agent
- * question instead of the checkbox, since such an agent has no `scope: board` to untick.
+ * `dontAsk` envelope): what is off, and how the owner lifts it. Only a `scope: board` the owner
+ * set limits (an old held agent no longer does), so the lift is always the checkbox.
  */
-export function boardLimitReason(title: string, slug: string, held: boolean): string {
-  const lift = held
-    ? `answer "Should ${title} still be limited to its board?" on its AI Team page, or run \`dreamcontext agents board-scope ${slug} lift\``
-    : `untick "Limit to its board" in its Edit dialog, or run \`dreamcontext agents edit ${slug} --no-board-only\``;
-  return `${title} is limited to its board: Bash, node, MCP tools and .env are off, and it writes only to its board and its output folder. To lift it: ${lift}.`;
+export function boardLimitReason(title: string, slug: string): string {
+  return `${title} is limited to its board: Bash, node, MCP tools and .env are off, and it writes only to its board and its output folder. To lift it: untick "Limit to its board" in its Edit dialog, or run \`dreamcontext agents edit ${slug} --no-board-only\`.`;
 }
 
 /** Marks a board-limit reason inside a longer line (a thread entry, a run error). */
 export const BOARD_LIMIT_MARK = 'is limited to its board:';
 
 /** How a target's board decides its envelope, for a surface that shows it (`agents show`, the AI
- *  Team): its home board, whether it is limited, whether only by the old-agent hold, and whether
- *  the owner owes the one question about it (approved, held, no `scope: board` of its own). */
+ *  Team): its home board, whether it is limited, whether it is an old agent the owner has not
+ *  answered about (`held`, never limited), and whether the one optional question is open for it
+ *  (approved, held, no `scope: board` of its own). */
 export interface BoardEnvelopeView {
   board: string | null;
   limited: boolean;
@@ -492,11 +501,7 @@ export function boardEnvelopeView(projectRoot: string, m: AutomationManifest, ho
 
 /** The one `effective:` line `agents show` prints. `chatMode` is the autonomy level's chat mode. */
 export function effectiveEnvelopeLine(view: BoardEnvelopeView, chatMode: string): string {
-  if (view.limited) {
-    return view.held
-      ? 'effective: dontAsk (board-scoped, kept from before boards stopped limiting; the owner is asked once whether it stays)'
-      : 'effective: dontAsk (board-scoped)';
-  }
+  if (view.limited) return 'effective: board-scoped (runs dontAsk; a chat with the owner asks him before any step outside its board)';
   const shows = view.board ? `; its board "${view.board}" shows its work, .env closed to Read` : '';
   return `effective: chat ${chatMode}, runs bypassPermissions${shows}`;
 }

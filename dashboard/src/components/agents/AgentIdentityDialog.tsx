@@ -487,7 +487,7 @@ export function AgentIdentityDialog({
               {t('agents.identity.boardOnly')}
               <span className="aid-hint"> {t(form.boardOnly
                 ? 'agents.identity.boardOnlyOn'
-                // An old board agent still held limited (its question unanswered): the screen says so.
+                // An old board agent with its offer open (it already works by its autonomy): the screen says so.
                 : detail.data?.agent.boardQuestion && form.whiteboard === (detail.data.agent.whiteboard ?? '')
                   ? 'agents.identity.boardOnlyHeld'
                   : 'agents.identity.boardOnlyOff')}</span>

@@ -88,7 +88,8 @@ export type CardChatPrep =
     ok: true;
     manifest: AutomationManifest;
     briefing: string;
-    /** The scoped permission argv (`--permission-mode dontAsk …`) for a home-board agent, null otherwise. */
+    /** The scoped permission argv (`--permission-mode default …`: the board's allowlist, anything else
+     *  asked as the owner's card) for a board-only agent, null otherwise. */
     permissionArgs: string[] | null;
     /** An agent Chat tab's permission argv from its autonomy level (M4), decided here from the
      *  manifest; null for a card and for a scoped agent (its board rules win). */
@@ -148,7 +149,9 @@ function prepareEnvelope(
     ok: true,
     manifest,
     briefing: briefing(manifest, scoped.scope, null),
-    permissionArgs: boardScopeArgs(scoped.scope, prepared.paths),
+    // The owner is in this conversation: a step outside the board reaches him as a permission
+    // card (`default`), never a silent `dontAsk` denial (owner 2026-11-09). Same allow/deny lists.
+    permissionArgs: boardScopeArgs(scoped.scope, prepared.paths, 'default'),
     levelArgs: null,
     levelMode,
     extraArgs: [],

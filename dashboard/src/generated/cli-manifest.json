@@ -23,7 +23,7 @@
     },
     {
       "path": "agents board-scope",
-      "desc": "Answer the one question an older home-board agent owes: should it still be limited to its board? (refused inside a Claude session or an agent run)",
+      "desc": "Answer the one offer an older home-board agent carries: keep it limited to its board? It runs by its autonomy until then (refused inside a Claude session or an agent run)",
       "args": [
         "<slug>",
         "<answer>"

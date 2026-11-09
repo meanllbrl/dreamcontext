@@ -52,10 +52,10 @@ export function TeamApproval({
 }
 
 /**
- * The ONE question an older home-board agent owes (owner 2026-11-07): boards stopped limiting
- * their agents, and an agent that was limited before stays limited until the owner says which it
- * is. Keep writes `scope: board` into its file (his own edit); Let it work opens it on this Mac.
- * Nothing waits on it: the agent keeps working, limited, until he answers.
+ * The ONE offer an older home-board agent carries: boards stopped limiting their agents
+ * (2026-11-07), and since 2026-11-09 one that was limited before already works by its autonomy (a
+ * hold left its own chat denying every step in silence). Keep writes `scope: board` into its file
+ * (his own edit); Let it work closes the offer on this Mac. Nothing waits on it.
  */
 function BoardScopeRow({ item, agentTitle, onToast }: { item: PendingApproval; agentTitle: string; onToast: (msg: string) => void }) {
   const { t } = useI18n();

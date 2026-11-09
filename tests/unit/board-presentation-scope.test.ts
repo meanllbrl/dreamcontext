@@ -55,7 +55,7 @@ import type { SuperTeamJob } from '../../src/lib/super/types.js';
 import { createWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
-import type { AutomationManifest } from '../../src/lib/automations/types.js';
+import { DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../../src/lib/automations/types.js';
 
 vi.mock('../../src/lib/claude-path.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/lib/claude-path.js')>()),
@@ -274,21 +274,29 @@ describe('a home board without scope: board runs like any member', () => {
 
 // ─── 3. The migration ───────────────────────────────────────────────────────
 
-describe('an old board agent is held, never silently widened', () => {
-  it('an entry without a mark keeps the board-only envelope and owes one question', async () => {
+describe('an old board agent runs by its autonomy; keeping it on its board is offered once', () => {
+  // Owner 2026-11-09 ("sub agent aksiyon alamıyor"): a held agent's own chat denied every Bash, MCP
+  // and out-of-board step in silence (`dontAsk`) until he found a question on another page.
+  it('an entry without a mark is NOT limited on any path, and carries the one offer', async () => {
     makeLegacy();
     makeEntryLegacy('funnel-qa');
     const m = getRunTarget(contextRoot, 'funnel-qa', 'automation') as AutomationManifest;
     const scoped = resolveSpawnScope(contextRoot, m, home);
-    expect(scoped.ok && scoped.scope?.board).toBe(board);
-    expect(scoped.ok && scoped.held).toBe(true);
-    const view = boardEnvelopeView(projectRoot, m, home);
-    expect(view).toEqual({ board, limited: true, held: true, question: true });
+    expect(scoped).toEqual({ ok: true, scope: null, homeBoard: board });
+    expect(boardEnvelopeView(projectRoot, m, home)).toEqual({ board, limited: false, held: true, question: true });
+    // A run: the open board envelope, never dontAsk.
     const { impl, calls } = fakeSpawn('# Done', 1);
     const out = await runAutomation(contextRoot, 'funnel-qa', runOpts(impl));
-    expect(calls[0].args).toContain('dontAsk');
-    // The named reason points a held agent at the question, not at a checkbox it does not have.
-    expect(out.error).toContain('agents board-scope funnel-qa lift');
+    expect(calls[0].args).not.toContain('dontAsk');
+    expect(calls[0].args).toEqual(expect.arrayContaining(openBoardArgs()));
+    expect(out.error ?? '').not.toContain('is limited to its board');
+    // The owner's chat with it: its autonomy level, no board allowlist.
+    const chat = prepareAgentChat(contextRoot, 'funnel-qa', home);
+    expect(chat.ok).toBe(true);
+    if (!chat.ok) return;
+    expect(chat.permissionArgs).toBeNull();
+    expect(chat.levelArgs).toEqual(levelPermissionArgs(DEFAULT_AGENT_AUTONOMY, 'chat'));
+    chat.dispose();
   });
 
   it('a re-approval for an unrelated change carries the hold', () => {
@@ -330,7 +338,7 @@ describe('an old board agent is held, never silently widened', () => {
     expect(() => answerBoardScope(contextRoot, 'funnel-qa', false, { home })).toThrow(/no open question/);
   });
 
-  it('a routine still held while its agent was approved open since asks the agent\'s question, and lift opens the routine', () => {
+  it('a routine still held while its agent was approved open since carries the agent\'s offer, and lift closes it', () => {
     createAgent(contextRoot, { slug: 'turing', title: 'Turing', prompt: 'Funnel QA.', whiteboard: board }, { approve: { now: NOW, home } });
     createAutomation(contextRoot, { slug: 'turing-daily', title: 'Turing daily', agent: 'turing', days: 'daily', at: '08:00' });
     approveAutomation(projectRoot, getRunTarget(contextRoot, 'turing-daily', 'automation') as AutomationManifest, NOW, home);
@@ -338,7 +346,8 @@ describe('an old board agent is held, never silently widened', () => {
     const call = getRunTarget(contextRoot, 'turing', 'agent')!;
     const routine = () => getRunTarget(contextRoot, 'turing-daily', 'automation') as AutomationManifest;
     expect(boardEnvelopeView(projectRoot, call, home).question).toBe(false);
-    expect(boardEnvelopeView(projectRoot, routine(), home).limited).toBe(true);
+    // Held, never limited: the routine already runs open; only the offer is carried to its agent.
+    expect(boardEnvelopeView(projectRoot, routine(), home)).toMatchObject({ limited: false, held: true, question: true });
     expect(agentBoardView(contextRoot, 'turing', call, home).question).toBe(true);
     answerBoardScope(contextRoot, 'turing', false, { home, now: NOW });
     expect(boardEnvelopeView(projectRoot, routine(), home).limited).toBe(false);

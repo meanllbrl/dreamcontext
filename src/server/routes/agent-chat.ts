@@ -2565,8 +2565,9 @@ export function startChatSession(
     '--verbose',
     '--include-partial-messages',
     '--permission-prompt-tool', 'stdio',
-    // A home-board card runs under its board's rules (dontAsk, project settings only, an exact
-    // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
+    // A board-only agent's card or Chat tab runs under its board's rules (project settings only, an
+    // exact allowlist) in place of the pane's mode, like its runs (board-scope.ts), but at `default`:
+    // the owner is here, so a step outside the list is his permission card, never a silent denial.
     // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
     // decided above from its manifest; the pane's bypass flag never reaches it.
     // A card that is not board-only runs at the owner's pane mode, never wider than the agent's

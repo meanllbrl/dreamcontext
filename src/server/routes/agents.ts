@@ -114,10 +114,10 @@ export interface AgentSummary {
   whiteboard: string | null;
   /** `scope: board`: limited to its home board by its own file. */
   boardOnly: boolean;
-  /** Limited to its board right now (its `scope: board`, or held from before boards stopped
-   *  limiting until the owner answers `boardQuestion`). */
+  /** Limited to its board right now: its `scope: board` (or a `board` mark here). An older board
+   *  agent with `boardQuestion` open is NOT limited (2026-11-09). */
   boardLimited: boolean;
-  /** The one question this older board agent owes the owner: should it still be limited? */
+  /** The one offer an older board agent carries: keep it limited to its board? */
   boardQuestion: boolean;
   shared: boolean;
   /** `reports_to` as written (the dashboard's tree applies the read rules). Unhashed. */

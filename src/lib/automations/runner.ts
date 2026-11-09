@@ -2528,7 +2528,6 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     let scope: BoardScope | null = null;
     // The home board as a presentation surface: what every turn shows, whatever the envelope.
     const homeView: BoardScope | null = scoped.ok && scoped.homeBoard ? { board: scoped.homeBoard, self: manifest.slug } : null;
-    const scopeHeld = scoped.ok && scoped.held;
     let scopeFailure: string | null = scoped.ok ? null : scoped.reason;
     if (scoped.ok && scoped.scope) {
       scope = scoped.scope;
@@ -3086,7 +3085,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     // Agent read as done. A run that stopped to ask keeps its question.
     if (scope && status === 'ok' && !reviewCardId && (claudeResult?.permissionDenials ?? 0) > 0) {
       status = 'failed';
-      const named = boardLimitReason(manifest.agentTitle || manifest.title, manifest.agent || slug, scopeHeld);
+      const named = boardLimitReason(manifest.agentTitle || manifest.title, manifest.agent || slug);
       error = error ? `${named} | ${error}` : named;
     }
 
