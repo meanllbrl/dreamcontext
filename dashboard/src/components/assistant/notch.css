@@ -275,6 +275,58 @@ html:has(.dc-notch) #root {
 .dc-proposal__btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
 .dc-proposal__btn:disabled { opacity: 0.5; cursor: default; }
 
+/* An agent's app request (app-onay-karti): the plan as label/value lines, a red line for what
+   cannot be undone, the picture itself for a logo. Neutral surface: the warn line carries tone. */
+.dc-proposal--app { background: var(--color-bg); }
+.dc-proposal__eyebrow {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+/* One grid for every line, so all values start in one column whatever the longest label. */
+.dc-proposal__lines { margin: var(--space-2) 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-3); row-gap: var(--space-1); font-size: var(--font-size-sm); }
+.dc-proposal__line { display: contents; }
+.dc-proposal__line dt { color: var(--color-text-secondary); }
+.dc-proposal__line dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.dc-proposal__line[data-tone='warn'] dd { color: var(--color-warning); }
+.dc-proposal__line[data-tone='bad'] dd { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.dc-proposal__warn {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+/* An app card that closed because its app changed: nothing was approved, said where he looks. */
+.dc-proposal__notice {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  /* The list's own inset (.dc-proposals), so it lines up with the cards under it. */
+  margin: var(--space-2) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-warning-subtle);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+.dc-proposal__image {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: var(--space-2) 0;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
 /* ── WHILE IT WORKS: one thin loading line (owner, 2026-09-27) ────────────────────────────
    "Çok ufak bir çizgi loading ve çalıştığını göstersin": a 2px line across the top edge,
    dreamcontext's own brand colours sweeping along it while a turn runs or its answer is

@@ -12,8 +12,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { sniffImageType } from '../image-sniff.js';
 import { pngSize } from './png.js';
 import { appsHome } from './registry.js';
@@ -79,6 +79,46 @@ export function logoBytes(buf: Buffer): { data: Buffer; ext: '.png' | '.jpg' } {
   }
   if (type === 'image/jpeg') return { data: buf, ext: '.jpg' };
   throw new LogoError('logo_type', 'Pick a PNG or JPG image (the Settings page turns an SVG into a PNG first).');
+}
+
+/**
+ * A logo file an AGENT names (app-onay-karti D15), read once by the server into memory. Only a
+ * plain file inside one of `roots` (real paths; a root's `_dream_context/tmp` is not one of them),
+ * opened with O_NOFOLLOW and checked on the open handle (the same dev/inode as its realpath, a
+ * regular file, at most 5 MB), PNG or JPEG by its bytes. An SVG is refused: the owner's Settings
+ * page draws one into a PNG, the server never renders SVG.
+ */
+export function readAgentLogoFile(path: string, roots: readonly string[]): { data: Buffer; ext: '.png' | '.jpg'; type: 'image/png' | 'image/jpeg' } {
+  if (typeof path !== 'string' || !path.trim() || !isAbsolute(path)) throw new LogoError('logo_unsafe', 'Name the image by its absolute path.');
+  let real: string;
+  try { real = realpathSync(path); } catch { throw new LogoError('logo_unsafe', 'That file is not there.'); }
+  const inside = roots.some((r) => {
+    let rr: string;
+    try { rr = realpathSync(r); } catch { return false; }
+    const rel = relative(rr, real);
+    return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
+  });
+  // The brain's scratch folder is anyone's: never a source for the owner's logo.
+  if (`${real}${sep}`.includes(`${sep}_dream_context${sep}tmp${sep}`)) throw new LogoError('logo_unsafe', 'The image must be inside the app, its project or its brain (not its tmp folder).');
+  if (!inside) throw new LogoError('logo_unsafe', 'The image must be inside the app, its project or its brain.');
+  if (/\.svgz?$/i.test(real)) throw new LogoError('logo_type', 'An SVG is not taken from an agent: convert it to PNG first.');
+  let fd: number;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { throw new LogoError('logo_unsafe', 'That file is a link or cannot be opened.'); }
+  try {
+    const st = fstatSync(fd);
+    const want = statSync(real);
+    if (!st.isFile() || st.dev !== want.dev || st.ino !== want.ino) throw new LogoError('logo_unsafe', 'That file changed while it was read; refusing it.');
+    if (st.size > MAX_LOGO_BYTES) throw new LogoError('logo_too_large', 'The logo is larger than 5 MB.');
+    const buf = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < buf.length) { const n = readSync(fd, buf, off, buf.length - off, off); if (!n) break; off += n; }
+    const head = buf.subarray(0, Math.min(buf.length, 512)).toString('utf-8').trimStart().toLowerCase();
+    if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) throw new LogoError('logo_type', 'An SVG is not taken from an agent: convert it to PNG first.');
+    const { data, ext } = logoBytes(buf.subarray(0, off));
+    return { data, ext, type: ext === '.png' ? 'image/png' : 'image/jpeg' };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function logoDirReady(home: string): string {

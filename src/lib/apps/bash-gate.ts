@@ -57,8 +57,17 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
   { words: ['apps', 'logs'], ownSlug: true, flags: ['-n', '--lines'] },
   { words: ['apps', 'do'], ownSlug: true, action: true, flags: ['--input', '--json'] },
   { words: ['apps', 'learn'], ownSlug: true, flags: [] },
-  // Only checks: applying an update stays the owner's click on the Apps page.
-  { words: ['apps', 'update'], ownSlug: true, flags: ['--check', '--json'] },
+  // Asking is free; doing needs the owner's Onayla: the server spends a grant only for the
+  // stored plan of THIS app and action, so a forged or reused --grant is refused there.
+  { words: ['apps', 'update'], ownSlug: true, flags: ['--check', '--ask', '--how', '--wait', '--apply', '--grant', '--json'] },
+  {
+    words: ['apps', 'publish'], ownSlug: true,
+    flags: ['--public', '--dry-run', '--go', '--grant', '--invite', '--approve', '--note', '--ask', '--wait', '--no-catalog', '--json'],
+  },
+  { words: ['apps', 'logo'], ownSlug: true, flags: ['--ask', '--wait', '--grant', '--json'] },
+  // The answer to its own ask. The server does not check who asks: a request id is unguessable,
+  // and its answer is only a state or a command that runs the plan the owner approved.
+  { words: ['apps', 'grant'], flags: ['--wait', '--json'] },
 ];
 
 /** A verb's flags that reach past this chat's project: a card each. `memory recall --vault`. */
@@ -66,6 +75,8 @@ export const REFUSED_FLAGS: Readonly<Record<string, readonly string[]>> = {
   'memory recall': ['--vault', '--connected', '--all-vaults'],
   // A change the owner agreed to: the card IS his yes, and the server then lets it through.
   'apps do': ['--confirm'],
+  // The repo name and the store line are the owner's (the Share sheet); a confirm is his click.
+  'apps publish': ['--repo', '--tagline', '--confirm-name'],
 };
 
 const SPLITTERS = new Set([';', '&', '|', '>', '<', '(', ')']);

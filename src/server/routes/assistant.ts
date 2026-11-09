@@ -18,7 +18,8 @@ import {
 } from '../../lib/assistant/home.js';
 import { checkAssistantToken, isTainted, markTainted } from '../../lib/assistant/session-state.js';
 import { decide, wrapUntrusted, type AssistantVerb } from '../../lib/assistant/autonomy.js';
-import { abandonProposal, createProposal, listProposals, resolveProposal } from '../../lib/assistant/proposals.js';
+import { abandonProposal, createProposal, getProposal, isAppRequestVerb, listProposals, resolveProposal } from '../../lib/assistant/proposals.js';
+import { decideAppRequest } from '../../lib/apps/share/app-request.js';
 import { getChat, listChats, pendingRequest, watchChat, activityOf, chatTopic, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
 import { collectRoster } from '../../lib/assistant/roster.js';
 import { broadcast, type BroadcastRow } from '../../lib/assistant/broadcast.js';
@@ -1267,6 +1268,19 @@ export async function handleAssistantProposalDecide(req: IncomingMessage, res: S
   const body = (await parseJsonBody(req)) ?? {};
   const action = body.action;
   if (action !== 'approve' && action !== 'edit' && action !== 'reject') { sendError(res, 400, 'invalid_action', 'action must be approve, edit or reject.'); return; }
+  // An agent's app request card (app-onay-karti C4): the owner key for Onayla AND Reddet, the
+  // card's own hash, no edit. A forged decide fails here, before the request or its card moves.
+  const proposal = getProposal(params.id);
+  if (proposal && isAppRequestVerb(proposal.verb)) {
+    if (!fromOwnerPage(req)) { sendError(res, 403, 'owner_page_only', 'Only the owner\'s own page decides an app request.'); return; }
+    if (action === 'edit') { sendError(res, 400, 'invalid_action', 'An app request is approved or rejected as shown.'); return; }
+    if (typeof body.hash !== 'string' || body.hash !== proposal.app?.hash) { sendError(res, 409, 'card_changed', 'The card changed; look again.'); return; }
+    const r = await decideAppRequest({ proposalId: params.id }, action, { by: 'owner-page', hash: body.hash });
+    if (r.ok) { sendJson(res, 200, { ok: true, state: r.state }); return; }
+    const status = r.error === 'card_changed' ? 409 : r.error === 'unknown' ? 404 : 409;
+    sendJson(res, status, { error: r.error === 'stale' ? 'stale_request' : r.error, message: r.error === 'stale' ? 'The app changed since this card was made: nothing was approved. The agent asks again.' : 'This request is no longer waiting.', ...(r.state ? { state: r.state } : {}) });
+    return;
+  }
   // A yes is the owner's word on what the Assistant asked to do, a permission among them: it wants
   // what his own answer wants. A no grants nothing, and it is his only way out of a proposal in an
   // app too old to hold the key, where the notch is the only place one is decided.

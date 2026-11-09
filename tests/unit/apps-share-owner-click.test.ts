@@ -44,6 +44,10 @@ const OWNER_ROUTES: Array<[string, Handler, Record<string, string>]> = [
   ['my own copy', share.handleDetach, { slug: 'nope' }],
   ['uninstall', share.handleUninstall, { slug: 'nope' }],
   ['restore from trash', share.handleTrashRestore, {}],
+  // Owner OR a card's one-time grant (app-onay-karti C2): with neither, refused as before.
+  ['publish', share.handlePublish, { slug: 'nope' }],
+  ['logo', share.handleAppLogoSet, { slug: 'nope' }],
+  ['logo reset', share.handleAppLogoReset, { slug: 'nope' }],
 ];
 
 let home: string;
@@ -235,5 +239,44 @@ describe('the windows that draw the Apps page hold the key', () => {
     }
     expect(files).not.toMatch(/api\.post[^\n]*\/(publish\/grant|uninstall|detach|config|auto-update|update\/undo|shared\/accept|trash\/restore)['`]/);
     expect(files).not.toMatch(/api\.post[^\n]*'\/apps\/install'/);
+  });
+});
+
+/**
+ * Every POST under /api/apps/ is one of three kinds (app-onay-karti, criterion 10). A new route
+ * nobody classified fails here, so an action can never slip in beside the owner's gate.
+ */
+describe('every POST under /api/apps/ is classified', () => {
+  const OWNER_ONLY = ['/api/apps/shared/accept', '/api/apps/trash/restore', '/api/apps/:slug/publish/grant', '/api/apps/:slug/config', '/api/apps/:slug/logo/reset', '/api/apps/:slug/update/undo', '/api/apps/:slug/auto-update', '/api/apps/:slug/detach', '/api/apps/:slug/uninstall'];
+  const OWNER_OR_GRANT = ['/api/apps/install', '/api/apps/:slug/publish', '/api/apps/:slug/logo', '/api/apps/:slug/update'];
+  /** Their own gates: a launch or embed token, the app's own chat, or only a read or an ask. */
+  const AGENT_OPEN = ['/api/apps/launch-window', '/api/apps/embed-check', '/api/apps/install/preview', '/api/apps/requests', '/api/apps/:slug/update/check', '/api/apps/:slug/launch', '/api/apps/:slug/say', '/api/apps/:slug/chats/close', '/api/apps/:slug/chats/title', '/api/apps/:slug/stop', '/api/apps/:slug/snapshot', '/api/apps/:slug/call', '/api/apps/:slug/mcp-request', '/api/apps/:slug/schedules/:id'];
+  const index = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'index.ts'), 'utf-8');
+  const posts = [...index.matchAll(/router\.post\('(\/api\/apps\/[^']+)',\s*(\w+)\)/g)].map((m) => ({ path: m[1], handler: m[2] }));
+  const shareSrc = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', 'apps-share.ts'), 'utf-8');
+  const bodyOf = (fn: string) => shareSrc.match(new RegExp(`export async function ${fn}\\([\\s\\S]*?\\n}\\n`))?.[0] ?? '';
+
+  it('none is unclassified, none twice', () => {
+    expect(posts.length).toBeGreaterThan(20);
+    const all = [...OWNER_ONLY, ...OWNER_OR_GRANT, ...AGENT_OPEN];
+    expect(new Set(all).size).toBe(all.length);
+    for (const { path } of posts) expect(all, `unclassified POST ${path}`).toContain(path);
+  });
+
+  it('owner-only routes call ownerOnly; owner-or-grant routes call ownerOrGrant', () => {
+    const handler = (path: string) => posts.find((p) => p.path === path)!.handler;
+    for (const path of OWNER_ONLY) expect(bodyOf(handler(path)), path).toMatch(/ownerOnly\(req, res\)/);
+    for (const path of OWNER_OR_GRANT) {
+      const body = bodyOf(handler(path));
+      expect(body, path).toMatch(/ownerOrGrant\(/);
+      expect(body, path).not.toMatch(/ownerOnly\(req, res\)/);
+    }
+  });
+
+  it('the request routes are registered before the :slug routes', () => {
+    const at = (s: string) => index.indexOf(s);
+    expect(at("router.post('/api/apps/requests'")).toBeGreaterThan(0);
+    expect(at("router.get('/api/apps/requests/:id'")).toBeLessThan(at("router.post('/api/apps/:slug/publish'"));
+    expect(at("router.get('/api/apps/requests/:id/logo'")).toBeLessThan(at("router.get('/api/apps/requests/:id'"));
   });
 });

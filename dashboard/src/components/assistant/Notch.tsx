@@ -9,7 +9,7 @@ import { isDesktop, pickerOpen } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
 import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
-import { CLICK_ONLY_VERBS, ProposalList, decide, type DecideOutcome, type Proposal } from './ProposalList';
+import { APP_REQUEST_VERBS, CLICK_ONLY_VERBS, ProposalList, decide, type DecideOutcome, type Proposal } from './ProposalList';
 import { GlanceList, HandoffList, answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { ConversationMenu } from './ConversationMenu';
 import { NotchPeek, peekItem, type PeekItem } from './NotchPeek';
@@ -457,6 +457,9 @@ export function Notch() {
   const [session, setSession] = useState<ChatSession | null>(null);
   const [rollup, setRollup] = useState<Rollup>(EMPTY_ROLLUP);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  // An app card closed because its app changed (nothing approved): the line stays until Tamam, so
+  // it never reads like the card went because the owner said yes.
+  const [appNotice, setAppNotice] = useState<string | null>(null);
   const [glance, setGlance] = useState<GlanceChat[]>([]);
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [inbox, setInbox] = useState<Inbox>(EMPTY_INBOX);
@@ -965,7 +968,8 @@ export function Notch() {
       }
       const p = proposals[0];
       // An app's .mcp.json approval is a click, never a key press (dreamcontext-apps plan r19).
-      if (p && !(key === 'y' && CLICK_ONLY_VERBS.has(p.verb))) {
+      // An agent's app request takes neither Y nor N: its decide carries the card's hash.
+      if (p && !APP_REQUEST_VERBS.has(p.verb) && !(key === 'y' && CLICK_ONLY_VERBS.has(p.verb))) {
         e.preventDefault();
         void decide(p.id, key === 'y' ? 'approve' : 'reject').then((outcome) => {
           if (outcome === 'ok' || outcome === 'gone') { rawGate.forget('proposals'); setProposals((ps) => ps.filter((x) => x.id !== p.id)); return; }
@@ -1797,12 +1801,18 @@ export function Notch() {
         )}
         <div className="dc-notch__now" hidden={tab !== 'now' || convosOpen}>
           {liveRows.length > 0 && <GlanceList chats={liveRows} failure={answerFailure} onAnswered={dropRow} />}
+          {appNotice && (
+            <p className="dc-proposal__notice" role="alert" lang="tr">
+              <span>{appNotice}</span>
+              <button type="button" className="dc-proposal__btn" onClick={() => setAppNotice(null)}>Tamam</button>
+            </p>
+          )}
           {proposals.length > 0 && (
             <ProposalList
               failure={proposalFailure}
               proposals={proposals}
               keyed={!glance.some((c) => c.ask?.kind === 'permission')}
-              onDecided={(id) => { rawGate.forget('proposals'); setProposals((p) => p.filter((x) => x.id !== id)); }}
+              onDecided={(id, notice) => { rawGate.forget('proposals'); setProposals((p) => p.filter((x) => x.id !== id)); if (notice) setAppNotice(notice); }}
             />
           )}
           <InboxList
@@ -1815,7 +1825,7 @@ export function Notch() {
             onPostGone={hide}
           />
           {handoffs.length > 0 && <HandoffList handoffs={handoffs} failure={answerFailure} onAnswered={dropRow} onDismiss={clearHandoff} />}
-          {glance.length === 0 && proposals.length === 0 && handoffs.length === 0 && inboxCount === 0 && inbox.running.length === 0 && (
+          {glance.length === 0 && proposals.length === 0 && !appNotice && handoffs.length === 0 && inboxCount === 0 && inbox.running.length === 0 && (
             <p className="dc-notch__empty">Nothing running and nothing waiting on you.{hasAssistant && ` Ask ${name} to start something.`}</p>
           )}
         </div>

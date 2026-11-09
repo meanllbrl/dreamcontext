@@ -45,6 +45,34 @@ describe('the publish prompt', () => {
   });
 });
 
+describe('the update publish (Güncellemeyi yayınla)', () => {
+  const up = publishPrompt({ slug: 'hava-notu', name: 'Hava Notu', grant: 'G-1', visibility: 'private', published: { fullName: 'ornek/hava-notu-app', public: false }, update: true });
+
+  it('never asks visibility or invitees, and publishes with the grant', () => {
+    expect(up).toContain('Do not ask me about visibility or invitees.');
+    expect(up).toContain('already on GitHub as ornek/hava-notu-app, private');
+    expect(up).toContain('dreamcontext apps publish hava-notu --go --grant G-1 --note');
+    expect(up).not.toContain('--invite');
+    expect(up).not.toContain('--public');
+    const pub = publishPrompt({ slug: 's', name: 'S', grant: 'g', visibility: 'public', published: { fullName: 'o/s-app', public: true }, update: true });
+    expect(pub).toContain('--go --grant g --public');
+  });
+
+  it('the band shows for an own published app with unpublished files, and hands over in update mode', () => {
+    const card = read('dashboard/src/components/apps/AppCard.tsx');
+    expect(card).toMatch(/!following && app\.publish && app\.unpublished && canLaunch/);
+    expect(card).toMatch(/handToClaude\(app\.publish!\.public \? 'public' : 'private', true\)\}>\{t\('share\.card\.publishUpdate'\)\}/);
+    const i18n = read('dashboard/src/context/I18nContext.tsx');
+    expect(i18n).toContain('"share.card.unpublished": "Yerelde yayınlanmamış yeni sürüm var."');
+    expect(i18n).toContain('"share.card.publishUpdate": "Güncellemeyi yayınla"');
+  });
+
+  it('a publish handoff never lands in the Super composer: it falls through to a new chat', () => {
+    expect(read('dashboard/src/components/apps/AppCard.tsx')).toMatch(/askAgent\(bus, prompt, \{\s*notSuper: true,/);
+    expect(read('dashboard/src/components/sleepy/chat/Composer.tsx')).toMatch(/if \(superView && detail\.notSuper\) return;/);
+  });
+});
+
 describe('the Share button', () => {
   const card = read('dashboard/src/components/apps/AppCard.tsx');
 
@@ -55,7 +83,8 @@ describe('the Share button', () => {
     expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('private'\)\}>\{t\('share\.card\.share'\)\}/);
     expect(card).toMatch(/onClick=\{\(\) => void handToClaude\('public'\)\}>\{t\('share\.card\.sharePublic'\)\}/);
     expect(card).toContain('/publish/grant');
-    expect(card).toMatch(/visibility === 'public' && !\(await confirmAction\(/);
+    // Going public asks first; a new version of an already public app changes no one's access.
+    expect(card).toMatch(/visibility === 'public' && !\(update && app\.publish\?\.public\) && !\(await confirmAction\(/);
     expect(card).toMatch(/askAgent\(bus, prompt, \{/);
     // No chat on screen can take it: a new chat starts with it, shown.
     expect(card).toMatch(/requestDelegateAgent\(bus, \{ title: ts\('store\.publish\.tab'[\s\S]*?reveal: true \}\)\) onClose\(\)/);
@@ -66,14 +95,15 @@ describe('the Share button', () => {
     const grantFn = route.slice(route.indexOf('export async function handlePublishGrant'), route.indexOf('export async function handlePublish('));
     expect(grantFn).toMatch(/if \(!ownerOnly\(req, res\)\) return;/);
     const pushFn = route.slice(route.indexOf('export async function handlePublish('), route.indexOf('// ─── Shared Apps'));
-    expect(pushFn).toMatch(/const held = owner \? null : takePublishGrant\(rec\.projectRoot, rec\.slug, b\.grant\);/);
+    // The owner's page, or a grant for exactly this app and action (app-onay-karti C2).
+    expect(pushFn).toMatch(/const gate = ownerOrGrant\(req, res, \{ projectRoot: rec\.projectRoot, key: rec\.slug, action: 'publish' \}, b\.grant\);/);
     expect(pushFn).toMatch(/sendError\(res, 403, 'owner_page_only'/);
     // Going public needs the owner's own public click; the grant is spent once the push went out.
-    expect(pushFn).toMatch(/held\.visibility !== requested\) \{\s*held\.done\(false\);\s*sendError\(res, 403, 'grant_scope'/);
+    expect(pushFn).toMatch(/held && !bound && held\.visibility !== visibility\) \{\s*held\.done\(false\);\s*sendError\(res, 403, 'grant_scope'/);
     expect(pushFn).toContain('onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); }');
     // A failure after the push still answers that it went out.
     expect(pushFn).toMatch(/if \(pushedTo\) \{[^\n]*pushed: true/);
-    expect(pushFn).toContain("sendError(res, 409, 'grant_used'");
+    expect(route).toContain("sendError(res, 409, 'grant_used'");
     expect(read('src/lib/apps/share/publish.ts')).toMatch(/refs\/heads\/main:refs\/heads\/main'\][^\n]*\n\s*opts\.onPushed\?\.\(fullName\);/);
   });
 });

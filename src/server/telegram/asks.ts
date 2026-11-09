@@ -34,6 +34,7 @@ import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } fr
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
+import { wireTelegramAppRequests } from './app-requests.js';
 
 /** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
 let rich: RichAsks | null = null;
@@ -170,8 +171,10 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   hub.extraButton = async (ab, rec, idx) => (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
     ? onQueueButton(hub, ab, rec, idx)
     : prev ? prev(ab, rec, idx) : LINES.stale;
+  // An agent's app request card (app-onay-karti C6): its own away rule and button kind.
+  const offApps = wireTelegramAppRequests(hub);
   return () => {
-    off(); offAnswered(); hub.awayFlushers.delete(flush);
+    offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
     setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
     hub.extraButton = prev;
   };

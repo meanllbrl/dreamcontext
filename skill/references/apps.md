@@ -39,6 +39,7 @@ then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## 
 | Re-add a removed app | `dreamcontext apps new <slug>` (its code and data come back) |
 | Check what a publish would send | `dreamcontext apps publish <slug> [--public]` |
 | Publish it (after the owner pressed Share) | `dreamcontext apps publish <slug> --go --grant <id> --note "…"` (the grant is in his prompt) |
+| Ask the owner for a publish, install, update or logo | `dreamcontext apps publish|update <slug> --ask`, `apps install <owner/repo> --ask`, `apps logo <slug> <file> --ask`; then `apps grant <request> --wait 100`; on Onayla run the one command it returns |
 | Fill an app's settings | `dreamcontext apps config <slug> [--suggest] [--set key=value]` (keys: `apps secret`, the owner's) |
 | See Shared Apps (shared with you, invitations) | `dreamcontext apps shared` |
 | Look at an app before installing | `dreamcontext apps install <owner/repo|link>` (installing is the owner's click) |
@@ -47,9 +48,11 @@ then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## 
 **Shared apps.** An app installed from someone else lives in `<project>-apps/installed/<slug>/` and
 runs like the owner's own apps; the install screen says who wrote it. Its settings are on this Mac
 (`~/.dreamcontext/apps/config/`), its keys in its own `.env`. A publish is the agent's job once the
-owner presses Share (it hands over a one-hour grant for that app); installing, updating, "my own
-copy" and uninstalling (to the trash, restorable) are the owner's clicks on the Apps page, and an
-agent's request to those routes is refused. The `/apps` skill's `references/sharing.md` has it all.
+owner presses Share (it hands over a one-hour grant for that app). An agent may ASK for a
+publish, an install, an update or a logo with `--ask`: the owner sees one card with the exact plan
+and his Onayla lets the agent run it once (`--go|--apply|--grant <id>`); an expired grant is the
+same `--ask` again. "My own copy" and uninstalling (to the trash, restorable) stay the owner's
+clicks on the Apps page, and an agent's request to those routes is refused. The `/apps` skill's `references/sharing.md` has it all.
 
 **Every app has its own assistant**, plain Claude with its role in `ASSISTANT.md` at the app root,
 and no AI Team entry. Its chat in the app window is the real Chat. An app chat runs in its own

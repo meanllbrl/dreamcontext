@@ -219,6 +219,17 @@ export async function previewInstall(opts: { home: string; projectRoot: string; 
   };
 }
 
+/** Is this preview still the one a card showed (its record there, its repo at `sha`)? */
+export function previewStillThere(home: string, previewId: string, sha: string): boolean {
+  if (!ID_RE.test(previewId) || !SHA_RE.test(sha)) return false;
+  try {
+    const meta = JSON.parse(readFileSync(join(incomingDir(home), `${previewId}.json`), 'utf-8')) as PreviewMeta;
+    return meta.sha === sha && revParse(join(incomingDir(home), `${previewId}.git`), 'refs/heads/main') === sha;
+  } catch {
+    return false;
+  }
+}
+
 /** Previews older than a day, and every other preview of this process's past, go. */
 function pruneIncoming(home: string, keep: string): void {
   const dir = incomingDir(home);

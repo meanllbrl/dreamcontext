@@ -668,6 +668,12 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/apps/:slug/auto-update': deny(WINDOW),
   'POST /api/apps/:slug/detach': deny(WINDOW),
   'POST /api/apps/:slug/uninstall': deny(SECRET),
+  'POST /api/apps/:slug/logo': deny(SECRET),
+  'POST /api/apps/:slug/logo/reset': deny(WINDOW),
+  // An agent's app request (app-onay-karti G7): asked, read and decided on the Mac only.
+  'POST /api/apps/requests': deny(SECRET),
+  'GET /api/apps/requests/:id': deny(SECRET),
+  'GET /api/apps/requests/:id/logo': deny(WINDOW),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or
