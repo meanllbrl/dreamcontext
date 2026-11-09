@@ -318,6 +318,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'Bold (`**…**`) the few words his eye must land on: each section head, the result, what he must',
       'do; a handful per answer, never whole sentences. Here and on Telegram alike.',
       expect.stringContaining('came from his Telegram'),
+      // rev 35 (2026-11-09): his Telegram reactions are a note, never an answer.
+      expect.stringContaining('A `[telegram reaction]` line is the owner reacting'),
       // rev 26 (2026-11-02): weigh a new idea from the owner before agreeing.
       'A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,',
       'does it break one of his earlier decisions or a project pattern, what does it cost? Sound: say so',
@@ -376,6 +378,6 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       expect.stringContaining('<super-brief rev=35>'),
     ]);
-    expect(after.length).toBe(before.length + 47); // +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 48); // +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });
