@@ -81,7 +81,7 @@ describe('the rule rides where the Super reads it', () => {
       expect(t).toContain('A `preview` is only a look at an option');
       expect(t).toContain('A report on a plan or on options is DRAWN, never written: screen\nmockups, options side by side, short headings');
       // 2026-11-03 (rev 29): the mockup is the product's real look, a sequence is a graph.
-      expect(t).toContain("A product mockup wears that\nproduct's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips.");
+      expect(t).toContain("A product mockup wears that\nproduct's real colors and frame, not the kit (inline, inside its frame); the page's own colors come\nonly from the kit, a page with its own shows on white in both themes; steps in order are a `dc-graph`, never chips.");
       expect(t).not.toContain("the yes option's `preview`");
     }
   });

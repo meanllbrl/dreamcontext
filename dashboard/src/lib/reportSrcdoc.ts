@@ -16,13 +16,15 @@ import { LINK_GUARD } from './htmlLocalAssets';
 import { ZOOM_BRIDGE } from '../components/layout/frameZoomBridge';
 import { CHAT_HTML_KIT_CSS, HEIGHT_BRIDGE, KIT_BEHAVIOUR } from '../components/sleepy/chat/chatHtmlKit';
 
-export function buildReportSrcdoc(html: string, tokens: Record<string, string>, scheme: 'light' | 'dark' = 'light'): string {
+/** `canvasCss`: a page on its own canvas (lib/pageCanvas.ts) gets it after the page default; absent,
+ *  the document is byte-equal to the server mirror's. */
+export function buildReportSrcdoc(html: string, tokens: Record<string, string>, scheme: 'light' | 'dark' = 'light', canvasCss?: string): string {
   return buildSandboxSrcdoc({
     html,
     css: CHAT_HTML_KIT_CSS,
     tokens,
     scheme,
-    overrideCss: pageDefaultCss(true),
+    overrideCss: canvasCss ? `${pageDefaultCss(true)}\n${canvasCss}` : pageDefaultCss(true),
     headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}\n${KIT_BEHAVIOUR}`,
   });
 }

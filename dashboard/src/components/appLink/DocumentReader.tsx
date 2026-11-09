@@ -16,6 +16,7 @@ import { pollMs } from '../../lib/windowActivity';
 import { SELECTION_BRIDGE } from '../../lib/textSelection';
 import { useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
+import { OWN_CANVAS_CSS, pageOwnsPalette, pageTokens } from '../../lib/pageCanvas';
 import { desktopScale, htmlFrameGeometry } from '../../lib/webDevice';
 import { PAGE_FIT_BRIDGE, readPageFit } from '../../lib/pageFit';
 import {
@@ -589,16 +590,23 @@ function HtmlPageLive({
   // rebuilt srcdoc reloads the page and drops its scroll.
   const themeNow = useRef(theme);
   themeNow.current = theme;
+  // A page with its own light-only palette is drawn on its own light canvas in both themes;
+  // half-themed it was unreadable (lib/pageCanvas.ts).
+  const ownCanvas = html !== null && pageOwnsPalette(html);
+  const schemeOf = useCallback((t: 'light' | 'dark') => (ownCanvas ? 'light' : t), [ownCanvas]);
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: themeNow.current, overrideCss: pageDefaultCss(fill),
+      html, css: CHAT_HTML_KIT_CSS, scheme: schemeOf(themeNow.current),
+      tokens: pageTokens(resolveChatKitTokens(), schemeOf(themeNow.current), themeNow.current),
+      overrideCss: pageDefaultCss(fill) + (ownCanvas ? `\n${OWN_CANVAS_CSS}` : ''),
       headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, SCROLL_KEEP_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : []), KIT_BEHAVIOUR].join('\n'),
     })),
-    [html, zoomBridge, fill, reportsFit],
+    [html, zoomBridge, fill, reportsFit, ownCanvas, schemeOf],
   );
   const sendTheme = useCallback(() => {
-    frameRef.current?.contentWindow?.postMessage(themeMessage(resolveChatKitTokens(), themeNow.current), '*');
-  }, []);
+    const scheme = schemeOf(themeNow.current);
+    frameRef.current?.contentWindow?.postMessage(themeMessage(pageTokens(resolveChatKitTokens(), scheme, themeNow.current), scheme), '*');
+  }, [schemeOf]);
   useEffect(sendTheme, [theme, sendTheme]);
 
   // The only message accepted: a height, from THIS frame's window (identity is the gate).
@@ -655,7 +663,7 @@ function HtmlPageLive({
       // Not filling: the floor is for before the page has reported; after, the frame is exactly
       // the page's height, so the note below sits right under a short page's last line. Filling:
       // the box's height, never the reported one (a 100vh page would report the frame's own).
-      style={{ ...htmlFrameGeometry(fill, height, scale), colorScheme: theme }}
+      style={{ ...htmlFrameGeometry(fill, height, scale), colorScheme: schemeOf(theme) }}
     />
   );
   return (

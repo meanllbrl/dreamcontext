@@ -309,7 +309,9 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen',
       expect.stringContaining('mockups, options side by side, short headings; text at the minimum.'),
       // rev 29 (2026-11-03): a product mockup wears the product's real look; steps in order are a graph.
-      expect.stringContaining("product's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips."),
+      // rev 37 (2026-11-09, rapor-dark-mode): the page's colors come only from the kit.
+      expect.stringContaining("product's real colors and frame, not the kit (inline, inside its frame); the page's own colors come"),
+      expect.stringContaining('only from the kit, a page with its own shows on white in both themes; steps in order are a `dc-graph`, never chips.'),
       expect.stringContaining('Write nothing between tool calls (but the line before `super ask`), and nothing'),
       // rev 32 (2026-11-07): he sees text, never thinking; a reported gap is written, never blamed on his screen.
       'He sees your text, never your thinking: what he asked for (a summary, a list) is written in this',
@@ -380,8 +382,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=36>'),
+      expect.stringContaining('<super-brief rev=37>'),
     ]);
-    expect(after.length).toBe(before.length + 48); // +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 49); // +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });
