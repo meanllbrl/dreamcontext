@@ -146,7 +146,7 @@ export function chromiumArgs(dir: string, pageUrl: string, pdfPath: string): str
   return [
     '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps',
-    '--mute-audio', '--hide-scrollbars', `--user-data-dir=${join(dir, 'profile')}`,
+    '--mute-audio', '--hide-scrollbars', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', `--user-data-dir=${join(dir, 'profile')}`,
     '--proxy-server=http://127.0.0.1:9', `--proxy-bypass-list=<-loopback>;127.0.0.1:${port}`, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
     '--no-pdf-header-footer', '--print-to-pdf-no-header', `--print-to-pdf=${pdfPath}`,
