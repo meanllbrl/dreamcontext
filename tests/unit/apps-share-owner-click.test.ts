@@ -22,6 +22,7 @@ import * as share from '../../src/server/routes/apps-share.js';
 import { setAppsHomeForTests } from '../../src/server/routes/apps.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
+import { OWNER_REOPEN_MESSAGE } from '../../src/server/routes/assistant.js';
 
 const KEY = 'b7'.repeat(32);
 const PORT = 4173;
@@ -146,6 +147,54 @@ describe('anything else is refused exactly as before', () => {
       expect(r.status).toBe(403);
       expect(r.body.error).toBe('forbidden');
     } finally { process.env.DREAMCONTEXT_DESKTOP = '1'; }
+  });
+});
+
+describe('a refused click says what mends it (2026-11-09)', () => {
+  // Installed 0.41.9 over a running 0.41.0, whose shell gave the key to the notch alone: Install
+  // on the Apps page read "Only the owner's own Apps page can do this" until he reopened the app.
+  const OLD = 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app).';
+  const reopen: Array<[string, Record<string, string>]> = [
+    ['his page without the key (a shell older than the page)', without(OWNER_KEY_HEADER)],
+    ['his page with a key this server does not hold', { ...OWNER_CLICK, [OWNER_KEY_HEADER]: 'c9'.repeat(32) }],
+  ];
+  for (const [what, headers] of reopen) {
+    it(`${what}: still 403 owner_page_only, read as "reopen dreamcontext"`, async () => {
+      for (const [, h, params] of OWNER_ROUTES) {
+        const r = await call(h, params, headers);
+        expect(r.status).toBe(403);
+        expect(r.body.error).toBe('owner_page_only');
+        expect(r.body.message).toBe(OWNER_REOPEN_MESSAGE);
+      }
+    });
+  }
+
+  it('a server the shell gave no key: his perfect click reads "reopen" too', async () => {
+    setOwnerKey(null);
+    const r = await call(share.handleInstall, {}, OWNER_CLICK);
+    expect(r.status).toBe(403);
+    expect(r.body.message).toBe(OWNER_REOPEN_MESSAGE);
+  });
+
+  const others: Array<[string, Record<string, string>]> = [
+    ['no Origin (an agent\'s curl)', without('origin')],
+    ['no Fetch Metadata', without('sec-fetch-site')],
+    ['another loopback port', { ...OWNER_CLICK, origin: 'http://127.0.0.1:5173' }],
+    ['cross-site', { ...OWNER_CLICK, 'sec-fetch-site': 'cross-site' }],
+  ];
+  for (const [what, headers] of others) {
+    it(`${what}: keeps the old sentence`, async () => {
+      const r = await call(share.handleInstall, {}, headers);
+      expect(r.status).toBe(403);
+      expect(r.body.message).toBe(OLD);
+    });
+  }
+
+  it('the page says the same sentence when the refusal comes from a server older than it', () => {
+    const client = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'api', 'client.ts'), 'utf-8');
+    const line = client.match(/export const OWNER_REOPEN_LINE = '([^']*)';/)?.[1];
+    expect(line).toBe(OWNER_REOPEN_MESSAGE);
+    expect(client).toMatch(/e\.code === 'owner_page_only' && isDesktop\(\)\) \{\s*throw new RequestError\(OWNER_REOPEN_LINE/);
   });
 });
 

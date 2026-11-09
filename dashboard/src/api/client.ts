@@ -13,6 +13,9 @@ interface ApiError {
  * alongside its prose. Still an `Error` with the server's `message`, so every existing
  * `catch (err: Error) { … err.message }` keeps working untouched.
  */
+/** What the owner reads when his own click in the app is refused for want of the owner key. */
+export const OWNER_REOPEN_LINE = 'dreamcontext has to be reopened before it can do this for you: quit it (⌘Q), open it again and try once more.';
+
 export class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
     super(message);
@@ -198,13 +201,23 @@ export class ApiClient {
    * shell holds, so an agent's request to the same route is refused. Null key = refused there.
    */
   async ownerPost<T>(path: string, body: unknown): Promise<T> {
-    const { ownerKey } = await import('../lib/desktop');
+    const { ownerKey, isDesktop } = await import('../lib/desktop');
     const key = await ownerKey();
-    return this.request<T>(path, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: key ? { 'X-Dreamcontext-Owner-Key': key } : {},
-    });
+    try {
+      return await this.request<T>(path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: key ? { 'X-Dreamcontext-Owner-Key': key } : {},
+      });
+    } catch (e) {
+      // In the app this is the owner's own click: a refusal means this window holds no key the
+      // server knows (a shell older than the page, a server it did not start). Only reopening
+      // mends that, so the owner reads that, never "only the owner can" (2026-11-09).
+      if (e instanceof RequestError && e.code === 'owner_page_only' && isDesktop()) {
+        throw new RequestError(OWNER_REOPEN_LINE, e.status, e.code);
+      }
+      throw e;
+    }
   }
 
   patch<T>(path: string, body: unknown): Promise<T> {
