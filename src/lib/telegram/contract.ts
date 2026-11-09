@@ -486,6 +486,11 @@ export const TELEGRAM_COMMANDS = [
   { command: 'durum', description: 'İşler, seni bekleyenler' },
   { command: 'gundem', description: 'Gündem' },
 ] as const;
+/** An AI Team member's bot: its own work only. /gundem and /handsfree stay the Super's. */
+export const MEMBER_TELEGRAM_COMMANDS = [
+  { command: 'dur', description: 'Çalışan işini durdur' },
+  { command: 'durum', description: 'İşleri, seni bekleyenler' },
+] as const;
 export type TelegramCommand = (typeof TELEGRAM_COMMANDS)[number]['command'] | 'start';
 
 export type StatusState = 'running' | 'done' | 'stuck' | 'waiting' | 'asking' | 'gone';
