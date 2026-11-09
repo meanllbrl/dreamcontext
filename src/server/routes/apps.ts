@@ -52,6 +52,7 @@ import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifie
 import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
 import { shareStatus } from './apps-share.js';
 import { iconIssue, isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
+import { appLogoPath, appLogoStamp, clearAppLogo } from '../../lib/apps/app-logo.js';
 import { icnsToPng } from '../../lib/apps/icns-raster.js';
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
@@ -236,10 +237,12 @@ async function shareSweep(): Promise<void> {
 function bundleInput(rec: AppRecord, runnerPath: string): BundleInput {
   const m = readManifest(rec.root);
   const icon = m.ok ? m.manifest.icon : null;
+  // The owner's own logo on this Mac comes first; it lives outside the repo (app-logo.ts).
+  const logo = appLogoPath(home, rec.configId);
   return {
     home, projectRoot: rec.projectRoot, vault: rec.vault, slug: rec.slug, name: m.ok ? m.manifest.name : rec.name,
     // An app born with the logo as its icon gets its own letter in the Dock; its manifest stays.
-    iconPath: iconIssue(icon, notifierIconPath())?.code === 'dreamcontext_logo' ? null : icon,
+    iconPath: logo ?? (iconIssue(icon, notifierIconPath())?.code === 'dreamcontext_logo' ? null : icon),
     runnerPath, appBundleId: shellBundleId(),
   };
 }
@@ -323,6 +326,7 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
   if (rt) liveWindowsOf(rec, rt);
   const m = readManifest(rec.root);
   const st = rt?.status();
+  const logo = appLogoPath(home, rec.configId);
   return {
     slug: rec.slug,
     name: m.ok ? m.manifest.name : rec.name,
@@ -340,10 +344,13 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     agentState: m.ok && m.manifest.agent?.member ? memberState(rec, m.manifest.agent.member) : null,
     assistant: assistantOf(rec),
     // Only what /icon can serve: a true on an .icns draws a broken image on the card.
-    hasIcon: m.ok ? servableIcon(m.manifest.icon) !== null : false,
+    hasIcon: logo !== null || (m.ok ? servableIcon(m.manifest.icon) !== null : false),
     // Still the letter `apps new` drew: the page draws its one monogram fallback instead.
-    iconPlaceholder: m.ok ? isDefaultIconCached(m.manifest.icon, m.manifest.slug, m.manifest.name) : false,
-    iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
+    iconPlaceholder: logo === null && m.ok ? isDefaultIconCached(m.manifest.icon, m.manifest.slug, m.manifest.name) : false,
+    iconIssue: logo === null && m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
+    // The owner's own logo (Settings), and the stamp that makes the card load the new one.
+    logo: logo !== null,
+    iconStamp: appLogoStamp(logo),
     actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, effect: effectOf(a), ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
     // The card's "N tools · M change" and its drift mark (app-araclari §5). `unknown` until the
     // backend answered health once in this server.
@@ -908,14 +915,18 @@ export async function handleAppDelete(req: IncomingMessage, res: ServerResponse,
   removeAppBundle(home, rec.slug, rec.hash);
   removeShots(home, rec.hash);
   removePins(home, rec.hash);
+  clearAppLogo(home, rec.configId);
   unregisterApp(home, rec.projectRoot, rec.slug);
   sendJson(res, 200, { ok: true, kept: rec.root, note: 'The app code was not deleted.' });
 }
 
 /** The app's icon as a raster image (never SVG: on the dashboard origin it would run script). */
-export function appIconPath(contextRoot: string, slug: string): string | null {
+export function appIconPath(contextRoot: string, slug: string, opts: { own?: boolean } = {}): string | null {
   const rec = getApp(home, projectRootOf(contextRoot), slug);
   if (!rec) return null;
+  // `own`: the app's own icon under the owner's logo (the Settings preview of "reset").
+  const logo = opts.own ? null : appLogoPath(home, rec.configId);
+  if (logo) return logo;
   const m = readManifest(rec.root);
   return m.ok ? servableIcon(m.manifest.icon) : null;
 }
@@ -924,7 +935,8 @@ export function appIconPath(contextRoot: string, slug: string): string | null {
 /** GET /api/apps/:slug/icon: the app's raster icon (allow-listed types, nosniff). */
 export async function handleAppIcon(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
-  sendPhotoFile(res, appIconPath(contextRoot, params.slug) ?? await appIcnsRaster(contextRoot, params.slug));
+  const own = new URL(req.url ?? '/', 'http://x').searchParams.get('own') === '1';
+  sendPhotoFile(res, appIconPath(contextRoot, params.slug, { own }) ?? await appIcnsRaster(contextRoot, params.slug));
 }
 
 /** An `.icns` icon as the cached PNG the notch and the history can draw. */
