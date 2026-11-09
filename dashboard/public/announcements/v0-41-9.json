@@ -1,0 +1,38 @@
+{
+  "hero": {
+    "eyebrow": "v0.41.9  ·  9 November 2026",
+    "headline": "A quieter drawer, and chats that stay cheap",
+    "sub": "Everything since 0.41.0 in one release. The left menu is calmer, and Eco mode is one setting for the whole Mac, on by default.",
+    "shot": {
+      "src": "shots/v0-41-9/drawer.png",
+      "alt": "The left drawer of the orbit demo project. Under the project name: Super Agent (off), New window, and a Team row opened to five members: Churn Watch with a red 1, Analyst, Monday metrics, Nightly churn check and Release Scout, each with its own picture.",
+      "caption": "The project section is one calm list: Super Agent, New window, Team. A number marks the member that waits on you.",
+      "frame": "plain"
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Eco mode keeps long chats cheap",
+      "body": "A long chat costs more with every message. Eco mode, now one setting for this whole Mac and on by default, nudges a chat to move to a fresh one at 300k tokens and asks harder at 650k. A chat's own switch changes only that chat.",
+      "shot": {
+        "src": "shots/v0-41-9/eco.png",
+        "alt": "Settings, Chat page, in the orbit demo project. The Eco mode switch is on: New chats in every project suggest moving to a fresh chat as their context fills, a nudge at 300k tokens, a firmer one at 650k. Above it Model and effort and Permissions; below it Let the agent name its tab.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "note",
+      "text": "Antigravity stays in beta. docs/tool-parity.md says row by row what was seen in a real turn, on Codex and on Antigravity."
+    },
+    {
+      "kind": "note",
+      "text": "The rest of this release, such as Telegram bots for AI Team members, shared apps and the faster CLI start, is in the changelog: those screens cannot be shown here."
+    }
+  ],
+  "closer": {
+    "title": "Get 0.41.9",
+    "body": "The app updates itself. New here? Download it from the latest GitHub release, or run npm i -g dreamcontext."
+  }
+}

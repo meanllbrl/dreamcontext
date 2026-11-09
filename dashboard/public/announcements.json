@@ -266,5 +266,17 @@
       "0.40.6",
       "0.40.7"
     ]
+  },
+  {
+    "id": "v0-41-9",
+    "date": "2026-11-09",
+    "version": "0.41.9",
+    "title": "A quieter drawer, and chats that stay cheap",
+    "summary": "The left menu is calmer: Super Agent, New window and Team in one list, with a number on the member that waits for you. Eco mode is now one setting for the whole Mac, on by default, and nudges a long chat to move to a fresh one before it gets expensive. Also in this version: Telegram bots for AI Team members, shared apps, a faster CLI start and Super Agent polish; see the changelog.",
+    "tags": [
+      "desktop",
+      "agent"
+    ],
+    "story": "v0-41-9.json"
   }
 ]
