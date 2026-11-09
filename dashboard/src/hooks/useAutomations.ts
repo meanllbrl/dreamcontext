@@ -299,6 +299,10 @@ export interface AutomationManifestDetail {
   readTools?: string[];
   /** Hashed when named, LAST: the app tools (`<app>/<tool>`) a run may CHANGE things with unattended. */
   appTools?: string[];
+  /** Hashed when set, LAST (super-rutin): `super` = a turn of the project's Super; `''` = headless. */
+  target?: string;
+  /** Hashed when `telegram`/`auto`, LAST: where the result goes; `''` = the Mac only. */
+  reply?: string;
   tool?: 'claude' | 'codex' | 'antigravity';
   /** Hashed when true, LAST: `scope: board`, the agent is limited to its home board.
    *  Absent on an older backend, which means not limited. */
@@ -612,6 +616,8 @@ export interface AutomationDraft {
   whiteboard?: string;
   /** "Ask me before it publishes": `agent` stops to ask, `off` never does. Edit only. */
   review?: 'off' | 'agent' | 'output';
+  /** Edit only, his own automation: its results reach Telegram too (`telegram`) or not (`mac`). */
+  reply?: 'telegram' | 'mac';
 }
 
 /**
