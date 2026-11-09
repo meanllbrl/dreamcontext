@@ -179,6 +179,15 @@ describe('the sweep', () => {
     expect(s.enqueued).toEqual([`sabah@${FIRE.toISOString()}`]);
   });
 
+  it('a hand-over that throws is told once, never retried into a double', async () => {
+    superAuto(); fired('sabah');
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    const s = sink();
+    await sweepProject(contextRoot, deps(s, { enqueue: async () => { throw new Error('disk full'); } }));
+    expect(s.said).toEqual([SCHEDULE_LINES.failed(new Date(FIRE).toTimeString().slice(0, 5))]);
+    expect(listScheduleItems(scope, home)).toHaveLength(0);
+  });
+
   it('a symlinked schedule folder is never listed or emptied', () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'dc-super-schedule-elsewhere-'));
     writeFileSync(join(elsewhere, `sabah@${FIRE.getTime()}.json`), 'not ours');

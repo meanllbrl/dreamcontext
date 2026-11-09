@@ -108,7 +108,7 @@ export function listScheduleScopes(home: string = homedir()): string[] {
 
 // ─── The told-ledger ─────────────────────────────────────────────────────────
 
-export type ToldWhat = 'missed' | 'off' | 'unapproved' | 'no-bot' | 'delivered';
+export type ToldWhat = 'missed' | 'off' | 'unapproved' | 'no-bot' | 'delivered' | 'failed';
 
 export function toldKey(slug: string, fireIso: string, what: ToldWhat): string {
   return `${slug}@${fireIso}#${what}`;

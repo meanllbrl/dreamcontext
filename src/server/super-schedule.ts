@@ -45,6 +45,7 @@ export const SCHEDULE_LINES = {
   missed: (at: string) => `⏰ ${at} işi kaçtı: Mac ya da uygulama kapalıydı.`,
   off: (at: string) => `⏰ ${at} işi bekliyor: bu projede Super kapalı. Super'i açınca yapılır.`,
   noBot: (at: string) => `⏰ ${at} işi Telegram'a gitmedi: Super botu bağlı değil. Mac'te yapılıyor.`,
+  failed: (at: string) => `⏰ ${at} işi Super'e iletilemedi. Bir sonraki saatinde yeniden denenecek.`,
 } as const;
 
 export interface ScheduleDeps {
@@ -143,7 +144,14 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
       removeScheduleItem(scope, item, home);
       continue;
     }
-    await deliver(contextRoot, scope, item, effectiveReply(job.manifest), job.job, state.session, deps);
+    try {
+      await deliver(contextRoot, scope, item, effectiveReply(job.manifest), job.job, state.session, deps);
+    } catch (err) {
+      // Claimed but not handed over: never silent (Decision 10), never retried into a double.
+      log(`[super-schedule] ${item.slug}@${item.fireIso} could not be handed over: ${(err as Error).message}`);
+      removeScheduleItem(scope, item, home);
+      await tellScheduleOwner(contextRoot, item, 'failed', SCHEDULE_LINES.failed(at), deps);
+    }
   }
 }
 
