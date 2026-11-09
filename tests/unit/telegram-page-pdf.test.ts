@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -96,8 +97,9 @@ describe('page-pdf renderer', () => {
   });
 
   it('chromium gets no network and no header/footer', () => {
-    const a = chromiumArgs('/tmp/x', '/tmp/x/page.html', '/tmp/x/page.pdf');
-    expect(a).toEqual(expect.arrayContaining(['--headless', '--host-resolver-rules=MAP * ~NOTFOUND', '--proxy-server=http://127.0.0.1:9', '--no-pdf-header-footer', '--print-to-pdf=/tmp/x/page.pdf', 'file:///tmp/x/page.html']));
+    const a = chromiumArgs('/tmp/x', 'http://127.0.0.1:4321/p.html', '/tmp/x/page.pdf');
+    expect(a).toEqual(expect.arrayContaining(['--headless', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>;127.0.0.1:4321', '--no-pdf-header-footer', '--print-to-pdf=/tmp/x/page.pdf', 'http://127.0.0.1:4321/p.html']));
+    expect(a.some((x) => x.startsWith('file:'))).toBe(false);
   });
 
   it('no chromium → null; a small PDF is printed once; a large one with images is printed again downsampled', async () => {
@@ -134,4 +136,51 @@ describe('page-pdf renderer', () => {
     expect(findChromium({ DREAMCONTEXT_CHROMIUM: process.execPath }, '/nonexistent')).toBe(process.execPath);
     expect(findChromium({ DREAMCONTEXT_CHROMIUM: '/nope/chrome' }, '/nonexistent')).toBeNull();
   });
+});
+
+/** Does a PDF's metadata carry this title? (Chromium writes document.title to /Title, ASCII or UTF-16BE hex.) */
+function pdfHasTitle(pdf: Buffer, title: string): boolean {
+  const raw = pdf.toString('latin1');
+  const hex = Buffer.from(`﻿${title}`, 'utf16le').swap16().toString('hex').toUpperCase();
+  return raw.includes(`(${title})`) || raw.toUpperCase().includes(hex);
+}
+
+describe.skipIf(!findChromium())('page-pdf in a real Chromium: the page cannot print another local file', () => {
+  it('location= and meta refresh to a file:// canary print the authored page, never the canary', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tg-pdf-canary-'));
+    try {
+      const canary = join(dir, 'canary.html');
+      writeFileSync(canary, '<title>CANARYTITLE</title><p>secret</p>');
+      const render = makePagePdfRenderer({ timeoutMs: 20_000 });
+      // Control: the page's own title reaches the PDF, so the probe below can see a swap.
+      const own = await render('<script>document.title="OWNTITLE"</script><p>x</p>');
+      expect(own && pdfHasTitle(own, 'OWNTITLE')).toBe(true);
+      for (const attack of [
+        `<script>document.title="OWNTITLE";location.href=${JSON.stringify(`file://${canary}`)}</script><p>x</p>`,
+        `<meta http-equiv="refresh" content="0;url=file://${canary}"><p>x</p>`,
+      ]) {
+        const pdf = await render(attack);
+        if (pdf) expect(pdfHasTitle(pdf, 'CANARYTITLE')).toBe(false);
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 60_000);
+
+  it('another loopback server (the dashboard) gets no request: navigation, form post, image', async () => {
+    let hits = 0;
+    const server = createServer((_q, r) => { hits++; r.end('<title>DASHTITLE</title>'); });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const render = makePagePdfRenderer({ timeoutMs: 20_000 });
+      for (const attack of [
+        `<script>location.href="http://127.0.0.1:${port}/x"</script>`,
+        `<form id="f" method="post" action="http://localhost:${port}/api"></form><script>document.getElementById('f').submit()</script>`,
+        `<img src="http://127.0.0.1:${port}/i.png"><p>x</p>`,
+      ]) {
+        const pdf = await render(attack);
+        if (pdf) expect(pdfHasTitle(pdf, 'DASHTITLE')).toBe(false);
+      }
+      expect(hits).toBe(0);
+    } finally { server.close(); }
+  }, 60_000);
 });

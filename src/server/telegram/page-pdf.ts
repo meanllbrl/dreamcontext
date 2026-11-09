@@ -9,9 +9,10 @@
  * virtual-time budget lets the kit's layout timers finish).
  *
  * Rendered by headless Chromium (`--print-to-pdf`, no header/footer), one at a time, killed on a
- * timeout, from a fresh temp folder under the OS temp dir that is always removed. No network: the
- * page's CSP allows only inline style/script and `data:` images/fonts, and the browser gets a
- * dead proxy plus a resolver that resolves nothing.
+ * timeout, with a fresh profile folder under the OS temp dir that is always removed. The page is
+ * served from a one-off loopback http address (never `file://`, see `chromiumArgs`). No network:
+ * the CSP (meta and header) allows only inline style/script and `data:` images/fonts, and the
+ * browser gets a dead proxy plus a resolver that resolves nothing.
  *
  * Size (owner, same day): text and vectors stay vectors (the page is never rasterized). Only a
  * PDF over `SMALL_PDF_BYTES` with raster `<img>`s in it is printed again with those images
@@ -23,10 +24,12 @@
  * the caller sends the card's text line.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildReportSrcdocServer } from '../../lib/telegram/chat-kit.js';
+import { SANDBOX_CSP, buildReportSrcdocServer } from '../../lib/telegram/chat-kit.js';
 import { reportTokens } from '../../lib/telegram/kit-tokens.js';
 import { authoredSecretHit } from '../../lib/telegram/render.js';
 import { REQUEST_MAX_BYTES } from './pictures.js';
@@ -131,17 +134,43 @@ export function findChromium(env: NodeJS.ProcessEnv = process.env, home = homedi
   return out.find((p) => { try { return statSync(p).isFile(); } catch { return false; } }) ?? null;
 }
 
-/** Chromium flags: headless print, no network, a throwaway profile inside `dir`. */
-export function chromiumArgs(dir: string, pagePath: string, pdfPath: string): string[] {
+/**
+ * Chromium flags: headless print, no network, a throwaway profile inside `dir`. The page is
+ * served over loopback http (`pageUrl`), never `file://`: a page on a file origin may navigate
+ * itself to any local file and Chromium would print THAT (review r1). An http page cannot open a
+ * `file:` URL; every other request goes to a dead proxy and a resolver that resolves nothing,
+ * loopback included (`<-loopback>`), except the one port the page is served from.
+ */
+export function chromiumArgs(dir: string, pageUrl: string, pdfPath: string): string[] {
+  const port = new URL(pageUrl).port;
   return [
     '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps',
     '--mute-audio', '--hide-scrollbars', `--user-data-dir=${join(dir, 'profile')}`,
-    '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>', '--host-resolver-rules=MAP * ~NOTFOUND',
+    '--proxy-server=http://127.0.0.1:9', `--proxy-bypass-list=<-loopback>;127.0.0.1:${port}`, '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     '--run-all-compositor-stages-before-draw', '--virtual-time-budget=5000',
     '--no-pdf-header-footer', '--print-to-pdf-no-header', `--print-to-pdf=${pdfPath}`,
-    `file://${pagePath}`,
+    pageUrl,
   ];
+}
+
+/** Serves `page` at one unguessable path on 127.0.0.1 (CSP header too); anything else is a 404. */
+function servePage(page: string): Promise<{ url: string; close: () => void }> {
+  const path = `/${randomBytes(16).toString('hex')}.html`;
+  const body = Buffer.from(page, 'utf8');
+  const server = createServer((req, res) => {
+    if (req.method !== 'GET' || req.url !== path) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': SANDBOX_CSP, 'Cache-Control': 'no-store', 'Content-Length': body.length });
+    res.end(body);
+  });
+  return new Promise((done, fail) => {
+    server.once('error', fail);
+    server.listen(0, '127.0.0.1', () => {
+      const a = server.address();
+      if (!a || typeof a === 'string') { server.close(); fail(new Error('no port')); return; }
+      done({ url: `http://127.0.0.1:${a.port}${path}`, close: () => { server.closeAllConnections?.(); server.close(); } });
+    });
+  });
 }
 
 function runChromium(bin: string, args: string[], timeoutMs: number): Promise<boolean> {
@@ -160,16 +189,17 @@ function runChromium(bin: string, args: string[], timeoutMs: number): Promise<bo
 
 export async function printPage(bin: string, page: string, timeoutMs: number): Promise<Buffer | null> {
   const dir = mkdtempSync(join(tmpdir(), 'dc-page-pdf-'));
+  let served: { url: string; close: () => void } | null = null;
   try {
-    const pagePath = join(dir, 'page.html');
     const pdfPath = join(dir, 'page.pdf');
-    writeFileSync(pagePath, page, { mode: 0o600 });
-    if (!(await runChromium(bin, chromiumArgs(dir, pagePath, pdfPath), timeoutMs))) return null;
+    served = await servePage(page);
+    if (!(await runChromium(bin, chromiumArgs(dir, served.url, pdfPath), timeoutMs))) return null;
     const pdf = readFileSync(pdfPath);
     return pdf.length > 64 && pdf.subarray(0, 5).equals(PDF_MAGIC) ? pdf : null;
   } catch {
     return null;
   } finally {
+    served?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 }
