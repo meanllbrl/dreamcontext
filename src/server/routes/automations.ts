@@ -1,4 +1,5 @@
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { telegramHub } from '../telegram/hub.js';
 import { deleteRoutine } from '../member-delete.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -1616,6 +1617,7 @@ export async function handleAutomationsPhotoUpload(
     // `photo` is not approval-hashed, so this write cannot block the agent —
     // which is why it does not re-approve and does not need to.
     const manifest = updateAutomation(contextRoot, slug, { photo: rel });
+    telegramHub()?.refreshIdentity(target.agent || slug);
     sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;

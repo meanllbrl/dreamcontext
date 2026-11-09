@@ -20,6 +20,8 @@ export class FakeTelegram {
   failOnce = new Map<string, number>();
   /** File ids whose download is slow (ms). */
   slowFiles = new Map<string, number>();
+  /** Methods that answer this many ms late (any method but getUpdates). */
+  slowMethods = new Map<string, number>();
   /** sendMessage calls whose text contains the key answer this many ms late. */
   slowSends = new Map<string, number>();
   /** sendMessage texts in the order they ANSWERED (what the phone shows), not the order sent. */
@@ -54,6 +56,8 @@ export class FakeTelegram {
     if (typeof init?.body === 'string') params = JSON.parse(init.body);
     else if (init?.body instanceof FormData) for (const [k, v] of init.body.entries()) params[k] = typeof v === 'string' ? v : '[file]';
     if (method !== 'getUpdates') this.calls.push({ token, method, params });
+    const slowMethod = method !== 'getUpdates' ? this.slowMethods.get(method) : undefined;
+    if (slowMethod) await new Promise((r) => setTimeout(r, slowMethod));
     const bot = this.bots.get(token);
     if (!bot) return res(401, { ok: false, error_code: 401, description: 'Unauthorized' });
     const fail = this.failing.get(method);

@@ -38,6 +38,7 @@ import { escapeHtml } from '../../lib/telegram/format.js';
 import { isAuthorized, type TgUpdateLike } from '../../lib/telegram/auth.js';
 import type { TelegramTransport } from '../../lib/telegram/transport.js';
 import { HubError, keyOf, MANAGER_PAIRING_TARGET, type TelegramHub } from './hub.js';
+import { displayNameFor } from './identity.js';
 
 const ID_TTL_MS = 5 * 60 * 1000;
 const VOIDED_KEEP_MS = 10 * 60 * 1000;
@@ -236,6 +237,9 @@ export class TelegramManager {
     await this.hub.send(ab, escapeHtml(`Ben ${name} (${projectName} projesi). Buradan yazabilirsin.`)).catch(() => {
       this.notice = "Botu aç ve Başlat'a bas.";
     });
+    // Its name, short line and photo from the member, in the background: the bind (and the
+    // desktop's 5 s confirm) never waits on them, and a refusal is logged, never fails the bind.
+    void this.hub.syncIdentity(ab);
   }
 
   /** Kaldır on a managed target revokes its token through the manager first (X6), 3 tries. */
@@ -346,7 +350,7 @@ export class TelegramManager {
   creationRequest(contextRoot: string, target: string, scope: string): { creationId: string } {
     if (!readManagerBinding(this.hub.home).ok) throw new HubError(409, 'no_manager', 'Set up Telegram in Settings first.');
     if (this.alarm) throw new HubError(409, 'manager_alarm', 'The manager key is in use elsewhere.');
-    const name = target === 'super' ? `Super · ${basename(dirname(contextRoot))}` : target;
+    const name = displayNameFor({ scope, target, contextRoot, projectName: basename(dirname(contextRoot)) }, this.hub.home);
     const r = this.mint({
       kind: 'creation', contextRoot, projectKey: projectKey(dirname(contextRoot)), projectName: basename(dirname(contextRoot)),
       target, scope, suggestedUsername: suggestedUsernameFor(target === 'super' ? basename(dirname(contextRoot)) : target), name,
@@ -404,7 +408,8 @@ export class TelegramManager {
     const m = readManagerBinding(this.hub.home);
     const row = this.historyRow(r.contextRoot, r.target);
     if (!m.ok || !row || row.botId !== r.botId || this.alarm) return 'mismatch';
-    await this.bindManaged(m.binding, row.botId, r.scope, r.target, r.projectKey, r.target === 'super' ? `Super · ${r.projectName}` : r.target, r.projectName);
+    const name = displayNameFor({ scope: r.scope, target: r.target, contextRoot: r.contextRoot, projectName: r.projectName }, this.hub.home);
+    await this.bindManaged(m.binding, row.botId, r.scope, r.target, r.projectKey, name, r.projectName);
     return 'ok';
   }
 }

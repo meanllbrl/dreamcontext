@@ -86,6 +86,7 @@ export function TelegramMemberSection({ slug, name }: { slug: string; name: stri
             <p className="tg-member-who">
               {atName(row?.botUsername)}{row?.userLabel && <span>{' · '}{t('telegram.member.with').replace('{who}', atName(row.userLabel))}</span>}
             </p>
+            {row?.identityIssue && <p className="agp-muted" data-testid="tg-identity-issue">{t(`telegram.identity.${row.identityIssue}`)}</p>}
             <p className="tg-forward-title">{t('telegram.forward.title')}</p>
             {forward.isLoading ? (
               <p className="agp-muted">{t('telegram.loading')}</p>

@@ -178,6 +178,8 @@ export interface TelegramStatusRow {
   managed?: boolean;
   /** Why a binding is disabled: hash mismatch (tamper), 409 (another poller), 401 (revoked). */
   disabledReason?: 'tamper' | 'conflict' | 'unauthorized';
+  /** Telegram refused the member's name/short line (`name`) or its photo (`photo`); the bot works. */
+  identityIssue?: 'name' | 'photo';
 }
 
 // ─── The hub API (W2 lane A implements it, W3 consumes it through routes) ────

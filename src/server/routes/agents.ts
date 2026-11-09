@@ -1,4 +1,5 @@
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { telegramHub } from '../telegram/hub.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
@@ -605,6 +606,8 @@ export async function handleAgentsUpdate(
       // was approved as it stood before the save is stamped (`withRestamp`): a teammate's change
       // waiting for its card stays waiting.
       ownerEdit(contextRoot, params.slug, patch, { consent: true, why: 'edited on the AI Team page' });
+      // A new title is the bot's new name in Telegram.
+      if (patch.title !== undefined && patch.title !== current.title) telegramHub()?.refreshIdentity(params.slug);
     }
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
@@ -911,6 +914,7 @@ export async function handleAgentsPhotoUpload(
   try {
     const rel = storeAgentPhoto(contextRoot, slug, image);
     updateAgent(contextRoot, slug, { photo: rel });
+    telegramHub()?.refreshIdentity(slug);
     sendSummary(res, contextRoot, slug);
   } catch (err) {
     sendWriteError(res, err, 'photo_failed', 'Failed to save the photo.');
