@@ -237,8 +237,9 @@ export class TelegramManager {
     await this.hub.send(ab, escapeHtml(`Ben ${name} (${projectName} projesi). Buradan yazabilirsin.`)).catch(() => {
       this.notice = "Botu aç ve Başlat'a bas.";
     });
-    // Its name, short line and photo from the member; a refusal is logged, never fails the bind.
-    await this.hub.syncIdentity(ab);
+    // Its name, short line and photo from the member, in the background: the bind (and the
+    // desktop's 5 s confirm) never waits on them, and a refusal is logged, never fails the bind.
+    void this.hub.syncIdentity(ab);
   }
 
   /** Kaldır on a managed target revokes its token through the manager first (X6), 3 tries. */

@@ -150,6 +150,14 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect((await call('POST', `/api/telegram-readopt/${readoptId}/start`, PAGE, { approvalHash: prev.approvalHash })).status).toBe(403);
     expect((await call('POST', `/api/telegram-readopt/${readoptId}/start`, KEYED, { approvalHash: 'nope' })).status).toBe(409);
     expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(false);
+    // A slow Telegram on the name never holds the reconnect: the desktop confirm gives it 5 s.
+    tg.slowMethods.set('setMyName', 4000);
+    const again = (await call('POST', '/api/telegram/ua-manager/readopt/request', PAGE)).json.readoptId;
+    const hash = (await call('GET', `/api/telegram-readopt/${again}/preview`)).json.approvalHash;
+    const t0 = Date.now();
+    expect((await call('POST', `/api/telegram-readopt/${again}/start`, KEYED, { approvalHash: hash })).status).toBe(200);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(true);
   });
 
   it('re-pairing the manager with its own token re-keys managed bots; a failed replace keeps that bot polling', async () => {

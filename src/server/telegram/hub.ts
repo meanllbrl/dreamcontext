@@ -258,10 +258,13 @@ export class TelegramHub implements TelegramHubApi {
   syncIdentity(ab: ActiveBinding): Promise<void> {
     const prev = this.identityChains.get(ab.key) ?? Promise.resolve();
     const next = prev.then(async () => {
-      if (this.active.get(ab.key) !== ab || ab.disabled) return;
+      const live = () => this.active.get(ab.key) === ab && !ab.disabled && !ab.halted;
+      if (!live()) return;
       const issue = await syncBotIdentity({
         scope: ab.scope, target: ab.target, botId: ab.binding.botId, transport: ab.transport, contextRoot: ab.contextRoot, projectName: ab.projectName,
-      }, this.home, this.deps.toJpeg).catch(() => undefined);
+      }, this.home, this.deps.toJpeg, live).catch(() => undefined);
+      // Removed or replaced meanwhile: nothing is recorded for a binding that is gone.
+      if (!live()) { this.identityIssues.delete(ab.key); return; }
       if (issue) this.identityIssues.set(ab.key, issue); else this.identityIssues.delete(ab.key);
     });
     this.identityChains.set(ab.key, next);

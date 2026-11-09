@@ -4,7 +4,7 @@
  * throws and leaves a one-line issue; the prompt never leaves the Mac.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeTelegram } from '../helpers/fake-telegram.js';
@@ -16,7 +16,7 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3
 const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9]);
 let home: string; let root: string; let tg: FakeTelegram; let transport: TelegramTransport;
 let converted: string[];
-const toJpeg = async (src: string) => { converted.push(src); return JPG; };
+const toJpeg = async (src: Buffer) => { converted.push(src.toString('hex')); return JPG; };
 const bot = () => ({ scope: 'abcdef0123456789', target: 'galileo', botId: 333333, transport, contextRoot: root, projectName: 'acme' });
 
 function member(title: string, photo?: string): void {
@@ -65,7 +65,7 @@ describe('syncBotIdentity', () => {
     expect(await syncBotIdentity(bot(), home, toJpeg)).toBeUndefined();
     expect(tg.sent('setMyName').map((c) => c.params.name)).toEqual(['Galileo · Rakip gözcüsü']);
     expect(tg.sent('setMyDescription')).toHaveLength(1);
-    expect(converted).toHaveLength(1);
+    expect(converted).toEqual([PNG.toString('hex')]);
     const photo = tg.sent('setMyProfilePhoto');
     expect(photo).toHaveLength(1);
     expect(JSON.parse(String(photo[0].params.photo))).toEqual({ type: 'static', photo: 'attach://avatar' });
@@ -114,6 +114,24 @@ describe('syncBotIdentity', () => {
     writeFileSync(join(root, 'automations', 'photos', 'galileo.png'), PNG);
     expect(await syncBotIdentity(bot(), home, async () => null)).toBe('photo');
     expect(tg.sent('setMyProfilePhoto')).toHaveLength(0);
+  });
+
+  it('a project bot whose project is not found takes nothing (never a global agent of that slug)', async () => {
+    member('Galileo');
+    expect(identityFor({ ...bot(), contextRoot: null }, home)).toBeNull();
+    expect(await syncBotIdentity({ ...bot(), contextRoot: null }, home, toJpeg)).toBeUndefined();
+    expect(tg.calls).toHaveLength(0);
+  });
+
+  it('a binding removed meanwhile gets no photo and no state written', async () => {
+    member('Galileo', 'automations/photos/galileo.png');
+    writeFileSync(join(root, 'automations', 'photos', 'galileo.png'), PNG);
+    let alive = true;
+    const slowJpeg = async (b: Buffer) => { alive = false; return toJpeg(b); };
+    await syncBotIdentity(bot(), home, slowJpeg, () => alive);
+    expect(tg.sent('setMyProfilePhoto')).toHaveLength(0);
+    expect(identityIssue('abcdef0123456789', 'galileo', 333333, home)).toBeUndefined();
+    expect(existsSync(join(home, '.dreamcontext'))).toBe(false);
   });
 
   it('another bot on the same binding starts fresh (state is keyed by bot id)', async () => {

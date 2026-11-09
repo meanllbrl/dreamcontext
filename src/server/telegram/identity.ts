@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent, readGlobalAgent } from '../../lib/agents/store.js';
@@ -65,11 +65,12 @@ export function identityFor(
       photo: null,
     };
   }
+  if (where.scope !== 'global' && !where.contextRoot) return null;
   let agent;
   try {
-    agent = where.scope === 'global' || !where.contextRoot
+    agent = where.scope === 'global'
       ? readGlobalAgent(where.target, home)
-      : getAgent(where.contextRoot, where.target, home);
+      : getAgent(where.contextRoot!, where.target, home);
   } catch { agent = null; }
   if (!agent) return null;
   const title = agent.title.trim() || where.target;
@@ -143,13 +144,15 @@ function readPhoto(path: string): Buffer | null {
 const isJpeg = (b: Buffer) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
 
 /** Telegram takes a static profile photo as JPG only: a PNG/WebP/GIF goes through macOS `sips`. */
-export type JpegConverter = (src: string) => Promise<Buffer | null>;
+export type JpegConverter = (src: Buffer) => Promise<Buffer | null>;
 
-export const sipsToJpeg: JpegConverter = async (src) => {
+export const sipsToJpeg: JpegConverter = async (bytes) => {
   if (process.platform !== 'darwin') return null;
   const dir = mkdtempSync(join(tmpdir(), 'dc-tg-photo-'));
+  const src = join(dir, 'source');
   const out = join(dir, 'photo.jpg');
   try {
+    writeFileSync(src, bytes, { mode: 0o600, flag: 'wx' });
     await new Promise<void>((resolve, reject) => {
       execFile('/usr/bin/sips', ['-s', 'format', 'jpeg', '-Z', '1024', src, '--out', out], { timeout: 20_000 }, (err) => (err ? reject(err) : resolve()));
     });
@@ -170,6 +173,8 @@ export async function syncBotIdentity(
   bot: { scope: TelegramScope; target: TelegramTarget; botId: number; transport: TelegramTransport; contextRoot: string | null; projectName: string },
   home: string,
   toJpeg: JpegConverter = sipsToJpeg,
+  /** False once the binding is removed or replaced: nothing more is sent or written. */
+  live: () => boolean = () => true,
 ): Promise<IdentityIssue | undefined> {
   let file: string;
   try { file = join(bindingDir(bot.scope, bot.target, home), 'identity.json'); } catch { return undefined; }
@@ -195,9 +200,9 @@ export async function syncBotIdentity(
   const src = want.photo ? readPhoto(want.photo) : null;
   const hash = src ? createHash('sha256').update(src).digest('hex') : '';
   if (src && state.photoHash !== hash) {
-    const jpg = isJpeg(src) ? src : await toJpeg(want.photo!);
+    const jpg = isJpeg(src) ? src : await toJpeg(src);
     if (!jpg) photoFailed = true;
-    else {
+    else if (live()) {
       try {
         await t.upload('setMyProfilePhoto', { photo: { type: 'static', photo: 'attach://avatar' } }, { avatar: { data: jpg, name: 'avatar.jpg', contentType: 'image/jpeg' } });
         state.photoHash = hash;
@@ -209,7 +214,7 @@ export async function syncBotIdentity(
 
   const issue: IdentityIssue | undefined = nameFailed ? 'name' : photoFailed ? 'photo' : undefined;
   if (issue) state.issue = issue; else delete state.issue;
-  if (JSON.stringify(state) !== before) {
+  if (JSON.stringify(state) !== before && live()) {
     try { writeTelegramJson(file, state, home); } catch { /* next start tries again */ }
   }
   if (issue) console.warn(`[telegram] could not set the ${issue} of the ${bot.target} bot`);
