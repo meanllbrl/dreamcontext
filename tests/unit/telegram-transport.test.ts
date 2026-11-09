@@ -153,12 +153,12 @@ describe('a message is never lost to formatting (owner, 2026-11-09)', () => {
   it('a refused parse is resent once as the plain text it shows, no parse_mode', async () => {
     const f = refuseOnce();
     const t = new TelegramTransport({ token: TOKEN, fetchImpl: f.impl });
-    const sent = await t.sendMessage(42, '<b>Senden beklenenler:</b>\n1. a &lt;b&gt; &amp; c');
+    const sent = await t.sendMessage(42, '<b>Senden beklenenler:</b>\n1. a &lt;b&gt; &amp; c <a href="https://example.com/r?a=1&amp;b=2">rapor</a>');
     expect(sent.message_id).toBe(9);
     expect(f.calls).toHaveLength(2);
     const retry = JSON.parse(f.calls[1].body as string);
     expect(retry.parse_mode).toBeUndefined();
-    expect(retry.text).toBe('Senden beklenenler:\n1. a <b> & c');
+    expect(retry.text).toBe('Senden beklenenler:\n1. a <b> & c rapor (https://example.com/r?a=1&b=2)');
     expect(retry.link_preview_options).toEqual({ is_disabled: true });
   });
 

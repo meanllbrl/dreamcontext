@@ -224,7 +224,10 @@ function isSectionHead(lines: string[], i: number): boolean {
 /** Telegram HTML back to the text it shows: tags dropped, the four escapes undone. The resend
  *  when Telegram refuses a message's entities (a message is never lost to formatting). */
 export function telegramHtmlToPlain(html: string): string {
-  return html.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  return html.replace(/<a\s+href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+    const h = href.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    return label === h ? label : `${label} (${h})`;
+  }).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 }
 
 /** Markdown (a Super/member text) → Telegram HTML. Reply marks are stripped first. */
