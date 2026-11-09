@@ -126,7 +126,7 @@ describe('a rail mini tile is one button, with no toolbar on hover', () => {
 describe('a chat folded to the bar takes its menus with it', () => {
   const SURF = SRC('components/sleepy/super/SuperSurface.tsx');
   it('the ⋯ unmounts with the hidden head, so no menu stays open out of sight', () => {
-    expect(SURF).toContain("{chat !== 'bar' && (column || onAdd) && (");
+    expect(SURF).toContain("{chat !== 'bar' && (column || onAdd || telegramMember) && (");
   });
   it('the add menu opened under the ⋯ closes on the fold, and focus goes back only to a ⋯ on screen', () => {
     expect(SURF).toContain("useEffect(() => { if (plan.chat === 'bar' && addByButton.current) setAddMenu(null); }, [plan.chat]);");

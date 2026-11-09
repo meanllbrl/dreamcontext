@@ -274,6 +274,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
       // rev 25 (2026-11-01): the line before `super ask`, which runs last in the turn.
       expect.stringContaining('Write nothing between tool calls, and nothing'),
+      // rev 36 (2026-11-09, gorev-kurali): a small fix gets no task.
+      '  (`--mode plan|develop`, `--task <slug>`). Keep your own turns short; end your turn after delegating.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Say'),
       expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
       // rev 30 (2026-11-06, owed ledger): only a child's question waits behind his card.

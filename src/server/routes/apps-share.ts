@@ -67,7 +67,7 @@ function ownerOrGrant(req: IncomingMessage, res: ServerResponse, slot: { project
 function preGate(req: IncomingMessage, res: ServerResponse, grant: unknown): boolean {
   if (!requireLocalDesktop(req, res)) return false;
   if (fromOwnerPage(req) || (typeof grant === 'string' && grant)) return true;
-  sendError(res, 403, 'owner_page_only', 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app), or the one-time grant his Onayla on your request card opened (`--ask`).');
+  sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app), or the one-time grant his Onayla on your request card opened (`--ask`).'));
   return false;
 }
 

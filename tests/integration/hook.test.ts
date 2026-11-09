@@ -1144,7 +1144,7 @@ describe('hook subagent-start (integration)', () => {
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
     expect(ctx_text).toContain('## Task Awareness');
-    expect(ctx_text).toContain('linked to a task');
+    expect(ctx_text).toContain('linked to ONE task');
     expect(ctx_text).toContain('dreamcontext tasks create');
     expect(ctx_text).toContain('save this plan as an dreamcontext task');
   });

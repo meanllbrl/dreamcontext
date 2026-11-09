@@ -288,8 +288,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/apps/:slug/auto-update',
   'POST /api/apps/:slug/detach',
   'POST /api/apps/:slug/uninstall',
-  'POST /api/apps/:slug/logo',
-  'POST /api/apps/:slug/logo/reset',
   'POST /api/apps/requests',
   'GET /api/apps/requests/:id',
   'GET /api/apps/requests/:id/logo',

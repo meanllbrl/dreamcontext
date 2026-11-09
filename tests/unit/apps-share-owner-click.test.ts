@@ -157,7 +157,7 @@ describe('anything else is refused exactly as before', () => {
 describe('a refused click says what mends it (2026-11-09)', () => {
   // Installed 0.41.9 over a running 0.41.0, whose shell gave the key to the notch alone: Install
   // on the Apps page read "Only the owner's own Apps page can do this" until he reopened the app.
-  const OLD = 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app).';
+  const OLD = 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app), or the one-time grant his Onayla on your request card opened (`--ask`).';
   const reopen: Array<[string, Record<string, string>]> = [
     ['his page without the key (a shell older than the page)', without(OWNER_KEY_HEADER)],
     ['his page with a key this server does not hold', { ...OWNER_CLICK, [OWNER_KEY_HEADER]: 'c9'.repeat(32) }],
