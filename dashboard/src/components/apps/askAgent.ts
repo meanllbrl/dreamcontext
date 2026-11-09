@@ -7,11 +7,13 @@ import { COMPOSER_PREFILL_EVENT } from '../sleepy/chat/Composer';
  * an icon or a README part, a publish). The surface mounts its composer a beat after it opens: ask a
  * few times until one takes it. Only an empty composer takes it: `missed` says none did.
  */
-export function askAgent(bus: EventTarget, text: string, on: { taken?: () => void; missed?: () => void } = {}): void {
+export function askAgent(bus: EventTarget, text: string, on: { taken?: () => void; missed?: () => void; notSuper?: boolean } = {}): void {
   openAgentSurface(bus);
   let tries = 0;
   const ask = () => {
-    const detail: { text: string; accepted?: boolean } = { text };
+    // `notSuper`: the Super's composer refuses it, so `missed` opens a new develop chat (a
+    // publish is the work of a session that builds, never the Super's).
+    const detail: { text: string; accepted?: boolean; notSuper?: boolean } = { text, ...(on.notSuper ? { notSuper: true } : {}) };
     emitInstance(bus, COMPOSER_PREFILL_EVENT, detail);
     if (detail.accepted) on.taken?.();
     else if (++tries < 10) window.setTimeout(ask, 150);

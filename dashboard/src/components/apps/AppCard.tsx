@@ -42,6 +42,8 @@ export interface AppRow {
   source?: { fullName: string; owner: string; mode?: 'following' | 'own'; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastCheck?: string | null; lastUpdate?: { to: string; at: string; auto: boolean; depsFailed?: string } | null } | null;
   provenance?: { fullName: string } | null;
   publish?: { fullName: string; public: boolean; at: string } | null;
+  /** Own published app whose files differ from the last publish (app-onay-karti D11). */
+  unpublished?: boolean;
   configCount?: number;
   configMissing?: string[];
 }
@@ -159,15 +161,17 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
    * prompt that has Claude clean, write the store page, run the gate and publish with the CLI.
    */
   const [handing, setHanding] = useState(false);
-  const handToClaude = async (visibility: 'private' | 'public') => {
+  const handToClaude = async (visibility: 'private' | 'public', update = false) => {
     if (handing) return;
-    // Public is for good: the owner's own yes, one line, before anything is handed over.
-    if (visibility === 'public' && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
+    // Public is for good: the owner's own yes, one line, before anything is handed over. A new
+    // version of an app that is already public asks nothing: it changes no one's access.
+    if (visibility === 'public' && !(update && app.publish?.public) && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
     setManageErr(null); setHanding(true);
     try {
       const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
-      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null });
+      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update });
       askAgent(bus, prompt, {
+        notSuper: true,
         taken: () => { setHanding(false); onClose(); },
         // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
         // with the prompt, shown, the way a delegated task does.
@@ -219,6 +223,12 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
       />
       <FactStrip facts={facts} />
       <div className="pp-notes-block">
+        {!following && app.publish && app.unpublished && canLaunch && (
+          <div className="app-card__note app-card__note--accent app-card__mcp">
+            <span>{t('share.card.unpublished')}</span>
+            <button type="button" className="app-card__stop" disabled={handing} onClick={() => void handToClaude(app.publish!.public ? 'public' : 'private', true)}>{t('share.card.publishUpdate')}</button>
+          </div>
+        )}
         {following && app.source!.available && (
           <div className="app-card__note app-card__note--accent app-card__mcp">
             <span>{t('share.card.updateReady')}</span>

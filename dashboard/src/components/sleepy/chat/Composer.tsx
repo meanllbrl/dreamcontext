@@ -670,8 +670,10 @@ export function Composer({
 
   // A page asked this project's Chat to start with a ready message (the Apps page's empty state
   // seeds `/apps `). Only an EMPTY, visible composer takes it: never over a half-typed draft.
-  useInstanceEvent<{ text?: unknown; accepted?: boolean }>(COMPOSER_PREFILL_EVENT, (detail) => {
+  useInstanceEvent<{ text?: unknown; accepted?: boolean; notSuper?: boolean }>(COMPOSER_PREFILL_EVENT, (detail) => {
     if (shelved || !detail || typeof detail.text !== 'string' || detail.accepted || draft.trim()) return;
+    // A publish handoff is never the Super's: it falls through to a new develop chat.
+    if (superView && detail.notSuper) return;
     // Visible means on screen: a composer of a tab that is not showing would swallow the ask.
     if (!taRef.current || taRef.current.getClientRects().length === 0) return;
     detail.accepted = true;

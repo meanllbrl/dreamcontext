@@ -239,7 +239,9 @@ Publishing to GitHub with no data, installing someone else's app, settings, upda
 copy": `references/sharing.md`. The owner's Share click hands YOU the publish with a one-hour grant:
 read what goes out, clean the app's copy, move fixed targets into the `config` template, write the
 store README, run `dreamcontext apps publish <slug>` (the gate) last, then publish with
-`--go --grant <id>`. The install and an update stay the owner's clicks on the Apps page.
+`--go --grant <id>`. To publish, install, update or set a logo without a grant, ASK: `--ask` shows
+the owner one card with the exact plan, his Onayla gives a one-time grant, you run the one command
+it returns (`references/sharing.md`, "Asking the owner"). An expired grant: the same `--ask` again.
 
 References: `references/sdk.md`, `references/best-practices.md`, `references/webview-limits.md`,
 `references/sharing.md`, `references/meta-ads.md` (a full worked example).

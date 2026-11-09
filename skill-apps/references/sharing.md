@@ -2,8 +2,9 @@
 
 An app can be published to GitHub with no data, and installed by someone else from Shared Apps
 (a private repo they were invited to) or from a public link ("Install from a link"). This page is what an agent does.
-A publish is YOURS to do: the owner presses Share on the app's page and you get the job. Installing,
-updating and the rest stay his clicks on the Apps page.
+A publish is YOURS to do: the owner presses Share on the app's page and you get the job. You may
+also ASK for a publish, an install, an update or a logo yourself (below, "Asking the owner"): his
+Onayla on the card lets you do exactly that once. "My own copy", uninstall and keys stay his clicks.
 
 ## What travels and what never does
 
@@ -69,12 +70,36 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public
 publish is for good, so only the owner's own "Share publicly" click opens one.
 
+## Asking the owner (publish, install, update, logo)
+
+When the work needs one of these and no grant came with your prompt, ask; never hunt for another way.
+
+1. Ask: `dreamcontext apps publish <slug> --ask [--note "…"] [--approve <ids>]`,
+   `dreamcontext apps install <owner/repo> --ask [--set key=value]`,
+   `dreamcontext apps update <slug> --ask [--how merge|set-aside]`, or
+   `dreamcontext apps logo <slug> <absolute path to a PNG or JPG> --ask`. The server builds the
+   plan from its own reads and shows him ONE card (the notch; Telegram while he is away) with
+   exactly what would happen: where it goes and to whom, the changed files, every permission
+   change, what a merge would lose, the picture itself. The command waits up to 110 s for him.
+2. Wait: still waiting, run `dreamcontext apps grant <request> --wait 100`. Rejected: stop, and do
+   not ask again for 10 minutes (and only if something changed).
+3. Spend: on Onayla you get one command with a one-hour, one-time grant (a chat line `[app onayı]`
+   brings the same). Run it once, as given. It runs the plan he saw, nothing you add: flags on the
+   spend are ignored. `stale_request`: the app changed after his yes, nothing ran; ask again.
+   `grant_used`: it already ran, stop. `grant_expired`: run the SAME `--ask` again; the card says
+   "Süresi doldu: yeniden onaylıyor musun?" and one tap gives a new hour.
+
+An update publish (a published app whose files changed) never asks about visibility or invitees:
+it keeps the last publish's. The Apps page shows such an app with "Yerelde yayınlanmamış yeni
+sürüm var." and "Güncellemeyi yayınla", which hands you the same job as Share, in update mode.
+
 ## Installing (the installer's side)
 
 - `dreamcontext apps shared`: invitations and apps shared with this account.
 - `dreamcontext apps install <owner/repo|link>`: the preview (who wrote it, what it runs, the
-  addresses its code names, the settings it asks for). Installing is the owner's click, which also
-  shows: "This app was written by X. It runs on your Mac with your permissions."
+  addresses its code names, the settings it asks for). Installing is the owner's click, or his
+  Onayla on your `--ask` card, which also shows: "This app was written by X. It runs on your Mac
+  with your permissions."
 - `dreamcontext apps config <slug> --suggest`: candidates from THIS project for each setting; fill
   them with `--set`. The installed app's keys go in the same way as the owner's own.
 
@@ -87,8 +112,8 @@ asks how to come in (Merge, Keep my changes aside, Make it my own copy) instead 
 `dreamcontext apps update <slug>` checks and changes nothing; an update it finds shows as the Update
 card on the app's page in Apps (the page also checks when it opens). Never pull, fetch, merge or
 copy the original's code yourself, and neither does the app's own assistant: that skips every gate
-below. An update is applied by the owner's click; any change to
-the manifest asks him again. Auto-update is off unless he turns it on for that app (never for a
+below. An update is applied by the owner's click or his Onayla on your `apps update <slug> --ask`
+card; any change to the manifest is a line on that card. Auto-update is off unless he turns it on for that app (never for a
 public app), and applies only to an unchanged copy with an unchanged manifest. "Make it my own
 copy" stops updates for good. A copy can be published again only if its licence allows (MIT and
 the like), under the new owner's name, with "Derived from <repo>" in its README.
