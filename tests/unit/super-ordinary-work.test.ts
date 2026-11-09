@@ -55,6 +55,29 @@ describe('what still asks the owner', () => {
     expect(ordinaryWorkAllows('Write', { file_path: join(tmp, 'trap', 'x.txt') }, ctx)).toBe(false);
   });
 
+  it('files that run code next, in any case spelling (security review)', () => {
+    const fold = { ...ctx, foldCase: true };
+    for (const f of ['.git/config', '.GIT/hooks/pre-commit', '.Claude/Settings.json', '.claude/hooks/start.sh', '.vscode/tasks.json', '.envrc', '.husky/pre-push']) {
+      expect(ordinaryWorkAllows('Write', { file_path: join(project, f) }, fold), f).toBe(false);
+    }
+    expect(ordinaryWorkAllows('Read', { file_path: join(home, '.CODEX', 'auth.json') }, fold)).toBe(false);
+  });
+
+  it('dreamcontext and Claude files in the temp folder are never scratch', () => {
+    for (const f of ['dreamcontext-chat-mode-1.json', 'dreamcontext-askpass-1', 'dc-codex-1/x', 'claude-501/x/tasks/a.output']) {
+      expect(ordinaryWorkAllows('Write', { file_path: join(tmp, f) }, ctx), f).toBe(false);
+      expect(ordinaryWorkAllows('Read', { file_path: join(tmp, f) }, ctx), f).toBe(false);
+    }
+  });
+
+  it('a search over a folder that holds secrets or the temp folder asks', () => {
+    expect(ordinaryWorkAllows('Grep', { pattern: 'token', path: home }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Grep', { pattern: 'token', path: '~' }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: '**/*', path: base }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: tmp }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: join(tmp, 'gal') }, ctx)).toBe(true);
+  });
+
   it('commands, MCP, web and questions are never answered here', () => {
     expect(ordinaryWorkAllows('Bash', { command: `python3 ${join(tmp, 'gal', 'peek.py')}` }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('mcp__gmail__send', { to: 'x' }, ctx)).toBe(false);

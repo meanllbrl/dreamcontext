@@ -29,6 +29,8 @@ export function ordinaryWorkMode(mode: string | null | undefined): boolean {
 }
 
 export interface OrdinaryWorkContext {
+  /** Compare paths without case (darwin and win32 file systems ignore it); defaults to the host's. */
+  foldCase?: boolean;
   /** The session's project folder. */
   cwd: string;
   /** Linked repos and their worktrees (already real paths). */
@@ -51,29 +53,20 @@ function realOf(abs: string): string {
   }
 }
 
-const inside = (p: string, root: string): boolean => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
-
-const SECRET_NAME = /^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|id_[a-z0-9_]+(?:\.pub)?|.*\.(?:pem|key|p12|pfx|keychain(?:-db)?)|credentials(?:\.json)?|service-account.*\.json)$/i;
-const SECRET_HOME_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.dreamcontext', '.claude', '.codex', '.gemini', join('.config', 'gcloud'), join('.config', 'gh'), join('Library', 'Keychains')];
-
-/** A place whose content is a credential or the agent's own controls: always the owner's. */
-export function isSecretPlace(real: string, home: string = homedir()): boolean {
-  if (SECRET_NAME.test(basename(real))) return true;
-  const h = realOf(home);
-  return SECRET_HOME_DIRS.some((d) => inside(real, join(h, d)));
-}
-
-/** A place a write must not reach on its own: hooks and settings that change what runs next. */
-function isControlPlace(real: string): boolean {
-  return /(?:^|[\\/])\.git[\\/]hooks(?:[\\/]|$)|(?:^|[\\/])\.claude[\\/]settings[^\\/]*$|(?:^|[\\/])\.mcp\.json$/.test(real);
-}
-
 function targetOf(tool: string, input: Record<string, unknown>): string | null {
   const v = tool === 'NotebookEdit' || tool === 'NotebookRead'
     ? (input.notebook_path ?? input.file_path)
     : tool === 'Glob' || tool === 'Grep' || tool === 'LS' ? (input.path ?? '') : input.file_path;
   return typeof v === 'string' ? v : null;
 }
+
+const inside = (p: string, root: string): boolean => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
+
+const SECRET_NAME = /^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|id_[a-z0-9_]+(?:\.pub)?|.*\.(?:pem|key|p12|pfx|keychain(?:-db)?)|credentials(?:\.json)?|service-account.*\.json)$/i;
+const SECRET_HOME_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.dreamcontext', '.claude', '.codex', '.gemini', '.config', join('Library', 'Keychains')];
+/** What dreamcontext and Claude keep in the temp folder: live chat settings, mode notes, askpass
+ *  tokens, browser configs, background task output. Never scratch, never read or written here. */
+const OWN_TEMP = /^(?:dreamcontext|dc-|claude)/i;
 
 /**
  * True when this permission request is ordinary work the server answers yes to. Never throws:
@@ -83,20 +76,38 @@ export function ordinaryWorkAllows(tool: string, rawInput: unknown, ctx: Ordinar
   try {
     if (!READS.has(tool) && !WRITES.has(tool)) return false;
     const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+    const fold = (ctx.foldCase ?? (process.platform === 'darwin' || process.platform === 'win32'))
+      ? (x: string): string => x.toLowerCase() : (x: string): string => x;
     const home = ctx.home ?? homedir();
     const named = targetOf(tool, input);
     if (named === null) return false;
-    const raw = named === '' ? ctx.cwd : named.startsWith('~/') ? join(home, named.slice(2)) : named;
-    const real = realOf(isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw));
-    if (isSecretPlace(real, home)) return false;
-    if (READS.has(tool)) return true;
-    if (isControlPlace(real) || bypassNeedsOwner(tool, input, ctx.cwd)) return false;
-    const roots = [ctx.cwd, ...(ctx.roots ?? [])].map(realOf);
-    const tmps = (ctx.tmpRoots ?? ['/tmp', tmpdir()]).map(realOf);
+    const raw = named === '' ? ctx.cwd : named === '~' ? home : named.startsWith('~/') ? join(home, named.slice(2)) : named;
+    const real = fold(realOf(isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw)));
+    const realHome = fold(realOf(home));
+    const secretDirs = SECRET_HOME_DIRS.map((d) => fold(join(realHome, d)));
+    if (SECRET_NAME.test(basename(real)) || secretDirs.some((d) => inside(real, d))) return false;
     // A temp root that is the home or the disk itself is no temp folder.
-    const realHome = realOf(home);
-    const okTmps = tmps.filter((t) => t !== realHome && t !== parse(t).root && !inside(realHome, t));
-    return roots.some((r) => inside(real, r)) || okTmps.some((t) => inside(real, t));
+    const tmps = (ctx.tmpRoots ?? ['/tmp', tmpdir()]).map((t) => fold(realOf(t)))
+      .filter((t) => t !== realHome && t !== parse(t).root && !inside(realHome, t));
+    const tmpRel = (p: string): string | null => {
+      const t = tmps.find((r) => inside(p, r));
+      return t === undefined ? null : p.slice(t.length).replace(/^[\\/]+/, '');
+    };
+    const ownTemp = (p: string): boolean => OWN_TEMP.test((tmpRel(p) ?? '').split(/[\\/]/)[0] ?? '');
+    if (ownTemp(real)) return false;
+    if (READS.has(tool)) {
+      // A search walks everything under its folder: one that holds a secret folder or the temp
+      // folder's own files is the owner's to allow.
+      if (tool === 'Read' || tool === 'NotebookRead') return true;
+      return !secretDirs.some((d) => inside(d, real)) && !tmps.some((t) => inside(t, real));
+    }
+    if (bypassNeedsOwner(tool, input, ctx.cwd)) return false;
+    // Inside a root, a write to a dot folder or dot file (.git, .claude, .vscode, .husky, .envrc,
+    // .mcp.json…) changes what runs next: those are exactly what Claude still asks about there.
+    const roots = [ctx.cwd, ...(ctx.roots ?? [])].map((r) => fold(realOf(r)));
+    const base = roots.find((r) => inside(real, r)) ?? tmps.find((t) => inside(real, t));
+    if (base === undefined || real === base) return false;
+    return !real.slice(base.length).split(/[\\/]/).some((seg) => seg.startsWith('.'));
   } catch {
     return false;
   }
