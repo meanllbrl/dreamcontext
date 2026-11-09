@@ -12,8 +12,14 @@
  *    into a dot folder or dot file (`.git`, `.claude`, `.vscode`…), which changes what runs next.
  *  Reads elsewhere (the rest of the home, other projects, app data) keep their card: a list of
  *  secret names can never be complete, so the rule is by place.
- * Everything else (a write elsewhere, Bash, MCP, web, a question) keeps its card: sending,
- * publishing, deleting and money are judged by the auto classifier or the owner, never here.
+ *  - a Bash command that only deletes scratch (owner 2026-11-09, kitup: a child stopped on
+ *    removing its own temp files): one or more plain `rm` calls, joined by `&&` or `;`, whose every
+ *    target sits strictly inside a temp folder, where children keep their scratch. The project's
+ *    `_dream_context/tmp/` is NOT such a place: it also holds dreamcontext's own state (plans,
+ *    locks, run ledgers, the only copy of folded journals), so a delete there goes to the Super. See
+ *    {@link scratchRmAllows} for the exact shape; anything else in the command keeps its card.
+ * Everything else (a write elsewhere, any other Bash, MCP, web, a question) keeps its card: sending,
+ * publishing, deleting elsewhere and money are judged by the auto classifier or the owner, never here.
  *
  * The target is resolved through its nearest existing folder (`realpath`), so a link planted in
  * `/tmp` that points into the home is judged by where it really lands.
@@ -41,6 +47,9 @@ export interface OrdinaryWorkContext {
   home?: string;
   /** Temp folders; defaults to `/tmp` and the OS temp folder. */
   tmpRoots?: readonly string[];
+  /** The session's `$TMPDIR` (a Bash `rm $TMPDIR/…` names it); defaults to the server's. Unset:
+   *  a command naming it is not judged here (an empty `$TMPDIR` would delete from the disk root). */
+  tmpdirEnv?: string;
 }
 
 /** The real path of `abs`: its nearest existing folder resolved, the missing rest appended. */
@@ -77,6 +86,10 @@ const OWN_TEMP = /^(?:dreamcontext|dc-|claude)/i;
  */
 export function ordinaryWorkAllows(tool: string, rawInput: unknown, ctx: OrdinaryWorkContext): boolean {
   try {
+    if (tool === 'Bash') {
+      const command = rawInput && typeof rawInput === 'object' ? (rawInput as Record<string, unknown>).command : undefined;
+      return typeof command === 'string' && scratchRmAllows(command, ctx);
+    }
     if (!READS.has(tool) && !WRITES.has(tool)) return false;
     const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
     const fold = (ctx.foldCase ?? (process.platform === 'darwin' || process.platform === 'win32'))
@@ -127,6 +140,75 @@ export function ordinaryWorkAllows(tool: string, rawInput: unknown, ctx: Ordinar
     // .mcp.json…) changes what runs next: those are exactly what Claude still asks about there.
     if (real === base) return false;
     return !real.slice(base.length).split(/[\\/]/).some((seg) => seg.startsWith('.'));
+  } catch {
+    return false;
+  }
+}
+
+/** A word of a scratch `rm`: no quote, variable, glob class, redirect, pipe, subshell or escape. */
+const PLAIN_WORD = /^[A-Za-z0-9_@%+=:,.\/*-]+$/;
+const RM_FLAGS = /^(?:-[rRfdv]+|--recursive|--force|--dir|--verbose)$/;
+
+/**
+ * True when `command` only deletes scratch: `rm [flags] <path>…`, one or more joined by `&&` or
+ * `;`, every path strictly inside a temp folder (never the folder itself, never dreamcontext's or
+ * Claude's own files there). A path may
+ * start with `$TMPDIR` or `${TMPDIR}` (optionally in double quotes, nothing else quoted); a `*`
+ * only in its last part, never before a trailing `/` (which would follow a link out) and never
+ * right under a root (that empties the whole temp folder); no `..`.
+ * Each target is resolved through `realpath`, so a link planted in the temp folder that points
+ * into the home is judged by where it lands. Anything else (another command, a pipe, a
+ * substitution, a redirect, `~`, a relative path) is not judged here and keeps its card.
+ */
+export function scratchRmAllows(command: string, ctx: OrdinaryWorkContext): boolean {
+  try {
+    if (command.length > 4000 || /[\n\r`|<>(){}\\'!#?[\]~]/.test(command.replace(/\$\{TMPDIR\}/g, '$TMPDIR'))) return false;
+    const fold = (ctx.foldCase ?? (process.platform === 'darwin' || process.platform === 'win32'))
+      ? (x: string): string => x.toLowerCase() : (x: string): string => x;
+    const home = ctx.home ?? homedir();
+    const realHome = fold(realOf(home));
+    const tmpEnv = ctx.tmpdirEnv ?? process.env.TMPDIR;
+    const tmps = (ctx.tmpRoots ?? ['/tmp', tmpdir()]).map((t) => fold(realOf(t)))
+      .filter((t) => t !== realHome && t !== parse(t).root && !inside(realHome, t));
+    const roots = tmps;
+    const segments = command.split(/&&|;/).map((c) => c.trim());
+    if (!segments.length || segments.some((c) => !c)) return false;
+    for (const seg of segments) {
+      const words = seg.split(/\s+/);
+      if (words[0] !== 'rm') return false;
+      let operands = 0;
+      let flagsDone = false;
+      for (const w0 of words.slice(1)) {
+        if (!flagsDone && w0 === '--') { flagsDone = true; continue; }
+        if (!flagsDone && w0.startsWith('-')) { if (!RM_FLAGS.test(w0)) return false; continue; }
+        // One pair of double quotes around the whole word, nothing else quoted.
+        const w1 = /^"[^"]*"$/.test(w0) ? w0.slice(1, -1) : w0;
+        if (w1.includes('"')) return false;
+        let path = w1.replace(/^\$\{TMPDIR\}/, '$TMPDIR');
+        if (path.startsWith('$TMPDIR')) {
+          if (!tmpEnv || !isAbsolute(tmpEnv)) return false;
+          const rest = path.slice('$TMPDIR'.length);
+          if (rest && !rest.startsWith('/')) return false;
+          path = tmpEnv.replace(/\/+$/, '') + rest;
+        }
+        if (path.includes('$') || !PLAIN_WORD.test(path) || !isAbsolute(path)) return false;
+        const parts = path.split('/');
+        if (parts.includes('..') || parts.includes('.')) return false;
+        const star = path.indexOf('*');
+        if (star >= 0 && path.slice(star).includes('/')) return false;
+        const real = fold(realOf(resolve(path)));
+        const root = roots.find((r) => real !== r && inside(real, r));
+        if (root === undefined) return false;
+        // A glob empties a folder: never a whole temp folder or the whole project tmp.
+        if (star >= 0 && fold(realOf(dirname(resolve(path)))) === root) return false;
+        const rel = real.slice(root.length).replace(/^[\\/]+/, '');
+        if (OWN_TEMP.test(rel.split(/[\\/]/)[0] ?? '')) return false;
+        if (SECRET_NAME.test(basename(real))) return false;
+        operands++;
+      }
+      if (!operands) return false;
+    }
+    return true;
   } catch {
     return false;
   }
