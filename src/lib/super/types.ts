@@ -1703,9 +1703,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * how the transcript tells whether this revision already arrived. Whoever changes the sections
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
- * claimed as shown; he is told where it is.
+ * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
+ * land on (section heads, the result, what he must do), on Telegram too.
  */
-export const SUPER_BRIEF_REV = 33;
+export const SUPER_BRIEF_REV = 34;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

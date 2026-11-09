@@ -9,4 +9,11 @@ describe('Telegram briefing line', () => {
     expect(SUPER_TELEGRAM_LINE).toContain('via="telegram"');
     expect(SUPER_TELEGRAM_LINE).toContain('super ask');
   });
+
+  it('allows bold on Telegram and only forbids interactive blocks (owner, 2026-11-09)', () => {
+    expect(SUPER_TELEGRAM_LINE).toContain('no interactive blocks');
+    expect(SUPER_TELEGRAM_LINE).toContain('bold is fine');
+    expect(SUPER_TELEGRAM_LINE).not.toContain('plain text');
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('Bold (`**…**`) the few words his eye must land on');
+  });
 });
