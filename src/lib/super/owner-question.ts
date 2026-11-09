@@ -314,7 +314,7 @@ export function offerOwnerItemsToTelegram(vault: string, state: Pick<SuperState,
 
 const TG_WHY: Record<Exclude<TelegramReach, 'sent'>, string> = {
   sending: 'the message is still on its way (it may land in a moment; nothing confirmed it yet)',
-  failed: 'Telegram refused the message; it is tried again after a short wait, and at once when he next writes from Telegram',
+  failed: 'Telegram refused the message; it goes again with the next change of the queue after a short wait, and at once when he next writes from Telegram',
   at_mac: 'he is at the Mac, so Telegram gets nothing; it goes there the moment he writes from Telegram',
   no_bot: 'no Super Telegram bot is bound to this project',
 };
