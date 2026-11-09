@@ -133,3 +133,49 @@ describe('managed bots', () => {
     expect(f.calls[0].url.endsWith('/replaceManagedBotToken')).toBe(true);
   });
 });
+
+describe('a message is never lost to formatting (owner, 2026-11-09)', () => {
+  /** Telegram refuses the first HTML send, accepts the rest. */
+  function refuseOnce(description = "Bad Request: can't parse entities: Unsupported start tag \"x\" at byte offset 3") {
+    const calls: Call[] = [];
+    const impl: FetchLike = async (url, init) => {
+      calls.push({ url, body: init?.body });
+      const refused = calls.length === 1;
+      return {
+        ok: !refused, status: refused ? 400 : 200,
+        json: async () => (refused ? { ok: false, error_code: 400, description } : { ok: true, result: { message_id: 9, chat: { id: 42 } } }),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    };
+    return { calls, impl };
+  }
+
+  it('a refused parse is resent once as the plain text it shows, no parse_mode', async () => {
+    const f = refuseOnce();
+    const t = new TelegramTransport({ token: TOKEN, fetchImpl: f.impl });
+    const sent = await t.sendMessage(42, '<b>Senden beklenenler:</b>\n1. a &lt;b&gt; &amp; c <a href="https://example.com/r?a=1&amp;b=2">rapor</a>');
+    expect(sent.message_id).toBe(9);
+    expect(f.calls).toHaveLength(2);
+    const retry = JSON.parse(f.calls[1].body as string);
+    expect(retry.parse_mode).toBeUndefined();
+    expect(retry.text).toBe('Senden beklenenler:\n1. a <b> & c rapor (https://example.com/r?a=1&b=2)');
+    expect(retry.link_preview_options).toEqual({ is_disabled: true });
+  });
+
+  it('a caption on an upload falls back the same way', async () => {
+    const f = refuseOnce();
+    const t = new TelegramTransport({ token: TOKEN, fetchImpl: f.impl });
+    await t.sendPhoto(42, { name: 'a.png', data: Buffer.from('x') }, '<b>Kart</b>');
+    expect(f.calls).toHaveLength(2);
+    const second = await bodyText(f.calls[1].body);
+    expect(second).toContain('caption=Kart');
+    expect(second).not.toContain('parse_mode');
+  });
+
+  it('any other 400 is not retried', async () => {
+    const f = refuseOnce('Bad Request: chat not found');
+    const t = new TelegramTransport({ token: TOKEN, fetchImpl: f.impl });
+    await expect(t.sendMessage(42, '<b>x</b>')).rejects.toBeInstanceOf(TelegramError);
+    expect(f.calls).toHaveLength(1);
+  });
+});

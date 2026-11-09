@@ -6,7 +6,8 @@
  * - `scrubLoginToken`: the hands-free login token never leaves in any body (plan "Media").
  * - `splitReplySections` / `stripReplyMarks`: the Super's line-start `<!-- re:<ref> -->`
  *   sections (outside fences), so the hub sends exactly the sections answering a Telegram ref.
- * - `markdownToTelegramHtml`: paragraphs, lists, headings, quotes, code, links (https/http only),
+ * - `markdownToTelegramHtml`: paragraphs, lists, headings (and a short `Başlık:` line opening a
+ *   list, drawn bold), quotes, code, links (https/http only),
  *   `==mark==` (the Mac highlighter, all three pens); dream fences become one
  *   "Mac'te: <başlık>" line (`dream-view` pin/title/checkout dropped, M5).
  * - `splitTelegramHtml`: ≤4096 per message, cut on a code-point boundary outside any tag or
@@ -204,6 +205,31 @@ function inline(raw: string): string {
   return s;
 }
 
+const LIST_LINE = /^\s*(?:[-*+]|\d{1,3}[.)])\s+\S/;
+
+/**
+ * A short line of its own that ends with ':' and opens a list ("Senden beklenenler:") is a
+ * section head: drawn bold like a `#` heading. Only at a paragraph start (first line or after a
+ * blank one), at most 60 characters, not already marked up, so a sentence ending in ':' inside a
+ * paragraph stays as written.
+ */
+function isSectionHead(lines: string[], i: number): boolean {
+  const t = lines[i].trim();
+  if (!t.endsWith(':') || t.length < 2 || Array.from(t).length > 60) return false;
+  if (/[*_`=<\[]/.test(t) || LIST_LINE.test(lines[i])) return false;
+  if (i > 0 && lines[i - 1].trim() !== '') return false;
+  return i + 1 < lines.length && LIST_LINE.test(lines[i + 1]);
+}
+
+/** Telegram HTML back to the text it shows: tags dropped, the four escapes undone. The resend
+ *  when Telegram refuses a message's entities (a message is never lost to formatting). */
+export function telegramHtmlToPlain(html: string): string {
+  return html.replace(/<a\s+href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+    const h = href.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    return label === h ? label : `${label} (${h})`;
+  }).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+}
+
 /** Markdown (a Super/member text) → Telegram HTML. Reply marks are stripped first. */
 export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): string {
   const lines = stripReplyMarks(md).split('\n');
@@ -243,6 +269,7 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
     const numbered = /^(\s*)(\d{1,3})[.)]\s+(.*)$/.exec(line);
     if (numbered) { out.push(`${'  '.repeat(Math.min(3, Math.floor(numbered[1].length / 2)))}${numbered[2]}. ${inline(numbered[3])}`); i++; continue; }
     if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push('──────'); i++; continue; }
+    if (isSectionHead(lines, i)) { out.push(`<b>${inline(line.trim())}</b>`); i++; continue; }
     out.push(inline(line));
     i++;
   }

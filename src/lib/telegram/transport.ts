@@ -5,11 +5,12 @@
  * Fences that hold for EVERY outbound call, so no caller can forget them:
  * - text and captions pass `redactSecrets` (which also scrubs the hands-free login token);
  * - `sendMessage` / `editMessageText` carry `link_preview_options: {is_disabled: true}`;
- * - the token never appears in an error, a log line or a thrown message (the URL carries it).
+ * - the token never appears in an error, a log line or a thrown message (the URL carries it);
+ * - HTML Telegram refuses (400 "can't parse entities") is resent once as the plain text it shows.
  */
 import { TG_DOWNLOAD_MAX_BYTES, TG_UPLOAD_MAX_BYTES, type TgUserRef } from './contract.js';
 import { redactToken } from './config.js';
-import { redactSecrets } from './format.js';
+import { redactSecrets, telegramHtmlToPlain } from './format.js';
 
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal }) => Promise<{
   ok: boolean;
@@ -68,6 +69,32 @@ export function fenceOutbound(method: string, params: Record<string, unknown>): 
   return out;
 }
 
+/** Telegram refused the HTML itself (400 "can't parse entities", an unsupported or unclosed tag). */
+export function isParseError(err: unknown): boolean {
+  return err instanceof TelegramError && err.code === 400 && /parse entities|unsupported start tag|can't find end|unexpected end tag|unclosed/i.test(err.message);
+}
+
+/** The same call as plain text: `parse_mode` gone, every HTML text and caption turned into what
+ *  it shows. Null when the call carried no HTML (nothing to fall back to). */
+export function plainParams(params: Record<string, unknown>): Record<string, unknown> | null {
+  let changed = false;
+  const out: Record<string, unknown> = { ...params };
+  if (out.parse_mode === 'HTML') {
+    delete out.parse_mode;
+    for (const f of TEXT_FIELDS) if (typeof out[f] === 'string') out[f] = telegramHtmlToPlain(out[f] as string);
+    changed = true;
+  }
+  if (Array.isArray(out.media)) {
+    out.media = (out.media as Record<string, unknown>[]).map((m) => {
+      if (m?.parse_mode !== 'HTML') return m;
+      changed = true;
+      const { parse_mode: _p, ...rest } = m;
+      return typeof rest.caption === 'string' ? { ...rest, caption: telegramHtmlToPlain(rest.caption) } : rest;
+    });
+  }
+  return changed ? out : null;
+}
+
 export class TelegramTransport {
   private readonly token: string;
   private readonly fetchImpl: FetchLike;
@@ -112,9 +139,17 @@ export class TelegramTransport {
   }
 
   /** One JSON call; every outbound fence applied. */
-  call<T = unknown>(method: string, params: Record<string, unknown> = {}, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
-    const body = JSON.stringify(fenceOutbound(method, params));
-    return this.request(method, { body, headers: { 'content-type': 'application/json' } }, opts) as Promise<T>;
+  async call<T = unknown>(method: string, params: Record<string, unknown> = {}, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
+    const send = (p: Record<string, unknown>): Promise<T> =>
+      this.request(method, { body: JSON.stringify(fenceOutbound(method, p)), headers: { 'content-type': 'application/json' } }, opts) as Promise<T>;
+    try {
+      return await send(params);
+    } catch (err) {
+      // A message is never lost to formatting: refused HTML goes again as the plain text it shows.
+      const plain = isParseError(err) ? plainParams(params) : null;
+      if (!plain) throw err;
+      return send(plain);
+    }
   }
 
   /** One multipart call: `files` are attached under their field names (≤50 MB in total). */
@@ -122,15 +157,24 @@ export class TelegramTransport {
     let total = 0;
     for (const f of Object.values(files)) total += f.data.length;
     if (total > TG_UPLOAD_MAX_BYTES) throw new TelegramError(method, 413, 'file too large');
-    const form = new FormData();
-    for (const [k, v] of Object.entries(fenceOutbound(method, params))) {
-      if (v === undefined) continue;
-      form.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+    const send = (p: Record<string, unknown>): Promise<T> => {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(fenceOutbound(method, p))) {
+        if (v === undefined) continue;
+        form.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+      }
+      for (const [field, f] of Object.entries(files)) {
+        form.append(field, new Blob([new Uint8Array(f.data)], { type: f.contentType ?? 'application/octet-stream' }), f.name);
+      }
+      return this.request(method, { body: form }, { timeoutMs: Math.max(this.timeoutMs, 60_000) }) as Promise<T>;
+    };
+    try {
+      return await send(params);
+    } catch (err) {
+      const plain = isParseError(err) ? plainParams(params) : null;
+      if (!plain) throw err;
+      return send(plain);
     }
-    for (const [field, f] of Object.entries(files)) {
-      form.append(field, new Blob([new Uint8Array(f.data)], { type: f.contentType ?? 'application/octet-stream' }), f.name);
-    }
-    return this.request(method, { body: form }, { timeoutMs: Math.max(this.timeoutMs, 60_000) }) as Promise<T>;
   }
 
   // ── Methods ──

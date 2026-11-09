@@ -163,3 +163,56 @@ describe('secrets and the login token never leave', () => {
     for (const m of toTelegramMessages(`Telefon linki: ${url}`)) expect(m).not.toContain('t=Zx81kQ');
   });
 });
+
+describe('emphasis (owner, 2026-11-09: bold heads and key words reach the phone)', () => {
+  const STATUS = [
+    'Şu an çalışan bir iş yok. Durum şöyle:',
+    '',
+    'Senden beklenenler:',
+    '1. Canlı funnel **senin turunu bekliyor**.',
+    '2. Kurum takvimi açık.',
+    '',
+    'Bugün canlıya çıkanlar:',
+    '- Özel Hat kopma uyarısı herkese açıldı.',
+  ].join('\n');
+
+  it('a short "Başlık:" line opening a list is bold; a sentence ending in ":" is not', () => {
+    const html = markdownToTelegramHtml(STATUS);
+    expect(html).toContain('<b>Senden beklenenler:</b>');
+    expect(html).toContain('<b>Bugün canlıya çıkanlar:</b>');
+    expect(html).toContain('Şu an çalışan bir iş yok. Durum şöyle:');
+    expect(html).not.toContain('<b>Şu an');
+    expect(html).toContain('1. Canlı funnel <b>senin turunu bekliyor</b>.');
+    expect(html).toContain('• Özel Hat');
+  });
+
+  it('a "Başlık:" line inside a paragraph, or not followed by a list, stays plain', () => {
+    expect(markdownToTelegramHtml('Bir cümle.\nNotlar:\n- bir')).not.toContain('<b>');
+    expect(markdownToTelegramHtml('Notlar:\nsadece metin')).not.toContain('<b>');
+  });
+
+  it('bold, headings, code and links', () => {
+    const html = markdownToTelegramHtml('## Durum\n**Sonuç:** hazır, `npm test` geçti, [rapor](https://example.com/r).');
+    expect(html).toBe('<b>Durum</b>\n<b>Sonuç:</b> hazır, <code>npm test</code> geçti, <a href="https://example.com/r">rapor</a>.');
+  });
+
+  it('a <b> an agent typed is shown, never obeyed: every <, >, & escaped', () => {
+    const html = markdownToTelegramHtml('Yaz <b>bunu</b> & <script>x</script>\n\nBaşlık <i>:\n- a');
+    expect(html).toContain('Yaz &lt;b&gt;bunu&lt;/b&gt; &amp; &lt;script&gt;x&lt;/script&gt;');
+    expect(html).not.toMatch(/<[a-z/]/); // no real tag at all: the head with markup in it stays plain
+    expect(visible(html)).toContain('Yaz <b>bunu</b> & <script>x</script>');
+  });
+
+  it('a long bold message splits outside every tag, each part balanced', () => {
+    const md = `Senden beklenenler:\n- **${'Çok önemli kalın bir cümle. '.repeat(250)}**`;
+    const parts = toTelegramMessages(md);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) {
+      expect(p.length).toBeLessThanOrEqual(4096);
+      expect(balanced(p)).toBe(true);
+      expect(p).not.toMatch(/<[^>]*$/); // never ends inside a tag
+    }
+    expect(parts[0].startsWith('<b>Senden beklenenler:</b>')).toBe(true);
+    expect(parts[1].startsWith('<b>')).toBe(true); // the open bold is reopened
+  });
+});
