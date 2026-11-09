@@ -148,7 +148,10 @@ describe('stage presentations (L1, L2, N1)', () => {
     const items = JSON.parse(String(album.params.media)) as { type: string; caption?: string }[];
     expect(items.map((i) => i.type)).toEqual(['photo', 'photo', 'photo']);
     expect(items[0].caption).toBe('Film şeridi: Resim C · Resim A · Resim B');
-    await vi.waitFor(() => expect(buttonMsg('Telefon linkini aç')).toBeTruthy());
+    await drained(80);
+    // Every card arrived as a photo: no phone line at all.
+    expect(buttonMsg('Telefon linkini aç')).toBeFalsy();
+    expect(tg.texts().some((t) => t.includes('Telefon linki'))).toBe(false);
   });
 
   it('with Telegram + link on for this bot, Telefonda aç is a URL button to the bare origin under the hub\'s own line', async () => {
@@ -157,6 +160,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     superWindow();
     tg.push(TOKEN, textUpdate(OWNER, 'göster'));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
+    reg.adoptOwnerWaits(SID, [{ wait: { kind: 'secret', id: 'sec-1', line: 'Firebase token' } as never, since: clock }]);
     await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
     noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
     endTurn(h);
@@ -166,7 +170,20 @@ describe('stage presentations (L1, L2, N1)', () => {
     const url = (msg.params.reply_markup as { inline_keyboard: { url: string }[][] }).inline_keyboard[0][0].url;
     expect(url.startsWith('https://quiet-fox.trycloudflare.com/?vault=')).toBe(true);
     expect(JSON.stringify(tg.calls)).not.toContain('SECRETLOGIN');
-    expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
+  });
+
+  it('with a live origin, a presentation that fully arrived as a photo sends no phone message', async () => {
+    session = { on: true, url: 'https://quiet-fox.trycloudflare.com/login?t=X', channel: 'full', via: true };
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
+    noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true));
+    await drained(80);
+    expect(buttonMsg('Telefonda aç')).toBeFalsy();
   });
 
   it('a picture Telegram would refuse (an 11 MB photo) goes as its text line beside the album, never silence', async () => {
@@ -196,7 +213,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Karşılaştırma: Resim A · Resim B') && t.includes("Resim A (Mac'te)") && t.includes("Resim B (Mac'te)"))).toBe(true));
   });
 
-  it('Telegram-only hands-free from this bot: no dead "Telefon linkini aç" button, a line says why', async () => {
+  it('Telegram-only hands-free: a photo sends no phone line; an unsent card never gets a mode-change instruction', async () => {
     session = { on: true, url: null, channel: 'telegram', via: true };
     const { h, sent } = chat();
     superWindow();
@@ -205,8 +222,32 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
     noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('Telefon linki kapalı'))).toBe(true));
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true));
+    await drained(80);
+    expect(tg.texts().some((t) => t.includes('Telefon linki'))).toBe(false);
+    // A card that cannot travel (secret pending): only the "(Mac'te)" line, still no mode text.
+    reg.adoptOwnerWaits(SID, [{ wait: { kind: 'secret', id: 'sec-1', line: 'Firebase token' } as never, since: clock }]);
+    await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
+    tg.push(TOKEN, textUpdate(OWNER, 'tekrar'));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("(Mac'te)"))).toBe(true));
+    await drained(80);
+    expect(tg.texts().some((t) => t.includes('Telefon linki') || t.includes('/handsfree'))).toBe(false);
     expect(tg.sent().some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Telefon linkini aç'))).toBe(false);
+  });
+
+  it('an all-photo presentation cut at the 10-card cap still offers the phone link', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: `image-m${i}`, kind: 'image', ref: 'a.png', shape: 'square', place: 'main', title: `M${i}` }));
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id), layout: 'grid' } });
+    present(many.map((c) => c.id));
+    endTurn(h);
+    await vi.waitFor(() => expect(buttonMsg('Telefon linkini aç')).toBeTruthy());
   });
 
   it('an owner arrangement on the Mac sends nothing; outside a Telegram turn with streaming off nothing either', async () => {
