@@ -224,20 +224,28 @@ export class TelegramTransport {
     }
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 120_000);
-    let res;
+    // The timer covers the headers AND the body: a stalled body must time out, not hang.
     try {
-      res = await this.fetchImpl(`${this.baseUrl}/file/bot${this.token}/${file.file_path}`, { method: 'GET', signal: ctl.signal });
-    } catch (err) {
-      throw new TelegramError('download', 0, this.sanitize((err as Error)?.message ?? 'network error'));
+      let res;
+      try {
+        res = await this.fetchImpl(`${this.baseUrl}/file/bot${this.token}/${file.file_path}`, { method: 'GET', signal: ctl.signal });
+      } catch (err) {
+        throw new TelegramError('download', 0, this.sanitize(ctl.signal.aborted ? 'timed out' : (err as Error)?.message ?? 'network error'));
+      }
+      if (!res.ok) throw new TelegramError('download', res.status, 'download failed');
+      const declared = Number(res.headers?.get('content-length') ?? NaN);
+      if (Number.isFinite(declared) && declared > cap) throw new TelegramError('download', 413, 'file too large');
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(await res.arrayBuffer());
+      } catch (err) {
+        throw new TelegramError('download', 0, this.sanitize(ctl.signal.aborted ? 'timed out' : (err as Error)?.message ?? 'network error'));
+      }
+      if (buf.length > cap) throw new TelegramError('download', 413, 'file too large');
+      return buf;
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) throw new TelegramError('download', res.status, 'download failed');
-    const declared = Number(res.headers?.get('content-length') ?? NaN);
-    if (Number.isFinite(declared) && declared > cap) throw new TelegramError('download', 413, 'file too large');
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > cap) throw new TelegramError('download', 413, 'file too large');
-    return buf;
   }
 
   // ── Managed bots (X1, X6, Z4) ──
