@@ -433,4 +433,7 @@ Asking rules above say. Your last reply of a turn
 reaches it too. Never look for it among peers: \`ListAgents\` and \`SendMessage\` list other
 sessions (often another project's) and do not include your Super Agent, so do not call them to
 find it and do not message anything they list.
+
+Scratch files (downloads, scripts you run once, intermediate JSON) go under \`$TMPDIR\` (\`/tmp\` when it
+is unset), in a folder named for the job, never in the project: no tool asks for them there.
 `;
