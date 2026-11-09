@@ -64,9 +64,9 @@ permissions:
 
 jobs:
   build-macos:
-    # macos-14 is Apple Silicon → produces an aarch64 .app. Add an x86_64 matrix
+    # macos-15 is Apple Silicon → produces an aarch64 .app. Add an x86_64 matrix
     # leg later for Intel; the client picks the arch-matching asset by name.
-    runs-on: macos-14
+    runs-on: macos-15
     # The signing secrets live in this environment, which only `v*` TAGS may deploy to:
     # a workflow pushed on any branch cannot read them. Dispatch from a tag ref, not main.
     # Every action is pinned to a commit: a moved tag cannot run code next to the key.
