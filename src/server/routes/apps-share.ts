@@ -18,6 +18,8 @@ import { readAppFile, storePage } from '../../lib/apps/store-facts.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
 import { writeEnvSecrets, SecretWriteError } from '../../lib/env-secrets.js';
+import { appLogoPath, clearAppLogo, LogoError, MAX_LOGO_BYTES, setAppLogo } from '../../lib/apps/app-logo.js';
+import { readCappedBody } from './automations.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
@@ -46,6 +48,7 @@ function sendFailure(res: ServerResponse, e: unknown): void {
   if (e instanceof InstallError) { sendJson(res, 409, { error: e.code, message: e.message, ...(e.report ? { report: e.report } : {}) }); return; }
   if (e instanceof HostError) { sendError(res, e.code === 'not_signed_in' ? 401 : e.code === 'rate_limited' ? 429 : 409, e.code, e.message); return; }
   if (e instanceof ConfigError || e instanceof SecretWriteError) { sendError(res, 400, (e as { code: string }).code, e.message); return; }
+  if (e instanceof LogoError) { sendError(res, e.code === 'logo_too_large' ? 413 : e.code === 'logo_type' ? 415 : 400, e.code, e.message); return; }
   sendError(res, 500, 'share_failed', (e as Error)?.message ?? String(e));
 }
 
@@ -56,7 +59,7 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
   const values = readAppConfig(appsHomeDir(), rec.configId);
   return {
     origin: rec.origin ?? 'own',
-    source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null, lastUpdate: rec.source.lastUpdate ?? null } : null,
+    source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, mode: rec.source.mode, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null, lastUpdate: rec.source.lastUpdate ?? null } : null,
     provenance: rec.origin === 'installed' && !rec.source && rec.provenance ? { fullName: rec.provenance.fullName } : null,
     publish: rec.publish && rec.publish.lastSha ? { fullName: rec.publish.fullName, public: rec.publish.public, at: rec.publish.at } : null,
     configCount: fields.length,
@@ -238,7 +241,37 @@ export async function handleAppConfigGet(req: IncomingMessage, res: ServerRespon
   sendJson(res, 200, {
     fields: fields.map((f) => ({ ...f, ...(f.type === 'secret' ? { set: secrets.has(f.key) } : { value: values[f.key] ?? null }) })),
     missing: missingRequired(fields, values, rec.root),
+    logo: appLogoPath(appsHomeDir(), rec.configId) !== null,
   });
+}
+
+/**
+ * POST /api/apps/:slug/logo (the image's raw bytes): the owner's own logo for this app on this
+ * Mac, typed by its bytes (PNG or JPEG; the page draws a picked SVG into a PNG). Beside its settings, never in
+ * its repo, so an update never touches it. The Dock picks it up the next time the app is closed.
+ */
+export async function handleAppLogoSet(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!ownerOnly(req, res)) return;
+  let rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const buf = await readCappedBody(req, res, MAX_LOGO_BYTES);
+  if (!buf) return;
+  try {
+    if (!rec.configId) rec = updateAppShare(appsHomeDir(), rec.projectRoot, rec.slug, { configId: newConfigId() }) ?? rec;
+    setAppLogo(appsHomeDir(), rec.configId!, buf);
+    sendJson(res, 200, { ok: true, logo: true });
+  } catch (e) { sendFailure(res, e); }
+}
+
+/** POST /api/apps/:slug/logo/reset: back to the app's own icon. */
+export async function handleAppLogoReset(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!ownerOnly(req, res)) return;
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  try {
+    clearAppLogo(appsHomeDir(), rec.configId);
+    sendJson(res, 200, { ok: true, logo: false });
+  } catch (e) { sendFailure(res, e); }
 }
 
 export async function handleAppConfigSet(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {

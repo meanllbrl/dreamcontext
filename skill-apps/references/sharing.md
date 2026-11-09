@@ -84,7 +84,10 @@ asks how to come in (Merge, Keep my changes aside, Make it my own copy) instead 
 
 ## Updates and my own copy
 
-`dreamcontext apps update <slug>` checks. An update is applied by the owner's click; any change to
+`dreamcontext apps update <slug>` checks and changes nothing; an update it finds shows as the Update
+card on the app's page in Apps (the page also checks when it opens). Never pull, fetch, merge or
+copy the original's code yourself, and neither does the app's own assistant: that skips every gate
+below. An update is applied by the owner's click; any change to
 the manifest asks him again. Auto-update is off unless he turns it on for that app (never for a
 public app), and applies only to an unchanged copy with an unchanged manifest. "Make it my own
 copy" stops updates for good. A copy can be published again only if its licence allows (MIT and

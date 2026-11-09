@@ -325,7 +325,7 @@ import {
 import { closeAllGateways, configureGateways } from './apps/gateway.js';
 import {
   handleSharedList, handleSharedAccept, handleInstallPreview, handleInstall, handleTrashList, handleTrashRestore,
-  handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleUpdateCheck, handleUpdateUndo,
+  handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
   handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
 } from './routes/apps-share.js';
 import './apps/gateway-w3.js';
@@ -549,6 +549,8 @@ export function buildRouter(): Router {
   router.post('/api/apps/:slug/publish', handlePublish);
   router.get('/api/apps/:slug/config', handleAppConfigGet);
   router.post('/api/apps/:slug/config', handleAppConfigSet);
+  router.post('/api/apps/:slug/logo', handleAppLogoSet);
+  router.post('/api/apps/:slug/logo/reset', handleAppLogoReset);
   router.post('/api/apps/:slug/update/check', handleUpdateCheck);
   router.post('/api/apps/:slug/update/undo', handleUpdateUndo);
   router.post('/api/apps/:slug/update', handleUpdateApply);

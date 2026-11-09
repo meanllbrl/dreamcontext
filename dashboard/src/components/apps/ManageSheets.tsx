@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useApi } from '../../context/VaultContext';
+import { AppIcon } from './AppIcon';
+import { isSvgFile, svgToPng } from './logoFile';
 import { ConfigInputs, splitValues } from './InstallSheet';
 import { Sheet, errText, useShareN, useShareT, type ConfigField } from './Sheet';
 
@@ -7,32 +9,76 @@ import { Sheet, errText, useShareN, useShareT, type ConfigField } from './Sheet'
 
 // ─── Settings ───────────────────────────────────────────────────────────────────────
 
-export function ConfigSheet({ slug, name, onClose, onDone }: { slug: string; name: string; onClose: () => void; onDone: () => void }) {
+/** Mirror of the logo route's cap (`MAX_LOGO_BYTES` in `lib/apps/app-logo.ts`). */
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+
+export function ConfigSheet({ slug, name, iconSrc, onClose, onDone }: { slug: string; name: string; iconSrc: string | null; onClose: () => void; onDone: () => void }) {
   const api = useApi();
   const t = useShareT();
   const [fields, setFields] = useState<ConfigField[] | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The owner's own logo: a picked file waits for Save; "reset" goes back to the app's own icon.
+  const [hasLogo, setHasLogo] = useState(false);
+  const [picked, setPicked] = useState<{ file: File; url: string } | null>(null);
+  const [reset, setReset] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    api.get<{ fields: ConfigField[] }>(`/apps/${encodeURIComponent(slug)}/config`).then((r) => {
+    api.get<{ fields: ConfigField[]; logo?: boolean }>(`/apps/${encodeURIComponent(slug)}/config`).then((r) => {
       setFields(r.fields);
+      setHasLogo(!!r.logo);
       setValues(Object.fromEntries(r.fields.filter((f) => f.type !== 'secret' && f.value !== null && f.value !== undefined).map((f) => [f.key, String(f.value)])));
     }, (e) => setErr(errText(e)));
   }, [api, slug]);
+  useEffect(() => () => { if (picked) URL.revokeObjectURL(picked.url); }, [picked]);
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const chosen = e.target.files?.[0];
+    e.target.value = '';
+    if (!chosen) return;
+    setErr(null);
+    let file = chosen;
+    // An SVG goes up as the PNG the page draws from it (logoFile.ts): the server takes no SVG.
+    if (isSvgFile(chosen)) {
+      setConverting(true);
+      try { file = await svgToPng(chosen); } catch { setErr(t('share.config.logoSvgFailed')); return; } finally { setConverting(false); }
+    }
+    if (file.size > MAX_LOGO_BYTES) { setErr(t('share.config.logoTooLarge')); return; }
+    setReset(false);
+    setPicked({ file, url: URL.createObjectURL(file) });
+  };
   const save = async () => {
     if (!fields) return;
     setBusy(true); setErr(null);
     const { config, secrets } = splitValues(fields, values);
-    try { await api.ownerPost(`/apps/${encodeURIComponent(slug)}/config`, { values: config, secrets }); onDone(); onClose(); } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+    try {
+      if (picked) await api.ownerPostBytes(`/apps/${encodeURIComponent(slug)}/logo`, picked.file);
+      else if (reset) await api.ownerPost(`/apps/${encodeURIComponent(slug)}/logo/reset`, {});
+      if (fields.length) await api.ownerPost(`/apps/${encodeURIComponent(slug)}/config`, { values: config, secrets });
+      onDone(); onClose();
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
+  const custom = picked !== null || (hasLogo && !reset);
   return (
     <Sheet title={t('share.config.titleOf', { name })} onClose={onClose} foot={<>
       <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button>
-      <button type="button" className="app-card__launch" disabled={!fields || busy} onClick={() => void save()}>{t('share.config.save')}</button>
+      <button type="button" className="app-card__launch" disabled={!fields || busy || converting} onClick={() => void save()}>{t('share.config.save')}</button>
     </>}>
       <p className="share-muted">{t('share.config.where')}</p>
       {!fields && !err && <p className="share-muted">{t('share.checking')}</p>}
+      {fields && (
+        <div className="share-field share-field--logo">
+          <span>{t('share.config.logo')}</span>
+          <div className="share-logo-row">
+            <AppIcon src={picked ? picked.url : reset ? (iconSrc ? `${iconSrc}&own=1` : null) : iconSrc} name={name} slug={slug} size={48} />
+            <button type="button" className="app-card__stop" onClick={() => fileRef.current?.click()}>{t('share.config.logoPick')}</button>
+            {custom && <button type="button" className="share-link" onClick={() => { setPicked(null); setReset(hasLogo); }}>{t('share.config.logoReset')}</button>}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/svg+xml,.svg" hidden onChange={(e) => void onFile(e)} />
+          </div>
+          <small className="share-muted">{t('share.config.logoHint')}</small>
+        </div>
+      )}
       {fields && <ConfigInputs fields={fields} values={values} setValues={setValues} />}
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
     </Sheet>

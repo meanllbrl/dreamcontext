@@ -23,7 +23,7 @@ import { knownMcpServers, removeLeanMcpConfig, writeLeanMcpConfig } from '../sup
 import { LISTED_VERBS, type BashGateContext } from './bash-gate.js';
 import { gateFilePath, type AppChatRecord } from './chat-store.js';
 import { MANIFEST_FILE, ROLE_FILE, cleanText, effectOf, readManifest, roleFileProblem, type AppManifest } from './manifest.js';
-import { appChatsDir, appsHome, getApp, real, registryPath } from './registry.js';
+import { appChatsDir, appsHome, getApp, real, registryPath, type AppRecord } from './registry.js';
 import { AppDataError, appsDataRoot, contextRootOf, ensureAppDataDir } from './data-dir.js';
 import { FILE_GATE_MATCHER } from './write-gate.js';
 import { approvedRunTarget } from '../automations/approved-run-target.js';
@@ -190,12 +190,31 @@ function ownBriefing(name: string, role: string): string {
   ].join('\n');
 }
 
+/**
+ * Where this app's code comes from, for the update paragraph of the chat briefing. An assistant
+ * that was never told improvised a `git pull` from the owner's repo (owner, 2026-11-09), which
+ * skips every gate an update has (same repo and owner, forward only, manifest re-asked, Undo).
+ */
+export type AppUpdateOrigin =
+  | { kind: 'own'; published: string | null }
+  | { kind: 'installed'; from: string; public: boolean; autoUpdate: boolean }
+  | { kind: 'own-copy'; from: string | null };
+
+export function appUpdateOrigin(rec: Pick<AppRecord, 'origin' | 'source' | 'provenance' | 'publish'>): AppUpdateOrigin {
+  if (rec.origin === 'installed') {
+    if (rec.source?.mode === 'following') return { kind: 'installed', from: rec.source.fullName, public: rec.source.public, autoUpdate: rec.source.autoUpdate };
+    return { kind: 'own-copy', from: rec.source?.fullName ?? rec.provenance?.fullName ?? null };
+  }
+  return { kind: 'own', published: rec.publish?.lastSha ? rec.publish.fullName : null };
+}
+
 export interface AppChatEnvelope {
   slug: string;
   name: string;
   hash: string;
   appRoot: string;
   dataDir: string;
+  updates: AppUpdateOrigin;
   /** The own assistant. False = a bound AI Team member. */
   own: boolean;
   member: string | null;
@@ -278,7 +297,7 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
     return {
       ok: true,
       app: {
-        slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, own: false, member: record.member,
+        slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, updates: appUpdateOrigin(rec), own: false, member: record.member,
         briefing: prep.briefing, permissionMode, allowed: [], denied: all, addDirs: [rec.root, dataDir], mcpConfig: null, settingSources: null,
         env: { ...prep.env, ...baseEnv }, hooks: fileGate, dispose: prep.dispose,
       },
@@ -305,7 +324,7 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   return {
     ok: true,
     app: {
-      slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, own: true, member: null,
+      slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, updates: appUpdateOrigin(rec), own: true, member: null,
       briefing: ownBriefing(cleanText(m.manifest.name, 60), role),
       permissionMode: 'default', allowed, denied, addDirs: [rec.root, dataDir], mcpConfig,
       settingSources: 'project', env: baseEnv,

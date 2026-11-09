@@ -18,13 +18,14 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { appsHome, appRootFor, getApp, installedAppsDir, listApps, registerInstalledApp, unregisterApp, type AppRecord } from '../registry.js';
 import { APP_SLUG_RE } from '../bundle.js';
 import { cleanText, parseManifest, type ConfigField } from '../manifest.js';
 import { appConfigPath, newConfigId, setAppConfig } from '../app-config.js';
+import { appLogoDir, appLogoPath } from '../app-logo.js';
 import { appDataDir } from '../data-dir.js';
 import { allowAppDir } from '../allow-dir.js';
 import { HostError, parseAppRepoRef, resolveAppHost, type AppHost } from './host.js';
@@ -363,6 +364,9 @@ export function uninstallApp(home: string, rec: AppRecord, opts: { deleteData?: 
   const src = sourceRepo(home, rec.installId);
   if (existsSync(src)) move(src, join(t, 'source.git'));
   if (rec.configId) { try { move(appConfigPath(home, rec.configId), join(t, 'config.json')); } catch { /* no settings */ } }
+  // The owner's logo goes with its settings, and comes back with them.
+  const logo = appLogoPath(home, rec.configId);
+  if (logo) { try { move(logo, join(t, `logo${extname(logo)}`)); } catch { /* the app's own icon then */ } }
   if (opts.deleteData) {
     const data = appDataDir(rec.projectRoot, rec.slug);
     if (existsSync(data)) move(data, join(t, 'data'));
@@ -400,6 +404,12 @@ export function restoreFromTrash(home: string, id: string): AppRecord {
   if (existsSync(join(t, 'code'))) move(join(t, 'code'), rec.root);
   if (existsSync(join(t, 'source.git'))) { mkdirSync(sourcesDir(home), { recursive: true, mode: 0o700 }); move(join(t, 'source.git'), sourceRepo(home, rec.installId)); }
   if (rec.configId && existsSync(join(t, 'config.json'))) { mkdirSync(join(appConfigPath(home, rec.configId), '..'), { recursive: true, mode: 0o700 }); move(join(t, 'config.json'), appConfigPath(home, rec.configId)); }
+  for (const ext of ['.png', '.jpg']) {
+    const kept = join(t, `logo${ext}`);
+    if (!rec.configId || !/^[0-9a-f]{16,64}$/.test(rec.configId) || !existsSync(kept) || lstatSync(kept).isSymbolicLink()) continue;
+    mkdirSync(appLogoDir(home), { recursive: true, mode: 0o700 });
+    move(kept, join(appLogoDir(home), `${rec.configId}${ext}`));
+  }
   if (existsSync(join(t, 'data'))) { mkdirSync(join(data, '..'), { recursive: true }); move(join(t, 'data'), data); }
   const { hash: _h, createdAt: _c, origin: _o, ...rest } = rec;
   const back = registerInstalledApp(home, { ...rest, installId: rec.installId });

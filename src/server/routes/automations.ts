@@ -1736,7 +1736,7 @@ const PHOTO_CONTENT_TYPE: Record<string, string> = {
  * buffer-then-check would let an oversized upload allocate first and be
  * refused afterwards, which is not a cap at all.
  */
-function readCappedBody(req: IncomingMessage, res: ServerResponse, max: number): Promise<Buffer | null> {
+export function readCappedBody(req: IncomingMessage, res: ServerResponse, max: number): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;

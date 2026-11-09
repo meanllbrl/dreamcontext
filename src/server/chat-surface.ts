@@ -29,6 +29,8 @@
  * again, cut prose before you raise the bound.
  */
 
+import type { AppUpdateOrigin } from '../lib/apps/assistant.js';
+
 /**
  * Kept in lockstep with what the transcript actually renders:
  *   • media + boards        — `chat/chatEntities.ts` (`useInlineMedia`) and `chat/BoardEmbed.tsx`
@@ -376,14 +378,40 @@ ${BRIEFING_PICTURES}
  * Added after {@link CHAT_SURFACE_BRIEFING} in an app's own window. That window is a smaller
  * surface: these objects leave it, so an agent that offered one would hand the owner a dead end.
  */
-export function appChatBriefing(a: { name: string; slug: string; appRoot: string; dataDir: string; own: boolean }): string {
+/**
+ * How this app's code changes from outside, in words the assistant can repeat. Without it an
+ * installed app's assistant offered to `git pull` the original itself (owner, 2026-11-09), past
+ * every gate an update has. One text for Claude, Codex and Antigravity: it rides the briefing file.
+ */
+export function appUpdatesBriefing(slug: string, o: AppUpdateOrigin): string {
+  const never = 'Never pull, fetch, merge, reset or copy code from the original or any repo yourself, even when asked: say in one line why, and point the owner to the card.';
+  if (o.kind === 'installed') {
+    const auto = o.public
+      ? 'A public app never updates by itself: he applies each update.'
+      : o.autoUpdate
+        ? 'Auto-update is on for this app: an update comes in by itself when the copy is unchanged and the update does not change what the app may do; anything else waits for his click.'
+        : 'Auto-update is off; he can turn it on with the switch on this app\'s page in Apps.';
+    return `### Updates
+This app was installed from \`${o.from}\` and takes updates from that original only. \`dreamcontext apps update ${slug}\` checks for one and changes nothing; when there is one, the Update card appears on this app's page in Apps. Applying it is the owner's click on that card: same repo and owner only, forward only, a change to what the app may do is asked again, and Undo goes back. ${auto} Changes you made to this copy are kept: the card asks him how the update comes in. ${never}`;
+  }
+  if (o.kind === 'own-copy') {
+    return `### Updates
+This app is the owner's own copy${o.from ? ` of \`${o.from}\`` : ''}: it takes no updates from the original any more. Its code changes only here, by you or in main Chat with /apps. ${never}`;
+  }
+  return `### Updates
+This is the owner's own app: there is no original it takes updates from. Its code changes only here, by you or in main Chat with /apps.${o.published ? ` It is published at \`${o.published}\`: the people who installed it get a change when he publishes again from its page in Apps.` : ''} ${never}`;
+}
+
+export function appChatBriefing(a: { name: string; slug: string; appRoot: string; dataDir: string; own: boolean; updates?: AppUpdateOrigin }): string {
   return `## This chat is inside the app "${a.name}"
 
 The app lives at \`${a.appRoot}\`, its data at \`${a.dataDir}\`.
 
+${appUpdatesBriefing(a.slug, a.updates ?? { kind: 'own', published: null })}
+
 This window does not draw: secret, run, checklist or mcp cards; the \`develop\`, \`task\` and \`knowledge\` buttons; terminal panes, voice, or a file or folder picker; \`dreamcontext window\`. Never offer them here. Anything that needs one belongs in main Chat, and you say so in one line.
 ${a.own ? `
-Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps tools\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\` for a tool that reads. A tool that changes something (sends, pays, writes, deletes) runs as \`dreamcontext apps do ${a.slug} <id> --confirm\`: say in one line what it will do first; the card the owner answers is his yes. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
+Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps tools\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps update ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\` for a tool that reads. A tool that changes something (sends, pays, writes, deletes) runs as \`dreamcontext apps do ${a.slug} <id> --confirm\`: say in one line what it will do first; the card the owner answers is his yes. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
 ` : ''}
 Sleep is not offered here: never suggest one.
 `;

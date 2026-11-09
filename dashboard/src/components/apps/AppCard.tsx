@@ -27,6 +27,9 @@ export interface AppRow {
   agent?: string | null;
   agentState?: 'ready' | 'needs_approval' | 'missing' | null;
   hasIcon?: boolean;
+  /** The owner's own logo from Settings, and its stamp (busts the card's image cache). */
+  logo?: boolean;
+  iconStamp?: number | null;
   /** Still the letter `apps new` drew: drawn as the monogram fallback. */
   iconPlaceholder?: boolean;
   actions?: Array<{ id: string; title: string }>;
@@ -36,7 +39,7 @@ export interface AppRow {
   mcp?: Array<{ name: string; state: string; source: string | null; message?: string }>;
   /** Shared apps (src/server/routes/apps-share.ts `shareStatus`). */
   origin?: 'own' | 'installed';
-  source?: { fullName: string; owner: string; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastUpdate?: { to: string; at: string; auto: boolean; depsFailed?: string } | null } | null;
+  source?: { fullName: string; owner: string; mode?: 'following' | 'own'; public: boolean; autoUpdate: boolean; available: string | null; problem: 'no_access' | 'moved' | 'not_forward' | null; lastCheck?: string | null; lastUpdate?: { to: string; at: string; auto: boolean; depsFailed?: string } | null } | null;
   provenance?: { fullName: string } | null;
   publish?: { fullName: string; public: boolean; at: string } | null;
   configCount?: number;
@@ -56,8 +59,9 @@ const STATE_TONE: Record<string, string> = {
 };
 
 /** The icon URL the page may draw: a raster the app really has, never the placeholder letter. */
-export function appIconSrc(app: Pick<AppRow, 'slug' | 'hasIcon' | 'iconPlaceholder'>, vault: string, canLaunch: boolean): string | null {
-  return app.hasIcon && !app.iconPlaceholder && canLaunch ? `/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}` : null;
+export function appIconSrc(app: Pick<AppRow, 'slug' | 'hasIcon' | 'iconPlaceholder' | 'iconStamp'>, vault: string, canLaunch: boolean): string | null {
+  // `r` busts the image cache when the owner's logo changes (the URL stays the same otherwise).
+  return app.hasIcon && !app.iconPlaceholder && canLaunch ? `/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}${app.iconStamp ? `&r=${app.iconStamp}` : ''}` : null;
 }
 
 function stateOf(app: AppRow): string {
@@ -292,7 +296,8 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
           <div className="app-card__share">
             {(!installed || !following) && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('private')}>{t('share.card.share')}</button>}
             {(!installed || !following) && !app.publish?.public && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('public')}>{t('share.card.sharePublic')}</button>}
-            {(app.configCount ?? 0) > 0 && <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
+            {/* Every app has Settings now: the owner's own logo is one of them. */}
+            <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>
             {following && <button type="button" className="share-link" onClick={() => setSheet('update')}>{t('share.card.checkUpdate')}</button>}
             {following && <button type="button" className="share-link" onClick={() => setSheet('detach')}>{t('share.card.makeOwn')}</button>}
             {installed && <button type="button" className="share-link" onClick={() => setSheet('uninstall')}>{t('share.card.uninstall')}</button>}
@@ -300,7 +305,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
           {manageErr && <p className="app-card__note app-card__note--bad" role="alert">{manageErr}</p>}
         </section>
       )}
-      {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={onChanged} />}
+      {sheet === 'config' && <ConfigSheet slug={app.slug} name={app.name} iconSrc={appIconSrc(app, vault, canLaunch)} onClose={() => setSheet(null)} onDone={onChanged} />}
       {sheet === 'update' && <UpdateSheet slug={app.slug} name={app.name} from={app.source?.fullName ?? ''} onClose={() => setSheet(null)} onDone={() => { onChanged(); void store.refetch(); }} onDetach={() => setSheet('detach')} />}
       {(sheet === 'detach' || sheet === 'uninstall') && <ConfirmSheet kind={sheet} slug={app.slug} name={app.name} onClose={() => setSheet(null)} onDone={() => { onChanged(); if (sheet === 'uninstall') onClose(); }} />}
     </Sheet>

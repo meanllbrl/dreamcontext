@@ -257,6 +257,17 @@ export class ApiClient {
       headers: { 'Content-Type': 'application/octet-stream' },
     });
   }
+
+  /** {@link postBytes} in the owner's name (an app's logo): the same key {@link ownerPost} carries. */
+  async ownerPostBytes<T>(path: string, bytes: Blob | ArrayBuffer): Promise<T> {
+    const { ownerKey } = await import('../lib/desktop');
+    const key = await ownerKey();
+    return this.request<T>(path, {
+      method: 'POST',
+      body: bytes,
+      headers: { 'Content-Type': 'application/octet-stream', ...(key ? { 'X-Dreamcontext-Owner-Key': key } : {}) },
+    });
+  }
 }
 
 /**

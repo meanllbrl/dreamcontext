@@ -11,6 +11,7 @@ import { readAppConfig, setAppConfig, missingRequired, newConfigId } from '../..
 import { LocalHost } from '../../src/lib/apps/share/host.js';
 import { runGate, findingId } from '../../src/lib/apps/share/gate.js';
 import { buildPublishTree, publishApp, PublishError } from '../../src/lib/apps/share/publish.js';
+import { appLogoDir, appLogoPath, setAppLogo } from '../../src/lib/apps/app-logo.js';
 import { installApp, listTrash, previewInstall, restoreFromTrash, uninstallApp, sourceRepo } from '../../src/lib/apps/share/install.js';
 import { applyUpdate, autoUpdateOne, checkUpdate, detachApp, setAutoUpdate, undoUpdate } from '../../src/lib/apps/share/update.js';
 import { listShared, clearSharedCache } from '../../src/lib/apps/share/shared.js';
@@ -349,7 +350,10 @@ describe('install, update, my own copy, uninstall', () => {
     writeFileSync(meta, JSON.stringify(j));
     expect(await checkUpdate(home, inst, kur)).toMatchObject({ state: 'problem', code: 'no_access' });
     expect(existsSync(join(inst.root, 'public', 'app.js'))).toBe(true);
+    // The owner's own logo leaves with the settings and comes back with them (app-logo.ts).
+    setAppLogo(home, inst.configId!, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]));
     const t = uninstallApp(home, getApp(home, instProject, 'tahmin')!);
+    expect(appLogoPath(home, inst.configId)).toBeNull();
     expect(getApp(home, instProject, 'tahmin')).toBeNull();
     expect(existsSync(inst.root)).toBe(false);
     expect(listTrash(home, realpathSync(instProject)).map((x) => x.id)).toEqual([t.id]);
@@ -357,6 +361,7 @@ describe('install, update, my own copy, uninstall', () => {
     expect(back.hash).toBe(inst.hash);
     expect(readAppConfig(home, back.configId)).toEqual({ insight: 'benim-insight' });
     expect(readFileSync(join(back.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(appLogoPath(home, back.configId)).toBe(join(appLogoDir(home), `${back.configId}.jpg`));
   });
 
   it('a repo that moved to another owner gets no update', async () => {
