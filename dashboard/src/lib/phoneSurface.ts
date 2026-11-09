@@ -264,6 +264,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/apps/:slug/status',
   'GET /api/apps/:slug/logs',
   'GET /api/apps/:slug/icon',
+  'POST /api/apps/:slug/logo',
+  'POST /api/apps/:slug/logo/reset',
   'POST /api/apps/:slug/snapshot',
   'POST /api/apps/:slug/call',
   'POST /api/apps/:slug/mcp-request',

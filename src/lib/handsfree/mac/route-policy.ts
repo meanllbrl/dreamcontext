@@ -644,6 +644,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/apps/:slug/status': deny(WINDOW),
   'GET /api/apps/:slug/logs': deny(SECRET),
   'GET /api/apps/:slug/icon': deny(WINDOW),
+  'POST /api/apps/:slug/logo': deny(WINDOW),
+  'POST /api/apps/:slug/logo/reset': deny(WINDOW),
   'POST /api/apps/:slug/snapshot': deny(DESKTOP),
   'POST /api/apps/:slug/call': deny(WINDOW),
   'POST /api/apps/:slug/mcp-request': deny(SECRET),
