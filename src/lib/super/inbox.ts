@@ -902,10 +902,17 @@ export function isSuperEventTurn(sessionId: string): boolean {
  * folds by this (dashboard `groupSuperEventTurns`), and Telegram sends by the same call, so the
  * two surfaces never disagree.
  */
-export function superTurnFolds(sessionId: string, ownerBatches: readonly string[]): boolean {
-  if (!isSuperEventTurn(sessionId)) return false;
-  const batch = superOpenBatch(sessionId);
-  return !batch || !ownerBatches.includes(batch);
+export interface SuperTurnMark { event: boolean; batch: string | null }
+
+/** The running turn as it is NOW, read synchronously where a text is emitted: the turn may end
+ *  (and forget its batch) before a later send decides, so the decision uses this snapshot. */
+export function superTurnMark(sessionId: string): SuperTurnMark {
+  return { event: isSuperEventTurn(sessionId), batch: superOpenBatch(sessionId) };
+}
+
+export function superTurnFolds(mark: SuperTurnMark, ownerBatches: readonly string[]): boolean {
+  if (!mark.event) return false;
+  return !mark.batch || !ownerBatches.includes(mark.batch);
 }
 
 /** The owner message the super session's running turn answers (its `<owner-msg ref>`), set by

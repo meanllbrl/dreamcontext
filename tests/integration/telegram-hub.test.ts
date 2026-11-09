@@ -18,7 +18,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
-import { _openEventTurnForTests, markSuperEventTurn } from '../../src/lib/super/inbox.js';
+import { _openEventTurnForTests, markSuperEventTurn, superTurnEnded } from '../../src/lib/super/inbox.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
 import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -208,6 +208,15 @@ describe('the Super target', () => {
         _openEventTurnForTests(SID, 'b-done', root);
         assistant(h, '<!-- re:abc123 -->\nİş bitti, sonuç hazır.');
         await vi.waitFor(() => expect(tg.texts()).toContain('İş bitti, sonuç hazır.'));
+      });
+
+      it('a result written right before the turn ends still sends (the batch is read when the text is emitted)', async () => {
+        const { h } = await onTelegram();
+        await ownerBatches('b-late');
+        _openEventTurnForTests(SID, 'b-late', root);
+        assistant(h, '<!-- re:abc123 -->\nSon sonuç hazır.');
+        superTurnEnded(SID);
+        await vi.waitFor(() => expect(tg.texts()).toContain('Son sonuç hazır.'));
       });
 
       it('an event=owner notice (owner batch) sends', async () => {
