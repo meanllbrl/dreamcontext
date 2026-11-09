@@ -344,7 +344,8 @@ describe('answers: blocks, late results (M1, M5, N7, S1, T3)', () => {
   });
 
   it('a Mac-started job blocked on the owner reaches the Super bot', async () => {
-    const item = { id: 'own-1', kind: 'owner', sessionId: SID, state: 'pending', createdAt: 1, ownerText: 'Deploy için onayını bekliyorum' };
+    // A real `owner` item names the card he must act on (the store drops one without `wait`).
+    const item = { id: 'own-1', kind: 'owner', sessionId: SID, state: 'pending', createdAt: 1, ownerText: 'Deploy için onayını bekliyorum', wait: { kind: 'run', id: 'run-1' } };
     await writeState({ queue: [item] });
     announceOwnerHead(() => vault, await readSuperState(root), item as never);
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Deploy için onayını bekliyorum'))).toBe(true));

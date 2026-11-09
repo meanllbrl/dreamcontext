@@ -39,7 +39,7 @@ import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
-import { ownerQuestionReach } from '../../lib/super/owner-question.js';
+import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
 import { pinnedMemberCard } from '../../lib/super/inbox.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
@@ -2126,8 +2126,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
-    // What reached the owner, told as it is (owner-question.ts). Only a question he has seen
-    // makes the turn's end no second ping; one nobody saw keeps the reply's own notch row.
+    // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
+    // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
+    // turn's end no second ping; one nobody saw keeps the reply's own notch row.
+    await settleOwnerReach(id as string);
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
@@ -2322,7 +2324,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The record's queue was full: the store dropped it (its cards are put back on the next write).
     if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
     const show = finishAskShow(c, state, id, prep, shown);
-    // Its turn's end is no second ping once the question reached him (owner-question.ts).
+    // Its turn's end is no second ping once the question reached him (owner-question.ts); a
+    // Telegram copy counts only once it landed, so its send is waited for (bounded).
+    await settleOwnerReach(id);
     const reach = ownerQuestionReach(state, id);
     if (reach.reached) noteSuperEscalation(session);
     const head = superQueueHead(state);

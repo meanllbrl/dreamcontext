@@ -181,7 +181,9 @@ export interface ChatHandle {
   /** `source` = who wrote the turn (I4, J1): a Telegram text clears no owner wait and is never
    *  "unheard" (a run or secret card is answered on the Mac or the phone, never by a chat text). */
   userSent(text: string, opts?: { source?: InjectedSource; server?: true }): void;
-  answered(requestId?: string): void;
+  /** `answers` (question → picked labels, AskUserQuestion's own `updatedInput.answers`) when the
+   *  window answered a question: what the Telegram copy of that card says it was answered with. */
+  answered(requestId?: string, answers?: unknown): void;
   /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
   interrupted(): void;
   /** The running (or just-ended) turn was refused on a usage limit and an account switch is
@@ -279,6 +281,25 @@ export function persistentBackground(t: { task_type?: unknown; description?: unk
 export function onChatChange(fn: (c: ChatChange) => void): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
+}
+
+/** A question or permission of a chat was answered through its window (the Mac card, the
+ *  Super's `answer`, a phone or Telegram tap that goes through the window). */
+export interface RequestAnswered { sessionId: string; requestId: string; answers: Record<string, string> | null }
+const answerListeners = new Set<(a: RequestAnswered) => void>();
+export function onRequestAnswered(fn: (a: RequestAnswered) => void): () => void {
+  answerListeners.add(fn);
+  return () => { answerListeners.delete(fn); };
+}
+/** Question → answer text (strings only, at most 8 questions, each cut to 300). */
+function answerMap(raw: unknown): Record<string, string> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const [q, a] of Object.entries(raw as Record<string, unknown>).slice(0, 8)) {
+    const v = Array.isArray(a) ? a.filter((x) => typeof x === 'string').join(', ') : typeof a === 'string' ? a : '';
+    if (v) out[q.slice(0, 300)] = v.slice(0, 300);
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 function emit(e: ChatEntry, from: ChatStatus): void {
@@ -777,10 +798,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       limitAsked = false;
       setStatus(e, 'idle');
     },
-    answered(requestId) {
+    answered(requestId, answers) {
       if (dead) return;
       alive();
       settlePending(requestId);
+      if (!requestId) return;
+      const a: RequestAnswered = { sessionId: init.sessionId, requestId, answers: answerMap(answers) };
+      for (const fn of [...answerListeners]) { try { fn(a); } catch { /* a listener's failure is its own */ } }
     },
     exited() {
       if (dead) return;
