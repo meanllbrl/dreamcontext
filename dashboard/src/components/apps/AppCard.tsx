@@ -234,7 +234,8 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             <button type="button" className="app-card__stop" disabled={handing} onClick={() => void handToClaude(app.publish!.public ? 'public' : 'private', true)}>{t('share.card.publishUpdate')}</button>
           </div>
         )}
-        {bandErr && <p className="app-card__note app-card__note--bad" role="alert">{bandErr}</p>}
+        {/* Only while the band stands: once the publish went, its old failure is not news. */}
+        {bandErr && !following && app.publish && app.unpublished && <p className="app-card__note app-card__note--bad" role="alert">{bandErr}</p>}
         {following && app.source!.available && (
           <div className="app-card__note app-card__note--accent app-card__mcp">
             <span>{t('share.card.updateReady')}</span>

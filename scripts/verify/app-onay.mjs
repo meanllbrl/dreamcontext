@@ -259,6 +259,22 @@ try {
     check(dc(...argv).out.includes('grant_used'), 'logo: a second spend was not refused as used');
   }
 
+  step('a card whose app changed after it opened: Onayla approves nothing and says so');
+  const staleId = await ask('apps', 'publish', 'kargo-takip', '--note', 'Kargo durumunu saatte bir yeniler');
+  const staleRow = await card('publish', '4a-before-change');
+  writeFileSync(join(kargo, 'public', 'saat.js'), 'export const every = "30m";\n');
+  git(kargo, 'add', '-A');
+  git(kargo, 'commit', '-qm', 'every half hour');
+  await staleRow.getByRole('button', { name: 'Onayla' }).click();
+  const notice = notch.locator('.dc-proposal__notice');
+  check(await notice.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true, () => false), 'stale: no notice after Onayla on a changed app');
+  check(/hiçbir şey onaylanmadı/.test(await notice.innerText().catch(() => '')), 'stale: the notice does not say nothing was approved');
+  check(status(staleId).state === 'stale', `stale: the request is ${status(staleId).state}`);
+  await notch.waitForTimeout(3500); // a poll passes: the notice stays until Tamam
+  check(await notice.isVisible(), 'stale: the notice went away by itself');
+  await notch.screenshot({ path: join(SHOTS, '4b-stale-notice-notch.png') });
+  await notice.getByRole('button', { name: 'Tamam' }).click();
+
   step('update publish of Kargo Takip → card → Onayla → the command publishes');
   const updId = await ask('apps', 'publish', 'kargo-takip', '--note', 'Kargo durumunu saatte bir yeniler');
   const updView = (await openCards()).find((p) => p.app.action === 'publish')?.app;
