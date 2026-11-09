@@ -326,6 +326,10 @@ import {
   handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
   handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
 } from './routes/apps-share.js';
+import { handleAppRequestCreate, handleAppRequestLogo, handleAppRequestStatus } from './routes/apps-requests.js';
+import { setAppRequestDelivery } from '../lib/apps/share/app-request.js';
+import { relayCommand } from '../lib/assistant/relay.js';
+import { isSuperManaged } from '../lib/super/inbox.js';
 import './apps/gateway-w3.js';
 import { stopAllRuntimes } from '../lib/apps/supervisor.js';
 import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
@@ -542,6 +546,10 @@ export function buildRouter(): Router {
   router.post('/api/apps/install', handleInstall);
   router.get('/api/apps/trash', handleTrashList);
   router.post('/api/apps/trash/restore', handleTrashRestore);
+  // An agent's request for an app action (app-onay-karti C3): before the `:slug` routes.
+  router.post('/api/apps/requests', handleAppRequestCreate);
+  router.get('/api/apps/requests/:id/logo', handleAppRequestLogo);
+  router.get('/api/apps/requests/:id', handleAppRequestStatus);
   router.post('/api/apps/:slug/publish/grant', handlePublishGrant);
   router.get('/api/apps/:slug/store', handleAppStore);
   router.post('/api/apps/:slug/publish', handlePublish);
@@ -1685,6 +1693,12 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // Every registered project follows the CLI on disk, however that CLI got there.
       stopProjectCatchUp = startProjectCatchUpJob();
     };
+    // An approved app request: one "[app onayı]" line into the requester's own chat (D10). A
+    // Super child is the Super's to steer: its CLI wait carries the grant instead.
+    setAppRequestDelivery(async (chat, text) => {
+      if (isSuperManaged(chat.sessionId)) return;
+      await relayCommand('send', { sessionId: chat.sessionId, vault: chat.vault, text });
+    });
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already
     // kept out of the notch, and children the window restores get their re-adoption grace.

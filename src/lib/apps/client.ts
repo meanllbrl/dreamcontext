@@ -23,6 +23,7 @@ import { vaultNameForContextRoot } from '../app-link.js';
 import { readDesktopServerFile, shellBundleId } from '../../server/desktop-server-file.js';
 import { appContaining, type AppRecord } from './registry.js';
 import { callClaim, encodeClaim, RUN_HEADER } from './call-claim.js';
+import { agentSessionId } from '../session-id.js';
 
 export class AppsClientError extends Error {
   constructor(readonly code: string, message: string, readonly status = 0) {
@@ -152,5 +153,23 @@ export function runHeader(env: NodeJS.ProcessEnv = process.env): Record<string, 
   const sessions = [env.DREAMCONTEXT_TAB_SESSION, env.CLAUDE_CODE_SESSION_ID].map((x) => (x ?? '').trim()).filter((x) => /^[0-9a-fA-F-]{8,64}$/.test(x));
   const value = JSON.parse(encodeClaim(c)) as Record<string, unknown>;
   if (sessions.length) value.sessions = sessions;
+  // An app's own conversation (`DREAMCONTEXT_AGENT_CHAT=app-<slug>`): the server narrows an app
+  // request to that app (app-onay-karti D15, D16). Narrowing only, like the class.
+  const chat = (env.DREAMCONTEXT_AGENT_CHAT ?? '').trim();
+  if (/^app-[a-z0-9][a-z0-9-]{0,79}$/.test(chat)) value.app = chat.slice(4);
   return { [RUN_HEADER]: JSON.stringify(value) };
+}
+
+/**
+ * The headers of an app request (`--ask`, `apps grant`): the claim, and which chat asked, so the
+ * owner's Onayla can drop its "[app onayı]" line there (delivery only, never authority). Same on
+ * Claude, Codex and Antigravity: the session id comes from `agentSessionId()`.
+ */
+export function requestHeaders(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out = runHeader(env);
+  const agent = agentSessionId(env);
+  if (agent) out['x-dc-agent-session'] = agent;
+  const tab = (env.DREAMCONTEXT_TAB_SESSION ?? '').trim();
+  if (/^[A-Za-z0-9._-]{1,128}$/.test(tab)) out['x-dc-tab-session'] = tab;
+  return out;
 }

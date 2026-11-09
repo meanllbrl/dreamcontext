@@ -119,6 +119,27 @@ export async function checkUpdate(home: string, rec: AppRecord, host?: AppHost):
   return { state: 'available', sha: next, manifestChanged: changes.length > 0, manifestChanges: changes, edited, notes, wouldLose };
 }
 
+/**
+ * What an update card binds, read from this Mac only (no fetch): the manifest fields the update
+ * changes, the copy's own edits, and the files both changed (a merge's risk). Null when `sha` is not
+ * the fetched update any more (the card is stale). An agent's request card and its spend both read
+ * it, so an edit or a newer update between them refuses the spend (app-onay-karti C2).
+ */
+export function localUpdateFacts(home: string, rec0: AppRecord, sha: string): { manifestChanges: string[]; edited: Edits | null; wouldLose: string[]; notes: string[] } | null {
+  const rec = getApp(home, rec0.projectRoot, rec0.slug) ?? rec0;
+  const src = rec.source;
+  if (rec.origin !== 'installed' || !src || src.mode !== 'following' || !rec.installId) return null;
+  if (!src.available || src.available.sha !== sha) return null;
+  const { dir, g } = gitOf(home, rec);
+  if (revParse(dir, 'refs/dc/upstream-next') !== sha) return null;
+  const changes = manifestChanges(manifestAt(dir, src.upstreamSha), manifestAt(dir, sha));
+  const edited = localEdits(home, rec);
+  const theirs = new Set(g(['diff', '--name-only', '-z', src.upstreamSha, sha]).split('\0').filter(Boolean));
+  const wouldLose = edited ? edited.files.filter((f) => theirs.has(f)) : [];
+  const notes = g(['log', '--format=%s', '-n', '20', `${src.upstreamSha}..${sha}`]).split('\n').map((s) => cleanText(s, 200)).filter(Boolean);
+  return { manifestChanges: changes, edited, wouldLose, notes };
+}
+
 export type ApplyHow = 'merge' | 'set-aside';
 
 export interface ApplyOptions {

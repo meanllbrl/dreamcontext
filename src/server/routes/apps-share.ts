@@ -23,7 +23,11 @@ import { readCappedBody } from './automations.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
-import { mintPublishGrant, takePublishGrant } from '../../lib/apps/share/publish-grant.js';
+import { mintPublishGrant } from '../../lib/apps/share/publish-grant.js';
+import { takeAppGrant, type AppAction, type TakeResult } from '../../lib/apps/share/app-grant.js';
+import { requestLogoBytes, type ActionPlan } from '../../lib/apps/share/app-request.js';
+import { updateStillBound } from '../../lib/apps/share/app-plan.js';
+import { parseAppRepoRef } from '../../lib/apps/share/host.js';
 import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
 import { catalogEntryFor, removeCatalogEntry, upsertCatalogEntry } from '../../lib/apps/catalog.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
@@ -37,6 +41,54 @@ function ownerOnly(req: IncomingMessage, res: ServerResponse): boolean {
   if (fromOwnerPage(req)) return true;
   sendError(res, 403, 'owner_page_only', 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app).');
   return false;
+}
+
+/** The header a logo spend carries its grant in (its body is the image on the owner's path). */
+export const GRANT_HEADER = 'x-dc-grant';
+
+type Held = Extract<TakeResult, { ok: true }>;
+
+/**
+ * The action gate (app-onay-karti C2): the owner's own page, or a live grant for exactly this
+ * app and action. `{ owner: true }`, `{ owner: false, held }`, or null (the refusal is sent).
+ * A bound grant (from a request card) carries its plan; the route runs that and ignores the body.
+ * Only a publish accepts an unbound grant (the owner's Share click).
+ */
+function ownerOrGrant(req: IncomingMessage, res: ServerResponse, slot: { projectRoot: string; key: string; action: AppAction }, grant: unknown): { owner: true } | { owner: false; held: Held } | null {
+  if (!preGate(req, res, grant)) return null;
+  if (fromOwnerPage(req)) return { owner: true };
+  const t = takeAppGrant({ ...slot, id: grant });
+  if (!t.ok) { refuseGrant(res, t, slot.action); return null; }
+  if (!t.plan && slot.action !== 'publish') { t.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for this action.'); return null; }
+  return { owner: false, held: t };
+}
+
+/** Before any lookup: neither the owner's page nor a grant to check is refused as before. */
+function preGate(req: IncomingMessage, res: ServerResponse, grant: unknown): boolean {
+  if (!requireLocalDesktop(req, res)) return false;
+  if (fromOwnerPage(req) || (typeof grant === 'string' && grant)) return true;
+  sendError(res, 403, 'owner_page_only', 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app), or the one-time grant his Onayla on your request card opened (`--ask`).');
+  return false;
+}
+
+const ASK_AGAIN = 'Run the same --ask command again: the owner sees a card and one tap gives a new hour.';
+
+function refuseGrant(res: ServerResponse, t: Extract<TakeResult, { ok: false }>, action: AppAction): void {
+  if (t.why === 'used') { sendError(res, 409, 'grant_used', `This grant already ran${t.fullName ? ` (${t.fullName})` : ''}. It is done: do not run it again, and never ask for a new grant for it.`); return; }
+  if (t.why === 'running') { sendError(res, 409, action === 'publish' ? 'publish_running' : 'grant_running', 'An action on this grant is still running. Wait, then check whether it went through; do not run it again.'); return; }
+  if (t.why === 'expired') { sendError(res, 403, 'grant_expired', `The grant ran out (one hour). The work you did stays. ${ASK_AGAIN}`); return; }
+  if (t.why === 'replaced') { sendError(res, 403, 'grant_replaced', 'The owner opened a newer grant for this: use the newest one.'); return; }
+  sendError(res, 403, 'owner_page_only', 'This grant is not for this app and action (made up, used, replaced, for another app or action, or the app restarted). Ask the owner with --ask.');
+}
+
+/** A bound plan of the right kind for this route, or null. */
+function bodyOf<A extends ActionPlan['body']['action']>(plan: ActionPlan | null, action: A): Extract<ActionPlan['body'], { action: A }> | null {
+  return plan && plan.body.action === action ? (plan.body as Extract<ActionPlan['body'], { action: A }>) : null;
+}
+
+function staleRequest(res: ServerResponse, held: Held): void {
+  held.done(false);
+  sendError(res, 409, 'stale_request', `The app changed since the owner approved this: nothing ran. ${ASK_AGAIN}`);
 }
 
 function realRoot(p: string): string {
@@ -108,39 +160,46 @@ export async function handlePublishGrant(req: IncomingMessage, res: ServerRespon
 export async function handlePublish(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
   holdOpen(req);
-  const owner = fromOwnerPage(req);
   const b = (await parseJsonBody(req)) ?? {};
+  if (!preGate(req, res, b.grant)) return;
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
-  const held = owner ? null : takePublishGrant(rec.projectRoot, rec.slug, b.grant);
-  if (held && !held.ok) {
-    if (held.why === 'used') { sendError(res, 409, 'grant_used', `This grant already published the app${held.fullName ? ` as ${held.fullName}` : ''}. It went out: do not publish again, and never ask for a new grant for it.`); return; }
-    if (held.why === 'running') { sendError(res, 409, 'publish_running', 'A publish on this grant is still running. Wait, then run `dreamcontext apps list` to see whether it went out; do not publish again.'); return; }
-    if (held.why === 'expired') { sendError(res, 403, 'grant_expired', 'The grant ran out (one hour). The work you did stays: ask the owner to press Share on the app\'s page again, then publish with the new grant.'); return; }
-    sendError(res, 403, 'owner_page_only', 'Publishing needs the owner: his Share click on the app\'s page opens a one-hour grant for that app (`--grant`). This one is not it (made up, used, replaced by a newer click, for another app, or the app restarted): ask him to press Share again.');
-    return;
-  }
-  const done = held?.ok ? held.done : null;
-  const requested = b.visibility === 'public' ? 'public' : 'private';
-  // Going public is for good: only the owner's own "Share publicly" click opens it.
-  if (held?.ok && held.visibility !== requested) {
+  const gate = ownerOrGrant(req, res, { projectRoot: rec.projectRoot, key: rec.slug, action: 'publish' }, b.grant);
+  if (!gate) return;
+  const held = gate.owner ? null : gate.held;
+  const done = held ? held.done : null;
+  const bound = held ? bodyOf(held.plan, 'publish') : null;
+  if (held && held.plan && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for a publish.'); return; }
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
+  // A card's grant runs ITS plan: nothing in the body counts (D4). The Share click's grant keeps
+  // today's shape: the agent's flags, under the visibility the owner clicked.
+  const visibility = bound ? bound.visibility : b.visibility === 'public' ? 'public' : 'private';
+  // Going public is for good: only the owner's own "Share publicly" click, or his Onayla on a card
+  // that said so, opens it.
+  if (held && !bound && held.visibility !== visibility) {
     held.done(false);
     sendError(res, 403, 'grant_scope', held.visibility === 'private' ? 'The owner opened a private publish (Share). Going public needs his own "Share publicly" click on the app\'s page.' : 'The owner opened a public publish: publish with --public.');
     return;
   }
-  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
+  const catalogOn = bound ? bound.catalog : b.catalog !== false;
   let pushedTo: string | null = null;
   try {
-    const out = await publishApp(rec, {
+    const out = await publishApp(rec, bound ? {
       home: appsHomeDir(), host: resolveAppHost(appsHomeDir()),
-      visibility: b.visibility === 'public' ? 'public' : 'private',
+      visibility: bound.visibility, repoName: bound.repoName ?? undefined, invite: bound.invite, approvals: bound.approvals,
+      note: bound.note ?? undefined, date: bound.date, expectDigest: bound.digest,
+      confirmed: bound.visibility === 'public', fresh: false,
+      onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); },
+    } : {
+      home: appsHomeDir(), host: resolveAppHost(appsHomeDir()),
+      visibility,
       repoName: typeof b.repoName === 'string' && b.repoName.trim() ? b.repoName.trim() : undefined,
       invite: strings(b.invite), approvals: strings(b.approvals),
       note: typeof b.note === 'string' ? b.note : undefined,
       tagline: typeof b.tagline === 'string' ? b.tagline : undefined,
       // A public grant IS the owner's confirmation (his "Share publicly" click).
-      confirmName: held?.ok && held.visibility === 'public' ? undefined : typeof b.confirmName === 'string' ? b.confirmName : undefined,
-      confirmed: held?.ok && held.visibility === 'public',
+      confirmName: held && held.visibility === 'public' ? undefined : typeof b.confirmName === 'string' ? b.confirmName : undefined,
+      confirmed: !!held && held.visibility === 'public',
       fresh: b.fresh === true,
       // Spent the moment the push went out: a failure after it never frees it for a second push.
       onPushed: (fullName) => { pushedTo = fullName; done?.(true, fullName); },
@@ -150,12 +209,12 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
     // The brain's list of this project's apps (app-araclari §2): after the push, never before.
     // `catalog: false` keeps a private app off it. A failure here never undoes the publish.
     let catalogged = false;
-    if (b.catalog !== false) {
+    if (catalogOn) {
       try {
         const m = readManifest(rec.root);
         if (m.ok) {
           const brief = m.manifest.agent?.brief ?? '';
-          upsertCatalogEntry(contextRoot, catalogEntryFor(m.manifest, { repo: out.fullName, visibility: b.visibility === 'public' ? 'public' : 'private', publishedBy: resolveActivePerson(contextRoot).slug, does: brief.split(/(?<=[.!?])\s/)[0] ?? '' }));
+          upsertCatalogEntry(contextRoot, catalogEntryFor(m.manifest, { repo: out.fullName, visibility, publishedBy: resolveActivePerson(contextRoot).slug, does: brief.split(/(?<=[.!?])\s/)[0] ?? '' }));
           catalogged = true;
         }
       } catch { /* the publish stands; the list is written on the next one */ }
@@ -167,6 +226,7 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
     done?.(false);
     // The push went out and a later step (topics, visibility, an invite) failed: it IS published.
     if (pushedTo) { clearSharedCache(); sendJson(res, 200, { ok: true, pushed: true, fullName: pushedTo, warning: (e as Error).message }); return; }
+    if (e instanceof PublishError && e.code === 'stale_request') { sendError(res, 409, 'stale_request', `${e.message}`); return; }
     sendFailure(res, e);
   }
 }
@@ -210,22 +270,37 @@ function writeSecrets(rec: AppRecord, secrets: unknown): void {
 }
 
 export async function handleInstall(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
-  if (!ownerOnly(req, res)) return;
+  if (!requireLocalDesktop(req, res)) return;
   holdOpen(req);
   const b = (await parseJsonBody(req)) ?? {};
   const projectRoot = realRoot(projectRootOf(contextRoot));
+  // A card's grant is for one repo: its key is the lowercase owner/repo the request previewed.
+  const key = typeof b.ref === 'string' ? (parseAppRepoRef(b.ref) ?? '').toLowerCase() : '';
+  const gate = ownerOrGrant(req, res, { projectRoot, key, action: 'install' }, b.grant);
+  if (!gate) return;
+  const held = gate.owner ? null : gate.held;
+  const bound = held ? bodyOf(held.plan, 'install') : null;
+  if (held && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an install.'); return; }
   const vault = listVaults(appsHomeDir()).find((v) => realRoot(v.path) === projectRoot)?.name;
-  if (!vault) { sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
+  if (!vault) { held?.done(false); sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
   try {
-    const { rec, renamed } = await installApp({
+    const { rec, renamed } = await installApp(bound ? {
+      // The previewed sha and the settings the card showed; never a key (secrets stay the owner's).
+      home: appsHomeDir(), projectRoot, vault, previewId: bound.previewId, sha: bound.sha, config: bound.config,
+    } : {
       home: appsHomeDir(), projectRoot, vault,
       previewId: String(b.previewId ?? ''), sha: String(b.sha ?? ''),
       config: b.config && typeof b.config === 'object' ? (b.config as Record<string, unknown>) : undefined,
       secrets: b.secrets && typeof b.secrets === 'object' ? (b.secrets as Record<string, unknown>) : undefined,
     });
+    held?.done(true, rec.slug);
     clearSharedCache();
     sendJson(res, 200, { ok: true, slug: rec.slug, renamed });
-  } catch (e) { sendFailure(res, e); }
+  } catch (e) {
+    held?.done(false);
+    if (held && e instanceof InstallError && (e.code === 'stale_preview' || e.code === 'preview_gone')) { sendError(res, 409, 'stale_request', `The app changed since the owner approved this install: nothing was installed. ${ASK_AGAIN}`); return; }
+    sendFailure(res, e);
+  }
 }
 
 // ─── Settings and keys ──────────────────────────────────────────────────────────────
@@ -251,16 +326,30 @@ export async function handleAppConfigGet(req: IncomingMessage, res: ServerRespon
  * its repo, so an update never touches it. The Dock picks it up the next time the app is closed.
  */
 export async function handleAppLogoSet(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
-  if (!ownerOnly(req, res)) return;
+  const header = req.headers[GRANT_HEADER];
+  const grant = Array.isArray(header) ? header[0] : header;
+  if (!preGate(req, res, grant)) return;
   let rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
-  const buf = await readCappedBody(req, res, MAX_LOGO_BYTES);
-  if (!buf) return;
+  const gate = ownerOrGrant(req, res, { projectRoot: rec.projectRoot, key: rec.slug, action: 'logo' }, grant);
+  if (!gate) return;
+  const held = gate.owner ? null : gate.held;
+  let buf: Buffer | null;
+  if (held) {
+    // The bytes the card showed, snapshotted at the request; the body is never read.
+    const bound = bodyOf(held.plan, 'logo');
+    buf = bound && held.requestId ? requestLogoBytes(held.requestId, bound.sha256) : null;
+    if (!buf) { staleRequest(res, held); return; }
+  } else {
+    buf = await readCappedBody(req, res, MAX_LOGO_BYTES);
+    if (!buf) return;
+  }
   try {
     if (!rec.configId) rec = updateAppShare(appsHomeDir(), rec.projectRoot, rec.slug, { configId: newConfigId() }) ?? rec;
     setAppLogo(appsHomeDir(), rec.configId!, buf);
+    held?.done(true);
     sendJson(res, 200, { ok: true, logo: true });
-  } catch (e) { sendFailure(res, e); }
+  } catch (e) { held?.done(false); sendFailure(res, e); }
 }
 
 /** POST /api/apps/:slug/logo/reset: back to the app's own icon. */
@@ -301,16 +390,31 @@ export async function handleUpdateCheck(req: IncomingMessage, res: ServerRespons
 }
 
 export async function handleUpdateApply(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
-  if (!ownerOnly(req, res)) return;
+  if (!requireLocalDesktop(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  if (!preGate(req, res, b.grant)) return;
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
-  const b = (await parseJsonBody(req)) ?? {};
-  const how = b.how === 'merge' || b.how === 'set-aside' ? (b.how as ApplyHow) : undefined;
+  const gate = ownerOrGrant(req, res, { projectRoot: rec.projectRoot, key: rec.slug, action: 'update' }, b.grant);
+  if (!gate) return;
+  const held = gate.owner ? null : gate.held;
+  const bound = held ? bodyOf(held.plan, 'update') : null;
+  if (held && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an update.'); return; }
+  // A card's grant: the facts it showed must still hold (a new edit or a newer update refuses it).
+  if (held && bound && !updateStillBound(appsHomeDir(), rec, bound)) { staleRequest(res, held); return; }
+  const how = bound ? bound.how ?? undefined : b.how === 'merge' || b.how === 'set-aside' ? (b.how as ApplyHow) : undefined;
   try {
-    const out = await applyUpdate(appsHomeDir(), rec, { sha: String(b.sha ?? ''), approveManifest: b.approveManifest === true, how });
+    const out = await applyUpdate(appsHomeDir(), rec, bound
+      ? { sha: bound.sha, approveManifest: bound.approveManifest, how }
+      : { sha: String(b.sha ?? ''), approveManifest: b.approveManifest === true, how });
+    held?.done(true);
     refreshAppRuntime(getApp(appsHomeDir(), rec.projectRoot, rec.slug) ?? rec);
     sendJson(res, 200, { ok: true, ...out });
-  } catch (e) { sendFailure(res, e); }
+  } catch (e) {
+    held?.done(false);
+    if (held && e instanceof InstallError && e.code === 'stale_card') { sendError(res, 409, 'stale_request', `The update changed since the owner approved it: nothing ran. ${ASK_AGAIN}`); return; }
+    sendFailure(res, e);
+  }
 }
 
 export async function handleUpdateUndo(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {

@@ -50,6 +50,7 @@ import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundl
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifier.js';
 import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
+import { unpublishedChanges } from '../../lib/apps/share/publish.js';
 import { shareStatus } from './apps-share.js';
 import { iconIssue, isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
 import { appLogoPath, appLogoStamp, clearAppLogo } from '../../lib/apps/app-logo.js';
@@ -448,6 +449,35 @@ export async function shootAppWindow(projectRoot: string, slug: string): Promise
 
 // ─── routes ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * "A newer local version is not published yet" (D11). Read from the cache only, so the list stays
+ * fast; a miss is computed after the reply (one app at a time) and the page's next poll shows it.
+ * Never an error on the list: a failure reads as nothing to publish.
+ */
+const unpublishedPending = new Set<string>();
+const unpublishedQueue: AppRecord[] = [];
+function unpublishedField(rec: AppRecord): { unpublished?: boolean } {
+  if (!rec.publish?.lastSha) return {};
+  const v = unpublishedChanges(home, rec, { cachedOnly: true });
+  if (v === undefined) {
+    if (!unpublishedPending.has(rec.hash)) {
+      unpublishedPending.add(rec.hash);
+      unpublishedQueue.push(rec);
+      if (unpublishedQueue.length === 1) setImmediate(drainUnpublished);
+    }
+    return {};
+  }
+  return v ? { unpublished: true } : {};
+}
+function drainUnpublished(): void {
+  const rec = unpublishedQueue[0];
+  if (!rec) return;
+  try { unpublishedChanges(home, rec); } catch { /* the list reads nothing */ }
+  unpublishedPending.delete(rec.hash);
+  unpublishedQueue.shift();
+  if (unpublishedQueue.length) setImmediate(drainUnpublished);
+}
+
 export async function handleAppsList(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
   if (isPhoneSocket(req)) {
     // The phone sees what exists (no paths, no logs); it cannot launch a Mac window.
@@ -460,7 +490,7 @@ export async function handleAppsList(req: IncomingMessage, res: ServerResponse, 
   }
   if (!requireLocalDesktop(req, res)) return;
   const registered = listApps(home, projectRootOf(contextRoot));
-  const apps = registered.map((a) => ({ ...publicStatus(a), root: a.root }));
+  const apps = registered.map((a) => ({ ...publicStatus(a), root: a.root, ...unpublishedField(a) }));
   // A teammate's app (its knowledge note, no app here) and a removed app's data (plan-veri K5).
   const others = appOthers(projectRootOf(contextRoot), new Set(registered.map((a) => a.slug)));
   sendJson(res, 200, { apps, others, platform: process.platform, runner: !!shellRunnerPath(), setup: await appSetup() });

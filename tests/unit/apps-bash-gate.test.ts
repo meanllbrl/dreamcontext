@@ -32,9 +32,16 @@ describe('runs with no card', () => {
     'dreamcontext apps tools --json',
     'dreamcontext apps status yuk',
     'dreamcontext apps logs yuk -n 20',
-    // An update is only CHECKED here; applying it stays the owner's click on the Apps page.
+    // Asking runs with no card; doing needs the owner's Onayla, checked by the server.
     'dreamcontext apps update yuk',
     'dreamcontext apps update yuk --json',
+    'dreamcontext apps update yuk --ask --how merge --wait 100',
+    'dreamcontext apps update yuk --apply --grant g_1',
+    'dreamcontext apps publish yuk --ask --note "yeni grafik" --wait 100',
+    'dreamcontext apps publish yuk --go --grant g_1',
+    `dreamcontext apps logo yuk ${'/x/app/logo.png'} --ask`,
+    'dreamcontext apps logo yuk --grant g_1',
+    'dreamcontext apps grant r_1 --wait 100',
     `dreamcontext apps do yuk snapshot --input '{"q":"a;b"}'`,
   ])('%s', (c) => expect(verdict(c)).toBe('pass'));
   // Written with '/' as an agent writes it in a shell (Git Bash on Windows): a backslash is a
@@ -51,6 +58,11 @@ describe('raises one card', () => {
   const q = "'";
   it.each([
     ['another app\'s update check', 'dreamcontext apps update other'],
+    ['another app\'s publish ask', 'dreamcontext apps publish other --ask'],
+    ['another app\'s logo ask', 'dreamcontext apps logo other /x/a.png --ask'],
+    ['an install', 'dreamcontext apps install acme/x-app --ask'],
+    ['the repo name on a publish', 'dreamcontext apps publish yuk --ask --repo other'],
+    ['the store line on a publish', 'dreamcontext apps publish yuk --tagline x'],
     ['a git pull of the app', 'git pull'],
     ['grep -r', 'grep -r TOKEN .'],
     ['git grep', 'git grep TOKEN'],

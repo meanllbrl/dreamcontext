@@ -206,20 +206,25 @@ function readmeFor(m: AppManifest): string {
 }
 
 /** The README edits a publish carries (app-paylasim-magaza r2): the tagline field and the note. */
-export function storeReadmeFor(rec: Pick<AppRecord, 'publish'>, name: string, current: string | null, opts: { tagline?: string; note?: string }): string | null {
+export function storeReadmeFor(rec: Pick<AppRecord, 'publish'>, name: string, current: string | null, opts: { tagline?: string; note?: string; date?: string }): string | null {
   const parsed = parseStoreReadme(current ?? '', { full: true });
   const note = cleanText(opts.note ?? '', 300) || (!rec.publish?.lastSha && !parsed.whatsNew.length ? 'First version.' : '');
   const tagline = cleanText(opts.tagline ?? '', TAGLINE_MAX + 40);
   if (!note && !tagline) return null;
-  const next = applyStoreEdits(current ?? readmeSkeletonLess(name), { name, tagline: tagline || null, note: note || null, date: new Date().toISOString().slice(0, 10), firstPublish: !rec.publish?.lastSha });
+  const next = applyStoreEdits(current ?? readmeSkeletonLess(name), { name, tagline: tagline || null, note: note || null, date: opts.date ?? publishDate(), firstPublish: !rec.publish?.lastSha });
   return next === (current ?? '').replace(/\r\n?/g, '\n') ? null : next;
+}
+
+/** Today, as the README's What's new entry writes it. A request card stores it, so a spend after midnight matches. */
+export function publishDate(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
 }
 
 function readmeSkeletonLess(name: string): string {
   return `# ${name}\n\nA dreamcontext app. Install it from the Apps page in dreamcontext: Shared Apps, or "Install from a link" with this repo's link.\n`;
 }
 
-export function buildPublishTree(home: string, rec: AppRecord, opts: { visibility: Visibility; login: string; approvals?: string[]; note?: string; tagline?: string; repoName?: string }): PublishPreview {
+export function buildPublishTree(home: string, rec: AppRecord, opts: { visibility: Visibility; login: string; approvals?: string[]; note?: string; tagline?: string; repoName?: string; date?: string }): PublishPreview {
   const m = readManifest(rec.root);
   if (!m.ok) throw new PublishError('bad_manifest', `The manifest has problems: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}`);
   if (rec.provenance && !RESHARE_OK.has(rec.provenance.license)) throw new PublishError('license_forbids', `This app is a copy of ${rec.provenance.fullName}, whose licence (${rec.provenance.license}) does not allow sharing it again.`);
@@ -252,7 +257,7 @@ export function buildPublishTree(home: string, rec: AppRecord, opts: { visibilit
   // The store page's words (tagline, What's new) are written into the README that goes; the
   // edited README is the publisher's text again, so it is scanned like any other file.
   const baseReadme = extra.find((f) => f.path === 'README.md')?.data.toString('utf-8') ?? byPath.get('README.md')?.data.toString('utf-8') ?? null;
-  const storeReadme = storeReadmeFor(rec, m.manifest.name, baseReadme, { tagline: opts.tagline, note: opts.note });
+  const storeReadme = storeReadmeFor(rec, m.manifest.name, baseReadme, { tagline: opts.tagline, note: opts.note, date: opts.date });
   if (storeReadme !== null) {
     const at = extra.findIndex((f) => f.path === 'README.md');
     if (at >= 0) extra.splice(at, 1);
@@ -343,6 +348,10 @@ export interface PublishOptions {
   onPushed?: (fullName: string) => void;
   /** Start a NEW repo (a public copy with today's version only). */
   fresh?: boolean;
+  /** The README entry's date a request card stored (default today). */
+  date?: string;
+  /** A request card's bound tree: the files that go must still be exactly these (`stale_request`). */
+  expectDigest?: string;
 }
 
 export interface PublishResult {
@@ -359,7 +368,9 @@ export interface PublishResult {
 export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<PublishResult> {
   if (rec.origin === 'installed' && (rec.source || !rec.provenance)) throw new PublishError('not_yours', 'This app was installed from someone else. Make it your own copy first (it keeps where it came from for the licence check).');
   const user: HostUser = await opts.host.me();
-  const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, tagline: opts.tagline, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
+  const pv = buildPublishTree(opts.home, rec, { visibility: opts.visibility, login: user.login, approvals: opts.approvals, note: opts.note, tagline: opts.tagline, date: opts.date, repoName: opts.fresh ? opts.repoName ?? `${rec.slug}-public` : opts.repoName });
+  // Checked on the SAME preview that is pushed: what the owner approved is what goes.
+  if (opts.expectDigest !== undefined && pv.digest !== opts.expectDigest) throw new PublishError('stale_request', 'The app changed since the owner approved this publish: nothing was sent. Ask again with the same command (--ask).');
   if (!pv.report.ok) throw new PublishError('gate_blocked', pv.report.blocks.length ? `${pv.report.blocks.length} problem(s) must be fixed before publishing.` : `${pv.report.unapproved.length} line(s) wait for your approval.`, pv.report);
   if (opts.visibility === 'public' && !opts.confirmed && (opts.confirmName ?? '').trim() !== pv.manifest.name) throw new PublishError('confirm_name', `A public app is public for good: type its name (${pv.manifest.name}) to publish.`);
 
@@ -478,3 +489,126 @@ export function writeBackStoreReadme(rec: Pick<AppRecord, 'root' | 'installId'>,
 
 /** The approval id of a finding, for tests and the CLI. */
 export { findingId };
+
+// ─── What the last publish sent, and what changed since (app-onay-karti D11, D12) ─────
+
+/** The publish mirror holding `rec.publish.lastSha` (a fresh public publish has its own), or null. */
+export function mirrorOfLastPublish(home: string, rec: AppRecord): string | null {
+  const sha = rec.publish?.lastSha;
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) return null;
+  const dir = join(appsHome(home), 'published');
+  const candidates = [publishMirror(home, rec)];
+  try { for (const f of readdirSync(dir)) if (f.startsWith(`${rec.hash}-`) && f.endsWith('.git')) candidates.push(join(dir, f)); } catch { /* none */ }
+  for (const c of candidates) {
+    if (!existsSync(c)) continue;
+    try { if (installedGit(c, ['cat-file', '-t', sha]).trim() === 'commit') return c; } catch { /* not here */ }
+  }
+  return null;
+}
+
+/** The files of the last publish, by path (`.gitignore` left out), or null with no mirror. */
+export function lastPublishedFiles(home: string, rec: AppRecord): Map<string, Buffer> | null {
+  const mirror = mirrorOfLastPublish(home, rec);
+  if (!mirror) return null;
+  try {
+    const out = new Map<string, Buffer>();
+    for (const f of filesAt(mirror, rec.publish!.lastSha)) if (f.path !== '.gitignore') out.set(f.path, f.data);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** A generated LICENSE whose only change is the year is no new version. */
+function sameButYear(a: Buffer, b: Buffer): boolean {
+  const strip = (x: Buffer) => x.toString('utf-8').replace(/\b(19|20)\d{2}\b/g, 'YYYY');
+  return strip(a) === strip(b);
+}
+
+/** Paths that differ between what would go now and what went last: `+ new`, `~ changed`, `- gone`. */
+export function changedSincePublish(files: readonly GateFile[], last: Map<string, Buffer>): string[] {
+  const now = new Map(files.filter((f) => f.path !== '.gitignore').map((f) => [f.path, f.data]));
+  const out: string[] = [];
+  for (const [path, data] of now) {
+    const prev = last.get(path);
+    if (!prev) out.push(`+ ${path}`);
+    else if (!prev.equals(data) && !(path === 'LICENSE' && sameButYear(prev, data))) out.push(`~ ${path}`);
+  }
+  for (const path of last.keys()) if (!now.has(path)) out.push(`- ${path}`);
+  return out.sort((a, b) => a.slice(2).localeCompare(b.slice(2)));
+}
+
+/** The published account's login, from the repo it went to (no network). */
+export function publishLogin(rec: Pick<AppRecord, 'publish'>): string {
+  return rec.publish?.fullName.split('/')[0] || 'the-publisher';
+}
+
+const unpublishedCache = new Map<string, { key: string; value: boolean }>();
+
+/** The cache key of `unpublishedChanges`: the source's HEAD (a copy: its tree as it is) and the last publish. */
+function sourceKey(rec: AppRecord): string | null {
+  try {
+    if (rec.installId) {
+      const st = lstatSync(rec.root);
+      return `copy:${st.mtimeMs}:${Math.floor(Date.now() / 30_000)}`;
+    }
+    return (ownRepoGit(rec.root, ['rev-parse', '--verify', 'HEAD^{commit}']) as string).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does this own published app hold a version not published yet (D11)? A dry preview with no note
+ * and no tagline, compared path by path with the last publish's tree. Derived from facts, no
+ * record: an app published before this change answers too, and right after a publish it is false
+ * (the README written back is the one that went). No mirror, uncommitted changes, a manifest
+ * problem: false, never an error. Cached by the source's HEAD and the last publish's sha.
+ * `cachedOnly`: answer from the cache or undefined, never compute (the list's hot path).
+ */
+export function unpublishedChanges(home: string, rec: AppRecord, opts: { cachedOnly?: boolean } = {}): boolean | undefined {
+  if (!rec.publish?.lastSha || (rec.origin === 'installed' && (rec.source || !rec.provenance))) return false;
+  const head = sourceKey(rec);
+  if (!head) return false;
+  const key = `${head}\0${rec.publish.lastSha}`;
+  const hit = unpublishedCache.get(rec.hash);
+  if (hit && hit.key === key) return hit.value;
+  if (opts.cachedOnly) return undefined;
+  let value = false;
+  try {
+    const last = lastPublishedFiles(home, rec);
+    if (last) {
+      const pv = buildPublishTree(home, rec, { visibility: rec.publish.public ? 'public' : 'private', login: publishLogin(rec) });
+      value = changedSincePublish(pv.files, last).length > 0;
+    }
+  } catch {
+    value = false;
+  }
+  unpublishedCache.set(rec.hash, { key, value });
+  return value;
+}
+
+/** Tests only. */
+export function resetUnpublishedCache(): void { unpublishedCache.clear(); }
+
+/**
+ * "Ne değişti" of an update publish when the agent wrote no note (D12): the README's top What's
+ * new entry when the last publish did not carry it (a draft; used as is, never added twice), else
+ * the commit subjects since the last publish. `draft` true = the README already says it.
+ */
+export function defaultPublishNote(rec: AppRecord, sourceReadme: Buffer | null, last: Map<string, Buffer> | null): { text: string; draft: boolean } | null {
+  const cur = parseStoreReadme(sourceReadme?.toString('utf-8') ?? '', { full: true }).whatsNew[0];
+  if (cur && cur.notes.length) {
+    const before = parseStoreReadme(last?.get('README.md')?.toString('utf-8') ?? '', { full: true }).whatsNew;
+    const same = before.some((e) => e.version === cur.version && e.notes.join('\n') === cur.notes.join('\n'));
+    if (!same) return { text: cleanText(cur.notes.join('; '), 300), draft: true };
+  }
+  if (rec.installId || !rec.publish?.at) return null;
+  try {
+    const subjects = (ownRepoGit(rec.root, ['log', `--since=${rec.publish.at}`, '--format=%s', '-n', '20', 'HEAD']) as string)
+      .split('\n').map((x) => cleanText(x, 120)).filter((x) => x && x !== 'Store page: README');
+    return subjects.length ? { text: cleanText(subjects.join('; '), 300), draft: false } : null;
+  } catch {
+    return null;
+  }
+}
