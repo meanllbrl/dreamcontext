@@ -6,20 +6,21 @@
  *   - image / video / pdf → the file itself, through the H outbound classifier (fd read);
  *   - insight → `render_card` (window clone, server seal; html/v1 frames rebuilt from the lab
  *     cache) when a renderer is wired, else its title;
- *   - a `web` card on a project file: `.html/.htm` → the report page built by the server from the
- *     bytes it read through H; a picture or PDF → the file; anything else → "Mac'te açık".
+ *   - a `web` card on a project file: `.html/.htm` → ONE PDF document of the page as the stage
+ *     draws it (`page-pdf.ts`, bytes read through H; owner 2026-11-09); a picture or PDF → the
+ *     file; anything else, or a page that could not be printed → "Mac'te açık".
  * Text in v1: whiteboard, board, task, knowledge, agenda, team, chat, member, app/v1 insights,
  * and web / live browser (a public https page as a link line, never a picture).
  */
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { readOutbound, type ClassifyOptions } from '../../lib/telegram/files.js';
 import { cleanTitle, webCardLine } from '../../lib/telegram/urls.js';
-import { reportPage } from '../../lib/telegram/render.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { readWhiteboard } from '../../lib/whiteboards/store.js';
 import { widgetPayloadOf } from '../../lib/whiteboards/widgets.js';
 import type { SuperContainer } from '../../lib/super/types.js';
 import type { UploadFile } from '../../lib/telegram/transport.js';
+import { renderPagePdf, type PagePdfRenderer } from './page-pdf.js';
 import { pngFile, type MediaItem, type Snapshotter } from './pictures.js';
 
 export type CardOut =
@@ -37,6 +38,8 @@ export interface CardContext {
   /** `render_card` for an insight container → PNG slices, or null (text). */
   renderInsight?: (containerId: string) => Promise<Buffer[] | null>;
   isGitIgnored?: ClassifyOptions['isGitIgnored'];
+  /** A project HTML page → PDF bytes or null (text). Defaults to headless Chromium. */
+  renderPdf?: PagePdfRenderer;
 }
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
@@ -71,14 +74,14 @@ function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | nu
   return null;
 }
 
-/** A project HTML page through H, built and rendered by the server (S1, T1, T3). */
-export async function reportPicture(ctx: CardContext, ref: string, title: string): Promise<MediaItem[] | null> {
+/** A project HTML page through H, printed to one PDF document (null → the caller's text line). */
+export async function reportPdf(ctx: CardContext, ref: string, title: string): Promise<MediaItem | null> {
   const f = readProjectFile(ctx, ref);
   if (!f.ok || (f.ext !== '.html' && f.ext !== '.htm')) return null;
-  const plan = reportPage(f.file.data.toString('utf8'));
-  if (!plan.ok) return null;
-  const pngs = await ctx.snapshot(ctx.sessionId, plan.page, plan.width);
-  return pngs ? pngs.map((p, i) => ({ kind: 'photo' as const, file: pngFile(`${title}-${i + 1}`, p), title })) : null;
+  const pdf = await (ctx.renderPdf ?? renderPagePdf)(f.file.data.toString('utf8'));
+  if (!pdf) return null;
+  const name = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 80) || 'sayfa'}.pdf`;
+  return { kind: 'document', file: { name, data: pdf, contentType: 'application/pdf' }, title };
 }
 
 function whiteboardLine(ctx: CardContext, c: SuperContainer, title: string): string {
@@ -117,8 +120,8 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
           if (!ctx.pictures) return text(`Mac'te açık: ${title}`);
           const ext = extname(v.href).toLowerCase();
           if (ext === '.html' || ext === '.htm') {
-            const pics = await reportPicture(ctx, v.href, title);
-            return pics ? { kind: 'media', items: pics, title } : text(`Mac'te açık: ${title}`);
+            const doc = await reportPdf(ctx, v.href, title);
+            return doc ? { kind: 'media', items: [doc], title } : text(`Mac'te açık: ${title}`);
           }
           const f = readProjectFile(ctx, v.href);
           const m = f.ok ? fileMedia(f.file, f.ext, title) : null;
