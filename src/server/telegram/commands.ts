@@ -21,8 +21,9 @@ import { padMove } from '../../lib/super/pad-move.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import type { SuperState } from '../../lib/super/types.js';
-import { STATUS_GLYPH, STATUS_LABEL, type ButtonRecord, type StatusState } from '../../lib/telegram/contract.js';
+import { type ButtonRecord, type StatusState } from '../../lib/telegram/contract.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
+import { statusLineHtml } from '../../lib/telegram/system-lines.js';
 import { agendaNoteBlock, replyAboutBlock } from '../../lib/telegram/headers.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
@@ -214,14 +215,14 @@ export function statusText(s: SuperState, contextRoot: string): string {
     const live = getChat(c.sessionId);
     const state: StatusState = live?.pendingQuestion?.isPermission ? 'waiting' : c.row === 'working' ? 'running' : c.row === 'asking' ? 'asking'
       : c.row === 'done' ? 'done' : c.row === 'stuck' ? 'stuck' : c.row === 'gone' ? 'gone' : c.row === 'waiting' ? 'waiting' : 'running';
-    rows.push(`${STATUS_GLYPH[state]} ${escapeHtml(cleanTitle(c.brief || 'iş', 60))} · ${STATUS_LABEL[state]}`);
+    rows.push(statusLineHtml(state, cleanTitle(c.brief || 'iş', 60)));
   }
   for (const j of s.team.slice(0, 10)) {
     let st = 'running';
     try { st = teamJobStatus(contextRoot, j, null).status; } catch { /* running */ }
     if (st === 'done') continue;
     const state: StatusState = st === 'failed' ? 'stuck' : st === 'asking' ? 'asking' : 'running';
-    rows.push(`${STATUS_GLYPH[state]} ${escapeHtml(cleanTitle(`${j.member}: ${j.brief || ''}`, 60))} · ${STATUS_LABEL[state]}`);
+    rows.push(statusLineHtml(state, cleanTitle(`${j.member}: ${j.brief || ''}`, 60)));
   }
   const waiting = s.queue.filter((q) => q.state !== 'done' && ['ask', 'question', 'permission', 'approval', 'owner'].includes(q.kind)).slice(0, 8)
     .map((q) => `✋ ${escapeHtml(cleanTitle(redactSecrets(q.ownerText ?? q.brief ?? q.kind), 80))}`);

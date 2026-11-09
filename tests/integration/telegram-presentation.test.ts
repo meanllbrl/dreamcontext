@@ -420,7 +420,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     endTurn(h);
     await writeState({ children: { c1: { sessionId: 'c1', brief: 'Paywall testi', row: 'working', startedAt: 1, adopted: false } } });
     tg.push(TOKEN, textUpdate(OWNER, '/durum'));
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Paywall testi · çalışıyor'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('<i>Paywall testi</i> · çalışıyor'))).toBe(true));
   });
 
   it('/gundem: Bitti moves the line to done (no turn); Yaz makes the next text carry the agenda block', async () => {

@@ -396,7 +396,7 @@ describe('the Super target', () => {
     tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, voice: { file_id: 'v1', file_size: 4 } }));
     await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
     expect(parseTelegramPrefix(sent[1]).body).toBe('🎙 merhaba dünya');
-    expect(tg.texts()).toContain('Duyduğum: merhaba dünya');
+    expect(tg.texts()).toContain('🎙 <i>Duyduğum</i>\n<blockquote expandable><i>merhaba dünya</i></blockquote>');
   });
 
   it('unbind sends the last message first, then removes the folder; an unkeyed one says so', async () => {
