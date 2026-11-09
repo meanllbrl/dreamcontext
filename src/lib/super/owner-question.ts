@@ -38,6 +38,10 @@ export interface OwnerQuestionReach {
   reached: boolean;
   /** For the agent: what that means and what to do. */
   note: string;
+  /** The server held its banner back because the open notch shows this head (and wrote the
+   *  history row): the window's job bar posts none of its own either. Not a channel that
+   *  reached him, so it is not in `via`. */
+  held?: true;
 }
 
 export interface OwnerQuestionPush {
@@ -52,8 +56,9 @@ export interface OwnerQuestionPush {
 export interface OwnerQuestionSinks {
   /** Which project, and which chat in it, the owner is looking at (notch-inbox presence). */
   presence: () => { vault: string | null; session: string | null };
-  /** Post a routable banner; true when one was posted. */
-  banner: (title: string, body: string, link: string | null) => boolean;
+  /** Post a routable banner; true when one was posted, `held` when the open notch shows it
+   *  (no banner, the history row written: owner 2026-11-09, never twice). */
+  banner: (title: string, body: string, link: string | null) => boolean | 'held';
   /** Push to the hands-free phones; how many devices it goes to (0 = Mac mode off). */
   push: (q: OwnerQuestionPush) => number;
   /** The project's Super bot (W2): true when a bound bot takes it (it sends on its own). */
@@ -156,6 +161,7 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   const session = state.session;
   const vault = vaultOf();
   const via: OwnerChannel[] = [];
+  let held = false;
   let looking: { vault: string | null; session: string | null } = { vault: null, session: null };
   try { looking = sinks.presence(); } catch { /* nobody known to be looking */ }
   // In this project's window: no banner over it (the attention rule). On screen only when that
@@ -175,7 +181,11 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   if (!here) {
     let link: string | null = null;
     try { link = buildAppLink({ kind: 'session', vault, claudeId: direct ? head.sessionId : session }); } catch { link = null; }
-    try { if (sinks.banner(title, body, link)) via.push('banner'); } catch { /* the other channels still stand */ }
+    try {
+      const posted = sinks.banner(title, body, link);
+      if (posted === 'held') held = true;
+      else if (posted) via.push('banner');
+    } catch { /* the other channels still stand */ }
   }
   try { if (sinks.push({ vault, sessionId: session, key: `super-ask:${head.id}`, title, body }) > 0) via.push('phone'); } catch { /* idem */ }
   // Duplicate pings are intended (M6): the owner may be walking away from the Mac.
@@ -184,13 +194,14 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   }
   // A notch that polls is listed but proves nothing alone: it polls while he is away too.
   const reached = via.some((v) => v !== 'notch');
-  remember(head.id, { shown: true, ahead: 0, via, reached, note: noteFor(head, true, 0, via, reached) });
+  remember(head.id, { shown: true, ahead: 0, via, reached, note: noteFor(head, true, 0, via, reached), ...(held ? { held: true as const } : {}) });
 }
 
-/** The queue items whose banner the server posted: the window's job bar posts none of its own
- *  for those, and posts its own for every other (a Mac without the notifier bundle). */
+/** The queue items whose banner the server posted, or held back for the open notch: the window's
+ *  job bar posts none of its own for those, and posts its own for every other (a Mac without the
+ *  notifier bundle). */
 export function serverBannered(queue: readonly SuperQueueItem[]): string[] {
-  return queue.filter((q) => announced.get(q.id)?.via.includes('banner')).map((q) => q.id);
+  return queue.filter((q) => { const a = announced.get(q.id); return !!a && (a.via.includes('banner') || a.held === true); }).map((q) => q.id);
 }
 
 /** At boot: the head already open is not news. */

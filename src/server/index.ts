@@ -32,6 +32,7 @@ import { lookingAt, lookingAtSession, setSuperFinishBanner, wireNotchInbox } fro
 import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { notchCovers } from '../lib/notch-state.js';
+import { recordNotification } from '../lib/notification-log.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
@@ -594,8 +595,13 @@ export function buildRouter(): Router {
   setOwnerQuestionSinks({
     presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
     // The notch glance lists the queue head. While the notch is on screen no banner is posted,
-    // and this says so (false): `via` stays the truth, and the window's job bar posts none either.
-    banner: (title, body, link) => isDesktop() && !notchCovers(true) && notifyViaBundle(title, body, undefined, { link }),
+    // the history row still is, and this says `held`: not a channel in `via` (he may not have
+    // looked), and the window's job bar posts no banner of its own for it (`serverBannered`).
+    banner: (title, body, link) => {
+      if (!isDesktop()) return false;
+      if (notchCovers(true)) { recordNotification({ title: title.replace(/[\r\n]+/g, ' '), body, link, file: null }); return 'held'; }
+      return notifyViaBundle(title, body, undefined, { link });
+    },
   });
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);

@@ -149,6 +149,16 @@ describe('super queue ask reaches the owner off the Super stage', () => {
     expect(superView(root, await readSuperState(root)).bannered).toBeUndefined();
   });
 
+  // Owner 2026-11-09: the open notch shows this head, so the server posts no banner ('held'),
+  // the window posts none of its own either, and a held banner is not a channel that reached him.
+  it('an open notch holds the banner: not in via, not reached, and the window is told not to post one', async () => {
+    setOwnerQuestionSinks({ banner: () => 'held' });
+    noteNotchPoll();
+    const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
+    expect(result(r)).toMatchObject({ reached: false, via: ['notch'] });
+    expect(superView(root, await readSuperState(root)).bannered).toEqual(['q-ask1']);
+  });
+
   it('hands-free on: a question push into the super chat', async () => {
     phones = 1;
     const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
