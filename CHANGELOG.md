@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.12] - 2026-11-09
+
+Patch on 0.41.11: seven finished jobs built together. Local build; not published.
+
+- **Every Super question reaches Telegram while you are away.** Each open question arrives as its own clean message, a refused send waits and goes again when you turn away, "reached" now says what really landed, drawings come as pictures, and an answered card turns "✓ Cevaplandı".
+- **A member's job writes temp folders without a card.** An AI Team member and its child jobs do ordinary work such as writing to the temp folder with no permission card; secrets and code-running files keep theirs.
+- **An agent's app request asks you first.** When an agent wants to publish, install, update or change the logo of an app, you get an Onayla / Reddet card on the Mac, on Telegram while you are away, and a band for a version that is not published yet. Onayla lets it run that plan once.
+- **Fewer tasks.** A task is only for big work; waves live inside it, sub-tasks open only when you ask, and a review loop needs no task.
+- **Telegram'a bağla in a member's menu.** The member's ⋯ menu binds a bot to that member in one step.
+- **A member's bot carries the member.** A bound bot gets the member's full name, a short description and its photo at the first start; a slow name or photo never holds up the bind.
+- **A new window has a name.** A window opened from the left menu is called Window (Pencere), then Window 2, instead of Chat.
+
 ## [0.41.9] - 2026-11-09
 
 Patch on 0.41.8: six finished jobs built together. Local build; not published.
