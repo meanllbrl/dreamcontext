@@ -9,6 +9,7 @@ import { safeWriteTarget } from '../vault-read.js';
 import { GLOBAL_REGISTRY_KEY, safeMemberWrite, underGlobalAgents } from '../agents/scope.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { superRunQuiet } from './super-quiet.js';
+import { notchListsAgent } from '../notch-state.js';
 import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
@@ -1232,9 +1233,11 @@ function escapeForAppleScript(s: string): string {
  */
 export function defaultNotify(
   title: string, body: string, home?: string, sound?: string, openTarget?: string | null, link?: string | null,
+  notchShows?: boolean,
 ): void {
   if (process.platform !== 'darwin') return;
-  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget, link })) return;
+  // `notchShows`: an open notch already lists this run's post, so no banner and no osascript.
+  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget, link, notchShows })) return;
   // The osascript banner is still a banner the user saw, so it joins the history the
   // Notifications window lists, where its link stays clickable even though this one is not.
   recordNotification({ title, body, link: link ?? null, file: openTarget ?? null }, home ?? homedir());
@@ -1736,7 +1739,7 @@ interface RunOptionsBase extends BoardTurnInput {
   log?: (line: string) => void;
   /** `openTarget` is the fallback file; `link` the `dreamcontext://` link the click opens
    *  first (null when this project is not a registered vault). */
-  notify?: (title: string, body: string, sound?: string, openTarget?: string | null, link?: string | null) => void;
+  notify?: (title: string, body: string, sound?: string, openTarget?: string | null, link?: string | null, notchShows?: boolean) => void;
   /** What the human typed to call this agent from `#agents`. Present ONLY for
    *  a fire a person started by hand; the scheduler never sets it. Rides into
    *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
@@ -1866,8 +1869,8 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   // still cannot reach into the developer's real ~/.dreamcontext.
   const notifyFn =
     opts.notify ??
-    ((t: string, b: string, s?: string, target?: string | null, link?: string | null) =>
-      defaultNotify(t, b, opts.home, s, target, link));
+    ((t: string, b: string, s?: string, target?: string | null, link?: string | null, notchShows?: boolean) =>
+      defaultNotify(t, b, opts.home, s, target, link, notchShows));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
   /** Where the account register and the recorded refusals live. */
@@ -2028,7 +2031,8 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         // picked that sentence for this human to read, and the banner is realistically the
         // only thing they see. Falling back in this order means the channel and the
         // notification never disagree about what the run's headline was.
-        const summary = lastAgentPost(contextRoot, slug, fireAt.toISOString(), logFn)
+        const posted = lastAgentPost(contextRoot, slug, fireAt.toISOString(), logFn);
+        const summary = posted
           ?? params.summary
           ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
         // A run that ended owing a verdict must NOT read as "your digest is
@@ -2054,6 +2058,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
           NOTIFY_SOUND_OK,
           clickFile,
           automationLink(contextRoot, slug, clickFile, home),
+          // The notch lists a run's POST (feed `textFrom: 'post'`), not a bare "document
+          // written": only a run that posted is a notch notice.
+          posted !== null && notchListsAgent(contextRoot, slug, home),
         );
       } else {
         // Capped like the success body. `error` can carry a STDERR_TAIL_BYTES
@@ -2068,6 +2075,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
           NOTIFY_SOUND_FAILED,
           params.outputPath,
           automationLink(contextRoot, slug, params.outputPath, home),
+          // The notch lists a failed or timed-out run's reason (feed `textFrom: 'error'`);
+          // a blocked or deferred one is no notch row, so its banner goes.
+          (params.status === 'failed' || params.status === 'timeout') && !!params.error && notchListsAgent(contextRoot, slug, home),
         );
       }
     }

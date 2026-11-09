@@ -292,6 +292,7 @@ pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 pub fn ensure_notch<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     if let Ok(panel) = app.get_webview_panel(NOTCH_LABEL) {
         panel.show();
+        write_notch_state(true);
         return Ok(());
     }
     let port = app.try_state::<AssistantState>().map(|s| s.port).ok_or("assistant state missing")?;
@@ -334,6 +335,7 @@ pub fn ensure_notch<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .map_err(|e| format!("could not build the notch: {e}"))?;
     prevent_activation(app);
     panel.show();
+    write_notch_state(true);
     Ok(())
 }
 
@@ -574,6 +576,7 @@ fn hide_notch<R: Runtime>(app: &AppHandle<R>) {
     if let Ok(panel) = app.get_webview_panel(NOTCH_LABEL) {
         panel.hide();
     }
+    write_notch_state(false);
     // A notch hidden while open never folds, so it would never let Esc go.
     set_escape_grab(app, false);
 }
@@ -665,12 +668,81 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
     let _ = app.run_on_main_thread(move || watch_outside_clicks(&h));
     let h = app.clone();
     let _ = app.run_on_main_thread(move || watch_hover(&h));
+    beat_notch_state(app);
     if assistant_enabled() {
         let _ = apply_hotkey(app);
     }
     if notch_wanted() {
         let _ = ensure_notch(app);
     }
+}
+
+// ── On screen, for the banners ─────────────────────────────────────────────────────
+// Owner, 2026-11-09: a notice the notch shows must not ALSO arrive as a macOS banner while the
+// notch is on screen. Banners leave from several processes (the server, the automation runner
+// under launchd, the CLI), so the shell writes what the panel itself says (`isVisible`) to
+// `~/.dreamcontext/notch-state.json`: at once on every show and hide, and every NOTCH_BEAT.
+// A reader believes it only while fresh (src/lib/notch-state.ts, `NOTCH_STATE_TTL_MS`), so a
+// quit or crashed app reads as unknown and the banner goes (better twice than never).
+
+/// Mirrors `NOTCH_BEAT_MS` in src/lib/notch-state.ts.
+const NOTCH_BEAT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn notch_state_path() -> Option<PathBuf> {
+    home_dir().map(|h| h.join(".dreamcontext").join("notch-state.json"))
+}
+
+/// The file's body: `{"visible":<bool>,"at":<epoch ms>}`.
+fn notch_state_json(visible: bool, at_ms: u128) -> String {
+    format!("{{\"visible\":{visible},\"at\":{at_ms}}}\n")
+}
+
+/// Best-effort and atomic (temp + rename): a reader never sees half a file, and a failed write
+/// only leaves the old report to go stale (unknown: the banner goes).
+pub fn write_notch_state(visible: bool) {
+    let Some(path) = notch_state_path() else { return };
+    let Some(dir) = path.parent() else { return };
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let tmp = dir.join(format!(".notch-state.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, notch_state_json(visible, at)).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// The app is quitting: no report at all, so nothing reads a notch that is gone as open.
+pub fn clear_notch_state() {
+    if let Some(path) = notch_state_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Main thread only: is the notch panel on screen right now (notch seat or popped out)?
+fn notch_on_screen<R: Runtime>(app: &AppHandle<R>) -> bool {
+    use objc2_app_kit::NSWindow;
+    let Some(w) = app.get_webview_window(NOTCH_LABEL) else { return false };
+    let Ok(ptr) = w.ns_window() else { return false };
+    if ptr.is_null() {
+        return false;
+    }
+    // SAFETY: the notch's live NSWindow (a tauri-nspanel NSPanel), read on the main thread.
+    let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    win.isVisible()
+}
+
+/// For the app's lifetime: every NOTCH_BEAT ask the panel on the main thread and write it.
+fn beat_notch_state<R: Runtime>(app: &AppHandle<R>) {
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        let h = handle.clone();
+        let _ = handle.run_on_main_thread(move || write_notch_state(notch_on_screen(&h)));
+        std::thread::sleep(NOTCH_BEAT);
+    });
 }
 
 // ── Click outside ──────────────────────────────────────────────────────────────────
@@ -792,6 +864,12 @@ mod tests {
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     const OPEN: NSRect = NSRect { origin: NSPoint { x: 610.0, y: 520.0 }, size: NSSize { width: 580.0, height: 560.0 } };
+
+    #[test]
+    fn notch_state_is_the_shape_the_readers_parse() {
+        assert_eq!(notch_state_json(true, 1_700_000_000_123), "{\"visible\":true,\"at\":1700000000123}\n");
+        assert_eq!(notch_state_json(false, 5), "{\"visible\":false,\"at\":5}\n");
+    }
 
     #[test]
     fn only_the_notch_refuses_a_close() {

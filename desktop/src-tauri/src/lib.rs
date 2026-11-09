@@ -247,6 +247,11 @@ pub fn run() {
                 reap_server(handle.inner());
             }
         }
+        // Quitting: the notch is gone, so no banner may wait on it (src/assistant.rs).
+        #[cfg(target_os = "macos")]
+        if matches!(event, RunEvent::Exit) {
+            assistant::clear_notch_state();
+        }
         // A Dock click with nothing on screen but the notch brings the Launcher back. Not while
         // the boot is still running (no port yet): the boot opens it itself.
         #[cfg(target_os = "macos")]

@@ -524,6 +524,28 @@ describe('runAutomation — completion notifications', () => {
     expect(notify.mock.calls[0][4]).toBe('dreamcontext://project/v/automation/linked-fail');
   });
 
+  // Owner, 2026-11-09: an open notch takes a notice it lists, so the banner is told which those
+  // are. The notch lists a failed run's reason and a run's own post, never a bare "document written".
+  it('marks a FAILED run of a registered agent as a notch notice, and a success that posted nothing as not', async () => {
+    registerVault('v');
+    const failed = createApproved('notch-fail');
+    const { child } = makeFakeChild(undefined);
+    const onFail = vi.fn();
+    await runAutomation(contextRoot, failed.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: onFail });
+    expect(onFail.mock.calls[0][5]).toBe(true);
+    const onOk = vi.fn();
+    await runToSuccess('notch-quiet-ok', onOk);
+    expect(onOk.mock.calls[0][5]).toBe(false);
+  });
+
+  it('a failed run of an UNREGISTERED project is no notch notice: its banner always goes', async () => {
+    const failed = createApproved('notch-unreg-fail');
+    const { child } = makeFakeChild(undefined);
+    const notify = vi.fn();
+    await runAutomation(contextRoot, failed.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify });
+    expect(notify.mock.calls[0][5]).toBe(false);
+  });
+
   it('carries NO link for an unregistered project: the fallback file alone, as before', async () => {
     const notify = vi.fn();
     await runToSuccess('unlinked-ok', notify);

@@ -10,7 +10,11 @@ import { buildAppLink, isValidAppLink } from '../../lib/app-link.js';
  * The app's own banners, and the history its Notifications window lists.
  *
  *   GET  /api/notifications?limit=50  → { notifications: NotificationEntry[] }, newest first
- *   POST /api/notify {title, body, link?, sound?} → { posted: boolean }
+ *   POST /api/notify {title, body, link?, sound?, notch?} → { posted: boolean }
+ *
+ * `notch: true` says the notch draws this notice too (a chat's question or permission): while
+ * the notch is on screen no banner is posted and the answer is still `posted: true`, so the
+ * window does not fall back to another banner (owner, 2026-11-09: never twice).
  *
  * WHY THE APP POSTS THROUGH HERE rather than through Tauri's notification plugin: a banner
  * posted by the branded applet carries a click that `open`s a `dreamcontext://` link, so it
@@ -35,7 +39,7 @@ const DEFAULT_LIMIT = 50;
 export interface NotificationRouteDeps {
   home?: string;
   /** Injected in tests so no real banner is posted. Mirrors `notifyViaBundle`. */
-  post?: (title: string, body: string, home: string, opts: { sound?: string; link?: string | null }) => boolean;
+  post?: (title: string, body: string, home: string, opts: { sound?: string; link?: string | null; notchShows?: boolean }) => boolean;
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -62,12 +66,12 @@ function capBody(body: string): string {
   return flat.length <= BANNER_BODY_CHARS ? flat : `${flat.slice(0, BANNER_BODY_CHARS - 1).trimEnd()}…`;
 }
 
-type NotifyRequest = { title: string; body: string; link: string; sound?: string };
+type NotifyRequest = { title: string; body: string; link: string; sound?: string; notch: boolean };
 
 /** The validated request, or the message for a 400. */
 function readNotifyRequest(payload: Record<string, unknown> | null): NotifyRequest | string {
   if (!payload) return 'A JSON body is required.';
-  const { title, body, link, sound } = payload;
+  const { title, body, link, sound, notch } = payload;
   if (typeof title !== 'string' || !title.trim() || title.length > TITLE_MAX_CHARS) {
     return `title must be a non-empty string of at most ${TITLE_MAX_CHARS} characters.`;
   }
@@ -80,12 +84,16 @@ function readNotifyRequest(payload: Record<string, unknown> | null): NotifyReque
   if (sound !== undefined && sound !== null && (typeof sound !== 'string' || !SOUND_RE.test(sound))) {
     return 'sound must be a system sound name.';
   }
+  if (notch !== undefined && notch !== null && typeof notch !== 'boolean') {
+    return 'notch must be a boolean.';
+  }
   return {
     title: title.trim(),
     body: capBody(body),
     // A banner with no in-app place still lands somewhere: the Notifications window.
     link: typeof link === 'string' ? link : buildAppLink({ kind: 'inbox' }),
     sound: typeof sound === 'string' ? sound : undefined,
+    notch: notch === true,
   };
 }
 
@@ -108,7 +116,7 @@ export function createNotificationRoutes(deps: NotificationRouteDeps = {}): {
       sendError(res, 400, 'invalid_notification', parsed);
       return;
     }
-    const posted = post(parsed.title, parsed.body, home(), { sound: parsed.sound, link: parsed.link });
+    const posted = post(parsed.title, parsed.body, home(), { sound: parsed.sound, link: parsed.link, ...(parsed.notch ? { notchShows: true } : {}) });
     sendJson(res, 200, { posted });
   };
 

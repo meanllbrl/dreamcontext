@@ -31,6 +31,8 @@ import {
 import { lookingAt, lookingAtSession, setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
 import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
+import { notchCovers } from '../lib/notch-state.js';
+import { recordNotification } from '../lib/notification-log.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
@@ -587,11 +589,19 @@ export function buildRouter(): Router {
   wireNotchInbox();
   // The Super Agent's reply while handed over is also a banner a click routes to its stage.
   // A member's reply comes with sound (plan r4 D6); main's own stays silent.
-  setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, ...(sound ? { sound } : {}) }); });
+  // The notch draws that reply as a row, so an open notch holds the banner back (notchShows).
+  setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, notchShows: true, ...(sound ? { sound } : {}) }); });
   // A question the Super Agent puts to the owner reaches him whatever page the window shows.
   setOwnerQuestionSinks({
     presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
-    banner: (title, body, link) => isDesktop() && notifyViaBundle(title, body, undefined, { link }),
+    // The notch glance lists the queue head. While the notch is on screen no banner is posted,
+    // the history row still is, and this says `held`: not a channel in `via` (he may not have
+    // looked), and the window's job bar posts no banner of its own for it (`serverBannered`).
+    banner: (title, body, link) => {
+      if (!isDesktop()) return false;
+      if (notchCovers(true)) { recordNotification({ title: title.replace(/[\r\n]+/g, ' '), body, link, file: null }); return 'held'; }
+      return notifyViaBundle(title, body, undefined, { link });
+    },
   });
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);

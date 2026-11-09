@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { findPackageDir } from '../catalog.js';
 import { recordNotification } from '../notification-log.js';
+import { notchCovers } from '../notch-state.js';
 
 /**
  * Branded macOS notifications for automations.
@@ -346,6 +347,12 @@ export interface NotifyViaBundleOptions {
   historyLink?: string | null;
   /** The dreamcontext App this post speaks for: its history row wears that app's icon. */
   historyApp?: { vault: string; slug: string } | null;
+  /** This notice is one the notch draws (a question, a finish, an agent's post, an app's
+   *  notice). While the notch is on screen it is not posted again as a banner; it still joins
+   *  the history, and the call returns true, so no caller falls back to another banner. */
+  notchShows?: boolean;
+  /** Injected in tests: the notch's live state (`lib/notch-state.ts`). */
+  notchCovers?: (notchShows: boolean | undefined, home: string) => boolean;
 }
 
 /** Newline is the record separator, so every single-line field is flattened. */
@@ -378,6 +385,14 @@ export function notifyViaBundle(
   opts: NotifyViaBundleOptions = {},
 ): boolean {
   if (process.platform !== 'darwin') return false;
+  // The notch already shows it: no second copy as a banner (owner, 2026-11-09).
+  if ((opts.notchCovers ?? notchCovers)(opts.notchShows, home)) {
+    recordNotification(
+      { title: oneLine(title), body, link: opts.link ?? opts.historyLink ?? null, file: opts.openTarget ?? null, app: opts.historyApp ?? null },
+      home,
+    );
+    return true;
+  }
   const appPath = notifierAppPath(home);
   if (!existsSync(appPath)) return false;
   try {

@@ -127,12 +127,15 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
   const historyLink = appHistoryLink(rec.vault, rec.slug, path ? issueLinkNonce(rec.hash, path) : null);
   const wantBanner = body.banner !== false;
   const wantNotch = body.notch !== false;
+  // The notch row first: a notice the open notch shows goes out as no banner (owner, 2026-11-09).
+  const notch = wantNotch ? !!recordAppEvent({ vault: rec.vault, projectRoot: rec.projectRoot, slug: rec.slug, name: title, body: text }, homeDir) : false;
   let banner: { banner: true; via: 'app' | 'dreamcontext' } | { banner: false; reason: string } = { banner: false, reason: 'not asked' };
   if (wantBanner) {
-    const via = await notifyFromApp({ title, body: text, rec, sound, historyLink, home: homeDir });
-    banner = via ? { banner: true, via } : { banner: false, reason: process.platform !== 'darwin' ? 'macOS only' : 'notifications are not set up (Apps card → Turn on notifications)' };
+    const via = await notifyFromApp({ title, body: text, rec, sound, historyLink, home: homeDir, notchShows: notch });
+    banner = via === 'notch' ? { banner: false, reason: 'the notch is open and shows it' }
+      : via ? { banner: true, via }
+        : { banner: false, reason: process.platform !== 'darwin' ? 'macOS only' : 'notifications are not set up (Apps card → Turn on notifications)' };
   }
-  const notch = wantNotch ? !!recordAppEvent({ vault: rec.vault, projectRoot: rec.projectRoot, slug: rec.slug, name: title, body: text }, homeDir) : false;
   send(res, 200, { ok: true, ...banner, notch });
 });
 
