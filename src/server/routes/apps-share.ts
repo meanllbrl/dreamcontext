@@ -281,9 +281,9 @@ export async function handleInstall(req: IncomingMessage, res: ServerResponse, _
   const held = gate.owner ? null : gate.held;
   const bound = held ? bodyOf(held.plan, 'install') : null;
   if (held && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an install.'); return; }
-  const vault = listVaults(appsHomeDir()).find((v) => realRoot(v.path) === projectRoot)?.name;
-  if (!vault) { held?.done(false); sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
   try {
+    const vault = listVaults(appsHomeDir()).find((v) => realRoot(v.path) === projectRoot)?.name;
+    if (!vault) { held?.done(false); sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
     const { rec, renamed } = await installApp(bound ? {
       // The previewed sha and the settings the card showed; never a key (secrets stay the owner's).
       home: appsHomeDir(), projectRoot, vault, previewId: bound.previewId, sha: bound.sha, config: bound.config,
@@ -400,10 +400,11 @@ export async function handleUpdateApply(req: IncomingMessage, res: ServerRespons
   const held = gate.owner ? null : gate.held;
   const bound = held ? bodyOf(held.plan, 'update') : null;
   if (held && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an update.'); return; }
-  // A card's grant: the facts it showed must still hold (a new edit or a newer update refuses it).
-  if (held && bound && !updateStillBound(appsHomeDir(), rec, bound)) { staleRequest(res, held); return; }
   const how = bound ? bound.how ?? undefined : b.how === 'merge' || b.how === 'set-aside' ? (b.how as ApplyHow) : undefined;
   try {
+    // A card's grant: the facts it showed must still hold (a new edit or a newer update refuses
+    // it). Inside the try: a throw here (the app's folder gone) still frees the held grant.
+    if (held && bound && !updateStillBound(appsHomeDir(), rec, bound)) { staleRequest(res, held); return; }
     const out = await applyUpdate(appsHomeDir(), rec, bound
       ? { sha: bound.sha, approveManifest: bound.approveManifest, how }
       : { sha: String(b.sha ?? ''), approveManifest: b.approveManifest === true, how });

@@ -155,18 +155,23 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
   };
   // Its error stands under Manage, beside the switch the owner just used.
   const [manageErr, setManageErr] = useState<string | null>(null);
+  // The band's own error: it stands under the band's button, where the owner clicked.
+  const [bandErr, setBandErr] = useState<string | null>(null);
   /**
    * Share (Publish) hands the publish to Claude (owner 2026-11-06): no form. The click opens the
-   * one-hour grant for this app, then Chat (the Super when it is the chat on screen) gets the
-   * prompt that has Claude clean, write the store page, run the gate and publish with the CLI.
+   * one-hour grant for this app, then a develop chat on screen gets the prompt that has Claude
+   * clean, write the store page, run the gate and publish with the CLI. Never the Super (app
+   * onay karti): a publish is work for a chat of its own, so with the Super on screen a new chat
+   * opens. `update`: the band's "Publish the update"; its error shows in the band.
    */
   const [handing, setHanding] = useState(false);
   const handToClaude = async (visibility: 'private' | 'public', update = false) => {
     if (handing) return;
+    const fail = update ? setBandErr : setManageErr;
     // Public is for good: the owner's own yes, one line, before anything is handed over. A new
     // version of an app that is already public asks nothing: it changes no one's access.
     if (visibility === 'public' && !(update && app.publish?.public) && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
-    setManageErr(null); setHanding(true);
+    setBandErr(null); setManageErr(null); setHanding(true);
     try {
       const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
       const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update });
@@ -179,11 +184,11 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
           void preparePrompt(vault, prompt).then((pp) => {
             setHanding(false);
             if (requestDelegateAgent(bus, { title: ts('store.publish.tab', { name: app.name }), prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true })) onClose();
-            else setManageErr(t('store.publish.missed'));
-          }, (e) => { setHanding(false); setManageErr((e as Error).message); });
+            else fail(t('store.publish.missed'));
+          }, (e) => { setHanding(false); fail((e as Error).message); });
         },
       });
-    } catch (e) { setHanding(false); setManageErr((e as Error).message); }
+    } catch (e) { setHanding(false); fail((e as Error).message); }
   };
   const toggleAuto = async (on: boolean) => {
     setManageErr(null);
@@ -229,6 +234,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             <button type="button" className="app-card__stop" disabled={handing} onClick={() => void handToClaude(app.publish!.public ? 'public' : 'private', true)}>{t('share.card.publishUpdate')}</button>
           </div>
         )}
+        {bandErr && <p className="app-card__note app-card__note--bad" role="alert">{bandErr}</p>}
         {following && app.source!.available && (
           <div className="app-card__note app-card__note--accent app-card__mcp">
             <span>{t('share.card.updateReady')}</span>

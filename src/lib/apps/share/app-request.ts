@@ -149,8 +149,15 @@ function sameText(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+const STALE_CHECK = async (): Promise<boolean> => false;
+
 function sweep(now: number): void {
   for (const [id, r] of requests) {
+    // A request that can never run again (replaced, rejected, stale, used, or out of time) lets go
+    // of what it held for the spend: the logo snapshot and the publish tree its check closes over.
+    // Its record stays for its 24 h so a late `apps grant` still reads its state.
+    const live = r.state === 'pending' || (r.state === 'approved' && !r.spent && !!r.grant && r.grant.expiresAt > now);
+    if (!live) { r.logo = null; r.stillFresh = STALE_CHECK; }
     // Kept while its grant can still be spent (a logo spend needs the snapshot).
     if (now - r.createdAt <= REQUEST_LIFETIME_MS || (r.grant && !r.spent && r.grant.expiresAt > now)) continue;
     if (r.state === 'pending') { r.state = 'expired'; closeProposal(r.proposalId, { outcome: 'declined', reason: 'timeout' }); }

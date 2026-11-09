@@ -50,7 +50,7 @@ import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundl
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifier.js';
 import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
-import { unpublishedChanges } from '../../lib/apps/share/publish.js';
+import { unpublishedCached, unpublishedChanges } from '../../lib/apps/share/publish.js';
 import { shareStatus } from './apps-share.js';
 import { iconIssue, isDefaultIconCached, servableIcon } from '../../lib/apps/icon.js';
 import { appLogoPath, appLogoStamp, clearAppLogo } from '../../lib/apps/app-logo.js';
@@ -451,23 +451,21 @@ export async function shootAppWindow(projectRoot: string, slug: string): Promise
 
 /**
  * "A newer local version is not published yet" (D11). Read from the cache only, so the list stays
- * fast; a miss is computed after the reply (one app at a time) and the page's next poll shows it.
+ * fast; a miss is computed after the reply (one app at a time) and the page's next poll shows it,
+ * the last answer for the same publish standing until then.
  * Never an error on the list: a failure reads as nothing to publish.
  */
 const unpublishedPending = new Set<string>();
 const unpublishedQueue: AppRecord[] = [];
 function unpublishedField(rec: AppRecord): { unpublished?: boolean } {
   if (!rec.publish?.lastSha) return {};
-  const v = unpublishedChanges(home, rec, { cachedOnly: true });
-  if (v === undefined) {
-    if (!unpublishedPending.has(rec.hash)) {
-      unpublishedPending.add(rec.hash);
-      unpublishedQueue.push(rec);
-      if (unpublishedQueue.length === 1) setImmediate(drainUnpublished);
-    }
-    return {};
+  const { value, fresh } = unpublishedCached(rec);
+  if (!fresh && !unpublishedPending.has(rec.hash)) {
+    unpublishedPending.add(rec.hash);
+    unpublishedQueue.push(rec);
+    if (unpublishedQueue.length === 1) setImmediate(drainUnpublished);
   }
-  return v ? { unpublished: true } : {};
+  return value ? { unpublished: true } : {};
 }
 function drainUnpublished(): void {
   const rec = unpublishedQueue[0];

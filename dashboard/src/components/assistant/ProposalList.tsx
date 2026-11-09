@@ -77,7 +77,7 @@ const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
 };
 
 /** An agent's app request: the plan as lines, a red line for what cannot be undone, Onayla/Reddet. */
-function AppRequestRow({ p, failure, onDecided }: { p: Proposal & { app: AppCard }; failure?: DecideOutcome; onDecided: (id: string) => void }) {
+function AppRequestRow({ p, failure, onDecided }: { p: Proposal & { app: AppCard }; failure?: DecideOutcome; onDecided: (id: string, notice?: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [ownFailure, setOwnFailure] = useState<DecideOutcome | undefined>();
   const failed = ownFailure ?? failure;
@@ -87,13 +87,16 @@ function AppRequestRow({ p, failure, onDecided }: { p: Proposal & { app: AppCard
     setOwnFailure(undefined);
     const outcome = await decide(p.id, action, undefined, a.hash);
     setBusy(false);
-    // A stale card is closed by the server: it leaves the list like a decided one.
-    if (outcome === 'ok' || outcome === 'gone' || outcome === 'stale') onDecided(p.id); else setOwnFailure(outcome);
+    // A stale card is closed by the server: it leaves the list, and its notice stays where the
+    // owner looks (nothing was approved, so it must not read like a yes).
+    if (outcome === 'stale') onDecided(p.id, `${a.appName}: ${APP_FAILURE.stale}`);
+    else if (outcome === 'ok' || outcome === 'gone') onDecided(p.id);
+    else setOwnFailure(outcome);
   };
   const image = a.image ? `${a.image}?vault=${encodeURIComponent(a.vault)}` : null;
   return (
     <li className="dc-proposal dc-proposal--app" data-action={a.action}>
-      <p className="dc-proposal__eyebrow">{a.renewal ? 'Süresi doldu' : 'Onayını bekliyor'}</p>
+      <p className="dc-proposal__eyebrow" lang="tr">{a.renewal ? 'Süresi doldu' : 'Onayını bekliyor'}</p>
       <div className="dc-proposal__head">
         <span className="dc-proposal__verb">{a.title}</span>
         <span className="dc-proposal__target">{a.appName}</span>
@@ -159,7 +162,7 @@ function ProposalRow({ p, keyed, failure, onDecided }: { p: Proposal; keyed: boo
 
 /** The actions the assistant wants to take that need the owner's yes first. */
 /** `keyed`: Y / N act on the first proposal (Notch.tsx owns the keys), so its row shows them. */
-export function ProposalList({ proposals, keyed = false, failure, onDecided }: { proposals: Proposal[]; keyed?: boolean; failure?: { id: string; outcome: DecideOutcome } | null; onDecided: (id: string) => void }) {
+export function ProposalList({ proposals, keyed = false, failure, onDecided }: { proposals: Proposal[]; keyed?: boolean; failure?: { id: string; outcome: DecideOutcome } | null; onDecided: (id: string, notice?: string) => void }) {
   return (
     <ul className="dc-proposals" aria-label="Waiting for your approval">
       {proposals.map((p, i) => p.app && APP_REQUEST_VERBS.has(p.verb)

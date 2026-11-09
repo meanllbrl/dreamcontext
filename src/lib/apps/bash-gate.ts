@@ -65,7 +65,8 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
     flags: ['--public', '--dry-run', '--go', '--grant', '--invite', '--approve', '--note', '--ask', '--wait', '--no-catalog', '--json'],
   },
   { words: ['apps', 'logo'], ownSlug: true, flags: ['--ask', '--wait', '--grant', '--json'] },
-  // The answer to its own ask: a request id is unguessable and the server checks the asker.
+  // The answer to its own ask. The server does not check who asks: a request id is unguessable,
+  // and its answer is only a state or a command that runs the plan the owner approved.
   { words: ['apps', 'grant'], flags: ['--wait', '--json'] },
 ];
 

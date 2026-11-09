@@ -543,7 +543,7 @@ export function publishLogin(rec: Pick<AppRecord, 'publish'>): string {
   return rec.publish?.fullName.split('/')[0] || 'the-publisher';
 }
 
-const unpublishedCache = new Map<string, { key: string; value: boolean }>();
+const unpublishedCache = new Map<string, { key: string; lastSha: string; value: boolean }>();
 
 /** The cache key of `unpublishedChanges`: the source's HEAD (a copy: its tree as it is) and the last publish. */
 function sourceKey(rec: AppRecord): string | null {
@@ -558,34 +558,51 @@ function sourceKey(rec: AppRecord): string | null {
   }
 }
 
+/** Not an own published app (or no source to read): nothing to publish, and nothing to compute. */
+function unpublishedKey(rec: AppRecord): string | null {
+  if (!rec.publish?.lastSha || (rec.origin === 'installed' && (rec.source || !rec.provenance))) return null;
+  const head = sourceKey(rec);
+  return head ? `${head}\0${rec.publish.lastSha}` : null;
+}
+
 /**
  * Does this own published app hold a version not published yet (D11)? A dry preview with no note
  * and no tagline, compared path by path with the last publish's tree. Derived from facts, no
  * record: an app published before this change answers too, and right after a publish it is false
  * (the README written back is the one that went). No mirror, uncommitted changes, a manifest
  * problem: false, never an error. Cached by the source's HEAD and the last publish's sha.
- * `cachedOnly`: answer from the cache or undefined, never compute (the list's hot path).
  */
-export function unpublishedChanges(home: string, rec: AppRecord, opts: { cachedOnly?: boolean } = {}): boolean | undefined {
-  if (!rec.publish?.lastSha || (rec.origin === 'installed' && (rec.source || !rec.provenance))) return false;
-  const head = sourceKey(rec);
-  if (!head) return false;
-  const key = `${head}\0${rec.publish.lastSha}`;
+export function unpublishedChanges(home: string, rec: AppRecord): boolean {
+  const key = unpublishedKey(rec);
+  if (!key) return false;
   const hit = unpublishedCache.get(rec.hash);
   if (hit && hit.key === key) return hit.value;
-  if (opts.cachedOnly) return undefined;
   let value = false;
   try {
     const last = lastPublishedFiles(home, rec);
     if (last) {
-      const pv = buildPublishTree(home, rec, { visibility: rec.publish.public ? 'public' : 'private', login: publishLogin(rec) });
+      const pv = buildPublishTree(home, rec, { visibility: rec.publish!.public ? 'public' : 'private', login: publishLogin(rec) });
       value = changedSincePublish(pv.files, last).length > 0;
     }
   } catch {
     value = false;
   }
-  unpublishedCache.set(rec.hash, { key, value });
+  unpublishedCache.set(rec.hash, { key, lastSha: rec.publish!.lastSha!, value });
   return value;
+}
+
+/**
+ * The list's hot path: the cached answer, never a computation. `fresh: false` = recompute it off
+ * the request. Until then the last answer for the SAME publish stands (stale while revalidating),
+ * so the band does not blink out on every new commit or a copy's 30 s bucket; a new publish has no
+ * last answer and reads as nothing to publish (right after a publish there is none).
+ */
+export function unpublishedCached(rec: AppRecord): { value: boolean; fresh: boolean } {
+  const key = unpublishedKey(rec);
+  if (!key) return { value: false, fresh: true };
+  const hit = unpublishedCache.get(rec.hash);
+  if (hit && hit.key === key) return { value: hit.value, fresh: true };
+  return { value: !!hit && hit.lastSha === rec.publish!.lastSha && hit.value, fresh: false };
 }
 
 /** Tests only. */

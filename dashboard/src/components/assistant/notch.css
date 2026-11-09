@@ -286,8 +286,9 @@ html:has(.dc-notch) #root {
   text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
-.dc-proposal__lines { margin: var(--space-2) 0; display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--font-size-sm); }
-.dc-proposal__line { display: grid; grid-template-columns: minmax(84px, max-content) 1fr; gap: var(--space-2); }
+/* One grid for every line, so all values start in one column whatever the longest label. */
+.dc-proposal__lines { margin: var(--space-2) 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--space-3); row-gap: var(--space-1); font-size: var(--font-size-sm); }
+.dc-proposal__line { display: contents; }
 .dc-proposal__line dt { color: var(--color-text-secondary); }
 .dc-proposal__line dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
 .dc-proposal__line[data-tone='warn'] dd { color: var(--color-warning); }
@@ -301,6 +302,19 @@ html:has(.dc-notch) #root {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
 }
+/* An app card that closed because its app changed: nothing was approved, said where he looks. */
+.dc-proposal__notice {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-subtle);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
 .dc-proposal__image {
   display: block;
   width: 96px;
@@ -309,7 +323,7 @@ html:has(.dc-notch) #root {
   object-fit: contain;
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  background: var(--color-bg-subtle, var(--color-bg));
+  background: var(--color-bg);
 }
 
 /* ── WHILE IT WORKS: one thin loading line (owner, 2026-09-27) ────────────────────────────

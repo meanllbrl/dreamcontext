@@ -10,7 +10,7 @@ import { getApp, readRegistry, registerApp, registryPath, type AppRecord } from 
 import { readAppConfig, setAppConfig, missingRequired, newConfigId } from '../../src/lib/apps/app-config.js';
 import { LocalHost } from '../../src/lib/apps/share/host.js';
 import { runGate, findingId } from '../../src/lib/apps/share/gate.js';
-import { buildPublishTree, publishApp, PublishError } from '../../src/lib/apps/share/publish.js';
+import { buildPublishTree, publishApp, PublishError, resetUnpublishedCache, unpublishedCached, unpublishedChanges } from '../../src/lib/apps/share/publish.js';
 import { appLogoDir, appLogoPath, setAppLogo } from '../../src/lib/apps/app-logo.js';
 import { installApp, listTrash, previewInstall, restoreFromTrash, uninstallApp, sourceRepo } from '../../src/lib/apps/share/install.js';
 import { applyUpdate, autoUpdateOne, checkUpdate, detachApp, setAutoUpdate, undoUpdate } from '../../src/lib/apps/share/update.js';
@@ -516,3 +516,27 @@ describe('review fixes', () => {
 
 // keep the import used
 void PublishError;
+
+describe('the unpublished band (app-onay-karti end review r1)', () => {
+  it('a new commit keeps the last answer while it recomputes; a new publish starts from nothing', async () => {
+    resetUnpublishedCache();
+    const rec = pubRec();
+    setAppConfig(home, rec.configId!, [{ key: 'insight', type: 'insight', label: 'I', required: true }], { insight: 'gelir-raporu' });
+    await publishFirst(rec);
+    const now = () => getApp(home, pubProject, 'tahmin')!;
+    const commit = (x: number) => { writeFileSync(join(appRoot, 'public', 'app.js'), `export const x = ${x};\n`); git(appRoot, 'add', '-A'); git(appRoot, 'commit', '-q', '-m', `v${x}`); };
+    expect(unpublishedCached(now())).toEqual({ value: false, fresh: false });
+    expect(unpublishedChanges(home, now())).toBe(false);
+    expect(unpublishedCached(now())).toEqual({ value: false, fresh: true });
+    commit(2);
+    expect(unpublishedChanges(home, now())).toBe(true);
+    // Another commit: the band stays up (stale) until the recompute, never blinks out.
+    commit(3);
+    expect(unpublishedCached(now())).toEqual({ value: true, fresh: false });
+    expect(unpublishedChanges(home, now())).toBe(true);
+    // A new publish: the last yes belonged to the old publish, so nothing shows until recomputed.
+    await publishApp(now(), { home, host: host('yayinci'), visibility: 'private' });
+    expect(unpublishedCached(now())).toEqual({ value: false, fresh: false });
+    expect(unpublishedChanges(home, now())).toBe(false);
+  });
+});
