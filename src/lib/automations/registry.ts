@@ -788,8 +788,9 @@ export function approvedTarget(
 }
 
 /**
- * True when `e` holds a home-board agent to its board pending the owner's answer: a `held` mark,
- * or an entry of a board agent written before marks existed. A `board` mark is NOT a hold: it
+ * True when `e` carries the one open offer to keep an old home-board agent on its board: a `held`
+ * mark, or an entry of a board agent written before marks existed. It never limits the agent
+ * (2026-11-09, `board-scope.ts` `boardLimited`). A `board` mark is NOT a hold: it
  * follows the manifest's own `scope: board`, so removing that field (an approved edit) opens it.
  */
 export function boardHoldIn(e: ApprovalEntry | null | undefined): boolean {
