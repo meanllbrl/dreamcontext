@@ -8,6 +8,7 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
+import { notchListsAgent } from '../notch-state.js';
 import { ownerQuietReader, superRunQuiet } from './super-quiet.js';
 import { appLinkForContextRoot } from '../app-link.js';
 import { readMachineIdentity } from '../machine-id.js';
@@ -874,7 +875,8 @@ export function announceTurn(
       home,
       // Lands on this agent's thread, where the reply it announces lives. No fallback
       // file: a resumed turn wrote no document of its own.
-      { sound: NOTIFY_SOUND_OK, link: appLinkForContextRoot(contextRoot, { kind: 'automation', slug }, home) },
+      // `notchShows`: the notch lists this unread post (or question), so an open notch takes it.
+      { sound: NOTIFY_SOUND_OK, link: appLinkForContextRoot(contextRoot, { kind: 'automation', slug }, home), notchShows: notchListsAgent(contextRoot, slug, home) },
     );
   } catch {
     return false;

@@ -4,6 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from '../automations/notifier.js';
 import { recordNotification } from '../notification-log.js';
+import { notchCovers } from '../notch-state.js';
 import { appBundlePath } from './bundle.js';
 
 /**
@@ -85,6 +86,8 @@ export interface AppNotification {
   /** The history row's `dreamcontext://` link. */
   historyLink?: string | null;
   home?: string;
+  /** The notch got this notice as a row (`recordAppEvent`): while it is on screen no banner. */
+  notchShows?: boolean;
 }
 
 export interface AppNotifyDeps {
@@ -92,13 +95,20 @@ export interface AppNotifyDeps {
   canNotify?: (bundlePath: string) => boolean;
   post?: RunnerPost;
   fallback?: typeof notifyViaBundle;
+  /** Injected in tests: the notch's live state (`lib/notch-state.ts`). */
+  notchCovers?: (notchShows: boolean | undefined, home: string) => boolean;
 }
 
-/** `app`: from the app's bundle. `dreamcontext`: the fallback. null: no banner at all. */
-export async function notifyFromApp(n: AppNotification, deps: AppNotifyDeps = {}): Promise<'app' | 'dreamcontext' | null> {
+/** `app`: from the app's bundle. `dreamcontext`: the fallback. `notch`: the open notch shows it,
+ *  so no banner (it still joins the history). null: no banner at all. */
+export async function notifyFromApp(n: AppNotification, deps: AppNotifyDeps = {}): Promise<'app' | 'dreamcontext' | 'notch' | null> {
   const home = n.home ?? homedir();
   const bundle = appBundlePath(home, n.rec.slug, n.rec.hash);
   const app = { vault: n.rec.vault, slug: n.rec.slug };
+  if ((deps.platform ?? process.platform) === 'darwin' && (deps.notchCovers ?? notchCovers)(n.notchShows, home)) {
+    recordNotification({ title: n.title.replace(/[\r\n]+/g, ' '), body: n.body, link: n.historyLink ?? null, file: bundle, app }, home);
+    return 'notch';
+  }
   if ((deps.platform ?? process.platform) === 'darwin' && (deps.canNotify ?? runnerCanNotify)(bundle)) {
     const payload = JSON.stringify({ title: n.title, body: n.body, ...(n.sound ? { sound: n.sound } : {}) });
     if (await (deps.post ?? realRunnerPost)(join(bundle, 'Contents', 'MacOS', 'app-runner'), payload, home)) {

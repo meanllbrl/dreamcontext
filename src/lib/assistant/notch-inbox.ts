@@ -422,31 +422,12 @@ export function setAppMuted(projectRoot: string, slug: string, mute: boolean, ho
 
 // ─── Muted automations ──────────────────────────────────────────────────────────────
 
-/** `~/.dreamcontext/notch-muted.json` — `{ "<project root>": ["<slug>", …] }`, machine-local. */
-export function notchMutedPath(home: string = homedir()): string {
-  return join(home, '.dreamcontext', 'notch-muted.json');
-}
+// Path and reader live in `lib/notch-state.ts`: the automation runner and the thread announcer
+// read them too, without pulling this server-side module in.
+export { notchMutedPath, readMutedAutomations } from '../notch-state.js';
+import { notchMutedPath, readMutedAutomations } from '../notch-state.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
-
-/** Never throws: an unreadable file is "nothing muted" (over-notifying beats a silent miss). */
-export function readMutedAutomations(home: string = homedir()): Record<string, string[]> {
-  const p = notchMutedPath(home);
-  if (!existsSync(p)) return {};
-  try {
-    const raw: unknown = JSON.parse(readFileSync(p, 'utf-8'));
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    const out: Record<string, string[]> = {};
-    for (const [root, slugs] of Object.entries(raw as Record<string, unknown>)) {
-      if (!Array.isArray(slugs)) continue;
-      const ok = slugs.filter((s): s is string => typeof s === 'string' && SLUG_RE.test(s));
-      if (ok.length) out[root] = [...new Set(ok)];
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
 
 export function isAutomationMuted(projectRoot: string, slug: string, muted = readMutedAutomations()): boolean {
   return (muted[projectRoot] ?? []).includes(slug);

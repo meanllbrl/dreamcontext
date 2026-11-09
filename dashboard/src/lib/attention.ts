@@ -58,6 +58,10 @@ export interface AskAlarm {
   /** False when the server already posts this alarm's banner (a Super Agent question,
    *  `lib/super/owner-question.ts`): the chime and the bounce only. Default true. */
   banner?: boolean;
+  /** True when the notch draws this ask too (a chat's question or permission, a Super queue
+   *  head; not a terminal's prompt, which the notch never sees). The server then posts no
+   *  banner while the notch is on screen (owner, 2026-11-09: never twice). Default false. */
+  notch?: boolean;
 }
 
 /** Hidden vaults (`__assistant__`, the notch's own) are never a chip and never in the
@@ -145,12 +149,12 @@ function isAlarmChipOnScreen(source: string): boolean {
  * only when the server says it posted one; false on `posted: false` (no notifier on this Mac
  * yet) and on any failure, which is the caller's cue to fall back.
  */
-async function postRoutableBanner(title: string, body: string, link: string | null): Promise<boolean> {
+async function postRoutableBanner(title: string, body: string, link: string | null, notch: boolean): Promise<boolean> {
   try {
     const res = await fetch('/api/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(link ? { title, body, link } : { title, body }),
+      body: JSON.stringify({ title, body, ...(link ? { link } : {}), ...(notch ? { notch: true } : {}) }),
     });
     if (!res.ok) return false;
     const out = await res.json() as { posted?: unknown };
@@ -164,8 +168,8 @@ async function postRoutableBanner(title: string, body: string, link: string | nu
 /** Post the banner: routable through the server first (desktop only — the route is
  *  desktop-gated), then the Tauri plugin, then the browser's own Notification API for the
  *  dev/web build (where there is no Tauri to ask). */
-async function postBanner(title: string, body: string, link: string | null): Promise<void> {
-  if (isDesktop() && await postRoutableBanner(title, body, link)) return;
+async function postBanner(title: string, body: string, link: string | null, notch: boolean): Promise<void> {
+  if (isDesktop() && await postRoutableBanner(title, body, link, notch)) return;
   if (await sendDesktopNotification(title, body)) return;
   try {
     // WKWebView has no `window.Notification` until the Tauri plugin injects one, so this
@@ -205,5 +209,6 @@ export function raiseAskAttention(alarm: AskAlarm = {}): void {
     source ? `Claude is asking · ${oneLine(source)}` : 'Claude is asking',
     detail ? oneLine(detail) : 'A question is waiting for your answer.',
     askAlarmLink(alarm),
+    alarm.notch === true,
   );
 }

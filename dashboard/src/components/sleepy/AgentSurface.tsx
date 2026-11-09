@@ -4102,6 +4102,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     raiseAskAttention({
       // A banner the server posted for it (owner-question.ts) is not posted twice.
       banner: !(superBannered ?? []).includes(item.id),
+      // The notch's glance lists the queue head: an open notch takes it instead of a banner.
+      notch: true,
       source: vault,
       detail: item.kind === 'permission' ? t('super.queue.permissionAlarm')
         : item.kind === 'approval' ? t('super.queue.approval').replace('{name}', item.member ?? '')
