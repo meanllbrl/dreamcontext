@@ -48,6 +48,7 @@
   background: transparent; color: var(--color-accent); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
 }
 .mcb-new:hover { background: var(--color-bg-tertiary); }
+.mcb-own { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
 .mcb-link { padding: 0; border: 0; background: transparent; color: var(--color-accent); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
 .mcb-link:hover { text-decoration: underline; }
 .mcb-danger, .agent-btn--danger {

@@ -24,7 +24,6 @@ const FILES = [
   'components/agents/AgentsFeed.css',
   'components/agents/AgentsFeedFilters.css',
   'components/agents/AgentMemberCard.css',
-  'components/agents/AgentsMembers.css',
   // The AI Team page (2026-10-20), which replaced the Automations and Agents pages.
   'pages/AiTeamPage.css',
   'components/automations/AutomationsDispatcherBar.css',

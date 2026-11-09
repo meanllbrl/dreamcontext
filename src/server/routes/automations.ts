@@ -1555,6 +1555,12 @@ export async function handleAutomationsDelete(
       sendJson(res, 200, { ok: true, slug: params.slug });
       return;
     }
+    // An unsplit member's own manifest IS the member: deleting it here would skip the member
+    // delete's dry run, blockers, trash copy and Super retirement. That road is /agents/:slug/delete.
+    if (getAgent(contextRoot, params.slug)?.implicit) {
+      sendError(res, 409, 'member_own_manifest', 'This automation is the member itself. Delete the member from its stage instead.');
+      return;
+    }
     const boundTo = boundAgentOf(contextRoot, params.slug);
     // Remove + revoke, the one helper the member delete uses too (plan r4 F2). A split
     // automation: only ITS record goes; its agent stays, its own approval untouched. A registry

@@ -1215,6 +1215,18 @@ describe('automations bound to an agent (create picks an agent)', () => {
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout', 'agent')!, undefined, 'run').approved).toBe(true);
   });
 
+  it('refuses to delete an unsplit member own manifest here (409): that is the member delete road', async () => {
+    const { getAgent } = await import('../../src/lib/agents/store.js');
+    const { handleAutomationsDelete } = await import('../../src/server/routes/automations.js');
+    createAutomation(contextRoot, { slug: 'solo', title: 'Solo', prompt: 'Run solo.', days: 'daily', at: '07:00' }, { approve: { now: T } });
+    expect(getAgent(contextRoot, 'solo')?.implicit).toBe(true);
+    const d = makeRes();
+    await handleAutomationsDelete(makePostReqWithBody(), d.res, { slug: 'solo' }, contextRoot);
+    expect(d.status()).toBe(409);
+    expect(d.body().error).toBe('member_own_manifest');
+    expect(getAutomation(contextRoot, 'solo')).not.toBeNull();
+  });
+
   it('passes a job edit to a bound automation and re-approves it here; null clears it', async () => {
     const { createAgent, getAgent } = await import('../../src/lib/agents/store.js');
     const { getRunTarget } = await import('../../src/lib/automations/store.js');
