@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.13] - 2026-11-09
+
+Patch on 0.41.12: seven finished jobs built together. Local build; not published.
+
+- **Telegram bots keep their menu up to date.** Every start brings a bound bot's profile and command menu up to date, the Super's bot included.
+- **A member's bot has /dur and /durum.** The two commands stop or show only that member's own work.
+- **A page with its own light colours stays readable in dark mode.** It keeps its light canvas in both themes.
+- **Telegram speaks your language.** Every turn the server writes carries the line that tells the agent which language you use.
+- **The Super's own notes stay off Telegram.** A note-only event, such as its own permission notes, is no longer sent to your phone.
+- **A long command is no longer refused for its length.** The Super decides a child's permission on the whole command; a plain delete of scratch files in the temp folder needs no card.
+- **The Super has its own schedule.** Tell it "every day at 9, do this": `super schedule add|list|change|cancel`, with the answer on Telegram, on the Mac, or wherever you are. An automation's results, failures and questions can also come to Telegram through the Super's bot ("Sonuçlar Telegram'a da gelsin").
+
 ## [0.41.12] - 2026-11-09
 
 Patch on 0.41.11: seven finished jobs built together. Local build; not published.

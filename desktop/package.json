@@ -1,7 +1,7 @@
 {
   "name": "dreamcontext-desktop",
   "private": true,
-  "version": "0.41.12",
+  "version": "0.41.13",
   "scripts": {
     "tauri": "tauri"
   },
