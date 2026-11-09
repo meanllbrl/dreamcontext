@@ -1082,6 +1082,18 @@ export class TelegramHub implements TelegramHubApi {
     return id;
   }
 
+  /** The message a button record was sent on (`sendButtons`' id), or null. */
+  buttonMessageId(recId: string): number | null {
+    return this.buttons.get(recId)?.messageId ?? null;
+  }
+
+  /** The question on this message was answered elsewhere: its text says so and its buttons go
+   *  (an edit with no reply_markup removes the keyboard; every record bound to it dies). */
+  async closeAnswered(ab: ActiveBinding, messageId: number, html: string): Promise<boolean> {
+    for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
+    return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => true, () => false);
+  }
+
   /** A multi-select toggle (P4): the message's buttons re-drawn under a FRESH record bound to the
    *  same message and text; the records it replaces die. Only the hub edits its own messages. */
   async reissueButtons(ab: ActiveBinding, messageId: number, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<string | null> {

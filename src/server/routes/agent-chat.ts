@@ -5327,7 +5327,7 @@ export function startChatSession(
         response: { subtype: 'success', request_id: msg.requestId, response },
       });
       outstandingAsks.delete(msg.requestId);
-      registry?.answered(msg.requestId);
+      registry?.answered(msg.requestId, msg.behavior === 'allow' ? (msg.updatedInput as { answers?: unknown } | undefined)?.answers : undefined);
       return;
     }
 

@@ -27,6 +27,7 @@ import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { cardOut } from './cards.js';
+import type { PreviewShooter } from './page-shot.js';
 import { caption as pictureCaption, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
@@ -70,8 +71,26 @@ export function richAskFits(questions: readonly RichQuestion[]): boolean {
 
 export interface RichAsksDeps {
   snapshot: Snapshotter;
+  /** Headless renderer for an option's drawing when the window cannot draw it (`page-shot.ts`). */
+  shoot?: PreviewShooter;
   /** The bot's one next-text capture (shared with /gundem's Yaz, capture.ts). */
   capture: NextTextCapture;
+}
+
+export interface SentRichAsk { askId: string; messages: { messageId: number; html: string }[] }
+
+/** An option that carries a drawing says where it is, after its own note (owner 2026-11-09: an
+ *  option with only a preview showed nothing on Telegram). */
+export function withDrawingNotes(q: RichQuestion, qi: number, drawn: ReadonlySet<string>): RichQuestion {
+  if (!q.options.some((o) => o.preview?.trim())) return q;
+  return {
+    ...q,
+    options: q.options.map((o) => {
+      if (!o.preview?.trim()) return o;
+      const where = drawn.has(`${qi}:${o.label}`) ? 'çizimi yukarıda' : "çizimi Mac'te (Telegram'a çizilemedi)";
+      return { ...o, description: o.description?.trim() ? `${o.description.trim()} (${where})` : `${where[0].toUpperCase()}${where.slice(1)}.` };
+    }),
+  };
 }
 
 export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
@@ -85,26 +104,40 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return rows;
   }
 
-  async function sendQuestion(ab: ActiveBinding, a: RichAsk, qi: number, head: { title?: string; lead?: string }): Promise<void> {
+  async function sendQuestion(ab: ActiveBinding, a: RichAsk, qi: number, head: { title?: string; lead?: string }, drawn: ReadonlySet<string>): Promise<void> {
     const q = a.questions[qi];
     const n = a.questions.length > 1 ? ` (${qi + 1}/${a.questions.length})` : '';
-    const html = formatAskQuestionHtml(q, { ...head, suffix: n, footer: q.multiSelect ? '<i>Birden fazla seçebilirsin.</i>' : undefined });
-    await hub.sendButtons(ab, html, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
-    a.messages[qi] = { messageId: 0, html };
+    const html = formatAskQuestionHtml(withDrawingNotes(q, qi, drawn), { ...head, suffix: n, footer: q.multiSelect ? '<i>Birden fazla seçebilirsin.</i>' : undefined });
+    const rec = await hub.sendButtons(ab, html, keyboard(a, qi), { kind: 'confirm', singleUse: false }, { rich: a.id, q: qi });
+    a.messages[qi] = { messageId: hub.buttonMessageId(rec) ?? 0, html };
   }
 
-  /** Previews (option markup → pictures) and the ask's `--show` cards, before the buttons. */
-  async function sendAskPictures(ab: ActiveBinding, sessionId: string, questions: readonly RichQuestion[], itemId: string | null): Promise<void> {
+  /** One option's drawing as PNG: the Mac window's sealed renderer when it is open, else
+   *  headless Chromium (owner 2026-11-09: "çizim gözükmüyor"). Null = it could not be drawn. */
+  async function drawPreview(sessionId: string, preview: string): Promise<Buffer | null> {
+    const plan = dreamHtmlPage(preview);
+    if (!plan.ok) return null;
+    const pngs = await deps.snapshot(sessionId, plan.page, plan.width).catch(() => null);
+    if (pngs?.[0]) return pngs[0];
+    return deps.shoot ? deps.shoot(preview).catch(() => null) : null;
+  }
+
+  /** Option previews (always, as pictures) and, when pictures are allowed, the ask's `--show`
+   *  cards, before the buttons. Returns the `qi:label` keys whose drawing reached Telegram. */
+  async function sendAskPictures(ab: ActiveBinding, sessionId: string, questions: readonly RichQuestion[], itemId: string | null, showCards: boolean): Promise<Set<string>> {
     const items: MediaItem[] = [];
-    for (const q of questions) {
+    const keyOf = new Map<MediaItem, string>();
+    for (const [qi, q] of questions.entries()) {
       for (const o of q.options) {
-        if (!o.preview || items.length >= 10) continue;
-        const plan = dreamHtmlPage(o.preview);
-        const pngs = plan.ok ? await deps.snapshot(sessionId, plan.page, plan.width) : null;
-        if (pngs?.[0]) items.push({ kind: 'photo', file: pngFile(o.label, pngs[0]), title: o.label });
+        if (!o.preview?.trim() || items.length >= 10) continue;
+        const png = await drawPreview(sessionId, o.preview);
+        if (!png) continue;
+        const it: MediaItem = { kind: 'photo', file: pngFile(o.label, png), title: o.label };
+        items.push(it);
+        keyOf.set(it, `${qi}:${o.label}`);
       }
     }
-    if (itemId && ab.contextRoot) {
+    if (showCards && itemId && ab.contextRoot) {
       const s = await readSuperState(ab.contextRoot).catch(() => null);
       const show = s?.askShows?.find((x) => x.item === itemId);
       for (const id of show?.cards ?? []) {
@@ -120,16 +153,26 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
         } else await hub.reply(ab, out.line);
       }
     }
+    const drawn = new Set<string>();
+    if (!items.length) return drawn;
     const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
-    const { unsent } = await sendPictures(ab, items, caption);
-    if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
+    const { sent, unsent } = await sendPictures(ab, items, caption);
+    for (const m of sent) { const k = keyOf.get(m); if (k) drawn.add(k); }
+    // A drawing that did not go is said on its own option's line ("çizim Mac'te"); a --show card here.
+    const cards = unsent.filter((m) => !keyOf.has(m));
+    if (cards.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${cards.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
+    return drawn;
   }
 
-  /** Sends a rich ask. False = it does not fit (the caller says "Mac'te seni bekliyor"). */
-  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string }): Promise<boolean> {
+  /** Sends a rich ask: its messages (id + HTML, one per question), or false when it does not fit
+   *  (the caller says "Mac'te seni bekliyor"). Throws when a question message did not go. */
+  async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string }): Promise<false | SentRichAsk> {
     if (!richAskFits(questions)) return false;
-    const pictures = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secretPending(opts.sessionId);
-    if (pictures) await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null).catch(() => {});
+    // The ask's --show cards only in a live Telegram turn or streaming (N3); its option drawings
+    // always (they are part of the question), never while a secret is pending.
+    const secret = secretPending(opts.sessionId);
+    const cards = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secret;
+    const drawn = secret ? new Set<string>() : await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null, cards).catch(() => new Set<string>());
     const a: RichAsk = {
       id: randomBytes(6).toString('hex'), key: ab.key, target, questions,
       picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], done: false,
@@ -137,8 +180,14 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     asks.set(a.id, a);
     if (asks.size > 200) asks.delete(asks.keys().next().value as string);
     const head = { title: opts.title ? cleanTitle(opts.title, 120) : undefined, lead: opts.lead };
-    for (let i = 0; i < questions.length; i++) await sendQuestion(ab, a, i, i === 0 ? head : {});
-    return true;
+    for (let i = 0; i < questions.length; i++) await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
+    return { askId: a.id, messages: a.messages.slice() };
+  }
+
+  /** Answered elsewhere: the ask's buttons answer nothing more. */
+  function close(askId: string): void {
+    const a = asks.get(askId);
+    if (a) { a.done = true; asks.delete(askId); }
   }
 
   async function submit(ab: ActiveBinding, a: RichAsk, unclear: boolean): Promise<string | null> {
@@ -244,7 +293,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return true;
   }
 
-  return { send, onButton, takeNote, _asks: asks };
+  return { send, close, onButton, takeNote, _asks: asks };
 }
 
 export type RichAsks = ReturnType<typeof wireRichAsks>;

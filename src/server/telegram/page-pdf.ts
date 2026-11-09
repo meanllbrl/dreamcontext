@@ -155,7 +155,7 @@ export function chromiumArgs(dir: string, pageUrl: string, pdfPath: string): str
 }
 
 /** Serves `page` at one unguessable path on 127.0.0.1 (CSP header too); anything else is a 404. */
-function servePage(page: string): Promise<{ url: string; close: () => void }> {
+export function servePage(page: string): Promise<{ url: string; close: () => void }> {
   const path = `/${randomBytes(16).toString('hex')}.html`;
   const body = Buffer.from(page, 'utf8');
   const server = createServer((req, res) => {
@@ -173,7 +173,7 @@ function servePage(page: string): Promise<{ url: string; close: () => void }> {
   });
 }
 
-function runChromium(bin: string, args: string[], timeoutMs: number): Promise<boolean> {
+export function runChromium(bin: string, args: string[], timeoutMs: number): Promise<boolean> {
   return new Promise((done) => {
     let settled = false;
     const finish = (ok: boolean) => { if (!settled) { settled = true; clearTimeout(t); done(ok); } };

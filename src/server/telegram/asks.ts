@@ -1,13 +1,20 @@
 /**
  * The Super's questions to the owner, on its Telegram bot (plan "Answering", A4, M2, M6; P3).
  *
- *  - Queue heads (`owner-question.ts` announces them: the Super's own `ask`, a child's escalated
- *    or direct question, an AI Team approval, a job that needs him): sent once per item, through
- *    the `telegram` sink, beside the banner and the phone push (duplicate pings are intended).
- *    A single-question, single-select card becomes buttons; anything richer (multi-select,
- *    several questions, previews) says "Mac'te seni bekliyor" in W2 (rich asks are W5).
- *  - A child's PERMISSION (never a queue head): when a child of a bound Super starts asking one
- *    and its queue item is open, "İzin ver (bir kez)" / "Reddet".
+ *  - Every open item he answers (the Super's own ask, a child's escalated or direct question, an
+ *    AI Team approval, a job that needs him), head of his bar or not, goes once through the
+ *    `telegram` sink while he is away (`owner-question.ts` offers them; owner 2026-11-09: a
+ *    question behind another reached Telegram only on his next message). At the Mac: nothing
+ *    (`at_mac`), and the turn-away flush offers them then.
+ *  - Each send re-reads the record first: an item answered meanwhile is not sent. Its outcome is
+ *    reported back (`noteTelegramSend`), so `super ask` says what LANDED, and written to
+ *    `~/.dreamcontext/logs/telegram-asks.log`; a refused send is offered again later.
+ *  - One clean message per question: the card's title once, the job's name, the question, its
+ *    description, its option notes; an option's drawing as a picture (rich-asks.ts).
+ *  - Answered anywhere else (the Mac card, the Super's `answer`, another device), its Telegram
+ *    copy is edited to "✓ Cevaplandı: <seçim>" and its buttons go.
+ *  - A child's PERMISSION (never offered by the sink): when a child of a bound Super starts
+ *    asking one and its queue item is open, "İzin ver (bir kez)" / "Reddet".
  *
  * Answers:
  *  - the Super's own ask → owner text `superAnswerText(...)` injected under a fresh Telegram ref;
@@ -15,8 +22,10 @@
  *  - a child permission → `answerChildPermission` (the window's `super allow`, `by: 'owner'`).
  * Each through a single-use, message-bound button record (hub.sendButtons).
  */
-import { getChat, onChatChange, type ChatEntry } from '../../lib/assistant/chat-registry.js';
-import { announces, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
+import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { answerChildPermission, answerChildQuestion, superAnswerText } from '../../lib/super/answer.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
@@ -32,8 +41,15 @@ export function setRichAsks(r: RichAsks | null): void { rich = r; }
 
 type Obj = Record<string, unknown>;
 
-/** Items already sent to Telegram (per process): one message per item. */
+/** Items taken for Telegram (per process): one send at a time per item; a failed one is let go. */
 const sentItems = new Set<string>();
+
+/** What an item's Telegram copy is: its messages, so an answer elsewhere can close them. */
+interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; messages: { messageId: number; html: string; question?: string }[] }
+const copies = new Map<string, Copy>();
+const COPIES_CAP = 200;
+
+type SendOutcome = { ok: true } | { ok: false; why: string; retryAfterS?: number } | { skipped: true };
 
 /** The one card a W2 message can carry as buttons: one question, single-select, 1-8 options. */
 function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; labels: string[]; card: AskCardQuestion } | null {
@@ -44,43 +60,109 @@ function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; 
   return { question: qs[0].question, labels: qs[0].options.map((o) => o.label), card: qs[0] };
 }
 
-/** One queue item to its bot, once. False when it did not go (nothing recorded as sent). */
+/** One line per send to `~/.dreamcontext/logs/telegram-asks.log` (the server's stdout is
+ *  /dev/null in the app: without this a lost question leaves no trace). Rotated at 512 KB. */
+function logSend(hub: TelegramHub, item: SuperQueueItem, outcome: SendOutcome): void {
+  try {
+    const dir = join(hub.home, '.dreamcontext', 'logs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = join(dir, 'telegram-asks.log');
+    try { if (statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`); } catch { /* none yet */ }
+    const what = 'skipped' in outcome ? 'skipped (answered before it went)' : outcome.ok ? 'sent' : `FAILED ${outcome.why}`;
+    appendFileSync(file, `${new Date().toISOString()} ${item.id} ${item.kind} ${what}\n`, { mode: 0o600 });
+  } catch { /* the log never breaks a send */ }
+}
+
+function failure(err: unknown): string {
+  return redactSecrets(String((err as Error)?.message ?? err ?? 'unknown')).replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/** One queue item to its bot, once at a time. True = taken (the outcome is reported later). */
 function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item: SuperQueueItem): boolean {
   if (sentItems.has(item.id)) return true;
   sentItems.add(item.id);
   // The Super's own ask that LANDS is its turn speaking (no "göndermeden bitti" after it); sent
   // in line with its texts. A child's item or an approval is not the Super's turn speaking.
-  hub.queueSend(sessionId, () => sendItem(hub, ab, sessionId, item).then(
-    (landed) => item.kind === 'ask' && landed,
-    () => { sentItems.delete(item.id); return false; },
-  ));
+  hub.queueSend(sessionId, async () => {
+    let outcome: SendOutcome;
+    try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) {
+      const retry = (err as { retryAfter?: unknown })?.retryAfter;
+      outcome = { ok: false, why: failure(err), ...(typeof retry === 'number' && retry > 0 ? { retryAfterS: retry } : {}) };
+    }
+    // Not sent (refused, or closed before it went): let go, so a later offer is a real send.
+    if ('skipped' in outcome || !outcome.ok) sentItems.delete(item.id);
+    logSend(hub, item, outcome);
+    noteTelegramSend(item.id, outcome);
+    // Answered while it was going: close it at once.
+    if ('ok' in outcome && outcome.ok && !(await stillOpen(ab, item))) await closeCopy(hub, item.id, null);
+    return item.kind === 'ask' && 'ok' in outcome && outcome.ok;
+  });
   return true;
+}
+
+/** Is this item still the owner's to answer (its record open; a child's question still asked)? */
+async function stillOpen(ab: ActiveBinding, item: SuperQueueItem): Promise<boolean> {
+  if (!ab.contextRoot) return false;
+  const s = await readSuperState(ab.contextRoot).catch(() => null);
+  const now = s?.queue.find((q) => q.id === item.id);
+  if (!s?.enabled || !now || !announces(now)) return false;
+  if (now.kind === 'question') {
+    const pq = pendingRequest(getChat(now.sessionId), now.requestId);
+    return !!pq && !pq.isPermission;
+  }
+  return true;
+}
+
+function remember(itemId: string, copy: Copy): void {
+  copies.delete(itemId);
+  copies.set(itemId, copy);
+  while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
+}
+
+/** Answered elsewhere: each message of its copy says so, with the pick when known, buttons gone. */
+async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<string, string> | null): Promise<void> {
+  const c = copies.get(itemId);
+  if (!c) return;
+  copies.delete(itemId);
+  if (c.askId) rich?.close(c.askId);
+  const all = answers ? Object.values(answers).join(' · ') : '';
+  for (const m of c.messages) {
+    if (!m.messageId) continue;
+    const pick = answers && m.question ? answers[m.question] ?? '' : c.messages.length === 1 ? all : '';
+    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n<b>✓ Cevaplandı${pick ? `: ${escapeHtml(redactSecrets(pick).slice(0, 300))}` : ''}</b>`);
+  }
 }
 
 export function wireTelegramAsks(hub: TelegramHub): () => void {
   setOwnerQuestionSinks({
-    // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: false, nothing recorded,
+    // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: `at_mac`, nothing taken,
     // so the turn-away flush below sends it once he is away.
     telegram: ({ vault, sessionId, item }) => {
       const ab = hub.superBindingOfVault(vault);
-      if (!ab || !hub.ownerAway()) return false;
+      if (!ab) return 'no_bot';
+      if (!hub.ownerAway()) return 'at_mac';
       return offerItem(hub, ab, sessionId, item);
     },
+    telegramClosed: ({ id }) => { void closeCopy(hub, id, null).catch(() => {}); },
   });
   const off = onChatChange((c) => { void onChildAsking(hub, c.entry).catch(() => {}); });
-  // He turned away: every question and child permission still open on this Super, oldest first.
+  // A child's question answered through its window (Mac card, `super answer`, a tap): its pick.
+  const offAnswered = onRequestAnswered((a) => {
+    for (const [id, c] of copies) {
+      if (c.sessionId === a.sessionId && c.requestId === a.requestId) { void closeCopy(hub, id, a.answers).catch(() => {}); break; }
+    }
+  });
+  // He turned away: every question still open on this Super goes (oldest first), each once; and
+  // every child permission still open.
   const flush = async (ab: ActiveBinding): Promise<void> => {
     if (!ab.contextRoot || !hub.ownerAway()) return;
     const s = await readSuperState(ab.contextRoot);
     if (!s.enabled || !s.session) return;
-    const open = [...s.queue].sort((a, b) => a.createdAt - b.createdAt);
-    for (const q of open) {
-      if (q.kind === 'permission') {
-        const child = q.state !== 'done' ? getChat(q.sessionId) : null;
-        if (child) await onChildAsking(hub, child).catch(() => {});
-        continue;
-      }
-      if (announces(q)) offerItem(hub, ab, s.session, q);
+    offerOwnerItemsToTelegram(ab.projectName, s);
+    for (const q of [...s.queue].sort((a, b) => a.createdAt - b.createdAt)) {
+      if (q.kind !== 'permission') continue;
+      const child = q.state !== 'done' ? getChat(q.sessionId) : null;
+      if (child) await onChildAsking(hub, child).catch(() => {});
     }
   };
   hub.awayFlushers.add(flush);
@@ -88,52 +170,87 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   hub.extraButton = async (ab, rec, idx) => (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
     ? onQueueButton(hub, ab, rec, idx)
     : prev ? prev(ab, rec, idx) : LINES.stale;
-  return () => { off(); hub.awayFlushers.delete(flush); setOwnerQuestionSinks({ telegram: () => false }); hub.extraButton = prev; };
+  return () => {
+    off(); offAnswered(); hub.awayFlushers.delete(flush);
+    setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
+    hub.extraButton = prev;
+  };
 }
 
-/** Sends one queue item. For the Super's own ask: true only when a message of it LANDED on
- *  Telegram (a swallowed failure is nothing landed); every other kind answers false. */
-async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<boolean> {
+/** One message with buttons; its message id kept for the copy. */
+async function buttons(hub: TelegramHub, ab: ActiveBinding, html: string, labels: string[], rec: Parameters<TelegramHub['sendButtons']>[3], data: Obj): Promise<{ messageId: number; html: string }> {
+  const id = await hub.sendButtons(ab, html, labels.map((l) => [l.slice(0, 60)]), rec, data);
+  return { messageId: hub.buttonMessageId(id) ?? 0, html };
+}
+
+/** Plain messages (answered on the Mac): every one must land, else it is a failure. */
+async function plain(hub: TelegramHub, ab: ActiveBinding, htmls: string[]): Promise<{ messageId: number; html: string }[]> {
+  const out: { messageId: number; html: string }[] = [];
+  for (const html of htmls) {
+    const sent = await hub.send(ab, html);
+    out.push({ messageId: Number(sent?.message_id) || 0, html });
+  }
+  return out;
+}
+
+/**
+ * Sends one queue item, if it is still open. Throws (or answers `ok: false`) when Telegram did
+ * not take it; `skipped` when it closed before it went (owner 2026-11-09: a card arrived a minute
+ * after the Super had answered it).
+ */
+async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<SendOutcome> {
+  if (!(await stillOpen(ab, item))) return { skipped: true };
   if (item.kind === 'ask') {
     const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
     const card = simpleCard(spec);
     if (card) {
-      await hub.sendButtons(ab, formatAskQuestionHtml(card.card, { title: spec.title }), card.labels.map((l) => [l.slice(0, 60)]),
+      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: spec.title }), card.labels,
         { kind: 'question', requestId: item.id, sessionId: superSession, singleUse: true },
         { queue: true, item: item.id, itemKind: 'ask', session: superSession, question: card.question, labels: card.labels, questions: spec.questions });
-      return true;
+      remember(item.id, { ab, messages: [{ ...m, question: card.question }] });
+      return { ok: true };
     }
-    if (rich && await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }).catch(() => false)) return true;
-    const landed = (html: string) => hub.send(ab, html).then(() => true, () => false);
-    if (spec.questions.length) {
-      let any = false;
-      for (const html of formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })) any = (await landed(html)) || any;
-      return any;
+    const r = rich ? await rich.send(ab, { kind: 'super-ask', item }, richQuestionsOf(spec.questions), { title: spec.title, sessionId: superSession, itemId: item.id }) : false;
+    if (r) {
+      remember(item.id, { ab, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
+      return { ok: true };
     }
-    return landed(escapeHtml(`❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`));
+    const htmls = spec.questions.length
+      ? formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })
+      : [escapeHtml(`❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`)];
+    remember(item.id, { ab, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
+    return { ok: true };
   }
   if (item.kind === 'question') {
-    const pq = getChat(item.sessionId)?.pendingQuestion;
-    const qs = pq && !pq.isPermission && pq.requestId === item.requestId ? pq.questions ?? [] : [];
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    const qs = pq && !pq.isPermission ? pq.questions ?? [] : [];
+    if (!qs.length || !item.requestId) return { skipped: true };
+    // Who asks: the job's name, once (never `ownerText`, which already joins every question).
+    const s = ab.contextRoot ? await readSuperState(ab.contextRoot).catch(() => null) : null;
+    const job = s?.children?.[item.sessionId]?.brief?.trim();
+    const lead = job ? `${job.slice(0, 80)} soruyor` : undefined;
+    const base = { ab, sessionId: item.sessionId, requestId: item.requestId };
     const card = simpleCard({ questions: qs as SuperAskSpec['questions'] });
-    if (card && item.requestId) {
-      await hub.sendButtons(ab, formatAskQuestionHtml(card.card, { title: pq?.title, lead: item.ownerText }), card.labels.map((l) => [l.slice(0, 60)]),
+    if (card) {
+      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: pq?.title, lead }), card.labels,
         { kind: 'question', requestId: item.requestId, sessionId: item.sessionId, singleUse: true },
         { queue: true, item: item.id, itemKind: 'question', question: card.question, labels: card.labels, questions: qs });
-      return false;
+      remember(item.id, { ...base, messages: [{ ...m, question: card.question }] });
+      return { ok: true };
     }
-    if (rich && item.requestId && qs.length && await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title ?? item.ownerText, lead: pq?.title ? item.ownerText : undefined, sessionId: superSession, itemId: item.id }).catch(() => false)) return false;
-    if (qs.length) {
-      for (const html of formatAskCardMessages(qs, { title: pq?.title, lead: item.ownerText, footer: escapeHtml(LINES.waitingOnMac) })) await hub.send(ab, html).catch(() => {});
-      return false;
+    const r = rich ? await rich.send(ab, { kind: 'child-question', item: item.id, requestId: item.requestId }, richQuestionsOf(qs), { title: pq?.title, lead, sessionId: superSession, itemId: item.id }) : false;
+    if (r) {
+      remember(item.id, { ...base, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: qs[i]?.question })) });
+      return { ok: true };
     }
-    await hub.reply(ab, `❓ ${redactSecrets(item.ownerText ?? pq?.text ?? 'Bir iş soru soruyor')}\n${LINES.waitingOnMac}`);
-    return false;
+    const htmls = formatAskCardMessages(qs, { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
+    remember(item.id, { ...base, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: qs[i]?.question })) });
+    return { ok: true };
   }
   // Approvals (G1) and jobs that need him: shown, answered on the Mac in W2.
   const line = item.kind === 'approval' ? `✋ Onay bekliyor: ${item.member ?? 'ekip üyesi'}` : `✋ ${item.ownerText ?? 'Bir iş seni bekliyor'}`;
-  await hub.reply(ab, `${redactSecrets(line)}\n${LINES.waitingOnMac}`);
-  return false;
+  remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`${redactSecrets(line)}\n${LINES.waitingOnMac}`)]) });
+  return { ok: true };
 }
 
 /** A child of a bound Super starts asking a permission: buttons, once per request (A4). */
@@ -193,4 +310,4 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
 }
 
 /** Test seam. */
-export function _resetTelegramAsks(): void { sentItems.clear(); }
+export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); }

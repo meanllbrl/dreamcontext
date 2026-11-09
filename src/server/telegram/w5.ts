@@ -15,6 +15,7 @@ import { wirePresenter, type PhoneLink, type PresenterDeps } from './present.js'
 import { richQuestionsOf, wireRichAsks } from './rich-asks.js';
 import { insightRenderer } from './insight-render.js';
 import { NextTextCapture } from './capture.js';
+import { shootPreviewPng, type PreviewShooter } from './page-shot.js';
 
 /** What W5 reads of the live hands-free session (`macSession()`). */
 export interface W5Session {
@@ -26,6 +27,8 @@ export interface W5Session {
 
 export interface W5Deps {
   snapshot?: Snapshotter;
+  /** An option drawing without the Mac window (headless Chromium); tests pass a fake. */
+  shoot?: PreviewShooter;
   session?: () => W5Session | null;
   renderInsight?: PresenterDeps['renderInsight'];
   settleMs?: number;
@@ -56,7 +59,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
   // ONE next-text capture per bot for Yaz and Not ekle (capture.ts).
   const capture = new NextTextCapture(() => hub.now());
   const offCommands = wireCommands(hub, { ...deps.commands, capture });
-  const rich = wireRichAsks(hub, { snapshot, capture });
+  const rich = wireRichAsks(hub, { snapshot, capture, shoot: deps.shoot ?? shootPreviewPng });
   setRichAsks(rich);
 
   const prevExtras = hub.answerExtras;
@@ -64,7 +67,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
   const prevIntercept = hub.interceptText;
   hub.interceptText = async (ab, msg) => (await rich.takeNote(ab, msg)) || (prevIntercept ? prevIntercept(ab, msg) : false);
   const prevRich = hub.richQuestion;
-  hub.richQuestion = async (ab, sid, q) => (!q.isPermission && await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { title: q.title, sessionId: sid }))
+  hub.richQuestion = async (ab, sid, q) => (!q.isPermission && !!await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { title: q.title, sessionId: sid }))
     || (prevRich ? prevRich(ab, sid, q) : false);
 
   const prevButton = hub.extraButton;
