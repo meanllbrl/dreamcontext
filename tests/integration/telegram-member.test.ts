@@ -12,6 +12,7 @@ import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
 import { TelegramHub } from '../../src/server/telegram/hub.js';
 import { memberAdapter } from '../../src/server/telegram/member.js';
 import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
+import { telegramReactionNotes } from '../../src/lib/telegram/reactions.js';
 import type { ThreadEntry } from '../../src/lib/automations/types.js';
 
 const TOKEN = '222222:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
@@ -47,7 +48,7 @@ beforeEach(async () => {
   await hub.confirmPairing(start.pairingId, { botId: 222222, userId: OWNER });
   await drained();
 });
-afterEach(async () => { await hub.stop(); rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { await hub.stop(); telegramReactionNotes.clear(); rmSync(home, { recursive: true, force: true }); });
 
 describe('a member bot', () => {
   it('a message is a job in the member\'s thread via telegram; its posts come back until the run ends', async () => {
@@ -70,6 +71,24 @@ describe('a member bot', () => {
     await vi.waitFor(() => expect(tg.texts()).toContain('ua-manager şu an meşgul, bitince yazacağım.'));
     await vi.waitFor(() => expect(says).toHaveLength(3));
     expect(tg.texts().filter((t) => t.includes('meşgul'))).toHaveLength(1);
+  });
+
+  it('a reaction on its message is a note in front of his next message, never a job of its own', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'rapor ver'));
+    await vi.waitFor(() => expect(says).toHaveLength(1));
+    run = [entry('ask', 'user', 'rapor ver'), entry('a1', 'agent', 'ROAS 1.4, bütçe yerinde.'), entry('s1', 'system', '', 'ok')];
+    await vi.waitFor(() => expect(tg.texts()).toContain('ROAS 1.4, bütçe yerinde.'));
+    const mid = tg.sent().find((c) => String(c.params.text).includes('ROAS 1.4'))!.result!.message_id;
+    tg.push(TOKEN, { message_reaction: { chat: { id: OWNER, type: 'private' }, message_id: mid, user: { id: OWNER }, new_reaction: [{ type: 'emoji', emoji: '👍' }] } });
+    tg.push(TOKEN, { message_reaction: { chat: { id: 555, type: 'private' }, message_id: mid, user: { id: 555 }, new_reaction: [{ type: 'emoji', emoji: '👎' }] } });
+    await vi.waitFor(() => expect(hub.strangers.total).toBe(1));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(says).toHaveLength(1);
+    tg.push(TOKEN, textUpdate(OWNER, 'yarın da bak'));
+    await vi.waitFor(() => expect(says).toHaveLength(2));
+    expect(says[1].text).toMatch(/^\[telegram reaction\] 👍 on: "ROAS 1\.4, bütçe yerinde\."\n\(A `\[telegram reaction\]` line/);
+    expect(says[1].text.endsWith('\n\nyarın da bak')).toBe(true);
+    expect(says[1].text).not.toContain('👎');
   });
 
   it('a command is not forwarded', async () => {

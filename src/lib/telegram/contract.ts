@@ -28,8 +28,9 @@ export const TG_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const TG_LONG_POLL_TIMEOUT_S = 50;
 /** A poll gap longer than this (wall clock vs monotonic) means the Mac slept: drain, never process (H10, I5). */
 export const TG_WAKE_GAP_MS = 2 * TG_LONG_POLL_TIMEOUT_S * 1000;
-/** Updates the hub asks for. The manager adds `managed_bot` (X2). */
-export const TG_ALLOWED_UPDATES = ['message', 'callback_query'] as const;
+/** Updates the hub asks for. The manager adds `managed_bot` (X2). `message_reaction` must be
+ *  named explicitly or Telegram never sends it (owner 2026-11-09: a reaction is a note). */
+export const TG_ALLOWED_UPDATES = ['message', 'callback_query', 'message_reaction'] as const;
 export const TG_MANAGER_ALLOWED_UPDATES = ['managed_bot', 'message'] as const;
 
 // ─── Identity, scope, target, token ─────────────────────────────────────────

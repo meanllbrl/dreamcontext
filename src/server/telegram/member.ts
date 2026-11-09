@@ -17,6 +17,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { readThreadRun } from '../../lib/automations/threads.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
+import { takeMemberReactionText } from '../../lib/telegram/reactions.js';
 import { sayToAgent } from '../routes/automations.js';
 import type { UpdateDisposition } from '../../lib/telegram/poller.js';
 import type { ActiveBinding, BindingKey, HubMember, TelegramHub } from './hub.js';
@@ -80,6 +81,9 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
         let text = inboundTurnText(msg, paths);
         if (spoken) text = `🎙 ${spoken}${text ? `\n\n${text}` : ''}`;
         if (!text.trim()) return;
+        // His reactions on this bot's messages since (reactions.ts): notes in front, never his words.
+        const reacted = takeMemberReactionText(ab.key, hub.now());
+        if (reacted) text = `${reacted}\n\n${text}`;
         await sendToMember(hub, ab, root, text, { say, readRun, watchEveryMs: deps.watchEveryMs ?? WATCH_EVERY_MS, retryEveryMs: deps.retryEveryMs ?? RETRY_EVERY_MS });
       })().catch(() => { void hub.reply(ab, 'Mesajın üyeye ulaşmadı, tekrar gönder.'); });
       return 'accepted';

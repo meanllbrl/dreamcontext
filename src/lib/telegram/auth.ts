@@ -23,6 +23,9 @@ export interface TgUpdateLike {
   update_id: number;
   message?: TgMessageLike;
   callback_query?: { id: string; from?: TgFrom; data?: string; message?: TgMessageLike };
+  /** A reaction change (`message_reaction`): `user` is who reacted; an anonymous reaction
+   *  (`actor_chat`, no `user`) has no sender and never passes the gate. */
+  message_reaction?: { chat?: TgChat; message_id?: number; user?: TgFrom; actor_chat?: TgChat };
 }
 
 /** The paired identity the gate checks against. */
@@ -32,6 +35,7 @@ export interface PairedIdentity { chatId: number; userId: number }
 export function senderOf(update: TgUpdateLike): { from: TgFrom | null; chat: TgChat | null } {
   if (update.message) return { from: update.message.from ?? null, chat: update.message.chat ?? null };
   if (update.callback_query) return { from: update.callback_query.from ?? null, chat: update.callback_query.message?.chat ?? null };
+  if (update.message_reaction) return { from: update.message_reaction.user ?? null, chat: update.message_reaction.chat ?? null };
   return { from: null, chat: null };
 }
 
