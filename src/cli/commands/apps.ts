@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, bundleRunning, resolveProject, runHeader, type ProjectRef } from '../../lib/apps/client.js';
-import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
+import { runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
 import { iconIssue, iconShapeWarnings, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
 import { readmeSkeleton, storeWarnings } from '../../lib/apps/store-readme.js';
 import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, checkToolInput, effectOf, toolTimeoutSec, type AppManifest } from '../../lib/apps/manifest.js';
@@ -477,7 +477,7 @@ export function registerAppsCommand(program: Command): void {
         const rec = getApp(homedir(), p.projectRoot, slug);
         if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
         // No window, no picture: never open one for this (and never start dreamcontext for it).
-        if (!bundleRunning(runnerBundleId(appHash(rec.projectRoot, rec.slug)))) {
+        if (!bundleRunning(runnerBundleId(rec.hash))) {
           throw new AppsClientError('app_not_open', `The app window is not open. Open it with: dreamcontext apps open ${slug}`);
         }
         let r: Record<string, unknown>;

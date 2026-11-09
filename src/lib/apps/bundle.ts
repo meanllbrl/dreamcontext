@@ -41,6 +41,7 @@ import { decodePng, maskToTile } from './png.js';
 export const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
 const STAMP_FILE = 'dreamcontext-bundle.stamp';
+const APP_HASH_RE = /^[0-9a-f]{16}$/;
 const LSREGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
 
@@ -84,6 +85,12 @@ export function plistEscape(s: string): string {
 
 export interface BundleInput {
   home?: string;
+  /**
+   * The app's REGISTERED hash (`AppRecord.hash`), never recomputed here: an installed app's hash
+   * carries its installId, so `appHash(projectRoot, slug)` names another app. Recomputing it built
+   * an installed app's bundle under a name Open never looks for (2026-11-09: Open did nothing).
+   */
+  hash: string;
   projectRoot: string;
   vault: string;
   slug: string;
@@ -204,7 +211,7 @@ const DEFAULT_ICON_STAMP = 'default-letter-1';
 
 function bundleParts(input: BundleInput): { name: string; plist: string; infoJson: string; iconSrc: string | null; stamp: string } {
   const name = cleanDisplayName(input.name);
-  const bundleId = runnerBundleId(appHash(input.projectRoot, input.slug));
+  const bundleId = runnerBundleId(input.hash);
   const iconSrc = input.iconPath && existsSync(input.iconPath) ? input.iconPath : null;
   const infoJson = renderBundleInfo({ projectRoot: input.projectRoot, vault: input.vault, slug: input.slug, name, appBundleId: input.appBundleId });
   const plist = renderInfoPlist({ bundleId, name, version: input.version ?? '1.0' });
@@ -250,7 +257,7 @@ export function shouldRefreshIdleBundle(s: { bundleExists: boolean; stale: boole
 /** Would `ensureAppBundle` rebuild? True when the bundle is missing or anything in it changed. */
 export function bundleIsStale(input: BundleInput): boolean {
   try {
-    const path = appBundlePath(input.home ?? homedir(), input.slug, appHash(input.projectRoot, input.slug));
+    const path = appBundlePath(input.home ?? homedir(), input.slug, input.hash);
     return readFileSync(join(path, 'Contents', 'Resources', STAMP_FILE), 'utf-8').trim() !== bundleParts(input).stamp;
   } catch {
     return true;
@@ -293,7 +300,8 @@ export function ensureAppBundle(input: BundleInput, deps: BundleDeps = {}): Bund
   if (!input.runnerPath || !existsSync(input.runnerPath)) {
     return { ok: false, reason: 'app-runner not found: update the dreamcontext app (DREAMCONTEXT_APP_RUNNER is unset)' };
   }
-  const hash = appHash(input.projectRoot, input.slug);
+  if (!APP_HASH_RE.test(input.hash)) return { ok: false, reason: 'bad app hash' };
+  const hash = input.hash;
   const bundleId = runnerBundleId(hash);
   const dir = appsBundleDir(home);
   const finalPath = appBundlePath(home, input.slug, hash);
