@@ -74,6 +74,13 @@ describe('the Super head keeps Add a card, New session and Turn off in a ⋯ men
     expect(menu.match(/role="menuitem"/g)?.length).toBe(4);
   });
 
+  it('a member\'s stage gets the same Telegram row, bound to that member (owner 2026-11-09)', () => {
+    expect(menu).toContain("const tgTarget = member ? member.slug : onTurnOff ? 'super' : null;");
+    expect(menu).toContain("<TelegramBindSheet target={tgTarget ?? 'super'} name={member ? member.name : null}");
+    expect(head).toContain('member={telegramMember}');
+    expect(surface).toMatch(/memberAgent\.readOnly !== true/);
+  });
+
   it('it asks nothing through a browser dialog (a silent no-op in the desktop app)', () => {
     const code = menu.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(code).not.toMatch(/\b(confirm|alert|prompt)\(/);

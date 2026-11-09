@@ -27,7 +27,7 @@ import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
-import { useAgents, useOwnerInbox } from '../../../hooks/useAgents';
+import { findAgent, useAgents, useOwnerInbox } from '../../../hooks/useAgents';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
@@ -166,7 +166,7 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
  * Super dock both draw it; the dock passes no agenda (the agenda is a stage card), no Turn off and
  * no Add. A mini chat (a presentation's) keeps only Add in its ⋯.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who, telegramMember }: {
   chat: string;
   /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
   who?: ReactNode;
@@ -180,6 +180,8 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
   /** Opens the stage's add menu under the ⋯ (absent: this head opens no card). */
   onAdd?: (anchor: HTMLElement) => void;
   actions?: ReactNode;
+  /** A member's stage: the ⋯ offers its own Telegram bind (absent for a read-only teammate's member). */
+  telegramMember?: { slug: string; name: string };
 }) {
   const { t } = useI18n();
   const column = chat === 'column';
@@ -194,11 +196,12 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
       {column && agenda}
       {/* A chat folded to the bar hides its head: the ⋯ unmounts with it, so no menu stays open
           (and keeps the arrow keys) out of sight. */}
-      {chat !== 'bar' && (column || onAdd) && (
+      {chat !== 'bar' && (column || onAdd || telegramMember) && (
         <SuperHeadMenu
           fresh={!column || noNewSession ? undefined : { pending, onPress: onNewSession }}
           onTurnOff={column ? onTurnOff : undefined}
           onAdd={onAdd}
+          member={telegramMember}
         />
       )}
       {actions}
@@ -243,6 +246,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const slotsChangedRef = useRef(onSlotsChanged);
   slotsChangedRef.current = onSlotsChanged;
   const hasMember = !!member;
+  // Same rule as the member's Profile: a teammate's (read-only) member has no Telegram bind here.
+  const memberAgents = useAgents({ enabled: hasMember }).data;
+  const memberAgent = member ? findAgent(memberAgents, member.slug) : undefined;
+  const memberTelegram = member && memberAgent && memberAgent.readOnly !== true
+    ? { slug: member.slug, name: memberAgent.title || member.slug } : undefined;
   useEffect(() => {
     const el = memberTopRef.current;
     if (!hasMember || !el || typeof ResizeObserver === 'undefined') return undefined;
@@ -1108,6 +1116,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-clip">
             <SuperCentreHead
               chat={plan.chat}
+              telegramMember={memberTelegram}
               who={member ? <MemberStageHead info={member} spawn={member.spawn} /> : undefined}
               agenda={(
                 <>

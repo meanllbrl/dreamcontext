@@ -21,31 +21,36 @@ import { TelegramBindSheet } from '../../telegram/TelegramBindSheet';
  *
  * Telegram (plan U, owner 2026-11-08) sits between New session and the rule: "Telegram'a bağla"
  * opens the bind sheet; bound, the row reads "Telegram", a green dot and the bot's @name and opens
- * the connected view. Only where Turn off is (the desktop stage's own head).
+ * the connected view. On the desktop stage's own head (Turn off) and on a member's stage (owner
+ * 2026-11-09: it could not be found anywhere but the Profile), bound to that member.
  */
-export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
+export function SuperHeadMenu({ fresh, onTurnOff, onAdd, member }: {
   /** Absent: this head starts no session (a remote screen). */
   fresh?: { pending: boolean; onPress: () => Promise<boolean> };
   /** Absent: this head cannot turn the Super Agent off (a remote screen, the dock, a member). */
   onTurnOff?: () => void;
   /** Absent: this head opens no card (a remote screen, the dock). Given the ⋯ to anchor under. */
   onAdd?: (anchor: HTMLElement) => void;
+  /** A member's own stage: its ⋯ gets the same Telegram row, bound to this member (absent: a
+   *  teammate's read-only member, which has no bind here, as in its Profile). */
+  member?: { slug: string; name: string };
 }) {
   const { t } = useI18n();
+  const tgTarget = member ? member.slug : onTurnOff ? 'super' : null;
   const [open, setOpen] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [telegram, setTelegram] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const tgStatus = useTelegramStatus({ enabled: !!onTurnOff });
-  const tgRow = rowOf(tgStatus.data, 'super');
+  const tgStatus = useTelegramStatus({ enabled: !!tgTarget });
+  const tgRow = tgTarget ? rowOf(tgStatus.data, tgTarget) : undefined;
   const tgBound = tgRow?.state === 'active' ? tgRow.botUsername : null;
   useEffect(() => {
     if (!error) return;
     const timer = setTimeout(() => setError(null), 6_000);
     return () => clearTimeout(timer);
   }, [error]);
-  if (!fresh && !onTurnOff && !onAdd) return null;
+  if (!fresh && !onTurnOff && !onAdd && !tgTarget) return null;
 
   const busy = !!fresh && (fresh.pending || posting);
   const toggleEl = () => wrapRef.current?.querySelector<HTMLButtonElement>('[data-testid="super-head-more"]') ?? null;
@@ -88,10 +93,10 @@ export function SuperHeadMenu({ fresh, onTurnOff, onAdd }: {
           fresh={fresh ? { busy, onPress: pressFresh } : undefined}
           onTurnOff={onTurnOff ? pressOff : undefined}
           onAdd={onAdd ? pressAdd : undefined}
-          telegram={onTurnOff ? { bound: tgBound, onPress: pressTelegram } : undefined}
+          telegram={tgTarget ? { bound: tgBound, onPress: pressTelegram } : undefined}
         />
       )}
-      {telegram && <TelegramBindSheet target="super" name={null} onClose={() => setTelegram(false)} />}
+      {telegram && tgTarget && <TelegramBindSheet target={tgTarget ?? 'super'} name={member ? member.name : null} onClose={() => setTelegram(false)} />}
     </div>
   );
 }
