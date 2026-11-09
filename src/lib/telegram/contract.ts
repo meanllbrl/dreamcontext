@@ -516,6 +516,8 @@ export interface StartedVia { scope: TelegramScope; target: TelegramTarget; auto
 /** `MacSession` emits these (W2 lane B). Streaming is DERIVED: `isOn() && startedVia` names the
  *  binding, evaluated per message (E3); there is no stored flag. */
 export type HandsfreeEvent =
+  /** A run is on (automatic or by hand): the owner is away, Super questions go out (`hub.flushAway`). */
+  | { type: 'started'; channel: HandsfreeChannel; startedVia?: StartedVia }
   | { type: 'ended'; channel: HandsfreeChannel; reason: string; keyed: boolean; startedVia?: StartedVia }
   | { type: 'batteryFloor'; startedVia?: StartedVia }
   | { type: 'heat'; level: string; startedVia?: StartedVia }

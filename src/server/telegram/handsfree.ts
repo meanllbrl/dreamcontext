@@ -122,6 +122,11 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
       return s.isOn() && matches(s.startedVia, scope, target);
     },
 
+    /** Any run on, however it started: the owner is away (`hub.ownerAway`). */
+    isOn() {
+      return session().isOn();
+    },
+
     async onCommand(hub: TelegramHub, key: BindingKey, update: Record<string, unknown>) {
       const ab = hub.active.get(key);
       const text = String((update.message as { text?: unknown } | undefined)?.text ?? '').trim();
@@ -170,6 +175,9 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
 
     wire(hub: TelegramHub) {
       return session().onEvent((e) => {
+        // A run started (by hand from the Mac panel or the phone link too): he is away now, so
+        // every Super question and permission still open goes to its bot, once.
+        if (e.type === 'started') { hub.flushAway(); return; }
         if (!e.startedVia) return;
         const ab = hub.active.get(keyOf(e.startedVia.scope, e.startedVia.target));
         if (!ab) return;

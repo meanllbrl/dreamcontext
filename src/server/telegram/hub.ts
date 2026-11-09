@@ -101,6 +101,9 @@ export interface HubHandsfree {
   /** He wrote on the Mac, in any dreamcontext chat (`lib/telegram/back-at-mac.ts`): the automatic
    *  run ends, machine-wide. Returns the binding it tells itself (its own "back" line), or null. */
   onBackAtMac?(hub: TelegramHub): BindingKey | null;
+  /** Any hands-free run is on (automatic, or started by hand from Telegram, the Mac panel or the
+   *  phone link): the owner counts as away (`ownerAway`). */
+  isOn?(): boolean;
 }
 
 export interface HubMember {
@@ -666,6 +669,9 @@ export class TelegramHub implements TelegramHubApi {
   richQuestion: ((ab: ActiveBinding, sessionId: string, q: PendingQuestion) => Promise<boolean>) | null = null;
   /** "Bu projede Super kapalı" with a Super'i aç button (N5). */
   superOff: ((ab: ActiveBinding) => Promise<void>) | null = null;
+  /** The owner just turned away (`flushAway`): the Super-side senders (asks.ts) send what is still
+   *  open, each once (their own sent guards). */
+  readonly awayFlushers = new Set<(ab: ActiveBinding) => Promise<void>>();
 
   /** The answer paths leave the blocks to `answerExtras` only when it is wired. */
   private extrasMode(): 'hub' | 'mac' { return this.answerExtras ? 'hub' : 'mac'; }
@@ -705,6 +711,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!as) {
       this.presence.set(ab.key, { via: 'telegram', at: this.now() });
       try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
+      this.flushAway();
     }
     return ref;
   }
@@ -927,6 +934,42 @@ export class TelegramHub implements TelegramHubApi {
     return !!p && p.via === 'telegram' && this.now() - p.at < TURN_ROUTABLE_MS;
   }
 
+  /** THE gate on every Super-side question and permission sent to Telegram (owner 2026-11-09,
+   *  "Yalnız uzaktayken"): the owner is AWAY while Telegram's automatic part is on for him (his
+   *  latest owner message to a Super bot came through Telegram, `onTelegram`, and no typing on the
+   *  Mac ended it) or while any hands-free run is on, automatic or started by hand. At the Mac the
+   *  Mac card is the only one: the senders (the `asks.ts` sink and child permissions, `sendPrompt`)
+   *  send nothing and mark nothing sent, so `flushAway` can send it later. Machine-wide, like
+   *  back-at-Mac. AI Team member bots never read it (their rule: questions and failures always). */
+  ownerAway(): boolean {
+    try { if (this.deps.handsfree?.isOn?.()) return true; } catch { /* unknown: the presence fact decides */ }
+    for (const ab of this.active.values()) if (ab.target === 'super' && !ab.disabled && this.onTelegram(ab)) return true;
+    return false;
+  }
+
+  /** The owner turned away (a Telegram owner message, a hands-free run starting): every Super
+   *  question and permission still open goes to its bot now, once. Idempotent: each sender keeps
+   *  its own sent guard, so a call on every Telegram message re-sends nothing. Coming back to the
+   *  Mac withdraws nothing already sent; those buttons still answer. */
+  flushAway(): void {
+    if (!this.ownerAway()) return;
+    for (const ab of [...this.active.values()]) {
+      if (ab.target !== 'super' || ab.disabled || !ab.contextRoot) continue;
+      const root = ab.contextRoot;
+      void (async () => {
+        try {
+          const s = await readSuperState(root);
+          if (s.enabled && s.session) {
+            this.superSessions.set(s.session, ab.key);
+            const own = getChat(s.session);
+            if (own?.status === 'asking' && own.pendingQuestion) await this.sendPrompt(ab, s.session, own.pendingQuestion);
+          }
+        } catch { /* unreadable: the next turn-away tries again */ }
+        for (const f of [...this.awayFlushers]) await f(ab).catch(() => {});
+      })();
+    }
+  }
+
   async onAssistantText(sessionId: string, text: string): Promise<void> {
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
@@ -1069,7 +1112,8 @@ export class TelegramHub implements TelegramHubApi {
 
   /** The Super chat's own pending prompt as buttons (permission: allow once / deny only). */
   private async sendPrompt(ab: ActiveBinding, sessionId: string, q: PendingQuestion): Promise<void> {
-    if (this.sentPrompts.has(q.requestId)) return;
+    // At the Mac: the Mac card only, and nothing marked sent (`flushAway` sends it if he turns away).
+    if (!this.ownerAway() || this.sentPrompts.has(q.requestId)) return;
     this.sentPrompts.add(q.requestId);
     if (this.sentPrompts.size > 500) this.sentPrompts.delete(this.sentPrompts.values().next().value as string);
     await this.sendPendingQuestion(ab, sessionId, q);

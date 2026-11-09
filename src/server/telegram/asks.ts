@@ -16,7 +16,7 @@
  * Each through a single-use, message-bound button record (hub.sendButtons).
  */
 import { getChat, onChatChange, type ChatEntry } from '../../lib/assistant/chat-registry.js';
-import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
+import { announces, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { answerChildPermission, answerChildQuestion, superAnswerText } from '../../lib/super/answer.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
@@ -44,22 +44,46 @@ function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; 
   return { question: qs[0].question, labels: qs[0].options.map((o) => o.label), card: qs[0] };
 }
 
+/** One queue item to its bot, once. False when it did not go (nothing recorded as sent). */
+function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item: SuperQueueItem): boolean {
+  if (sentItems.has(item.id)) return true;
+  sentItems.add(item.id);
+  void sendItem(hub, ab, sessionId, item).catch(() => { sentItems.delete(item.id); });
+  return true;
+}
+
 export function wireTelegramAsks(hub: TelegramHub): () => void {
   setOwnerQuestionSinks({
+    // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: false, nothing recorded,
+    // so the turn-away flush below sends it once he is away.
     telegram: ({ vault, sessionId, item }) => {
       const ab = hub.superBindingOfVault(vault);
-      if (!ab || sentItems.has(item.id)) return !!ab;
-      sentItems.add(item.id);
-      void sendItem(hub, ab, sessionId, item).catch(() => { sentItems.delete(item.id); });
-      return true;
+      if (!ab || !hub.ownerAway()) return false;
+      return offerItem(hub, ab, sessionId, item);
     },
   });
   const off = onChatChange((c) => { void onChildAsking(hub, c.entry).catch(() => {}); });
+  // He turned away: every question and child permission still open on this Super, oldest first.
+  const flush = async (ab: ActiveBinding): Promise<void> => {
+    if (!ab.contextRoot || !hub.ownerAway()) return;
+    const s = await readSuperState(ab.contextRoot);
+    if (!s.enabled || !s.session) return;
+    const open = [...s.queue].sort((a, b) => a.createdAt - b.createdAt);
+    for (const q of open) {
+      if (q.kind === 'permission') {
+        const child = q.state !== 'done' ? getChat(q.sessionId) : null;
+        if (child) await onChildAsking(hub, child).catch(() => {});
+        continue;
+      }
+      if (announces(q)) offerItem(hub, ab, s.session, q);
+    }
+  };
+  hub.awayFlushers.add(flush);
   const prev = hub.extraButton;
   hub.extraButton = async (ab, rec, idx) => (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
     ? onQueueButton(hub, ab, rec, idx)
     : prev ? prev(ab, rec, idx) : LINES.stale;
-  return () => { off(); setOwnerQuestionSinks({ telegram: () => false }); hub.extraButton = prev; };
+  return () => { off(); hub.awayFlushers.delete(flush); setOwnerQuestionSinks({ telegram: () => false }); hub.extraButton = prev; };
 }
 
 async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<void> {
@@ -107,6 +131,8 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
 async function onChildAsking(hub: TelegramHub, entry: ChatEntry): Promise<void> {
   const pq = entry.pendingQuestion;
   if (entry.status !== 'asking' || !pq?.isPermission) return;
+  // At the Mac: the Mac card only, nothing claimed (the turn-away flush sends it).
+  if (!hub.ownerAway()) return;
   // Claimed before any await: two `asking` emits for one request send one message.
   const claim = `req:${entry.sessionId}:${pq.requestId}`;
   if (sentItems.has(claim)) return;

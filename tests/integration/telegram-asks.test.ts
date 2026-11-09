@@ -15,7 +15,7 @@ import { wireTelegramAsks, _resetTelegramAsks } from '../../src/server/telegram/
 import * as reg from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { announceOwnerHead, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
+import { announceOwnerHead, ownerQuestionReach, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
 import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -25,6 +25,8 @@ const OWNER = 777;
 const SID = '11111111-2222-4333-8444-555555555555';
 const CHILD = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 let vault = 'acme'; let home: string; let project: string; let root: string; let tg: FakeTelegram; let hub: TelegramHub; let unwire: () => void;
+/** A hands-free run on (owner 2026-11-09: questions go out only while he is away). */
+let handsfreeOn = true;
 const drained = () => new Promise((r) => setTimeout(r, 40));
 
 async function writeState(extra: Record<string, unknown>): Promise<void> {
@@ -51,7 +53,8 @@ beforeEach(async () => {
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: vault, path: project }] }));
   reg._resetChatRegistry(); resetWindowControl(); _resetTelegramAsks(); _resetOwnerQuestions();
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300 });
+  handsfreeOn = true;
+  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => handsfreeOn } });
   unwire = wireTelegramAsks(hub);
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: vault, contextRoot: root });
@@ -103,5 +106,77 @@ describe('a child\'s permission (A4)', () => {
     tap(msg, 1);
     await vi.waitFor(() => expect(tg.sent('answerCallbackQuery').at(-1)?.params.text).toBe('Bu soru artık geçerli değil.'));
     expect(frames).toHaveLength(1);
+  });
+});
+
+describe('only while the owner is away (owner 2026-11-09, "Yalnız uzaktayken")', () => {
+  const ask = (id: string, q: string, labels: string[], createdAt: number) => ({ id, kind: 'ask', sessionId: SID, state: 'escalated', createdAt, ownerText: q, ask: { questions: [{ question: q, options: labels.map((label) => ({ label })) }] } });
+  const count = (label: string) => tg.sent().filter((c) => JSON.stringify(c.params.reply_markup ?? {}).includes(label)).length;
+  const quiet = () => new Promise((r) => setTimeout(r, 80));
+
+  it('at the Mac a Super question is not sent and is not recorded as reaching Telegram', async () => {
+    handsfreeOn = false;
+    const item = ask('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1);
+    await writeState({ queue: [item] });
+    const state = await readSuperState(root);
+    announceOwnerHead(() => vault, state, item as never);
+    await quiet();
+    expect(count('Yeşil')).toBe(0);
+    expect(ownerQuestionReach(state, 'ask-1').via).not.toContain('telegram');
+  });
+
+  it('away: sent, and recorded as reaching Telegram', async () => {
+    const item = ask('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1);
+    await writeState({ queue: [item] });
+    const state = await readSuperState(root);
+    announceOwnerHead(() => vault, state, item as never);
+    await vi.waitFor(() => expect(count('Yeşil')).toBe(1));
+    expect(ownerQuestionReach(state, 'ask-1').via).toContain('telegram');
+  });
+
+  it('turning away from Telegram with two questions open sends both, once each; a later message re-sends nothing', async () => {
+    handsfreeOn = false;
+    const a = ask('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1);
+    const b = ask('ask-2', 'Yayınlayalım mı?', ['Evet yayınla', 'Bekle'], 2);
+    await writeState({ queue: [a, b] });
+    announceOwnerHead(() => vault, await readSuperState(root), a as never);
+    reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    const sent: string[] = [];
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { sent.push(t); return { ok: true }; }, interrupt: () => {} });
+    await quiet();
+    expect(count('Yeşil') + count('Evet yayınla')).toBe(0);
+    tg.push(TOKEN, textUpdate(OWNER, 'yoldayım'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    await vi.waitFor(() => { expect(count('Yeşil')).toBe(1); expect(count('Evet yayınla')).toBe(1); });
+    tg.push(TOKEN, textUpdate(OWNER, 'durum?'));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    await quiet();
+    expect(count('Yeşil')).toBe(1);
+    expect(count('Evet yayınla')).toBe(1);
+  });
+
+  it('a child\'s permission: nothing at the Mac; a hands-free start sends it once; buttons still answer after', async () => {
+    handsfreeOn = false;
+    await writeState({
+      children: { [CHILD]: { sessionId: CHILD, brief: 'deploy', adopted: false, startedAt: 1 } },
+      queue: [{ id: 'perm-1', kind: 'permission', sessionId: CHILD, requestId: 'req-9', state: 'pending', createdAt: 1 }],
+    });
+    const child = reg.registerChat({ sessionId: CHILD, conversationId: null, vault, mode: 'basic' });
+    child.observe({ type: 'control_request', request_id: 'req-9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'npm publish' } } });
+    await quiet();
+    expect(count('İzin ver (bir kez)')).toBe(0);
+    handsfreeOn = true; // a run started (by hand): the adapter's `started` event calls flushAway
+    hub.flushAway();
+    await vi.waitFor(() => expect(count('İzin ver (bir kez)')).toBe(1));
+    hub.flushAway();
+    await quiet();
+    expect(count('İzin ver (bir kez)')).toBe(1);
+    // He comes back: nothing withdrawn, the button still answers.
+    handsfreeOn = false;
+    const frames: Record<string, unknown>[] = [];
+    const { token } = mintWindowToken({ send: (f) => { if (f.subtype !== 'super_command') return true; frames.push(f); setImmediate(() => deliverSuperResult(token, f.id, { ok: true, result: {} })); return true; }, sessionId: SID, mode: 'super', vault, contextRoot: root });
+    tap(buttonMsg('İzin ver (bir kez)'), 0);
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    expect(frames[0]).toMatchObject({ verb: 'allow', args: { child: CHILD, requestId: 'req-9', by: 'owner' } });
   });
 });
