@@ -19,6 +19,7 @@ import { readThreadRun } from '../../lib/automations/threads.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { takeMemberReactionText } from '../../lib/telegram/reactions.js';
 import { sayToAgent } from '../routes/automations.js';
+import { SILENT, voiceEchoHtml } from '../../lib/telegram/system-lines.js';
 import type { UpdateDisposition } from '../../lib/telegram/poller.js';
 import type { ActiveBinding, BindingKey, HubMember, TelegramHub } from './hub.js';
 
@@ -75,7 +76,7 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
           const saved = await saveInbound({ transport: ab.transport, contextRoot: root, media });
           if (!saved.ok) { await hub.reply(ab, saved.line); if (!msg.text && !msg.caption) return; }
           else if ((media.kind === 'voice' || media.kind === 'audio') && deps.transcribeVoice) {
-            try { spoken = await deps.transcribeVoice(saved.path); await hub.reply(ab, `Duyduğum: ${spoken}`); } catch { paths.push(saved.path); }
+            try { spoken = await deps.transcribeVoice(saved.path); await hub.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {}); } catch { paths.push(saved.path); }
           } else paths.push(saved.path);
         }
         let text = inboundTurnText(msg, paths);

@@ -40,7 +40,7 @@ import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js
 import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
-  CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, STATUS_GLYPH, STATUS_LABEL, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
+  CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, withTelegramRef,
   type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
@@ -54,6 +54,7 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
+import { SILENT, statusLineHtml, voiceEchoHtml } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
@@ -662,7 +663,7 @@ export class TelegramHub implements TelegramHubApi {
           await this.reply(ab, missing ? 'Sesli not için ffmpeg gerekli (brew install ffmpeg).' : 'Sesli notu yazıya çeviremedim.');
           paths.push(saved.path);
         }
-        if (spoken !== null) await this.reply(ab, `Duyduğum: ${spoken}`);
+        if (spoken !== null) await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
       } else paths.push(saved.path);
     }
     let text = inboundTurnText(msg, paths);
@@ -836,17 +837,17 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** The rows of one Telegram message: children and team jobs whose origin is its ref. */
-  async statusRows(ab: ActiveBinding, ref: string): Promise<{ state: StatusState; label: string }[]> {
+  async statusRows(ab: ActiveBinding, ref: string): Promise<{ state: StatusState; label: string; note?: string }[]> {
     if (!ab.contextRoot) return [];
     const s = await readSuperState(ab.contextRoot);
-    const rows: { state: StatusState; label: string }[] = [];
+    const rows: { state: StatusState; label: string; note?: string }[] = [];
     for (const c of Object.values(s.children)) {
       if (c.origin !== ref) continue;
       const live = getChat(c.sessionId);
       const pending = live?.pendingQuestion?.isPermission;
       const state: StatusState = pending ? 'waiting' : c.row === 'working' ? 'running' : c.row === 'asking' ? 'asking' : c.row === 'done' ? 'done'
         : c.row === 'stuck' ? 'stuck' : c.row === 'gone' ? 'gone' : c.row === 'waiting' ? 'waiting' : 'running';
-      rows.push({ state, label: `${(c.brief || 'iş').slice(0, 60)}${pending ? ' · izin bekliyor' : ''}` });
+      rows.push({ state, label: (c.brief || 'iş').slice(0, 60), note: pending ? 'izin bekliyor' : undefined });
     }
     for (const j of s.team) {
       if (j.origin !== ref) continue;
@@ -863,10 +864,10 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab) return;
     const rows = await this.statusRows(ab, turn.ref);
     if (!rows.length) return;
-    const text = rows.map((r) => `${STATUS_GLYPH[r.state]} ${escapeHtml(r.label)} · ${STATUS_LABEL[r.state]}`).join('\n');
+    const text = rows.map((r) => statusLineHtml(r.state, r.label, r.note)).join('\n');
     if (text === turn.statusText) return;
     if (turn.statusMessageId === null) {
-      const sent = await this.send(ab, text, { disable_notification: true });
+      const sent = await this.send(ab, text, SILENT);
       turn.statusMessageId = sent.message_id;
     } else {
       if (this.now() - turn.lastEditAt < STATUS_EDIT_MIN_MS) return;
