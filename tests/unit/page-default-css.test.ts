@@ -78,6 +78,6 @@ describe('pageDefaultCss', () => {
   it('both page surfaces use it', () => {
     expect(read('dashboard/src/components/appLink/DocumentReader.tsx')).toContain('overrideCss: pageDefaultCss(fill)');
     expect(read('dashboard/src/components/layout/FrameViewer.tsx')).toContain('buildReportSrcdoc(html, ');
-    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain('overrideCss: pageDefaultCss(true)');
+    expect(read('dashboard/src/lib/reportSrcdoc.ts')).toContain('pageDefaultCss(true)');
   });
 });

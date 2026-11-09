@@ -139,8 +139,8 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect(tg.sent('setMyName').filter((c) => c.token === NEW).map((c) => c.params.name)).toEqual(['UA Manager · Kampanya yöneticisi']);
     expect(tg.sent('setMyShortDescription').find((c) => c.token === NEW)?.params.short_description).toBe('Kampanya yöneticisi · acme projesinin AI Team üyesi.');
     expect(tg.sent('setMyProfilePhoto')).toHaveLength(0);
-    // A member bot never gets the Super's command menu.
-    expect(tg.sent('setMyCommands').filter((c) => c.token === NEW)).toEqual([]);
+    // A member bot gets its own two commands (/dur /durum), never the Super's menu.
+    expect(tg.sent('setMyCommands').filter((c) => c.token === NEW).map((c) => (c.params.commands as { command: string }[]).map((x) => x.command))).toEqual([['dur', 'durum']]);
     // Kaldır: the token is revoked through the manager BEFORE the folder goes.
     expect((await call('DELETE', '/api/telegram/ua-manager', PAGE)).status).toBe(200);
     expect(tg.sent('replaceManagedBotToken')).toHaveLength(1);

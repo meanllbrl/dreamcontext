@@ -169,6 +169,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // +1,360 (2026-11-08, planlama-dongusu: the plan stop card is the owner's, a Plan unit carries premise/env/decisions; measured 25,860; same cap as super-orchestration-guide.test.ts).
     // +10 (2026-11-08, 0.41.7 cut: the guide lines of the merged jobs; measured 26,864).
     // +300 (2026-11-09, 0.41.12 cut: the owner's ask card for app requests and the one-task rule; measured 27,169).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(27_170);
+    // +420 (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(27_600);
   });
 });

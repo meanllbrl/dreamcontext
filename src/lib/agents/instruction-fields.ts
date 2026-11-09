@@ -131,7 +131,7 @@ export interface WidenView {
 export const CREATE_BASELINE: Readonly<WidenView> = {
   prompt: '', soul: '', job: '', outputInstructions: '', model: null, effort: null, timeoutMinutes: null,
   outputDir: null, learning: null, review: 'off', flow: null, whiteboard: null, autonomy: 'balanced',
-  readTools: '', tool: null, app: '', appTools: '', mode: 'call', enabled: true, fallbackTools: [], boardOnly: false,
+  readTools: '', tool: null, app: '', appTools: '', target: '', reply: '', mode: 'call', enabled: true, fallbackTools: [], boardOnly: false,
 };
 
 /** Moving these never widens reach: cost, wording, drawing. */

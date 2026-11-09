@@ -459,7 +459,8 @@ describe('automations CLI (integration)', () => {
     // 14 → 15 with `tool`: which vendor reads the prompt; omitted on Claude (Track T W4).
     // 15 → 16 with `app` (dreamcontext Apps): the app a schedule runs for; omitted when none.
     // 16 → 17 with `appTools`, 18 with `scope: board` (merged in 0.41.5): the app tools a run may change things with unattended; omitted when none.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(18);
+    // 18 → 20 with `target` and `reply` (super-rutin, 0.41.13): a Super turn or a Telegram outflow; omitted when default.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(20);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

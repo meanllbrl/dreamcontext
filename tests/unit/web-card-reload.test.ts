@@ -17,7 +17,7 @@ describe('a project page on a web card reloads only when its file changes', () =
   });
 
   it('a theme never rebuilds the srcdoc', () => {
-    expect(reader).toMatch(/\[html, zoomBridge, fill, reportsFit\],/);
+    expect(reader).toMatch(/\[html, zoomBridge, fill, reportsFit, ownCanvas, schemeOf\],/);
   });
 
   it('the theme bridge swaps the rule, and only for its parent', () => {
