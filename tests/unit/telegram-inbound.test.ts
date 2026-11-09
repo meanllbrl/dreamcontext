@@ -2,11 +2,11 @@
  * Inbound media lands in agent-drops (generated names, 0600, ≤20 MB with a clear refusal);
  * captions, forwards and quotes arrive as data; hub headers cannot be forged (plan AC6, A6, N4).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanOwnerText, inboundTurnText, neutraliseHeaders, pickInboundMedia, saveInbound, TOO_LARGE_LINE } from '../../src/lib/telegram/inbound.js';
+import { NO_FILE_LINE, TIMEOUT_LINE, cleanOwnerText, inboundTurnText, neutraliseHeaders, pickInboundMedia, saveInbound, TOO_LARGE_LINE } from '../../src/lib/telegram/inbound.js';
 import { TG_SENTINEL } from '../../src/lib/telegram/contract.js';
 import { TelegramError } from '../../src/lib/telegram/transport.js';
 
@@ -55,6 +55,51 @@ describe('saving', () => {
   it('a failed download is a line, not a crash', async () => {
     const r = await saveInbound({ transport: { getFile: async () => { throw new TelegramError('getFile', 0, 'down'); }, download: async () => Buffer.alloc(0) }, contextRoot: ctx, media: { kind: 'photo', fileId: 'p' } });
     expect(r.ok === false && r.reason).toBe('download_failed');
+  });
+
+  it('a transient error is retried once; the second try can succeed', async () => {
+    let n = 0;
+    const logs: string[] = [];
+    const t = { getFile: async (id: string) => ({ file_id: id, file_path: 'documents/a.pdf' }), download: async () => { if (++n === 1) throw new TelegramError('download', 502, 'download failed'); return Buffer.from('ok'); } };
+    const r = await saveInbound({ transport: t, contextRoot: ctx, media: { kind: 'document', fileId: 'd' }, retryDelayMs: 0, log: (_m, step, attempt, c) => { logs.push(`${c.kind}/${step}/${attempt}`); } });
+    expect(r.ok).toBe(true);
+    expect(n).toBe(2);
+    expect(logs).toEqual(['download_failed/download/1']);
+  });
+
+  it('a repeated timeout says so; no file path says Telegram gave no file and is not retried', async () => {
+    let n = 0;
+    const timeout = { getFile: async (id: string) => ({ file_id: id, file_path: 'a/b.pdf' }), download: async () => { n++; throw new TelegramError('download', 0, 'timed out'); } };
+    let r = await saveInbound({ transport: timeout, contextRoot: ctx, media: { kind: 'document', fileId: 'd' }, retryDelayMs: 0, log: () => {} });
+    expect(r).toEqual({ ok: false, reason: 'timeout', line: TIMEOUT_LINE });
+    expect(n).toBe(2);
+    n = 0;
+    const nofile = { getFile: async (id: string) => ({ file_id: id }), download: async () => { n++; throw new TelegramError('download', 400, 'no file path'); } };
+    r = await saveInbound({ transport: nofile, contextRoot: ctx, media: { kind: 'document', fileId: 'd' }, retryDelayMs: 0, log: () => {} });
+    expect(r).toEqual({ ok: false, reason: 'no_file', line: NO_FILE_LINE });
+    expect(n).toBe(1);
+  });
+
+  it('"file is too big" from getFile is the too-large line, logged once, never retried', async () => {
+    let n = 0;
+    const logs: unknown[] = [];
+    const t = { getFile: async () => { n++; throw new TelegramError('getFile', 400, 'Bad Request: file is too big'); }, download: async () => Buffer.alloc(0) };
+    const r = await saveInbound({ transport: t, contextRoot: ctx, media: { kind: 'video', fileId: 'v' }, retryDelayMs: 0, log: (...a) => { logs.push(a); } });
+    expect(r).toEqual({ ok: false, reason: 'too_large', line: TOO_LARGE_LINE });
+    expect(n).toBe(1);
+    expect(logs).toHaveLength(1);
+  });
+
+  it('the default log writes a redacted stderr line (no token, no URL)', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => { lines.push(String(c)); return true; });
+    try {
+      const t = { getFile: async () => { throw new TelegramError('getFile', 400, 'see https://api.telegram.org/bot123456789:AAAAAAAAAAAAAAAAAAAAAAAA/getFile'); }, download: async () => Buffer.alloc(0) };
+      await saveInbound({ transport: t, contextRoot: ctx, media: { kind: 'photo', fileId: 'p' }, retryDelayMs: 0 });
+    } finally { spy.mockRestore(); }
+    const out = lines.join('');
+    expect(out).toContain('[telegram] inbound photo failed (download_failed, getFile, attempt 1, code 400)');
+    expect(out).not.toMatch(/AAAAAAAA|https?:/);
   });
 });
 

@@ -3,7 +3,7 @@
  * login token in any body, the token never in an error; downloads capped at 20 MB; the managed-bot
  * methods (plan AC9, A6, X1).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { TelegramTransport, TelegramError, MANAGED_BOT_TOKEN_PARAM, type FetchLike } from '../../src/lib/telegram/transport.js';
 
 const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ';
@@ -112,6 +112,22 @@ describe('downloads', () => {
     const f = fakeFetch(null, { bytes: Buffer.from('x') });
     const t = new TelegramTransport({ token: TOKEN, fetchImpl: f.impl });
     await expect(t.download({ file_id: 'a', file_path: '../../x' })).rejects.toMatchObject({ code: 400 });
+  });
+
+  it('a body that stalls after the headers times out as a timeout, not a hang', async () => {
+    vi.useFakeTimers();
+    try {
+      const impl: FetchLike = async (_url, init) => ({
+        ok: true, status: 200, json: async () => ({}),
+        arrayBuffer: () => new Promise<ArrayBuffer>((_res, rej) => { init?.signal?.addEventListener('abort', () => rej(new Error('The operation was aborted'))); }),
+        headers: { get: () => null },
+      });
+      const t = new TelegramTransport({ token: TOKEN, fetchImpl: impl });
+      const p = t.download({ file_id: 'a', file_path: 'p/a.jpg' });
+      const assertion = expect(p).rejects.toMatchObject({ code: 0, message: expect.stringContaining('timed out') });
+      await vi.advanceTimersByTimeAsync(121_000);
+      await assertion;
+    } finally { vi.useRealTimers(); }
   });
 });
 

@@ -21,7 +21,10 @@ import { TelegramError, type TelegramTransport } from './transport.js';
 
 export const TELEGRAM_DROP_PREFIX = 'tg-';
 export const TELEGRAM_DROPS_TOTAL_CAP = 200 * 1024 * 1024;
-export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük; Telegram botların en fazla 20 MB indirmesine izin veriyor. Mac'ten gönder ya da küçült.";
+export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük; Telegram botların en fazla 20 MB indirmesine izin veriyor. Daha küçük bir dosya ya da link gönder.";
+export const TIMEOUT_LINE = "Telegram'dan indirme zaman aşımına uğradı; bir kez daha denedim, yine olmadı. Biraz sonra tekrar gönder.";
+export const NO_FILE_LINE = 'Telegram bu dosyayı vermedi. Tekrar göndermeyi dene.';
+const failedLine = (code: number): string => `Dosyayı Telegram'dan indiremedim (kod ${code}). Tekrar gönder.`;
 
 export type InboundKind = 'photo' | 'video' | 'document' | 'voice' | 'audio' | 'video_note' | 'animation';
 
@@ -86,23 +89,54 @@ function telegramDropBytes(dir: string): number {
 
 export type SaveResult =
   | { ok: true; path: string; media: InboundMedia }
-  | { ok: false; reason: 'too_large' | 'cap' | 'download_failed' | 'write_failed'; line: string };
+  | { ok: false; reason: 'too_large' | 'cap' | 'timeout' | 'no_file' | 'download_failed' | 'write_failed'; line: string };
+
+export type FailKind = 'too_large' | 'timeout' | 'no_file' | 'download_failed';
+
+/** What a getFile/download error means. The messages TelegramError carries are already token-free. */
+export function classifyDownloadError(err: unknown): { kind: FailKind; code: number; transient: boolean } {
+  if (!(err instanceof TelegramError)) return { kind: 'download_failed', code: 0, transient: true };
+  const { code, message } = err;
+  if (code === 413 || /too big|too large/i.test(message)) return { kind: 'too_large', code, transient: false };
+  if (code === 0 && /timed out|abort|timeout/i.test(message)) return { kind: 'timeout', code, transient: true };
+  if (/no file path/i.test(message)) return { kind: 'no_file', code, transient: false };
+  return { kind: 'download_failed', code, transient: code === 0 || code === 429 || code >= 500 };
+}
+
+/** One log line per failure: kind, step, code and the (token-free) message. Never a URL. */
+function logFailure(media: InboundMedia, step: string, attempt: number, c: { kind: FailKind; code: number }, err: unknown): void {
+  const msg = (err instanceof Error ? err.message : String(err)).replace(/https?:\/\/\S+/g, '<url>').replace(/\d{6,}:[A-Za-z0-9_-]{20,}/g, '<token>').slice(0, 200);
+  process.stderr.write(`[telegram] inbound ${media.kind} failed (${c.kind}, ${step}, attempt ${attempt}, code ${c.code}): ${msg}\n`);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Downloads one inbound file into the drop folder. */
 export async function saveInbound(
-  input: { transport: Pick<TelegramTransport, 'getFile' | 'download'>; contextRoot: string; media: InboundMedia; now?: number },
+  input: { transport: Pick<TelegramTransport, 'getFile' | 'download'>; contextRoot: string; media: InboundMedia; now?: number; retryDelayMs?: number; log?: typeof logFailure },
 ): Promise<SaveResult> {
   const { transport, contextRoot, media } = input;
   if ((media.fileSize ?? 0) > TG_DOWNLOAD_MAX_BYTES) return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
-  let data: Buffer;
-  try {
-    const file = await transport.getFile(media.fileId);
-    if ((file.file_size ?? 0) > TG_DOWNLOAD_MAX_BYTES) return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
-    data = await transport.download(file, TG_DOWNLOAD_MAX_BYTES);
-  } catch (err) {
-    if (err instanceof TelegramError && (err.code === 413 || /too big|too large/i.test(err.message))) return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
-    return { ok: false, reason: 'download_failed', line: 'Dosyayı Telegram\'dan indiremedim, tekrar gönder.' };
+  const log = input.log ?? logFailure;
+  let data: Buffer | null = null;
+  for (let attempt = 1; attempt <= 2 && !data; attempt++) {
+    let step = 'getFile';
+    try {
+      const file = await transport.getFile(media.fileId);
+      if ((file.file_size ?? 0) > TG_DOWNLOAD_MAX_BYTES) return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
+      step = 'download';
+      data = await transport.download(file, TG_DOWNLOAD_MAX_BYTES);
+    } catch (err) {
+      const c = classifyDownloadError(err);
+      log(media, step, attempt, c, err);
+      if (c.kind === 'too_large') return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
+      if (c.transient && attempt === 1) { await sleep(input.retryDelayMs ?? 700); continue; }
+      if (c.kind === 'timeout') return { ok: false, reason: 'timeout', line: TIMEOUT_LINE };
+      if (c.kind === 'no_file') return { ok: false, reason: 'no_file', line: NO_FILE_LINE };
+      return { ok: false, reason: 'download_failed', line: failedLine(c.code) };
+    }
   }
+  if (!data) return { ok: false, reason: 'download_failed', line: failedLine(0) };
   const dir = agentDropsDir(contextRoot);
   try {
     mkdirSync(dir, { recursive: true });
