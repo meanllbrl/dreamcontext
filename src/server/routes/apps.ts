@@ -46,7 +46,7 @@ import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/s
 import { getAutomation } from '../../lib/automations/store.js';
 import { jobStartedByOwner } from '../automation-job.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
-import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
+import { appBundlePath, appHash, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath, notifyViaBundle } from '../../lib/automations/notifier.js';
 import { autoUpdateOne, checkUpdate } from '../../lib/apps/share/update.js';
@@ -237,7 +237,7 @@ function bundleInput(rec: AppRecord, runnerPath: string): BundleInput {
   const m = readManifest(rec.root);
   const icon = m.ok ? m.manifest.icon : null;
   return {
-    home, projectRoot: rec.projectRoot, vault: rec.vault, slug: rec.slug, name: m.ok ? m.manifest.name : rec.name,
+    home, hash: rec.hash, projectRoot: rec.projectRoot, vault: rec.vault, slug: rec.slug, name: m.ok ? m.manifest.name : rec.name,
     // An app born with the logo as its icon gets its own letter in the Dock; its manifest stays.
     iconPath: iconIssue(icon, notifierIconPath())?.code === 'dreamcontext_logo' ? null : icon,
     runnerPath, appBundleId: shellBundleId(),
@@ -266,17 +266,47 @@ async function retireStoppedWindow(rec: AppRecord, rt: AppRuntime): Promise<void
   rt.clearWindows();
 }
 
-/** Open the app's bundle (or bring its window forward). The single focus path. */
-export function focusApp(rec: AppRecord, opts: { runnerAlive: boolean }): { ok: true; path: string } | { ok: false; code: string; message: string } {
+/**
+ * Before 2026-11-09 an installed app's bundle was built under `appHash(projectRoot, slug)`, a
+ * hash without its installId, so it sat next to the one Open looks for. That stray copy is
+ * removed once the right one exists and nothing runs it; a registered app never owns it.
+ */
+function removeStrayBundle(rec: AppRecord): void {
+  if (rec.origin !== 'installed') return;
+  const stray = appHash(rec.projectRoot, rec.slug);
+  if (stray === rec.hash || listApps(home).some((a) => a.hash === stray)) return;
+  if (!existsSync(appBundlePath(home, rec.slug, stray)) || probeBundle(runnerBundleId(stray)) !== false) return;
+  removeAppBundle(home, rec.slug, stray);
+}
+
+export type FocusResult = { ok: true; path: string } | { ok: false; code: string; message: string };
+
+/** `open` itself, injectable for tests: resolves with its error, null when it opened the bundle. */
+export type BundleOpener = (path: string) => Promise<Error | null>;
+const openBundle: BundleOpener = (path) => new Promise((resolve) => {
+  execFile('/usr/bin/open', [path], { timeout: 10_000 }, (err, _out, stderr) => {
+    resolve(err ? new Error(String(stderr || err.message).trim().slice(0, 300)) : null);
+  });
+});
+
+/**
+ * Open the app's bundle (or bring its window forward). The single focus path. Every way it can
+ * fail says so in plain words: before 2026-11-09 `open`'s answer was ignored, so a missing bundle
+ * left the owner's Open click with nothing on screen and nothing said.
+ */
+export async function focusApp(rec: AppRecord, opts: { runnerAlive: boolean }, opener: BundleOpener = openBundle): Promise<FocusResult> {
   const runner = shellRunnerPath();
   const path = appBundlePath(home, rec.slug, rec.hash);
   // A live window: never rebuild the bundle under it, only bring it forward.
   if (mayBuildBundle({ processRunning: probeBundle(runnerBundleId(rec.hash)), leaseAlive: opts.runnerAlive, bundleExists: existsSync(path) })) {
     if (!runner) return { ok: false, code: 'runner_missing', message: 'This dreamcontext app has no app runner: update the desktop app.' };
     const built = ensureAppBundle(bundleInput(rec, runner));
-    if (!built.ok) return { ok: false, code: 'bundle_failed', message: built.reason };
+    if (!built.ok) return { ok: false, code: 'bundle_failed', message: `The app's window could not be made: ${built.reason}` };
+    try { removeStrayBundle(rec); } catch { /* the next open tries again */ }
   }
-  execFile('/usr/bin/open', [path], { timeout: 10_000 }, () => { /* the window reports itself through its heartbeat */ });
+  if (!existsSync(path)) return { ok: false, code: 'bundle_missing', message: 'The app\'s window is missing on this Mac. Quit dreamcontext (⌘Q), open it again and press Open once more.' };
+  const err = await opener(path);
+  if (err) return { ok: false, code: 'open_failed', message: `macOS did not open the app's window: ${err.message || 'no reason given'}` };
   return { ok: true, path };
 }
 
@@ -394,7 +424,7 @@ export async function openAppForAssistant(projectRoot: string, slug: string): Pr
   const rt = runtime(rec);
   await gatewayFor(rt);
   if (rec0.stoppedByOwner) await retireStoppedWindow(rec, rt);
-  const f = focusApp(rec, { runnerAlive: liveWindowsOf(rec, rt) > 0 });
+  const f = await focusApp(rec, { runnerAlive: liveWindowsOf(rec, rt) > 0 });
   if (!f.ok) return { ok: false, state: rt.status().state, code: f.code };
   return { ok: true, state: rt.status().state };
 }
@@ -608,7 +638,7 @@ export async function handleAppLaunch(req: IncomingMessage, res: ServerResponse,
   const alive = liveWindowsOf(rec, rt) > 0;
   // A window already open keeps its page: a link only brings it forward.
   if (linkPath !== null && !alive) launchGw.pendingPath = linkPath;
-  const f = focusApp(rec, { runnerAlive: alive });
+  const f = await focusApp(rec, { runnerAlive: alive });
   if (!f.ok) { sendError(res, 409, f.code, f.message); return; }
   sendJson(res, 200, { ok: true, state: rec.stoppedByOwner ? 'stopped' : rt.status().state, focused: alive });
 }

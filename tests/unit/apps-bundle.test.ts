@@ -46,11 +46,31 @@ function setup() {
     // iconutil writes the icns the bundle expects.
     if (cmd.endsWith('iconutil')) writeFileSync(args[args.indexOf('-o') + 1], 'icns');
   };
-  const input = { home, projectRoot: project, vault: 'acme', slug: 'meta-ads', name: 'Meta Ads', runnerPath: runner, appBundleId: 'com.dreamcontext.beta' };
+  const input = { home, hash: appHash(project, 'meta-ads'), projectRoot: project, vault: 'acme', slug: 'meta-ads', name: 'Meta Ads', runnerPath: runner, appBundleId: 'com.dreamcontext.beta' };
   return { home, project, runner, calls, exec, input };
 }
 
 describe('ensureAppBundle', () => {
+  it('builds an installed app under its registered hash, the one Open looks for (2026-11-09)', () => {
+    const { home, project, exec, input } = setup();
+    const installed = appHash(project, 'meta-ads', 'abc123installid');
+    expect(installed).not.toBe(appHash(project, 'meta-ads'));
+    const r = ensureAppBundle({ ...input, hash: installed }, { exec, platform: 'darwin' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.path).toBe(appBundlePath(home, 'meta-ads', installed));
+    expect(r.bundleId).toBe(`com.dreamcontext.app.${installed}`);
+    expect(readFileSync(join(r.path, 'Contents', 'Info.plist'), 'utf-8')).toContain(`<string>com.dreamcontext.app.${installed}</string>`);
+    expect(existsSync(appBundlePath(home, 'meta-ads', appHash(project, 'meta-ads')))).toBe(false);
+    expect(bundleIsStale({ ...input, hash: installed })).toBe(false);
+  });
+
+  it('refuses a hash that is not one', () => {
+    const { exec, input } = setup();
+    const r = ensureAppBundle({ ...input, hash: '../x' }, { exec, platform: 'darwin' });
+    expect(r).toEqual({ ok: false, reason: 'bad app hash' });
+  });
+
   it('lays out the bundle at <slug>-<hash6>.app with the runner, plist and bundle info', () => {
     const { home, project, calls, exec, input } = setup();
     const r = ensureAppBundle(input, { exec, platform: 'darwin' });

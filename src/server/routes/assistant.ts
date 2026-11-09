@@ -87,9 +87,26 @@ function ownerGate(req: IncomingMessage, res: ServerResponse): boolean {
  * which can write any of them, so the last word is the key only the shell holds (owner-key.ts).
  */
 export function fromOwnerPage(req: IncomingMessage): boolean {
+  return looksLikeOwnPage(req) && hasOwnerKey(req);
+}
+
+function looksLikeOwnPage(req: IncomingMessage): boolean {
   return carriesOwnOrigin(req)
-    && String(req.headers['sec-fetch-site'] ?? '').trim().toLowerCase() === 'same-origin'
-    && hasOwnerKey(req);
+    && String(req.headers['sec-fetch-site'] ?? '').trim().toLowerCase() === 'same-origin';
+}
+
+/** The line a request refused by `fromOwnerPage` reads when it came from the app's own page. */
+export const OWNER_REOPEN_MESSAGE = 'dreamcontext has to be reopened before it can do this for you: quit it (⌘Q), open it again and try once more.';
+
+/**
+ * The words for a `fromOwnerPage` refusal. A request that is the app's own page in every way but
+ * the key is the owner's own click in a window the running shell never gave a key this server
+ * knows (a shell older than its pages, a server it did not start): only reopening mends that, so
+ * he reads that. Everything else (an agent's call, another origin) keeps `otherwise`. The refusal
+ * itself, its status and its code do not change: a forged Origin only buys the other sentence.
+ */
+export function ownerRefusalMessage(req: IncomingMessage, otherwise: string): string {
+  return isDesktop() && looksLikeOwnPage(req) && !hasOwnerKey(req) ? OWNER_REOPEN_MESSAGE : otherwise;
 }
 
 
@@ -1061,7 +1078,7 @@ export async function handleAssistantDelegationDismiss(req: IncomingMessage, res
 export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerGate(req, res)) return;
   if (!fromOwnerPage(req)) {
-    sendError(res, 403, 'owner_page_only', 'Only the app\'s own page answers a permission prompt for the owner.');
+    sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the app\'s own page answers a permission prompt for the owner.'));
     return;
   }
   holdOpen(req);
@@ -1254,7 +1271,7 @@ export async function handleAssistantProposalDecide(req: IncomingMessage, res: S
   // what his own answer wants. A no grants nothing, and it is his only way out of a proposal in an
   // app too old to hold the key, where the notch is the only place one is decided.
   if (action === 'reject' ? !carriesOwnOrigin(req) : !fromOwnerPage(req)) {
-    sendError(res, 403, 'owner_page_only', 'Only the app\'s own page decides a proposal for the owner.');
+    sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the app\'s own page decides a proposal for the owner.'));
     return;
   }
   const ok = resolveProposal(params.id, action, typeof body.text === 'string' ? body.text : undefined);

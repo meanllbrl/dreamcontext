@@ -10,7 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { realpathSync } from 'node:fs';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { requireLocalDesktop } from './agent-spawn-shared.js';
-import { fromOwnerPage } from './assistant.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import { holdOpen } from '../hold-open.js';
 import { appsHomeDir, findAppFor, projectRootOf, retireAppRuntime, refreshAppRuntime } from './apps.js';
 import { readManifest } from '../../lib/apps/manifest.js';
@@ -33,7 +33,7 @@ type Params = Record<string, string>;
 function ownerOnly(req: IncomingMessage, res: ServerResponse): boolean {
   if (!requireLocalDesktop(req, res)) return false;
   if (fromOwnerPage(req)) return true;
-  sendError(res, 403, 'owner_page_only', 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app).');
+  sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the owner\'s own Apps page can do this (a click in the dreamcontext app).'));
   return false;
 }
 

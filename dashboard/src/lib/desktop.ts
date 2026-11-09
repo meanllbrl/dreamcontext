@@ -642,7 +642,9 @@ export async function ownerKey(): Promise<string | null> {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     return await invoke<string>('owner_key');
-  } catch {
+  } catch (err) {
+    // The click goes on without it and the server refuses; the reason stays findable here.
+    console.warn('[desktop] no owner key for this window:', err);
     return null;
   }
 }
