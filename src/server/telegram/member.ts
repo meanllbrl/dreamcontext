@@ -10,7 +10,8 @@
  *    ends (or 2 h).
  *  - At the machine's live-job limit (429): "<üye> şu an meşgul, bitince yazacağım" and ONE retry
  *    when a slot frees (checked every 30 s, at most 30 min). Other refusals are told as they are.
- *  - A command (`/…`) is not a member's: one line naming that there is none.
+ *  - `/dur` and `/durum`: that member's own work only (member-commands.ts); any other command,
+ *    a Super one included, gets one line naming these two.
  */
 import { join } from 'node:path';
 import { listVaults } from '../../lib/vaults.js';
@@ -21,6 +22,7 @@ import { takeMemberReactionText } from '../../lib/telegram/reactions.js';
 import { sayToAgent } from '../routes/automations.js';
 import { SILENT, voiceEchoHtml } from '../../lib/telegram/system-lines.js';
 import type { UpdateDisposition } from '../../lib/telegram/poller.js';
+import { memberCommandLine, memberStatusText, stopMemberJobs, type MemberJobsDeps } from './member-commands.js';
 import type { ActiveBinding, BindingKey, HubMember, TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
@@ -38,7 +40,11 @@ export interface MemberDeps {
   watchEveryMs?: number;
   retryEveryMs?: number;
   transcribeVoice?: (oggPath: string) => Promise<string>;
+  /** /dur and /durum's reads and stops (tests inject; member-commands.ts). */
+  jobs?: MemberJobsDeps;
 }
+
+const NOT_FOUND = "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.";
 
 /** The project a member binding talks in: its own project, or for a global member the first
  *  registered project that sees it (named residual: one project per global member in v1). */
@@ -61,13 +67,17 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
       const msg = obj(update.message);
       if (!ab || !msg) return 'accepted';
       const text0 = typeof msg.text === 'string' ? msg.text.trim() : '';
+      const root = memberContextRoot(hub, ab);
       if (text0.startsWith('/')) {
-        if (!/^\/start(?:@\w+)?(?:\s|$)/.test(text0)) await hub.notice(ab, 'info', 'Bu botta komut yok; yazman yeterli.');
-        else await hub.notice(ab, 'info', "Buradayım. Yaz, Mac'te okusun.");
+        const cmd = /^\/([a-z_]+)(?:@\w+)?(?:\s|$)/i.exec(text0)?.[1]?.toLowerCase() ?? '';
+        if (cmd === 'start') { await hub.notice(ab, 'info', "Buradayım. Yaz, Mac'te okusun."); return 'accepted'; }
+        if (cmd !== 'dur' && cmd !== 'durum') { await hub.notice(ab, 'info', memberCommandLine(cmd)); return 'accepted'; }
+        if (!root) { await hub.notice(ab, 'warn', NOT_FOUND, true); return 'accepted'; }
+        if (cmd === 'dur') await hub.notice(ab, 'info', stopMemberJobs(root, ab.target, deps.jobs));
+        else await hub.send(ab, memberStatusText(root, ab.target, deps.jobs));
         return 'accepted';
       }
-      const root = memberContextRoot(hub, ab);
-      if (!root) { await hub.notice(ab, 'warn', "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.", true); return 'accepted'; }
+      if (!root) { await hub.notice(ab, 'warn', NOT_FOUND, true); return 'accepted'; }
       void (async () => {
         const paths: string[] = [];
         let spoken: string | null = null;

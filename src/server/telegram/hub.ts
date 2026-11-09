@@ -40,7 +40,7 @@ import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js
 import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
-  CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
+  CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, withTelegramRef,
   type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
@@ -255,11 +255,12 @@ export class TelegramHub implements TelegramHubApi {
   private identityIssues = new Map<BindingKey, IdentityIssue>();
   private identityChains = new Map<BindingKey, Promise<void>>();
 
-  /** Super bots (by bot id) whose command menu this process has already set: once per start. */
-  private commandsSet = new Set<number>();
+  /** Bots whose command menu this process has already set, by bot id and menu kind: once per
+   *  start (a bot rebound from the Super to a member, or back, gets the new menu). */
+  private commandsSet = new Set<string>();
 
   /**
-   * Brings a bound bot's Telegram profile up to date: the Super's command menu, then its name,
+   * Brings a bound bot's Telegram profile up to date: its command menu, then its name,
    * short line and photo from its member (identity.ts). The ONE step every path runs: hub start,
    * a pairing bind, a manager bind, a member's title or photo change. A field added to a bot's
    * profile goes here, so no path can set it once and forget it on the others. Never throws.
@@ -283,17 +284,19 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /**
-   * The Super's command menu (/dur /durum /gundem /handsfree), set once per start per bot.
-   * Member bots get none and are never called: one that has commands from elsewhere keeps them.
+   * The bot's command menu, set once per start per bot: the Super's four (/dur /durum /gundem
+   * /handsfree), a member's two (/dur /durum, its own work only; member-commands.ts).
    * A refusal is logged and retried at the next bind or start, never blocking either.
    */
   private async syncCommands(ab: ActiveBinding): Promise<void> {
-    if (ab.target !== 'super' || this.commandsSet.has(ab.binding.botId)) return;
+    const isSuper = ab.target === 'super';
+    const done = `${ab.binding.botId}:${isSuper ? 'super' : 'member'}`;
+    if (this.commandsSet.has(done)) return;
     try {
-      await ab.transport.setMyCommands(TELEGRAM_COMMANDS);
-      this.commandsSet.add(ab.binding.botId);
+      await ab.transport.setMyCommands(isSuper ? TELEGRAM_COMMANDS : MEMBER_TELEGRAM_COMMANDS);
+      this.commandsSet.add(done);
     } catch (err) {
-      console.warn(`[telegram] could not set the command menu of the super bot @${ab.binding.botUsername}: ${redactToken((err as Error)?.message ?? String(err), ab.binding.token)}`);
+      console.warn(`[telegram] could not set the command menu of the ${isSuper ? 'super' : 'member'} bot @${ab.binding.botUsername}: ${redactToken((err as Error)?.message ?? String(err), ab.binding.token)}`);
     }
   }
 

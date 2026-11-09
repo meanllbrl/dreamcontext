@@ -580,19 +580,22 @@ describe('the command menu is part of the profile every start brings up to date 
   }
   const commandCalls = (token: string) => tg.sent('setMyCommands').filter((c) => c.token === token);
 
-  it('start registers the Super menu for a saved Super binding, once per start; a member bot is never called', async () => {
+  it("start registers the Super menu (its four) and a member bot's (exactly /dur /durum), once per start", async () => {
     const { TELEGRAM_COMMANDS } = await import('../../src/lib/telegram/contract.js');
     await savedBindings();
     await hub.start();
     await vi.waitFor(() => expect(commandCalls(TOKEN)).toHaveLength(1), { timeout: 5000 });
     expect(commandCalls(TOKEN)[0].params.commands).toEqual(TELEGRAM_COMMANDS);
+    expect((commandCalls(TOKEN)[0].params.commands as { command: string }[]).map((c) => c.command).sort()).toEqual(['dur', 'durum', 'gundem', 'handsfree']);
+    await vi.waitFor(() => expect(commandCalls(MEMBER_TOKEN)).toHaveLength(1), { timeout: 5000 });
+    expect((commandCalls(MEMBER_TOKEN)[0].params.commands as { command: string }[]).map((c) => c.command)).toEqual(['dur', 'durum']);
     // The Super's name and short line follow in the same step.
     await vi.waitFor(() => expect(tg.sent('setMyName').some((c) => c.token === TOKEN)).toBe(true));
     // Another sync in the same start (a title change, a bind) does not call Telegram again.
     await hub.syncProfile(hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!);
     await hub.syncProfile(hub.active.get(keyOf(scopeOfContextRoot(root), 'galileo'))!);
     expect(commandCalls(TOKEN)).toHaveLength(1);
-    expect(tg.calls.some((c) => c.token === MEMBER_TOKEN && /Commands$/.test(c.method))).toBe(false);
+    expect(commandCalls(MEMBER_TOKEN)).toHaveLength(1);
   });
 
   it('a refused setMyCommands is logged without the token, the start goes on, and the next start tries again', async () => {
