@@ -246,19 +246,30 @@ export class TelegramHub implements TelegramHubApi {
       this.activate(row.scope, row.target, row.read.binding);
     }
     this.manager?.start();
-    // Bots already bound get their member's name and photo once, only where it differs.
-    void (async () => { for (const ab of [...this.active.values()]) await this.syncIdentity(ab); })();
+    // Every bot already bound is brought up to date once per start: a bot bound before a release
+    // that added a profile field (the Super's command menu, 2026-11-08) gets it here.
+    void (async () => { for (const ab of [...this.active.values()]) await this.syncProfile(ab); })();
   }
 
   /** Last identity issue per binding (name or photo not set), for the status row. */
   private identityIssues = new Map<BindingKey, IdentityIssue>();
   private identityChains = new Map<BindingKey, Promise<void>>();
 
-  /** Sets the bot's name, short line and photo from its member (identity.ts). Never throws. */
-  syncIdentity(ab: ActiveBinding): Promise<void> {
+  /** Super bots (by bot id) whose command menu this process has already set: once per start. */
+  private commandsSet = new Set<number>();
+
+  /**
+   * Brings a bound bot's Telegram profile up to date: the Super's command menu, then its name,
+   * short line and photo from its member (identity.ts). The ONE step every path runs: hub start,
+   * a pairing bind, a manager bind, a member's title or photo change. A field added to a bot's
+   * profile goes here, so no path can set it once and forget it on the others. Never throws.
+   */
+  syncProfile(ab: ActiveBinding): Promise<void> {
     const prev = this.identityChains.get(ab.key) ?? Promise.resolve();
     const next = prev.then(async () => {
       const live = () => this.active.get(ab.key) === ab && !ab.disabled && !ab.halted;
+      if (!live()) return;
+      await this.syncCommands(ab);
       if (!live()) return;
       const issue = await syncBotIdentity({
         scope: ab.scope, target: ab.target, botId: ab.binding.botId, transport: ab.transport, contextRoot: ab.contextRoot, projectName: ab.projectName,
@@ -271,9 +282,24 @@ export class TelegramHub implements TelegramHubApi {
     return next;
   }
 
+  /**
+   * The Super's command menu (/dur /durum /gundem /handsfree), set once per start per bot.
+   * Member bots get none and are never called: one that has commands from elsewhere keeps them.
+   * A refusal is logged and retried at the next bind or start, never blocking either.
+   */
+  private async syncCommands(ab: ActiveBinding): Promise<void> {
+    if (ab.target !== 'super' || this.commandsSet.has(ab.binding.botId)) return;
+    try {
+      await ab.transport.setMyCommands(TELEGRAM_COMMANDS);
+      this.commandsSet.add(ab.binding.botId);
+    } catch (err) {
+      console.warn(`[telegram] could not set the command menu of the super bot @${ab.binding.botUsername}: ${redactToken((err as Error)?.message ?? String(err), ab.binding.token)}`);
+    }
+  }
+
   /** A member's title or photo changed: every bot bound to it takes the new one. */
   refreshIdentity(target: TelegramTarget): void {
-    for (const ab of this.active.values()) if (ab.target === target) void this.syncIdentity(ab);
+    for (const ab of this.active.values()) if (ab.target === target) void this.syncProfile(ab);
   }
 
   /** The device-level manager (manager.ts `wireManager`). */
@@ -525,9 +551,8 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   async afterBound(ab: ActiveBinding, who: string): Promise<void> {
-    if (ab.target === 'super') await ab.transport.setMyCommands(TELEGRAM_COMMANDS).catch(() => {});
     await this.notice(ab, 'info', LINES.bound(who));
-    await this.syncIdentity(ab);
+    await this.syncProfile(ab);
   }
 
   // ── Losing a binding (C3, D3) ──
