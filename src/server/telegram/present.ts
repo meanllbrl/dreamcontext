@@ -12,7 +12,8 @@
  * every text card as one line in one message (a public page with its link button), then the
  * **Telefonda aç** message (N1): with Telegram + link hands-free on for this bot, the bare
  * tunnel origin to the phone page's Super chat under the hub's own "🔐 Mac'in kendi bağlantısı"
- * line; otherwise a **Telefon linkini aç** button that starts it. No picture at all while a
+ * line; otherwise a **Telefon linkini aç** button that starts it. Only when something did not travel
+ * (a text/page card or an unsent picture); an all-picture presentation sends no phone line. No picture at all while a
  * secret card is pending in that chat (L3).
  */
 import { getChat, onChatAssistantText, onChatChange } from '../../lib/assistant/chat-registry.js';
@@ -49,8 +50,6 @@ interface Pending { key: string; verbs: StageVerbEvent[]; telegram: boolean }
 
 export type PhoneLink = { origin: string } | { why: 'telegram-only' | 'other' | 'starting' } | 'off';
 export const PHONE_LINES = {
-  telegramOnly: "Telefon linki kapalı: hands-free yalnız Telegram modunda. Link için /handsfree kapat, sonra Telegram + telefon linki.",
-  other: "Hands-free başka yerden açık; telefon linki Mac'te.",
   starting: 'Telefon linki hazırlanıyor; adres gelince buraya yazacağım.',
   offer: 'Telefonda açmak için önce telefon linki gerekir.',
 } as const;
@@ -91,7 +90,9 @@ export function phoneChatUrl(origin: string, ab: ActiveBinding, sessionId: strin
 /** The Telefonda aç message (hub-written; the only place a system URL button appears, N4). */
 export async function sendPhoneButton(hub: TelegramHub, ab: ActiveBinding, sessionId: string, link: PhoneLink): Promise<void> {
   // A button only where tapping it can do what it says (a link already up, or one a tap starts).
-  if (link !== 'off' && 'why' in link) { await hub.reply(ab, link.why === 'telegram-only' ? PHONE_LINES.telegramOnly : link.why === 'starting' ? PHONE_LINES.starting : PHONE_LINES.other); return; }
+  // Never an unasked instruction to change hands-free mode: with the link unavailable the
+  // fallback line ("<title> (Mac'te)") already says where the card is.
+  if (link !== 'off' && 'why' in link) { if (link.why === 'starting') await hub.reply(ab, PHONE_LINES.starting); return; }
   const url = link !== 'off' ? phoneChatUrl(link.origin, ab, sessionId) : null;
   if (link !== 'off' && !url) return;
   if (url) {
@@ -127,7 +128,9 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
     const keyboard = lines.flatMap((l) => (l.kind === 'text' && l.button ? [[{ text: l.button.text, url: l.button.url }]] : []));
     await hub.send(ab, text, keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}).catch(() => {});
   }
-  await sendPhoneButton(hub, ab, sessionId, deps.phoneLink?.(ab) ?? 'off');
+  // The phone line belongs only to a presentation Telegram could not carry whole (a live card,
+  // a page, an unsent picture); one that arrived entirely as photos/documents needs no link.
+  if (lines.length || unsent.length) await sendPhoneButton(hub, ab, sessionId, deps.phoneLink?.(ab) ?? 'off');
   return { photos: pics.length, album, texts: lines.length };
 }
 
