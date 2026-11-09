@@ -5,6 +5,7 @@ import { getAutomation, getRunTarget } from '../automations/store.js';
 import { approvalCardFacts, schedulerInstalled } from '../automations/approval-card.js';
 import { checkApproval } from '../automations/registry.js';
 import { formatLocalFire } from '../automations/schedule.js';
+import { SCHEDULE_LINE, fireClock, quotedJob, scheduleJob } from './schedule-job.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
@@ -1341,6 +1342,15 @@ function automationItemLines(root: string, item: SuperQueueItem): string[] {
   return [head, `  title: ${JSON.stringify(m.title)} · runs: ${f.cadence}`];
 }
 
+/** A scheduled job (super-rutin Decision 9): its job read at delivery from the approved manifest. */
+function scheduleItemLines(root: string, item: SuperQueueItem): string[] {
+  const slug = item.automation ?? '';
+  const head = `- item=${item.id} event=schedule automation=${slug}${item.fire ? ` at=${fireClock(item.fire)}` : ''}`;
+  const job = slug ? scheduleJob(rootOf(root), slug) : null;
+  if (!job || !job.ok) return [`${head} state=${job ? job.reason : 'gone'}`];
+  return [head, `  job: ${quotedJob(job.job)}`];
+}
+
 /** A member decision (`member=`), its live state read at delivery: approved here, on or off. */
 function memberDecisionLines(root: string, item: SuperQueueItem): string[] {
   const slug = item.member ?? '';
@@ -1368,7 +1378,7 @@ function itemDebt(s: Pick<SuperState, 'owed'>, itemId: string): SuperOwed | unde
 
 /** What a child sent out that this item must tell: its open debt's (a re-delivery), else the child's own. */
 function itemSent(s: SuperState, item: SuperQueueItem): string[] {
-  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted') return [];
+  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted' || item.kind === 'schedule') return [];
   const debt = itemDebt(s, item.id);
   if (debt?.sent?.length) return debt.sent;
   return s.children[item.sessionId]?.sent ?? [];
@@ -1491,6 +1501,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
     return lines;
   }
   if (item.kind === 'automation') return automationItemLines(root, item);
+  if (item.kind === 'schedule') return scheduleItemLines(root, item);
   if (item.kind === 'request' || item.kind === 'reply') return requestItemLines(vault, item);
   const sid = item.sessionId;
   const e = getChat(sid);
@@ -1549,6 +1560,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'owner') ? [OWNER_WAIT_LINE] : []),
     ...(items.some((it) => it.kind === 'permission') ? [PERMISSION_LINE] : []),
     ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
+    ...(items.some((it) => it.kind === 'schedule') ? [SCHEDULE_LINE] : []),
     ...(items.some((it) => it.kind === 'restarted') ? [RESTARTED_LINE] : []),
     BATCH_LAST_LINE,
     // The agenda lines the server moved, or that went stale (pad.ts): keep or close each.
@@ -1638,7 +1650,7 @@ function scheduleRetry(key: string, at: number): void {
 /** A recap older than this is dropped, never delivered (`nextBatch`). */
 export const RECAP_MAX_AGE_MS = 30 * 60_000;
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 2, recap: 3, request: 4, reply: 5 };
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted']);
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule']);
 
 /** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
  *  (the child started working again), a `gone` whose child is live. A team item reads its
@@ -1647,6 +1659,8 @@ function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean
   if (q.team) return staleTeamItem(state, q, root === undefined ? undefined : rootOf(root));
   // A request or a reply is the member's until it is closed; it is never "moved on".
   if (q.kind === 'request' || q.kind === 'reply') return false;
+  // A scheduled job stays news until it is delivered (the server decides when it is too late).
+  if (q.kind === 'schedule') return false;
   // An `owed` turn is re-decided: stale once none of its debts is still open.
   if (q.kind === 'owed') return owedStillOpen(state, q.owed).length === 0;
   const row = state.children[q.sessionId]?.row;
@@ -2032,7 +2046,7 @@ async function pumpOnce(key: string): Promise<void> {
     // A member Super's question about main's own request (`from=member-super`) is main's to answer
     // (`super team answer`), never the owner's: it never makes the turn his (review 2026-11-02).
     const tells = !!owedTurn || (!solo && (!!held || items.some((q) => !isRequestQuestion(state, q)
-      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'automation' || (!!q.team && q.kind === 'question')))));
+      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
     const nudged = new Set(owedNow.map((d) => d.id));
     const fresh = solo && items[0].kind === 'fresh';
     // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.

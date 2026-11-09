@@ -379,6 +379,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
     if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
+    // A scheduled job names its Super automation and the fire it answers for (super-rutin C3).
+    const scheduled = q.kind === 'schedule' && typeof q.automation === 'string' && okMember(q.automation)
+      && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire)) ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString() } : undefined;
+    if (q.kind === 'schedule' && !scheduled) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
     const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
@@ -421,6 +425,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
       ...(member ? { member } : {}),
       ...(automation && decision ? { automation, decision } : {}),
+      ...(scheduled ?? {}),
       ...(q.kind === 'automation' && member && decision ? { decision } : {}),
       ...(wait ? { wait } : {}),
       ...(requestId ? { requestId } : {}),

@@ -34,6 +34,7 @@ import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { notchCovers } from '../lib/notch-state.js';
 import { recordNotification } from '../lib/notification-log.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
+import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
@@ -1716,7 +1717,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')), { parked: (sid) => parkedSince(sid) !== null })
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
       // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
-      .then(() => { armSuperOutbox(); armSuperSuccession(); })
+      .then(() => {
+        armSuperOutbox(); armSuperSuccession();
+        // The Super automations' fires (super-rutin): the desktop server only, one deliverer per Mac.
+        if (isDesktop()) startSuperSchedule({ log: (l) => console.warn(l) });
+      })
       .finally(() => server.listen(port, host, onListening));
   });
 }

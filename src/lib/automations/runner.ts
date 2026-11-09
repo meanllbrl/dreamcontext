@@ -46,6 +46,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestionFor, pendingQue
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { replaceRunSession } from './run-session.js';
 import { enqueueFire } from './queue.js';
+import { writeScheduleItem } from '../super/schedule-queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
@@ -2104,7 +2105,8 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
-      if (!scheduled) return;
+      // A Super automation's answer is the Super's own turn, never a forwarded run result.
+      if (!scheduled || (manifest as AutomationManifest).target === 'super') return;
       if (superRunQuiet(contextRoot, slug, fireIso)) return;
       const entries = readThreadRun(contextRoot, slug, fireIso);
       forwardSink.send = buildRoutineForward({
@@ -2214,6 +2216,32 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     );
   }
   const needsApprovalQuestion = !approval.approved;
+
+  // A Super automation (super-rutin plan Decision 8) is a turn of this project's Super session:
+  // the fire leaves one queue item for the server and spawns nothing. Only an approved manifest
+  // (approved with the owner's or his Super's consent) fires; a waiting change never does.
+  if (manifest.target === 'super') {
+    if (needsApprovalQuestion || view.pending) return await shortCircuit('blocked', 'its change waits for your approval on the AI Team page');
+    if (opts.override?.light || opts.parallel || opts.ask || opts.app || opts.task || opts.board || taskStep) {
+      return await shortCircuit('blocked', 'a Super automation is a turn of the Super session; it only runs on its schedule');
+    }
+    const at = nowFn();
+    try {
+      writeScheduleItem(contextRoot, { slug, fireIso }, home);
+    } catch (err) {
+      return await finalize({
+        status: 'failed', error: `could not hand the job to the Super: ${(err as Error).message}`, outputPath: null, exitCode: null,
+        sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0, startedAt: at, finishedAt: at, durationMs: 0,
+        advanceWatermark: false, notify: true,
+      });
+    }
+    return await finalize({
+      status: 'ok', error: null, outputPath: null, exitCode: null, sessionId: null, costUsd: null, numTurns: null,
+      permissionDenials: 0, startedAt: at, finishedAt: at, durationMs: 0,
+      // The server trusts the item only when its fire is the recorded watermark (C3).
+      advanceWatermark: true, notify: false, resultText: "Super'e iletildi",
+    });
+  }
 
   // Step 3 — sleep-lock deference (skipped under --force).
   if (!opts.force) {

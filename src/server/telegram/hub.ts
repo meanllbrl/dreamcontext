@@ -41,7 +41,7 @@ import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
   CALLBACK_DATA_RE, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
-  TURN_ROUTABLE_MS, TYPING_EVERY_MS, withTelegramRef,
+  TURN_ROUTABLE_MS, TYPING_EVERY_MS, telegramSideSource, withTelegramRef,
   type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
 } from '../../lib/telegram/contract.js';
@@ -783,12 +783,12 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | null = null): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
     if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
     const ref = this.mintRef(ab);
-    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as ? { cardRef: as.cardRef } : {}) });
+    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}) });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
     const dir = bindingDir(ab.scope, ab.target, this.home);
     const turns = readTurns(dir, this.home);
@@ -797,7 +797,7 @@ export class TelegramHub implements TelegramHubApi {
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
     this.beginTurn(ab, ref, sessionId);
-    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? 'run-report' : 'telegram-text' });
+    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text' });
     if (!r.ok) {
       telegramRefs.forget(inj.chatRegistryId, ref);
       this.endTurn(ref);
@@ -805,7 +805,7 @@ export class TelegramHub implements TelegramHubApi {
       await this.notice(ab, 'warn', LINES.notWritten, true);
       return false;
     }
-    // A run report is the app's, not a message he wrote: it moves no presence.
+    // A run report or a scheduled job is the app's, not a message he wrote: it moves no presence.
     if (!as) {
       this.presence.set(ab.key, { via: 'telegram', at: this.now() });
       try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
@@ -947,7 +947,8 @@ export class TelegramHub implements TelegramHubApi {
     // Presence is not read here: only words typed on the Mac end it (`backAtMac`), whichever chat.
     if (!this.superSessions.has(sessionId)) return;
     const cur = this.turnInputs.get(sessionId) ?? { telegram: new Set<string>(), mac: false };
-    if (source !== 'telegram-text') cur.mac = true;
+    // A scheduled job's turn answers on Telegram like his own text there (super-rutin C5).
+    if (!telegramSideSource(source)) cur.mac = true;
     this.turnInputs.set(sessionId, cur);
   }
 
@@ -1298,8 +1299,8 @@ function memoryPollState(): PollStateIO {
   return { read: () => s, write: (n) => { s = { ...n, v: 1 }; } };
 }
 
-/** `open -g <dreamcontext://…>`: argv, never a shell. */
-function openInBackground(url: string): void {
+/** `open -g <dreamcontext://…>`: argv, never a shell. Shared with the Super schedule (super-schedule.ts). */
+export function openInBackground(url: string): void {
   if (!/^dreamcontext:\/\//.test(url)) return;
   const child = spawn('/usr/bin/open', ['-g', url], { stdio: 'ignore', detached: true });
   child.on('error', () => { /* no open: the wait times out */ });

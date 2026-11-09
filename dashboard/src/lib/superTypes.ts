@@ -370,7 +370,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  `checklist`): his from birth, closed when his answer reaches the child. */
 /** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
  *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -834,7 +834,7 @@ export interface SuperStateView extends SuperState {
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]', '[super schedule]'] as const;
 
 export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch', 'fresh'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];

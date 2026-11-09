@@ -365,6 +365,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // rev 30 (2026-11-06): his approvals are asked on his Super screen, never given by the Super.
       '- Set up something that waits for his approval here (a member, a routine, changed instructions)?',
       '  Its card is already on his screen and in Waiting on you: say so in one line; never approve it.',
+      // rev 37 (2026-11-09, super-rutin): his timed jobs through `super schedule`.
+      expect.stringContaining('- His timed jobs ("every day at 9, do X"), ONLY on his own message'),
+      expect.stringContaining('report asked: `super schedule add --job'),
+      expect.stringContaining('`--headless` when it must run while you are off.'),
+      expect.stringContaining('He sees each job word for word: no approval card.'),
       // 2026-11-08 (model-secimi): the handoff line never fixes a model per kind of job.
       expect.stringContaining('Its working style never fixes a model per kind of job.'),
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
@@ -380,8 +385,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=36>'),
+      // rev 37 (2026-11-09, super-rutin): a scheduled job's turn.
+      expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
+      expect.stringContaining('<super-brief rev=37>'),
     ]);
-    expect(after.length).toBe(before.length + 48); // +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 53); // +5 (rev 37: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

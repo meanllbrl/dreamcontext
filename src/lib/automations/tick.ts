@@ -48,6 +48,7 @@
  * to enforce that by construction, not by convention.
  */
 
+import { noteMissedSuperFire } from '../super/schedule-queue.js';
 import { existsSync } from 'node:fs';
 import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
@@ -331,6 +332,15 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     // accounts for every manifest it considered.
     const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours, manifest.mode);
     if (!due.due) {
+      // A Super automation's fire past catch-up is never silent (super-rutin Decision 10): one
+      // `missed` item the server tells once. Headless automations keep today's behaviour.
+      if (due.reason === 'outside-catchup' && manifest.target === 'super' && due.fireAt) {
+        try {
+          if (noteMissedSuperFire(contextRoot, manifest.slug, due.fireAt, opts.home)) logFn(`[automations] ${manifest.slug} missed its ${due.fireAt.toISOString()} fire — the Super tells the owner`);
+        } catch (err) {
+          logFn(`[automations] ${manifest.slug}: could not record a missed fire: ${(err as Error).message}`);
+        }
+      }
       verdicts.push({ slug: manifest.slug, verdict: due.reason });
       continue;
     }
