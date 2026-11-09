@@ -563,3 +563,59 @@ describe('a held token lock (the tick, a crash inside the stale window)', () => 
     expect(hub.active.get(again.key)?.disabled).toBeUndefined();
   }, 12_000);
 });
+
+describe('the command menu is part of the profile every start brings up to date (owner report 2026-11-09)', () => {
+  const MEMBER_TOKEN = '222222:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const restart = () => new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+  /** Bindings saved before this release: on disk, no command ever set for them. */
+  async function savedBindings(): Promise<void> {
+    const { writeBinding } = await import('../../src/lib/telegram/config.js');
+    tg.addBot(MEMBER_TOKEN, 'acme_galileo_bot');
+    const at = new Date().toISOString();
+    writeBinding(scopeOfContextRoot(root), 'super', { token: TOKEN, botId: 123456, botUsername: 'acme_super_bot', chatId: OWNER, userId: OWNER, boundAt: at }, home);
+    writeBinding(scopeOfContextRoot(root), 'galileo', { token: MEMBER_TOKEN, botId: 222222, botUsername: 'acme_galileo_bot', chatId: OWNER, userId: OWNER, boundAt: at }, home);
+    await hub.stop();
+    tg.calls.length = 0;
+    hub = restart();
+  }
+  const commandCalls = (token: string) => tg.sent('setMyCommands').filter((c) => c.token === token);
+
+  it('start registers the Super menu for a saved Super binding, once per start; a member bot is never called', async () => {
+    const { TELEGRAM_COMMANDS } = await import('../../src/lib/telegram/contract.js');
+    await savedBindings();
+    await hub.start();
+    await vi.waitFor(() => expect(commandCalls(TOKEN)).toHaveLength(1), { timeout: 5000 });
+    expect(commandCalls(TOKEN)[0].params.commands).toEqual(TELEGRAM_COMMANDS);
+    // The Super's name and short line follow in the same step.
+    await vi.waitFor(() => expect(tg.sent('setMyName').some((c) => c.token === TOKEN)).toBe(true));
+    // Another sync in the same start (a title change, a bind) does not call Telegram again.
+    await hub.syncProfile(hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!);
+    await hub.syncProfile(hub.active.get(keyOf(scopeOfContextRoot(root), 'galileo'))!);
+    expect(commandCalls(TOKEN)).toHaveLength(1);
+    expect(tg.calls.some((c) => c.token === MEMBER_TOKEN && /Commands$/.test(c.method))).toBe(false);
+  });
+
+  it('a refused setMyCommands is logged without the token, the start goes on, and the next start tries again', async () => {
+    await savedBindings();
+    tg.failing.set('setMyCommands', 400);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await hub.start();
+      await vi.waitFor(() => expect(warn.mock.calls.some((c) => String(c[0]).includes('command menu of the super bot @acme_super_bot'))).toBe(true), { timeout: 5000 });
+      expect(warn.mock.calls.flat().join(' ')).not.toContain(TOKEN);
+      // Nothing blocked: the identity still syncs and the binding serves.
+      await vi.waitFor(() => expect(tg.sent('setMyName').some((c) => c.token === TOKEN)).toBe(true));
+      expect(hub.status()).toEqual(expect.arrayContaining([expect.objectContaining({ target: 'super', state: 'active' })]));
+    } finally { warn.mockRestore(); }
+    tg.failing.delete('setMyCommands');
+    await hub.stop();
+    hub = restart();
+    await hub.start();
+    await vi.waitFor(() => expect(commandCalls(TOKEN)).toHaveLength(2), { timeout: 5000 });
+  });
+
+  it('a pairing bind sets the Super menu through the same step', async () => {
+    await bound();
+    await vi.waitFor(() => expect(commandCalls(TOKEN)).toHaveLength(1), { timeout: 5000 });
+  });
+});
