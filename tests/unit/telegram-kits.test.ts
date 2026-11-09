@@ -80,7 +80,7 @@ describe('buildReportSrcdoc is a behaviour-neutral extraction of HtmlFrame', () 
 
   it('FrameViewer calls it (no second inline composition left behind)', () => {
     const src = readFileSync('dashboard/src/components/layout/FrameViewer.tsx', 'utf-8');
-    expect(src).toContain('buildReportSrcdoc(html, resolveChatKitTokens(), theme)');
+    expect(src).toContain('buildReportSrcdoc(html, pageTokens(resolveChatKitTokens(), scheme, theme), scheme,');
     expect(src).not.toMatch(/buildSandboxSrcdoc\(/);
   });
 });

@@ -7,6 +7,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { SANDBOX_ALLOW } from '../../lib/sandboxHtml';
 import { frameEscSpent, useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { buildReportSrcdoc } from '../../lib/reportSrcdoc';
+import { OWN_CANVAS_CSS, pageOwnsPalette, pageTokens } from '../../lib/pageCanvas';
 import {
   CHAT_HTML_SANDBOX, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
   readHeightMessage, resolveChatKitTokens,
@@ -261,9 +262,12 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
   const [torn, setTorn] = useState(false);
   const loads = useRef(0);
   const html = state.html;
+  // A page with its own light-only palette keeps its own light canvas in both themes (lib/pageCanvas.ts).
+  const ownCanvas = html !== null && pageOwnsPalette(html);
+  const scheme = ownCanvas ? 'light' : theme;
   const srcDoc = useMemo(
-    () => (html === null ? null : buildReportSrcdoc(html, resolveChatKitTokens(), theme)),
-    [html, theme],
+    () => (html === null ? null : buildReportSrcdoc(html, pageTokens(resolveChatKitTokens(), scheme, theme), scheme, ownCanvas ? OWN_CANVAS_CSS : undefined)),
+    [html, theme, scheme, ownCanvas],
   );
   useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);
   if (state.loading) return <p className="frame-viewer-status">{t('viewer.loading')}</p>;
