@@ -26,7 +26,8 @@ import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fres
 import { readHandoffRecord, type HandoffRecord } from '../context-watch.js';
 import { memberCallState, ownerWords } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
-import { detectOwnerLanguage, ownerLanguageLine, type OwnerLanguage } from './owner-language.js';
+import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './owner-language.js';
+import { isServerTurnText } from '../usage-readers.js';
 import {
   closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, stampOwedSince,
   type OwedEnd,
@@ -912,8 +913,12 @@ const ownerLanguages = new Map<string, OwnerLanguage>();
  *  HIS words only (`ownerWords`: no reply quote, agenda line or server-written block); when they
  *  do not tell, the one he wrote in before. A change is written to the record, so it outlives a
  *  restart and a fresh session. A server-written text (the continue-at-reset turn) must go to
- *  `superKnownLanguage` instead: it is never his. */
+ *  `superKnownLanguage` instead: it is never his; one with a known opening (`isServerTurnText`)
+ *  is read-only here too. */
 export function superOwnerLanguage(sessionId: string, text: string): OwnerLanguage | null {
+  // A text the server or the app posted on his path (a `[ran in chat]` run report, an interrupt
+  // note) is never his: it only reads, so its English never overwrites his Turkish.
+  if (isServerTurnText(text)) return superKnownLanguage(sessionId);
   const root = superKeyOfSession(sessionId);
   const words = ownerWords(text);
   const detected = words ? detectOwnerLanguage(words) : null;
@@ -1639,6 +1644,9 @@ function scheduleRetry(key: string, at: number): void {
 export const RECAP_MAX_AGE_MS = 30 * 60_000;
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 2, recap: 3, request: 4, reply: 5 };
 const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted']);
+/** Every kind the pump writes as a turn into the Super's session (a solo turn or a batch): each
+ *  one ends with the owner-language line (`withOwnerLanguage`). Exported for the kind-walk test. */
+export const SUPER_TURN_KINDS: readonly QueueKind[] = [...Object.keys(SOLO) as QueueKind[], ...BATCHED];
 
 /** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
  *  (the child started working again), a `gone` whose child is live. A team item reads its
@@ -1998,8 +2006,7 @@ async function pumpOnce(key: string): Promise<void> {
     const body = owedTurn ? owedTurnText(key, owedNow)
       : solo ? superEventText(key, state, items[0], now, batch) : superBatchText(key, state, items.filter((q) => !heldIds.has(q.id)), batch, now, held);
     // Every server-written turn ends by naming the owner's language (owner-language.ts).
-    const langLine = ownerLanguageLine(ownerLanguageOf(key, state));
-    const text = langLine ? `${body}\n${langLine}` : body;
+    const text = withOwnerLanguage(body, ownerLanguageOf(key, state));
     // A request, reply or owed turn goes as a batch of one (its own kind is no event kind of the window's).
     const asBatch = !solo || items[0].kind === 'request' || items[0].kind === 'reply' || items[0].kind === 'owed';
     const event: SuperEventFrame = !asBatch

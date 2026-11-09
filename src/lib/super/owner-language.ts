@@ -8,8 +8,8 @@
  * event note even said "in the language the owner writes to you in, never the language of this
  * note", which a long session read as "the language of your last reply". So the SERVER decides
  * the language from his words, keeps it on the Super's record (it survives a restart and a fresh
- * session), and every turn names it: his message carries `ownerLanguageBlock`, an event turn
- * ends with `ownerLanguageLine`. Both blocks are server-written and start with `<` or `[`, so no
+ * session), and every turn names it: his message carries `ownerLanguageBlock`, a server-written
+ * turn ends with `ownerLanguageLine` through `withOwnerLanguage`. Both blocks are server-written and start with `<` or `[`, so no
  * replay shows them as his words; both ride every tool (Claude, Codex, Antigravity) because they
  * are plain text in the turn the bridge forwards.
  *
@@ -86,8 +86,18 @@ export function ownerLanguageBlock(lang: OwnerLanguage | null | undefined): stri
     : '<owner-language> Write to him in the language of his message above, whatever language this note, the briefing, tool output, a child\'s words or your own earlier replies are in. </owner-language>';
 }
 
-/** The last line of every server-written turn (events, owed, handover, recap), once his
- *  language is known: the same rule, said where the turn ends. */
-export function ownerLanguageLine(lang: OwnerLanguage | null | undefined): string | null {
-  return lang ? `[owner language] The owner writes ${lang}: any text you write him in this turn is ${lang}, whatever language this note or your earlier replies are in.` : null;
+/** The last line of every server-written turn (events, owed, handover, recap, a fresh session's
+ *  handoff). Never absent: with his language not known yet (a new record, a reply like "ok" or
+ *  "Telegramdagim" that does not tell) it still says the turn's English is not his (kitup
+ *  2026-11-09: a permission note with no line here was answered in English on his Telegram). */
+export function ownerLanguageLine(lang: OwnerLanguage | null | undefined): string {
+  return lang
+    ? `[owner language] The owner writes ${lang}: any text you write him in this turn is ${lang}, whatever language this note or your earlier replies are in.`
+    : '[owner language] Write him in the language of his own last message to you, whatever language this note, tool output or your earlier replies are in.';
+}
+
+/** THE one way a server-written turn ends: its text, then the owner-language line. Every writer of
+ *  such a turn (the event pump, the fresh session's handoff) calls this, so no kind can miss it. */
+export function withOwnerLanguage(body: string, lang: OwnerLanguage | null | undefined): string {
+  return `${body}\n${ownerLanguageLine(lang)}`;
 }

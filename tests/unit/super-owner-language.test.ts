@@ -26,12 +26,12 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { emptySuperState } from '../../src/lib/super/types.js';
+import { QUEUE_KINDS, emptySuperState, type QueueKind, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  _resetSuperInbox, _superInboxDrained, attachSuperInbox, startSuperInbox, superKnownLanguage, superOwnerLanguage, superTurnEnded,
+  SUPER_TURN_KINDS, _resetSuperInbox, _superInboxDrained, attachSuperInbox, startSuperInbox, superKnownLanguage, superOwnerLanguage, superTurnEnded,
   type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
-import { detectOwnerLanguage, ownerLanguageBlock, ownerLanguageLine } from '../../src/lib/super/owner-language.js';
+import { detectOwnerLanguage, ownerLanguageBlock, ownerLanguageLine, withOwnerLanguage } from '../../src/lib/super/owner-language.js';
 import { _resetOwnerQuestions, setOwnerQuestionSinks } from '../../src/lib/super/owner-question.js';
 import { SEND_QUEUED_WAITS, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, deliverWindowResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -159,8 +159,10 @@ describe('the owner\'s language is detected from his own words', () => {
   it('the block names the language; unknown, it points at his message', () => {
     expect(ownerLanguageBlock('Turkish')).toMatch(/^<owner-language> He writes Turkish\. Every word you write to him in this turn is Turkish/);
     expect(ownerLanguageBlock(null)).toMatch(/^<owner-language> Write to him in the language of his message above/);
-    expect(ownerLanguageLine(null)).toBeNull();
+    // Never absent (kitup 2026-11-09): unknown, it still says this turn's English is not his.
+    expect(ownerLanguageLine(null)).toMatch(/^\[owner language\] Write him in the language of his own last message to you/);
     expect(ownerLanguageLine('Turkish')).toMatch(/^\[owner language\] The owner writes Turkish/);
+    expect(withOwnerLanguage('[super events] x', null).split('\n').at(-1)).toBe(ownerLanguageLine(null));
   });
 });
 
@@ -191,13 +193,21 @@ describe('the Super is told his language on every turn', { timeout: 30_000 }, ()
     expect((await readSuperState(root)).ownerLanguage).toBe('Turkish');
   });
 
-  it('an event turn ends by naming it; before he ever wrote, nothing is added', async () => {
+  it('a run report or an interrupt note on his path never decides it (kitup 2026-11-09)', async () => {
+    expect(superOwnerLanguage(SUPER, 'bu taraf daha çok notion formül arayüzü gibi olmalı')).toBe('Turkish');
+    expect(superOwnerLanguage(SUPER, '[ran in chat] the owner ran this and it exited 0, please read the output and tell him what it did')).toBe('Turkish');
+    expect(superOwnerLanguage(SUPER, 'Your previous turn was stopped by the owner, so please check what is done and what is not')).toBe('Turkish');
+    await _superInboxDrained();
+    expect((await readSuperState(root)).ownerLanguage).toBe('Turkish');
+  });
+
+  it('an event turn ends by naming it; before he ever wrote, it still says the note is not his', async () => {
     const busy = { on: false };
     const { inbox, delivered } = fakeInbox(busy);
     attachSuperInbox(inbox);
     askQuestion(reg(C1), 'req-1');
     await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
-    expect(delivered[0].text).not.toContain('[owner language]');
+    expect(delivered[0].text.split('\n').at(-1)).toBe(ownerLanguageLine(null));
     busy.on = true;
     superOwnerLanguage(SUPER, 'bu taraf daha çok notion formül arayüzü gibi olmalı');
     await _superInboxDrained();
@@ -209,6 +219,43 @@ describe('the Super is told his language on every turn', { timeout: 30_000 }, ()
     const last = delivered[delivered.length - 1].text;
     expect(last.split('\n').at(-1)).toMatch(/^\[owner language\] The owner writes Turkish: any text you write him in this turn is Turkish/);
   });
+});
+
+describe('every kind of server-written turn ends with his language (kitup 2026-11-09)', { timeout: 60_000 }, () => {
+  // Kinds that never become a turn of their own: an `ask` is the Super's own question, an `ended`
+  // item is born done, an `approval` waits on the owner's card. A NEW kind fails here until it is
+  // put on one side: a turn kind goes through the pump, which ends every turn with the line.
+  const NEVER_A_TURN: readonly QueueKind[] = ['ask', 'ended', 'approval'];
+  it('the ledger: every queue kind is a pump turn or named as never one', () => {
+    for (const k of QUEUE_KINDS) expect(SUPER_TURN_KINDS.includes(k) !== NEVER_A_TURN.includes(k), k).toBe(true);
+  });
+
+  // The kinds whose item stands on its own record; the rest (a live question or permission, an
+  // owed debt, a member's request or reply, an owner wait) need live state the tests above drive.
+  const item = (kind: QueueKind): SuperQueueItem => ({
+    id: `q-${kind}`, kind, state: 'pending', createdAt: Date.now(),
+    sessionId: kind === 'recap' || kind === 'handover' || kind === 'fresh' || kind === 'automation' ? SUPER : C1,
+    ...(kind === 'automation' ? { automation: 'daily-digest', decision: 'approved' as const } : {}),
+  });
+  const ROW: Partial<Record<QueueKind, string>> = { done: 'done', stuck: 'stuck', gone: 'gone', restarted: 'working' };
+  for (const kind of ['done', 'stuck', 'gone', 'restarted', 'recap', 'handover', 'fresh', 'automation'] as QueueKind[]) {
+    it(`${kind}: the turn's last line names Turkish`, async () => {
+      await _superInboxDrained();
+      _resetSuperInbox();
+      resetSuperIndex();
+      writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+        ...emptySuperState(), session: SUPER, enabled: true, ownerLanguage: 'Turkish',
+        children: { [C1]: { sessionId: C1, brief: 'Pick the database', adopted: true, startedAt: 1, ...(ROW[kind] ? { row: ROW[kind] } : {}) } },
+        queue: [item(kind)],
+      }));
+      await startSuperInbox([root]);
+      const { inbox, delivered } = fakeInbox({ on: false });
+      attachSuperInbox(inbox);
+      superTurnEnded(SUPER);
+      await vi.waitFor(() => expect(delivered.length).toBeGreaterThanOrEqual(1), W);
+      for (const d of delivered) expect(d.text.split('\n').at(-1)).toBe(ownerLanguageLine('Turkish'));
+    });
+  }
 });
 
 describe('a send that waits behind a question says so', { timeout: 30_000 }, () => {
