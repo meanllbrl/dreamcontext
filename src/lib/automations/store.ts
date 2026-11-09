@@ -33,7 +33,7 @@ import {
   adoptIfSyncing,
   updateAgent,
 } from '../agents/store.js';
-import { approveAutomation, approvePair } from './registry.js';
+import { approveAutomation, approvePair, type ApprovalConsent } from './registry.js';
 import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
@@ -66,6 +66,9 @@ import {
   PATTERN_PLAYBOOK_MAX_CHARS,
   PATTERN_SECTION_MAX_CHARS,
   REVIEW_MODES,
+  AUTOMATION_REPLIES,
+  type AutomationReply,
+  type AutomationTarget,
   sharedSlugNegations,
   type AutomationCache,
   type AutomationJob,
@@ -805,6 +808,9 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     // Only when set and non-empty, for the same hash reason. Kept as written (a bad entry simply
     // names no tool the gate will match): dropping one would change what the owner approved.
     ...(appToolsOf(data.app_tools).length ? { appTools: appToolsOf(data.app_tools) } : {}),
+    // Only when set, for the same hash reason (super-rutin plan). Anything else reads as absent.
+    ...(data.target === 'super' ? { target: 'super' as const } : {}),
+    ...((AUTOMATION_REPLIES as readonly unknown[]).includes(data.reply) ? { reply: data.reply as AutomationReply } : {}),
     // Every file read here is an AUTOMATION run target, exactly as before the
     // agent split; a legacy manifest is its own agent and has no `## Job`. Only
     // the store composes an agent's call target (with real bindings and a
@@ -1466,6 +1472,11 @@ export interface CreateAutomationInput {
   /** `<app>/<tool>` refs an unattended run may use to change things (app-araclari §4.2). */
   appTools?: string[];
   app?: string;
+  /** `target: super`: a turn of the project's Super session (super-rutin). Set only by the
+   *  `super schedule` verb; every other surface refuses it. */
+  target?: AutomationTarget;
+  /** Where the result goes. Approved only with the owner's or his Super's consent. */
+  reply?: AutomationReply;
 }
 
 /**
@@ -1494,6 +1505,16 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   if (i.appTools !== undefined) {
     for (const t of i.appTools) if (!APP_TOOL_REF_RE.test(t)) throw new AutomationError(`Invalid app tool "${t}": write it as <app>/<tool>, e.g. yuk-izleme/notify-test.`);
     if (i.appTools.length > 20) throw new AutomationError('At most 20 app tools per automation.');
+  }
+  if (i.reply !== undefined && !(AUTOMATION_REPLIES as readonly string[]).includes(i.reply)) {
+    throw new AutomationError(`Invalid reply "${String(i.reply)}": must be one of ${AUTOMATION_REPLIES.join(', ')}.`);
+  }
+  if (i.target !== undefined) {
+    if (i.target !== 'super') throw new AutomationError(`Invalid target "${String(i.target)}": only "super".`);
+    // A Super turn is the Super's own: no member, flow, board, app or vendor of its own.
+    if (i.agent !== undefined || i.whiteboard || i.app || i.appTools?.length || i.tool || mode !== 'sched') {
+      throw new AutomationError('A Super automation is a scheduled turn of the Super itself: no agent, board, app, tool or call mode.');
+    }
   }
   if (i.app !== undefined) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(i.app)) throw new AutomationError(`Invalid app "${i.app}": it must be an app slug.`);
@@ -1687,11 +1708,11 @@ export function createAutomation(
  * record, which the automation's own approval then writes back. A same-slug pair (a separate agent
  * file) is `approvePair`'s; any other agent is untouched.
  */
-export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string): void {
+export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent): void {
   const projectRoot = dirname(contextRoot);
   const call = m.runKind === 'agent' ? null : getRunTarget(contextRoot, m.slug, 'agent');
-  if (call && call.path === m.path) approveAutomation(projectRoot, call, now, home);
-  approveAutomation(projectRoot, m, now, home);
+  if (call && call.path === m.path) approveAutomation(projectRoot, call, now, home, consent);
+  approveAutomation(projectRoot, m, now, home, consent);
 }
 
 /** The body every new manifest's `## Output instructions` starts with. */
@@ -1805,6 +1826,8 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     ...(i.whiteboard && i.boardOnly ? { scope: 'board' } : {}),
     ...(i.app ? { app: i.app } : {}),
     ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
+    ...(i.target === 'super' ? { target: 'super' } : {}),
+    ...(i.reply && i.reply !== 'mac' ? { reply: i.reply } : {}),
   };
 
   const body = [
@@ -1864,6 +1887,9 @@ export interface UpdateAutomationInput {
   job?: string | null;
   /** The job's "ask me before it publishes" gate (`review:`), a job-file field. */
   review?: ReviewMode;
+  /** Where the result goes (`reply:`), an unsplit automation only; `mac` clears it. Consent-gated
+   *  at the stamp (`ApprovalEntry.consent`): an edit here never approves it by itself. */
+  reply?: AutomationReply;
 }
 
 /** A review mode an edit may write, or a refusal: a typo'd mode would read as `off`. */
@@ -1901,6 +1927,9 @@ export function updateAutomation(
   if (!isSafeAutomationSlug(slug)) throw new AutomationError(`No such automation: ${slug}`);
   // Before any write: a bad mode refused after the agent half was saved would leave half an edit.
   checkReviewPatch(patch.review);
+  if (patch.reply !== undefined && !(AUTOMATION_REPLIES as readonly string[]).includes(patch.reply)) {
+    throw new AutomationError(`Invalid reply "${String(patch.reply)}": must be one of ${AUTOMATION_REPLIES.join(', ')}.`);
+  }
   const path = automationPath(contextRoot, slug);
   if (!pathOccupied(path)) {
     if (patch.job !== undefined) throw new AutomationError(JOB_NEEDS_BOUND);
@@ -1914,6 +1943,10 @@ export function updateAutomation(
   }
   // Checked before anything is written, so a refused job leaves the file untouched.
   if (parts.kind === 'legacy' && patch.job !== undefined) throw new AutomationError(JOB_NEEDS_BOUND);
+  if (parts.kind !== 'legacy' && patch.reply !== undefined) throw new AutomationError('A member\'s routine reaches Telegram through its member\'s bot (its Telegram section).');
+  if (parts.kind === 'legacy' && parts.legacy.target === 'super' && (patch.tool || patch.mode === 'call')) {
+    throw new AutomationError('A Super automation is a scheduled turn of the Super itself: no tool or call mode.');
+  }
   // A teammate's routine (or a routine of a teammate's agent) is read-only here.
   if (parts.kind === 'legacy') assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
   else assertOwned({ owner: getAgent(contextRoot, parts.job.agent)?.owner ?? null, jobOwner: parts.job.owner }, parts.job.title || slug);
@@ -2017,6 +2050,7 @@ function updateLegacyManifest(
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.photo !== undefined) fields.photo = patch.photo;
   if (patch.review !== undefined) fields.review = patch.review;
+  if (patch.reply !== undefined) fields.reply = patch.reply === 'mac' && manifest.target !== 'super' ? null : patch.reply;
 
   patchManifestFrontmatter(manifest.path, fields);
 

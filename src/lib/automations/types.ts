@@ -530,6 +530,18 @@ export interface AutomationManifest {
    * this exact manifest is approved on this Mac. Approval-hashed, OMITTED when absent and LAST.
    */
   appTools?: string[];
+  /**
+   * `target: super` (super-rutin plan): the run is a turn of this project's Super session, not a
+   * headless process. Absent = headless. Approval-hashed, OMITTED when absent and LAST; stamped
+   * only with the owner's or his Super's consent (`ApprovalEntry.consent`).
+   */
+  target?: AutomationTarget;
+  /**
+   * `reply:` where the result goes. Headless: only `telegram` means anything (also through the
+   * project's Super bot). Super: absent = `auto` (Telegram while he is on Telegram, else the Mac).
+   * Approval-hashed when `telegram`/`auto`, OMITTED otherwise and LAST; consent as `target`.
+   */
+  reply?: AutomationReply;
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -1132,6 +1144,10 @@ export interface ApprovalPayloadFields {
   boardOnly: boolean;
   /** Hashed because it lets an unattended run change things through an app. '' when none. */
   appTools: string;
+  /** Hashed: a Super automation is a turn of the Super session, not a headless run. '' when headless. */
+  target: string;
+  /** Hashed: where the result goes (Telegram is outflow). '' at the default. */
+  reply: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1249,6 +1265,16 @@ export const APPROVAL_PAYLOAD_VERSION = 'automation-approval/v1';
  *  their position in `canonicalApprovalPayload`'s literal — the two orders must
  *  not drift, or the surface a human reviews stops matching the bytes that were
  *  hashed. */
+/** `target:` values: only the Super session today. */
+export type AutomationTarget = 'super';
+/** `reply:` values. */
+export const AUTOMATION_REPLIES = ['telegram', 'mac', 'auto'] as const;
+export type AutomationReply = (typeof AUTOMATION_REPLIES)[number];
+/** True when the manifest carries a field only the owner (or his own Super) may approve. */
+export function needsOwnerConsent(m: { target?: string; reply?: string }): boolean {
+  return m.target === 'super' || m.reply === 'telegram' || m.reply === 'auto';
+}
+
 export const APPROVAL_DIFF_FIELDS = [
   'prompt',
   'outputInstructions',
@@ -1268,6 +1294,10 @@ export const APPROVAL_DIFF_FIELDS = [
   'app',
   'boardOnly',
   'appTools',
+  // Appended LAST and omitted at their default (pattern: a new field in a consent hash must not
+  // re-block everyone): every existing approval keeps its hash.
+  'target',
+  'reply',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

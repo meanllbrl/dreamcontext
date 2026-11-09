@@ -24,7 +24,7 @@ import type { AutomationManifest } from './types.js';
 export const APPROVED_TEXT_KEYS = [
   'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning',
   'review', 'mode', 'flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'fallbackTools',
-  'tool', 'app', 'boardOnly', 'appTools',
+  'tool', 'app', 'boardOnly', 'appTools', 'target', 'reply',
 ] as const;
 
 export type ApprovedText = Partial<Pick<AutomationManifest, (typeof APPROVED_TEXT_KEYS)[number]>>;

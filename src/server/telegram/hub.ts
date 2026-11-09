@@ -49,6 +49,7 @@ import {
   bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readTurns,
   redactToken, removeBindingDir, scopeOfContextRoot, writeBinding, writePollState, writeTurns,
 } from '../../lib/telegram/config.js';
+import { writeAwayState } from '../../lib/telegram/away-state.js';
 import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
 import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
@@ -809,6 +810,7 @@ export class TelegramHub implements TelegramHubApi {
       this.presence.set(ab.key, { via: 'telegram', at: this.now() });
       try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
       this.flushAway();
+      writeAwayState(this.ownerAway(), this.home, this.now());
     }
     return ref;
   }
@@ -1014,6 +1016,8 @@ export class TelegramHub implements TelegramHubApi {
       if (this.presence.has(ab.key)) this.presence.set(ab.key, { via: 'mac', at });
     }
     try { this.deps.handsfree?.onBackAtMac?.(this); } catch { /* best-effort */ }
+    // A runner reads it: a plain automation's question goes to Telegram only while he is away.
+    writeAwayState(this.ownerAway(), this.home, at);
   }
 
   /** The owner is ON TELEGRAM for this Super binding: his latest message to it came through
@@ -1043,6 +1047,7 @@ export class TelegramHub implements TelegramHubApi {
    *  Mac withdraws nothing already sent; those buttons still answer. */
   flushAway(): void {
     if (!this.ownerAway()) return;
+    writeAwayState(true, this.home, this.now());
     for (const ab of [...this.active.values()]) {
       if (ab.target !== 'super' || ab.disabled || !ab.contextRoot) continue;
       const root = ab.contextRoot;

@@ -497,6 +497,9 @@ export async function handleAutomationsShow(
         boardOnly: manifest.boardOnly === true,
         // Hashed when named, LAST: the app tools a run may change things with while nobody watches.
         appTools: manifest.appTools ?? [],
+        // Hashed when set, LAST (super-rutin): a turn of the Super itself, and where the result goes.
+        target: manifest.target ?? '',
+        reply: manifest.reply ?? '',
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -653,7 +656,8 @@ export async function handleAutomationsApprove(
     const body = (await parseJsonBody(req)) ?? {};
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
-    const entry = approveAutomation(projectRoot, manifest, new Date());
+    // The owner's page: his consent covers a Super turn or a Telegram reply too (super-rutin C2).
+    const entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page');
     settleApprovalQuestions(contextRoot, manifest.slug);
     const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
     const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
@@ -927,7 +931,7 @@ export async function handleAutomationsQuestionAnswer(
       // the exact primitive `handleAutomationsRunNow` uses — never a second
       // spawn path. An agent target writes the agent's own grant, exactly what
       // the Agents page's Approve writes.
-      approveAutomation(dirname(contextRoot), manifest, new Date());
+      approveAutomation(dirname(contextRoot), manifest, new Date(), undefined, 'owner-page');
       if (question.target === 'agent') {
         // The agent re-runs only with the task its run carried: a bare re-run of
         // a call target has no ask to answer.
@@ -1174,7 +1178,8 @@ function approveHere(contextRoot: string, manifest: AutomationManifest): void {
   const projectRoot = dirname(contextRoot);
   registerProject(projectRoot);
   // The agent an unsplit file also is gets the same stamp: one file, one approval (`approveMadeHere`).
-  approveMadeHere(contextRoot, manifest, new Date());
+  // Every caller is behind `refuseUnlessOwnerPage`: his save is his consent (super-rutin C2).
+  approveMadeHere(contextRoot, manifest, new Date(), undefined, 'owner-page');
 }
 
 /**
@@ -1436,6 +1441,8 @@ export async function handleAutomationsUpdate(
       review: str(body.review) as UpdateAutomationInput['review'],
       prompt: str(body.prompt),
       job,
+      // The dialog's "Telegram'a da gelsin" tick / "Cevap nereye" (super-rutin).
+      reply: str(body.reply) as UpdateAutomationInput['reply'],
     });
     const stamped = approveUnlessUnseenSoul(contextRoot, before, manifest);
     sendJson(res, 200, {

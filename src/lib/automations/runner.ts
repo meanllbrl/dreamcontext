@@ -37,6 +37,7 @@ import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, approvedTarget, getApproval, manifestHash, renderApprovalReview } from './registry.js';
 import { claimPendingNotice } from '../agents/pending-change.js';
 import { buildRoutineForward, mintRunPostKey, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
+import { ownerAwayNow } from '../telegram/away-state.js';
 import type { OnDeferredSend } from '../telegram/contract.js';
 import { ownerLabel } from '../agents/owner.js';
 import { effectivePattern } from '../agents/agent-sync.js';
@@ -2097,16 +2098,20 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       result: params.resultText ?? null,
     };
   };
-  /** The member bot's message for this run, or none (member-forward.ts): only a scheduled fire,
-   *  never a task step or a job the Super sent; best-effort, never the run's outcome. */
+  /** The Telegram message for this run, or none (member-forward.ts): its member's bot, else the
+   *  project's Super bot (super-rutin). Only a scheduled fire, never a task step or a job the
+   *  Super sent; best-effort, never the run's outcome. */
   const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
-      if (!scheduled || !manifest.agent) return;
+      if (!scheduled) return;
       if (superRunQuiet(contextRoot, slug, fireIso)) return;
       const entries = readThreadRun(contextRoot, slug, fireIso);
       forwardSink.send = buildRoutineForward({
         contextRoot, slug, title: manifest.title, agent: manifest.agent, approvalHash: manifestHash(manifest as AutomationManifest),
+        // The run's approved manifest (only an approved one runs): `reply` stamped with his consent.
+        reply: (manifest as AutomationManifest).reply ?? null,
+        away: () => ownerAwayNow(home ?? homedir()),
         status: params.status, error: params.error,
         // The published headline from the runner's own memory (what its `ok` entry will carry),
         // never read back from the thread file, which anyone with brain write access can add to.

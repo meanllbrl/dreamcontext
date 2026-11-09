@@ -63,8 +63,14 @@ export interface ForwardInput {
   contextRoot: string;
   slug: string;
   title: string;
-  /** The routine's member (manifest `agent`); none = nothing is sent. */
+  /** The routine's member (manifest `agent`); none = the project's Super bot (super-rutin). */
   agent: string | null | undefined;
+  /** A plain automation's approved `reply:` (only `telegram` opts it in). Ignored for a member,
+   *  whose opt-in is its bot's `forward.json`. */
+  reply?: string | null;
+  /** Whether he is away from the Mac (`ownerAwayNow`): a plain automation's question goes to the
+   *  Super bot only then (owner 2026-11-09). Absent = at the Mac. */
+  away?: () => boolean;
   /** The routine's current manifest hash (its approval entry's `manifestSha256`). */
   approvalHash: string;
   status: string;
@@ -104,29 +110,48 @@ const TEXT_DOC = /\.(md|txt|csv|json|html?)$/i;
  * forward.json (both through the shared, symlink-refusing reader).
  */
 export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) | null {
-  if (!input.scheduled || !input.agent) return null;
+  if (!input.scheduled) return null;
   const home = input.home ?? homedir();
-  const where = memberScope(input.contextRoot, input.agent, home);
-  if (!where) return null;
-  const scope = where === 'global' ? 'global' : scopeOfContextRoot(input.contextRoot);
-  const b = readBinding(scope, input.agent, home);
+  // A member with its own bot: that bot, opted in by forward.json (native confirm). Anything else,
+  // a plain automation or a member with no bot (super-rutin): the project's Super bot, its results
+  // opted in by an approved `reply: telegram` (approval with the owner's consent,
+  // `ApprovalEntry.consent`), its failures always. One sender for both.
+  let scope = scopeOfContextRoot(input.contextRoot);
+  let target = 'super';
+  let viaSuper = true;
+  if (input.agent) {
+    const where = memberScope(input.contextRoot, input.agent, home);
+    const memberScopeKey = where === 'global' ? 'global' : scopeOfContextRoot(input.contextRoot);
+    const own = where ? readBinding(memberScopeKey, input.agent, home) : null;
+    if (own && (own.ok || own.reason !== 'absent')) {
+      scope = memberScopeKey;
+      target = input.agent;
+      viaSuper = false;
+    }
+  }
+  const failed = input.status === 'failed' || input.status === 'timeout';
+  const asked = !!input.question && input.status.startsWith('awaiting');
+  const optedIn = viaSuper
+    ? input.reply === 'telegram'
+    : readForward(bindingDir(scope, target, home), home).routines.some((r) => r.projectKey === projectKey(dirname(input.contextRoot)) && r.slug === input.slug && r.approvalHash === input.approvalHash);
+  // Through the Super bot a question goes only while he is away (owner 2026-11-09); failures always.
+  if (viaSuper && !failed && asked && !(input.away?.() ?? false)) return null;
+  const b = readBinding(scope, target, home);
   if (!b.ok) {
     if (b.reason === 'tamper') input.log?.(`telegram forward ${input.slug}: binding not written by the hub; nothing sent`);
+    else if (viaSuper && optedIn) input.log?.(`telegram forward ${input.slug}: Telegram'a gitmedi: bu projenin Super botu bağlı değil`);
     return null;
   }
   const binding = b.binding;
-  const fwd = readForward(bindingDir(scope, input.agent, home), home);
-  const pk = projectKey(dirname(input.contextRoot));
-  const optedIn = fwd.routines.some((r) => r.projectKey === pk && r.slug === input.slug && r.approvalHash === input.approvalHash);
   const title = line(input.title || input.slug, 120);
 
   const messages: string[] = [];
   const files: OutboundFile[] = [];
-  const failed = input.status === 'failed' || input.status === 'timeout';
   if (failed) {
     messages.push(`⚠ <b>${escapeHtml(title)}</b>: Rutin çalışamadı: ${escapeHtml(line(input.error ?? input.status))}`);
-  } else if (input.question && input.status.startsWith('awaiting')) {
-    messages.push(formatAskQuestionHtml({ question: line(input.question, 1500) }, { title }));
+  } else if (asked) {
+    messages.push(formatAskQuestionHtml({ question: line(input.question!, 1500) }, { title }));
+    if (viaSuper) messages.push(escapeHtml("Cevabı Mac'te, Agents sayfasında verirsin."));
   } else if (input.reviewPending) {
     if (!optedIn) return null;
     messages.push(`✋ <b>${escapeHtml(title)}</b>: Mac'te kararını bekliyor`);

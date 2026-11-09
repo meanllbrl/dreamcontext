@@ -276,7 +276,7 @@ function bySlug<T extends { slug: string }>(a: T, b: T): number {
 function resolveAgents(contextRoot: string, files: readonly SlotFile[], home?: string): AgentManifest[] {
   const agents = new Map<string, AgentManifest>();
   for (const f of files) {
-    if (f.parts.kind === 'legacy') agents.set(f.slug, legacyPair(f.parts.legacy).agent);
+    if (f.parts.kind === 'legacy' && f.parts.legacy.target !== 'super') agents.set(f.slug, legacyPair(f.parts.legacy).agent);
   }
   for (const file of listAgentFiles(contextRoot)) {
     const slug = basename(file, '.md');
@@ -323,7 +323,8 @@ export function getAgent(contextRoot: string, slug: string, home?: string): Agen
   if (pathOccupied(slotPath)) {
     try {
       const parts = readManifestParts(slotPath);
-      if (parts.kind === 'legacy') return legacyPair(parts.legacy).agent;
+      // A Super automation is the Super's own turn, never a member (super-rutin C2).
+      if (parts.kind === 'legacy') return parts.legacy.target === 'super' ? null : legacyPair(parts.legacy).agent;
     } catch {
       // an unreadable slot shadows nothing; fall through to the agent file
     }

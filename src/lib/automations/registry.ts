@@ -7,6 +7,7 @@ import {
   APPROVAL_PAYLOAD_VERSION,
   AutomationError,
   DEFAULT_AGENT_AUTONOMY,
+  needsOwnerConsent,
   type ApprovalPayloadFields,
   type ApprovalUse,
   type AutomationManifest,
@@ -84,7 +85,19 @@ export interface ApprovalEntry {
    * (fail closed), so an upgrade widens nobody.
    */
   boardScope?: BoardScopeMarker;
+  /**
+   * Who consented to THIS hash, when it carries a field only the owner may approve (`target`,
+   * a Telegram `reply`; `needsOwnerConsent`). Written only by the owner's page, the owner's own
+   * terminal and his main Super's `super schedule` verb; every other stamp site writes none, so
+   * such a manifest stamped there reads as never-approved and waits for his card. Kept across a
+   * re-stamp of the SAME hash. Outside the hashed payload.
+   */
+  consent?: ApprovalConsent;
 }
+
+/** See {@link ApprovalEntry.consent}. */
+export type ApprovalConsent = 'owner-page' | 'owner-cli' | 'super-verb';
+const APPROVAL_CONSENTS: ReadonlySet<string> = new Set(['owner-page', 'owner-cli', 'super-verb']);
 
 /** See {@link ApprovalEntry.boardScope}. */
 export type BoardScopeMarker = 'board' | 'open' | 'held';
@@ -159,7 +172,8 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     // A malformed marker drops the entry (fail closed): a bad value must never read as `open`.
     (e.boardScope === undefined || (typeof e.boardScope === 'string' && BOARD_SCOPE_MARKERS.has(e.boardScope))) &&
     // Display data only: a malformed map drops the entry like any other bad field (fail closed).
-    (e.fieldHashes === undefined || isFieldHashMap(e.fieldHashes))
+    (e.fieldHashes === undefined || isFieldHashMap(e.fieldHashes)) &&
+    (e.consent === undefined || (typeof e.consent === 'string' && APPROVAL_CONSENTS.has(e.consent)))
   );
 }
 
@@ -497,6 +511,11 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // hash must not re-block everyone): no automation names one today, so every hash stays what
     // it was. Present, it lets an unattended run change things through an app.
     ...(m.appTools?.length ? { appTools: [...m.appTools].sort() } : {}),
+    // OMITTED unless set, and LAST (super-rutin plan): no automation says either today, so every
+    // hash stays byte-for-byte what it was. Present, they decide whether the run is a turn of the
+    // Super session and whether its result leaves the Mac through Telegram.
+    ...(m.target === 'super' ? { target: 'super' } : {}),
+    ...(m.reply === 'telegram' || m.reply === 'auto' ? { reply: m.reply } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -568,6 +587,9 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     boardOnly: m.boardOnly === true,
     // Always present (as '' when absent): the reviewer reads which app tools may change things unattended.
     appTools: (m.appTools ?? []).join(', '),
+    // Always present ('' at the default): the reviewer sees a Super turn or a Telegram outflow appear.
+    target: m.target === 'super' ? 'super' : '',
+    reply: m.reply === 'telegram' || m.reply === 'auto' ? m.reply : '',
   };
 }
 
@@ -715,7 +737,13 @@ export function checkApproval(
   if (owner) return { approved: false, reason: 'not_owner', owner, expected: null, actual };
   // A global agent's grant lives in the machine's `global` bucket: one approval, every project (D1).
   const project = projectEntry(readAutomationsRegistry(home), m.agentScope === 'global' ? GLOBAL_REGISTRY_KEY : projectRoot);
-  if (m.runKind !== 'agent') return judgeEntry(project?.approvals[m.slug], actual);
+  if (m.runKind !== 'agent') {
+    const v = judgeEntry(project?.approvals[m.slug], actual);
+    // A Super turn or a Telegram outflow runs only on a stamp the owner (or his own Super) gave
+    // for this exact hash; any other stamp site leaves it waiting for his card (super-rutin C2).
+    if (v.approved && needsOwnerConsent(m) && !v.entry.consent) return { approved: false, reason: 'never-approved', expected: null, actual };
+    return v;
+  }
 
   const direct = project?.agentApprovals?.[m.slug];
   let own: ApprovalVerdict;
@@ -810,8 +838,11 @@ function boardScopeMarkFor(m: AutomationManifest, prev?: ApprovalEntry | null, a
 }
 
 /** A fresh approval entry for `m` as it stands right now. */
-function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null): ApprovalEntry {
+function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null, consentGiven?: ApprovalConsent): ApprovalEntry {
   const boardScope = boardScopeMarkFor(m, prev, agentEntry);
+  const hash = manifestHash(m);
+  // Consent belongs to a hash: a new one names its giver; a re-stamp of the same hash keeps it.
+  const consent = needsOwnerConsent(m) ? (consentGiven ?? (prev?.manifestSha256 === hash ? prev.consent : undefined)) : undefined;
   return {
     manifestSha256: manifestHash(m),
     approvedAt: now.toISOString(),
@@ -820,6 +851,7 @@ function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry
     ...(m.tool ? { tool: m.tool } : {}),
     fieldHashes: approvalFieldHashes(m),
     ...(boardScope ? { boardScope } : {}),
+    ...(consent ? { consent } : {}),
   };
 }
 
@@ -893,21 +925,21 @@ function mutateProject<T>(projectRoot: string, home: string | undefined, mutate:
  * on, because `agentApprovals[slug]` exists). A pair's automation record (slot
  * `'automation'`) is never touched.
  */
-export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string): ApprovalEntry {
+export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent): ApprovalEntry {
   // Someone else's member is read-only here: approving it would be running it by another door.
   assertOwned(m, m.agentTitle || m.title || m.slug);
   // Kept BEFORE the registry write, whose prune keeps only what an approval names.
   saveApprovedText(manifestHash(m), m, home);
   if (m.agentScope === 'global') {
     return mutateProject(GLOBAL_REGISTRY_KEY, home, (project) => {
-      const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug]);
+      const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug], undefined, consent);
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       return entry;
     });
   }
   return mutateProject(projectRoot, home, (project) => {
     const prev = m.runKind === 'agent' ? agentEntryIn(project, m.slug) : project.approvals[m.slug];
-    const entry = approvalEntryFor(m, now, prev, agentEntryIn(project, m.agent || m.slug));
+    const entry = approvalEntryFor(m, now, prev, agentEntryIn(project, m.agent || m.slug), consent);
     if (m.runKind === 'agent') {
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       if (AGENT_OWNED_SLOTS.has(classifyAutomationSlot(contextRootOf(projectRoot), m.slug))) {
