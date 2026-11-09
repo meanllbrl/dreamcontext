@@ -56,6 +56,7 @@ import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
+import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -542,8 +543,17 @@ export class TelegramHub implements TelegramHubApi {
   // ── Sending ──
 
   async send(ab: ActiveBinding, html: string, extra: Obj = {}): Promise<{ message_id: number; text?: string }> {
-    return ab.transport.sendMessage(ab.binding.chatId, html, extra) as Promise<{ message_id: number; text?: string }>;
+    const sent = await (ab.transport.sendMessage(ab.binding.chatId, html, extra) as Promise<{ message_id: number; text?: string }>);
+    // What a reaction to it quotes (reactions.ts): the first words Telegram shows, memory only.
+    if (Number.isSafeInteger(sent?.message_id) && typeof sent.text === 'string' && sent.text.trim()) {
+      this.sentQuotes.set(`${ab.key}:${sent.message_id}`, shortQuote(sent.text));
+      if (this.sentQuotes.size > 2000) this.sentQuotes.delete(this.sentQuotes.keys().next().value as string);
+    }
+    return sent;
   }
+
+  /** message id → the short quote of what the hub sent there (a reaction's note). Memory only. */
+  private sentQuotes = new Map<string, string>();
 
   /** Markdown → one or more Telegram messages. */
   /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
@@ -566,6 +576,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab || ab.disabled) return 'accepted';
     if (!isAuthorized(u as unknown as TgUpdateLike, ab.binding)) { this.strangers.note(u as unknown as TgUpdateLike); return 'accepted'; }
     if (!this.intact(ab)) { await this.loseBinding(key, 'tamper'); return 'accepted'; }
+    if (u.message_reaction) { await this.onReaction(ab, u); return 'accepted'; }
     const cb = obj(u.callback_query);
     if (cb) { await this.onCallback(ab, cb); return 'accepted'; }
     const msg = obj(u.message);
@@ -583,6 +594,24 @@ export class TelegramHub implements TelegramHubApi {
     }
     if (text && this.interceptText && await this.interceptText(ab, msg)) return 'accepted';
     return this.onOwnerMessage(ab, Number(u.update_id), msg);
+  }
+
+  /**
+   * His reaction on one of the bot's messages (owner 2026-11-09): a NOTE for the agent's next
+   * turn, never a turn of its own, never an answer, never an approval (reactions.ts). Reached
+   * only past `isAuthorized`. A removal drops that message's note.
+   */
+  private async onReaction(ab: ActiveBinding, u: Obj): Promise<void> {
+    const r = parseReaction(u);
+    if (!r || r.chatId !== ab.binding.chatId || r.userId !== ab.binding.userId) return;
+    // Only what the bot sent: a reaction on his own message quotes nothing.
+    const mapped = this.replyOf(ab, r.messageId);
+    const quote = this.sentQuotes.get(`${ab.key}:${r.messageId}`) ?? (mapped?.from === 'super' ? mapped.quote : null);
+    if (ab.target !== 'super') { telegramReactionNotes.add(`member:${ab.key}`, r.messageId, r.emojis, quote, this.now()); return; }
+    if (!ab.contextRoot) return;
+    let session: string | null = null;
+    try { session = (await readSuperState(ab.contextRoot))?.session ?? null; } catch { session = null; }
+    if (session) telegramReactionNotes.add(`super:${session}`, r.messageId, r.emojis, quote, this.now());
   }
 
   private journal(ab: ActiveBinding, fn: (pending: JournalEntry[]) => JournalEntry[]): void {

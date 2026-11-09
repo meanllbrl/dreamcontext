@@ -113,6 +113,7 @@ import { flushHeldReports } from '../runs/delivery.js';
 import { ensureCards } from './run-terminal.js';
 import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
+import { takeSuperReactionBlock } from '../../lib/telegram/reactions.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -3476,6 +3477,10 @@ export function startChatSession(
     if (isSuper && !text.startsWith('/')) {
       const lang = serverContinue ? superKnownLanguage(chatRegistryId) : superOwnerLanguage(chatRegistryId, text);
       content.push({ type: 'text', text: ownerLanguageBlock(lang) });
+      // His Telegram reactions since the last turn (reactions.ts): a note beside his words,
+      // never part of them, so it answers nothing and owes nothing.
+      const reactions = takeSuperReactionBlock(chatRegistryId);
+      if (reactions) content.push({ type: 'text', text: reactions });
     }
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
@@ -5011,7 +5016,9 @@ export function startChatSession(
             lastSentText = null;
             superEventTurnOpen = true;
             registry?.userSent('');
-            const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+            // His Telegram reactions ride an event turn too (reactions.ts): a note, never an item.
+            const reactions = takeSuperReactionBlock(chatRegistryId);
+            const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }, ...(reactions ? [{ type: 'text' as const, text: reactions }] : [])] } });
             if (!wrote) superEventTurnOpen = false;
             // The owner's "New session" turn is out: its result rotates the pane even when the
             // super writes no handoff (handoff-rotation.ts). Only after a write that landed.

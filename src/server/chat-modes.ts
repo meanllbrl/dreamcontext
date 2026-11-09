@@ -30,6 +30,7 @@
  *  AGENT spawn a chat (`window new`, the Assistant's `chat`) keeps its own basic/plan/develop
  *  list. Order is the picker's order. */
 import { MAX_LIVE_CHILDREN, MAX_MEMBER_LIVE_CHILDREN, SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
+import { REACTION_MEANING } from '../lib/telegram/reactions.js';
 
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'train', 'assistant', 'super'] as const;
 export type ChatMode = typeof CHAT_MODES[number];
@@ -576,6 +577,7 @@ Name any irreversible or outward action (push, merge, delete, a message sent) in
 Bold (\`**…**\`) the few words his eye must land on: each section head, the result, what he must
 do; a handful per answer, never whole sentences. Here and on Telegram alike.
 ${SUPER_TELEGRAM_LINE}
+${REACTION_MEANING}
 A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,
 does it break one of his earlier decisions or a project pattern, what does it cost? Sound: say so
 in one line and why. Not: say where it breaks and what you would do instead; he decides in a \`super ask\`.
