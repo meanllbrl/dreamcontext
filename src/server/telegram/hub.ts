@@ -54,7 +54,7 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, statusLineHtml, voiceEchoHtml } from '../../lib/telegram/system-lines.js';
+import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
@@ -72,19 +72,18 @@ const LAST_MESSAGE_TIMEOUT_MS = 5_000;
 const TURN_TYPING_CAP_MS = 2 * 60 * 60 * 1000;
 
 export const LINES = {
-  superOff: 'Bu projede Super kapalı.',
-  cannotOpen: "Super'i Mac'te açamadım. Mac'te uygulamaya bak, sonra tekrar yaz.",
-  notWritten: "Mesajın Mac'te yazılamadı, tekrar gönder.",
-  writtenNotDone: "Mesajın Mac'e yazıldı ama iş tamamlanamadı; tekrar göndermeden önce Mac'e bak.",
+  superOff: "Bu projede Super kapalı; Mac'te açınca yazabilirsin.",
+  cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar yaz.",
+  notWritten: "Mesajın Mac'e yazılamadı; tekrar gönder.",
+  writtenNotDone: "Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.",
   stale: 'Bu soru artık geçerli değil.',
   waitingOnMac: "Mac'te seni bekliyor.",
-  unknownCommand: 'Bu komut burada yok. Komutlar: /durum /gundem /dur /handsfree',
+  unknownCommand: 'Bu komut yok. Komutlar: /durum /gundem /dur /handsfree',
   bound: (who: string) => `Bağlandı: ${who}. Buradan yazabilirsin.`,
   unbound: (keyed: boolean) => `Telegram bağlantısı Mac'te kaldırıldı${keyed ? '' : ' (anahtarsız istek)'}.`,
-  conflict: "Bu bot başka bir yerde de dinleniyor; bağlantı durdu. BotFather'da token'ı yenile.",
+  conflict: "Bu bot başka yerde de dinleniyor, bağlantı durdu; BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
-  endedSilent: 'Bu tur sana yazı göndermeden bitti. Gerekirse Mac\'e bak ya da tekrar yaz.',
-  back: "Mac'e döndün; cevaplar artık Mac'te.",
+  endedSilent: "Bu tur cevap yazmadan bitti; tekrar yaz ya da Mac'e bak.",
 } as const;
 
 // ─── Dependencies (tests inject fakes) ──────────────────────────────────────
@@ -475,7 +474,7 @@ export class TelegramHub implements TelegramHubApi {
     // A confirmed bind that replaces an active one: the old bot says its last word first (C3).
     const key = keyOf(live.scope, live.target);
     const old = this.active.get(key);
-    if (old && old.binding.botId !== live.botId) await this.lastMessage(old, LINES.unbound(true));
+    if (old && old.binding.botId !== live.botId) await this.lastMessage(old, 'info', LINES.unbound(true));
     if (old) this.halt(old);
     if (old && (old.binding.botId !== live.botId || old.binding.chatId !== user.chatId || old.binding.userId !== user.userId)) {
       removeBindingDir(live.scope, live.target, this.home);
@@ -495,7 +494,7 @@ export class TelegramHub implements TelegramHubApi {
 
   async afterBound(ab: ActiveBinding, who: string): Promise<void> {
     if (ab.target === 'super') await ab.transport.setMyCommands(TELEGRAM_COMMANDS).catch(() => {});
-    await this.send(ab, escapeHtml(LINES.bound(who))).catch(() => {});
+    await this.notice(ab, 'info', LINES.bound(who));
   }
 
   // ── Losing a binding (C3, D3) ──
@@ -505,7 +504,7 @@ export class TelegramHub implements TelegramHubApi {
     const ab = this.active.get(key);
     for (const [id, p] of [...this.pairings]) if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); }
     if (ab) {
-      await this.lastMessage(ab, LINES.unbound(opts.keyed));
+      await this.lastMessage(ab, 'info', LINES.unbound(opts.keyed));
       this.halt(ab);
       this.active.delete(key);
       this.deps.handsfree?.onBindingLost?.(scope, target);
@@ -520,7 +519,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!ab || ab.disabled) return;
     ab.disabled = why;
     this.halt(ab);
-    if (why !== 'unauthorized') await this.lastMessage(ab, why === 'conflict' ? LINES.conflict : LINES.tamper);
+    if (why !== 'unauthorized') await (why === 'conflict' ? this.lastMessage(ab, 'warn', LINES.conflict, true) : this.lastMessage(ab, 'access', LINES.tamper, true));
     // A 401 on a bot the manager made: the manager token may be out (Z4, AA3).
     if (why === 'unauthorized' && ab.binding.managed) this.manager?.raise('unauthorized');
     this.deps.handsfree?.onBindingLost?.(ab.scope, ab.target);
@@ -528,9 +527,9 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** Best-effort, from the in-memory binding, never longer than 5 s (D3). */
-  private async lastMessage(ab: ActiveBinding, line: string): Promise<void> {
+  private async lastMessage(ab: ActiveBinding, kind: NoticeKind, line: string, loud = false): Promise<void> {
     await Promise.race([
-      ab.transport.sendMessage(ab.binding.chatId, escapeHtml(line)).catch(() => {}),
+      ab.transport.sendMessage(ab.binding.chatId, noticeHtml(kind, line), loud ? {} : SILENT).catch(() => {}),
       new Promise((r) => { const t = setTimeout(r, LAST_MESSAGE_TIMEOUT_MS); t.unref?.(); }),
     ]);
   }
@@ -570,6 +569,12 @@ export class TelegramHub implements TelegramHubApi {
     await this.send(ab, escapeHtml(line)).catch(() => {});
   }
 
+  /** A fixed system line: meaning emoji + one italic sentence (`noticeHtml`). Silent unless
+   *  `loud` (the owner has to do something). The only way the hub says a warning or a state. */
+  async notice(ab: ActiveBinding, kind: NoticeKind, sentence: string, loud = false): Promise<void> {
+    await this.send(ab, noticeHtml(kind, sentence), loud ? {} : SILENT).catch(() => {});
+  }
+
   // ── Inbound ──
 
   async onUpdate(key: BindingKey, u: Obj): Promise<UpdateDisposition> {
@@ -590,7 +595,7 @@ export class TelegramHub implements TelegramHubApi {
       if (await this.deps.handsfree?.onCommand?.(this, key, u)) return 'accepted';
       if (this.commandHook && await this.commandHook(ab, u)) return 'accepted';
       if (/^\/start(?:@\w+)?(?:\s|$)/.test(text)) { await this.reply(ab, 'Buradayım. Yaz, Super Mac\'te okusun.'); return 'accepted'; }
-      await this.reply(ab, LINES.unknownCommand);
+      await this.notice(ab, 'info', LINES.unknownCommand);
       return 'accepted';
     }
     if (text && this.interceptText && await this.interceptText(ab, msg)) return 'accepted';
@@ -628,21 +633,21 @@ export class TelegramHub implements TelegramHubApi {
     if (!s.pending.length) return;
     const lines = s.pending.map((e) => (e.written ? LINES.writtenNotDone : LINES.notWritten));
     io.write({ ...s, pending: [] });
-    void (async () => { for (const l of new Set(lines)) await this.reply(ab, l); })();
+    void (async () => { for (const l of new Set(lines)) await this.notice(ab, 'warn', l, true); })();
   }
 
   private async onOwnerMessage(ab: ActiveBinding, updateId: number, msg: Obj): Promise<UpdateDisposition> {
     if (!ab.contextRoot) return 'accepted';
     let state;
     try { state = await readSuperState(ab.contextRoot); } catch { state = null; }
-    if (!state?.enabled || !state.session) { await (this.superOff ? this.superOff(ab) : this.reply(ab, LINES.superOff)); return 'accepted'; }
+    if (!state?.enabled || !state.session) { await (this.superOff ? this.superOff(ab) : this.notice(ab, 'info', LINES.superOff)); return 'accepted'; }
     const media = pickInboundMedia(msg);
     this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now() }]);
     // Confirmed now (journaled); delivered in order behind the previous message.
     const session = state.session;
     ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, session).catch(async () => {
       this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
-      await this.reply(ab, LINES.notWritten);
+      await this.notice(ab, 'warn', LINES.notWritten, true);
     })).catch(() => { /* one failed link never stops the next delivery */ });
     return 'accepted';
   }
@@ -654,13 +659,13 @@ export class TelegramHub implements TelegramHubApi {
     const media = pickInboundMedia(msg);
     if (media) {
       const saved = await saveInbound({ transport: ab.transport, contextRoot: ab.contextRoot!, media, now: this.now() });
-      if (!saved.ok) { await this.reply(ab, saved.line); if (!msg.text && !msg.caption) { drop(); return; } }
+      if (!saved.ok) { await this.notice(ab, 'file', saved.line, true); if (!msg.text && !msg.caption) { drop(); return; } }
       else if (media.kind === 'voice' || media.kind === 'audio') {
         try {
           spoken = await (this.deps.transcribeVoice ? this.deps.transcribeVoice(saved.path) : Promise.reject(new Error('no_transcriber')));
         } catch (err) {
           const missing = /ffmpeg_missing/.test((err as Error).message);
-          await this.reply(ab, missing ? 'Sesli not için ffmpeg gerekli (brew install ffmpeg).' : 'Sesli notu yazıya çeviremedim.');
+          await this.notice(ab, 'warn', missing ? 'Sesli not için ffmpeg gerekli: Mac\'te brew install ffmpeg yaz.' : 'Sesli notu yazıya çeviremedim; yazarak gönder.', true);
           paths.push(saved.path);
         }
         if (spoken !== null) await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
@@ -721,7 +726,7 @@ export class TelegramHub implements TelegramHubApi {
   async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
-    if (!inj) { await this.reply(ab, LINES.cannotOpen); return false; }
+    if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
     const ref = this.mintRef(ab);
     telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as ? { cardRef: as.cardRef } : {}) });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
@@ -737,7 +742,7 @@ export class TelegramHub implements TelegramHubApi {
       telegramRefs.forget(inj.chatRegistryId, ref);
       this.endTurn(ref);
       drop();
-      await this.reply(ab, LINES.notWritten);
+      await this.notice(ab, 'warn', LINES.notWritten, true);
       return false;
     }
     // A run report is the app's, not a message he wrote: it moves no presence.
@@ -806,7 +811,7 @@ export class TelegramHub implements TelegramHubApi {
       // Settled on a clean result while the chat lives = done. Otherwise the owner is told (F5).
       const entry = getChat(chatRegistryId);
       const clean = written && !!entry && entry.status !== 'gone';
-      if (!clean) void this.reply(ab, written ? LINES.writtenNotDone : LINES.notWritten);
+      if (!clean) void this.notice(ab, 'warn', written ? LINES.writtenNotDone : LINES.notWritten, true);
     }
   }
 
@@ -904,7 +909,7 @@ export class TelegramHub implements TelegramHubApi {
           await this.refreshStatus({ ...t, lastEditAt: 0 }).catch(() => {});
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
-          if (!t.answered) await this.reply(ab, LINES.endedSilent);
+          if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);
         })();
       }
     }
@@ -941,25 +946,15 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** He wrote on the Mac, in any dreamcontext chat of any project (owner 2026-11-09): the automatic
-   *  Telegram part ends machine-wide. Every Super bot that was forwarding stops and says so once;
-   *  the bot whose automatic keep-awake ends says it with its own line (handsfree.ts), not twice.
-   *  A hands-free run started by hand is never touched (`onBackAtMac` ends only an `auto` run), and
-   *  its bot, which keeps streaming every answer, is told nothing (a "back" line would be false). */
+   *  Telegram part ends machine-wide, silently (owner 2026-11-09: no unprompted mode note; the
+   *  answers simply stop coming to Telegram). A hands-free run started by hand is never touched
+   *  (`onBackAtMac` ends only an `auto` run). */
   private backAtMac(at: number): void {
-    const forwarding: ActiveBinding[] = [];
     for (const ab of this.active.values()) {
       if (ab.target !== 'super') continue;
-      if (this.onTelegram(ab) && !ab.disabled) forwarding.push(ab);
       if (this.presence.has(ab.key)) this.presence.set(ab.key, { via: 'mac', at });
     }
-    let toldBy: BindingKey | null = null;
-    try { toldBy = this.deps.handsfree?.onBackAtMac?.(this) ?? null; } catch { /* best-effort */ }
-    for (const ab of forwarding) {
-      if (ab.key === toldBy) continue;
-      // Still streaming (a manual run, decided after hands-free answered): its answers keep coming.
-      if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) continue;
-      void this.reply(ab, LINES.back).catch(() => {});
-    }
+    try { this.deps.handsfree?.onBackAtMac?.(this); } catch { /* best-effort */ }
   }
 
   /** The owner is ON TELEGRAM for this Super binding: his latest message to it came through

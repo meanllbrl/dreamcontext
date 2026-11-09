@@ -117,7 +117,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     }
     const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
     const { unsent } = await sendPictures(ab, items, caption);
-    if (unsent.length) await hub.reply(ab, `Önizlemeler Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
+    if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
   }
 
   /** Sends a rich ask. False = it does not fit (the caller says "Mac'te seni bekliyor"). */
@@ -188,7 +188,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     }
     if (idx === n) {
       deps.capture.set(ab.key, { kind: 'note', askId: a.id, qi, at: hub.now() });
-      await hub.reply(ab, 'Notunu yaz (5 dk); sonraki mesajın bu sorunun notu olacak.');
+      await hub.notice(ab, 'wait', 'Notunu yaz (5 dk): sonraki mesajın bu sorunun notu olacak.');
       return 'Not ekle';
     }
     const isLast = qi === a.questions.length - 1;

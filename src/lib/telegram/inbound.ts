@@ -21,7 +21,7 @@ import { TelegramError, type TelegramTransport } from './transport.js';
 
 export const TELEGRAM_DROP_PREFIX = 'tg-';
 export const TELEGRAM_DROPS_TOTAL_CAP = 200 * 1024 * 1024;
-export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük; Telegram botların en fazla 20 MB indirmesine izin veriyor. Mac'ten gönder ya da küçült.";
+export const TOO_LARGE_LINE = "Bu dosya 20 MB'tan büyük, Telegram botlara bundan fazlasını indirtmiyor; Mac'ten gönder ya da küçült.";
 
 export type InboundKind = 'photo' | 'video' | 'document' | 'voice' | 'audio' | 'video_note' | 'animation';
 
@@ -101,7 +101,7 @@ export async function saveInbound(
     data = await transport.download(file, TG_DOWNLOAD_MAX_BYTES);
   } catch (err) {
     if (err instanceof TelegramError && (err.code === 413 || /too big|too large/i.test(err.message))) return { ok: false, reason: 'too_large', line: TOO_LARGE_LINE };
-    return { ok: false, reason: 'download_failed', line: 'Dosyayı Telegram\'dan indiremedim, tekrar gönder.' };
+    return { ok: false, reason: 'download_failed', line: "Dosyayı Telegram'dan indiremedim; tekrar gönder." };
   }
   const dir = agentDropsDir(contextRoot);
   try {
@@ -110,7 +110,7 @@ export async function saveInbound(
     ensureTmpGitignored(contextRoot);
     pruneDrops(dir);
   } catch {
-    return { ok: false, reason: 'write_failed', line: 'Dosyayı Mac\'e yazamadım.' };
+    return { ok: false, reason: 'write_failed', line: "Dosyayı Mac'e yazamadım; tekrar gönder." };
   }
   if (telegramDropBytes(dir) + data.length > TELEGRAM_DROPS_TOTAL_CAP) {
     return { ok: false, reason: 'cap', line: "Mac'teki Telegram dosyaları 200 MB sınırında; eskiler silinince tekrar gönder." };
@@ -120,7 +120,7 @@ export async function saveInbound(
     const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeSync(fd, data); } finally { closeSync(fd); }
   } catch {
-    return { ok: false, reason: 'write_failed', line: 'Dosyayı Mac\'e yazamadım.' };
+    return { ok: false, reason: 'write_failed', line: "Dosyayı Mac'e yazamadım; tekrar gönder." };
   }
   return { ok: true, path, media };
 }

@@ -112,7 +112,7 @@ describe('the hub adapter', () => {
     const replies: string[] = [];
     const buttons: string[][][] = [];
     const ab = { key: `${VIA.scope}/super`, scope: VIA.scope, target: 'super', projectName: 'acme' };
-    return { replies, buttons, hub: { active: new Map([[ab.key, ab]]), reply: async (_a: unknown, l: string) => { replies.push(l); }, sendButtons: async (_a: unknown, _h: string, l: string[][]) => { buttons.push(l); return 'id'; } } as never };
+    return { replies, buttons, hub: { active: new Map([[ab.key, ab]]), reply: async (_a: unknown, l: string) => { replies.push(l); }, notice: async (_a: unknown, _k: string, l: string) => { replies.push(l); }, sendButtons: async (_a: unknown, _h: string, l: string[][]) => { buttons.push(l); return 'id'; } } as never };
   }
   function fakeSession(over: Partial<Record<string, unknown>> = {}) {
     let on = false; let via: typeof VIA | null = null; let channel: 'telegram' | 'full' | null = null;
@@ -142,9 +142,14 @@ describe('the hub adapter', () => {
     expect(s.startPowerOnly).toHaveBeenCalledWith(VIA);
     expect(a.streamsTo(VIA.scope, 'super')).toBe(true);
     expect(a.streamsTo(VIA.scope, 'ua-manager')).toBe(false);
-    await s.stop({ reason: 'http', keyed: false });
+    await s.stop({ reason: 'tunnel', keyed: false });
     expect(a.streamsTo(VIA.scope, 'super')).toBe(false);
-    expect(replies.at(-1)).toBe(HF_LINES.ended('istekle kapatıldı', false));
+    expect(replies.at(-1)).toBe(HF_LINES.ended('telefon bağlantısı koptu', false));
+    // An end he caused himself (the HTTP stop, the Mac panel, Telegram) gets no line.
+    await a.onCallback!(hub, `${VIA.scope}/super`, {} as never, 0);
+    const n = replies.length;
+    await s.stop({ reason: 'http', keyed: false });
+    expect(replies.length).toBe(n);
   });
 
   it('Mac-started hands-free: the explanatory line, and it never streams', async () => {
@@ -179,8 +184,9 @@ describe('the hub adapter', () => {
     a.onBindingLost!(VIA.scope, 'super');
     expect(s.stop).toHaveBeenCalledWith({ reason: 'binding_lost', keyed: true });
     await a.onCallback!(hub, `${VIA.scope}/super`, {} as never, 0);
+    const before = replies.length;
     await s.stop({ reason: 'mac', keyed: true });
-    expect(replies.at(-1)).toBe(HF_LINES.ended("Mac'ten kapatıldı", true));
+    expect(replies.length).toBe(before); // closing it on the Mac himself: no note
   });
 
   describe('on Telegram, by itself (owner 2026-11-09)', () => {
@@ -202,7 +208,7 @@ describe('the hub adapter', () => {
       await s.stop({ reason: 'mac' });
     });
 
-    it('a message typed on the Mac disarms it, names the binding it tells, and tells him once', async () => {
+    it('a message typed on the Mac disarms it, names the binding, and says nothing', async () => {
       const { hub, replies } = fakeHub();
       const s = fakeSession();
       const a = handsfreeAdapter(() => s as never);
@@ -213,7 +219,7 @@ describe('the hub adapter', () => {
       await settle();
       expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true });
       expect(s.isOn()).toBe(false);
-      expect(replies).toEqual([HF_LINES.back]);
+      expect(replies).toEqual([]); // coming back is his own act: no "back" note
     });
 
     it('back at the Mac while it is still starting: it ends once on', async () => {
@@ -282,7 +288,7 @@ describe('the hub adapter', () => {
       expect(s.stop).toHaveBeenCalledWith({ reason: 'back', keyed: true });
     });
 
-    it('back at the Mac while it was starting and the start fails: the bot still gets its one "back" line', async () => {
+    it('back at the Mac while it was starting and the start fails: no line is sent', async () => {
       const { hub, replies } = fakeHub();
       let fail: () => void = () => {};
       const s = fakeSession({ startPowerOnly: vi.fn(() => new Promise((_r, rej) => { fail = () => rej(Object.assign(new Error('x'), { code: 'boom' })); })) });
@@ -290,7 +296,8 @@ describe('the hub adapter', () => {
       a.onPresence!(hub, KEY, 'telegram');
       expect(a.onBackAtMac!(hub)).toBe(KEY);
       fail();
-      await vi.waitFor(() => expect(replies).toEqual([LINES.back]));
+      await settle();
+      expect(replies).toEqual([]);
     });
 
     it('no sleep permission: one line to Telegram, no crash, no second line', async () => {

@@ -62,19 +62,19 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
       if (!ab || !msg) return 'accepted';
       const text0 = typeof msg.text === 'string' ? msg.text.trim() : '';
       if (text0.startsWith('/')) {
-        if (!/^\/start(?:@\w+)?(?:\s|$)/.test(text0)) await hub.reply(ab, 'Bu botta komut yok; yazman yeterli.');
-        else await hub.reply(ab, 'Buradayım. Yaz, Mac\'te okusun.');
+        if (!/^\/start(?:@\w+)?(?:\s|$)/.test(text0)) await hub.notice(ab, 'info', 'Bu botta komut yok; yazman yeterli.');
+        else await hub.notice(ab, 'info', "Buradayım. Yaz, Mac'te okusun.");
         return 'accepted';
       }
       const root = memberContextRoot(hub, ab);
-      if (!root) { await hub.reply(ab, 'Bu üyeyi Mac\'te bulamadım.'); return 'accepted'; }
+      if (!root) { await hub.notice(ab, 'warn', "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.", true); return 'accepted'; }
       void (async () => {
         const paths: string[] = [];
         let spoken: string | null = null;
         const media = pickInboundMedia(msg);
         if (media) {
           const saved = await saveInbound({ transport: ab.transport, contextRoot: root, media });
-          if (!saved.ok) { await hub.reply(ab, saved.line); if (!msg.text && !msg.caption) return; }
+          if (!saved.ok) { await hub.notice(ab, 'file', saved.line, true); if (!msg.text && !msg.caption) return; }
           else if ((media.kind === 'voice' || media.kind === 'audio') && deps.transcribeVoice) {
             try { spoken = await deps.transcribeVoice(saved.path); await hub.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {}); } catch { paths.push(saved.path); }
           } else paths.push(saved.path);
@@ -86,7 +86,7 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
         const reacted = takeMemberReactionText(ab.key, hub.now());
         if (reacted) text = `${reacted}\n\n${text}`;
         await sendToMember(hub, ab, root, text, { say, readRun, watchEveryMs: deps.watchEveryMs ?? WATCH_EVERY_MS, retryEveryMs: deps.retryEveryMs ?? RETRY_EVERY_MS });
-      })().catch(() => { void hub.reply(ab, 'Mesajın üyeye ulaşmadı, tekrar gönder.'); });
+      })().catch(() => { void hub.notice(ab, 'warn', 'Mesajın üyeye ulaşmadı; tekrar gönder.', true); });
       return 'accepted';
     },
   };
@@ -98,7 +98,7 @@ async function sendToMember(
 ): Promise<void> {
   let r = o.say(root, { slug: ab.target, text, via: 'telegram' });
   if (!r.ok && r.status === 429) {
-    await hub.reply(ab, `${ab.target} şu an meşgul, bitince yazacağım.`);
+    await hub.notice(ab, 'wait', `${ab.target} şu an meşgul; boşalınca mesajını iletirim.`);
     // Delivered once, when a slot frees (checked every 30 s, at most 30 min).
     const until = hub.now() + RETRY_MAX_MS;
     while (hub.now() < until) {
@@ -107,7 +107,7 @@ async function sendToMember(
       if (r.ok || r.status !== 429) break;
     }
   }
-  if (!r.ok) { await hub.reply(ab, r.status === 429 ? `${ab.target} hâlâ meşgul; sonra tekrar yaz.` : r.message); return; }
+  if (!r.ok) { await hub.notice(ab, 'warn', r.status === 429 ? `${ab.target} hâlâ meşgul; sonra tekrar yaz.` : r.message, true); return; }
   const runId = String(r.body.runId ?? '');
   const askId = String(r.body.entryId ?? '');
   if (!runId) return;
@@ -132,7 +132,7 @@ async function watchRun(
       if (e.kind === 'agent' && e.text.trim()) await hub.sendMarkdown(ab, e.text).catch(() => {});
       // Its question (a free-text ask) and a failure reach the owner here too.
       if (e.kind === 'system' && e.event === 'asked' && e.text.trim()) await hub.sendMarkdown(ab, `❓ ${e.text}`).catch(() => {});
-      if (e.kind === 'system' && (e.event === 'failed' || e.event === 'timeout')) await hub.reply(ab, `Çalışamadı: ${e.text.slice(0, 300) || e.event}`);
+      if (e.kind === 'system' && (e.event === 'failed' || e.event === 'timeout')) await hub.notice(ab, 'warn', `Çalışamadı: ${e.text.slice(0, 300) || e.event}`, true);
       if (e.kind === 'system' && e.event && END_EVENTS.has(e.event)) ended = true;
     }
     if (ended || hub.now() > until) return;

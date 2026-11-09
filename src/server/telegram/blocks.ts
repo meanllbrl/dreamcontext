@@ -87,10 +87,10 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
       if (pngs?.length) {
         const items = pngs.map((p, i) => ({ kind: 'photo' as const, file: pngFile(`kart-${i + 1}`, p), title }));
         const { sent } = await sendPictures(ab, items);
-        if (!sent.length) await hub.reply(ab, `Bu kart Mac'te: ${title}`);
-        else if (pngs.length > 3) await hub.reply(ab, "devamı Mac'te");
+        if (!sent.length) await hub.notice(ab, 'info', `Bu kart Telegram'a gitmedi, Mac'te: ${title}`);
+        else if (pngs.length > 3) await hub.notice(ab, 'info', "Kartın devamı Mac'te.");
       } else {
-        await hub.reply(ab, `Bu kart Mac'te: ${title}`);
+        await hub.notice(ab, 'info', `Bu kart Telegram'a gitmedi, Mac'te: ${title}`);
       }
     } else if (b.lang === 'dream-actions') {
       const m = actionsMessage(b.body, deps.tunnelHost?.() ?? null);
