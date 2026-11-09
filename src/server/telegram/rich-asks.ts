@@ -27,7 +27,7 @@ import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { cardOut } from './cards.js';
-import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { caption as pictureCaption, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
@@ -111,8 +111,13 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
         const c = s!.containers.find((k) => k.id === id);
         if (!c || items.length >= 10) continue;
         const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot }, c);
-        if (out.kind === 'media') items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
-        else await hub.reply(ab, out.line);
+        if (out.kind === 'media') {
+          items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
+          // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
+          for (const d of out.items.filter((m) => m.kind === 'document')) {
+            if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, `${cleanTitle(d.title, 80)} (Mac'te)`);
+          }
+        } else await hub.reply(ab, out.line);
       }
     }
     const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
