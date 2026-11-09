@@ -98,7 +98,15 @@ export interface PendingQuestion {
    *  `safetyCheck` asks even in Bypass and takes no "always allow". */
   reason?: string;
   reasonType?: string;
+  /** A permission's WHOLE command (or path), only when `text` had to be cut: `text` is the short
+   *  line a card or a phone shows, this is what a decider (the Super Agent) reads. Bounded by
+   *  {@link PERMISSION_FULL_CAP}; past that it is cut too and ends in `…`. */
+  fullText?: string;
 }
+
+/** The most of a permission's command a decider is handed (a command longer than this is no
+ *  ordinary work and goes to the owner). */
+export const PERMISSION_FULL_CAP = 16_000;
 
 export interface RegistryQuestionOption { label: string; description?: string; preview?: string }
 export interface RegistryQuestion {
@@ -537,7 +545,9 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
     ...(typeof req.decision_reason === 'string' && req.decision_reason.trim() ? { reason: cap(req.decision_reason.trim(), 300) } : {}),
     ...(typeof req.decision_reason_type === 'string' && /^[A-Za-z]{1,40}$/.test(req.decision_reason_type) ? { reasonType: req.decision_reason_type } : {}),
   };
-  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'], ...toolUse, ...why };
+  const text = cap(described, 600);
+  const full = text === described ? {} : { fullText: cap(described, PERMISSION_FULL_CAP) };
+  return { requestId: frame.request_id, toolName, isPermission: true, text, options: ['allow', 'deny'], ...toolUse, ...why, ...full };
 }
 
 /** Does its Super Agent decide this request first? Only a TOOL permission (never a question or a

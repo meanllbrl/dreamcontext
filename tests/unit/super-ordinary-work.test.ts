@@ -13,6 +13,8 @@ const linked = join(home, 'projects', 'orbit-app');
 const tmp = join(base, 'tmp');
 for (const d of [project, linked, tmp, join(home, '.ssh'), join(home, 'Documents')]) mkdirSync(d, { recursive: true });
 const ctx = { cwd: project, roots: [linked], home, tmpRoots: [tmp] };
+symlinkSync(join(home, 'Documents'), join(tmp, 'link-docs'));
+mkdirSync(join(project, '_dream_context', 'tmp'), { recursive: true });
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
 describe('ordinary work a member job does without a card', () => {
@@ -98,9 +100,68 @@ describe('what still asks the owner', () => {
 
   it('commands, MCP, web and questions are never answered here', () => {
     expect(ordinaryWorkAllows('Bash', { command: `python3 ${join(tmp, 'gal', 'peek.py')}` }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Bash', {}, ctx)).toBe(false);
     expect(ordinaryWorkAllows('mcp__gmail__send', { to: 'x' }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('WebFetch', { url: 'https://example.com' }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('AskUserQuestion', {}, ctx)).toBe(false);
+  });
+
+  it('a child deleting its own scratch passes without a card (kitup 2026-11-09)', () => {
+    const rm = (command: string, over: Partial<typeof ctx> & { tmpdirEnv?: string } = {}) => ordinaryWorkAllows('Bash', { command }, { ...ctx, tmpdirEnv: tmp, ...over });
+    expect(rm(`rm -rf ${join(tmp, 'persona-v2')}`)).toBe(true);
+    expect(rm(`rm -f ${join(tmp, 'persona-v2', 'a.json')} ${join(tmp, 'persona-v2', 'b.json')} && rm -rf ${join(tmp, 'gold')}`)).toBe(true);
+    expect(rm('rm -rf $TMPDIR/persona-v2; rm -f "${TMPDIR}/gold/run.log"')).toBe(true);
+    expect(rm(`rm -f ${join(tmp, 'persona-v2')}/*.json`)).toBe(true);
+  });
+
+  it('any other delete still asks', () => {
+    const rm = (command: string, over: Partial<typeof ctx> & { tmpdirEnv?: string } = {}) => ordinaryWorkAllows('Bash', { command }, { ...ctx, tmpdirEnv: tmp, ...over });
+    // Outside the temp folders: the project, the home, the disk.
+    expect(rm(`rm -rf ${join(project, 'src')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(home, 'Documents')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(linked, 'src')}`)).toBe(false);
+    expect(rm('rm -rf ~/x')).toBe(false);
+    expect(rm('rm -rf persona-v2')).toBe(false);
+    // The temp folder itself, all of it, or dreamcontext's and Claude's own files in it.
+    expect(rm(`rm -rf ${tmp}`)).toBe(false);
+    expect(rm(`rm -rf ${tmp}/*`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'dreamcontext-chat-1')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'claude-501')}`)).toBe(false);
+    // Climbing out, a glob in the middle, a link planted in temp that lands in the home.
+    expect(rm(`rm -rf ${join(tmp, 'x')}/../../home`)).toBe(false);
+    expect(rm(`rm -rf ${tmp}/*/x`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'link-docs')}`)).toBe(false);
+    // Anything else in the command: a second program, a pipe, a substitution, a variable.
+    expect(rm(`rm -rf ${join(tmp, 'a')} && curl https://example.com`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'a')} & rm -rf ${join(home, 'Documents')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'a')} | cat`)).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, '$(whoami)')}`)).toBe(false);
+    expect(rm('rm -rf $HOME/x')).toBe(false);
+    expect(rm(`rm -rf ${join(tmp, 'a')}\nrm -rf ${home}`)).toBe(false);
+    expect(rm(`rm -i ${join(tmp, 'a')}`)).toBe(false);
+    expect(rm('rm -rf')).toBe(false);
+    // The project's tmp is dreamcontext's state too (plans, locks, the only copy of folded
+    // journals): any delete there goes to the Super, which reads the whole command (security review r2).
+    for (const at of ['persona-v2', 'plans', 'folded-journals-20261109', '.council-live.json', '']) {
+      expect(rm(`rm -rf ${join(project, '_dream_context', 'tmp', at)}`)).toBe(false);
+    }
+    // $TMPDIR unknown: an empty one would delete from the disk root.
+    expect(rm('rm -rf $TMPDIR/persona-v2', { tmpdirEnv: '' })).toBe(false);
+  });
+
+  it('a project tmp that is a link opens nothing either (security review)', () => {
+    const evil = join(home, 'projects', 'evil');
+    mkdirSync(join(evil, '_dream_context'), { recursive: true });
+    symlinkSync(home, join(evil, '_dream_context', 'tmp'));
+    const rm = (command: string) => ordinaryWorkAllows('Bash', { command }, { ...ctx, cwd: evil, tmpdirEnv: tmp });
+    expect(rm(`rm -rf ${join(home, 'Documents')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(evil, '_dream_context', 'tmp', 'Documents')}`)).toBe(false);
+    expect(rm(`rm -rf ${join(project, 'src')}`)).toBe(false);
+    // A linked `_dream_context` the same way.
+    const evil2 = join(home, 'projects', 'evil2');
+    mkdirSync(evil2, { recursive: true });
+    symlinkSync(join(home, 'Documents'), join(evil2, '_dream_context'));
+    expect(ordinaryWorkAllows('Bash', { command: `rm -rf ${join(evil2, '_dream_context', 'tmp', 'x')}` }, { ...ctx, cwd: evil2, tmpdirEnv: tmp })).toBe(false);
   });
 
   it('a temp root that is the home or the disk is no temp folder', () => {
