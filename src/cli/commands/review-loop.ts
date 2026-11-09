@@ -126,18 +126,22 @@ function cleanPaths(paths: string[] | undefined): string[] {
 
 // ─── open ───────────────────────────────────────────────────────────────────
 
-export async function reviewOpen(deps: ReviewDeps, task: string, loop: string, opts: { lenses: string; start: string; criteriaFile?: string }): Promise<string> {
+export async function reviewOpen(deps: ReviewDeps, task: string, loop: string, opts: { lenses: string; start: string; criteriaFile?: string; goal?: string }): Promise<string> {
   const s = store(deps, task, loop);
   const lenses = parseLenses(opts.lenses);
   if (!GIT_OBJECT_RE.test(opts.start ?? '')) throw new PlanRefusal('--start <tree> must be the run\'s START tree (a git object id).');
+  if (opts.criteriaFile && opts.goal !== undefined) throw new PlanRefusal('Give the criteria one way: --criteria-file <file> or --goal "<what the fix must do>".');
   let criteria = '';
   if (opts.criteriaFile) criteria = readExternalNoLink(opts.criteriaFile).trim();
+  // Small work opens no task (owner, 2026-11-09): the loop's key is then just a name (the
+  // branch's, say), and --goal says what the fix must do, so a review never forces a task.
+  else if (opts.goal !== undefined) criteria = opts.goal.trim() ? `- [ ] ${opts.goal.trim()}` : '';
   else {
     try {
       criteria = ((await deps.brain().backend.get(task))?.acceptance_criteria ?? '').trim();
     } catch { /* no brain reachable from here: --criteria-file says it */ }
   }
-  if (!criteria) throw new PlanRefusal(`The task's criteria could not be read here (no brain in ${deps.repo}, or no criteria). Write them to a file and pass --criteria-file <file>.`);
+  if (!criteria) throw new PlanRefusal(`No criteria for "${task}" could be read here (no brain in ${deps.repo}, no such task, or a task with no criteria). Small work needs no task: pass --goal "<what the fix must do>" (the loop's name can be the branch's). Otherwise write the criteria to a file and pass --criteria-file <file>.`);
   return s.lock(() => {
     const existing = readLedgerAt(deps.repo, join(s.dir, 'ledger.json'), loop, 'code');
     if (existing.ok || !existing.missing) throw new PlanRefusal(`Review loop "${loop}" of ${task} already exists: \`${loopCommand({ mode: 'code', plan: loop, task } as Ledger, 'status')}\`. A new end review after an abandoned loop takes another --loop name.`);
@@ -390,12 +394,13 @@ export function registerReviewLoopCommands(builder: Command): void {
     .option('--loop <name>', 'The loop: end (the end review) or w<N> (a fan-out wave\'s reviewer)', 'end')
     .option('--repo <path>', 'The code repo the loop lives in (default: this checkout)');
 
-  common(review.command('open').argument('<task>'))
+  common(review.command('open').argument('<task>', 'The task slug, or for small work with no task any a-z0-9- name (e.g. the branch\'s)'))
     .requiredOption('--lenses <list>', `The end review's reviewers: reviewer, or the team review-pick names (${CODE_LENSES.join(', ')})`)
     .requiredOption('--start <tree>', 'The run\'s START tree')
     .option('--criteria-file <path>', 'The task\'s criteria, when no brain is reachable from here')
+    .option('--goal <text>', 'Small work with no task: what the fix must do, the reviewer\'s one criterion')
     .description('Open the review loop of a run (its ledger beside the run, in tmp/develop/<task>/review/)')
-    .action((task: string, o: Common & { lenses: string; start: string; criteriaFile?: string }) => run(() => reviewOpen(depsFor(o.repo), task, o.loop, o)));
+    .action((task: string, o: Common & { lenses: string; start: string; criteriaFile?: string; goal?: string }) => run(() => reviewOpen(depsFor(o.repo), task, o.loop, o)));
 
   common(review.command('packet').argument('<task>'))
     .requiredOption('--lens <reviewer>', CODE_LENSES.join(' | '))

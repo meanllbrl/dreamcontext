@@ -89,6 +89,15 @@ describe('open and the round-1 packet', () => {
     await expect(reviewOpen(deps, T, 'x', { lenses: 'critic', start: START, criteriaFile: join(repo, 'criteria.md') })).rejects.toThrow(/--lenses/);
   });
 
+  it('small work opens a loop with no task: --goal is the one criterion, the key any name', async () => {
+    await expect(reviewOpen(deps, 'gorev-kurali', 'end', { lenses: 'reviewer', start: START })).rejects.toThrow(/Small work needs no task: pass --goal/);
+    await expect(reviewOpen(deps, 'gorev-kurali', 'end', { lenses: 'reviewer', start: START, goal: '  ' })).rejects.toThrow(/--goal/);
+    await expect(reviewOpen(deps, 'gorev-kurali', 'end', { lenses: 'reviewer', start: START, goal: 'x', criteriaFile: join(repo, 'criteria.md') })).rejects.toThrow(/one way/);
+    await reviewOpen(deps, 'gorev-kurali', 'end', { lenses: 'reviewer', start: START, goal: 'The title typo is fixed' });
+    const p = await reviewPacket(deps, 'gorev-kurali', 'end', 'reviewer', { tree: tree(1), paths: ['a.ts'] });
+    expect(p.text).toContain('- [ ] The title typo is fixed');
+  });
+
   it('a team member reads its own scope', async () => {
     await open('review-security,reviewer');
     await reviewPacket(deps, T, 'end', 'reviewer', { tree: tree(1), paths: ['a.ts', 'b.ts'] });
