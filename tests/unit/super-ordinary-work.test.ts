@@ -85,6 +85,9 @@ describe('what still asks the owner', () => {
     expect(ordinaryWorkAllows('Grep', { pattern: 'KEY', path: join(home, 'projects') }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('Glob', { pattern: join(home, '.ssh', '*') }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('Glob', { pattern: '~/.ssh/*' }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: `${project}*/**/.env` }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: `${project}/*/../../../.ssh/*` }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: '../**/*.env' }, ctx)).toBe(false);
   });
 
   it('a project folder that is the home or the disk opens nothing', () => {

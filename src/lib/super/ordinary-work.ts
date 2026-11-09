@@ -108,8 +108,12 @@ export function ordinaryWorkAllows(tool: string, rawInput: unknown, ctx: Ordinar
     if (READS.has(tool)) {
       // A Glob's absolute pattern names its own folder: it must sit there too.
       const pat = tool === 'Glob' && typeof input.pattern === 'string' ? input.pattern : '';
+      // A `..` anywhere in a pattern climbs out of the folder it names: the owner's to allow.
+      if (pat && pat.split(/[\\/]/).includes('..')) return false;
       if (pat && (isAbsolute(pat) || pat.startsWith('~'))) {
-        const fixed = pat.replace(/^~(?=\/|$)/, home).split(/[*?[{]/)[0] ?? '';
+        // The folder before the first wildcard (cut at its last separator: `orbit*` is no folder).
+        const lead = pat.replace(/^~(?=\/|$)/, home).split(/[*?[{]/)[0] ?? '';
+        const fixed = lead.slice(0, Math.max(lead.lastIndexOf('/'), 0)) || '/';
         const at = fold(realOf(resolve(fixed || '/')));
         if (!roots.some((r) => inside(at, r)) && !tmps.some((t) => inside(at, t))) return false;
         if (ownTemp(at) || secretDirs.some((d) => inside(at, d) || inside(d, at))) return false;
