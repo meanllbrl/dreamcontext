@@ -141,7 +141,7 @@ export async function reviewOpen(deps: ReviewDeps, task: string, loop: string, o
       criteria = ((await deps.brain().backend.get(task))?.acceptance_criteria ?? '').trim();
     } catch { /* no brain reachable from here: --criteria-file says it */ }
   }
-  if (!criteria) throw new PlanRefusal(`No criteria for "${task}" could be read here (no brain in ${deps.repo}, no such task, or a task with no criteria). Small work needs no task: pass --goal "<what the fix must do>" (the loop's name can be the branch's). Otherwise write the criteria to a file and pass --criteria-file <file>.`);
+  if (!criteria) throw new PlanRefusal(`No criteria for "${task}" could be read here (no brain in ${deps.repo}, no such task, or a task with no criteria). Small work needs no task: pass --goal "<what the fix must do>" (the loop's name can be the branch's, without its prefix). Otherwise write the criteria to a file and pass --criteria-file <file>.`);
   return s.lock(() => {
     const existing = readLedgerAt(deps.repo, join(s.dir, 'ledger.json'), loop, 'code');
     if (existing.ok || !existing.missing) throw new PlanRefusal(`Review loop "${loop}" of ${task} already exists: \`${loopCommand({ mode: 'code', plan: loop, task } as Ledger, 'status')}\`. A new end review after an abandoned loop takes another --loop name.`);
@@ -394,7 +394,7 @@ export function registerReviewLoopCommands(builder: Command): void {
     .option('--loop <name>', 'The loop: end (the end review) or w<N> (a fan-out wave\'s reviewer)', 'end')
     .option('--repo <path>', 'The code repo the loop lives in (default: this checkout)');
 
-  common(review.command('open').argument('<task>', 'The task slug, or for small work with no task any a-z0-9- name (e.g. the branch\'s)'))
+  common(review.command('open').argument('<task>', 'The task slug, or for small work with no task any a-z0-9- name (e.g. the branch\'s, without its prefix)'))
     .requiredOption('--lenses <list>', `The end review's reviewers: reviewer, or the team review-pick names (${CODE_LENSES.join(', ')})`)
     .requiredOption('--start <tree>', 'The run\'s START tree')
     .option('--criteria-file <path>', 'The task\'s criteria, when no brain is reachable from here')
