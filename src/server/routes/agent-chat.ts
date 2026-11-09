@@ -127,6 +127,7 @@ import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
+import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-work.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock } from '../../lib/super/owner-language.js';
@@ -2733,6 +2734,13 @@ export function startChatSession(
   // A member's own Super chat and its children (plan-r10 1): ALWAYS set, as above ('' = none).
   const memberSuperEnv = isSuper && opts.agent ? opts.agent : '';
   const memberCrewEnv = opts.memberCrew ?? '';
+  // Ordinary work never waits on a card (owner 2026-11-09): a Super crew session on Claude whose
+  // mode already lets it work alone gets its reads, and its writes in the project, a linked repo
+  // or a temp folder, answered yes here (lib/super/ordinary-work.ts). The rest keeps its card.
+  const spawnModeAt = argv.indexOf('--permission-mode');
+  const ordinaryWork = superCrewEnv === '1' && !bridgeCommand && !app && !scopedCard && !card && !isAssistant
+    && spawnModeAt >= 0 && ordinaryWorkMode(argv[spawnModeAt + 1]);
+  const ordinaryRoots = ordinaryWork ? linkedWritableRoots(projectRoot) : [];
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
@@ -3953,6 +3961,14 @@ export function startChatSession(
         // above") never reaches the owner: the agent gets it back with what to add (owner
         // 2026-11-08). Every tool's question passes here (the T3 bridge speaks this frame).
         intercept: (o) => {
+          if (ordinaryWork && o.type === 'control_request' && typeof o.request_id === 'string') {
+            const req = o.request as { subtype?: unknown; tool_name?: unknown; input?: unknown } | undefined;
+            if (req?.subtype === 'can_use_tool' && typeof req.tool_name === 'string'
+              && ordinaryWorkAllows(req.tool_name, req.input, { cwd: projectRoot, roots: ordinaryRoots })) {
+              writeStdin({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: { behavior: 'allow', updatedInput: (req.input && typeof req.input === 'object' ? req.input : {}) } } });
+              return true;
+            }
+          }
           const off = offCardQuestionFrame(o);
           if (!off) return false;
           writeStdin({ type: 'control_response', response: { subtype: 'success', request_id: off.requestId, response: { behavior: 'deny', message: off.message } } });
