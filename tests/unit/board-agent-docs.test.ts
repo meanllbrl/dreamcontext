@@ -43,7 +43,7 @@ describe('skill-draw/references/whiteboards.md: the agent card', () => {
     // A home board alone presents, never limits (owner 2026-11-07).
     expect(WHITEBOARDS_MD).toContain('**A home board presents; it does not limit**');
     expect(AUTOMATIONS_MD).toContain('**A home board is a presentation surface, never a permission scope**');
-    expect(WHITEBOARDS_MD).toContain('--permission-mode dontAsk --setting-sources project');
+    expect(WHITEBOARDS_MD).toContain('`--setting-sources project` and an exact allowlist, at `--permission-mode dontAsk` when nobody watches and `default` in a conversation the owner is in');
     expect(WHITEBOARDS_MD).toContain('Could not limit <title> to its board: <reason>');
   });
 

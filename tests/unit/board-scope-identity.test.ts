@@ -74,7 +74,6 @@ describe("resolveSpawnScope(…, use)", () => {
       ok: true,
       scope: { board, self: 'board-pilot' },
       homeBoard: board,
-      held: false,
     });
   });
 
@@ -104,7 +103,6 @@ describe("resolveSpawnScope(…, use)", () => {
       ok: true,
       scope: { board, self: 'board-pilot' },
       homeBoard: board,
-      held: false,
     });
     const run = resolveSpawnScope(contextRoot, callTarget, home, 'run');
     expect(run.ok).toBe(false);
