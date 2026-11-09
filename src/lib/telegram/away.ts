@@ -78,6 +78,8 @@ async function noticeAway(home: string, scope: string, target: string, b: { toke
     for (const u of batch) {
       const id = Number(u.update_id);
       if (!Number.isSafeInteger(id) || notified.includes(id) || state.seenIds.includes(id)) continue;
+      // A reaction (still delivered after the server asked for it) is no message he expects an answer to.
+      if (!u.message && !u.callback_query) continue;
       if (!isAuthorized(u as unknown as TgUpdateLike, b)) continue;
       notified.push(id);
       await transport.sendMessage(b.chatId, escapeHtml(AWAY_LINE)).catch(() => {});

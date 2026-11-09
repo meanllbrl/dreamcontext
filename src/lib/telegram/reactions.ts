@@ -72,7 +72,9 @@ export function shortQuote(text: string): string {
 
 /** One line per note: `[telegram reaction] 👍 on: "<quote>"` (no quote when unmapped). */
 export function reactionLine(n: Pick<Note, 'emojis' | 'quote'>): string {
-  return `[telegram reaction] ${n.emojis.join('')}${n.quote ? ` on: ${JSON.stringify(n.quote)}` : ' on one of your messages'}`;
+  // `<` escaped: a quote can never close the block it rides in.
+  const q = n.quote ? JSON.stringify(n.quote).replace(/</g, '\\u003c') : null;
+  return `[telegram reaction] ${n.emojis.join('')}${q ? ` on: ${q}` : ' on one of your messages'}`;
 }
 
 /** Notes waiting for an agent's next turn, keyed by the agent (a Super session id, a member binding). */

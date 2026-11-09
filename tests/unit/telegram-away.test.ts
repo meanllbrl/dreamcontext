@@ -33,6 +33,8 @@ describe('app quit', () => {
   it('one notice per authorized message, none for a stranger, offset never moved', async () => {
     tg.push(TOKEN, textUpdate(777, 'merhaba'));
     tg.push(TOKEN, textUpdate(555, 'yabancı'));
+    // His reaction is no message: no "will not be processed" line for it.
+    tg.push(TOKEN, { message_reaction: { chat: { id: 777, type: 'private' }, message_id: 5, user: { id: 777 }, new_reaction: [{ type: 'emoji', emoji: '👍' }] } });
     await telegramAwayTick(deps());
     await telegramAwayTick(deps());
     expect(tg.texts()).toEqual([AWAY_LINE]);

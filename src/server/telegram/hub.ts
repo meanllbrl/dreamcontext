@@ -604,7 +604,9 @@ export class TelegramHub implements TelegramHubApi {
   private async onReaction(ab: ActiveBinding, u: Obj): Promise<void> {
     const r = parseReaction(u);
     if (!r || r.chatId !== ab.binding.chatId || r.userId !== ab.binding.userId) return;
-    const quote = this.sentQuotes.get(`${ab.key}:${r.messageId}`) ?? this.replyOf(ab, r.messageId)?.quote ?? null;
+    // Only what the bot sent: a reaction on his own message quotes nothing.
+    const mapped = this.replyOf(ab, r.messageId);
+    const quote = this.sentQuotes.get(`${ab.key}:${r.messageId}`) ?? (mapped?.from === 'super' ? mapped.quote : null);
     if (ab.target !== 'super') { telegramReactionNotes.add(`member:${ab.key}`, r.messageId, r.emojis, quote, this.now()); return; }
     if (!ab.contextRoot) return;
     let session: string | null = null;

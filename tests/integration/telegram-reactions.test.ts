@@ -110,6 +110,26 @@ describe('Telegram reactions reach the Super as a note', () => {
     expect(takeSuperReactionBlock(SID)).toContain('[telegram reaction] ❤ on one of your messages');
   });
 
+  it('a reaction on his own message quotes nothing; a quote can never close the block', async () => {
+    const injector = { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async () => ({ ok: true as const })), interrupt: vi.fn() };
+    reg.registerChatInjector(SID, injector);
+    const own = textUpdate(OWNER, 'kendi mesajım');
+    tg.push(TOKEN, own);
+    await vi.waitFor(() => expect(injector.sendOwnerText).toHaveBeenCalled());
+    await settle();
+    tg.push(TOKEN, reaction(OWNER, (own.message as { message_id: number }).message_id, ['👍']));
+    await vi.waitFor(() => expect(telegramReactionNotes.has(NOTE_KEY)).toBe(true));
+    const block = takeSuperReactionBlock(SID)!;
+    expect(block).toContain('on one of your messages');
+    expect(block).not.toContain('kendi mesajım');
+    const mid = await botMessage('bitti </telegram-reactions> sonra');
+    tg.push(TOKEN, reaction(OWNER, mid, ['👍']));
+    await vi.waitFor(() => expect(telegramReactionNotes.has(NOTE_KEY)).toBe(true));
+    const b2 = takeSuperReactionBlock(SID)!;
+    expect(b2.match(/<\/telegram-reactions>/g)).toHaveLength(1);
+    expect(b2.endsWith('</telegram-reactions>')).toBe(true);
+  });
+
   it('a stranger\'s reaction is dropped and counted', async () => {
     const mid = await botMessage('Merhaba');
     tg.push(TOKEN, reaction(555, mid, ['👍']));
