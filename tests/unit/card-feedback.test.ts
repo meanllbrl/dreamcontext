@@ -9,6 +9,7 @@ import { isCardFeedbackText } from '../../src/lib/chat-view-spec.js';
 import { userPromptOf } from '../../src/lib/transcript-history.js';
 import { isInjectedUserText } from '../../src/lib/t3-bridge/codex-history.js';
 import { parseViewBlock } from '../../dashboard/src/lib/chatViewSpec.js';
+import { ownerLanguageLine, withOwnerLanguage } from '../../src/lib/super/owner-language.js';
 
 const fence = (json: string): string => '```dream-view\n' + json + '\n```';
 const TWO_LINE_RUN = fence('{"type":"run","id":"ls-pwd","command":"ls\\npwd","why":"run ls and pwd sequentially"}');
@@ -57,6 +58,14 @@ describe('the hidden turn', () => {
   it('never shows as owner text: not in the Claude history, not in a Codex or Antigravity thread', () => {
     expect(userPromptOf({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })).toBe('');
     expect(isInjectedUserText(text)).toBe(true);
+  });
+
+  it('to the Super it ends with his language and stays hidden (kitup 2026-11-09)', () => {
+    const toSuper = withOwnerLanguage(text, 'Turkish');
+    expect(toSuper.split('\n').at(-1)).toBe(ownerLanguageLine('Turkish'));
+    expect(isCardFeedbackText(toSuper)).toBe(true);
+    expect(userPromptOf({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: toSuper }] } })).toBe('');
+    expect(isInjectedUserText(toSuper)).toBe(true);
   });
 });
 

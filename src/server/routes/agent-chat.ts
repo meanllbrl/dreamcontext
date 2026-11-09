@@ -130,7 +130,7 @@ import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/
 import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-work.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
-import { ownerLanguageBlock } from '../../lib/super/owner-language.js';
+import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
@@ -4164,8 +4164,11 @@ export function startChatSession(
           respawning: respawnTo !== null, turnsInFlight, switchPending, heldTexts: heldTexts.length, stdinEnding: stdinEnding(),
         });
         stopAskedThisTurn = false;
-        const told = cardFeedback.atResult(cleanEnd);
-        if (told) {
+        const feedback = cardFeedback.atResult(cleanEnd);
+        if (feedback) {
+          // A server-written turn into the Super ends with his language like every other one
+          // (owner-language.ts): this note tells it to speak to him, and it is English.
+          const told = isSuper ? withOwnerLanguage(feedback, superKnownLanguage(chatRegistryId)) : feedback;
           openTurn();
           if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: told }] } })) closeTurn();
         }
