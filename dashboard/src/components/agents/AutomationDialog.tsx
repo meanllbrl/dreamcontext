@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { rowOf, useTelegramStatus } from '../../api/telegram';
+import { TelegramBindSheet } from '../telegram/TelegramBindSheet';
 import type { AutomationDraft, AutomationMode, AutomationSummary, Weekday } from '../../hooks/useAutomations';
 import {
   useAutomation,
@@ -326,6 +328,20 @@ export function AutomationDialog({
     jobSeed.current = fullJob;
     setJob(fullJob);
   }, [editing, fullJob]);
+  // "Telegram'a da gelsin" (super-rutin AC1-AC2): an edit of his own automation only, seeded from
+  // the same fresh read and sent only when he changed it. Failures reach Telegram either way.
+  const fullReply = detail.isFetchedAfterMount ? detail.data?.automation.reply ?? '' : undefined;
+  const superTarget = detail.data?.automation.target === 'super';
+  const replySeed = useRef<boolean | null>(null);
+  const [tgReply, setTgReply] = useState(false);
+  useEffect(() => {
+    if (!editing || replySeed.current !== null || fullReply === undefined) return;
+    replySeed.current = fullReply === 'telegram';
+    setTgReply(fullReply === 'telegram');
+  }, [editing, fullReply]);
+  const tgStatus = useTelegramStatus({ enabled: editing });
+  const superBotBound = rowOf(tgStatus.data, 'super')?.state === 'active';
+  const [bindSuper, setBindSuper] = useState(false);
   const [mode, setMode] = useState<AutomationMode>(agent?.mode ?? start?.mode ?? 'sched');
   const [rows, setRows] = useState<SlotRow[]>(() =>
     initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
@@ -517,6 +533,8 @@ export function AutomationDialog({
       effort: effort as AutomationDraft['effort'],
       // Edit only: a changed Job ('' removes it). The server re-approves the edit like any other.
       ...(editsJob && job.trim() !== (jobSeed.current ?? '').trim() ? { job: job.trim() } : {}),
+      // Edit only: his tick changed (his save on this page is the consent it needs).
+      ...(editing && replySeed.current !== null && tgReply !== replySeed.current ? { reply: tgReply ? 'telegram' as const : 'mac' as const } : {}),
       // Create only: `start` is undefined on an edit, and the server never moves a home board.
       ...(start?.whiteboard ? { whiteboard: start.whiteboard } : {}),
     };
@@ -888,6 +906,27 @@ export function AutomationDialog({
           </div>
         </div>
 
+        {editing && !bound && !superTarget && mode === 'sched' && replySeed.current !== null && (
+          <div className="agent-field" data-testid="automation-telegram-reply">
+            <label className="agent-check">
+              <input type="checkbox" checked={tgReply} onChange={(e) => setTgReply(e.target.checked)} />
+              <span>{tx('automations.telegramReply', "Results come to Telegram too")}</span>
+            </label>
+            <p className="agent-note">
+              {tx('automations.telegramReplyHint', 'Failures always come to Telegram; questions only while you are away.')}
+            </p>
+            {tgStatus.isSuccess && !superBotBound && (
+              <p className="agent-note" data-testid="automation-telegram-unbound">
+                {tx('automations.telegramReplyUnbound', "Super's bot is not connected")}
+                {' · '}
+                <button type="button" className="automation-agent-link" onClick={() => setBindSuper(true)}>
+                  {tx('automations.telegramReplyBind', 'Connect')}
+                </button>
+              </p>
+            )}
+          </div>
+        )}
+
         <p className="agent-summary">{summary}</p>
 
         {error && <p className="agent-error">{error}</p>}
@@ -916,6 +955,7 @@ export function AutomationDialog({
           </button>
         </div>
       </div>
+      {bindSuper && <TelegramBindSheet target="super" name={null} onClose={() => { setBindSuper(false); void tgStatus.refetch(); }} />}
     </div>
   );
 }

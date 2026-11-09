@@ -33,6 +33,7 @@ import {
   type ThreadSummaryRow,
   THREAD_SUMMARY_MAX_ROWS,
   createNeedsOwner,
+  needsOwnerConsent,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -2192,6 +2193,14 @@ export function registerAutomationsCommand(program: Command): void {
         const verdict = checkApproval(projectRoot, manifest, undefined, 'run');
         if (verdict.approved) {
           success(`"${slug}" is already approved (${verdict.entry.approvedAt}) — nothing has changed since.`);
+          return;
+        }
+
+        // A Super turn or a Telegram outflow is approved only on his AI Team page or by his own
+        // Super's `super schedule` (super-rutin C2): a terminal cannot prove who is typing.
+        if (needsOwnerConsent(manifest)) {
+          error(`"${slug}" sends its work to the Super or to Telegram: approve it on the AI Team page in the app.`);
+          process.exitCode = 1;
           return;
         }
 

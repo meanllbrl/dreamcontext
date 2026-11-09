@@ -44,6 +44,9 @@ export const HASHED_FIELD_SIDE = {
   app: 'authority',
   boardOnly: 'authority',
   appTools: 'authority',
+  // super-rutin: a Super turn and a Telegram outflow are the owner's to grant.
+  target: 'authority',
+  reply: 'authority',
   mode: 'authority',
 } as const satisfies Record<keyof ApprovalPayloadFields | 'mode', FieldSide>;
 

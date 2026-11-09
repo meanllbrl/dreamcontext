@@ -48,14 +48,16 @@
  * to enforce that by construction, not by convention.
  */
 
+import { noteMissedSuperFire } from '../super/schedule-queue.js';
 import { existsSync } from 'node:fs';
 import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
-import { getAutomation, listAutomations, readAutomationCache } from './store.js';
+import { getAutomation, listAutomations, readAutomationCache, writeAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
-import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { checkApproval, listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import type { AutomationCache, AutomationManifest } from './types.js';
 import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { cleanAllVaultTmps } from '../tmp-clean.js';
@@ -320,17 +322,30 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     }
 
     if (!manifest.enabled) {
+      if (manifest.target === 'super') notePaused(contextRoot, manifest.slug, now, logFn);
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });
       continue;
     }
 
     const cache = readAutomationCache(contextRoot, manifest.slug);
+    const watermark = manifest.target === 'super'
+      ? superWatermark(projectRoot, contextRoot, manifest, cache, now, opts.home, logFn)
+      : cache?.lastFireAt ?? null;
     // `manifest.mode` is the FIRST thing isDue looks at: an on-call agent is
     // never fired by the dispatcher, whatever its schedule field happens to
     // say. It still contributes a verdict ('on-call'), so a tick's report
     // accounts for every manifest it considered.
-    const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours, manifest.mode);
+    const due = isDue(manifest.schedule, watermark, now, manifest.catchupHours, manifest.mode);
     if (!due.due) {
+      // A Super automation's fire past catch-up is never silent (super-rutin Decision 10): one
+      // `missed` item the server tells once. Headless automations keep today's behaviour.
+      if (due.reason === 'outside-catchup' && manifest.target === 'super' && due.fireAt) {
+        try {
+          if (noteMissedSuperFire(contextRoot, manifest.slug, due.fireAt, opts.home)) logFn(`[automations] ${manifest.slug} missed its ${due.fireAt.toISOString()} fire — the Super tells the owner`);
+        } catch (err) {
+          logFn(`[automations] ${manifest.slug}: could not record a missed fire: ${(err as Error).message}`);
+        }
+      }
       verdicts.push({ slug: manifest.slug, verdict: due.reason });
       continue;
     }
@@ -358,6 +373,45 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
   for (const send of deferred) await send().catch((err) => logFn(`[telegram] a routine message failed: ${(err as Error)?.message ?? err}`));
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };
+}
+
+// ─── A Super automation owes only fires from while it was live ───────────────
+
+const emptyCache = (slug: string): AutomationCache => ({
+  slug, lastRunAt: null, lastFireAt: null, status: null, durationMs: null, outputPath: null, error: null, exitCode: null, history: [],
+});
+
+/** Remembers when a Super automation was first seen switched off (one write per pause). */
+function notePaused(contextRoot: string, slug: string, now: Date, log: (l: string) => void): void {
+  try {
+    const cache = readAutomationCache(contextRoot, slug);
+    if (cache?.pausedAt) return;
+    writeAutomationCache(contextRoot, slug, { ...(cache ?? emptyCache(slug)), pausedAt: now.toISOString() });
+  } catch (err) { log(`[automations] ${slug}: could not note the pause: ${(err as Error).message}`); }
+}
+
+/**
+ * The watermark `isDue` judges a Super automation by: its last fire, but never earlier than the
+ * moment it became live (its approval for this exact text, or coming back on after a pause). A
+ * routine set at 20:00 for 09:00 then owes nothing until tomorrow, and is not "missed" today.
+ */
+function superWatermark(
+  projectRoot: string, contextRoot: string, m: AutomationManifest, cache: AutomationCache | null, now: Date, home: string | undefined, log: (l: string) => void,
+): string | null {
+  let liveFrom = cache?.liveFrom ?? null;
+  if (cache?.pausedAt) {
+    liveFrom = now.toISOString();
+    const { pausedAt: _gone, ...rest } = cache;
+    try { writeAutomationCache(contextRoot, m.slug, { ...rest, liveFrom }); } catch (err) { log(`[automations] ${m.slug}: could not note the resume: ${(err as Error).message}`); }
+  }
+  let approvedAt: string | null = null;
+  try {
+    const v = checkApproval(projectRoot, m, home, 'run');
+    if (v.approved) approvedAt = v.entry.approvedAt;
+  } catch { /* the runner reports it */ }
+  const marks = [cache?.lastFireAt ?? null, approvedAt, liveFrom].filter((x): x is string => !!x && Number.isFinite(Date.parse(x)));
+  if (!marks.length) return null;
+  return new Date(Math.max(...marks.map((x) => Date.parse(x)))).toISOString();
 }
 
 /**

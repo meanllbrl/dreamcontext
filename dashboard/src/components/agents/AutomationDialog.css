@@ -512,3 +512,18 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* "Results come to Telegram too" (super-rutin): one tick, its rule, and the bind line. */
+.agent-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.agent-check input:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}

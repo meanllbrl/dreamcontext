@@ -3450,7 +3450,7 @@ export function startChatSession(
     const tg = isSuper ? telegramRefs.take(chatRegistryId, raw) : { ref: null, entry: null, body: parseTelegramPrefix(raw).body };
     const text = tg.body;
     const tgRef = tg.ref;
-    const tgSource: InjectedSource | undefined = tg.entry ? (tg.entry.kind === 'run-report' ? 'run-report' : 'telegram-text') : undefined;
+    const tgSource: InjectedSource | undefined = tg.entry ? (tg.entry.kind === 'run-report' || tg.entry.kind === 'schedule' ? tg.entry.kind : 'telegram-text') : undefined;
     if (tgRef) turnTelegramRefs.add(tgRef);
     // Any owner message cancels a "continue at reset" (resume-at-reset.ts): he is here.
     ownerSeq += 1;

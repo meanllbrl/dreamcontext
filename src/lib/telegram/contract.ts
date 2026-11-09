@@ -242,8 +242,10 @@ export interface PendingTelegramRef {
   at: number;
   /** Set when `writeOwnerTurn` honoured it; honoured again for the same chat (idempotent re-write, E1). */
   written: boolean;
-  /** `run-report` clears exactly its cardRef's wait; `text` clears no run/secret wait (J1). */
-  kind: 'text' | 'run-report';
+  /** `run-report` clears exactly its cardRef's wait; `text` clears no run/secret wait (J1).
+   *  `schedule` (super-rutin C5): a job the owner scheduled for his Super, answered on Telegram
+   *  like his text, clearing no wait and moving no presence. */
+  kind: 'text' | 'run-report' | 'schedule';
   cardRef?: string;
 }
 
@@ -267,7 +269,11 @@ export interface PendingTelegramRefStore {
 export type TelegramRefDropped = (chatRegistryId: string, ref: string, written: boolean) => void;
 
 /** Who wrote an injected turn (I4, J1). Read by `writeOwnerTurn` from the HONOURED entry only. */
-export type InjectedSource = 'telegram-text' | 'run-report';
+export type InjectedSource = 'telegram-text' | 'run-report' | 'schedule';
+/** A source whose answer goes back to Telegram and that answers no wait on the Mac. */
+export function telegramSideSource(source: InjectedSource | string | undefined): boolean {
+  return source === 'telegram-text' || source === 'schedule';
+}
 
 /**
  * The injector one live Super chat registers (`registerChatInjector(sessionId, injector)` in

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { scheduleVerb } from '../super-schedule.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -1040,7 +1041,7 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
   return note;
 }
 
-async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
+export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
   await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); });
   return out;
@@ -1425,6 +1426,7 @@ const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: strin
   'team-amend': { error: 'main_only', message: 'only the project\'s Super Agent proposes a member change' },
   'team-answer': { error: 'main_only', message: 'only the project\'s Super Agent answers a member\'s question' },
   adopt: { error: 'main_only', message: 'a member\'s Super never adopts a chat: open your own children with `super delegate`' },
+  schedule: { error: 'main_only', message: 'only the project\'s Super Agent sets the owner\'s scheduled jobs' },
 };
 const MEMBER_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-done': { error: 'member_only', message: 'only a member\'s Super closes the request it was given' },
@@ -2173,6 +2175,15 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   'pool-list': async (c, _b, res) => {
     ok(res, { pool: poolRows(vaultNameOf(c.who.contextRoot), c.state.pool) });
+  },
+
+  // ── The owner's scheduled jobs (super-rutin C4): main only, its own record only ──
+  schedule: async (c, b, res) => {
+    if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent sets the owner\'s scheduled jobs'); return; }
+    if (!callerOwnsSuper(c, b, res)) return;
+    const r = await scheduleVerb(c.who.contextRoot, b);
+    if (!r.ok) { refuse(res, r.status, r.error, r.message); return; }
+    ok(res, r.result);
   },
 
   // ── The owner's agenda: the super's own notepad (owner 2026-10-22 19:15) ──

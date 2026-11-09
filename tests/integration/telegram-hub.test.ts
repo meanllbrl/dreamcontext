@@ -281,6 +281,24 @@ describe('the Super target', () => {
       expect(hub.onTelegram(ab)).toBe(false);
     });
 
+    it('a scheduled job the hub injected moves no presence, and its answer goes to Telegram (super-rutin C5)', async () => {
+      const onPresence = vi.fn();
+      (hub.deps as { handsfree?: unknown }).handsfree = { streamsTo: () => false, onPresence };
+      const h = reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      const ab = [...hub.active.values()][0];
+      const text = '[super schedule] automation=super-is-0900-abc123 at=09:00\njob: "Haberleri özetle"';
+      expect(await hub.injectText(ab, hub.syntheticUpdateId(), text, SID, { kind: 'schedule' })).not.toBe(false);
+      expect(inj.sendOwnerText.mock.calls[0][1]).toMatchObject({ source: 'schedule' });
+      expect(onPresence).not.toHaveBeenCalled();
+      expect(hub.onTelegram(ab)).toBe(false);
+      // The window writes the turn as the schedule source: it answers no Mac wait and the answer goes back.
+      h.userSent(text, { source: 'schedule' });
+      assistant(h, 'Bugünün özeti hazır.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Bugünün özeti hazır.'));
+    });
+
     it('a Mac message in a session the hub has not mapped yet (a fresh Super session) ends it too', async () => {
       await onTelegram();
       const NEW = '99999999-2222-4333-8444-555555555555';

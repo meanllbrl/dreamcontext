@@ -648,7 +648,7 @@ Its `sessionId` is the super's own.
 turn of its own (outbox.ts) and its row stays `working` (`SuperChild.resuming`). One line in the next
 batch, never a `done`; the Super has nothing to send.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -732,6 +732,9 @@ export interface SuperQueueItem {
   owedAt?: number;
   /** An `owed` item's debts (`SuperOwed.id`), fixed when it was queued. */
   owed?: string[];
+  /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
+   *  names it). The job text is read from the approved manifest at delivery, never stored here. */
+  fire?: string;
 }
 
 /**
@@ -1658,6 +1661,8 @@ export const SUPER_VERBS = [
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
+  // The owner's scheduled jobs (super-rutin plan C4): main Super only.
+  'schedule',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
@@ -1676,7 +1681,7 @@ export const SUPER_FRAME_CUE = 'super_cue' as const;
 
 /** The prefixes an injected super turn starts with; history replay renders them as event lines.
  *  `[super event]` stays for a transcript written before plan r4. */
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]', '[super owed]', '[super schedule]'] as const;
 
 /** What a `super_event` frame says about the turn it opened: `batch` since plan r4 (the other
  *  kinds stay for replay of older transcripts). */
@@ -1704,9 +1709,9 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now.
  */
-export const SUPER_BRIEF_REV = 37;
+export const SUPER_BRIEF_REV = 38;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

@@ -395,6 +395,29 @@ export function registerSuperCommand(program: Command): void {
     .description('The pooled jobs (title, note, task, held, maybe started)')
     .action(() => run('pool-list', {}));
 
+  const sc = s.command('schedule').description('The owner\'s timed jobs ("every morning at 9, do X"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word');
+  sc.command('add')
+    .description('A job that runs on its own: by default a turn of YOUR session at that time (you do it and talk to him); --headless for a job that must run even when you are off')
+    .requiredOption('--job <text>', 'The job, in the owner\'s own words')
+    .requiredOption('--at <HH:MM>', 'Local time, 24 h')
+    .option('--days <daily|mon,wed|mon-fri>', 'Which days (default daily)')
+    .option('--reply <auto|telegram|mac>', 'Where the answer goes: auto = wherever he is (Telegram while he is away, else the Mac; your turns only), telegram, or mac')
+    .option('--headless', 'A plain automation that runs without you (its result reaches Telegram with --reply telegram)')
+    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}) }));
+  sc.command('list')
+    .description('Every scheduled job: id, when, where the answer goes, next run, last result')
+    .action(() => run('schedule', { op: 'list' }));
+  sc.command('change <id>')
+    .description('Change a scheduled job (only what you name); refused with changed_elsewhere when it was edited outside you')
+    .option('--job <text>', 'The new job, in his words')
+    .option('--at <HH:MM>', 'New time')
+    .option('--days <daily|mon,wed|mon-fri>', 'New days')
+    .option('--reply <auto|telegram|mac>', 'Where the answer goes now ("send it to the Mac/Telegram")')
+    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string }) => run('schedule', { op: 'change', id, ...o }));
+  sc.command('cancel <id>')
+    .description('Remove a scheduled job')
+    .action((id: string) => run('schedule', { op: 'cancel', id }));
+
   const n = s.command('note').description('The owner\'s agenda: your notepad of what you do now, what you wait on him for, and what is done (plain words, high level)');
   n.command('add <section> <text...>')
     .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')

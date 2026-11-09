@@ -4072,6 +4072,48 @@
       ]
     },
     {
+      "path": "super schedule",
+      "desc": "The owner's timed jobs (\"every morning at 9, do X\"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super schedule add",
+      "desc": "A job that runs on its own: by default a turn of YOUR session at that time (you do it and talk to him); --headless for a job that must run even when you are off",
+      "args": [],
+      "valueFlags": [
+        "--job",
+        "--at",
+        "--days",
+        "--reply"
+      ]
+    },
+    {
+      "path": "super schedule cancel",
+      "desc": "Remove a scheduled job",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "super schedule change",
+      "desc": "Change a scheduled job (only what you name); refused with changed_elsewhere when it was edited outside you",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--job",
+        "--at",
+        "--days",
+        "--reply"
+      ]
+    },
+    {
+      "path": "super schedule list",
+      "desc": "Every scheduled job: id, when, where the answer goes, next run, last result",
+      "args": []
+    },
+    {
       "path": "super send",
       "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks, and then \"waits\" says it is not read yet). A parked child is woken first, in the same command: \"delivered\" says how it arrived",
       "args": [

@@ -317,7 +317,7 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
 });
 
 describe('approval surface — seventeen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the eighteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app, boardOnly and appTools', () => {
+  it('APPROVAL_DIFF_FIELDS is the twenty-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool, app, boardOnly, appTools, target and reply', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -356,6 +356,9 @@ describe('approval surface — seventeen hashed fields, everywhere it is claimed
       'boardOnly',
       // The app tools a run may use to CHANGE something unattended. LAST, omitted when none.
       'appTools',
+      // A turn of the Super, and where the result goes (super-rutin). LAST, omitted when unset.
+      'target',
+      'reply',
     ]);
   });
 
