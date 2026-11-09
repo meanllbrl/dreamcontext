@@ -139,6 +139,8 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect(tg.sent('setMyName').filter((c) => c.token === NEW).map((c) => c.params.name)).toEqual(['UA Manager · Kampanya yöneticisi']);
     expect(tg.sent('setMyShortDescription').find((c) => c.token === NEW)?.params.short_description).toBe('Kampanya yöneticisi · acme projesinin AI Team üyesi.');
     expect(tg.sent('setMyProfilePhoto')).toHaveLength(0);
+    // A member bot never gets the Super's command menu.
+    expect(tg.sent('setMyCommands').filter((c) => c.token === NEW)).toEqual([]);
     // Kaldır: the token is revoked through the manager BEFORE the folder goes.
     expect((await call('DELETE', '/api/telegram/ua-manager', PAGE)).status).toBe(200);
     expect(tg.sent('replaceManagedBotToken')).toHaveLength(1);
@@ -158,6 +160,17 @@ describe('the manager and one-tap bots (X, Z, AA)', () => {
     expect((await call('POST', `/api/telegram-readopt/${again}/start`, KEYED, { approvalHash: hash })).status).toBe(200);
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(readBinding(scopeOfContextRoot(root), 'ua-manager', home).ok).toBe(true);
+  });
+
+  it('a Super bot the manager creates gets its command menu (the managed bind used to skip it; owner report 2026-11-09)', async () => {
+    await pair(MANAGER, '/api/telegram-manager/bind', 900001);
+    const id = (await call('POST', '/api/telegram/super/creation/request', PAGE)).json.creationId;
+    expect((await call('POST', `/api/telegram-creation/${id}/start`, KEYED)).status).toBe(200);
+    tg.push(MANAGER, { managed_bot: { bot: { id: 555, is_bot: true, username: 'ua_manager_x1y2_bot' }, user: { id: OWNER } } });
+    await vi.waitFor(() => expect(readBinding(scopeOfContextRoot(root), 'super', home).ok).toBe(true), { timeout: 5000 });
+    const NEW = '555:NEWTOKENNEWTOKENNEWTOKENNEWTOKEN12';
+    await vi.waitFor(() => expect(tg.sent('setMyCommands').filter((c) => c.token === NEW)).toHaveLength(1), { timeout: 5000 });
+    expect(tg.sent('setMyCommands').some((c) => c.token === MANAGER)).toBe(false);
   });
 
   it('re-pairing the manager with its own token re-keys managed bots; a failed replace keeps that bot polling', async () => {
