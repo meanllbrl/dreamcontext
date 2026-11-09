@@ -27,13 +27,13 @@ describe('ordinary work a member job does without a card', () => {
     expect(ordinaryWorkAllows('MultiEdit', { file_path: join(linked, 'src', 'a.ts') }, ctx)).toBe(true);
   });
 
-  it('reads pass anywhere but a secret place', () => {
-    expect(ordinaryWorkAllows('Read', { file_path: join(home, 'Documents', 'brief.pdf') }, ctx)).toBe(true);
-    expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: join(home, 'Documents') }, ctx)).toBe(true);
+  it('reads pass where the job works, never a secret', () => {
+    expect(ordinaryWorkAllows('Read', { file_path: join(tmp, 'gal', 'raw2.json') }, ctx)).toBe(true);
+    expect(ordinaryWorkAllows('Read', { file_path: join(linked, 'src', 'a.ts') }, ctx)).toBe(true);
+    expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: join(tmp, 'gal') }, ctx)).toBe(true);
     expect(ordinaryWorkAllows('Glob', { pattern: '**/*.md' }, ctx)).toBe(true);
-    expect(ordinaryWorkAllows('Read', { file_path: join(home, '.ssh', 'id_ed25519') }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: join(tmp, 'gal', '*.json') }, ctx)).toBe(true);
     expect(ordinaryWorkAllows('Read', { file_path: join(project, '.env') }, ctx)).toBe(false);
-    expect(ordinaryWorkAllows('Read', { file_path: join(home, '.dreamcontext', 'telegram', 'bot.json') }, ctx)).toBe(false);
   });
 });
 
@@ -76,6 +76,21 @@ describe('what still asks the owner', () => {
     expect(ordinaryWorkAllows('Glob', { pattern: '**/*', path: base }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: tmp }, ctx)).toBe(false);
     expect(ordinaryWorkAllows('Grep', { pattern: 'x', path: join(tmp, 'gal') }, ctx)).toBe(true);
+  });
+
+  it('reads anywhere else in the home ask, whatever the file is called (security review r2)', () => {
+    for (const f of ['.zshrc', '.zsh_history', '.pgpass', join('.cargo', 'credentials.toml'), join('Library', 'Application Support', 'Chrome', 'Cookies'), join('Documents', 'brief.pdf')]) {
+      expect(ordinaryWorkAllows('Read', { file_path: join(home, f) }, ctx), f).toBe(false);
+    }
+    expect(ordinaryWorkAllows('Grep', { pattern: 'KEY', path: join(home, 'projects') }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: join(home, '.ssh', '*') }, ctx)).toBe(false);
+    expect(ordinaryWorkAllows('Glob', { pattern: '~/.ssh/*' }, ctx)).toBe(false);
+  });
+
+  it('a project folder that is the home or the disk opens nothing', () => {
+    expect(ordinaryWorkAllows('Read', { file_path: join(home, '.zshrc') }, { ...ctx, cwd: home })).toBe(false);
+    expect(ordinaryWorkAllows('Write', { file_path: join(home, 'Documents', 'x') }, { ...ctx, cwd: home })).toBe(false);
+    expect(ordinaryWorkAllows('Read', { file_path: '/etc/hosts' }, { ...ctx, cwd: '/' })).toBe(false);
   });
 
   it('commands, MCP, web and questions are never answered here', () => {

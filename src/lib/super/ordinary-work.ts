@@ -6,9 +6,12 @@
  * this project's folders"), so a member job sat on a card for a scratch file. This decides, for a
  * crew session whose mode is `auto` or `bypassPermissions`, which of those requests are ordinary
  * work the server answers yes to itself:
- *  - a read (Read, Glob, Grep, LS, NotebookRead) anywhere, except a secret place;
- *  - a write (Write, Edit, MultiEdit, NotebookEdit) inside the project, a linked repo or its
- *    worktrees, or a temp folder (`/tmp`, the OS temp folder), except a secret or guarded place.
+ *  - a read or a write (Read, Glob, Grep, LS, NotebookRead; Write, Edit, MultiEdit, NotebookEdit)
+ *    inside the project, a linked repo or its worktrees, or a temp folder (`/tmp`, the OS temp
+ *    folder): never a secret, never dreamcontext's or Claude's own temp files, and a write never
+ *    into a dot folder or dot file (`.git`, `.claude`, `.vscode`…), which changes what runs next.
+ *  Reads elsewhere (the rest of the home, other projects, app data) keep their card: a list of
+ *  secret names can never be complete, so the rule is by place.
  * Everything else (a write elsewhere, Bash, MCP, web, a question) keeps its card: sending,
  * publishing, deleting and money are judged by the auto classifier or the owner, never here.
  *
@@ -95,18 +98,30 @@ export function ordinaryWorkAllows(tool: string, rawInput: unknown, ctx: Ordinar
     };
     const ownTemp = (p: string): boolean => OWN_TEMP.test((tmpRel(p) ?? '').split(/[\\/]/)[0] ?? '');
     if (ownTemp(real)) return false;
+    // A root that is the home or the disk is no project folder.
+    const roots = [ctx.cwd, ...(ctx.roots ?? [])].map((r) => fold(realOf(r)))
+      .filter((r) => r !== parse(r).root && !inside(realHome, r));
+    const base = roots.find((r) => inside(real, r)) ?? tmps.find((t) => inside(real, t));
+    // Reads and writes alike only where the job works: the project, a linked repo, a temp folder.
+    // Anywhere else (the rest of the home, other projects, app data) stays the owner's card.
+    if (base === undefined) return false;
     if (READS.has(tool)) {
-      // A search walks everything under its folder: one that holds a secret folder or the temp
-      // folder's own files is the owner's to allow.
-      if (tool === 'Read' || tool === 'NotebookRead') return true;
-      return !secretDirs.some((d) => inside(d, real)) && !tmps.some((t) => inside(t, real));
+      // A Glob's absolute pattern names its own folder: it must sit there too.
+      const pat = tool === 'Glob' && typeof input.pattern === 'string' ? input.pattern : '';
+      if (pat && (isAbsolute(pat) || pat.startsWith('~'))) {
+        const fixed = pat.replace(/^~(?=\/|$)/, home).split(/[*?[{]/)[0] ?? '';
+        const at = fold(realOf(resolve(fixed || '/')));
+        if (!roots.some((r) => inside(at, r)) && !tmps.some((t) => inside(at, t))) return false;
+        if (ownTemp(at) || secretDirs.some((d) => inside(at, d) || inside(d, at))) return false;
+      }
+      // A search over a whole temp root also walks dreamcontext's own files there.
+      if (tool !== 'Read' && tool !== 'NotebookRead' && tmps.includes(real)) return false;
+      return true;
     }
     if (bypassNeedsOwner(tool, input, ctx.cwd)) return false;
     // Inside a root, a write to a dot folder or dot file (.git, .claude, .vscode, .husky, .envrc,
     // .mcp.json…) changes what runs next: those are exactly what Claude still asks about there.
-    const roots = [ctx.cwd, ...(ctx.roots ?? [])].map((r) => fold(realOf(r)));
-    const base = roots.find((r) => inside(real, r)) ?? tmps.find((t) => inside(real, t));
-    if (base === undefined || real === base) return false;
+    if (real === base) return false;
     return !real.slice(base.length).split(/[\\/]/).some((seg) => seg.startsWith('.'));
   } catch {
     return false;
