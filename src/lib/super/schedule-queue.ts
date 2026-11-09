@@ -9,12 +9,13 @@
  * Under the telegram folder to reuse its symlink-, hardlink- and escape-refusing IO (config.ts);
  * `listBindings` skips it (not a scope). An item holds no job text: the server reads the job from
  * the APPROVED manifest at delivery, and trusts an item only when `fireIso` is the fire the tick
- * recorded (`cache.lastFireAt`), so a forged or replayed file cannot fire anything.
+ * recorded (`cache.lastFireAt`) and that fire was never handed over (`#delivered` in the ledger),
+ * so a forged file fires nothing and a replayed one fires nothing twice.
  *
- * `told.json` is the told-ledger (Decision 10): every notice about a fire (missed, Super off) is
- * keyed `<slug>@<fireIso>#<what>` and sent at most once.
+ * `told.json` is the told-ledger (Decision 10): every notice about a fire (missed, Super off) and
+ * every hand-over is keyed `<slug>@<fireIso>#<what>` and happens at most once.
  */
-import { readdirSync, rmSync } from 'node:fs';
+import { lstatSync, readdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isValidScope, readTelegramJson, scopeOfContextRoot, telegramBase, writeTelegramJson } from '../telegram/config.js';
@@ -25,13 +26,12 @@ export interface ScheduleItem {
   fireIso: string;
   /** Written by the tick for a fire it found past catch-up: only a "kaçtı" notice, never a turn. */
   missed?: true;
-  /** Set just before the server hands the turn over; an item found with it is never handed again. */
-  delivered?: true;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,119}$/;
 const FILE_RE = /^([a-z0-9][a-z0-9-]{0,119})@(\d{1,15})\.json$/;
-/** Told-ledger entries older than this are pruned on write. */
+/** Told-ledger entries older than this are pruned on write. Longer than the longest catch-up
+ *  (MAX_CATCHUP_HOURS, 7 days): a fire whose `#delivered` key is gone is past catch-up anyway. */
 const TOLD_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
 
 export function scheduleDir(scope: string, home: string = homedir()): string {
@@ -52,7 +52,6 @@ function cleanItem(v: unknown, slug: string, ms: number): ScheduleItem | null {
   return {
     v: 1, slug, fireIso: new Date(ms).toISOString(),
     ...(o.missed === true ? { missed: true as const } : {}),
-    ...(o.delivered === true ? { delivered: true as const } : {}),
   };
 }
 
@@ -63,10 +62,6 @@ export function writeScheduleItem(contextRoot: string, item: Omit<ScheduleItem, 
   writeTelegramJson(itemFile(scope, item.slug, fireIso, home), { v: 1, slug: item.slug, fireIso, ...(item.missed ? { missed: true } : {}) }, home);
 }
 
-/** Marks an item handed over (before the hand-over: a crash then loses a repeat, never doubles). */
-export function markScheduleDelivered(scope: string, item: ScheduleItem, home: string = homedir()): void {
-  writeTelegramJson(itemFile(scope, item.slug, item.fireIso, home), { ...item, delivered: true }, home);
-}
 
 export function removeScheduleItem(scope: string, item: Pick<ScheduleItem, 'slug' | 'fireIso'>, home: string = homedir()): void {
   try { rmSync(itemFile(scope, item.slug, item.fireIso, home), { force: true }); } catch { /* gone */ }
@@ -74,6 +69,8 @@ export function removeScheduleItem(scope: string, item: Pick<ScheduleItem, 'slug
 
 /** Every item of a scope, oldest fire first. A file that is not a clean item is removed. */
 export function listScheduleItems(scope: string, home: string = homedir()): ScheduleItem[] {
+  // A symlinked folder on the way is never listed: its files would be someone else's to remove.
+  if (!realFolders(home, scope)) return [];
   let names: string[];
   try { names = readdirSync(scheduleDir(scope, home)); } catch { return []; }
   const out: ScheduleItem[] = [];
@@ -93,6 +90,15 @@ export function listScheduleItems(scope: string, home: string = homedir()): Sche
   return out.sort((a, b) => a.fireIso.localeCompare(b.fireIso));
 }
 
+/** True when `super-schedule` and `super-schedule/<scope>` are real folders (or not there yet). */
+function realFolders(home: string, scope: string): boolean {
+  const base = join(telegramBase(home), 'super-schedule');
+  for (const dir of [base, join(base, scope)]) {
+    try { if (!lstatSync(dir).isDirectory()) return false; } catch { return true; }
+  }
+  return true;
+}
+
 /** The scopes that hold any item. */
 export function listScheduleScopes(home: string = homedir()): string[] {
   try {
@@ -102,7 +108,7 @@ export function listScheduleScopes(home: string = homedir()): string[] {
 
 // ─── The told-ledger ─────────────────────────────────────────────────────────
 
-export type ToldWhat = 'missed' | 'off' | 'unapproved' | 'no-bot';
+export type ToldWhat = 'missed' | 'off' | 'unapproved' | 'no-bot' | 'delivered';
 
 export function toldKey(slug: string, fireIso: string, what: ToldWhat): string {
   return `${slug}@${fireIso}#${what}`;
@@ -131,6 +137,21 @@ export function markTold(scope: string, key: string, now = Date.now(), home: str
   kept[key] = now;
   writeTelegramJson(join(scheduleDir(scope, home), 'told.json'), { v: 1, told: kept }, home);
   return true;
+}
+
+/** Claims one fire for its single hand-over; false when it was already handed over. Synchronous
+ *  read-and-write, so two sweeps (or a replayed file) can never both win. */
+export function claimScheduleFire(scope: string, slug: string, fireIso: string, now = Date.now(), home: string = homedir()): boolean {
+  return markTold(scope, toldKey(slug, fireIso, 'delivered'), now, home);
+}
+
+/** Gives a claim back when the hand-over could not happen (the Super went off): it waits. */
+export function releaseScheduleFire(scope: string, slug: string, fireIso: string, home: string = homedir()): void {
+  const told = readTold(scope, home);
+  const key = toldKey(slug, fireIso, 'delivered');
+  if (told[key] === undefined) return;
+  delete told[key];
+  writeTelegramJson(join(scheduleDir(scope, home), 'told.json'), { v: 1, told }, home);
 }
 
 /** The tick found a Super automation's fire past its catch-up window (`outside-catchup`, which

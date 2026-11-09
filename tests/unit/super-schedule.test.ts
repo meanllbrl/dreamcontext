@@ -6,12 +6,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAutomation, getAutomation, readAutomationCache, recordRun } from '../../src/lib/automations/store.js';
-import { approveAutomation, checkApproval } from '../../src/lib/automations/registry.js';
+import { createAutomation, getAutomation, readAutomationCache, recordRun, updateAutomation } from '../../src/lib/automations/store.js';
+import { approveAutomation, checkApproval, manifestHash, registerProject } from '../../src/lib/automations/registry.js';
+import { tickProject } from '../../src/lib/automations/tick.js';
 import { runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
 import { getAgent } from '../../src/lib/agents/store.js';
 import {
-  listScheduleItems, markScheduleDelivered, markTold, noteMissedSuperFire, scheduleDir, toldKey, wasTold, writeScheduleItem,
+  claimScheduleFire, listScheduleItems, markTold, noteMissedSuperFire, scheduleDir, toldKey, wasTold, writeScheduleItem,
 } from '../../src/lib/super/schedule-queue.js';
 import { scheduleTurnText } from '../../src/lib/super/schedule-job.js';
 import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
@@ -49,7 +50,7 @@ function deps(sink: Sink, over: Partial<ScheduleDeps> & { away?: boolean; bound?
     now: over.now ?? (() => FIRE.getTime() + 60_000),
     banner: (_t, b) => { sink.said.push(b); },
     superState: async () => ({ enabled: over.on ?? true, session: 'sess-super' }),
-    enqueue: async (_root, slug, fireIso) => { sink.enqueued.push(`${slug}@${fireIso}`); },
+    enqueue: async (_root, slug, fireIso) => { sink.enqueued.push(`${slug}@${fireIso}`); return true; },
     hub: () => (over.bound ? {
       superBindingOfVault: () => ab,
       ownerAway: () => over.away ?? false,
@@ -136,14 +137,56 @@ describe('the sweep', () => {
     expect(listScheduleItems(scope, home)).toHaveLength(0);
   });
 
-  it('an item marked handed over before a crash is never handed again', async () => {
+  it('a fire is handed over at most once: a replayed file of the delivered fire fires nothing', async () => {
     superAuto(); fired('sabah');
     writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
-    markScheduleDelivered(scope, { v: 1, slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    const s = sink();
+    await sweepProject(contextRoot, deps(s));
+    // The watermark still equals that fire: re-creating the file must not run the job again.
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    await sweepProject(contextRoot, deps(s));
+    expect(s.enqueued).toEqual([`sabah@${FIRE.toISOString()}`]);
+    expect(listScheduleItems(scope, home)).toHaveLength(0);
+  });
+
+  it('a fire claimed by an overlapping sweep is not handed over again', async () => {
+    superAuto(); fired('sabah');
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    expect(claimScheduleFire(scope, 'sabah', FIRE.toISOString(), Date.now(), home)).toBe(true);
     const s = sink();
     await sweepProject(contextRoot, deps(s));
     expect(s.enqueued).toEqual([]);
-    expect(listScheduleItems(scope, home)).toHaveLength(0);
+  });
+
+  it('an item written a moment before the watermark moves waits for it, never dropped', async () => {
+    superAuto();
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    const s = sink();
+    await sweepProject(contextRoot, deps(s));
+    expect(listScheduleItems(scope, home)).toHaveLength(1);
+    fired('sabah');
+    await sweepProject(contextRoot, deps(s));
+    expect(s.enqueued).toEqual([`sabah@${FIRE.toISOString()}`]);
+  });
+
+  it('the Super going off between the check and the queue keeps the item for later', async () => {
+    superAuto(); fired('sabah');
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    const s = sink();
+    await sweepProject(contextRoot, deps(s, { enqueue: async () => false }));
+    expect(listScheduleItems(scope, home)).toHaveLength(1);
+    await sweepProject(contextRoot, deps(s));
+    expect(s.enqueued).toEqual([`sabah@${FIRE.toISOString()}`]);
+  });
+
+  it('a symlinked schedule folder is never listed or emptied', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'dc-super-schedule-elsewhere-'));
+    writeFileSync(join(elsewhere, `sabah@${FIRE.getTime()}.json`), 'not ours');
+    mkdirSync(join(scheduleDir(scope, home), '..'), { recursive: true });
+    symlinkSync(elsewhere, scheduleDir(scope, home));
+    expect(listScheduleItems(scope, home)).toEqual([]);
+    expect(readFileSync(join(elsewhere, `sabah@${FIRE.getTime()}.json`), 'utf-8')).toBe('not ours');
+    rmSync(elsewhere, { recursive: true, force: true });
   });
 
   it('a forged or replayed fire (not the recorded watermark) fires nothing', async () => {
@@ -218,9 +261,11 @@ describe('the sweep', () => {
     expect(away.injected).toEqual([{ text: scheduleTurnText('sabah', FIRE.toISOString(), 'Haberleri özetle ve bana yaz.'), kind: 'schedule' }]);
     expect(away.enqueued).toEqual([]);
 
-    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: FIRE.toISOString() }, home);
+    const next = new Date(FIRE.getTime() + 86_400_000);
+    fired('sabah', next);
+    writeScheduleItem(contextRoot, { slug: 'sabah', fireIso: next.toISOString() }, home);
     const here = sink();
-    await sweepProject(contextRoot, deps(here, { bound: true, away: false }));
+    await sweepProject(contextRoot, deps(here, { bound: true, away: false, now: () => next.getTime() + 60_000 }));
     expect(here.injected).toEqual([]);
     expect(here.enqueued).toHaveLength(1);
   });
@@ -280,6 +325,20 @@ describe('the verb: super schedule', () => {
     expect(refused).toMatchObject({ ok: false, error: 'changed_elsewhere' });
   });
 
+  it('reply mac on a Super schedule is kept in the file and the hash; deleting the line re-blocks it', async () => {
+    const s = sink();
+    const r = await scheduleVerb(contextRoot, { op: 'add', job: 'Özetle', at: '09:00', reply: 'mac' }, deps(s));
+    const id = (r as { result: { id: string } }).result.id;
+    const m = getAutomation(contextRoot, id, home)!;
+    expect(m.reply).toBe('mac');
+    expect(s.said[0]).toContain('cevap: Mac');
+    expect(manifestHash(m)).not.toBe(manifestHash({ ...m, reply: undefined }));
+    writeFileSync(m.path, readFileSync(m.path, 'utf-8').replace(/^reply: mac\n/m, ''));
+    const after = getAutomation(contextRoot, id, home)!;
+    expect(after.reply).toBeUndefined();
+    expect(checkApproval(projectRoot, after, home, 'run').approved).toBe(false);
+  });
+
   it('change and cancel touch only the verb\'s own schedules', async () => {
     superAuto('sabah');
     const s = sink();
@@ -288,5 +347,42 @@ describe('the verb: super schedule', () => {
     const id = (r as { result: { id: string } }).result.id;
     expect(await scheduleVerb(contextRoot, { op: 'cancel', id }, deps(s))).toMatchObject({ ok: true });
     expect(getAutomation(contextRoot, id, home)).toBeNull();
+  });
+});
+
+describe('the tick: only fires from while it was live are owed', () => {
+  // 09:00 local each day; the tests use the local clock like the schedule does.
+  const at = (day: number, h: number, min = 0) => new Date(2026, 10, day, h, min);
+  const tick = (now: Date) => tickProject(projectRoot, { now, home, log: () => {}, runImpl: (async (_c: string, slug: string) => ({ slug, status: 'ok' })) as never });
+
+  it('set at 20:00: today\'s 09:00 is neither run nor missed; tomorrow\'s runs', async () => {
+    registerProject(projectRoot, home);
+    const m = createAutomation(contextRoot, { slug: 'sabah', title: 'sabah', days: 'daily', at: '09:00', prompt: 'x', target: 'super' });
+    approveAutomation(projectRoot, m, at(10, 20), home, 'super-verb');
+    const evening = await tick(at(10, 20, 1));
+    expect(evening.ran).toHaveLength(0);
+    expect(listScheduleItems(scope, home)).toHaveLength(0);
+    const morning = await tick(at(11, 9, 1));
+    expect(morning.ran.map((r) => r.slug)).toEqual(['sabah']);
+  });
+
+  it('set at 11:00: today\'s 09:00 does not run right away', async () => {
+    registerProject(projectRoot, home);
+    const m = createAutomation(contextRoot, { slug: 'sabah', title: 'sabah', days: 'daily', at: '09:00', prompt: 'x', target: 'super' });
+    approveAutomation(projectRoot, m, at(10, 11), home, 'super-verb');
+    expect((await tick(at(10, 11, 1))).ran).toHaveLength(0);
+  });
+
+  it('switched off for a day and back on: the fire while off is not told as missed', async () => {
+    registerProject(projectRoot, home);
+    const m = createAutomation(contextRoot, { slug: 'sabah', title: 'sabah', days: 'daily', at: '09:00', prompt: 'x', target: 'super' });
+    approveAutomation(projectRoot, m, at(9, 20), home, 'super-verb');
+    updateAutomation(contextRoot, 'sabah', { enabled: false });
+    await tick(at(10, 8));
+    updateAutomation(contextRoot, 'sabah', { enabled: true });
+    const back = await tick(at(10, 20));
+    expect(back.ran).toHaveLength(0);
+    expect(listScheduleItems(scope, home)).toHaveLength(0);
+    expect(readAutomationCache(contextRoot, 'sabah')?.liveFrom).toBe(at(10, 20).toISOString());
   });
 });

@@ -67,6 +67,7 @@ import {
   PATTERN_SECTION_MAX_CHARS,
   REVIEW_MODES,
   AUTOMATION_REPLIES,
+  storedReply,
   type AutomationReply,
   type AutomationTarget,
   sharedSlugNegations,
@@ -1245,6 +1246,8 @@ function recordRunUnlocked(
     error: e.error,
     exitCode: e.exitCode,
     history,
+    ...(existing?.pausedAt ? { pausedAt: existing.pausedAt } : {}),
+    ...(existing?.liveFrom ? { liveFrom: existing.liveFrom } : {}),
   };
   writeAutomationCache(contextRoot, slug, cache);
   return cache;
@@ -1827,7 +1830,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     ...(i.app ? { app: i.app } : {}),
     ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
     ...(i.target === 'super' ? { target: 'super' } : {}),
-    ...(i.reply && i.reply !== 'mac' ? { reply: i.reply } : {}),
+    ...(storedReply(i) ? { reply: storedReply(i) } : {}),
   };
 
   const body = [

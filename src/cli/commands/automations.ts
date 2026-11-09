@@ -29,11 +29,11 @@ import {
   type AutomationMode,
   type AutomationQuestion,
   type ReviewMode,
-  type AutomationReply,
   type FlowGraph,
   type ThreadSummaryRow,
   THREAD_SUMMARY_MAX_ROWS,
   createNeedsOwner,
+  needsOwnerConsent,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -72,7 +72,7 @@ import { RUN_POST_STAMP_ENV, runPostStamp } from '../../lib/telegram/member-forw
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { approvalCardBlock, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
-import { inSession, refuseSelfApproval } from './agents.js';
+import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
 import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js';
 import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
@@ -948,7 +948,6 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--app-tools <refs>', 'App tools this job may run to CHANGE something while nobody watches, comma-separated <app>/<tool> (approved with the job)')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
-    .option('--reply <where>', 'Where its result goes: telegram (also through the project\'s Super bot) or mac. Owner only: an agent asks the Super (`super schedule`)')
     .option(
       '--answer <question-id>',
       'Inside a run: the routine proposal (`propose --routine`) the owner answered with its first choice',
@@ -958,20 +957,8 @@ export function registerAutomationsCommand(program: Command): void {
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
       learning?: boolean; review?: string; whiteboard?: string; boardOnly?: boolean; agent?: string; job?: string; answer?: string; app?: string; appTools?: string;
-      reply?: string;
     }) => {
       const root = ensureContextRoot();
-      // Where a result goes is the owner's to say (super-rutin C2): an agent session asks the Super.
-      if (opts.reply !== undefined && inSession()) {
-        error('`--reply` is the owner\'s choice. The Super sets it with `dreamcontext super schedule`, or the owner ticks it in the app.');
-        process.exitCode = 1;
-        return;
-      }
-      if (opts.reply !== undefined && opts.agent !== undefined) {
-        error('A member\'s routine reaches Telegram through its member\'s bot (its Telegram section), not `--reply`.');
-        process.exitCode = 1;
-        return;
-      }
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
       // anything is parsed or written; a person at a terminal passes straight through.
       const gate = checkRoutineCreate(root, { agent: opts.agent, answer: opts.answer });
@@ -1056,7 +1043,6 @@ export function registerAutomationsCommand(program: Command): void {
           ...(opts.boardOnly ? { boardOnly: true } : {}),
           ...appOption(root, opts.app),
           ...appToolsOption(opts.appTools),
-          ...(opts.reply !== undefined ? { reply: opts.reply as AutomationReply } : {}),
         });
 
         // Every fresh automation gets a `## Flow` block that actually
@@ -1077,8 +1063,7 @@ export function registerAutomationsCommand(program: Command): void {
         // stamps, unless a background process wrote risky text (`judgeAgentCreate`).
         const judged = stamp || !createNeedsOwner() ? null : judgeAgentCreate(projectRoot, manifest);
         const stamped = stamp || (judged?.ok ?? false);
-        // His own terminal (checked above: no session) consents to a `--reply` it set.
-        if (stamped) approveMadeHere(root, manifest, new Date(), undefined, opts.reply !== undefined && !inSession() ? 'owner-cli' : undefined);
+        if (stamped) approveMadeHere(root, manifest, new Date());
 
         success(`Automation created: automations/${manifest.slug}.md${stamped ? ' (approved on this machine)' : ''}.`);
         if (!stamped) printOwnerApprovalCard(manifest.slug, judged?.risks ?? []);
@@ -2211,6 +2196,14 @@ export function registerAutomationsCommand(program: Command): void {
           return;
         }
 
+        // A Super turn or a Telegram outflow is approved only on his AI Team page or by his own
+        // Super's `super schedule` (super-rutin C2): a terminal cannot prove who is typing.
+        if (needsOwnerConsent(manifest)) {
+          error(`"${slug}" sends its work to the Super or to Telegram: approve it on the AI Team page in the app.`);
+          process.exitCode = 1;
+          return;
+        }
+
         console.log(header(`Approve: ${slug}`));
         if (verdict.reason === 'payload-format-changed') {
           warn('The approval format itself changed — this is not a normal manifest edit. Re-review in full.');
@@ -2268,8 +2261,7 @@ export function registerAutomationsCommand(program: Command): void {
           }
         }
 
-        // `refuseSelfApproval` already refused any session: this is his own terminal.
-        approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-cli');
+        approveAutomation(projectRoot, manifest, new Date());
         settleApprovalQuestions(root, slug);
         success(`"${slug}" approved.`);
       } catch (err) {

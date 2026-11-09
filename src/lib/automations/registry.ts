@@ -8,6 +8,7 @@ import {
   AutomationError,
   DEFAULT_AGENT_AUTONOMY,
   needsOwnerConsent,
+  storedReply,
   type ApprovalPayloadFields,
   type ApprovalUse,
   type AutomationManifest,
@@ -87,8 +88,9 @@ export interface ApprovalEntry {
   boardScope?: BoardScopeMarker;
   /**
    * Who consented to THIS hash, when it carries a field only the owner may approve (`target`,
-   * a Telegram `reply`; `needsOwnerConsent`). Written only by the owner's page, the owner's own
-   * terminal and his main Super's `super schedule` verb; every other stamp site writes none, so
+   * a Telegram `reply`; `needsOwnerConsent`). Written only by the owner's page and his main
+   * Super's `super schedule` verb (never a terminal: it cannot prove who is typing); every other
+   * stamp site writes none, so
    * such a manifest stamped there reads as never-approved and waits for his card. Kept across a
    * re-stamp of the SAME hash. Outside the hashed payload.
    */
@@ -96,8 +98,8 @@ export interface ApprovalEntry {
 }
 
 /** See {@link ApprovalEntry.consent}. */
-export type ApprovalConsent = 'owner-page' | 'owner-cli' | 'super-verb';
-const APPROVAL_CONSENTS: ReadonlySet<string> = new Set(['owner-page', 'owner-cli', 'super-verb']);
+export type ApprovalConsent = 'owner-page' | 'super-verb';
+const APPROVAL_CONSENTS: ReadonlySet<string> = new Set(['owner-page', 'super-verb']);
 
 /** See {@link ApprovalEntry.boardScope}. */
 export type BoardScopeMarker = 'board' | 'open' | 'held';
@@ -515,7 +517,7 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // hash stays byte-for-byte what it was. Present, they decide whether the run is a turn of the
     // Super session and whether its result leaves the Mac through Telegram.
     ...(m.target === 'super' ? { target: 'super' } : {}),
-    ...(m.reply === 'telegram' || m.reply === 'auto' ? { reply: m.reply } : {}),
+    ...(storedReply(m) ? { reply: storedReply(m) } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -589,7 +591,7 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     appTools: (m.appTools ?? []).join(', '),
     // Always present ('' at the default): the reviewer sees a Super turn or a Telegram outflow appear.
     target: m.target === 'super' ? 'super' : '',
-    reply: m.reply === 'telegram' || m.reply === 'auto' ? m.reply : '',
+    reply: storedReply(m) ?? '',
   };
 }
 

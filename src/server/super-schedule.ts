@@ -24,7 +24,7 @@ import {
 } from '../lib/automations/store.js';
 import { checkApproval, registerProject } from '../lib/automations/registry.js';
 import { formatLocalFire, formatSchedule, nextFire, parseSlot } from '../lib/automations/schedule.js';
-import { AUTOMATION_REPLIES, type AutomationManifest, type AutomationReply, type Weekday } from '../lib/automations/types.js';
+import { AUTOMATION_REPLIES, effectiveReply, type AutomationManifest, type AutomationReply, type Weekday } from '../lib/automations/types.js';
 import { defaultNotify } from '../lib/automations/runner.js';
 import { appLinkForContextRoot } from '../lib/app-link.js';
 import { scopeOfContextRoot } from '../lib/telegram/config.js';
@@ -32,7 +32,7 @@ import { readSuperState } from '../lib/super/store.js';
 import { countEvent, deliveryBlocker, newQueueId, pumpSuper, superVaultName, writeSuper } from '../lib/super/inbox.js';
 import { isRotating } from '../lib/super/fresh-session.js';
 import {
-  listScheduleItems, markScheduleDelivered, markTold, removeScheduleItem, toldKey, type ScheduleItem, type ToldWhat,
+  claimScheduleFire, listScheduleItems, markTold, releaseScheduleFire, removeScheduleItem, toldKey, type ScheduleItem, type ToldWhat,
 } from '../lib/super/schedule-queue.js';
 import { fireClock, scheduleJob, scheduleTurnText } from '../lib/super/schedule-job.js';
 import { openInBackground, telegramHub, type TelegramHub } from './telegram/hub.js';
@@ -60,7 +60,7 @@ export interface ScheduleDeps {
   /** The Super's on/off and session (tests inject one). */
   superState?: (contextRoot: string) => Promise<{ enabled: boolean; session: string | null }>;
   /** Puts the `schedule` item into the Super inbox and pumps it (tests inject one). */
-  enqueue?: (contextRoot: string, slug: string, fireIso: string) => Promise<void>;
+  enqueue?: (contextRoot: string, slug: string, fireIso: string) => Promise<boolean>;
 }
 
 /** Tells the owner one line about a Super automation: through the Super bot when bound, else a
@@ -101,8 +101,6 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
   const scope = scopeOfContextRoot(contextRoot);
   for (const item of listScheduleItems(scope, home)) {
     const at = fireClock(item.fireIso);
-    // Handed over before a crash: at most a repeat is lost, never a turn doubled.
-    if (item.delivered) { removeScheduleItem(scope, item, home); continue; }
     const job = scheduleJob(contextRoot, item.slug, home);
     if (!job.ok) {
       log(`[super-schedule] ${item.slug}@${item.fireIso} dropped: ${job.reason}`);
@@ -117,13 +115,17 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
     // Only the fire the tick recorded: a forged or replayed file fires nothing. An older fire a
     // newer one replaced before it went is told as missed.
     const last = readAutomationCache(contextRoot, item.slug)?.lastFireAt ?? null;
+    const late = now - Date.parse(item.fireIso) > job.manifest.catchupHours * 3_600_000;
     if (last !== item.fireIso) {
+      // The runner writes the item a moment before it records the fire: an item ahead of the
+      // watermark waits for it (until its catch-up ends), never dropped in that gap.
+      if ((last === null || last < item.fireIso) && !late) continue;
       if (last !== null && last > item.fireIso) await tellScheduleOwner(contextRoot, item, 'missed', SCHEDULE_LINES.missed(at), deps);
       else log(`[super-schedule] ${item.slug}@${item.fireIso} refused: not the recorded fire`);
       removeScheduleItem(scope, item, home);
       continue;
     }
-    if (now - Date.parse(item.fireIso) > job.manifest.catchupHours * 3_600_000) {
+    if (late) {
       await tellScheduleOwner(contextRoot, item, 'missed', SCHEDULE_LINES.missed(at), deps);
       removeScheduleItem(scope, item, home);
       continue;
@@ -134,7 +136,14 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
       await tellScheduleOwner(contextRoot, item, 'off', SCHEDULE_LINES.off(at), deps);
       continue;
     }
-    await deliver(contextRoot, scope, item, job.manifest.reply ?? 'auto', job.job, state.session, deps);
+    // Each fire is handed over at most once, whatever file shows up again (a replay, an
+    // overlapping sweep): claimed in the ledger, synchronously, before the hand-over.
+    if (!claimScheduleFire(scope, item.slug, item.fireIso, now, home)) {
+      log(`[super-schedule] ${item.slug}@${item.fireIso} refused: already handed over`);
+      removeScheduleItem(scope, item, home);
+      continue;
+    }
+    await deliver(contextRoot, scope, item, effectiveReply(job.manifest), job.job, state.session, deps);
   }
 }
 
@@ -145,24 +154,28 @@ async function deliver(contextRoot: string, scope: string, item: ScheduleItem, r
   const bound = !!(hub && ab && !ab.disabled);
   const wantsTelegram = reply === 'telegram' || (reply === 'auto' && bound && hub!.ownerAway());
   if (reply === 'telegram' && !bound) await tellScheduleOwner(contextRoot, item, 'no-bot', SCHEDULE_LINES.noBot(fireClock(item.fireIso)), deps);
-  markScheduleDelivered(scope, item, home);
   // A rotating Super (between /clear and its first turn) takes nothing on the owner path: the
   // inbox holds it until the fresh session has read its handoff.
   if (wantsTelegram && bound && !isRotating(session)) {
     const ref = await hub!.injectText(ab!, hub!.syntheticUpdateId(), scheduleTurnText(item.slug, item.fireIso, job), session, { kind: 'schedule' });
     if (ref) { removeScheduleItem(scope, item, home); return; }
   }
-  await (deps.enqueue ?? ((root, slug, fireIso) => enqueueSchedule(root, slug, fireIso, session, deps)))(contextRoot, item.slug, item.fireIso);
+  const queued = await (deps.enqueue ?? ((root, slug, fireIso) => enqueueSchedule(root, slug, fireIso, session, deps)))(contextRoot, item.slug, item.fireIso);
+  // The Super went off between the check and the queue: the item stays and waits for it.
+  if (!queued) { releaseScheduleFire(scope, item.slug, item.fireIso, home); return; }
   removeScheduleItem(scope, item, home);
 }
 
 /** The Mac door: a `schedule` item in the Super inbox, delivered when the Super is idle. */
-async function enqueueSchedule(contextRoot: string, slug: string, fireIso: string, session: string, deps: ScheduleDeps): Promise<void> {
+async function enqueueSchedule(contextRoot: string, slug: string, fireIso: string, session: string, deps: ScheduleDeps): Promise<boolean> {
+  let queued = false;
   await writeSuper(contextRoot, (s) => {
     if (!s.enabled || !s.session) return;
+    queued = true;
     s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'schedule', state: 'pending', createdAt: (deps.now ?? Date.now)(), automation: slug, fire: fireIso });
     countEvent(s);
   });
+  if (!queued) return false;
   // The Super window is closed: opened in the background, so the turn does not wait for him.
   const blocker = deliveryBlocker(contextRoot);
   if (blocker === 'no_socket' || blocker === 'no_chat') {
@@ -170,13 +183,22 @@ async function enqueueSchedule(contextRoot: string, slug: string, fireIso: strin
     if (link) try { (deps.open ?? openInBackground)(link); } catch { /* it waits for the window */ }
   }
   void pumpSuper(contextRoot);
+  return true;
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
 /** Boot sweep, then one every minute. Desktop server only. */
 export function startSuperSchedule(deps: ScheduleDeps = {}): () => void {
-  const run = () => { void sweepSuperSchedule(deps).catch((err) => deps.log?.(`[super-schedule] ${(err as Error).message}`)); };
+  // One sweep at a time: a slow one (a Telegram hand-over waits up to 45 s) is never overlapped.
+  let sweeping = false;
+  const run = () => {
+    if (sweeping) return;
+    sweeping = true;
+    void sweepSuperSchedule(deps)
+      .catch((err) => deps.log?.(`[super-schedule] ${(err as Error).message}`))
+      .finally(() => { sweeping = false; });
+  };
   run();
   if (timer) clearInterval(timer);
   timer = setInterval(run, SCHEDULE_SWEEP_MS);
@@ -188,7 +210,8 @@ export function startSuperSchedule(deps: ScheduleDeps = {}): () => void {
 
 /** Every schedule the verb makes is named with this prefix; the verb touches no other automation. */
 export const SCHEDULE_SLUG_PREFIX = 'super-is-';
-const MAX_JOB = 4000;
+/** Leaves room for the echo's own words inside one Telegram message (4096). */
+const MAX_JOB = 3500;
 const TR_DAYS: Record<Weekday, string> = { mon: 'Pzt', tue: 'Sal', wed: 'Çar', thu: 'Per', fri: 'Cum', sat: 'Cmt', sun: 'Paz' };
 const TR_REPLY: Record<AutomationReply, string> = { auto: 'neredeysem', telegram: 'Telegram', mac: 'Mac' };
 
@@ -207,7 +230,7 @@ export function scheduleWhen(m: Pick<AutomationManifest, 'schedule'>): string {
 }
 
 function replyOf(m: Pick<AutomationManifest, 'target' | 'reply'>): AutomationReply {
-  return m.reply ?? (m.target === 'super' ? 'auto' : 'mac');
+  return effectiveReply(m);
 }
 
 /** The verbatim confirmation the owner gets on every add and change (Decision 4). */
@@ -269,11 +292,17 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
       m = createAutomation(contextRoot, {
         slug, title: job.length > 60 ? `${job.slice(0, 59)}…` : job, mode: 'sched', days, at, prompt: job,
         enabled: true, shared: false, notify: true,
-        ...(headless ? (reply === 'telegram' ? { reply: 'telegram' as const } : {}) : { target: 'super' as const, ...(reply && reply !== 'auto' ? { reply } : {}) }),
+        ...(headless ? (reply === 'telegram' ? { reply: 'telegram' as const } : {}) : { target: 'super' as const, reply: reply ?? 'auto' }),
       });
+    } catch (err) {
+      return bad('not_created', (err as Error).message, 409);
+    }
+    try {
       // His own Super set it on his own message: approved here with that consent (C2), no card.
       approveMadeHere(contextRoot, m, now, deps.home, 'super-verb');
     } catch (err) {
+      // Never left behind unapproved: the owner asked for a schedule, not a card.
+      try { removeAutomation(contextRoot, m.slug); } catch { /* the card shows it */ }
       return bad('not_created', (err as Error).message, 409);
     }
     await sayToOwner(contextRoot, scheduleEcho('Kuruldu', m), deps);

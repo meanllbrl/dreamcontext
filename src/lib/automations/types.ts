@@ -775,6 +775,10 @@ export interface AutomationCache {
   exitCode: number | null;
   /** Newest first, bounded to HISTORY_LIMIT. */
   history: RunEvent[];
+  /** A Super automation only: first tick that saw it switched off (cleared when it comes back). */
+  pausedAt?: string;
+  /** A Super automation only: when it came back on. No fire before it is owed or missed. */
+  liveFrom?: string;
 }
 
 // ─── Answer channels + steers ───────────────────────────────────────────────
@@ -1273,6 +1277,18 @@ export type AutomationReply = (typeof AUTOMATION_REPLIES)[number];
 /** True when the manifest carries a field only the owner (or his own Super) may approve. */
 export function needsOwnerConsent(m: { target?: string; reply?: string }): boolean {
   return m.target === 'super' || m.reply === 'telegram' || m.reply === 'auto';
+}
+/** Where the result really goes. A Super automation defaults to `auto` (Telegram while he is
+ *  away), so its file and its hash always carry the value: a deleted `reply: mac` line must move
+ *  the hash. A plain one defaults to `mac`, where absent and `mac` are the same thing. */
+export function effectiveReply(m: { target?: string; reply?: string }): AutomationReply {
+  if (m.reply === 'telegram' || m.reply === 'auto' || m.reply === 'mac') return m.reply;
+  return m.target === 'super' ? 'auto' : 'mac';
+}
+/** The `reply` a file and a hash carry: always for a Super automation, else only when not `mac`. */
+export function storedReply(m: { target?: string; reply?: string }): AutomationReply | undefined {
+  const r = effectiveReply(m);
+  return m.target === 'super' || r !== 'mac' ? r : undefined;
 }
 
 export const APPROVAL_DIFF_FIELDS = [

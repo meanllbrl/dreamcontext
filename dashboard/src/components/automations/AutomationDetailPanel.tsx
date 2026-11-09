@@ -691,6 +691,18 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           <span>{automation.appTools.join(', ')}</span>
                         </div>
                       )}
+                      {automation.target === 'super' && (
+                        <div className="adp-review-row" data-review-target>
+                          <span className="adp-review-label">runs as</span>
+                          <span>a turn of the Super</span>
+                        </div>
+                      )}
+                      {!!automation.reply && (
+                        <div className="adp-review-row" data-review-reply>
+                          <span className="adp-review-label">result goes to</span>
+                          <span>{automation.reply === 'telegram' ? 'Telegram' : automation.reply === 'auto' ? 'Telegram while away, else the Mac' : 'the Mac'}</span>
+                        </div>
+                      )}
                       {automation.soul && (
                         <div className="adp-review-row adp-review-row--block" data-review-soul>
                           <span className="adp-review-label">soul</span>
