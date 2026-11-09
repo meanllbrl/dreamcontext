@@ -95,7 +95,7 @@ function remember(id: string, reach: OwnerQuestionReach): void {
 /** Does the owner answer this item (not a permission: the window rings that one)? The exception is
  *  a Bypass child's permission its Super handed him (`escalated`, `permissionToOwner`): the
  *  registry's own ring for it went to the Super, so it is announced here, once. */
-function announces(item: SuperQueueItem | null): item is SuperQueueItem {
+export function announces(item: SuperQueueItem | null): item is SuperQueueItem {
   // Main Super's work in a member's Super (`main:*`, plan-r10 1) is never the owner's to answer.
   if (typeof item?.workOrigin === 'string' && item.workOrigin.startsWith('main:')) return false;
   if (item?.kind === 'owner') return item.state !== 'done';

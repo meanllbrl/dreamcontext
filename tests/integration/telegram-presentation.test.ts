@@ -86,7 +86,7 @@ beforeEach(async () => {
   hubFrames = [];
   session = { on: false, url: null, channel: null, via: false };
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, now: () => clock, openLink: () => {} });
+  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, now: () => clock, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
   unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, {
     settleMs: 5, isGitIgnored: () => false,
     session: () => ({ isOn: () => session.on, startedVia: session.via ? { scope: scopeOfContextRoot(root), target: 'super' } : null, channel: session.channel, status: () => ({ url: session.url }) }),

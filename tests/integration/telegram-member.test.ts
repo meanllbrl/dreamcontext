@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
 import { TelegramHub } from '../../src/server/telegram/hub.js';
 import { memberAdapter } from '../../src/server/telegram/member.js';
@@ -75,5 +76,17 @@ describe('a member bot', () => {
     tg.push(TOKEN, textUpdate(OWNER, '/handsfree'));
     await vi.waitFor(() => expect(tg.texts()).toContain('Bu botta komut yok; yazman yeterli.'));
     expect(says).toEqual([]);
+  });
+});
+
+describe('a member bot keeps its own rule (owner 2026-11-09)', () => {
+  it('its question and failure reach it while the owner is at the Mac (the Super-only "away" gate never applies)', async () => {
+    noteOwnerAtMac();
+    expect(hub.ownerAway()).toBe(false);
+    tg.push(TOKEN, textUpdate(OWNER, 'rapor çıkar'));
+    await vi.waitFor(() => expect(says).toHaveLength(1));
+    run = [entry('ask', 'user', 'rapor çıkar'), entry('q1', 'system', 'Hangi hafta?', 'asked'), entry('f1', 'system', 'kota doldu', 'failed')];
+    await vi.waitFor(() => expect(tg.texts()).toContain('❓ Hangi hafta?'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('Çalışamadı: kota doldu'));
   });
 });

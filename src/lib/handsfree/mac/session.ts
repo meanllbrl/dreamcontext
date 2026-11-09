@@ -535,7 +535,7 @@ export class MacSession {
       if (this.gaveUpWhileStarting) {
         this.gaveUpWhileStarting = false;
         this.endAfterGiveUp();
-      }
+      } else this.emit({ type: 'started', channel: 'full', ...(this.state?.startedVia ? { startedVia: this.state.startedVia } : {}) });
       return this.status();
     } catch (e) {
       this.lastError = e instanceof MacModeError ? e.code : 'mac_tunnel_failed';
@@ -593,6 +593,7 @@ export class MacSession {
       });
       this.battery.start();
       this.phase = 'on';
+      this.emit({ type: 'started', channel: 'telegram', startedVia });
       return this.status();
     } catch (e) {
       this.lastError = e instanceof MacModeError ? e.code : 'mac_sudo_missing';

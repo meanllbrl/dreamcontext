@@ -72,7 +72,8 @@ describe('the session (lane B)', () => {
     s.onEvent((e) => got.push(e));
     await s.stop({ reason: 'http', keyed: false });
     expect(s.startedVia).toBeNull();
-    expect(got).toEqual([{ type: 'ended', channel: 'telegram', reason: 'http', keyed: false, startedVia: VIA }]);
+    // `started` was held until this subscriber (the hub wires at boot, before any run).
+    expect(got).toEqual([{ type: 'started', channel: 'telegram', startedVia: VIA }, { type: 'ended', channel: 'telegram', reason: 'http', keyed: false, startedVia: VIA }]);
   });
 
   it('a Mac start never carries startedVia (never streams); its end is still emitted', async () => {
@@ -83,7 +84,7 @@ describe('the session (lane B)', () => {
     await s.start({ vaults: ['acme'] });
     expect(s.startedVia).toBeNull();
     await s.stop({ reason: 'mac' });
-    expect(got).toEqual([{ type: 'ended', channel: 'full', reason: 'mac', keyed: true }]);
+    expect(got).toEqual([{ type: 'started', channel: 'full' }, { type: 'ended', channel: 'full', reason: 'mac', keyed: true }]);
   });
 
   it('boot recovery announces a Telegram-started run once, and not when the tick already did', async () => {
@@ -154,6 +155,19 @@ describe('the hub adapter', () => {
     await a.onCommand!(hub, `${VIA.scope}/super`, cmd('/handsfree'));
     expect(replies).toEqual([HF_LINES.macOn]);
     expect(a.streamsTo(VIA.scope, 'super')).toBe(false);
+  });
+
+  it('any run counts as away (isOn), and a run starting, by hand too, flushes the open Super questions', () => {
+    const flushAway = vi.fn();
+    const listeners: Array<(e: HandsfreeEvent) => void> = [];
+    const s = fakeSession({ onEvent: (fn: (e: HandsfreeEvent) => void) => { listeners.push(fn); return () => {}; } });
+    const a = handsfreeAdapter(() => s as never);
+    a.wire({ active: new Map(), flushAway } as never);
+    expect(a.isOn!()).toBe(false);
+    s.macStart();
+    expect(a.isOn!()).toBe(true);
+    for (const l of listeners) l({ type: 'started', channel: 'full' });
+    expect(flushAway).toHaveBeenCalledTimes(1);
   });
 
   it('losing the binding ends Telegram-only hands-free; a Mac panel end reads "Mac\'ten kapatıldı" with no key note', async () => {
