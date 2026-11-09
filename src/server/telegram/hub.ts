@@ -36,6 +36,7 @@ import {
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { listVaults } from '../../lib/vaults.js';
 import { readSuperState } from '../../lib/super/store.js';
+import { superTurnFolds } from '../../lib/super/inbox.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
@@ -1068,6 +1069,13 @@ export class TelegramHub implements TelegramHubApi {
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
     if (!ab || ab.disabled || ab.target !== 'super') return false;
+    // A server-opened event turn the Mac folds into one quiet line (a permission decision, a
+    // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
+    // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
+    if (ab.contextRoot) {
+      const folds = await readSuperState(ab.contextRoot).then((st) => superTurnFolds(sessionId, st.ownerBatches), () => false);
+      if (folds) return false;
+    }
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;
