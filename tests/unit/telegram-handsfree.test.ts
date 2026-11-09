@@ -145,11 +145,15 @@ describe('the hub adapter', () => {
     await s.stop({ reason: 'tunnel', keyed: false });
     expect(a.streamsTo(VIA.scope, 'super')).toBe(false);
     expect(replies.at(-1)).toBe(HF_LINES.ended('telefon bağlantısı koptu', false));
-    // An end he caused himself (the HTTP stop, the Mac panel, Telegram) gets no line.
+    // An end he caused himself (the Mac panel, Telegram) gets no line.
     await a.onCallback!(hub, `${VIA.scope}/super`, {} as never, 0);
     const n = replies.length;
-    await s.stop({ reason: 'http', keyed: false });
+    await s.stop({ reason: 'telegram', keyed: true });
     expect(replies.length).toBe(n);
+    // An HTTP stop he did not make (no owner key) is still told, loudly.
+    await a.onCallback!(hub, `${VIA.scope}/super`, {} as never, 0);
+    await s.stop({ reason: 'http', keyed: false });
+    expect(replies.at(-1)).toBe(HF_LINES.ended('istekle kapatıldı', false));
   });
 
   it('Mac-started hands-free: the explanatory line, and it never streams', async () => {

@@ -504,7 +504,7 @@ export class TelegramHub implements TelegramHubApi {
     const ab = this.active.get(key);
     for (const [id, p] of [...this.pairings]) if (p.scope === scope && p.target === target) { p.poller.stop(); this.pairings.delete(id); }
     if (ab) {
-      await this.lastMessage(ab, 'info', LINES.unbound(opts.keyed));
+      await this.lastMessage(ab, 'info', LINES.unbound(opts.keyed), !opts.keyed);
       this.halt(ab);
       this.active.delete(key);
       this.deps.handsfree?.onBindingLost?.(scope, target);

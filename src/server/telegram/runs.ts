@@ -116,7 +116,8 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
   const sendPhoneLink = async (ab: ActiveBinding, rec: CardRecordEntry, line: string, label = 'Telefonda aç'): Promise<void> => {
     const extra = phoneButton(rec, label);
     if (extra) await hub.send(ab, escapeHtml(line), extra).catch(() => {});
-    else await hub.notice(ab, 'phone', `${line} ${RUN_LINES.noPhone}`);
+    // Loud: the agent waits on him here. The line's own leading emoji is dropped (the notice adds one).
+    else await hub.notice(ab, 'phone', `${line.replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')} ${RUN_LINES.noPhone}`, true);
   };
 
   const announceRun = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
@@ -187,7 +188,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       }
       if (!o.browserNoted && /https?:\/\/(?:localhost|127\.0\.0\.1)[:/]/.test(tail)) {
         o.browserNoted = true;
-        const t = setTimeout(() => { if (!run.ended()) void hub.notice(ab, 'info', RUN_LINES.browser); }, 5000);
+        const t = setTimeout(() => { if (!run.ended()) void hub.notice(ab, 'info', RUN_LINES.browser, true); }, 5000);
         t.unref?.();
       }
     }));
