@@ -9,7 +9,7 @@
  * Real `startChatSession` with a mocked spawn; the member is made and edited through the real
  * command tree in a scratch project and HOME.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -119,6 +119,8 @@ afterEach(() => {
   process.chdir(cwd);
   rmSync(join(repo, '..'), { recursive: true, force: true });
 });
+
+afterAll(() => { rmSync(fakeHome, { recursive: true, force: true }); });
 
 describe('an idle member chat follows a level change at once', () => {
   it('from this server\'s route: respawns with --resume under the new mode, socket kept', async () => {
