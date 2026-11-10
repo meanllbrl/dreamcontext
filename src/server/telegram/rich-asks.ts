@@ -27,6 +27,7 @@ import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { cardOut } from './cards.js';
+import { answerMemberPick } from './member-picks.js';
 import type { PreviewShooter } from './page-shot.js';
 import { caption as pictureCaption, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
@@ -42,7 +43,9 @@ export interface RichQuestion { question: string; header?: string; description?:
 export type RichTarget =
   | { kind: 'super-ask'; item: Pick<SuperQueueItem, 'id' | 'kind' | 'sessionId'> }
   | { kind: 'child-question'; item: string; requestId: string }
-  | { kind: 'pending'; sessionId: string; requestId: string };
+  | { kind: 'pending'; sessionId: string; requestId: string }
+  /** An AI Team member's item mirrored into main's queue (owner 2026-11-10): `mirror` is its id there. */
+  | { kind: 'member'; mirror: string };
 
 interface RichAsk {
   id: string;
@@ -198,6 +201,11 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     if (!unclear && !Object.keys(picked).length) return 'Önce bir seçenek seç.';
     const typed = a.notes.filter(Boolean);
     const t = a.target;
+    if (t.kind === 'member') {
+      return answerMemberPick(hub, ab, t.mirror, unclear
+        ? { kind: 'question', questions: a.questions, picked: {}, unclear: typed.join(' / ') }
+        : { kind: 'question', questions: a.questions, picked, ...(Object.keys(notes).length ? { notes } : {}) });
+    }
     if (t.kind === 'super-ask') {
       if (!ab.contextRoot) return LINES.stale;
       const s = await readSuperState(ab.contextRoot);
@@ -267,7 +275,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     if (t.kind === 'pending') return pendingStillOpen(t.sessionId, t.requestId);
     if (!ab.contextRoot) return false;
     const s = await readSuperState(ab.contextRoot).catch(() => null);
-    const id = t.kind === 'super-ask' ? t.item.id : t.item;
+    const id = t.kind === 'super-ask' ? t.item.id : t.kind === 'member' ? t.mirror : t.item;
     return !!s?.queue.some((q) => q.id === id && q.state !== 'done');
   }
 

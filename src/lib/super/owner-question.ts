@@ -122,6 +122,10 @@ export function announces(item: SuperQueueItem | null): item is SuperQueueItem {
   // Main Super's work in a member's Super (`main:*`, plan-r10 1) is never the owner's to answer.
   if (typeof item?.workOrigin === 'string' && item.workOrigin.startsWith('main:')) return false;
   if (item?.kind === 'owner') return item.state !== 'done';
+  // An AI Team member's item mirrored into main's queue (owner 2026-11-10): his until it closes.
+  // Its banner and push went out from the member's own record (with the member's name); here it
+  // is what Telegram offers and what counts ahead of a later question.
+  if (item?.kind === 'member') return item.state !== 'done';
   if (item?.kind === 'permission') return item.state === 'escalated' && !item.toSuper;
   // A child's question shown to him from birth (`direct`): announced when it is asked.
   if (item?.kind === 'question' && item.direct === true && !item.team) return item.state !== 'done';

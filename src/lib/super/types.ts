@@ -647,8 +647,15 @@ Its `sessionId` is the super's own.
 `restarted`: the app went down while this child was mid-job; the server resumes it with a continue
 turn of its own (outbox.ts) and its row stays `working` (`SuperChild.resuming`). One line in the next
 batch, never a `done`; the Super has nothing to send.
+`member` (owner 2026-11-10, "üyenin izni kimseye düşmüyor"): something the owner must answer that
+sits in an AI Team member's OWN Super record (its `super ask`, a child's question, a permission, a
+card only he can act on), MIRRORED into MAIN's queue by the server (`syncMemberMirrors`, inbox.ts,
+on every write of a member record), so it reaches his bar, the Super chat, Telegram and the Super
+Agent like any other item of his. `member` names the member, `answers` the member item it mirrors,
+`of` that item's kind; `ownerText`/`ask`/`requestId` are copied from it. Born `pending` (one event
+line to the Super Agent), then `escalated` until the member's item closes, whoever answered it.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -735,7 +742,13 @@ export interface SuperQueueItem {
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
    *  names it). The job text is read from the approved manifest at delivery, never stored here. */
   fire?: string;
+  /** A `member` item: the kind of the member's item it mirrors (`answers` names that item). */
+  of?: MemberItemOf;
 }
+
+/** The member items a `member` mirror stands for: everything the owner answers in a member's record. */
+export const MEMBER_ITEM_OF = ['ask', 'question', 'permission', 'owner', 'approval'] as const;
+export type MemberItemOf = typeof MEMBER_ITEM_OF[number];
 
 /**
  * Which super a record, a token or a verb belongs to (plan-r10 1): the project's own Super Agent

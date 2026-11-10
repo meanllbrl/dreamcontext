@@ -436,7 +436,8 @@ describe('one inbox per super', () => {
     h.userSent('go');
     h.observe({ type: 'control_request', request_id: 'r-1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which?', options: [{ label: 'a' }, { label: 'b' }] }] } } });
     await vi.waitFor(async () => expect((await rota()).queue.some((q) => q.kind === 'question' && q.sessionId === 'kid-1')).toBe(true), W);
-    expect((await main()).queue.some((q) => q.sessionId === 'kid-1')).toBe(false);
+    // Only its mirror reaches main (kind member, owner 2026-11-10), never the question item itself.
+    expect((await main()).queue.some((q) => q.sessionId === 'kid-1' && q.kind !== 'member')).toBe(false);
     expect(session).toBeTruthy();
   });
 

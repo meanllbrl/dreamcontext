@@ -6,7 +6,7 @@ import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, OWED_ID_RE, SENT_RE, type SuperOwed,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -373,8 +373,13 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     // An automation item may name a member instead of an automation: the owner's decision on a
     // member's approval (Super's approval card), never both.
-    const member = (q.kind === 'approval' || q.kind === 'automation') && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
+    // A `member` mirror (inbox.ts `syncMemberMirrors`) names its member, the member item it mirrors
+    // (`answers`) and that item's kind (`of`); one missing any of them is dropped.
+    const isMirror = q.kind === 'member';
+    const member = (q.kind === 'approval' || q.kind === 'automation' || isMirror) && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
+    const mirrorOf = isMirror && oneOf(MEMBER_ITEM_OF, q.of) ? q.of : undefined;
+    if (isMirror && (!member || !mirrorOf || typeof q.answers !== 'string' || !QUEUE_ID_RE.test(q.answers))) continue;
     // An automation item exists only for its automation (or member) and a decision the owner made.
     const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
@@ -394,7 +399,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // Its AskUserQuestion-shaped spec, re-validated whole: a refused one is dropped (the card
     // then draws the question from its text and options). Kept only while the question is open:
     // nothing draws a closed one, and its previews (up to 32 KB) would ride every write and push.
-    const askSpec = isAsk && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
+    const askSpec = (isAsk || isMirror) && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
     const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
     // A team job's ending names its job; only an ending kind does.
     const team = (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question') && typeof q.team === 'string' && TEAM_JOB_ID_RE.test(q.team) ? q.team : undefined;
@@ -405,7 +410,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const teamText = !!team && (q.kind === 'done' || q.kind === 'question');
     const text = isRequest || isReply || teamText ? cap(q.text, MAX_REQUEST_TEXT) : undefined;
     if ((isRequest || isReply) && !text) continue;
-    const answers = (isReply || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
+    const answers = (isReply || isMirror || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
     const result = isRequest ? cap(q.result, MAX_REQUEST_RESULT) : undefined;
     const acceptedAt = isRequest ? finite(q.acceptedAt) : undefined;
     const workOrigin = parseWorkOrigin(q.workOrigin);
@@ -457,6 +462,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(workOrigin ? { workOrigin } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
+      ...(mirrorOf ? { of: mirrorOf } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request

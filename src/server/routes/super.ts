@@ -17,7 +17,7 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -1439,6 +1439,36 @@ async function askMainSuper(c: SuperCaller, res: ServerResponse, spec: SuperAskS
   ok(res, { item: askId, asked: true, audience: 'main', reached: added });
 }
 
+/**
+ * `super team answer <item>` on a `member` mirror: the member's own `super ask` gets the Super
+ * Agent's answer as a `reply` in its queue (its words, never the owner's: a member that needs HIS
+ * word keeps waiting for it on his card). A child's question, a permission or a card only he can
+ * act on is his: refused with where it waits.
+ */
+async function answerMemberMirror(c: SuperCaller, res: ServerResponse, mirror: SuperQueueItem, text: string): Promise<void> {
+  if (mirror.state === 'done') { refuse(res, 409, 'already_done', 'that question is already answered'); return; }
+  if (mirror.of !== 'ask' || !mirror.member || !mirror.answers) {
+    refuse(res, 409, 'owner_only', 'only the owner answers this one (a child\'s question, a permission or a card only he can act on): it waits on his bar and, while he is away, on Telegram. Tell him in one line which member waits and why');
+    return;
+  }
+  const root = c.who.contextRoot;
+  const memberId = superIdOfMember(mirror.member);
+  let replied = false;
+  await writeSuper(root, memberId, (s) => {
+    const ask = s.queue.find((q) => q.id === mirror.answers && q.kind === 'ask' && q.state !== 'done');
+    if (!s.session || !ask) return;
+    s.queue.push({
+      id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(),
+      text: text.slice(0, MAX_REQUEST_TEXT), answers: ask.id, ...(ask.workOrigin ? { workOrigin: ask.workOrigin } : {}),
+    });
+    replied = true;
+  });
+  if (!replied) { refuse(res, 409, 'already_done', 'the member\'s question is already closed'); return; }
+  await writeSuper(root, c.superId, (s) => { const q = s.queue.find((x) => x.id === mirror.id); if (q) q.state = 'done'; });
+  void pumpSuper(root, memberId);
+  ok(res, { item: mirror.id, answered: true, member: mirror.member });
+}
+
 /** Verbs only the project's own Super may run, and verbs only a member's Super may run. */
 const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-ask': { error: 'member_cannot_assign', message: 'a member\'s Super does not give other members work: tell whoever gave you this job what it needs' },
@@ -1494,6 +1524,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text.trim() : '';
     if (!id || !QUEUE_ID_RE.test(id)) { refuse(res, 404, 'unknown_item', 'name a member\'s question in your queue (`dreamcontext super state`)'); return; }
     if (!text) { refuse(res, 400, 'invalid_args', 'write the answer'); return; }
+    // A member's question to the OWNER, mirrored into this queue (owner 2026-11-10): the Super may
+    // answer it like a child's, as its own words; what only he decides stays his.
+    const mirror = c.state.queue.find((q) => q.id === id && q.kind === 'member');
+    if (mirror) { await answerMemberMirror(c, res, mirror, text); return; }
     const item = c.state.queue.find((q) => q.id === id && q.kind === 'question' && !!q.team && !!q.answers);
     const job = item ? c.state.team.find((j) => j.id === item.team && !!j.request) : undefined;
     if (!item || !job) { refuse(res, 404, 'unknown_item', 'no member question with that id waits in your queue'); return; }

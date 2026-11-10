@@ -40,7 +40,7 @@ import {
 import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
-  type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
+  MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
 } from './types.js';
 
@@ -358,15 +358,83 @@ export function noteMainBatch(s: SuperState, batch: string | undefined): void {
  * not approved here). A second one waits behind the first, so the owner never has two at once.
  */
 export function superQueueHead(state: Pick<SuperState, 'queue'> & { children?: SuperState['children'] }): SuperQueueItem | null {
+  const own = ownerItems(state);
+  return own.find((q) => q.kind === 'permission') ?? own[0] ?? null;
+}
+
+/**
+ * EVERY item of a record the owner must answer, oldest first: an open permission (not one its
+ * Super decides first), an escalated question, `ask` or approval, a wait only he can act on, a
+ * child's question that is his from birth. `superQueueHead` leads with one of these, and a member
+ * record's are mirrored into main's queue from this same list (`syncMemberMirrors`), so the two
+ * can never disagree about what is his. A `member` mirror itself is never in it (main's own head
+ * is about main's own items; the mirror's banner went out from the member's record).
+ */
+export function ownerItems(state: Pick<SuperState, 'queue'> & { children?: SuperState['children'] }): SuperQueueItem[] {
   // Main Super's work (`main:*`, a member Super's) never reaches the owner's bar, except a
   // permission: it is only ever the owner's or its own Super's to decide (D7), whoever's work it is.
   const byAge = [...state.queue].filter((q) => q.kind === 'permission' || ownerFacing({ children: state.children ?? {} }, q)).sort((a, b) => a.createdAt - b.createdAt);
-  return byAge.find((q) => q.kind === 'permission' && q.state !== 'done' && !q.toSuper)
-    ?? byAge.find((q) => ((q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
-      // A child waiting on something only he can do is his from birth, not after a super turn;
-      // so is a child's question (`direct`): its card is his at once, the Super hears it too.
-      || (q.kind === 'owner' && q.state !== 'done') || directQuestion(q))
-    ?? null;
+  return byAge.filter((q) => (q.kind === 'permission' && q.state !== 'done' && !q.toSuper)
+    || ((q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
+    // A child waiting on something only he can do is his from birth, not after a super turn;
+    // so is a child's question (`direct`): its card is his at once, the Super hears it too.
+    || (q.kind === 'owner' && q.state !== 'done') || directQuestion(q));
+}
+
+/** The member item a `member` mirror stands for, as `of` names it. */
+function mirrorOf(kind: QueueKind): MemberItemOf | null {
+  return (MEMBER_ITEM_OF as readonly string[]).includes(kind) ? kind as MemberItemOf : null;
+}
+
+/**
+ * A member's record was written: what the owner must answer in it reaches MAIN's queue as `member`
+ * mirrors, and a mirror whose member item is no longer his closes (owner 2026-11-10: an AI Team
+ * member's approval card sat only on its own stage; his bar, the Super chat, Telegram and the Super
+ * Agent never heard of it, so the job stayed stuck). The ONE place: every member path (its own
+ * `super ask`, a child's question or permission, a card only he can act on, project or global
+ * member, a team job or his own work) is a write of its record, and every write ends here.
+ * A mirror is born once per member item (never again after the owner or the Super closed it);
+ * main must be handed over (no Super stage, no bar: the member's own stage still has it).
+ */
+export async function syncMemberMirrors(memberKey: string, state: SuperState): Promise<void> {
+  const slug = state.member;
+  if (!slug || idOf(memberKey) === 'main') return;
+  const want = ownerItems(state).filter((q) => mirrorOf(q.kind) !== null);
+  const wantIds = new Set(want.map((q) => q.id));
+  const mainKey = keyOf(rootOf(memberKey));
+  // Cheap when nothing changed (member records are written often): main's record is written only
+  // when a mirror is born or closes, never touched otherwise (its last state here, else read).
+  const seen = lastStates.get(mainKey) ?? await readSuperState(mainKey, superSanitizeOpts()).catch(() => null);
+  if (!seen?.enabled || !seen.session) return;
+  const known = seen.queue.filter((q) => q.kind === 'member' && q.member === slug);
+  const add = want.some((q) => !known.some((m) => m.answers === q.id));
+  const close = known.some((m) => m.state !== 'done' && !wantIds.has(m.answers ?? ''));
+  if (!add && !close) return;
+  await writeSuper(mainKey, (s) => {
+    if (!s.enabled || !s.session) return;
+    const now = Date.now();
+    for (const m of s.queue) {
+      if (m.kind === 'member' && m.member === slug && m.state !== 'done' && !wantIds.has(m.answers ?? '')) m.state = 'done';
+    }
+    for (const q of want) {
+      if (s.queue.some((m) => m.kind === 'member' && m.member === slug && m.answers === q.id)) continue;
+      const of = mirrorOf(q.kind) as MemberItemOf;
+      // A permission is drawn from the child's own request only (D7): no words ride its mirror.
+      const text = of === 'permission' ? undefined : q.ownerText;
+      s.queue.push({
+        id: newQueueId(), sessionId: q.sessionId, kind: 'member', state: 'pending', createdAt: now,
+        member: slug, answers: q.id, of,
+        ...(q.requestId ? { requestId: q.requestId } : {}),
+        ...(text ? { ownerText: text } : {}),
+        ...(q.ask ? { ask: q.ask } : {}),
+      });
+    }
+  });
+}
+
+/** A `member` mirror the owner still has to answer (the dashboard's bar reads the same rule). */
+export function openMirror(q: SuperQueueItem): boolean {
+  return q.kind === 'member' && q.state !== 'done';
 }
 
 /** A child's question that is the owner's from birth (`SuperQueueItem.direct`), still open. */
@@ -480,6 +548,10 @@ export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state), state.member ? memberTitle(rootOf(contextRoot), state.member) : undefined);
   pushSuperState(contextRoot, state);
   syncSweep(keyOf(contextRoot), state);
+  // What the owner must answer in a member's record reaches main's queue (owner 2026-11-10).
+  if (idOf(contextRoot) !== 'main' && state.member) {
+    void track(syncMemberMirrors(contextRoot, state).catch((err) => console.warn(`[super] member mirror for ${state.member} failed: ${(err as Error).message}`)));
+  }
   // Main's card for this member reads the member's record (plan-r10 1): it moves with it.
   if (idOf(contextRoot) !== 'main' && state.queue.some((q) => q.kind === 'request')) {
     const main = lastStates.get(keyOf(rootOf(contextRoot)));
@@ -824,6 +896,13 @@ async function settleCarried(key: string): Promise<boolean> {
           if (pureExit && (it.exits ?? 0) < 1) { it.exits = (it.exits ?? 0) + 1; it.state = 'pending'; delete it.batch; }
           continue;
         }
+        // A member's item mirrored for the owner (syncMemberMirrors): the Super was told (or its
+        // turn died, then once more); it stays HIS until the member's item closes, never `done` here.
+        if (it.kind === 'member') {
+          if (pureExit && (it.exits ?? 0) < 1) { it.exits = (it.exits ?? 0) + 1; it.state = 'pending'; delete it.batch; continue; }
+          it.state = 'escalated';
+          continue;
+        }
         if (pureExit && it.kind === 'fresh') {
           // A "New session" turn whose process died never rotates and is never re-sent to the
           // successor: the owner presses again if he still wants one.
@@ -1120,7 +1199,7 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
       if (ownerAsk(q)) {
         if (q.state !== 'done') closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
         q.state = 'done';
-      } else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' ? 'escalated' : 'done'; q.batch = batch; }
+      } else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' || q.kind === 'member' ? 'escalated' : 'done'; q.batch = batch; }
     }
     if (s.held) s.held = s.held.filter((h) => !ids.has(h.item));
     markPadTold(s, padIds);
@@ -1528,6 +1607,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   if (item.kind === 'automation') return automationItemLines(root, item);
   if (item.kind === 'schedule') return scheduleItemLines(root, item);
   if (item.kind === 'request' || item.kind === 'reply') return requestItemLines(vault, item);
+  if (item.kind === 'member') return memberItemLines(rootOf(root), vault, item);
   const sid = item.sessionId;
   const e = getChat(sid);
   const status = e ? activityOf(e, now) : 'gone';
@@ -1585,6 +1665,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'done' && awaitedItem(state, it) && state.children[it.sessionId]?.mode === 'plan') ? [PLAN_DONE_LINE] : []),
     ...(items.some((it) => it.team) ? [TEAM_LINE] : []),
     ...(items.some((it) => it.kind === 'owner') ? [OWNER_WAIT_LINE] : []),
+    ...(items.some((it) => it.kind === 'member') ? [MEMBER_LINE] : []),
     ...(items.some((it) => it.kind === 'permission') ? [PERMISSION_LINE] : []),
     ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
     ...(items.some((it) => it.kind === 'schedule') ? [SCHEDULE_LINE] : []),
@@ -1601,6 +1682,28 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
 export const REQUEST_FROM = "Super Agent'tan";
 
 /** A request's or a reply's own lines (the main Super's words are data for the member). */
+/** A member's item mirrored for the owner: who waits, on what, and its words fenced (member text). */
+function memberItemLines(root: string, vault: string, item: SuperQueueItem): string[] {
+  const slug = item.member ?? '';
+  const lines = [`- item=${item.id} event=member member=${slug} waits=${item.of ?? 'ask'}`];
+  lines.push(wrapUntrusted(vault, `Member: ${memberTitle(root, slug)}`));
+  if (item.of === 'permission') {
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    if (pq?.isPermission) lines.push(wrapUntrusted(vault, `Wants to run: ${pq.fullText || pq.text || pq.toolName}`));
+  } else if (item.of === 'ask' && item.ask?.questions.length) {
+    for (const q of item.ask.questions) {
+      lines.push(wrapUntrusted(vault, `Question: ${q.question}`));
+      if (q.options?.length) lines.push(wrapUntrusted(vault, `Options: ${q.options.map((o) => o.label).join(' | ')}`));
+    }
+  } else if (item.ownerText) {
+    lines.push(wrapUntrusted(vault, `It asks the owner: ${item.ownerText}`));
+  }
+  return lines;
+}
+
+/** Told with every batch that carries a `member` item (owner 2026-11-10). */
+export const MEMBER_LINE = `An item whose own server line says event=member is an AI Team member waiting on the OWNER (waits=ask: its own question to him; question: a question of one of its jobs; permission: a command one of its jobs wants to run; owner: a card only he can act on). It is already on his Waiting on you list and, while he is away, on Telegram, with its buttons; whoever answers, it closes everywhere. Tell him in one line which member waits and on what (${OWNER_VOICE}); this is an exception to the no-text rule. A waits=ask question that what he already told you settles for certain you may answer yourself with \`dreamcontext super team answer <item> "<answer>"\`: it reaches the member as YOUR words, never as his, so a member that needs his own word keeps asking him. Everything else is his to decide: never answer, allow or work around it.`;
+
 function requestItemLines(vault: string, item: SuperQueueItem): string[] {
   if (item.kind === 'reply') {
     return [
@@ -1617,13 +1720,15 @@ function requestItemLines(vault: string, item: SuperQueueItem): string[] {
 /** The member's instructions for one request or reply turn: in full, never the one-line rule. */
 export const REQUEST_LAST_LINE = `This is work the Super Agent gave you (main Super), not the owner's: it is shown on your stage as "${REQUEST_FROM}". Do it through your children when it is real work (\`super delegate --for <item>\`, passing any model= and effort= above to them; at most two at once, more wait in your pool), and answer in text as you go. A question about it goes to the Super Agent (\`super ask --for <item>\`), never the owner. When it is finished, close it: \`dreamcontext super team done <item> "<the result in a few lines>"\`.`;
 export const REPLY_LAST_LINE = `The Super Agent answered your question about its request. Go on with that request (its item is named in your question), and close it with \`dreamcontext super team done <item> "<result>"\` when it is finished.`;
+/** A reply to a question the member put to the OWNER (`super team answer` on its mirror). */
+export const REPLY_OWNER_ASK_LINE = `The Super Agent answered the question you asked the owner, from what he already told it: these are the Super Agent's words, not his. Go on when that settles it; when your instructions need HIS own word (an approval only he gives), ask him again with \`super ask\`.`;
 
 /** The text of a solo turn (handover, recap); any other item is a batch of one. Exported for tests. */
 export function superEventText(contextRoot: string, state: SuperState, item: SuperQueueItem, now = Date.now(), batch = item.batch ?? newBatchId()): string {
   const vault = superVaultName(contextRoot);
   if (item.kind === 'request' || item.kind === 'reply') {
     // A request turn shows the full text framed (exempt from the one-line BATCH_LAST_LINE rule).
-    return [`[super events] batch=${batch} items=1`, ...requestItemLines(vault, item), item.kind === 'request' ? REQUEST_LAST_LINE : REPLY_LAST_LINE].join('\n');
+    return [`[super events] batch=${batch} items=1`, ...requestItemLines(vault, item), item.kind === 'request' ? REQUEST_LAST_LINE : isMainWork(item.workOrigin) ? REPLY_LAST_LINE : REPLY_OWNER_ASK_LINE].join('\n');
   }
   if (item.kind === 'handover') {
     const ids = Object.keys(state.children);
@@ -1677,7 +1782,7 @@ function scheduleRetry(key: string, at: number): void {
 /** A recap older than this is dropped, never delivered (`nextBatch`). */
 export const RECAP_MAX_AGE_MS = 30 * 60_000;
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 2, recap: 3, request: 4, reply: 5 };
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule']);
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule', 'member']);
 /** Every kind the pump writes as a turn into the Super's session (a solo turn or a batch): each
  *  one ends with the owner-language line (`withOwnerLanguage`). Exported for the kind-walk test. */
 export const SUPER_TURN_KINDS: readonly QueueKind[] = [...Object.keys(SOLO) as QueueKind[], ...BATCHED];
@@ -2075,7 +2180,7 @@ async function pumpOnce(key: string): Promise<void> {
     // A member Super's question about main's own request (`from=member-super`) is main's to answer
     // (`super team answer`), never the owner's: it never makes the turn his (review 2026-11-02).
     const tells = !!owedTurn || (!solo && (!!held || items.some((q) => !isRequestQuestion(state, q)
-      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
+      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'member' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
     const nudged = new Set(owedNow.map((d) => d.id));
     const fresh = solo && items[0].kind === 'fresh';
     // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.
@@ -3167,6 +3272,10 @@ async function startMemberSupers(root: string, opts: { parked?: (sessionId: stri
     // A member's children are cut off by the same relaunch as main's.
     s = await resumeCutChildren(key, s, opts.parked);
     syncSweep(key, s);
+    // What already waited on the owner before this start (or before mirrors existed) reaches main.
+    try { await syncMemberMirrors(key, s); } catch (err) {
+      console.warn(`[super] ${root}: ${slug}'s open questions did not reach the Super Agent: ${(err as Error).message}`);
+    }
   }
 }
 

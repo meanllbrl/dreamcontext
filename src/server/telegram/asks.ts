@@ -28,6 +28,8 @@ import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntr
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { answerChildPermission, answerChildQuestion, superAnswerText } from '../../lib/super/answer.js';
+import { answerMemberPick } from './member-picks.js';
+import { memberTitle } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } from '../../lib/telegram/ask-format.js';
@@ -250,8 +252,63 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     remember(item.id, { ...base, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: qs[i]?.question })) });
     return { ok: true };
   }
+  if (item.kind === 'member') return sendMemberItem(hub, ab, superSession, item);
   // Approvals (G1) and jobs that need him: shown, answered on the Mac in W2.
   const line = item.kind === 'approval' ? `✋ Onay bekliyor: ${item.member ?? 'ekip üyesi'}` : `✋ ${item.ownerText ?? 'Bir iş seni bekliyor'}`;
+  remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`${redactSecrets(line)}\n${LINES.waitingOnMac}`)]) });
+  return { ok: true };
+}
+
+/**
+ * An AI Team member waiting on him (a `member` mirror, owner 2026-11-10), as its own kind would
+ * go: its own question or a job's question with their options as buttons, a job's permission with
+ * "İzin ver (bir kez)" / "Reddet", anything else as a line answered on the Mac. Every message is
+ * led by the member's name; every button answers the MEMBER's item (`onQueueButton`).
+ */
+async function sendMemberItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<SendOutcome> {
+  const who = ab.contextRoot ? memberTitle(ab.contextRoot, item.member ?? '') : item.member ?? '';
+  const lead = `${who.slice(0, 80) || 'Bir ekip üyesi'} soruyor`;
+  const data = { queue: true, item: item.id, itemKind: 'member' };
+  if (item.of === 'permission') {
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    if (!pq?.isPermission || !item.requestId) return { skipped: true };
+    const body = `🔐 ${escapeHtml(who.slice(0, 60))} · İzin istiyor: <b>${escapeHtml(pq.toolName)}</b>\n<pre>${escapeHtml(redactSecrets(pq.text).slice(0, 1500))}</pre>`;
+    const m = await buttons(hub, ab, body, ['İzin ver (bir kez)', 'Reddet'],
+      { kind: 'permission', requestId: item.requestId, sessionId: item.sessionId, singleUse: true }, data);
+    remember(item.id, { ab, messages: [m] });
+    return { ok: true };
+  }
+  let questions: SuperAskSpec['questions'] = [];
+  let title: string | undefined;
+  if (item.of === 'ask') {
+    const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', []);
+    questions = spec.questions;
+    title = spec.title;
+  } else if (item.of === 'question') {
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    if (!pq || pq.isPermission) return { skipped: true };
+    questions = (pq.questions ?? []) as SuperAskSpec['questions'];
+    title = pq.title;
+  }
+  if (questions.length) {
+    const card = simpleCard({ questions });
+    if (card) {
+      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title, lead }), card.labels,
+        { kind: 'question', requestId: item.id, sessionId: item.sessionId, singleUse: true },
+        { ...data, question: card.question, labels: card.labels, questions });
+      remember(item.id, { ab, messages: [{ ...m, question: card.question }] });
+      return { ok: true };
+    }
+    const r = rich ? await rich.send(ab, { kind: 'member', mirror: item.id }, richQuestionsOf(questions), { title, lead, sessionId: superSession, itemId: item.id }) : false;
+    if (r) {
+      remember(item.id, { ab, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: questions[i]?.question })) });
+      return { ok: true };
+    }
+    const htmls = formatAskCardMessages(questions, { title, lead, footer: escapeHtml(LINES.waitingOnMac) });
+    remember(item.id, { ab, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: questions[i]?.question })) });
+    return { ok: true };
+  }
+  const line = `✋ ${who || 'Bir ekip üyesi'} seni bekliyor${item.ownerText ? `: ${item.ownerText}` : ''}`;
   remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`${redactSecrets(line)}\n${LINES.waitingOnMac}`)]) });
   return { ok: true };
 }
@@ -287,6 +344,15 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   const d = rec.data ?? {};
   const root = ab.contextRoot;
   if (!root) return LINES.stale;
+  if (d.itemKind === 'member') {
+    if (rec.kind === 'permission') return answerMemberPick(hub, ab, String(d.item), { kind: 'permission', allow: idx === 0 });
+    const labels = Array.isArray(d.labels) ? (d.labels as string[]) : [];
+    const label = labels[idx];
+    if (typeof label !== 'string') return LINES.stale;
+    const question = String(d.question ?? '');
+    const questions = Array.isArray(d.questions) ? (d.questions as { question: string }[]) : [{ question }];
+    return answerMemberPick(hub, ab, String(d.item), { kind: 'question', questions, picked: { [question]: label } });
+  }
   if (rec.kind === 'permission') {
     const r = await answerChildPermission(root, 'main', { item: String(d.item), requestId: String(rec.requestId), choice: idx === 0 ? 'allow' : 'deny' });
     if (!r.ok) return r.error === 'no_window' ? LINES.waitingOnMac : LINES.stale;

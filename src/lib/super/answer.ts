@@ -13,7 +13,7 @@
  */
 import { getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../assistant/chat-registry.js';
 import { sendSuperCommand, superTokenOfSession } from '../window-control.js';
-import { isReservedId, readSuperState } from './store.js';
+import { isReservedId, readSuperState, superIdOfMember } from './store.js';
 import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from './inbox.js';
 import type { SuperId, SuperQueueItem, SuperState } from './types.js';
 
@@ -76,6 +76,37 @@ export function superUnclearText(item: Pick<SuperQueueItem, 'id'>, message: stri
     'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
   );
   return `${SUPER_ANSWER_PREFIX} item=${item.id} unclear\n${body}`;
+}
+
+// ─── An AI Team member's item, mirrored into main's queue ────────────────────
+
+/** What a `member` mirror answers: the member's super, its OWN open item, and its Super session. */
+export interface MemberMirrorTarget {
+  superId: SuperId;
+  /** The open mirror in main's queue. */
+  mirror: SuperQueueItem;
+  /** The member's own item it stands for, still open. */
+  item: SuperQueueItem;
+  /** The member's Super session (its own `super ask` is answered there, as owner text). */
+  session: string;
+}
+
+/**
+ * The member item behind an open mirror of main's queue, or null when either side is closed (owner
+ * 2026-11-10). Every surface that answers a mirror resolves it here, then answers the MEMBER's
+ * item with the answer path that item already has: its own ask (owner text into its Super
+ * session), a child's question or permission (`answerChildQuestion` / `answerChildPermission` on
+ * the member's super). Closing the member's item closes the mirror (inbox.ts `syncMemberMirrors`).
+ */
+export async function memberMirrorTarget(contextRoot: string, mirrorId: string): Promise<MemberMirrorTarget | null> {
+  const main = await readState(contextRoot, 'main');
+  const mirror = main?.queue.find((q) => q.id === mirrorId && q.kind === 'member' && q.state !== 'done');
+  if (!main?.enabled || !mirror?.member || !mirror.answers) return null;
+  const superId = superIdOfMember(mirror.member);
+  const member = await readState(contextRoot, superId);
+  const item = member?.queue.find((q) => q.id === mirror.answers && q.state !== 'done');
+  if (!member?.session || !item) return null;
+  return { superId, mirror, item, session: member.session };
 }
 
 // ─── A child's question or permission, through the window ───────────────────
