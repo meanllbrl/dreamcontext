@@ -1,7 +1,9 @@
 import { openSync, closeSync, readSync, statSync } from 'node:fs';
+import { open, stat as statAsync } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { repoToplevel } from './git-sync/git.js';
-import { isGovernedCheckout } from './session-cwd.js';
+import { isGovernedCheckout, isGovernedCheckoutAsync } from './session-cwd.js';
+import { repoToplevelAsync } from './session-facts.js';
 import { findTranscriptBySessionId, isSafeSessionId } from './transcript-locate.js';
 
 /**
@@ -224,10 +226,97 @@ export function transcriptCheckout(
   return checkoutRootOf(cwd, projectRoot, opts.now ?? Date.now(), opts.home);
 }
 
+// ─── The polled route's reader: the same answer, never blocking the server ─────────────────
+// Task: opening a project is slow. Eleven restored chats each asked `transcriptCheckout` at
+// once; its first read forks `git rev-parse` twice and reads a transcript tail synchronously
+// (measured ~100 ms of a blocked server for nine chats, cold). The async reader below shares
+// both memos above and their rules; concurrent callers for one directory share one fork.
+
+async function readTailAsync(file: string, size: number, bytes: number): Promise<{ text: string; fromStart: boolean } | null> {
+  const want = Math.min(bytes, size);
+  const start = size - want;
+  let fh: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    fh = await open(file, 'r');
+    const buf = Buffer.allocUnsafe(want);
+    let filled = 0;
+    while (filled < want) {
+      const { bytesRead } = await fh.read(buf, filled, want - filled, start + filled);
+      if (bytesRead <= 0) break;
+      filled += bytesRead;
+    }
+    return { text: buf.subarray(0, filled).toString('utf-8'), fromStart: start === 0 };
+  } catch {
+    return null;
+  } finally {
+    if (fh) await fh.close().catch(() => { /* already gone */ });
+  }
+}
+
+async function newestCwdAsync(conversationId: string, home?: string): Promise<string | null> {
+  const file = home
+    ? findTranscriptBySessionId([conversationId], home)
+    : findTranscriptBySessionId([conversationId]);
+  if (!file) return null;
+
+  let st: { mtimeMs: number; size: number };
+  try { const x = await statAsync(file); st = { mtimeMs: x.mtimeMs, size: x.size }; } catch { return null; }
+
+  const hit = tails.get(conversationId);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.cwd;
+  if (st.size === 0) return remember(tails, conversationId, { ...st, cwd: null }, MAX_TRACKED_TRANSCRIPTS).cwd;
+
+  for (const bytes of TAIL_STEPS_BYTES) {
+    const tail = await readTailAsync(file, st.size, bytes);
+    if (!tail) break;
+    const cwd = newestCwdIn(tail.text, tail.fromStart);
+    if (cwd) return remember(tails, conversationId, { ...st, cwd }, MAX_TRACKED_TRANSCRIPTS).cwd;
+    if (tail.fromStart) break;
+  }
+  return remember(tails, conversationId, { ...st, cwd: null }, MAX_TRACKED_TRANSCRIPTS).cwd;
+}
+
+const resolving = new Map<string, Promise<string | null>>();
+
+async function checkoutRootOfAsync(cwd: string, projectRoot: string, now: number, home?: string): Promise<string | null> {
+  const key = `${cwd}\0${projectRoot}`;
+  const hit = resolved.get(key);
+  if (hit && now - hit.at < RESOLVE_TTL_MS) return hit.root;
+  let running = resolving.get(key);
+  if (!running) {
+    const p = (async () => {
+      const top = await repoToplevelAsync(cwd);
+      const root = top && await isGovernedCheckoutAsync(top, projectRoot, { home, now }) ? top : null;
+      return remember(resolved, key, { root, at: now }, MAX_RESOLVE_CACHE).root;
+    })().catch(() => null).finally(() => { if (resolving.get(key) === p) resolving.delete(key); });
+    resolving.set(key, p);
+    running = p;
+  }
+  return running;
+}
+
+/** {@link transcriptCheckout} without blocking the server: same answer, same memos, git and the
+ *  tail read off the event loop. Never throws. */
+export async function transcriptCheckoutAsync(
+  conversationId: string | null,
+  projectRoot: string,
+  opts: { home?: string; now?: number } = {},
+): Promise<string | null> {
+  if (!conversationId || !isSafeSessionId(conversationId)) return null;
+  try {
+    const cwd = await newestCwdAsync(conversationId, opts.home);
+    if (!cwd) return null;
+    return await checkoutRootOfAsync(cwd, projectRoot, opts.now ?? Date.now(), opts.home);
+  } catch {
+    return null;
+  }
+}
+
 /** TEST SEAM, same contract as `resetSessionCheckouts`/`resetSessionFactsCaches`: the two
  *  memos above are process-global by design, so a test that appends to a real transcript
  *  inside one TTL window needs a way to ask for a clean read. Production code never calls it. */
 export function resetTranscriptCheckoutCaches(): void {
   tails.clear();
   resolved.clear();
+  resolving.clear();
 }

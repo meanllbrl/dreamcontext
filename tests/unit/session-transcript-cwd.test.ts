@@ -17,8 +17,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  TAIL_STEPS_BYTES, newestCwdIn, resetTranscriptCheckoutCaches, transcriptCheckout,
+  TAIL_STEPS_BYTES, newestCwdIn, resetTranscriptCheckoutCaches, transcriptCheckout, transcriptCheckoutAsync,
 } from '../../src/lib/session-transcript-cwd.js';
+import { resetSessionFactsCaches, sessionFactsGitRuns } from '../../src/lib/session-facts.js';
 import { resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 
 function gitAvailable(): boolean {
@@ -299,5 +300,39 @@ describe.skipIf(!HAS_GIT)('transcriptCheckout', () => {
     expect(transcriptCheckout(ID, root, { home })).toBe(wt);
     appendFileSync(file, JSON.stringify(withCwd(root)) + '\n', 'utf-8');
     expect(transcriptCheckout(ID, root, { home })).toBe(root);
+  });
+});
+
+// Opening a project is slow (owner, 2026-11-10): eleven restored chats each asked the shelf's
+// facts at once, and this reader's first read forked git synchronously, holding the server.
+describe.skipIf(!HAS_GIT)('transcriptCheckoutAsync (the polled route never blocks on git)', () => {
+  beforeEach(() => { resetTranscriptCheckoutCaches(); resetSessionCheckouts(); resetSessionFactsCaches(); });
+
+  it('answers what the sync reader answers, with git run off the event loop', async () => {
+    const root = makeRepo('async-repo', 'main');
+    const wt = addWorktree(root, 'async-wt', 'feature-async');
+    const home = makeHome('home-async');
+    writeTranscript(home, ID, [withCwd(root), withCwd(join(wt), 'feature-async'), noCwd(1)]);
+
+    const before = sessionFactsGitRuns();
+    const pending = transcriptCheckoutAsync(ID, root, { home });
+    // Its git runs through async execFile (counted), never execFileSync.
+    expect(await pending).toBe(wt);
+    expect(sessionFactsGitRuns() - before).toBeGreaterThanOrEqual(2);
+
+    resetTranscriptCheckoutCaches();
+    expect(transcriptCheckout(ID, root, { home })).toBe(wt);
+  });
+
+  it('shares one read between concurrent callers and answers null for no transcript', async () => {
+    const root = makeRepo('async-repo-2', 'main');
+    const home = makeHome('home-async-2');
+    writeTranscript(home, ID, [withCwd(root)]);
+    const before = sessionFactsGitRuns();
+    const answers = await Promise.all(Array.from({ length: 8 }, () => transcriptCheckoutAsync(ID, root, { home })));
+    expect(new Set(answers)).toEqual(new Set([root]));
+    // One toplevel + one common dir per directory (root twice at most), never one per caller.
+    expect(sessionFactsGitRuns() - before).toBeLessThanOrEqual(3);
+    expect(await transcriptCheckoutAsync(OTHER_ID, root, { home })).toBeNull();
   });
 });

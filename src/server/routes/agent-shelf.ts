@@ -9,7 +9,7 @@ import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readSessionFactsAsync, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
 import { claimedCheckout, sessionCheckout } from '../../lib/session-cwd.js';
 import { editsElsewhere } from '../../lib/session-edits.js';
-import { transcriptCheckout } from '../../lib/session-transcript-cwd.js';
+import { transcriptCheckout, transcriptCheckoutAsync } from '../../lib/session-transcript-cwd.js';
 
 /**
  * The two reads behind the chat's PINNED SHELF — the surface docked to the composer's top
@@ -277,7 +277,7 @@ export async function handleAgentSessionFacts(
   // VAULT (third argument), because it is a property of the brain rather than of the folder
   // the agent happens to be standing in. See readSessionFacts. Polled every 15 s per pane, so
   // the async reader: git off the event loop, re-read only when the checkout's HEAD moved.
-  const dir = resolveSessionDir(session || null, projectRoot);
+  const dir = await resolveSessionDirAsync(session || null, projectRoot);
   const facts = await readSessionFactsAsync(dir, Date.now(), projectRoot);
   // Composed OUTSIDE the memo: the git reading is held while HEAD is unchanged, the write counts are not —
   // they move while a turn runs, and a warning that lags the run by a poll is a warning about
@@ -319,5 +319,21 @@ export function resolveSessionDir(
 ): string {
   return claimedCheckout(session, projectRoot)
     ?? transcriptCheckout(session, projectRoot, opts)
+    ?? sessionCheckout(session, projectRoot);
+}
+
+/**
+ * {@link resolveSessionDir} for the polled route, never blocking the server on git (task: opening
+ * a project is slow): the same order, the transcript read through its async reader. The claim and
+ * the frame registry stay synchronous: they are in-memory maps, and their git check reuses the
+ * memo the async reader fills.
+ */
+export async function resolveSessionDirAsync(
+  session: string | null,
+  projectRoot: string,
+  opts: { home?: string } = {},
+): Promise<string> {
+  return claimedCheckout(session, projectRoot)
+    ?? await transcriptCheckoutAsync(session, projectRoot, opts)
     ?? sessionCheckout(session, projectRoot);
 }

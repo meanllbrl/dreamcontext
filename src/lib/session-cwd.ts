@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { gitCommonDir } from './session-facts.js';
+import { gitCommonDir, gitCommonDirAsync } from './session-facts.js';
 import { resolveLinkedRepos } from './linked-repos.js';
 
 /**
@@ -147,6 +147,42 @@ export function isGovernedCheckout(
   const theirs = gitCommonDir(dir);
   if (!theirs) return false;
   return governedCommonDirs(projectRoot, opts).includes(theirs);
+}
+
+/** {@link governedCommonDirs} without blocking the server: same memo, same rules, git through
+ *  {@link gitCommonDirAsync}. */
+export async function governedCommonDirsAsync(
+  projectRoot: string,
+  opts: { home?: string; now?: number } = {},
+): Promise<string[]> {
+  const now = opts.now ?? Date.now();
+  const hit = governedRoots.get(projectRoot);
+  if (hit && now - hit.at < GOVERNED_ROOTS_TTL_MS) return hit.dirs;
+
+  const roots = [projectRoot];
+  try {
+    for (const repo of resolveLinkedRepos(projectRoot, opts.home)) {
+      if (repo.path) roots.push(repo.path);
+    }
+  } catch { /* same as the sync reader: the vault's own repo stays governed */ }
+
+  const dirs: string[] = [];
+  for (const dir of await Promise.all(roots.map((root) => gitCommonDirAsync(root, now)))) {
+    if (dir && !dirs.includes(dir)) dirs.push(dir);
+  }
+  governedRoots.set(projectRoot, { dirs, at: now });
+  return dirs;
+}
+
+/** {@link isGovernedCheckout} without blocking the server. Same totality contract. */
+export async function isGovernedCheckoutAsync(
+  dir: string,
+  projectRoot: string,
+  opts: { home?: string; now?: number } = {},
+): Promise<boolean> {
+  const theirs = await gitCommonDirAsync(dir, opts.now);
+  if (!theirs) return false;
+  return (await governedCommonDirsAsync(projectRoot, opts)).includes(theirs);
 }
 
 /** A directory that exists and is a directory. `statSync` rather than `existsSync` because a

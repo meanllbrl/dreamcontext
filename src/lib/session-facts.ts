@@ -227,6 +227,42 @@ export function gitCommonDir(cwd: string, now: number = Date.now()): string | nu
   return commonDirCache.get(cwd)?.value ?? null;
 }
 
+/**
+ * {@link gitCommonDir} without blocking the server: a fresh answer from the same memo, else ONE
+ * `git rev-parse` through async `execFile` shared by every concurrent caller for that directory
+ * (task: opening a project is slow; eleven restored chats asked it synchronously at once).
+ * An expired answer is served as the sync reader serves it, refreshed off the loop.
+ */
+const commonDirInflight = new Map<string, Promise<string | null>>();
+export async function gitCommonDirAsync(cwd: string, now: number = Date.now()): Promise<string | null> {
+  const hit = commonDirCache.get(cwd);
+  if (hit && now - hit.at < COMMON_DIR_TTL_MS) return hit.value;
+  if (hit) {
+    refreshCommonDir(cwd, now);
+    return hit.value;
+  }
+  let running = commonDirInflight.get(cwd);
+  if (!running) {
+    const gen = asyncGeneration;
+    const p = gitLineAsync(cwd, ['rev-parse', '--git-common-dir'])
+      .then((raw) => {
+        const value = raw ? canonical(resolve(cwd, raw)) : null;
+        if (gen === asyncGeneration) storeCommonDir(cwd, value, now);
+        return value;
+      })
+      .finally(() => { if (commonDirInflight.get(cwd) === p) commonDirInflight.delete(cwd); });
+    commonDirInflight.set(cwd, p);
+    running = p;
+  }
+  return running;
+}
+
+/** `git rev-parse --show-toplevel` off the event loop: {@link repoToplevel}'s answer, or null. */
+export async function repoToplevelAsync(cwd: string): Promise<string | null> {
+  const top = await gitLineAsync(cwd, ['rev-parse', '--show-toplevel']);
+  return process.platform === 'win32' && top ? resolve(top) : top;
+}
+
 const commonDirRefreshing = new Set<string>();
 
 function refreshCommonDir(cwd: string, now: number): void {
@@ -282,6 +318,7 @@ export function resetSessionFactsCaches(): void {
   commonDirCache.clear();
   asyncCache.clear();
   asyncInflight.clear();
+  commonDirInflight.clear();
   asyncGeneration += 1;
   asyncGitRuns = 0;
 }
