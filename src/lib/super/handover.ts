@@ -5,7 +5,7 @@ import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from '
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
-  clearOwnerLease, showAgendaCard, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, writeSuper,
+  clearOwnerLease, showAgendaCard, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, syncAllMemberMirrors, writeSuper,
 } from './inbox.js';
 
 /**
@@ -112,7 +112,9 @@ export async function enableSuper(
     if (prunedAdopted.length) s.formerAdopted = [...new Set([...(s.formerAdopted ?? []), ...prunedAdopted])].slice(-MAX_FORMER_CHILDREN);
     s.children = kept;
     // Items about a child that is not kept, or that a remote screen holds, are old news.
-    for (const q of s.queue) if (q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';
+    // A member's item mirrored for him is not about a child of this Super: it lives exactly as long
+    // as the member's item (syncMemberMirrors), never swept with old news (end review r1).
+    for (const q of s.queue) if (q.kind !== 'member' && q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';
     s.containers = s.containers.filter((c) => c.kind !== 'chat' || !!kept[c.ref]);
     for (const sid of Object.keys(kept)) if (!phoneEnded.has(sid)) ensureChatContainer(s, sid, kept[sid].brief.slice(0, 120));
     // The agenda opens with every hand-over (a new super session): made if the record has none,
@@ -127,6 +129,8 @@ export async function enableSuper(
     for (const sid of adopt) queueWhatItAsks(s, sid, now);
   }, { onDemoted: (ids) => { for (const id of ids) skip(id, 'phone_held'); } });
   await reconcileRows(contextRoot);
+  // What a member asked him while nobody was handed over (no mirror is made then) reaches him now.
+  await syncAllMemberMirrors(contextRoot).catch(() => undefined);
   void pumpSuper(contextRoot);
   return { session: state.session as string, state, skipped };
 }

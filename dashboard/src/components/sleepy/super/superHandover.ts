@@ -573,6 +573,9 @@ export interface AgendaRow {
   stale?: boolean;
   /** A child's own question (`directChildQuestion`): pressing it opens that child's chat. */
   direct?: boolean;
+  /** An AI Team member waiting on him (a `member` mirror): its slug. Named by the member, and
+   *  pressing it opens the member's page, never a child of this Super. */
+  member?: string;
   /** An unanswered line: the debt the Super still owes him (`SuperOwed.id`), and what it is. */
   owed?: string;
   owedKind?: 'msg' | 'result';
@@ -597,6 +600,8 @@ export interface JobLook {
   nameFor?: (sid: string) => string;
   modelFor?: (sid: string) => string | null;
   superTitle: string;
+  /** An AI Team member's title on this machine (a `member` mirror's row); absent or '' = its slug. */
+  memberTitleFor?: (slug: string) => string;
 }
 
 /** A child's row, from the record, or from live status when the record has none (a v1 record). */
@@ -630,8 +635,17 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
   const chipOf = (k: QueueKind): AgendaChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : k === 'owner' ? 'needsYou' : 'question');
+  // A member's mirror: chipped by what the member's item is.
+  const memberChip = (q: SuperQueueItem): AgendaChip => (q.of === 'permission' ? 'permission' : q.of === 'ask' || q.of === 'question' ? 'question' : 'needsYou');
   const nameOf = (sid: string) => plainJobName(look.nameFor?.(sid) || look.titleFor(sid));
   for (const q of owner) {
+    if (q.kind === 'member') {
+      out.waiting.push({
+        key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member ?? '', text: look.memberTitleFor?.(q.member ?? '') || (q.member ?? ''),
+        line: q.of === 'permission' ? '' : (q.ownerText ?? ''), chip: memberChip(q), at: q.createdAt,
+      });
+      continue;
+    }
     const own = q.kind === 'ask' || q.kind === 'approval';
     out.waiting.push({
       key: `q:${q.id}`, section: 'waiting', item: q.id, ...(own ? {} : { sid: q.sessionId }),
@@ -745,7 +759,7 @@ export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'te
  */
 export function agendaAboutStrip(
   about: AgendaAbout,
-  open: readonly Pick<SuperQueueItem, 'id' | 'kind' | 'state' | 'sessionId'>[],
+  open: readonly Pick<SuperQueueItem, 'id' | 'kind' | 'state' | 'sessionId' | 'member'>[],
   nameFor: (sid: string) => string,
   words: AboutWords = ABOUT_WORDS_EN,
 ): { label: string; text: string } {
@@ -754,7 +768,8 @@ export function agendaAboutStrip(
   const q = open.find((x) => x.id === about.id && x.state !== 'done');
   if (!q) return { label: words.about, text: words.aQuestion };
   if (q.kind === 'ask' || q.kind === 'approval') return { label: words.about, text: words.superQuestion };
-  const name = plainJobName(nameFor(q.sessionId) || '');
+  // A member's mirror: the member, never a session of this Super's.
+  const name = q.kind === 'member' ? (q.member ?? '') : plainJobName(nameFor(q.sessionId) || '');
   return { label: words.about, text: name ? words.question.replace('{name}', () => name) : words.aQuestion };
 }
 

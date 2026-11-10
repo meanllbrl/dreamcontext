@@ -2196,6 +2196,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const item = id ? c.state.queue.find((q) => q.id === id) : undefined;
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is closed only by the owner\'s answer'); return; }
+    // A member waiting on him closes when the member's own item closes (syncMemberMirrors), never
+    // by a Super verb: said, with what IS yours, so nothing is closed in silence (end review r1).
+    if (item.kind === 'member') {
+      refuse(res, 403, 'member_item', item.of === 'ask'
+        ? 'a member\'s question closes when it is answered: answer it with `super team answer <item> "<answer>"` if what the owner told you settles it, else it waits on his bar'
+        : 'this waits on the owner (his bar, his Telegram, the member\'s page) and closes when he answers it there: tell him in one line which member waits and why');
+      return;
+    }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
     if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });

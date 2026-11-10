@@ -393,7 +393,9 @@ function mirrorOf(kind: QueueKind): MemberItemOf | null {
  * Agent never heard of it, so the job stayed stuck). The ONE place: every member path (its own
  * `super ask`, a child's question or permission, a card only he can act on, project or global
  * member, a team job or his own work) is a write of its record, and every write ends here.
- * A mirror is born once per member item (never again after the owner or the Super closed it);
+ * A mirror is born once per member item and lives exactly as long as that item: closed when it
+ * closes, opened again if anything else closed it first (only the Super's `reply` to the member's
+ * own question closes it for good);
  * main must be handed over (no Super stage, no bar: the member's own stage still has it).
  */
 export async function syncMemberMirrors(memberKey: string, state: SuperState): Promise<void> {
@@ -407,20 +409,32 @@ export async function syncMemberMirrors(memberKey: string, state: SuperState): P
   const seen = lastStates.get(mainKey) ?? await readSuperState(mainKey, superSanitizeOpts()).catch(() => null);
   if (!seen?.enabled || !seen.session) return;
   const known = seen.queue.filter((q) => q.kind === 'member' && q.member === slug);
+  // The member's record is the truth (end review r1): a mirror closed by anything else while the
+  // member's item still waits (`super queue done`, a hand-over's sweep, a take-back) is opened
+  // again, so no closer anywhere can strand it on the member's page. The one close that stands is
+  // the Super Agent's answer to the member's own question: the member's `reply` names it.
+  const repliedTo = new Set(state.queue.filter((q) => q.kind === 'reply' && q.answers).map((q) => q.answers as string));
+  const strandedMirror = (m: SuperQueueItem) => m.state === 'done' && wantIds.has(m.answers ?? '') && !repliedTo.has(m.answers ?? '');
   const add = want.some((q) => !known.some((m) => m.answers === q.id));
   const close = known.some((m) => m.state !== 'done' && !wantIds.has(m.answers ?? ''));
-  if (!add && !close) return;
+  const reopen = known.some(strandedMirror);
+  if (!add && !close && !reopen) return;
+  let born = false;
   await writeSuper(mainKey, (s) => {
     if (!s.enabled || !s.session) return;
     const now = Date.now();
     for (const m of s.queue) {
-      if (m.kind === 'member' && m.member === slug && m.state !== 'done' && !wantIds.has(m.answers ?? '')) m.state = 'done';
+      if (m.kind !== 'member' || m.member !== slug) continue;
+      if (m.state !== 'done' && !wantIds.has(m.answers ?? '')) m.state = 'done';
+      // The Super Agent already heard it: back on his list, no second event.
+      else if (strandedMirror(m)) m.state = 'escalated';
     }
     for (const q of want) {
       if (s.queue.some((m) => m.kind === 'member' && m.member === slug && m.answers === q.id)) continue;
       const of = mirrorOf(q.kind) as MemberItemOf;
       // A permission is drawn from the child's own request only (D7): no words ride its mirror.
       const text = of === 'permission' ? undefined : q.ownerText;
+      born = true;
       s.queue.push({
         id: newQueueId(), sessionId: q.sessionId, kind: 'member', state: 'pending', createdAt: now,
         member: slug, answers: q.id, of,
@@ -430,6 +444,17 @@ export async function syncMemberMirrors(memberKey: string, state: SuperState): P
       });
     }
   });
+  // Born pending: the Super Agent hears it now, not whenever something else wakes its queue.
+  if (born) void pumpSuper(rootOf(memberKey));
+}
+
+/** Every member record of a project, mirrored again (a hand-over: nothing was mirrored while main
+ *  was not handed over, and what an earlier sweep closed is opened again). A refused record is skipped. */
+export async function syncAllMemberMirrors(contextRoot: string): Promise<void> {
+  for (const slug of await listMemberSupers(contextRoot)) {
+    const key = superKey(contextRoot, superIdOfMember(slug));
+    try { await syncMemberMirrors(key, await readSuperState(key, superSanitizeOpts())); } catch { /* skipped */ }
+  }
 }
 
 /** A `member` mirror the owner still has to answer (the dashboard's bar reads the same rule). */

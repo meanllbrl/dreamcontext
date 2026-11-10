@@ -5,6 +5,7 @@ import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
 import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
 import { superApprovalSentence, type SuperApproval } from './superApprovals';
+import { requestOpenAgents } from '../../../lib/openAgents';
 import './SuperAgenda.css';
 
 /**
@@ -100,13 +101,15 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // child's permission, or a child waiting on something only he can do (`needsYou`), shows that
   // child beside the centre, its card in view (SuperSurface.showChild). A note is only read.
   // A child's own question (`direct`) opens that child: its card is in its chat.
-  const showsChild = (r: AgendaRow) => r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || !!r.direct;
+  const showsChild = (r: AgendaRow) => !r.member && ( r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || !!r.direct);
   const press = (r: AgendaRow) => {
     if (!r.item) return;
+    // An AI Team member waiting on him: its page, where its own card answers it.
+    if (r.member) { requestOpenAgents({ slug: r.member }); return; }
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && (r.member ? true : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
 
   const rowOf = (r: AgendaRow) => {
     const body = (

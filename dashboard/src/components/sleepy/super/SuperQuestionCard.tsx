@@ -189,7 +189,7 @@ function MemberWaitCard({ item }: { item: SuperQueueItem }) {
     <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of}>
       <CardHeader
         glyph={<AgentAvatar slug={slug} title={name} hasPhoto={agent?.hasPhoto ?? false} size={22} />}
-        title={t('super.queue.memberCard').replace('{name}', name)}
+        title={t(item.of === 'permission' ? 'super.queue.memberCardPermission' : 'super.queue.memberCard').replace('{name}', name)}
       />
       {questions.length
         ? questions.map((q, i) => (
@@ -198,7 +198,8 @@ function MemberWaitCard({ item }: { item: SuperQueueItem }) {
             {q.options && q.options.length > 0 && <ul>{q.options.map((o, j) => <li key={j}>{o.label}</li>)}</ul>}
           </div>
         ))
-        : <p className="chat-agentthread-note">{memberItemText(item, t)}</p>}
+        // Its own words when it has some; a permission's are the child's request, drawn on its page.
+        : item.ownerText ? <p className="chat-agentthread-note">{memberItemText(item, t)}</p> : null}
       <div className="chat-agentthread-actions">
         <button type="button" className="chat-agentthread-btn is-primary" data-testid="super-member-open" disabled={!slug} onClick={() => requestOpenAgents({ slug })}>
           {t('super.queue.openMember')}

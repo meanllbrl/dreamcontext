@@ -142,12 +142,13 @@ export interface SuperSurfaceProps {
 export interface StageShowChild { show: (sid: string) => void; showCard: (id: string) => void; ready: boolean }
 
 /** The look the agenda and the question band read (both the stage and the Super dock). */
-export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle }: {
+export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle, memberTitleFor }: {
   sessionFor: (claudeId: string) => ChatSession | undefined;
   titleFor: (claudeId: string) => string;
   nameFor?: (claudeId: string) => string;
   children: SuperStateView['children'];
   superTitle: string;
+  memberTitleFor?: (slug: string) => string;
 }): JobLook {
   return {
     live: (sid) => { const cs = sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
@@ -155,6 +156,7 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
     nameFor,
     modelFor: (sid) => childModelChip(sessionFor(sid), hasOwnKey(children, sid) ? children[sid] : undefined),
     superTitle,
+    ...(memberTitleFor ? { memberTitleFor } : {}),
   };
 }
 
@@ -943,7 +945,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     }, `${batchKey}\u0002${titleKey}`);
   }, [superId, batchKey, titleKey, state.ownerBatches, state.mainBatches, requestTexts, motion]);
   // The agenda and the question band read the same record and the children's live sessions (0 requests).
-  const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name') });
+  // A member waiting on him (a `member` mirror) is named by its title, read from the roster.
+  const agendaRoster = useAgents({ enabled: !member && state.queue.some((q) => q.kind === 'member' && q.state !== 'done') }).data;
+  const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name'), memberTitleFor: (slug) => findAgent(agendaRoster, slug)?.title ?? '' });
   // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
   // and the agenda stays with it (presented together, the agenda last): a page side by side
   // would send the agenda to Others, and the owner reads on from it.

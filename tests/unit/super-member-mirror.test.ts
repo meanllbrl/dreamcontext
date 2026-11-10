@@ -26,11 +26,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
+import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  MEMBER_LINE, REPLY_OWNER_ASK_LINE, _resetSuperInbox, _superInboxDrained, nextBatch, ownerItems, setMemberGateForTest, superBatchText, superEventText, superQueueHead, wireSuperInbox, writeSuper,
+  MEMBER_LINE, REPLY_OWNER_ASK_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, type SuperInbox, ownerItems, setMemberGateForTest, superBatchText, superEventText, superQueueHead, wireSuperInbox, writeSuper,
 } from '../../src/lib/super/inbox.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
@@ -38,6 +38,7 @@ import { createAgent } from '../../src/lib/agents/store.js';
 import { _resetDelegating } from '../../src/lib/super/delegating.js';
 import { _resetOwnerQuestions, announces, setOwnerQuestionSinks } from '../../src/lib/super/owner-question.js';
 import { memberMirrorTarget } from '../../src/lib/super/answer.js';
+import { enableSuper } from '../../src/lib/super/handover.js';
 
 let dir: string;
 let root: string;
@@ -68,13 +69,13 @@ const mirrors = async () => (await main()).queue.filter((q) => q.kind === 'membe
 
 /** Main gives Rota a job (its record is born with a Super session); its session id. */
 async function rotaWorking(): Promise<{ request: string; session: string }> {
-  const r = await verb(tokenFor(MAIN), 'team-ask', { member: 'rota', text: 'DM Mehmet Can the report.', brief: 'DM' });
+  const r = await verb(tokenFor(MAIN), 'team-ask', { member: 'rota', text: 'DM Ada the report.', brief: 'DM' });
   expect(r.status, JSON.stringify(r.json)).toBe(200);
   return { request: (r.json.result as { request: string }).request, session: (await rota()).session as string };
 }
 
 /** The field case: the member asks the OWNER for his own approval (`super ask --for owner`). */
-async function rotaAsksOwner(session: string, text = 'May I send the DM to Mehmet Can?') {
+async function rotaAsksOwner(session: string, text = 'May I send the DM to Ada?') {
   const r = await verb(tokenFor(session, 'm:rota'), 'ask', { text, options: ['Send it', 'Do not send'], for: 'owner' });
   expect(r.status, JSON.stringify(r.json)).toBe(200);
   await _superInboxDrained();
@@ -131,16 +132,17 @@ describe('a member\'s question to the owner reaches main\'s queue', () => {
     expect(m[0].ownerText).toBeUndefined();
   });
 
-  it('closes when the member\'s item closes, and is never born again once closed', async () => {
+  it('lives exactly as long as the member\'s item: anything else closing it first is undone (end review r1)', async () => {
     const { session } = await rotaWorking();
     const ask = await rotaAsksOwner(session);
     const [m] = await mirrors();
-    // The owner (or the Super) closed the mirror while the member's ask is still open: a later
-    // write of the member's record does not bring it back.
+    // Something other than the member's item closed it (a hand-over's sweep, an old `queue done`)
+    // while the member still waits: the next write of the member's record puts it back on his
+    // list, once, with no second event (escalated), never stranded on the member's page.
     await writeSuper(root, (s) => { const q = s.queue.find((x) => x.id === m.id); if (q) q.state = 'done'; });
     await writeSuper(root, 'm:rota', (s) => { s.pool = [...s.pool]; });
     await _superInboxDrained();
-    expect((await mirrors()).map((x) => [x.id, x.state])).toEqual([[m.id, 'done']]);
+    expect((await mirrors()).map((x) => [x.id, x.state])).toEqual([[m.id, 'escalated']]);
     // A fresh question: a new mirror; answered on the member's own stage: closed in main too.
     await writeSuper(root, 'm:rota', (s) => { const q = s.queue.find((x) => x.id === ask); if (q) q.state = 'done'; });
     const ask2 = await rotaAsksOwner(session, 'Second question?');
@@ -160,6 +162,38 @@ describe('a member\'s question to the owner reaches main\'s queue', () => {
 });
 
 describe('the Super Agent hears it, and may answer only the member\'s own question', () => {
+  it('a mirror born while the Super Agent is idle reaches it through its own queue, unprompted (end review r1)', async () => {
+    const { session } = await rotaWorking();
+    const h = registerChat({ sessionId: MAIN, conversationId: null, vault: 'acme', mode: 'super' });
+    h.userSent(''); h.observe({ type: 'result' });
+    const delivered: string[] = [];
+    const inbox: SuperInbox = {
+      id: 'inbox-main', sessionId: MAIN, attached: () => true, idle: () => true,
+      deliver: async (text) => { delivered.push(text); return true; },
+    };
+    attachSuperInbox(inbox);
+    await _superInboxDrained();
+    delivered.length = 0;
+    await rotaAsksOwner(session);
+    await vi.waitFor(() => expect(delivered.some((t) => t.includes('event=member'))).toBe(true), { timeout: 10_000 });
+  });
+
+  it('a hand-over keeps a member\'s waiting item; one asked while nobody was handed over reaches him at the next', async () => {
+    const { session } = await rotaWorking();
+    const first = await rotaAsksOwner(session);
+    // A hand-over sweeps items about chats it does not keep: never a member's mirror.
+    await enableSuper(root, { adopt: [], titles: {} });
+    expect((await mirrors()).map((m) => [m.answers, m.state === 'done'])).toEqual([[first, false]]);
+    // Asked while nobody is handed over: no mirror then; the next hand-over brings it.
+    await writeSuper(root, 'm:rota', (s) => { const q = s.queue.find((x) => x.id === first); if (q) q.state = 'done'; });
+    await _superInboxDrained();
+    await writeSuper(root, (s) => { s.enabled = false; });
+    const ask = await rotaAsksOwner(session, 'Asked while away?');
+    expect((await mirrors()).filter((m) => m.state !== 'done')).toEqual([]);
+    await enableSuper(root, { adopt: [], titles: {} });
+    expect((await mirrors()).filter((m) => m.state !== 'done').map((m) => m.answers)).toEqual([ask]);
+  });
+
   it('one event line naming the member, its question and options, with the member rule', async () => {
     const { session } = await rotaWorking();
     await rotaAsksOwner(session);
@@ -168,7 +202,7 @@ describe('the Super Agent hears it, and may answer only the member\'s own questi
     expect(items.map((q) => q.kind)).toContain('member');
     const text = superBatchText(root, state, items, 'b-test');
     expect(text).toContain('event=member member=rota waits=ask');
-    expect(text).toContain('Question: May I send the DM to Mehmet Can?');
+    expect(text).toContain('Question: May I send the DM to Ada?');
     expect(text).toContain('Options: Send it | Do not send');
     expect(text).toContain(MEMBER_LINE);
   });
@@ -184,6 +218,26 @@ describe('the Super Agent hears it, and may answer only the member\'s own questi
     expect(reply?.workOrigin).toBe('owner');
     expect(superEventText(root, await rota(), reply as SuperQueueItem)).toContain(REPLY_OWNER_ASK_LINE);
     expect((await mirrors())[0].state).toBe('done');
+    // The Super's answer is the one close that stands while the member's ask is still open.
+    await writeSuper(root, 'm:rota', (s) => { s.pool = [...s.pool]; });
+    await _superInboxDrained();
+    expect((await mirrors()).map((x) => x.state)).toEqual(['done']);
+  });
+
+  it('`queue done` on a mirror is refused with what is the Super\'s and what is his; nothing closes', async () => {
+    const { session } = await rotaWorking();
+    await rotaAsksOwner(session);
+    await writeSuper(root, 'm:rota', (s) => {
+      s.queue.push({ id: 'q-perm-3', sessionId: 'sess-rota-child', kind: 'permission', state: 'pending', createdAt: Date.now(), requestId: 'req-3' });
+    });
+    await _superInboxDrained();
+    for (const m of await mirrors()) {
+      const r = await verb(tokenFor(MAIN), 'queue-done', { item: m.id });
+      expect(r.status, m.of).toBe(403);
+      expect(r.json.error).toBe('member_item');
+      expect(String(r.json.message)).toContain(m.of === 'ask' ? 'super team answer' : 'his bar');
+    }
+    expect((await mirrors()).every((x) => x.state !== 'done')).toBe(true);
   });
 
   it('`team answer` on a permission is refused with where it waits (owner_only), nothing changes', async () => {

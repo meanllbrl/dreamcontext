@@ -6,7 +6,7 @@
  * the line the bar draws (`memberItemText`). Each fails on the code before the mirror was read.
  */
 import { describe, it, expect } from 'vitest';
-import { needsOwner, ownerQueueCount, queueHead } from '../../dashboard/src/components/sleepy/super/superHandover';
+import { agendaAboutStrip, needsOwner, ownerQueueCount, queueHead, superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { memberItemText, openMemberMirrors } from '../../dashboard/src/components/sleepy/super/superQuestions';
 import type { SuperQueueItem } from '../../dashboard/src/lib/superTypes';
 
@@ -54,5 +54,24 @@ describe('a member mirror in the Super chat', () => {
     expect(memberItemText(mirror(), t)).toBe('Slack DM to Ada: send it?');
     expect(memberItemText(mirror({ ownerText: undefined, of: 'permission' }), t)).toBe('super.queue.memberPermission');
     expect(memberItemText(mirror({ ownerText: undefined, of: 'owner' }), t)).toBe('super.queue.memberWaiting');
+  });
+});
+
+describe('a member mirror on the agenda (end review r1: it was drawn as a child of this Super)', () => {
+  const look = { live: () => null, titleFor: (sid: string) => sid.slice(0, 8), superTitle: 'Super Agent' };
+  it('is named by the member, chipped by what it waits for, and carries the member to open', () => {
+    const queue = [mirror({ id: 'p', of: 'permission', ownerText: undefined, createdAt: 1 }), mirror({ id: 'o', of: 'owner', createdAt: 2 })];
+    const rows = superNotepad({ queue, pad: [] }, look).waiting;
+    expect(rows.map((r) => [r.item, r.text, r.member, r.chip, r.sid])).toEqual([
+      ['p', 'otobot', 'otobot', 'permission', undefined],
+      ['o', 'otobot', 'otobot', 'needsYou', undefined],
+    ]);
+    expect(rows[0].line).toBe('');
+  });
+
+  it('a line written about it names the member, never a session of this Super', () => {
+    const strip = agendaAboutStrip({ kind: 'item', id: 'q-m1', section: 'waiting' }, [mirror()], (sid) => `title-of-${sid}`);
+    expect(strip.text).toContain('otobot');
+    expect(strip.text).not.toContain('member-sid');
   });
 });
