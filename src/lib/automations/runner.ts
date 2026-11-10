@@ -66,6 +66,7 @@ import {
 } from './board-scope.js';
 import { renderBoardContext, renderBoardIndex } from '../whiteboards/board-context.js';
 import { expandBoardRefs } from '../whiteboards/board-refs.js';
+import { canonicalInput } from '../grants/canonical.js';
 import {
   clearRunSidecar,
   extractSection,
@@ -1067,6 +1068,32 @@ export function outputPathFor(contextRoot: string, m: AutomationManifest, fireAt
 
 // ─── claude -p --output-format json parsing ─────────────────────────────────
 
+/** One call the run's permission mode refused. `input` is the Bash command itself, or the
+ *  tool's input as stable-key JSON, cut. */
+export interface DeniedCall { tool: string; input: string }
+/** A run that hits the mode over and over is told by its count; the owner reads the first few. */
+export const MAX_DENIED_CALLS = 10;
+export const DENIED_INPUT_CAP = 2000;
+
+/** PURE. The envelope's `permission_denials`, read leniently: an entry without a tool name says
+ *  nothing the owner could act on and is skipped, never guessed. */
+export function deniedCallsOf(raw: unknown): DeniedCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DeniedCall[] = [];
+  for (const d of raw) {
+    if (out.length >= MAX_DENIED_CALLS) break;
+    if (!d || typeof d !== 'object') continue;
+    const r = d as Record<string, unknown>;
+    if (typeof r.tool_name !== 'string' || !r.tool_name) continue;
+    const inp = r.tool_input;
+    // Spelled exactly as a grant and a refusal item spell it (grants/canonical.ts), so the same
+    // call reads the same everywhere the owner meets it.
+    const text = inp === undefined ? '' : canonicalInput(r.tool_name, inp);
+    out.push({ tool: r.tool_name.slice(0, 200), input: text.slice(0, DENIED_INPUT_CAP) });
+  }
+  return out;
+}
+
 export interface ClaudeResult {
   raw: string;
   parsed: boolean;
@@ -1077,6 +1104,13 @@ export interface ClaudeResult {
   numTurns: number | null;
   durationMs: number | null;
   permissionDenials: number;
+  /**
+   * The refused calls themselves (`permission_denials`), not just their count: a light run that
+   * ended ok while the mode refused what it needed has to show the owner WHAT was refused
+   * (routine needs, plan K7). At most {@link MAX_DENIED_CALLS}, each input cut to
+   * {@link DENIED_INPUT_CAP}. Always set on a parsed envelope (empty when none).
+   */
+  deniedCalls?: DeniedCall[];
   subtype: string | null;
   /**
    * The account's own refusal, when this envelope IS one. Read once here rather than at
@@ -1153,6 +1187,7 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
       numTurns: typeof p.num_turns === 'number' ? p.num_turns : null,
       durationMs: typeof p.duration_ms === 'number' ? p.duration_ms : null,
       permissionDenials: Array.isArray(p.permission_denials) ? p.permission_denials.length : 0,
+      deniedCalls: deniedCallsOf(p.permission_denials),
       subtype: typeof p.subtype === 'string' ? p.subtype : null,
       // Computed HERE because this is the one place that holds both halves at once: the
       // whole envelope (for the structured readers, which carry the window and the reset)

@@ -19,17 +19,32 @@
  * wait. Everything else here is pure.
  */
 
-export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
+import { createHash } from 'node:crypto';
+import { MAX_REFUSAL_REASON, REFUSAL_WORD_RE, type RefusalFact } from './types.js';
+
+/**
+ * `refusal` and `stalled` are no cards (uye-bildirim K2, K6): a refusal is read from the stream's
+ * permission metadata by the registry, a stall is decided by the server. Neither is ever produced
+ * by `ownerCardsIn` or answered by a receipt; a refusal closes when the same call is accepted
+ * later or the owner writes into that session himself (the registry), a stall when the server
+ * says so.
+ */
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp', 'refusal', 'stalled'] as const;
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
+/** The kinds a card in the chat's own text can be (what `ownerCardsIn` and `answeredBy` know). */
+export type OwnerCardKind = Exclude<OwnerWaitKind, 'refusal' | 'stalled'>;
 
 export interface OwnerWait {
   kind: OwnerWaitKind;
-  /** The card's own id. */
+  /** The card's own id; a refusal's `rf-<hash of tool and whole input>`; a stall's `st-<request>`. */
   id: string;
   /** What he is asked to do, one plain line (the card's title, `why` or command). */
   line: string;
-  /** What his answer names (the run card's command, the secret's or checklist's title). */
+  /** What his answer names (the run card's command, the secret's or checklist's title; a
+   *  refusal's tool). */
   key?: string;
+  /** Only on kind `refusal`: the call that was refused. */
+  refusal?: RefusalFact;
 }
 
 /** Owner waits one child may hold at once (a fence-happy reply cannot grow the record). */
@@ -114,6 +129,45 @@ export function answeredBy(text: string, open: readonly OwnerWait[]): OwnerWait[
     if (subject && w.key === subject) return true;
     return open.filter((x) => x.kind === w.kind).length === 1;
   });
+}
+
+// ─── Waits the server reads, not cards (uye-bildirim K2, K6) ───────────────────────────────────
+
+/** A refusal wait's id: the same call (tool and WHOLE canonical input) is one wait however often
+ *  it is refused, and it never collides with a card id (`ID_RE` still holds). */
+export function refusalWaitId(tool: string, wholeInput: string): string {
+  return `rf-${createHash('sha256').update(`${tool}\n${wholeInput}`).digest('hex').slice(0, 16)}`;
+}
+
+/** The owner wait for one refused call. `wholeInput` is the canonical input before any cut;
+ *  the fact keeps at most `cap` of it and says so (`whole: false`). */
+export function refusalWait(
+  tool: string, wholeInput: string, cap: number,
+  how: { source: RefusalFact['source']; category?: string; reason?: string },
+): OwnerWait {
+  const whole = wholeInput.length <= cap;
+  const reason = how.reason ? how.reason.replace(/\s+/g, ' ').trim().slice(0, MAX_REFUSAL_REASON) : '';
+  const category = how.category && REFUSAL_WORD_RE.test(how.category) ? how.category : '';
+  return {
+    kind: 'refusal',
+    id: refusalWaitId(tool, wholeInput),
+    line: oneLine(wholeInput ? `${tool}: ${wholeInput}` : tool),
+    key: tool,
+    refusal: {
+      tool, input: whole ? wholeInput : wholeInput.slice(0, cap), whole, source: how.source,
+      ...(category ? { category } : {}),
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+/** The owner wait for a member that stopped without closing request `requestId` or asking (K6);
+ *  `lastSentence` is its own last words (untrusted, shown as a line). Null for a request id a
+ *  card id could not hold. */
+export function stalledWait(requestId: string, lastSentence: string): OwnerWait | null {
+  const id = `st-${requestId}`;
+  if (!ID_RE.test(id)) return null;
+  return { kind: 'stalled', id, line: oneLine(lastSentence) || 'Stopped without finishing or asking' };
 }
 
 // ─── Who wrote it: the Super Agent's own sends ────────────────────────────────────────────────

@@ -372,7 +372,12 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
 /** `member`: something the owner must answer in an AI Team member's own record, mirrored into
  *  main's queue (`member` the slug, `answers` its item, `of` that item's kind). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member'] as const;
+/** `nudge`: the server's one turn into a member Super that stopped without closing its job or
+ *  asking (never mirrored, never counted). `routine`: something a routine waits on the owner for,
+ *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
+ *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
+ *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -401,8 +406,8 @@ export interface SuperQueueItem {
    *  src/lib/super/types.ts). */
   automation?: string;
   decision?: 'approved' | 'rejected';
-  /** An `owner` item's wait: the child's card he must act on. */
-  wait?: { kind: OwnerWaitKind; id: string };
+  /** An `owner` item's wait: the child's card he must act on; a refusal's refused call. */
+  wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
   team?: string;
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
@@ -427,7 +432,49 @@ export interface SuperQueueItem {
   workOrigin?: SuperWorkOrigin;
   /** A `member` item: the kind of the member's item it mirrors. */
   of?: typeof MEMBER_OFS[number];
+  /** An OWN item: the record's own session asks (answered through its own window). */
+  own?: true;
+  /** A `routine` item's routine slug, its fact on disk, and that it already rang once. */
+  routine?: string;
+  fact?: string;
+  shown?: true;
+  /** What a surface may offer (server-computed for a permission or a refusal, copied onto its
+   *  mirror): draw exactly these sizes; absent = Allow once and Deny / Not needed only (MIRROR of
+   *  src/lib/super/types.ts `SuperQueueItem.offer`). */
+  offer?: GrantOffer;
 }
+
+/** A refused tool call (MIRROR of src/lib/super/types.ts `RefusalFact`): `whole` false = the
+ *  input was cut, and no grant may be offered for it. */
+export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'unknown'] as const;
+export type RefusalSource = typeof REFUSAL_SOURCES[number];
+export interface RefusalFact {
+  tool: string;
+  input: string;
+  whole: boolean;
+  source: RefusalSource;
+  category?: string;
+  reason?: string;
+  scriptSha?: string;
+}
+
+/** Owner answers and grants on the wire (MIRROR of src/lib/super/types.ts, uye-bildirim K3-K5). */
+export const GRANT_SIZES = ['once', 'job', 'member'] as const;
+export type GrantSize = typeof GRANT_SIZES[number];
+export type OwnerAnswer =
+  | { kind: 'question'; answers: Record<string, string> }
+  | { kind: 'permission'; behavior: 'allow' | 'deny'; size?: GrantSize }
+  | { kind: 'refusal'; action: 'allow' | 'not_needed'; size?: GrantSize }
+  | { kind: 'ask'; text: string }
+  | { kind: 'dismiss' };
+export const OWNER_ANSWER_VIAS = ['bar', 'chat', 'member-chat', 'phone', 'telegram'] as const;
+export type OwnerAnswerVia = typeof OWNER_ANSWER_VIAS[number];
+export interface OwnerAnswerRequest { record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia }
+export type OwnerAnswerResult =
+  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
+  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid'; message: string };
+export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
+export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }
 
 /** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own
  *  (`main`) or an AI Team member's (`m:<member slug>`). Absent anywhere = `main`. MIRROR of
@@ -478,8 +525,9 @@ export interface SuperWindowCommand {
   superId?: SuperId;
 }
 
-/** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
-export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
+/** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`):
+ *  `refusal` a refused tool call, `stalled` a member that stopped without finishing or asking. */
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp', 'refusal', 'stalled'] as const;
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 
 /** `super ask` in AskUserQuestion's shape (MIRROR of src/lib/super/types.ts). */

@@ -36,6 +36,10 @@ describe('super types — server record <-> window mirror', () => {
     expect([...client.CHILD_ROWS]).toEqual([...server.CHILD_ROWS]);
     expect([...client.STUCK_REASONS]).toEqual([...server.STUCK_REASONS]);
     expect([...client.OWNER_WAIT_KINDS]).toEqual([...ownerWait.OWNER_WAIT_KINDS]);
+    // uye-bildirim W4: the refusal fact, the grant sizes and where an answer came from.
+    expect([...client.REFUSAL_SOURCES]).toEqual([...server.REFUSAL_SOURCES]);
+    expect([...client.GRANT_SIZES]).toEqual([...server.GRANT_SIZES]);
+    expect([...client.OWNER_ANSWER_VIAS]).toEqual([...server.OWNER_ANSWER_VIAS]);
     expect([...client.TEAM_JOB_STATUSES]).toEqual([...server.TEAM_JOB_STATUSES]);
     expect(client.MAX_TEAM_JOBS).toBe(server.MAX_TEAM_JOBS);
     expect([...client.SUPER_NOTES]).toEqual([...server.SUPER_NOTES]);
@@ -234,6 +238,16 @@ describe('super types — server record <-> window mirror', () => {
     const entry: server.SuperMemberSummary = { slug: 'rota', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: true, lastAt: 1, pending: 2 };
     const mirrored: client.SuperMemberSummary = entry;
     expect(mirrored.pending).toBe(2);
+  });
+
+  it('uye-bildirim W5: a queue item\'s grant offer reaches the window as the server wrote it', () => {
+    const offer: server.GrantOffer = { sizes: ['once', 'job'], onceOnlyReason: 'outward', notChecked: 'its imports', rule: 'node scripts/x.mjs' };
+    const mirrored: client.GrantOffer = offer;
+    const view: server.SuperStateView = {
+      ...server.emptySuperState(), vault: 'acme-app', session: 'sess-super', enabled: true,
+      queue: [{ id: 'q1', sessionId: 'child-1', kind: 'permission', requestId: 'r1', state: 'escalated', createdAt: 2, offer }],
+    };
+    expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))?.queue[0].offer).toEqual(mirrored);
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {
