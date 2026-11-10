@@ -4,6 +4,13 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.14] - 2026-11-10
+
+Patch on 0.41.13: two finished jobs built together. Local build; not published.
+
+- **An automation opens from the AI Team routine card.** The edit window, with the "Sonuçlar Telegram'a da gelsin" tick, opens from the routine card. The separate members list on the Automations page is gone. Deleting an automation that has only one member now answers 409 instead of leaving an empty shell.
+- **An MCP server that needs a sign-in says so.** Its card shows "sign-in needed" with a Settings button. The Super and the child it delegates to both know which servers still need a sign-in, and the orchestration guide says so.
+
 ## [0.41.13] - 2026-11-09
 
 Patch on 0.41.12: seven finished jobs built together. Local build; not published.

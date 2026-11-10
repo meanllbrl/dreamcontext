@@ -1,6 +1,6 @@
 [package]
 name = "dreamcontext-desktop"
-version = "0.41.13"
+version = "0.41.14"
 edition = "2021"
 
 [lib]
