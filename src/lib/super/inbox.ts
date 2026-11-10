@@ -2251,10 +2251,7 @@ export function grantOffer(contextRoot: string, call: { tool: string; input: unk
     if (mem?.ok) sizes.push('member');
     const pin = job.ok ? job.script : mem?.ok ? mem.script : undefined;
     rule = canonicalInput(call.tool, call.input);
-    if (pin) {
-      const folder = dirname(pin.scriptPath);
-      notChecked = `With any arguments. What the script loads from its folder (${folder}) and from the project is not checked.`;
-    }
+    if (pin) notChecked = notCheckedLine(pin.scriptPath, ctx.roots.map((r) => ctx.resolve.realpath(r) ?? r));
   } catch {
     return { sizes: ['once'], onceOnlyReason: MCP_OR_FILE_RULE };
   }
@@ -2264,6 +2261,18 @@ export function grantOffer(contextRoot: string, call: { tool: string; input: unk
     ...(notChecked && sizes.length > 1 ? { notChecked } : {}),
     ...(rule && sizes.length > 1 ? { rule: rule.slice(0, 2000) } : {}),
   };
+}
+
+/**
+ * The one line an always-size carries about what a pinned script does NOT cover: what it loads
+ * from its own folder. Named relative to the root it lives in (`tools/`), never as an absolute
+ * path a person cannot read; the project root itself reads as "the project".
+ */
+export function notCheckedLine(scriptPath: string, roots: readonly string[]): string {
+  const folder = dirname(scriptPath);
+  const root = [...roots].sort((a, b) => b.length - a.length).find((r) => folder === r || folder.startsWith(r.endsWith('/') ? r : `${r}/`));
+  const rel = root === undefined ? basename(folder) : folder.slice(root.length).replace(/^\/+/, '');
+  return rel ? `What it loads from ${rel}/ is not checked.` : 'What it loads from the project is not checked.';
 }
 
 /** A pending permission's call as the registry holds it: Bash's whole command, else nothing whole. */

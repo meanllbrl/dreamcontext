@@ -313,6 +313,52 @@ export function AgentIdentityDialog({
   const boardList = boards.data ?? [];
   const boardMissing = form.whiteboard && !boardList.some((b) => b.slug === form.whiteboard);
 
+  const levelControl = (
+    <fieldset
+      className="aid-autonomy"
+      disabled={!ready || !!detail.data?.agent.implicit}
+      title={detail.data?.agent.implicit ? t('aiteam.autonomy.implicit') : undefined}
+    >
+      <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
+      <div
+        className="aid-segmented"
+        role="radiogroup"
+        aria-labelledby="aid-autonomy-legend"
+        onKeyDown={(e) => {
+          // One Tab stop; the arrows move the choice (the radio pattern).
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
+          const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
+          set('autonomy', next);
+          (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
+        }}
+      >
+        {AUTONOMY_LEVELS.map((level) => (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={form.autonomy === level}
+            tabIndex={form.autonomy === level ? 0 : -1}
+            className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
+            onClick={() => set('autonomy', level)}
+            data-autonomy={level}
+          >
+            {t(`aiteam.autonomy.${level}`)}
+          </button>
+        ))}
+      </div>
+      <ul className="aid-autonomy-lines">
+        {AUTONOMY_LEVELS.map((level) => (
+          <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
+            <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
+          </li>
+        ))}
+      </ul>
+    </fieldset>
+  );
+
   return (
     <div
       className={inline ? 'aid-inline' : 'aid-scrim'}
@@ -517,54 +563,12 @@ export function AgentIdentityDialog({
           <span>{t('agents.identity.learning')}</span>
         </label>
 
-        {/* An old member still in its automation file cannot hold a level: it runs Balanced (the
-            default), so the field shows that, read-only, and says why on hover. */}
-        {editing && (
-          <fieldset
-            className="aid-autonomy"
-            disabled={!ready || !!detail.data?.agent.implicit}
-            title={detail.data?.agent.implicit ? t('aiteam.autonomy.implicit') : undefined}
-          >
-            <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
-            <div
-              className="aid-segmented"
-              role="radiogroup"
-              aria-labelledby="aid-autonomy-legend"
-              onKeyDown={(e) => {
-                // One Tab stop; the arrows move the choice (the radio pattern).
-                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-                e.preventDefault();
-                const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
-                const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
-                set('autonomy', next);
-                (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
-              }}
-            >
-              {AUTONOMY_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.autonomy === level}
-                  tabIndex={form.autonomy === level ? 0 : -1}
-                  className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
-                  onClick={() => set('autonomy', level)}
-                  data-autonomy={level}
-                >
-                  {t(`aiteam.autonomy.${level}`)}
-                </button>
-              ))}
-            </div>
-            <ul className="aid-autonomy-lines">
-              {AUTONOMY_LEVELS.map((level) => (
-                <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
-                  <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
-                </li>
-              ))}
-            </ul>
-          </fieldset>
-        )}
-        {editing && slug && !detail.data?.agent.implicit && <AgentPermissionsSection slug={slug} name={form.title || slug} chosenLevel={form.autonomy} />}
+        {/* The level is ONE control (form.autonomy, the same setting the header's Autonomy label
+            reads). A member with Permissions draws it at the top of that section, as the approved
+            drawing C1 has it; an old member still in its automation file cannot hold a level: it runs
+            Balanced (the default), so the field shows that, read-only, and says why on hover. */}
+        {editing && (!slug || detail.data?.agent.implicit) && levelControl}
+        {editing && slug && !detail.data?.agent.implicit && <AgentPermissionsSection slug={slug} name={form.title || slug} chosenLevel={form.autonomy} levelControl={levelControl} />}
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 

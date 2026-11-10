@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { RequestError } from '../../api/client';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -71,8 +71,11 @@ export async function removeMemberRule(api: PermissionsApi, slug: string, id: st
   }
 }
 
-export function AgentPermissionsSection({ slug, name, chosenLevel }: {
+export function AgentPermissionsSection({ slug, name, chosenLevel, levelControl }: {
   slug: string;
+  /** The dialog's own level switch (Ask / Balanced / Free, drawing C1), drawn at the top of the
+   *  section; the section never keeps a level of its own. */
+  levelControl?: ReactNode;
   /** The member's title, for the sentences ("When Fisher asks…"). */
   name: string;
   /** The level picked in the dialog right now (unsaved), to say when it would take effect. */
@@ -103,17 +106,19 @@ export function AgentPermissionsSection({ slug, name, chosenLevel }: {
     setBusy(null);
   };
 
-  return <PermissionsBody data={data} failed={failed} busy={busy} note={note} name={name} chosenLevel={chosenLevel} onRemove={(id) => { void remove(id); }} />;
+  return <PermissionsBody data={data} failed={failed} busy={busy} note={note} name={name} chosenLevel={chosenLevel} levelControl={levelControl} onRemove={(id) => { void remove(id); }} />;
 }
 
 /** What the section draws from what it read (drawing C1 with rules, C2 without). */
-export function PermissionsBody({ data, failed, busy, note, name, chosenLevel, onRemove }: {
+export function PermissionsBody({ data, failed, busy, note, name, chosenLevel, levelControl, onRemove }: {
   data: MemberPermissions | null;
   failed: boolean;
   busy: string | null;
   note: string | null;
   name: string;
   chosenLevel?: string;
+  /** The level switch to draw in place of the plain "Autonomy: …" line. */
+  levelControl?: ReactNode;
   onRemove: (id: string) => void;
 }) {
   const { t, locale } = useI18n();
@@ -125,11 +130,11 @@ export function PermissionsBody({ data, failed, busy, note, name, chosenLevel, o
   return (
     <section className="aid-autonomy" data-testid="agent-permissions" aria-labelledby="aid-permissions-title">
       <span className="aid-label" id="aid-permissions-title">{t('agents.permissions.title')}</span>
-      {data && (
+      {levelControl ?? (data && (
         <p className="aid-note" data-testid="agent-permissions-level">
           {t('aiteam.autonomy.label').replace('{level}', t(`aiteam.autonomy.${data.level}`))}
         </p>
-      )}
+      ))}
       {change && <p className="aid-note" data-testid="agent-permissions-applies" data-change={change}>{t(change)}</p>}
 
       <span className="aid-label">{t('agents.permissions.always')}</span>

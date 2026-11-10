@@ -193,7 +193,8 @@ describe("the Super chat's member card (B1, B2)", () => {
     expect(has(html, 'grant-size-job')).toBe(true);
     expect(has(html, 'grant-size-member')).toBe(true);
     expect(has(html, 'grant-rule')).toBe(true);
-    expect(has(html, 'grant-not-checked')).toBe(true);
+    // Said ONCE under the sizes, never repeated per always-size (owner, 11 Nov).
+    expect(html.split('data-testid="grant-not-checked"').length - 1).toBe(1);
     expect(html).toContain('owner.answer.notNeeded');
   });
 
@@ -403,6 +404,15 @@ describe("the profile's Permissions (C1, C2)", () => {
     expect(html).toContain('node _dream_context/tmp/turing/pay.cjs …');
     expect(has(html, 'agent-permissions-remove')).toBe(true);
     expect(html).toContain('aiteam.autonomy.label');
+  });
+
+  it('the level switch is drawn at the top of Permissions in place of the plain level line (C1)', () => {
+    const control = createElement('div', { 'data-testid': 'level-switch', role: 'radiogroup' });
+    const html = body({ levelControl: control });
+    expect(has(html, 'level-switch')).toBe(true);
+    expect(html).not.toContain('aiteam.autonomy.label');
+    // Before the rules, as in the drawing.
+    expect(html.indexOf('data-testid="level-switch"')).toBeLessThan(html.indexOf('data-testid="agent-permissions-rules"'));
   });
 
   it('an empty list says so (C2)', () => {

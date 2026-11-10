@@ -74,12 +74,12 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
                 <span>
                   <strong>{w.title}</strong>
                   <span className="chat-permcard-explainer" style={{ display: 'block' }}>{w.desc}</span>
-                  {s !== 'once' && choices.notChecked && <span className="chat-permcard-explainer" style={{ display: 'block' }} data-testid="grant-not-checked">{choices.notChecked}</span>}
                   {s === 'member' && choices.rule && <code className="chat-permcard-raw" style={{ display: 'block' }} data-testid="grant-rule">{visibleText(choices.rule)}</code>}
                 </span>
               </label>
             );
           })}
+          {choices.notChecked && <p className="chat-permcard-explainer" style={{ margin: 0 }} data-testid="grant-not-checked">{choices.notChecked}</p>}
         </div>
       )}
       <div className="chat-permcard-decide">
