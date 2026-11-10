@@ -34,6 +34,8 @@ import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { AppChatContext } from './chat/appChatContext';
 import { PermissionCard } from './chat/PermissionCard';
+import { SessionRefusalCards } from './chat/RefusalCard';
+import { useSessionGrantItems } from './super/ownerAnswer';
 import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
@@ -834,6 +836,8 @@ export function ChatPane({
   /** Whose Super this chat is: a member's (`m:<slug>`, its chat is bound to that member) or main's. */
   const paneMember = superMember || (session.mode === 'super' ? chatAgentFor(session.claudeId) : '');
   const paneSuperId: SuperId = paneMember ? memberSuperId(paneMember) : 'main';
+  // Who the refusal card says wanted the call: the member's title when the record is a member's.
+  const refusalWho = useSessionGrantItems(session.claudeId ?? null)?.memberTitle || paneMember || 'Claude';
   const { t } = useI18n();
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
@@ -2975,6 +2979,9 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPermission => p.kind === 'permission')
               .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
+            {/* A refused call is no pending request of the CLI (the turn went on without it), so its
+                card comes from the record's item, published for this session by the surface. */}
+            {!readOnly && <SessionRefusalCards sessionId={session.claudeId ?? null} who={refusalWho} />}
             {conv.pending
               .filter((p): p is PendingQuestion => p.kind === 'question')
               .map((p) => (

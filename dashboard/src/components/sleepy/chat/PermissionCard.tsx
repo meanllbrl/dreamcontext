@@ -13,6 +13,9 @@ import type { ChatSession, PendingPermission } from '../chatSession';
 import { looksInteractive, permissionReasonLine } from './permissionReason';
 import { PermissionDetails } from './PermissionDetails';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
+import { allowAnswer, allowedWaiting, grantChoices, permissionItemOf, useOwnerAnswer, useSessionGrantItems, visibleText } from '../super/ownerAnswer';
+import { sizeWords } from './RefusalCard';
+import type { GrantSize, SuperQueueItem } from '../../../lib/superTypes';
 
 /**
  * ORGANISM — permission request, state 6. Header (🔓 + tool badge), a human sentence
@@ -59,6 +62,10 @@ export function PermissionCard({
   permissionMode: 'auto' | 'bypass';
 }) {
   const [alwaysAllow, setAlwaysAllow] = useState(false);
+  // The record's item for this request, when the surface holding the record published it: then
+  // the server's sizes (once, this job, this member) replace the CLI's session-wide checkbox.
+  const grantView = useSessionGrantItems(session.claudeId ?? null);
+  const grantItem = permissionItemOf(grantView, item.requestId);
   const [running, setRunning] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
   const { vault } = useVaultId();
@@ -144,6 +151,12 @@ export function PermissionCard({
           extra={canRunHere && !runUpFront ? runButton : null}
         />
 
+        {grantItem && allowedWaiting(grantItem) ? (
+          // The owner already allowed it elsewhere (the bar, Telegram): no second Allow here.
+          <p className="chat-permcard-why" data-testid="grant-allowed">{t('owner.answer.allowedWaiting')}</p>
+        ) : grantItem && grantView && !embed ? (
+          <GrantSizes item={grantItem} record={grantView.record} memberName={grantView.memberTitle} pending={item} onOnce={allow} onDeny={deny} />
+        ) : (
         <div className="chat-permcard-decide">
           {offerAlways && (
             <label className="chat-permcard-always">
@@ -157,10 +170,68 @@ export function PermissionCard({
             {!tooLong && <button type="button" className="chat-btn pill primary" onClick={allow}>{t('perm.allow')}</button>}
           </div>
         </div>
+        )}
 
         {tooLong && <p className="chat-permcard-explainer">{t('embed.commandTooLong')}</p>}
         {embed && <p className="chat-permcard-explainer">{t('embed.permissionHere')}</p>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The sizes the server offers for this request (uye-bildirim K4, drawing B1/B2). Allow once is
+ * the session's own answer, as it always was; a wider size goes through the owner-answer route,
+ * which writes the rule from the STORED request and answers it. A command offered once only says
+ * why (an outward or deleting command, a classified refusal).
+ */
+function GrantSizes({ item, record, memberName, pending, onOnce, onDeny }: {
+  item: SuperQueueItem;
+  record: string;
+  memberName?: string;
+  pending: PendingPermission;
+  onOnce: () => void;
+  onDeny: () => void;
+}) {
+  const { t } = useI18n();
+  const answer = useOwnerAnswer(record, item, 'member-chat');
+  const command = commandPreview(pending.toolName, pending.input);
+  // What this card shows is the session's own request, whole: the consent matches it.
+  const choices = grantChoices(item, { tool: pending.toolName, input: command ?? JSON.stringify(pending.input ?? null), whole: true }, record);
+  const [size, setSize] = useState<GrantSize>('once');
+  const pick = choices.sizes.includes(size) ? size : 'once';
+  const wide = choices.sizes.filter((s) => s !== 'once');
+  const allow = () => { if (pick === 'once') onOnce(); else answer.submit(allowAnswer('permission', pick)); };
+  return (
+    <div className="chat-permcard-details" data-testid="permission-sizes">
+      {choices.onceOnlyReason && <p className="chat-permcard-why" data-testid="grant-once-only">{choices.onceOnlyReason}</p>}
+      {wide.length > 0 && (
+        <div role="radiogroup" aria-label={t('owner.answer.sizes')} className="chat-permcard-details">
+          {choices.sizes.map((s) => {
+            const w = sizeWords(s, t, memberName);
+            return (
+              <label key={s} className="chat-permcard-always" data-testid={`grant-size-${s}`} style={{ alignItems: 'flex-start' }}>
+                <input type="radio" name={`perm-size-${pending.requestId}`} checked={pick === s} onChange={() => setSize(s)} disabled={answer.busy} />
+                <span>
+                  <strong>{w.title}</strong>
+                  <span className="chat-permcard-explainer" style={{ display: 'block' }}>{w.desc}</span>
+                  {s !== 'once' && choices.notChecked && <span className="chat-permcard-explainer" style={{ display: 'block' }} data-testid="grant-not-checked">{choices.notChecked}</span>}
+                  {s === 'member' && choices.rule && <code className="chat-permcard-raw" style={{ display: 'block' }} data-testid="grant-rule">{visibleText(choices.rule)}</code>}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      <div className="chat-permcard-decide">
+        <div className="chat-permcard-actions">
+          <button type="button" className="chat-btn pill" data-testid="grant-decline" disabled={answer.busy} onClick={onDeny}>{t('owner.answer.deny')}</button>
+          <button type="button" className="chat-btn pill primary" data-testid="grant-allow" disabled={answer.busy} onClick={allow}>
+            {t(wide.length ? 'owner.answer.allow' : 'owner.answer.allowOnce')}
+          </button>
+        </div>
+      </div>
+      {answer.note && <p className="chat-permcard-explainer" data-testid="grant-note">{t(answer.note)}</p>}
     </div>
   );
 }

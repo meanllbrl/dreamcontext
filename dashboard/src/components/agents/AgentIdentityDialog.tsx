@@ -16,6 +16,7 @@ import { useWhiteboardList } from '../../hooks/useWhiteboards';
 import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { SOUL_MAX_CHARS, SOUL_TEMPLATES, normalizeSoul, soulProblem, soulTemplate, type SoulTemplateId } from '../../generated/soul-templates';
 import { AgentAvatar } from './AgentAvatar';
+import { AgentPermissionsSection } from './AgentPermissionsSection';
 import { tx } from './AgentRosterCard';
 import './AgentIdentityDialog.css';
 
@@ -546,6 +547,7 @@ export function AgentIdentityDialog({
             </ul>
           </fieldset>
         )}
+        {editing && slug && !detail.data?.agent.implicit && <AgentPermissionsSection slug={slug} name={form.title || slug} chosenLevel={form.autonomy} />}
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 

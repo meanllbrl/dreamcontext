@@ -679,6 +679,10 @@ export interface EkipMember {
   ownerWorking: number;
   /** A question waits on the owner. */
   asking: boolean;
+  /** How many of its items wait on the owner in main's record (its mirrors: a question, a
+   *  permission, a refused command, a stalled job; and its routines' needs), when the caller read
+   *  them (`memberWaitCounts`). Absent: the summary's one `asking` is all that is known. */
+  waiting?: number;
   /** One approval card waits on the owner (a synced or widening change). */
   approval: boolean;
   /** Owner-origin turns the owner has not read. */
@@ -727,6 +731,7 @@ export function buildEkip(
   summaries: readonly EkipSummary[] | null | undefined,
   identities: readonly EkipIdentity[] | null | undefined,
   headless: readonly EkipHeadless[] = [],
+  waits: Readonly<Record<string, number>> = {},
 ): EkipMember[] {
   const who = new Map((identities ?? []).map((a) => [a.slug, a] as const));
   const old = new Map(headless.map((h) => [h.slug, h] as const));
@@ -736,7 +741,11 @@ export function buildEkip(
     // A headless routine's question is the owner's; a headless team job is the Super's.
     const headlessAsk = !!h && h.status === 'needs' && !h.superOnly;
     const headlessSuper = !!h && !!h.superOnly && (h.status === 'working' || h.status === 'needs');
-    const asking = s.asking || headlessAsk;
+    // Main's record is the one list of what is his (uye-bildirim invariant): an item mirrored
+    // there for this member makes it ask even when the member's own summary does not say so
+    // (a refused command, a stalled job, an own item of its Super, a routine of it).
+    const waiting = Math.max(0, Math.floor(waits[s.slug] ?? 0));
+    const asking = s.asking || headlessAsk || waiting > 0;
     const ownerWorking = Math.max(0, s.ownerWorking | 0);
     const unread = Math.max(0, s.unread | 0);
     // "Super için" only when nothing of the owner's is there.
@@ -751,6 +760,7 @@ export function buildEkip(
       enabled: s.enabled !== false,
       ownerWorking,
       asking,
+      ...(waiting > 0 ? { waiting } : {}),
       approval: s.approval === true || h?.status === 'approval',
       unread,
       superOnly,
@@ -770,7 +780,7 @@ export function ekipCount(members: readonly EkipMember[]): number {
   for (const m of members) {
     if (m.approval) n += 1;
     if (m.superOnly || !m.enabled) continue;
-    if (m.asking) n += 1;
+    if (m.asking) n += Math.max(1, m.waiting ?? 0);
     n += m.unread;
   }
   return n;
@@ -786,9 +796,25 @@ export function ekipAskingCount(members: readonly EkipMember[]): number {
   let n = 0;
   for (const m of members) {
     if (m.approval) n += 1;
-    if (m.asking && !m.superOnly && m.enabled) n += 1;
+    if (m.asking && !m.superOnly && m.enabled) n += Math.max(1, m.waiting ?? 0);
   }
   return n;
+}
+
+/**
+ * How many items wait on the owner for each member, read from MAIN's queue: its open `member`
+ * mirrors (every kind the server mirrors: a question, a permission, a refused command, a stalled
+ * job, a card only he can act on) and the open `routine` items that name it. A server `nudge` is
+ * never one (it is the member's own turn). Pure; the side menu and the Agenda count the same.
+ */
+export function memberWaitCounts(queue: ReadonlyArray<{ kind: string; state: string; member?: string }> | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const q of queue ?? []) {
+    if (q.state === 'done' || !q.member) continue;
+    if (q.kind !== 'member' && q.kind !== 'routine') continue;
+    out[q.member] = (out[q.member] ?? 0) + 1;
+  }
+  return out;
 }
 
 /** Approval cards waiting on the owner (counted in `ekipAskingCount` too). */
@@ -868,6 +894,7 @@ export function buildGlobalEkip(
         enabled: had.enabled && m.enabled,
         ownerWorking: had.ownerWorking + m.ownerWorking,
         asking: had.asking || m.asking,
+        ...((had.waiting ?? 0) + (m.waiting ?? 0) > 0 ? { waiting: (had.waiting ?? 0) + (m.waiting ?? 0) } : {}),
         approval: had.approval || m.approval,
         unread: had.unread + m.unread,
         superOnly: had.superOnly && m.superOnly,

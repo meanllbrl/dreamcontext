@@ -442,6 +442,13 @@ export interface SuperQueueItem {
    *  mirror): draw exactly these sizes; absent = Allow once and Deny / Not needed only (MIRROR of
    *  src/lib/super/types.ts `SuperQueueItem.offer`). */
   offer?: GrantOffer;
+  /** A `permission` item's call (tool and canonical input; `whole` false = cut), copied onto its
+   *  `member` mirror: drawn whole before any Allow; absent = no Allow, only Open (MIRROR of
+   *  src/lib/super/types.ts `SuperQueueItem.call`). */
+  call?: { tool: string; input: string; whole: boolean };
+  /** Already allowed at this size, waiting for the call to run: draw that line, no Allow buttons
+   *  (MIRROR of src/lib/super/types.ts `SuperQueueItem.allowed`). */
+  allowed?: GrantSize;
 }
 
 /** A refused tool call (MIRROR of src/lib/super/types.ts `RefusalFact`): `whole` false = the
@@ -1127,7 +1134,16 @@ export interface SuperDigestWire {
   pad: SuperPadItem[];
   /** Open with the owner, or queued behind an open question. `text`: the item's `ownerText`
    *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
-  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string; member?: string; of?: SuperQueueItem['of'] }>;
+  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string; member?: string; of?: SuperQueueItem['of'];
+    /** An `owner` item's wait kind, or a mirror's whose `of` is `owner` (a refusal, a stall, a card). */
+    wait?: OwnerWaitKind;
+    /** A `routine` item's routine slug. */
+    routine?: string;
+    /** An own item: the record's own session asks. */
+    own?: true;
+    /** The member's title on a mirror, the routine's title on a routine item (flattened, at most
+     *  DIGEST_MAX_TITLE characters): the phone names the row by it. Absent = name it by the slug. */
+    title?: string }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
    *  digest from an older server. */
@@ -1137,6 +1153,15 @@ export interface SuperDigestWire {
   /** The open debts (server owed.ts), read only. Absent in a digest from an older server. */
   owed?: SuperOwed[];
   key: string;
+}
+
+/** The most of a member's or a routine's title a digest row carries (phone-mirror.ts caps it the same). */
+export const DIGEST_MAX_TITLE = 80;
+/** A title as a remote screen draws it: one line, no control or line-separator characters, capped. */
+function digestTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const flat = raw.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(flat).slice(0, DIGEST_MAX_TITLE).join('').trim();
 }
 
 /** A `super_digest` frame's body, or null when it is not one. Drops what it does not know. */
@@ -1164,6 +1189,12 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text,
       ...(q.kind === 'member' && typeof q.member === 'string' && q.member ? { member: q.member.slice(0, 64) } : {}),
       ...(q.kind === 'member' && oneOf(MEMBER_OFS, q.of) ? { of: q.of } : {}),
+      // Each new field only on the kind that can carry it, so a hostile row cannot dress a
+      // question as a refusal or a routine.
+      ...((q.kind === 'owner' || (q.kind === 'member' && q.of === 'owner')) && oneOf(OWNER_WAIT_KINDS, q.wait) ? { wait: q.wait } : {}),
+      ...(q.kind === 'routine' && typeof q.routine === 'string' && MEMBER_SLUG_RE.test(q.routine) ? { routine: q.routine } : {}),
+      ...(q.own === true && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
+      ...((q.kind === 'member' || q.kind === 'routine') && digestTitle(q.title) ? { title: digestTitle(q.title) } : {}),
     })),
     ownerBatches, mainBatches, names,
     // Checked and capped; only open ones travel (the phone draws and never drops them).

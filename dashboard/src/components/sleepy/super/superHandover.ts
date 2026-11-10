@@ -201,16 +201,34 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
  *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
+  // The server's one nudge to a member that stopped in silence is the member's turn, never his
+  // (uye-bildirim K6): never counted, never drawn.
+  if (item.kind === 'nudge') return false;
   // A Bypass child's permission is its Super's to decide first; it is his once it falls to him.
   if (item.kind === 'permission' && item.toSuper === true) return false;
   // An AI Team member waiting on him (the server's mirror of its own record): his from birth,
   // whether or not the Super Agent has read the event yet (owner 2026-11-10).
-  return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.state === 'escalated' || directChildQuestion(item);
+  // A routine waiting on him (K7, derived from disk) and a session's OWN request (K1: a member
+  // Super's own question, permission or wait) are his from birth too; an `owner` item covers a
+  // refused command and a stalled member as well (their waits, `refusal` and `stalled`).
+  return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.kind === 'routine'
+    || item.own === true || item.state === 'escalated' || directChildQuestion(item);
 }
 
-/** A permission of his, a child's or a member's (the mirror of a member's permission): the head of the line. */
+/** What an owner item (or the mirror of one) waits on, when it is a refusal or a stalled member.
+ *  A mirror that carries an offer and no wait is a refusal: an offer rides only a permission or
+ *  a refusal (store.ts `cleanGrantOffer`). */
+export function ownerWaitOf(item: SuperQueueItem): 'refusal' | 'stalled' | null {
+  const ownerLike = item.kind === 'owner' || (item.kind === 'member' && item.of === 'owner');
+  if (!ownerLike) return null;
+  if (item.wait?.kind === 'refusal' || item.wait?.kind === 'stalled') return item.wait.kind;
+  return item.kind === 'member' && item.offer ? 'refusal' : null;
+}
+
+/** A permission of his, a child's or a member's (the mirror of a member's permission), or a
+ *  refused command (a job stopped dead until he answers): the head of the line. */
 function isPermission(item: SuperQueueItem): boolean {
-  return item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission');
+  return item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission') || ownerWaitOf(item) === 'refusal';
 }
 
 /** A child's question that is the owner's from birth (the server's `direct`), still open: the bar
@@ -551,7 +569,7 @@ function bridgeModelChip(m: string, effort: string | undefined | null): { name: 
 export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
 /** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
-export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou';
+export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou' | 'refusal' | 'stalled' | 'routine';
 /** A row's section: one of the notepad's three, or the unanswered lines above them (owed.ts). */
 export type AgendaRowSection = AgendaSection | 'unanswered';
 export interface AgendaRow {
@@ -576,6 +594,12 @@ export interface AgendaRow {
   /** An AI Team member waiting on him (a `member` mirror): its slug. Named by the member, and
    *  pressing it opens the member's page, never a child of this Super. */
   member?: string;
+  /** A routine waiting on him (a `routine` item): its slug. Pressing it opens the routine's
+   *  approval row (or its member), where the change is in view. */
+  routine?: string;
+  /** He already allowed it and it waits for its chat to open (`SuperQueueItem.allowed`): the row
+   *  says so instead of asking again; pressing it still opens where it runs. */
+  allowed?: true;
   /** An unanswered line: the debt the Super still owes him (`SuperOwed.id`), and what it is. */
   owed?: string;
   owedKind?: 'msg' | 'result';
@@ -596,6 +620,8 @@ export interface JobLook {
   /** The child's live status kind in this window, or null when it has no session here. */
   live: (sid: string) => string | null;
   titleFor: (sid: string) => string;
+  /** A routine's title on this machine (a `routine` item's row); absent or '' = its slug. */
+  routineTitleFor?: (slug: string) => string;
   /** The job's name: the child's tab title (falls back to `titleFor`). */
   nameFor?: (sid: string) => string;
   modelFor?: (sid: string) => string | null;
@@ -635,24 +661,35 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
   const chipOf = (k: QueueKind): AgendaChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : k === 'owner' ? 'needsYou' : 'question');
-  // A member's mirror: chipped by what the member's item is.
-  const memberChip = (q: SuperQueueItem): AgendaChip => (q.of === 'permission' ? 'permission' : q.of === 'ask' || q.of === 'question' ? 'question' : 'needsYou');
+  // A member's mirror: chipped by what the member's item is. A refused command and a stalled
+  // member read as what they are, not as a card to act on.
+  const memberChip = (q: SuperQueueItem): AgendaChip => (ownerWaitOf(q) ?? (q.of === 'permission' ? 'permission' : q.of === 'ask' || q.of === 'question' ? 'question' : 'needsYou'));
   const nameOf = (sid: string) => plainJobName(look.nameFor?.(sid) || look.titleFor(sid));
   for (const q of owner) {
-    if (q.kind === 'member') {
+    if (q.kind === 'routine') {
+      // Drawn by its own title (K7): a routine is no child of this Super and may have no member.
+      const slug = q.routine ?? '';
       out.waiting.push({
-        key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member ?? '', text: look.memberTitleFor?.(q.member ?? '') || (q.member ?? ''),
-        line: q.of === 'permission' ? '' : (q.ownerText ?? ''), chip: memberChip(q), at: q.createdAt,
+        key: `q:${q.id}`, section: 'waiting', item: q.id, routine: slug, ...(q.member ? { member: q.member } : {}),
+        text: look.routineTitleFor?.(slug) || slug, line: q.ownerText ?? '', chip: 'routine', at: q.createdAt,
       });
       continue;
     }
-    const own = q.kind === 'ask' || q.kind === 'approval';
+    if (q.kind === 'member') {
+      out.waiting.push({
+        key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member ?? '', text: look.memberTitleFor?.(q.member ?? '') || (q.member ?? ''),
+        line: q.of === 'permission' ? '' : (q.ownerText ?? ''), chip: memberChip(q), at: q.createdAt, ...(q.allowed ? { allowed: true as const } : {}),
+      });
+      continue;
+    }
+    // An OWN item (K1: main's own refused command) is the Super's own, like its `ask`.
+    const own = q.kind === 'ask' || q.kind === 'approval' || q.own === true;
     out.waiting.push({
       key: `q:${q.id}`, section: 'waiting', item: q.id, ...(own ? {} : { sid: q.sessionId }),
       text: own ? look.superTitle : nameOf(q.sessionId),
       // A permission row shows only the child's own request (the bar draws it); never the super's words.
-      line: q.kind === 'permission' ? '' : (q.ownerText ?? ''),
-      chip: chipOf(q.kind), at: q.createdAt, ...(directChildQuestion(q) ? { direct: true } : {}),
+      line: q.kind === 'permission' ? '' : (q.ownerText ?? ''), ...(q.allowed ? { allowed: true as const } : {}),
+      chip: ownerWaitOf(q) ?? chipOf(q.kind), at: q.createdAt, ...(directChildQuestion(q) ? { direct: true } : {}),
     });
   }
   if (isQuestionOpen(state)) {

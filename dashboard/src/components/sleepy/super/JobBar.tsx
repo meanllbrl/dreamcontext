@@ -1,12 +1,17 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
+import { useAutomation } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
-import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
+import type { GrantSize, SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  directChildQuestion, optionsFit, permissionSummary, type JobLook, type OptionsFit,
+  directChildQuestion, optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
+import {
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices,
+} from './ownerAnswer';
+import { sizeWords } from '../chat/RefusalCard';
 import {
   claimOwnerAnswer, memberItemText, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
   releaseOwnerAnswer, useOwnerAnswerVersion,
@@ -14,7 +19,7 @@ import {
 import type { Rect } from './superLayout';
 import { SuperAgentIcon } from '../../layout/NavIcons';
 import { cssEsc } from './StageMotion';
-import { showMemberApproval } from './superApprovals';
+import { showApprovalRow, showMemberApproval } from './superApprovals';
 import './JobBar.css';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 
@@ -74,6 +79,11 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   remote?: boolean;
 }) {
   const { t } = useI18n();
+  // The record this bar draws (main's, or a member's on its own stage): it decides whose crew an
+  // item is and where its answer goes, never the item's kind.
+  const record = recordOf(state);
+  // On a member's own stage, "Always for <member>" names that member.
+  const recordName = record === MAIN_RECORD ? undefined : (look.memberTitleFor?.(record) || record);
   // An `ask` is the super agent's own question: there is no child behind it.
   const child = head && head.kind !== 'ask' ? sessionFor(head.sessionId) : undefined;
   const [, force] = useReducer((n: number) => n + 1, 0);
@@ -140,19 +150,30 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
     >
       <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
-          {head.kind === 'member' ? null : !rect && head.kind !== 'ask' && head.kind !== 'approval'
+          {head.kind === 'member' || head.kind === 'routine' ? null : head.own
+            // The Super's own refused command (K1): its own name, no child to open.
+            ? <span className="super-queue-who">{look.superTitle}</span>
+            : !rect && head.kind !== 'ask' && head.kind !== 'approval'
             // In the dock the stage is not on screen: the child's name opens it there (its card
             // beside the agenda), the way the stage's own band reaches an owner card.
             ? <button type="button" className="super-queue-who super-queue-who--link" data-testid="super-queue-open-child" onClick={() => onShowChild(head.sessionId)}>{titleFor(head.sessionId)}</button>
             : <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>}
-          {head.kind === 'permission'
-            ? <PermissionHead item={head} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} />
+          {allowedWaiting(head) && (head.kind === 'permission' || (head.kind === 'owner' && ownerWaitOf(head) === 'refusal'))
+            ? <AllowedHead item={head} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
+            : head.kind === 'permission'
+            ? <PermissionHead item={head} record={record} memberName={recordName} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} />
             : head.kind === 'ask'
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'member'
-                ? <MemberHead item={head} />
+                ? <MemberHead item={head} record={record} showOptions={showOptions} />
+              : head.kind === 'routine'
+                ? <RoutineHead item={head} />
+              : head.kind === 'owner' && ownerWaitOf(head) === 'refusal'
+                ? <GrantHead item={head} record={record} memberName={recordName} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
+              : head.kind === 'owner' && ownerWaitOf(head) === 'stalled'
+                ? <StalledHead item={head} record={record} onOpen={() => onShowChild(head.sessionId)} />
               : head.kind === 'owner'
                 ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
               : directChildQuestion(head)
@@ -300,14 +321,19 @@ function QueueText({ full, children }: { full: string; children: ReactNode }) {
   );
 }
 
-function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
+function PermissionHead({ item, record, memberName, child, locked, answerOnce, remote = false }: {
   item: SuperQueueItem;
+  record: string;
+  memberName?: string;
   child: ChatSession | undefined;
   locked: boolean;
   answerOnce: (send: () => boolean | void) => void;
   remote?: boolean;
 }) {
   const { t } = useI18n();
+  // A wider size than once goes through the owner-answer route, which writes the rule from the
+  // stored request; Allow once stays the child's own answer, as it always was.
+  const wide = useOwnerAnswer(record, item, 'bar');
   // A remote screen never answers a child's permission (D6): the Mac does.
   if (remote) return <span className="super-queue-text" data-testid="super-queue-permission-remote">{t('super.queue.permissionRemote')}</span>;
   const pending = child?.getModel().pending.find(
@@ -317,11 +343,16 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
     // The child's request is not (yet) in this window — nothing to answer from here.
     return <span className="super-queue-text">{t('super.queue.permissionWaiting')}</span>;
   }
+  // What the bar shows is the child's own request: its whole text is the row's overlay.
+  const command = typeof (pending.input as { command?: unknown } | null)?.command === 'string' ? (pending.input as { command: string }).command : null;
+  const choices = grantChoices(item, { tool: pending.toolName, input: command ?? JSON.stringify(pending.input ?? null), whole: true }, record);
+  const shown = visibleText(permissionSummary(pending.input));
   return (
     <>
-      <QueueText full={`${pending.displayName || pending.toolName} ${permissionSummary(pending.input)}`}>
+      <QueueText full={`${pending.displayName || pending.toolName} ${visibleText(command ?? permissionSummary(pending.input))}${choices.onceOnlyReason ? ` · ${choices.onceOnlyReason}` : ''}`}>
         <strong className="super-queue-tool">{pending.displayName || pending.toolName}</strong>
-        <code className="super-queue-input">{permissionSummary(pending.input)}</code>
+        <code className="super-queue-input">{shown}</code>
+        {choices.onceOnlyReason && <span data-testid="super-queue-once-only"> · {choices.onceOnlyReason}</span>}
       </QueueText>
       <span className="super-queue-actions">
         <button
@@ -330,7 +361,9 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
           data-testid="super-queue-allow"
           disabled={locked}
           onClick={() => answerOnce(() => { const ok = child.answer(pending.requestId, { behavior: 'allow', updatedInput: pending.input }); if (ok) noteOwnerWrote(); return ok; })}
-        >{t('super.queue.allow')}</button>
+        >{t(choices.sizes.length > 1 ? 'owner.answer.allowOnce' : 'super.queue.allow')}</button>
+        {/* Main's own crew has no member size (grantChoices); a member's own stage names it. */}
+        <AlwaysMenu choices={choices} memberName={memberName} busy={locked || wide.busy} onPick={(size) => wide.submit(allowAnswer('permission', size))} />
         <button
           type="button"
           className="super-queue-btn"
@@ -343,32 +376,288 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
   );
 }
 
+
 /**
- * An AI Team member waiting on the owner (its own question, a job's question or permission, a
- * card only he can act on), mirrored into main's queue by the server (owner 2026-11-10): who, what,
- * and ONE button that opens that member's stage, where its own card answers it. Nothing is
- * answered from here: the member's session holds the request.
+ * An AI Team member waiting on the owner, mirrored into main's queue by the server (owner
+ * 2026-11-10), answered IN PLACE (uye-bildirim K11, drawing A1-A6): a question's options, a
+ * permission's or a refused command's Allow once / Always / Deny or Not needed, a stalled job's
+ * Open and Not needed. Whatever this window cannot decide (no owner key, the member's window
+ * closed, a command it cannot show whole, a card only the member's page draws) is one Open button
+ * that brings the member's page, where its own card answers it, as before.
  */
-function MemberHead({ item }: { item: SuperQueueItem }) {
+function MemberHead({ item, record, showOptions }: { item: SuperQueueItem; record: string; showOptions: boolean }) {
   const { t } = useI18n();
   const member = item.member ?? '';
   const name = useAgent(member || null).data?.agent.title || member;
+  const row = ownerRowKind(item);
+  const answer = useOwnerAnswer(record, item, 'bar');
+  const open = () => requestOpenAgents({ slug: member });
+  if (allowedWaiting(item) && (row === 'permission' || row === 'refusal')) {
+    return (
+      <>
+        <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
+        <AllowedHead item={item} onOpen={open} />
+      </>
+    );
+  }
+  if (!answer.fallback && (row === 'permission' || row === 'refusal')) {
+    return (
+      <>
+        <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
+        <GrantHead item={item} record={record} memberName={name} onOpen={open} />
+      </>
+    );
+  }
+  if (!answer.fallback && row === 'stalled') {
+    return (
+      <>
+        <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
+        <StalledHead item={item} record={record} onOpen={open} />
+      </>
+    );
+  }
   const text = memberItemText(item, t);
+  const q = row === 'question' && !answer.fallback ? oneChoiceQuestion(item) : null;
   return (
     <>
       <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
       <QueueText full={text}>{text}</QueueText>
       <span className="super-queue-actions">
+        {q && showOptions && q.options.map((label, i) => (
+          <button
+            key={label}
+            type="button"
+            className={`super-queue-btn super-queue-btn--option${i === 0 ? ' super-queue-btn--allow' : ''}`}
+            data-testid="super-queue-member-option"
+            disabled={answer.busy}
+            onClick={() => answer.submit(questionAnswer(q.question, label))}
+          >{label}</button>
+        ))}
+        {row === 'question' && !answer.fallback ? (
+          <button
+            type="button"
+            className="super-queue-btn super-queue-btn--reply"
+            data-testid="super-queue-member-reply"
+            disabled={!member}
+            // Its card in the Super chat takes his words; no card on screen: the member's page.
+            onClick={() => { if (!showMemberCard(item.id)) open(); }}
+          >{t('owner.answer.reply')}</button>
+        ) : (
+          <button
+            type="button"
+            className="super-queue-btn super-queue-btn--option"
+            data-testid="super-queue-open-member"
+            disabled={!member}
+            onClick={open}
+          >{t('owner.answer.open')}</button>
+        )}
+      </span>
+      {answer.note && <span className="super-queue-text" data-testid="super-queue-note">{t(answer.note)}</span>}
+    </>
+  );
+}
+
+/**
+ * A permission or a refused command answered on the bar: the tool and the whole command (cut
+ * only by the row's width, whole in its overlay), Allow once, the Always menu with exactly the
+ * sizes the server offers, and Deny or Not needed. A command the row cannot show whole (stored
+ * cut) or that nothing may allow offers Open, and says why.
+ */
+function GrantHead({ item, record, memberName, onOpen }: { item: SuperQueueItem; record: string; memberName?: string; onOpen: () => void }) {
+  const { t } = useI18n();
+  const kind = ownerRowKind(item) === 'refusal' ? 'refusal' : 'permission';
+  const answer = useOwnerAnswer(record, item, 'bar');
+  const call = callOf(item);
+  const choices = grantChoices(item, call, record);
+  const input = call ? visibleText(call.input) : '';
+  const lead = kind === 'refusal' ? t('owner.answer.refusedBar') : '';
+  const why = !call ? '' : !call.whole ? t('owner.answer.cut') : !choices.sizes.length ? t('owner.answer.ruleForbids') : choices.onceOnlyReason ?? '';
+  const full = [lead, call?.tool, input].filter(Boolean).join(' ') + (why ? ` · ${why}` : '');
+  const text = call ? null : memberItemText(item, t);
+  return (
+    <>
+      {kind === 'refusal' && <span className="super-queue-needs" data-testid="super-queue-stopped">{t('owner.answer.stopped')}</span>}
+      <QueueText full={text ?? full}>
+        {text ?? (
+          <>
+            {lead && <>{lead} </>}
+            {kind === 'permission' && <strong className="super-queue-tool">{call?.tool}</strong>}
+            {kind === 'permission' && ' '}
+            <code className="super-queue-input" data-testid="super-queue-command">{input}</code>
+            {why && <span data-testid="super-queue-once-only"> · {why}</span>}
+          </>
+        )}
+      </QueueText>
+      <span className="super-queue-actions">
+        {answer.fallback || !choices.sizes.length ? (
+          <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-open-member" onClick={onOpen}>{t('owner.answer.open')}</button>
+        ) : (
+          <>
+            {choices.sizes.includes('once') && (
+              <button
+                type="button"
+                className="super-queue-btn super-queue-btn--allow"
+                data-testid="super-queue-allow-once"
+                disabled={answer.busy}
+                onClick={() => answer.submit(allowAnswer(kind, 'once'))}
+              >{t('owner.answer.allowOnce')}</button>
+            )}
+            <AlwaysMenu choices={choices} memberName={memberName} busy={answer.busy} onPick={(size) => answer.submit(allowAnswer(kind, size))} />
+          </>
+        )}
         <button
           type="button"
-          className="super-queue-btn super-queue-btn--option"
-          data-testid="super-queue-open-member"
-          disabled={!member}
-          onClick={() => requestOpenAgents({ slug: member })}
-        >{t('super.queue.openMember')}</button>
+          className="super-queue-btn"
+          data-testid="super-queue-decline"
+          disabled={answer.busy}
+          onClick={() => answer.submit(declineAnswer(kind))}
+        >{t(kind === 'refusal' ? 'owner.answer.notNeeded' : 'owner.answer.deny')}</button>
+      </span>
+      {answer.note && <span className="super-queue-text" data-testid="super-queue-note">{t(answer.note)}</span>}
+    </>
+  );
+}
+
+/**
+ * A permission or a refused command the owner already allowed, waiting for its call to run (its
+ * chat is closed: `allowed`, set by the server). Asking again would grant twice: the row says it
+ * is allowed and offers Open only.
+ */
+function AllowedHead({ item, onOpen }: { item: SuperQueueItem; onOpen: () => void }) {
+  const { t } = useI18n();
+  const call = callOf(item);
+  const input = call ? visibleText(call.input) : '';
+  const line = t('owner.answer.allowedWaiting');
+  return (
+    <>
+      <QueueText full={[call?.tool, input].filter(Boolean).join(' ') + ` · ${line}`}>
+        {call && <><strong className="super-queue-tool">{call.tool}</strong> <code className="super-queue-input" data-testid="super-queue-command">{input}</code> · </>}
+        <span data-testid="super-queue-allowed">{line}</span>
+      </QueueText>
+      <span className="super-queue-actions">
+        <button type="button" className="super-queue-btn super-queue-btn--option" data-testid="super-queue-open-member" onClick={onOpen}>{t('owner.answer.open')}</button>
       </span>
     </>
   );
+}
+
+/** A member that stopped without closing its job or asking (K6, drawing A6): its last sentence,
+ *  Open, and Not needed (he has seen it; nothing else changes). */
+function StalledHead({ item, record, onOpen }: { item: SuperQueueItem; record: string; onOpen: () => void }) {
+  const { t } = useI18n();
+  const answer = useOwnerAnswer(record, item, 'bar');
+  const text = t('owner.answer.stalled').replace('{text}', visibleText(item.ownerText ?? ''));
+  return (
+    <>
+      <span className="super-queue-needs" data-testid="super-queue-stopped">{t('owner.answer.stopped')}</span>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-open-member" onClick={onOpen}>{t('owner.answer.open')}</button>
+        {!answer.fallback && (
+          <button type="button" className="super-queue-btn" data-testid="super-queue-decline" disabled={answer.busy} onClick={() => answer.submit(declineAnswer('stalled'))}>
+            {t('owner.answer.notNeeded')}
+          </button>
+        )}
+      </span>
+      {answer.note && <span className="super-queue-text" data-testid="super-queue-note">{t(answer.note)}</span>}
+    </>
+  );
+}
+
+/**
+ * A routine waiting on him (K7, drawing A7), drawn by its OWN title (its member's name before it
+ * when it has one): what it waits for, and Review, which brings its row of the Super's approval
+ * card into view, where the change is in view; AI Team when no row is drawn. Never approved here.
+ */
+function RoutineHead({ item }: { item: SuperQueueItem }) {
+  const { t } = useI18n();
+  const slug = item.routine ?? '';
+  const member = item.member ?? '';
+  const memberName = useAgent(member || null).data?.agent.title || member;
+  const routineTitle = (useAutomation(slug || null).data?.automation as { title?: string } | undefined)?.title || slug;
+  const title = [memberName, routineTitle].filter(Boolean).join(' · ');
+  const text = visibleText(item.ownerText ?? '');
+  return (
+    <>
+      <span className="super-queue-who" data-testid="super-queue-routine">{title}</span>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button
+          type="button"
+          className="super-queue-btn super-queue-btn--allow"
+          data-testid="super-queue-review"
+          disabled={!slug}
+          onClick={() => { if (!showApprovalRow(`routine:${slug}`)) requestOpenAgents({ slug: member || slug }); }}
+        >{t('owner.answer.review')}</button>
+      </span>
+    </>
+  );
+}
+
+/**
+ * The Always menu (drawing A2): one entry per wider size the server offers, each saying how long
+ * it lasts; the member's entry shows the rule in full and what is not checked. Absent when only
+ * once is offered (an outward, deleting or classified command: the row says why instead).
+ */
+function AlwaysMenu({ choices, memberName, busy, onPick }: {
+  choices: GrantChoices;
+  memberName?: string;
+  busy: boolean;
+  onPick: (size: GrantSize) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const wide = choices.sizes.filter((s) => s !== 'once');
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  if (!wide.length) return null;
+  const entry = { height: 'auto', flexDirection: 'column', alignItems: 'flex-start', gap: 'var(--space-1)', whiteSpace: 'normal', padding: 'var(--space-2)' } as const;
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        className="super-queue-btn"
+        data-testid="super-queue-always"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((o) => !o)}
+      >{t('owner.answer.always')} ▾</button>
+      {open && (
+        <div className="super-size-menu super-head-menu" role="menu" data-testid="super-queue-always-menu" style={{ minWidth: 280, maxWidth: 400 }}>
+          {wide.map((size) => {
+            const w = sizeWords(size, t, memberName, true);
+            return (
+              <button key={size} type="button" role="menuitem" className="super-head-menu-item" style={entry} data-testid={`super-queue-always-${size}`} onClick={() => { setOpen(false); onPick(size); }}>
+                <strong>{w.title}</strong>
+                <span className="super-size-menu-note" style={{ padding: 0 }}>{w.desc}</span>
+                {size === 'member' && choices.rule && <code className="super-queue-input" style={{ whiteSpace: 'normal', wordBreak: 'break-all' }} data-testid="super-queue-rule">{visibleText(choices.rule)}</code>}
+                {choices.notChecked && <span className="super-size-menu-note" style={{ padding: 0 }} data-testid="super-queue-not-checked">{choices.notChecked}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** Bring a member's card in the Super chat into view and put the keyboard in its reply field.
+ *  False when no such card is drawn (the chat not on screen): the caller opens the member. */
+export function showMemberCard(itemId: string, root: ParentNode = document): boolean {
+  const card = [...root.querySelectorAll<HTMLElement>('[data-testid="super-member-card"]')].find((el) => el.dataset.item === itemId);
+  if (!card || !card.isConnected) return false;
+  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  card.querySelector<HTMLElement>('textarea, button:not([disabled])')?.focus({ preventScroll: true });
+  return true;
 }
 
 /**

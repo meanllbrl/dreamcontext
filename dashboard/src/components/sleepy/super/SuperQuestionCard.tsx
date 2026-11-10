@@ -10,7 +10,11 @@ import { useAgent } from '../../../hooks/useAgents';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { CardHeader } from '../chat/molecules';
+import { GrantDecision } from '../chat/RefusalCard';
 import '../chat/AgentThreadCard.css';
+import {
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
+} from './ownerAnswer';
 import {
   askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
   type AskRef,
@@ -175,8 +179,11 @@ export function SuperQuestionTail({ session, anchored }: {
 
 /**
  * An AI Team member waiting on the owner (owner 2026-11-10: "üyenin izni kimseye düşmüyor"), as
- * main's record mirrors it: the member, what it waits for, its options read-only, and ONE button
- * that opens the member's page, where the member's own card answers it through its own session.
+ * main's record mirrors it, answered IN PLACE (uye-bildirim K11, drawing B1/B2): a question's
+ * options (and, for its own question to him, his words), a permission's or a refused command's
+ * sizes with the whole command, a stalled job's Not needed. Whatever this window cannot decide
+ * (no owner key, the member's window closed, a command it cannot show whole, a card only the
+ * member's page draws) is one Open button that brings the member's page, as before.
  * Leaves the chat when the member's item closes, wherever it was answered (Telegram, its page).
  */
 function MemberWaitCard({ item }: { item: SuperQueueItem }) {
@@ -184,28 +191,100 @@ function MemberWaitCard({ item }: { item: SuperQueueItem }) {
   const slug = item.member ?? '';
   const agent = useAgent(slug || null).data?.agent;
   const name = agent?.title || slug;
+  const row = ownerRowKind(item);
+  // Member mirrors are drawn in MAIN's chat only (SuperQuestionView.members): main's record.
+  const answer = useOwnerAnswer(MAIN_RECORD, item, 'chat');
+  const [reply, setReply] = useState('');
   const questions = item.ask ? askQuestionsOf(item.ask) : [];
+  const call = callOf(item);
+  const choices = grantChoices(item, call, MAIN_RECORD);
+  const open = () => requestOpenAgents({ slug });
+  const live = !answer.fallback;
+  // Already allowed, waiting for its chat to open: the line and Open, never a second Allow.
+  const allowed = allowedWaiting(item) && (row === 'permission' || row === 'refusal');
+  const grant = live && !allowed && (row === 'permission' || row === 'refusal') && !!call;
+  const one = live && row === 'question' ? oneChoiceQuestion(item) : null;
+  const title = row === 'refusal' ? 'owner.answer.refusedTitle' : item.of === 'permission' ? 'super.queue.memberCardPermission' : 'super.queue.memberCard';
   return (
-    <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of}>
+    <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of} data-row={row}>
       <CardHeader
         glyph={<AgentAvatar slug={slug} title={name} hasPhoto={agent?.hasPhoto ?? false} size={22} />}
-        title={t(item.of === 'permission' ? 'super.queue.memberCardPermission' : 'super.queue.memberCard').replace('{name}', name)}
+        title={t(title).replace('{name}', name)}
       />
-      {questions.length
+      {allowed ? (
+        <>
+          {call && <pre className="chat-agentthread-note" data-testid="super-member-command">{visibleText(call.input, true)}</pre>}
+          <p className="chat-agentthread-note" data-testid="super-member-allowed">{t('owner.answer.allowedWaiting')}</p>
+        </>
+      ) : grant && call ? (
+        <GrantDecision
+          kind={row === 'refusal' ? 'refusal' : 'permission'}
+          call={call}
+          choices={choices}
+          words={{ lead: t(row === 'refusal' ? 'owner.answer.refusedLead' : 'owner.answer.permissionLead').replace('{name}', name), memberName: name }}
+          busy={answer.busy}
+          onAllow={(size) => answer.submit(allowAnswer(row === 'refusal' ? 'refusal' : 'permission', size))}
+          onDecline={() => answer.submit(declineAnswer(row))}
+        />
+      ) : questions.length
         ? questions.map((q, i) => (
           <div key={i} className="chat-agentthread-note">
             <strong>{q.question}</strong>
-            {q.options && q.options.length > 0 && <ul>{q.options.map((o, j) => <li key={j}>{o.label}</li>)}</ul>}
+            {/* A single-choice question is answered by its option; anything richer is read here. */}
+            {!one && q.options && q.options.length > 0 && <ul>{q.options.map((o, j) => <li key={j}>{o.label}</li>)}</ul>}
           </div>
         ))
         // Its own words when it has some; a permission's are the child's request, drawn on its page.
-        : item.ownerText ? <p className="chat-agentthread-note">{memberItemText(item, t)}</p> : null}
-      <div className="chat-agentthread-actions">
-        <button type="button" className="chat-agentthread-btn is-primary" data-testid="super-member-open" disabled={!slug} onClick={() => requestOpenAgents({ slug })}>
-          {t('super.queue.openMember')}
-        </button>
-      </div>
-      <p className="chat-agentthread-note">{t('super.queue.memberCardNote')}</p>
+        : item.ownerText
+          ? <p className="chat-agentthread-note">{row === 'stalled' ? t('owner.answer.stalled').replace('{text}', visibleText(item.ownerText)) : memberItemText(item, t)}</p>
+          : null}
+      {live && item.of === 'ask' && (
+        // The member's own question to him: his words go into the member's Super as his (K5).
+        <textarea
+          className="chat-agentthread-note"
+          data-testid="super-member-reply"
+          rows={2}
+          value={reply}
+          placeholder={t('owner.answer.replyPlaceholder')}
+          aria-label={t('owner.answer.reply')}
+          onChange={(e) => setReply(e.target.value)}
+          disabled={answer.busy}
+        />
+      )}
+      {!grant && (
+        <div className="chat-agentthread-actions">
+          {one && one.options.map((label, i) => (
+            <button
+              key={label}
+              type="button"
+              className={`chat-agentthread-btn${i === 0 ? ' is-primary' : ''}`}
+              data-testid="super-member-option"
+              disabled={answer.busy}
+              onClick={() => answer.submit(questionAnswer(one.question, label))}
+            >{label}</button>
+          ))}
+          {live && item.of === 'ask' && (
+            <button
+              type="button"
+              className="chat-agentthread-btn"
+              data-testid="super-member-send"
+              disabled={answer.busy || !reply.trim()}
+              onClick={() => answer.submit({ kind: 'ask', text: reply.trim() })}
+            >{t('owner.answer.send')}</button>
+          )}
+          <button type="button" className={`chat-agentthread-btn${one ? '' : ' is-primary'}`} data-testid="super-member-open" disabled={!slug} onClick={open}>
+            {t('owner.answer.open')}
+          </button>
+          {live && row === 'stalled' && (
+            <button type="button" className="chat-agentthread-btn" data-testid="super-member-dismiss" disabled={answer.busy} onClick={() => answer.submit(declineAnswer('stalled'))}>
+              {t('owner.answer.notNeeded')}
+            </button>
+          )}
+        </div>
+      )}
+      {answer.note
+        ? <p className="chat-agentthread-note" data-testid="super-member-note">{t(answer.note)}</p>
+        : !grant && !allowed && !one && item.of !== 'ask' && row !== 'stalled' && <p className="chat-agentthread-note">{t('super.queue.memberCardNote')}</p>}
     </div>
   );
 }
