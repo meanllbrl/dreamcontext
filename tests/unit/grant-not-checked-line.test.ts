@@ -10,16 +10,19 @@ const WT = '/Users/someone/.claude-worktrees/acme-storefront-weekly';
 
 describe('notCheckedLine', () => {
   it('names the folder relative to its root, in the project or a worktree', () => {
-    expect(notCheckedLine(`${PROJECT}/tools/weekly-total.mjs`, [PROJECT, WT])).toBe('What it loads from tools/ is not checked.');
-    expect(notCheckedLine(`${WT}/scripts/verify/look.mjs`, [PROJECT, WT])).toBe('What it loads from scripts/verify/ is not checked.');
+    expect(notCheckedLine(`${PROJECT}/tools/weekly-total.mjs`, [PROJECT, WT])).toBe('Any arguments. What it loads from tools/ is not checked.');
+    expect(notCheckedLine(`${WT}/scripts/verify/look.mjs`, [PROJECT, WT])).toBe('Any arguments. What it loads from scripts/verify/ is not checked.');
   });
   it('a script at a root reads as the project; never an absolute path', () => {
-    expect(notCheckedLine(`${PROJECT}/run.mjs`, [PROJECT])).toBe('What it loads from the project is not checked.');
+    expect(notCheckedLine(`${PROJECT}/run.mjs`, [PROJECT])).toBe('Any arguments. What it loads from the project is not checked.');
     const line = notCheckedLine('/private/var/folders/8h/T/x/acme/tools/a.mjs', ['/private/var/folders/8h/T/x/acme']);
-    expect(line).toBe('What it loads from tools/ is not checked.');
+    expect(line).toBe('Any arguments. What it loads from tools/ is not checked.');
     expect(line).not.toContain('/private');
   });
+  it('says the grant covers any arguments: the card shows only the exact command', () => {
+    expect(notCheckedLine(`${PROJECT}/tools/weekly-total.mjs`, [PROJECT])).toMatch(/^Any arguments\. /);
+  });
   it('the most specific root wins (a worktree under a project path)', () => {
-    expect(notCheckedLine(`${PROJECT}/.wt/a/tools/x.mjs`, [PROJECT, `${PROJECT}/.wt/a`])).toBe('What it loads from tools/ is not checked.');
+    expect(notCheckedLine(`${PROJECT}/.wt/a/tools/x.mjs`, [PROJECT, `${PROJECT}/.wt/a`])).toBe('Any arguments. What it loads from tools/ is not checked.');
   });
 });

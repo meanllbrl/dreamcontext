@@ -2264,15 +2264,17 @@ export function grantOffer(contextRoot: string, call: { tool: string; input: unk
 }
 
 /**
- * The one line an always-size carries about what a pinned script does NOT cover: what it loads
- * from its own folder. Named relative to the root it lives in (`tools/`), never as an absolute
+ * The one line an always-size carries about a pinned script's reach: it covers any arguments,
+ * and NOT what it loads from its own folder. Named relative to the root it lives in (`tools/`), never as an absolute
  * path a person cannot read; the project root itself reads as "the project".
  */
 export function notCheckedLine(scriptPath: string, roots: readonly string[]): string {
   const folder = dirname(scriptPath);
   const root = [...roots].sort((a, b) => b.length - a.length).find((r) => folder === r || folder.startsWith(r.endsWith('/') ? r : `${r}/`));
   const rel = root === undefined ? basename(folder) : folder.slice(root.length).replace(/^\/+/, '');
-  return rel ? `What it loads from ${rel}/ is not checked.` : 'What it loads from the project is not checked.';
+  // The grant covers the pinned script with ANY arguments (match.ts): the card must say so, it
+  // shows only the exact command the owner is looking at.
+  return rel ? `Any arguments. What it loads from ${rel}/ is not checked.` : 'Any arguments. What it loads from the project is not checked.';
 }
 
 /** A pending permission's call as the registry holds it: Bash's whole command, else nothing whole. */
