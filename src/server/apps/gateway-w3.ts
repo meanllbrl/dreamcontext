@@ -13,11 +13,19 @@
  *   /__dc/ask         bearer only       ask the app's assistant; polled at /__dc/ask/:id
  *   /__dc/embed/:view cookie only       302 to a dreamcontext screen, carrying the embed token
  *   /__dc/learn       bearer only       {text}: one finding for sleep (learn-queue.ts); the gateway stamps the app
+ *   /__dc/data/status cookie + bearer   {mode, shared, pending, held}: where this app's data stands (app-veri-ortak K8)
+ *   /__dc/data/read   cookie + bearer   ?path=: one file, or `dir/`'s files one level down
+ *   /__dc/data/write  bearer only       {path, content}: atomic (a dotted temp + rename)
+ *   /__dc/data/remove bearer only       {path}: the one real delete of a shared file (a tombstone, K6)
+ *
+ * Every data path resolves inside the CALLING app's own data folder only (`containedPath`:
+ * `safeChildPath` plus the K4 name rule, so `..`, a dotted part and an instruction name are
+ * refused), and no link is followed.
  */
 
-import { randomUUID } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gatewayDashboardPort, gatewayTheme, registerGatewayRoute, type AppGateway } from './gateway.js';
@@ -39,6 +47,11 @@ import { buildAppLink } from '../../lib/app-link.js';
 import { issueLinkNonce } from './link-nonces.js';
 import { appendFinding } from '../../lib/apps/learn-queue.js';
 import { publicConfig, readAppConfig } from '../../lib/apps/app-config.js';
+import { appDataDir, checkAppDataChain, ensureAppDataDir } from '../../lib/apps/data-dir.js';
+import { containedPath } from '../../lib/apps/data-conflicts.js';
+import { FILE_MAX_BYTES } from '../../lib/apps/data-share.js';
+import { addTombstone, clearTombstones } from '../../lib/apps/data-deletes.js';
+import { appDataStatus, sharedMember, trackedAppFiles } from '../../lib/apps/others.js';
 
 const NOTIFY_PER_MINUTE = 30;
 
@@ -329,4 +342,171 @@ registerGatewayRoute('/__dc/embed', { cookie: true, bearer: false }, (gw, req, r
   }
   res.writeHead(302, { Location: to.toString(), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
   res.end();
+});
+
+// ─── data (app-veri-ortak r6, K6, K8) ───────────────────────────────────────────────
+
+const DATA_LIST_MAX = 500;
+const DATA_LIST_BYTES = 8 * 1024 * 1024;
+
+/** The calling app's data folder, its chain checked (no link on the way), or null. */
+function ownDataDir(gw: AppGateway, make: boolean): string | null {
+  const rec = gw.runtime.rec;
+  try {
+    if (make) return ensureAppDataDir(rec.projectRoot, rec.slug);
+    if (!checkAppDataChain(rec.projectRoot, rec.slug).ok) return null;
+    return appDataDir(rec.projectRoot, rec.slug);
+  } catch { return null; }
+}
+
+/** `rel` inside `dir` (the K4 name rule on every part), with no existing step a link, or null. */
+function realTarget(dir: string, rel: string): string | null {
+  const abs = containedPath(dir, rel);
+  if (!abs) return null;
+  let cur = dir;
+  for (const part of relative(dir, abs).split(sep)) {
+    cur = join(cur, part);
+    let st;
+    try { st = lstatSync(cur); } catch { break; }
+    if (st.isSymbolicLink()) return null;
+  }
+  return abs;
+}
+
+const WRITE_TMP_PREFIX = '.dc-write-';
+
+/** A `.dc-write-*` a crashed write left beside its target (older than a minute) goes. */
+function sweepWriteTemps(folder: string): void {
+  let names: string[];
+  try { names = readdirSync(folder); } catch { return; }
+  for (const n of names) {
+    if (!n.startsWith(WRITE_TMP_PREFIX)) continue;
+    const p = join(folder, n);
+    try { const st = lstatSync(p); if (st.isFile() && Date.now() - st.mtimeMs > 60_000) unlinkSync(p); } catch { /* gone */ }
+  }
+}
+
+function badPath(res: ServerResponse): void {
+  send(res, 400, { error: 'bad_path', message: 'A path inside this app\'s own data folder: no "..", no part starting with a dot, no agent instruction name.' });
+}
+
+/** A data path as the caller sent it: relative, `/`-separated, a folder only with a trailing `/`. */
+function relOf(raw: unknown): { rel: string; folder: boolean } | null {
+  if (typeof raw !== 'string' || !raw || raw.length > 1024) return null;
+  const folder = raw.endsWith('/');
+  const rel = folder ? raw.slice(0, -1) : raw;
+  return rel ? { rel, folder } : null;
+}
+
+function readOne(abs: string): { text: string } | { error: string } {
+  try {
+    const st = lstatSync(abs);
+    if (st.isSymbolicLink() || !st.isFile()) return { error: 'not_a_file' };
+    if (st.size > FILE_MAX_BYTES) return { error: 'too_big' };
+    return { text: readFileSync(abs, 'utf-8') };
+  } catch { return { error: 'not_found' }; }
+}
+
+registerGatewayRoute('/__dc/data', { cookie: true, bearer: true }, async (gw, req, res, ident, url) => {
+  const method = (req.method ?? 'GET').toUpperCase();
+  const what = url.pathname.slice('/__dc/data'.length);
+  const rec = gw.runtime.rec;
+
+  if (what === '/status') {
+    if (method !== 'GET') { send(res, 405, { error: 'method' }); return; }
+    const s = appDataStatus(homeDir, rec);
+    send(res, 200, { mode: s.mode, shared: s.shared, pending: s.pending, held: s.held });
+    return;
+  }
+
+  if (what === '/read') {
+    if (method !== 'GET') { send(res, 405, { error: 'method' }); return; }
+    const p = relOf(url.searchParams.get('path'));
+    const dir = ownDataDir(gw, false);
+    if (!p) { badPath(res); return; }
+    if (!dir) { send(res, 404, { error: 'not_found' }); return; }
+    const abs = realTarget(dir, p.rel);
+    if (!abs) { badPath(res); return; }
+    if (!p.folder) {
+      const one = readOne(abs);
+      if ('error' in one) { send(res, one.error === 'not_found' ? 404 : 409, { error: one.error }); return; }
+      send(res, 200, { path: p.rel, text: one.text });
+      return;
+    }
+    let names: string[];
+    try {
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink() || !st.isDirectory()) { send(res, 404, { error: 'not_found' }); return; }
+      names = readdirSync(abs).sort();
+    } catch { send(res, 404, { error: 'not_found' }); return; }
+    const records: { path: string; text: string }[] = [];
+    let bytes = 0;
+    for (const name of names) {
+      if (records.length >= DATA_LIST_MAX) break;
+      const rel = `${p.rel}/${name}`;
+      const fileAbs = containedPath(dir, rel);
+      if (!fileAbs) continue; // a dotted or instruction-named file is never handed to the page
+      const one = readOne(fileAbs);
+      if ('error' in one) continue;
+      bytes += Buffer.byteLength(one.text);
+      if (bytes > DATA_LIST_BYTES) break;
+      records.push({ path: rel, text: one.text });
+    }
+    send(res, 200, { path: `${p.rel}/`, records });
+    return;
+  }
+
+  if (what === '/write' || what === '/remove') {
+    // Only the app's own backend: the page writes through its backend, never directly.
+    if (ident.kind !== 'backend') { req.resume(); send(res, 403, { error: 'backend_only', message: `/__dc/data${what} is for the app's own backend (Bearer DC_TOKEN).` }); return; }
+    if (method !== 'POST') { req.resume(); send(res, 405, { error: 'method' }); return; }
+    let body: Record<string, unknown>;
+    try { body = (await readJson(req, FILE_MAX_BYTES + 64 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) { send(res, 400, { error: 'invalid_body' }); return; }
+    const p = relOf(body.path);
+    if (!p || p.folder) { badPath(res); return; }
+    const dir = ownDataDir(gw, what === '/write');
+    if (!dir) { send(res, 409, { error: 'data_folder', message: 'The app\'s data folder is missing or not a real folder.' }); return; }
+    const abs = realTarget(dir, p.rel);
+    if (!abs) { badPath(res); return; }
+
+    if (what === '/write') {
+      const content = typeof body.content === 'string' ? body.content : body.content !== undefined ? JSON.stringify(body.content, null, 2) : null;
+      if (content === null) { send(res, 400, { error: 'invalid_body', message: '{path, content} is required' }); return; }
+      if (Buffer.byteLength(content) > FILE_MAX_BYTES) { send(res, 413, { error: 'too_big', message: 'A data file is at most 5 MB.' }); return; }
+      const tmp = join(dirname(abs), `${WRITE_TMP_PREFIX}${randomBytes(6).toString('hex')}`);
+      try {
+        mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
+        // A folder made just now must still be inside (no link raced in).
+        if (!realTarget(dir, p.rel)) { badPath(res); return; }
+        try { if (lstatSync(abs).isSymbolicLink()) { send(res, 409, { error: 'not_a_file' }); return; } } catch { /* new file */ }
+        sweepWriteTemps(dirname(abs));
+        writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+        renameSync(tmp, abs);
+      } catch (e) {
+        try { rmSync(tmp, { force: true }); } catch { /* never written */ }
+        send(res, 500, { error: 'write_failed', message: (e as NodeJS.ErrnoException).code ?? 'write failed' });
+        return;
+      }
+      // Written again: an earlier delete of this path is no longer the app's word (K6).
+      try { clearTombstones(homeDir, rec.hash, [p.rel]); } catch { /* none */ }
+      send(res, 200, { ok: true, path: p.rel });
+      return;
+    }
+
+    // remove: a tracked file of this app's live shared set, deleted here AND for the team.
+    const m = readManifest(rec.root);
+    const status = appDataStatus(homeDir, rec);
+    const tracked = trackedAppFiles(rec.projectRoot).get(rec.slug) ?? [];
+    if (status.mode !== 'shared' || !sharedMember(m.ok ? m.manifest.data : null, status.consent, p.rel) || !tracked.includes(p.rel)) {
+      send(res, 403, { error: 'not_shared', message: 'Only a file the team already has, on a path this Mac shares, is removed this way. Delete a local file with your own code.' });
+      return;
+    }
+    try { addTombstone(homeDir, rec.hash, p.rel); } catch (e) { send(res, 500, { error: 'remove_failed', message: (e as Error).message }); return; }
+    try { if (lstatSync(abs).isFile()) unlinkSync(abs); } catch { /* already gone from disk */ }
+    send(res, 200, { ok: true, path: p.rel, team: true });
+    return;
+  }
+
+  send(res, 404, { error: 'not_found', message: 'GET /__dc/data/status, GET /__dc/data/read?path=, POST /__dc/data/write, POST /__dc/data/remove' });
 });

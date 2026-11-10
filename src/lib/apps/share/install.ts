@@ -12,8 +12,15 @@
  * on a `local` branch at `<project>-apps/installed/<slug>/`. Per owner decision 1 the app then
  * runs like the owner's own apps; the install screen says so in plain words.
  *
- * Uninstall moves the code, its repo and its settings to `~/.dreamcontext/apps/trash/`; nothing
- * is deleted by inference (a-delete-is-never-inferred-from-absence). Restore brings it back.
+ * Uninstall moves the code, its repo, its settings and its team-data consent to
+ * `~/.dreamcontext/apps/trash/`; nothing is deleted by inference
+ * (a-delete-is-never-inferred-from-absence). Restore brings it back.
+ *
+ * A teammate's app (app-veri-ortak K9): when this brain already holds team data under the app's
+ * slug (`_dream_context/apps/<slug>/` with tracked files), the install KEEPS that slug and uses the
+ * folder as it is (never emptied); a slug another registered app holds is `team_slug_taken`. Team
+ * files on paths the installed manifest does not share then go to the conflict store
+ * (`applyPullRuleForInstall`, the K5 rule), so a path this Mac calls local holds no team file.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -22,7 +29,6 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { devNull } from 'node:os';
 import { extname, join } from 'node:path';
 import { appsHome, appRootFor, getApp, installedAppsDir, listApps, registerInstalledApp, unregisterApp, type AppRecord } from '../registry.js';
-import { APP_SLUG_RE } from '../bundle.js';
 import { cleanText, parseManifest, type ConfigField } from '../manifest.js';
 import { appConfigPath, newConfigId, setAppConfig } from '../app-config.js';
 import { appLogoDir, appLogoPath } from '../app-logo.js';
@@ -32,6 +38,12 @@ import { HostError, parseAppRepoRef, resolveAppHost, type AppHost } from './host
 import { runGate, type GateFile, type GateReport } from './gate.js';
 import { initHardRepo, installedGit, installedGitAsync, lsTree, readBlob, revParse } from './installed-git.js';
 import { writeEnvSecrets } from '../../env-secrets.js';
+import { moveConsent, restoreConsent } from '../data-consent.js';
+import { trackedAppFiles } from '../others.js';
+import { applyPullRuleForInstall } from '../data-exchange.js';
+import { rekeyAppState } from '../data-conflicts.js';
+import { teamHash } from '../data-stage.js';
+import { APP_SLUG_RE, appHash } from '../bundle.js';
 import { licenseKind } from './publish.js';
 import { ICON_MAX_BYTES, imageDataUrl, storePage, type StorePage } from '../store-facts.js';
 import { isDefaultIconBytes } from '../icon.js';
@@ -246,15 +258,35 @@ function pruneIncoming(home: string, keep: string): void {
   } catch { /* no dir */ }
 }
 
-/** A local slug no app, app folder or data folder of this project uses. */
-function freeSlug(home: string, projectRoot: string, base: string): string {
-  const taken = (s: string) => !!getApp(home, projectRoot, s) || existsSync(join(installedAppsDir(projectRoot), s)) || existsSync(appRootFor(projectRoot, s)) || existsSync(appDataDir(projectRoot, s));
+/**
+ * A local slug no app, app folder or data folder of this project uses. A data folder the team
+ * tracks under `base` means "keep this slug": the app installs onto its team's data, or not at all
+ * (`team_slug_taken` when another registered app or app folder holds the name).
+ */
+export function freeSlug(home: string, projectRoot: string, base: string, teamTracked = false): string {
+  const codeTaken = (s: string) => !!getApp(home, projectRoot, s) || existsSync(join(installedAppsDir(projectRoot), s)) || existsSync(appRootFor(projectRoot, s));
+  if (teamTracked && base !== 'installed') {
+    if (codeTaken(base)) throw new InstallError('team_slug_taken', `The team's data for "${base}" is in this brain, but another app here already uses that name. Rename that app (or remove it), then install again so the data stays with its app.`);
+    return base;
+  }
+  const taken = (s: string) => codeTaken(s) || existsSync(appDataDir(projectRoot, s));
   if (!taken(base) && base !== 'installed') return base;
   for (let i = 2; i < 100; i++) {
     const s = `${base.slice(0, 60)}-${i}`;
     if (APP_SLUG_RE.test(s) && !taken(s)) return s;
   }
   throw new InstallError('slug_taken', 'No free name for this app in this project.');
+}
+
+/** `rekeyAppState`'s answer as a refusal reason, or null when it moved (or had nothing to move). */
+function rekeyRefusal(r: unknown): string | null {
+  if (typeof r === 'string') return r || null;
+  if (r && typeof r === 'object') {
+    const o = r as { ok?: unknown; reason?: unknown };
+    if (typeof o.reason === 'string' && o.reason) return o.reason;
+    if (o.ok === false) return 'a pull is open';
+  }
+  return null;
 }
 
 // Never the installer's edits: keys, data, dependencies, logs and build output.
@@ -306,9 +338,20 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const facts = factsOf(files, m);
   if (facts.npmProblem) throw new InstallError('npm', facts.npmProblem);
 
-  const slug = freeSlug(opts.home, opts.projectRoot, m.slug);
+  // The team's data for this slug already in the brain: the install keeps the slug (K9).
+  const teamTracked = APP_SLUG_RE.test(m.slug) && (trackedAppFiles(opts.projectRoot).get(m.slug)?.length ?? 0) > 0;
+  const slug = freeSlug(opts.home, opts.projectRoot, m.slug, teamTracked);
   const installId = randomBytes(16).toString('hex');
   const configId = newConfigId();
+  // The team folder's per-machine state (pull record, conflict store, tombstones) is keyed by its
+  // team hash until an app owns it: it moves to the installed app's hash BEFORE anything else, and
+  // an open pull of that folder refuses the install (nothing moved yet).
+  const teamKey = teamTracked ? teamHash(opts.projectRoot, slug) : null;
+  const ownKey = appHash(opts.projectRoot, slug, installId);
+  if (teamKey) {
+    const why = rekeyRefusal(rekeyAppState(opts.home, teamKey, ownKey));
+    if (why) throw new InstallError('team_pull_open', `The team's data for "${slug}" is being pulled right now (${why}). Install again once the sync is done.`);
+  }
   const src = sourceRepo(opts.home, installId);
   mkdirSync(sourcesDir(opts.home), { recursive: true, mode: 0o700 });
   const root = join(installedAppsDir(opts.projectRoot), slug);
@@ -328,6 +371,8 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   } catch (e) {
     rmSync(root, { recursive: true, force: true });
     try { installedGit(src, ['config', 'core.bare', 'true']); renameSync(src, incoming); } catch { rmSync(src, { recursive: true, force: true }); }
+    // No app owns the folder after all: its state goes back to the team key.
+    if (teamKey) { try { rekeyAppState(opts.home, ownKey, teamKey); } catch { /* left under the unused key */ } }
     throw e;
   }
   rmSync(join(dir, `${opts.previewId}.json`), { force: true });
@@ -341,6 +386,15 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const values = Object.fromEntries(Object.entries(opts.config ?? {}).filter(([k]) => m.config.some((f) => f.key === k && f.type !== 'secret')));
   if (Object.keys(values).length) setAppConfig(opts.home, configId, m.config, values);
   try { allowAppDir(opts.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
+  // Installed onto the team's folder: the data stays as it is; only team files on a path this
+  // manifest does not share move to the conflict store (the K5 rule, data-exchange.ts).
+  if (teamTracked) {
+    // The registry's hash is the one every door asks: should it ever differ, the state follows it.
+    if (teamKey && rec.hash !== ownKey) { try { rekeyAppState(opts.home, ownKey, rec.hash); } catch { /* asked again on the next pull */ } }
+    try {
+      applyPullRuleForInstall({ gitCwd: opts.projectRoot, contextRoot: join(opts.projectRoot, '_dream_context'), projectRoot: opts.projectRoot, home: opts.home }, slug, rec.hash);
+    } catch { /* the next team pull applies the same rule */ }
+  }
   return { rec, renamed: slug !== m.slug };
 }
 
@@ -378,6 +432,8 @@ export function uninstallApp(home: string, rec: AppRecord, opts: { deleteData?: 
   // The owner's logo goes with its settings, and comes back with them.
   const logo = appLogoPath(home, rec.configId);
   if (logo) { try { move(logo, join(t, `logo${extname(logo)}`)); } catch { /* the app's own icon then */ } }
+  // The owner's team-data consent goes with the app's trash entry and comes back with it (K3).
+  try { moveConsent(home, rec.hash, t); } catch { /* none, or kept where it was */ }
   if (opts.deleteData) {
     const data = appDataDir(rec.projectRoot, rec.slug);
     if (existsSync(data)) move(data, join(t, 'data'));
@@ -424,6 +480,7 @@ export function restoreFromTrash(home: string, id: string): AppRecord {
   if (existsSync(join(t, 'data'))) { mkdirSync(join(data, '..'), { recursive: true }); move(join(t, 'data'), data); }
   const { hash: _h, createdAt: _c, origin: _o, ...rest } = rec;
   const back = registerInstalledApp(home, { ...rest, installId: rec.installId });
+  try { restoreConsent(home, back.hash, t); } catch { /* asked again on the Apps page */ }
   rmSync(t, { recursive: true, force: true });
   return back;
 }

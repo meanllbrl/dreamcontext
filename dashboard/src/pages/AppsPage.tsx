@@ -11,6 +11,7 @@ import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
 import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow } from '../components/apps/AppCard';
 import { InstallSheet, SharedApps, TrashList, type SharedList } from '../components/apps/ShareSheets';
 import { askAgent } from '../components/apps/askAgent';
+import { AppDataNotices } from '../components/apps/AppDataNotice';
 import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';
 import './AppsPage.css';
@@ -23,6 +24,7 @@ import './AppsPage.css';
  */
 /** Beside this Mac's apps (plan-veri K5): a teammate's app (its note only) and a removed app's data. */
 type AppOther =
+  | { kind: 'team-data'; slug: string; title: string; files: number; dataPath: string; knowledgeId: string | null }
   | { kind: 'team-note'; slug: string; title: string; note: string; knowledgeId: string }
   | { kind: 'orphan-data'; slug: string; dataPath: string };
 
@@ -153,6 +155,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
       {tab === 'mine' && (
         <>
           {canLaunch && <SetupLine setup={data?.setup} apps={apps} onChanged={refresh} />}
+          {canLaunch && <AppDataNotices apps={apps} onChanged={refresh} />}
           {isLoading && <p className="apps-page__muted">{t('apps.loading')}</p>}
           {error && <p className="error-state">{(error as Error).message}</p>}
           {!isLoading && !error && apps.length === 0 && (
@@ -167,19 +170,28 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           {canLaunch && <TrashList key={`t:${appsKey}`} onChanged={refresh} />}
           {others.length > 0 && (
             <ul className="apps-others" aria-label={t('apps.others.label')}>
-              {others.map((o) => (
-                <li key={`${o.kind}:${o.slug}`} className="apps-other">
-                  <div className="apps-other__text">
-                    <span className="apps-other__name">{o.kind === 'team-note' ? o.title : o.slug}</span>
-                    <span className="apps-other__note">{o.kind === 'team-note' ? t('apps.others.teamNote') : t('apps.others.orphan')}</span>
-                  </div>
-                  {o.kind === 'team-note' ? (
-                    <button type="button" className="apps-other__btn" onClick={() => openNote(o.knowledgeId)}>{t('apps.others.openNote')}</button>
-                  ) : (
-                    <button type="button" className="apps-other__btn" onClick={() => revealData(o.dataPath)}>{t('apps.others.openFolder')}</button>
-                  )}
-                </li>
-              ))}
+              {others.map((o) => {
+                // A teammate's app with its data here: Kur when it is shared with this account (K9).
+                const kur = o.kind === 'team-data' && canLaunch ? (shared.data?.shared ?? []).find((x) => !x.installed && x.fullName.split('/')[1]?.toLowerCase() === o.slug) : undefined;
+                return (
+                  <li key={`${o.kind}:${o.slug}`} className="apps-other">
+                    <div className="apps-other__text">
+                      <span className="apps-other__name">{o.kind === 'orphan-data' ? o.slug : o.title}</span>
+                      <span className="apps-other__note">
+                        {o.kind === 'team-data' ? t(o.files === 1 ? 'apps.others.teamData.one' : 'apps.others.teamData.other').replace('{n}', String(o.files))
+                          : o.kind === 'team-note' ? t('apps.others.teamNote') : t('apps.others.orphan')}
+                      </span>
+                    </div>
+                    {kur ? (
+                      <button type="button" className="apps-other__btn" onClick={() => setInstallRef(kur.fullName)}>{t('apps.others.install')}</button>
+                    ) : o.kind !== 'orphan-data' && o.knowledgeId ? (
+                      <button type="button" className="apps-other__btn" onClick={() => openNote(o.knowledgeId!)}>{t('apps.others.openNote')}</button>
+                    ) : o.kind !== 'team-note' ? (
+                      <button type="button" className="apps-other__btn" onClick={() => revealData(o.dataPath)}>{t('apps.others.openFolder')}</button>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </>

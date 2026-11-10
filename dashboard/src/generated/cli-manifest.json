@@ -235,6 +235,29 @@
       ]
     },
     {
+      "path": "apps data",
+      "desc": "The app's data and the team: what is shared, what stays on this Mac and why (read only)",
+      "args": [
+        "<slug>"
+      ],
+      "group": true
+    },
+    {
+      "path": "apps data deletes",
+      "desc": "The deletes of shared files that wait to go to the team; --approve --confirm lets them go after the owner said yes",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps data resolve",
+      "desc": "Settle a file with two versions after the owner picked in chat: --theirs takes the team's, --mine keeps this Mac's",
+      "args": [
+        "<slug>",
+        "<path>"
+      ]
+    },
+    {
       "path": "apps detach",
       "desc": "Make your own copy (no more updates from the original): the owner's click on the Apps page",
       "args": [

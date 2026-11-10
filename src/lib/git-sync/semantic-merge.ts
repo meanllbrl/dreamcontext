@@ -12,7 +12,7 @@ import { unionTaskMap, type TaskMapEntry } from '../task-backend/sync-state.js';
 import { TASKS_MAP_REL } from '../task-backend/paths.js';
 import { PEOPLE_JSON_REL, PEOPLE_SCHEMA_VERSION } from '../people-store.js';
 import { inspectJsonArray } from '../json-file.js';
-import { addPath, readOursTheirsBase } from './git.js';
+import { addPath, readOursTheirsBase, takeSide, unmergedStages } from './git.js';
 import { loadStatuses } from '../overrides.js';
 import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
 import { parseWhiteboard, serializeWhiteboard, type Whiteboard } from '../whiteboards/format.js';
@@ -65,6 +65,13 @@ export type MergeClass =
    *  ours beside the renamed agent; an edit of a shared file takes the prose path. */
   | 'agent-file'
   | 'other'
+  /**
+   * An app's data file under the brain's `apps/` (app-veri-ortak K5): never text-merged. The
+   * team's copy goes into the index AND the disk (one side, never a blend), so a push can never
+   * carry mine over theirs; the exchange layer then puts mine back on disk, theirs in the
+   * conflict store, the path `conflict`. A modify/delete keeps the side that was not deleted.
+   */
+  | 'app-data'
   /**
    * full-repo only: a real project/code file (anything NOT under `_dream_context/`).
    * NEVER semantically merged and NEVER deferred to the prose agent — a code
@@ -713,6 +720,29 @@ export interface ResolveConflictsOptions {
   home?: string;
   /** The incoming commit (MERGE_HEAD), recorded on a parked copy. */
   remoteSha?: string;
+  /**
+   * The brain's app data folder as git prints it (`_dream_context/apps/`, a nested brain's prefix
+   * included): a conflicted path under it (any letter case) takes the `app-data` lane, before
+   * prose. Absent = no app-data lane (the brain is not in a repo).
+   */
+  appsPrefix?: string;
+}
+
+function isAppDataPath(relPath: string, opts: ResolveConflictsOptions): boolean {
+  if (!opts.appsPrefix) return false;
+  return relPath.replace(/\\/g, '/').toLowerCase().startsWith(opts.appsPrefix.toLowerCase());
+}
+
+/**
+ * The `app-data` lane: theirs into index and disk (`checkout --theirs` + add); a modify/delete
+ * keeps the side that was not deleted. Index and disk stay equal, so `git merge --abort` runs
+ * clean. THROWS when git cannot.
+ */
+export function resolveAppDataConflict(cwd: string, relPath: string): 'theirs' | 'ours' {
+  const stages = unmergedStages(cwd, relPath);
+  const side = stages.includes(3) ? 'theirs' : 'ours';
+  takeSide(cwd, relPath, side);
+  return side;
 }
 
 /** True for a conflicted path that is a real project/code file in full-repo mode (not a brain file). */
@@ -784,6 +814,17 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
   };
 
   for (const relPath of reorderTaskMdFirst(conflicts, opts)) {
+    // App data first: never blended, never deferred to the prose agent (`/dream-sync` does not
+    // touch these files). A side git cannot take leaves it for the human like code.
+    if (isAppDataPath(relPath, opts)) {
+      try {
+        resolveAppDataConflict(cwd, relPath);
+        resolved.push(relPath);
+      } catch {
+        deferredToHuman.push({ path: relPath, class: 'app-data' });
+      }
+      continue;
+    }
     // A real code file in full-repo mode never touches the semantic merge — it
     // stays exactly as git left it (native conflict markers) for the human.
     if (isCodePath(relPath, opts)) {

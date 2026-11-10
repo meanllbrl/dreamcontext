@@ -204,11 +204,14 @@ describe('notch rows and the snapshot line', () => {
   });
   it('the snapshot carries one short line of this project\'s apps, and nothing when the registry is unreadable', () => {
     const home = tmp();
-    const { proj } = project(home, 'meta-ads', {});
+    const { proj, root } = project(home, 'meta-ads', {});
     const line = appsSnapshotLine(join(proj, '_dream_context'), home);
-    expect(line).toContain('meta-ads (App)');
+    // No `data` field yet: the line says the data decision waits (app-veri-ortak K9), still short.
+    expect(line).toContain('meta-ads (App · veri kararı bekliyor)');
     expect(line).toContain('dreamcontext apps tools');
     expect(line!.length).toBeLessThanOrEqual(220);
+    writeFileSync(join(root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'meta-ads', name: 'App', data: { shared: [], local: [] } }));
+    expect(appsSnapshotLine(join(proj, '_dream_context'), home)).toContain('meta-ads (App)');
     writeFileSync(join(home, '.dreamcontext', 'apps', 'registry.json'), '{not json');
     expect(appsSnapshotLine(join(proj, '_dream_context'), home)).toBeNull();
   });

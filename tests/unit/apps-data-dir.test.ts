@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  AppDataError, appDataDir, checkAppDataChain, ensureAppDataDir, isInsideAppsData, scanAppData,
+  AppDataError, appDataDir, checkAppDataChain, ensureAppDataDir, ensureAppsMergeAttributes, isInsideAppsData, scanAppData,
 } from '../../src/lib/apps/data-dir.js';
 
 /** plan-veri r3 K1/K2: where app data lives, the chain check, both ignore layers. */
@@ -91,5 +91,26 @@ describe('what is inside', () => {
     expect(isInsideAppsData(ctx, join(ctx, 'APPS', 'yuk', 'a.json'))).toBe(true);
     expect(isInsideAppsData(ctx, join(ctx, 'knowledge', 'apps', 'x.md'))).toBe(false);
     expect(isInsideAppsData(ctx, join(ctx, 'apps-notes.md'))).toBe(false);
+  });
+});
+
+describe('the merge attribute line (app-veri-ortak K5)', () => {
+  it('is written once to .git/info/attributes and read back; a nested brain gets its prefix; outside git there is nothing to protect', () => {
+    expect(ensureAppsMergeAttributes(project, join(project, '_dream_context'))).toBe('none');
+    git(project, 'init', '-q');
+    expect(ensureAppsMergeAttributes(project, join(project, '_dream_context'))).toBe('ok');
+    expect(ensureAppsMergeAttributes(project, join(project, '_dream_context'))).toBe('ok');
+    const text = readFileSync(join(project, '.git', 'info', 'attributes'), 'utf-8');
+    expect(text.split('\n').filter((l) => l === '/_dream_context/apps/** -merge -diff')).toHaveLength(1);
+    const sub = join(project, 'pkg');
+    mkdirSync(join(sub, '_dream_context'), { recursive: true });
+    expect(ensureAppsMergeAttributes(sub, join(sub, '_dream_context'))).toBe('ok');
+    expect(readFileSync(join(project, '.git', 'info', 'attributes'), 'utf-8')).toContain('/pkg/_dream_context/apps/** -merge -diff');
+  });
+
+  it('a .git/info/attributes that cannot be written fails (the pull is skipped)', () => {
+    git(project, 'init', '-q');
+    mkdirSync(join(project, '.git', 'info', 'attributes'), { recursive: true }); // a folder where the file goes
+    expect(ensureAppsMergeAttributes(project, join(project, '_dream_context'))).toBe('failed');
   });
 });

@@ -1,16 +1,21 @@
 /**
  * Where an app's DATA lives (plan-veri r3, K1): `<project>/_dream_context/apps/<slug>/`, the
- * backend's `DC_DATA_DIR`. Only this Mac: the folder is ignored twice (the privacy block in
- * `.git/info/exclude` and an anchored `/apps/` line in `_dream_context/.gitignore`), the sync
- * engine unstages it, refuses to push it and refuses to pull into it (data-stage.ts,
- * sync-engine.ts, agent-sync.ts). The app's CODE stays beside the project.
+ * backend's `DC_DATA_DIR`. The folder is ignored twice (the privacy block in
+ * `.git/info/exclude` and an anchored `/apps/` line in `_dream_context/.gitignore`) and the
+ * general sync stage excludes it; only the exchange layer (data-exchange.ts, app-veri-ortak K5)
+ * force-adds the owner-approved shared paths. Wherever that layer does not run (an in-tree brain,
+ * cloud sync off), anything staged under it by hand is taken out of the index again before the
+ * sync commits (data-stage.ts `dropStagedAppData`). Where it does run (full-repo), the push gate
+ * holds a hand-made commit of app data and the pull gate refuses what may not come in. In-tree
+ * has no push gate: a commit the owner makes by hand outside the sync is theirs to push. The
+ * app's CODE stays beside the project.
  *
  * Every step of `_dream_context → apps → <slug>` must be a real folder, never a symlink: an
  * `lstat` per step, and the real path must equal the lexical one. A recursive mkdir would follow
  * a planted link, so the steps are made one by one.
  */
 
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
 import { applyAgentPrivacy, brainPrefix } from '../agents/agent-sync.js';
@@ -22,6 +27,11 @@ import { appsHome, type AppRecord } from './registry.js';
 export const APPS_DATA_FOLDER = 'apps';
 /** The tracked ignore line, ANCHORED: a bare `apps/` would also hide `knowledge/apps/`. */
 export const APPS_GITIGNORE_LINE = '/apps/';
+/**
+ * The comment above it. The privacy block stays in both ignore layers: a normal `git add` never
+ * takes app data; only the sync's exchange layer force-adds the owner-approved shared paths.
+ */
+export const APPS_GITIGNORE_COMMENT = 'dreamcontext Apps: app data stays on this Mac; only owner-approved hand-made data (emekle üretilmiş veri) goes to the team, through the sync';
 
 export type AppDataCode = 'app_data_symlink' | 'app_data_conflict' | 'app_data_privacy' | 'app_instruction_file' | 'app_data_no_brain';
 
@@ -131,12 +141,50 @@ export function ensureAppsPrivacy(contextRoot: string): void {
       throw new AppDataError('app_data_privacy', `the privacy line ${ex?.line ?? '/_dream_context/apps/'} could not be written to .git/info/exclude`);
     }
   }
-  try { ensureGitignoreEntries(contextRoot, [APPS_GITIGNORE_LINE], { comment: 'dreamcontext Apps: app data stays on this Mac (never synced)' }); } catch (e) {
+  try { ensureGitignoreEntries(contextRoot, [APPS_GITIGNORE_LINE], { comment: APPS_GITIGNORE_COMMENT }); } catch (e) {
     if (inGit) throw new AppDataError('app_data_privacy', `_dream_context/.gitignore could not be written (${(e as Error).message})`);
   }
   if (inGit && !gitignoreCovers(contextRoot, [APPS_GITIGNORE_LINE])) {
     throw new AppDataError('app_data_privacy', `_dream_context/.gitignore does not hold ${APPS_GITIGNORE_LINE}`);
   }
+}
+
+// ─── the merge attribute line (app-veri-ortak K5) ──────────────────────────────────
+
+/**
+ * `/<prefix>apps/** -merge -diff` in `.git/info/attributes` (machine-local, never synced): git
+ * never text-merges app data (a JSON file is a unit: one side or the other, never a blend) and
+ * never prints its content in a diff. The sync engine writes it and READS IT BACK before every
+ * merge; a pull that cannot have it is skipped.
+ */
+export function appsAttributeLine(prefix: string): string {
+  return `/${prefix}${APPS_DATA_FOLDER}/** -merge -diff`;
+}
+
+/**
+ * Ensure the attribute line. `ok`: present (written now or already there); `none`: the brain is
+ * not in a git repo (nothing can merge into it); `failed`: could not be written or read back.
+ * Never throws.
+ */
+export function ensureAppsMergeAttributes(gitCwd: string, contextRoot: string): 'ok' | 'none' | 'failed' {
+  let prefix: string | null;
+  try { prefix = brainPrefix(gitCwd, contextRoot); } catch { return 'failed'; }
+  if (prefix === null) return 'none';
+  const file = git.gitPathFor(gitCwd, 'info/attributes');
+  if (!file) return 'failed';
+  const line = appsAttributeLine(prefix);
+  const has = (): boolean => {
+    try { return readFileSync(file, 'utf-8').split('\n').some((l) => l.trim() === line); } catch { return false; }
+  };
+  if (has()) return 'ok';
+  try {
+    mkdirSync(join(file, '..'), { recursive: true });
+    let text = '';
+    try { text = readFileSync(file, 'utf-8'); } catch { text = ''; }
+    const lead = text && !text.endsWith('\n') ? '\n' : '';
+    writeFileSync(file, `${text}${lead}# dreamcontext Apps: app data is never text-merged (a file is one side or the other)\n${line}\n`);
+  } catch { return 'failed'; }
+  return has() ? 'ok' : 'failed';
 }
 
 function mkdirStep(p: string): void {

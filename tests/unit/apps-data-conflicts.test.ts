@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CONFLICTS_KEEP, addConflict, appPullHeld, conflictDir, containedPath, listConflicts, listPullRecords, newStamp,
-  parkTarget, pullRecordPath, readPullRecord, removePullRecord, resolveConflict, writePullRecord,
+  parkTarget, pullRecordPath, readPullRecord, rekeyAppState, removePullRecord, resolveConflict, writePullRecord,
   type PullRecord,
 } from '../../src/lib/apps/data-conflicts.js';
 import { finishAppPull, recoverAppPulls } from '../../src/lib/apps/data-exchange.js';
+import { addTombstone, listTombstones } from '../../src/lib/apps/data-deletes.js';
 
 /** app-veri-ortak K5/K7 state: the pull record, the park and the conflict store. */
 
@@ -82,10 +83,26 @@ describe('the pull record', () => {
     expect(parkTarget(home, HASH, '../escape/a.json')).toBeNull();
   });
 
-  it('the wave-2 stubs are typed and inert', () => {
+  it('outside a git repo recovery finds nothing to do and a missing record is finished', () => {
     const ctx = { gitCwd: home, contextRoot: join(home, 'proj', '_dream_context'), projectRoot: join(home, 'proj'), home };
     expect(recoverAppPulls(ctx)).toEqual({ recovered: [], skipped: null, notes: [] });
-    expect(finishAppPull(ctx, HASH).done).toBe(false);
+    expect(finishAppPull(ctx, HASH)).toEqual({ done: true });
+    writePullRecord(home, record());
+    expect(finishAppPull(ctx, HASH).done).toBe(false); // the brain is not in a git repo: kept
+  });
+
+  it('`absent` (paths with no file on disk before the merge) is kept, deduped, and validated like `parked`', () => {
+    writePullRecord(home, record({ absent: ['favorites/t.json', 'favorites/t.json', 'cache/x.json'] }));
+    const r = readPullRecord(home, HASH);
+    expect(r && r.ok && r.rec.absent).toEqual(['favorites/t.json', 'cache/x.json']);
+    writePullRecord(home, record());
+    const none = readPullRecord(home, HASH);
+    expect(none && none.ok && none.rec.absent).toBeUndefined(); // the park never ran: unknown
+    expect(() => writePullRecord(home, record({ absent: ['../../etc/passwd'] }))).toThrow();
+    expect(() => writePullRecord(home, record({ absent: ['a/.env'] }))).toThrow();
+    mkdirSync(join(home, '.dreamcontext', 'apps', 'pull'), { recursive: true });
+    writeFileSync(pullRecordPath(home, HASH), JSON.stringify({ ...record(), absent: 'favorites/t.json' }));
+    expect(readPullRecord(home, HASH)).toEqual({ ok: false, corrupt: true });
   });
 });
 
@@ -139,5 +156,33 @@ describe('the conflict store and resolve', () => {
     expect(all.length).toBe(CONFLICTS_KEEP);
     expect(all.map((c) => c.path)).not.toContain('f/0.json');
     expect(all.filter((c) => c.path === `f/${CONFLICTS_KEEP + 2}.json`)).toHaveLength(1);
+  });
+});
+
+describe('rekeyAppState (a team folder installed under the same slug)', () => {
+  const TEAM = 't-0123456789abcdef0123456789abcdef01234567';
+  it('moves the conflict index and store and the tombstones to the installed app\'s hash', () => {
+    expect(addConflict(home, TEAM, 'notes/n.json', 'not_installed', { data: Buffer.from('{"n":1}') }).ok).toBe(true);
+    addTombstone(home, TEAM, 'favorites/a.json');
+    const r = rekeyAppState(home, TEAM, HASH);
+    expect(r).toEqual({ ok: true, moved: ['conflict index', 'conflict store', 'tombstones'] });
+    expect(listConflicts(home, TEAM)).toEqual([]);
+    expect(listConflicts(home, HASH).map((c) => c.path)).toEqual(['notes/n.json']);
+    expect(listTombstones(home, HASH).map((t) => t.path)).toEqual(['favorites/a.json']);
+    expect(existsSync(conflictDir(home, TEAM))).toBe(false);
+    expect(resolveConflict(home, HASH, dataDir, 'notes/n.json', 'theirs')).toEqual({ ok: true });
+    expect(readFileSync(join(dataDir, 'notes/n.json'), 'utf-8')).toBe('{"n":1}');
+  });
+
+  it('refuses while a pull is open (either key), over state the target already has, and a bad hash; nothing to move is fine', () => {
+    expect(rekeyAppState(home, TEAM, HASH)).toEqual({ ok: true, moved: [] });
+    writePullRecord(home, { ...record(), hash: TEAM });
+    expect(rekeyAppState(home, TEAM, HASH)).toEqual({ ok: false, reason: 'pull_open' });
+    removePullRecord(home, TEAM);
+    addTombstone(home, TEAM, 'favorites/a.json');
+    addTombstone(home, HASH, 'favorites/b.json');
+    expect(rekeyAppState(home, TEAM, HASH)).toEqual({ ok: false, reason: 'target_busy' });
+    expect(listTombstones(home, TEAM).map((t) => t.path)).toEqual(['favorites/a.json']);
+    expect(rekeyAppState(home, '../x', HASH)).toEqual({ ok: false, reason: 'bad_app' });
   });
 });

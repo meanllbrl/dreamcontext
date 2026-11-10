@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import * as share from '../../src/server/routes/apps-share.js';
-import { setAppsHomeForTests } from '../../src/server/routes/apps.js';
+import { handleAppDataShare, setAppsHomeForTests } from '../../src/server/routes/apps.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
 import { OWNER_REOPEN_MESSAGE } from '../../src/server/routes/assistant.js';
@@ -35,6 +35,8 @@ type Handler = (req: IncomingMessage, res: ServerResponse, params: Record<string
 /** Every route on the Apps page that decides in the owner's name, with a harmless target. */
 const OWNER_ROUTES: Array<[string, Handler, Record<string, string>]> = [
   ['publish grant (Share, Share publicly)', share.handlePublishGrant, { slug: 'nope' }],
+  // The owner's consent to share an app's hand-made data with the team (app-veri-ortak K3).
+  ['team data consent', handleAppDataShare, { slug: 'nope' }],
   ['accept an invitation', share.handleSharedAccept, {}],
   ['install', share.handleInstall, {}],
   ['settings and keys', share.handleAppConfigSet, { slug: 'nope' }],
@@ -233,11 +235,11 @@ describe('the windows that draw the Apps page hold the key', () => {
 
   it('every owner-only Apps click goes through ownerPost, the one call that sends the key', () => {
     const dash = join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'apps');
-    const files = ['AppCard.tsx', 'ManageSheets.tsx', 'InstallSheet.tsx', 'SharedApps.tsx'].map((f) => readFileSync(join(dash, f), 'utf-8')).join('\n');
-    for (const path of ['/publish/grant', '/apps/shared/accept', '/apps/install', '/config', '/update', '/update/undo', '/auto-update', '/apps/trash/restore']) {
+    const files = ['AppCard.tsx', 'ManageSheets.tsx', 'InstallSheet.tsx', 'SharedApps.tsx', 'AppDataNotice.tsx'].map((f) => readFileSync(join(dash, f), 'utf-8')).join('\n');
+    for (const path of ['/data-share', '/publish/grant', '/apps/shared/accept', '/apps/install', '/config', '/update', '/update/undo', '/auto-update', '/apps/trash/restore']) {
       expect(files).toMatch(new RegExp(`ownerPost[^\\n]*${path.replace(/\//g, '\\/')}`));
     }
-    expect(files).not.toMatch(/api\.post[^\n]*\/(publish\/grant|uninstall|detach|config|auto-update|update\/undo|shared\/accept|trash\/restore)['`]/);
+    expect(files).not.toMatch(/api\.post[^\n]*\/(data-share|publish\/grant|uninstall|detach|config|auto-update|update\/undo|shared\/accept|trash\/restore)['`]/);
     expect(files).not.toMatch(/api\.post[^\n]*'\/apps\/install'/);
   });
 });
@@ -247,13 +249,14 @@ describe('the windows that draw the Apps page hold the key', () => {
  * nobody classified fails here, so an action can never slip in beside the owner's gate.
  */
 describe('every POST under /api/apps/ is classified', () => {
-  const OWNER_ONLY = ['/api/apps/shared/accept', '/api/apps/trash/restore', '/api/apps/:slug/publish/grant', '/api/apps/:slug/config', '/api/apps/:slug/logo/reset', '/api/apps/:slug/update/undo', '/api/apps/:slug/auto-update', '/api/apps/:slug/detach', '/api/apps/:slug/uninstall'];
+  const OWNER_ONLY = ['/api/apps/:slug/data-share', '/api/apps/shared/accept', '/api/apps/trash/restore', '/api/apps/:slug/publish/grant', '/api/apps/:slug/config', '/api/apps/:slug/logo/reset', '/api/apps/:slug/update/undo', '/api/apps/:slug/auto-update', '/api/apps/:slug/detach', '/api/apps/:slug/uninstall'];
   const OWNER_OR_GRANT = ['/api/apps/install', '/api/apps/:slug/publish', '/api/apps/:slug/logo', '/api/apps/:slug/update'];
   /** Their own gates: a launch or embed token, the app's own chat, or only a read or an ask. */
-  const AGENT_OPEN = ['/api/apps/launch-window', '/api/apps/embed-check', '/api/apps/install/preview', '/api/apps/requests', '/api/apps/:slug/update/check', '/api/apps/:slug/launch', '/api/apps/:slug/say', '/api/apps/:slug/chats/close', '/api/apps/:slug/chats/title', '/api/apps/:slug/stop', '/api/apps/:slug/snapshot', '/api/apps/:slug/call', '/api/apps/:slug/mcp-request', '/api/apps/:slug/schedules/:id'];
+  const AGENT_OPEN = ['/api/apps/launch-window', '/api/apps/embed-check', '/api/apps/install/preview', '/api/apps/requests', '/api/apps/:slug/update/check', '/api/apps/:slug/launch', '/api/apps/:slug/say', '/api/apps/:slug/chats/close', '/api/apps/:slug/chats/title', '/api/apps/:slug/stop', '/api/apps/:slug/snapshot', '/api/apps/:slug/call', '/api/apps/:slug/mcp-request', '/api/apps/:slug/schedules/:id', '/api/apps/:slug/sync-pause'];
   const index = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'index.ts'), 'utf-8');
   const posts = [...index.matchAll(/router\.post\('(\/api\/apps\/[^']+)',\s*(\w+)\)/g)].map((m) => ({ path: m[1], handler: m[2] }));
-  const shareSrc = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', 'apps-share.ts'), 'utf-8');
+  // Owner routes live in apps-share.ts and apps.ts (the team-data consent): both are read.
+  const shareSrc = ['apps-share.ts', 'apps.ts'].map((f) => readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', f), 'utf-8')).join('\n');
   const bodyOf = (fn: string) => shareSrc.match(new RegExp(`export async function ${fn}\\([\\s\\S]*?\\n}\\n`))?.[0] ?? '';
 
   it('none is unclassified, none twice', () => {

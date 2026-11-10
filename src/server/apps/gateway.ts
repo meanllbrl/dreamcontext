@@ -114,6 +114,24 @@ function errorPage(res: ServerResponse, status: number, title: string, detail: s
   res.end(html);
 }
 
+/**
+ * A held app (a team pull lands its data): a page gets the "Ekipten veri geliyor" screen, which
+ * looks again every 3 s; an API call, a `/__dc/*` path or anything not asking for HTML gets 503
+ * `{error: 'paused_for_sync'}`.
+ */
+export function pausedForSync(req: IncomingMessage, res: ServerResponse, path: string): void {
+  const method = (req.method ?? 'GET').toUpperCase();
+  const wantsPage = !path.startsWith('/__dc/') && (method === 'GET' || method === 'HEAD') && String(req.headers.accept ?? '').includes('text/html');
+  if (!wantsPage) { send(res, 503, { error: 'paused_for_sync', message: 'Team data is landing for this app. Try again in a moment.' }); return; }
+  if (res.headersSent) { res.destroy(); return; }
+  const html = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="3"><title>Ekipten veri geliyor</title>'
+    + '<body style="font:14px -apple-system,sans-serif;padding:32px;color:#666"><h1 style="font-size:18px">Ekipten veri geliyor</h1>'
+    + '<p>Takım arkadaşlarının verisi yerine konuyor. Bitince app kendiliğinden açılır.</p>'
+    + '<p lang="en">Team data is landing. The app opens again by itself when it is done.</p></body>';
+  res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '3', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'X-Content-Type-Options': 'nosniff' });
+  res.end(method === 'HEAD' ? undefined : html);
+}
+
 function readBody(req: IncomingMessage, limit: number): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
@@ -279,6 +297,10 @@ export class AppGateway {
       return;
     }
     if (ident.kind === 'runner') { send(res, 401, { error: 'unauthorized' }); return; }
+    // THE one gate of a team pull (app-veri-ortak K5): while this app's pull record exists, no
+    // part of it opens: page, static public/, every /__dc/* path (data included), every request
+    // for the backend. Read from disk on every request, never cached.
+    if (this.runtime.pullHeld()) { req.resume(); pausedForSync(req, res, path); return; }
     // An incoming gateway secret is never trusted (only the gateway sets it).
     delete req.headers[GATEWAY_SECRET_HEADER];
 
@@ -323,11 +345,15 @@ export class AppGateway {
       if (!rt.rec.stoppedByOwner && (rt.state === 'stopped' || (lapsed && rt.state !== 'running' && rt.state !== 'updating' && rt.state !== 'starting'))) {
         void rt.ensureRunning();
       }
+      // A team pull holds the app (app-veri-ortak K7): the window is not "stopped" (no Start
+      // button to press); it waits, and its page shows "Ekipten veri geliyor" until the pull is done.
+      const syncing = !rt.rec.stoppedByOwner && rt.pullHeld();
       const out: Record<string, unknown> = {
         rev: rt.rev,
-        lastError: rt.lastError ? rt.scrub(rt.lastError) : null,
+        lastError: syncing ? null : rt.lastError ? rt.scrub(rt.lastError) : null,
         theme: env.theme(),
-        state: rt.rec.stoppedByOwner ? 'stopped' : rt.state,
+        state: rt.rec.stoppedByOwner ? 'stopped' : syncing ? 'starting' : rt.state,
+        ...(syncing ? { paused: 'sync' } : {}),
       };
       for (const [id, w] of this.snapshots) {
         if (!w.sent) { w.sent = true; out.command = { id, type: 'snapshot' }; break; }
@@ -510,6 +536,7 @@ export class AppGateway {
     if (ident.kind === 'none' || ident.kind === 'runner') { deny(401, 'Unauthorized'); return; }
     if (!this.originOk(req, ident, true)) { deny(403, 'Forbidden'); return; }
     if ((req.url ?? '').startsWith('/__dc')) { deny(404, 'Not Found'); return; }
+    if (this.runtime.pullHeld()) { deny(503, 'Service Unavailable'); return; }
     const b = this.runtime.backend;
     if (!b) { deny(503, 'Service Unavailable'); return; }
     delete req.headers[GATEWAY_SECRET_HEADER];

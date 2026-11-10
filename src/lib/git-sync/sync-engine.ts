@@ -1,7 +1,15 @@
+import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
-import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
+import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appsExcludeSpec, dropStagedAppData, incomingAppData, underApps } from '../apps/data-stage.js';
+import {
+  afterAppDataPush, finishAppPulls, pendingSharedAppFiles, prepareAppPull, recoverAppPullsHeld, settleAppPulls, stageOutbound,
+  type ExchangeCtx,
+} from '../apps/data-exchange.js';
+import { pauseForSync, resumeAfterSync } from '../apps/client.js';
+import { backupAppData } from '../apps/data-backup.js';
+import { brainPrefix } from '../agents/agent-sync.js';
 import { SESSION_FILES_HELD_NOTE, SESSION_FILES_PULL_NOTE, SUPER_RECORD_PULL_NOTE, dropMachineLocalFromPushRange, incomingSuperRecords, machineLocalInPushRange, sessionChanges, superStagePass } from '../super/pull-guard.js';
 import { parkSessionFiles, restoreLeftoverSessionPark, restoreSessionPark, settleSessionMerge, underSleepStateLock } from './session-merge.js';
 import { GitSyncError } from './git.js';
@@ -112,6 +120,8 @@ export interface SyncOptions {
    * syncs never set it — they always checkpoint so nothing is lost.
    */
   noCheckpoint?: boolean;
+  /** The home of this Mac's per-machine app state (tests; default the user's home). */
+  home?: string;
 }
 
 export interface SyncResult {
@@ -180,10 +190,31 @@ export interface SyncEngineDeps {
   resolvePendingRestores: typeof resolvePendingRestores;
   /** B1-2: this machine's ignored agent files the staging pass will force-add (agent sync confirmed). */
   pendingOwnAgentFiles: typeof pendingOwnAgentFiles;
-  /** plan-veri K2: the push gate (a commit of the range holding app data). */
+  /** app-veri-ortak K5: the push gate's back door (a commit introducing app data this Mac may not send). */
   appDataInPushRange: typeof appDataInPushRange;
-  /** plan-veri K2: the pull gate (incoming app data). */
+  /** app-veri-ortak K5: the pull gate's back door (incoming app data that may not come in). */
   incomingAppData: typeof incomingAppData;
+  /** app-veri-ortak K5, the exchange layer: OUTBOUND (the only way app data enters the index). */
+  stageOutbound: typeof stageOutbound;
+  /** Where stageOutbound did not run: what got staged under apps/ by hand comes out again. */
+  dropStagedAppData: typeof dropStagedAppData;
+  /** Its dry run, for `dirtyPaths`. */
+  pendingSharedAppFiles: typeof pendingSharedAppFiles;
+  /** Before a NEW merge: pull records, pause, backup, park (K7). */
+  prepareAppPull: typeof prepareAppPull;
+  /** Right after the merge: the decision, into the records. */
+  settleAppPulls: typeof settleAppPulls;
+  /** Once no MERGE_HEAD: apply or put back, remove the records. */
+  finishAppPulls: typeof finishAppPulls;
+  /** Crash recovery, with the brain lock held (before the "merge in progress" guard). */
+  recoverAppPullsHeld: typeof recoverAppPullsHeld;
+  /** After a push reached the remote: delivered tombstones go. */
+  afterAppDataPush: typeof afterAppDataPush;
+  /** Stop/resume an app's running backend through the server (wave 1 client). */
+  pauseForSync: typeof pauseForSync;
+  resumeAfterSync: typeof resumeAfterSync;
+  /** The `before-team-pull` backup. */
+  backupAppData: typeof backupAppData;
   /** The pull gate for Super Agent records (they never sync). */
   incomingSuperRecords: typeof incomingSuperRecords;
   /** What the team's update does to this Mac's session files (sleep state, digests, peer mail). */
@@ -219,6 +250,17 @@ const defaultDeps: SyncEngineDeps = {
   pendingOwnAgentFiles,
   appDataInPushRange,
   incomingAppData,
+  stageOutbound,
+  dropStagedAppData,
+  pendingSharedAppFiles,
+  prepareAppPull,
+  settleAppPulls,
+  finishAppPulls,
+  recoverAppPullsHeld,
+  afterAppDataPush,
+  pauseForSync,
+  resumeAfterSync,
+  backupAppData,
   incomingSuperRecords,
   sessionChanges,
   parkSessionFiles,
@@ -230,25 +272,57 @@ const defaultDeps: SyncEngineDeps = {
   underSleepStateLock,
 };
 
-/** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
- *  file never shows in `git status`, so without them a confirmed machine would never send them. */
+/** The exchange layer's view of this sync (app-veri-ortak K5). */
+function pullCtx(ctx: Ctx): ExchangeCtx {
+  return { gitCwd: ctx.gitCwd, contextRoot: ctx.contextRoot, projectRoot: ctx.projectRoot, home: ctx.home };
+}
+
+/** The brain's prefix in its repo, once per sync (null outside git). */
+function appsPrefix(ctx: Ctx): string | null {
+  if (ctx.appsPrefixCache === undefined) {
+    try { ctx.appsPrefixCache = brainPrefix(ctx.gitCwd, ctx.contextRoot); } catch { ctx.appsPrefixCache = null; }
+  }
+  return ctx.appsPrefixCache;
+}
+
+/**
+ * Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
+ * file never shows in `git status`, so without them a confirmed machine would never send them.
+ * App data (app-veri-ortak K5): a tracked `apps/` path counts only when the exchange layer would
+ * send it now (`pendingSharedAppFiles`, its dry run, which also brings a first share in). A held,
+ * missing, unapproved or team-only file never makes the tree dirty.
+ */
 function dirtyPaths(ctx: Ctx): string[] {
   // A file held back for a secret is not a change to send (it would read dirty on every sync).
   const held = heldSecretPaths(ctx.contextRoot);
-  return [...ctx.d.git.statusPorcelainTracked(ctx.gitCwd), ...ctx.d.pendingOwnAgentFiles(ctx.gitCwd, ctx.contextRoot)]
+  const prefix = appsPrefix(ctx);
+  const tracked = ctx.d.git.statusPorcelainTracked(ctx.gitCwd).filter((p) => prefix === null || !underApps(prefix, p));
+  return [...tracked, ...ctx.d.pendingOwnAgentFiles(ctx.gitCwd, ctx.contextRoot), ...ctx.d.pendingSharedAppFiles(pullCtx(ctx))]
     .filter((p) => !held.has(p));
 }
 
 /**
- * Stage for a sync commit: everything (or the brain only, in-tree), then the agent staging pass
- * (M3) unstages agent and automation files that carry a secret. ONE helper every stage site calls.
+ * Stage for a sync commit: everything (or the brain only, in-tree) EXCEPT the brain's `apps/`
+ * (app-veri-ortak K5: the general stage never touches app data, so its index entries stay what
+ * they were: HEAD's, or an open merge's own result; nothing is reset), then the agent staging
+ * pass (M3) unstages agent and automation files that carry a secret, then the exchange layer
+ * force-adds this Mac's shared app data (full-repo only, never during an open merge). ONE helper
+ * every stage site calls.
  */
 function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
-  if (scope === 'brain') ctx.d.git.stagePath(ctx.gitCwd, '_dream_context');
-  else ctx.d.git.stageAll(ctx.gitCwd);
+  const ex = appsExcludeSpec(ctx.gitCwd, ctx.contextRoot);
+  const excludes = ex ? [ex] : [];
+  if (scope === 'brain') ctx.d.git.stagePath(ctx.gitCwd, '_dream_context', excludes);
+  else ctx.d.git.stageAll(ctx.gitCwd, excludes);
   ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
-  // App data never enters git, a `git add -f` included (plan-veri K2): out of the index again.
-  appDataStagePass(ctx.gitCwd, ctx.contextRoot);
+  // In-tree brains stage no app data (their commits are the code repo's; no pull gate runs there).
+  // App data stays in the index only through stageOutbound's own add: wherever it did not run
+  // (in-tree, another scope, sync off), what got staged under apps/ by hand comes out again. Never
+  // during an open merge: its apps/ entries are the merge's own result.
+  const outbound = ctx.mode === 'full-repo' && scope === 'all' ? ctx.d.stageOutbound(pullCtx(ctx)) : null;
+  if (!outbound?.ran && !ctx.d.git.hasMergeHead(ctx.gitCwd)) {
+    ctx.d.dropStagedAppData(ctx.gitCwd, ctx.contextRoot, { keepHead: ctx.mode === 'full-repo', home: ctx.home });
+  }
   // The Super Agent's record and session rosters, and every session file (sleep state, digests,
   // peer mail), never enter a sync commit, whatever a pulled `.gitignore` says or an old install
   // committed (2026-11-03 and 2026-11-07 leaks): out of the index again.
@@ -273,6 +347,10 @@ interface Ctx {
   foreground: boolean;
   /** Disable the pull-only dirty-tree auto-checkpoint (the on-open "don't touch my WIP" preference). */
   noCheckpoint: boolean;
+  /** The home whose `~/.dreamcontext/apps/*` state the app data exchange reads and writes. */
+  home: string;
+  /** {@link appsPrefix}'s memo. */
+  appsPrefixCache?: string | null;
   /**
    * The active token session for THIS run — set by whichever sync function first
    * resolves a token. Carries the stale-per-project-token self-heal state so
@@ -418,6 +496,7 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     strict: !!opts.strict,
     foreground: !!opts.foreground,
     noCheckpoint: !!opts.noCheckpoint,
+    home: opts.home ?? homedir(),
   };
 
   // full-repo stages the WHOLE project (`git add -A` at the root), so the
@@ -442,6 +521,24 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     }
   }
 
+  // The brain lock comes FIRST (app-veri-ortak K5): crash recovery of app pulls runs only while
+  // this process holds it, and it must run before the "merge in progress" guard (our own crashed
+  // merge is aborted there, so the guard then sees a clean tree). Every early return of the guard
+  // below releases it in `finally`.
+  if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
+  try {
+    const recovered = d.recoverAppPullsHeld(pullCtx(ctx));
+    const result = await guardedSync(ctx, opts);
+    if (!recovered.notes.length) return result;
+    return { ...result, note: [result.note, ...recovered.notes].filter(Boolean).join(' ') };
+  } finally {
+    d.releaseBrainLock(contextRoot);
+  }
+}
+
+/** The reentrancy guard and the sync itself, under the brain lock {@link runBrainSync} holds. */
+async function guardedSync(ctx: Ctx, opts: SyncOptions): Promise<SyncResult> {
+  const { d, gitCwd, contextRoot, projectRoot } = ctx;
   // ── Reentrancy guard — 5-clause precedence (v3.2) ──────────────────────
   const hasMerge = d.git.hasMergeHead(gitCwd);
   const brainLocal = readBrainLocal(projectRoot);
@@ -496,27 +593,24 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     clearConflictReport(contextRoot);
   }
 
-  if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
-
-  try {
-    // Session files a crashed sync parked go back first, whatever this sync goes on to do (a pull
-    // may not come for days); under the brain lock, so never another sync's live park.
-    d.restoreLeftoverSessionPark(contextRoot);
-    let result: SyncResult;
-    if (opts.continue) result = await continueMerge(ctx);
-    else if (opts.resume) result = await resumeHandoff(ctx);
-    else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
-    else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
-    else result = await autoSync(ctx);
-    // Parked agent files come back at the end of EVERY sync call (renamed once a merge committed).
-    const restored = await d.resolvePendingRestores(gitCwd, contextRoot);
-    if (restored.length > 0) result = { ...result, note: [result.note, ...restored].filter(Boolean).join(' ') };
-    detectReplacedManifests(contextRoot);
-    // Stamp the stale-per-project-token self-heal (if it fired) onto the result.
-    return applyHealInfo(ctx, result);
-  } finally {
-    d.releaseBrainLock(contextRoot);
-  }
+  // Session files a crashed sync parked go back first, whatever this sync goes on to do (a pull
+  // may not come for days); under the brain lock, so never another sync's live park.
+  d.restoreLeftoverSessionPark(contextRoot);
+  let result: SyncResult;
+  if (opts.continue) result = await continueMerge(ctx);
+  else if (opts.resume) result = await resumeHandoff(ctx);
+  else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
+  else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
+  else result = await autoSync(ctx);
+  // Parked agent files come back at the end of EVERY sync call (renamed once a merge committed).
+  const restored = await d.resolvePendingRestores(gitCwd, contextRoot);
+  if (restored.length > 0) result = { ...result, note: [result.note, ...restored].filter(Boolean).join(' ') };
+  detectReplacedManifests(contextRoot);
+  // App pulls a sync function left behind (its merge ended after the wrapper's own finish, e.g.
+  // a re-merge): swept here; an open merge keeps them (finishAppPull checks MERGE_HEAD itself).
+  d.finishAppPulls(pullCtx(ctx));
+  // Stamp the stale-per-project-token self-heal (if it fired) onto the result.
+  return applyHealInfo(ctx, result);
 }
 
 // ─── in-tree: commit-only, never pushes ─────────────────────────────────────
@@ -603,17 +697,51 @@ async function fetchRemoteIfExists(ctx: Ctx, session: BrainSyncTokenSession): Pr
   });
 }
 
-/** Attempt `attemptMerge`; on conflict, resolve deterministically and defer the rest to the agent. */
-function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcome {
-  const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
-  // B1-2: incoming NEW agent files landing where this machine holds an untracked one of the same
-  // name park the local one first (moved, so git never refuses the merge).
-  // App data never comes in from the team either: a pull that carries any stops here, before
-  // git could overwrite or delete this Mac's data (plan-veri K2). A guard that cannot answer stops too.
+/**
+ * EVERY new merge goes through here (app-veri-ortak K7, the async wrapper `prepareAppPull`):
+ * `autoSync`, `pullOnlySync`, `resumeHandoff` and the re-merge in `pushWithRetry`. The pull gate's
+ * back door first (incoming app data that may not come in stops the pull, nothing changed); then
+ * the exchange layer writes the pull records, stops the running backends, backs up and parks;
+ * the synchronous merge; the decision (`settleAppPulls`, disk and index untouched); and in
+ * `finally` the finish, which applies the plan or puts the park back once MERGE_HEAD is gone
+ * (an aborted merge included; a merge left open for the agent keeps its records).
+ */
+async function mergeWithAppPull(ctx: Ctx, opts: MergeAndMaybeDeferOpts): Promise<MergeOutcome> {
+  const { d, gitCwd, contextRoot } = ctx;
   const incomingApps = d.incomingAppData(gitCwd, contextRoot, ctx.remoteRef);
   if (incomingApps === null || incomingApps.length > 0) {
-    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingApps === null ? 'Skipped the pull: could not check whether the team\'s update carries app data. It is retried at the next sync.' : APP_DATA_PULL_NOTE }, needsTaskSync: false };
+    const note = incomingApps === null
+      ? 'Skipped the pull: could not check whether the team\'s update carries app data that may not come in. It is retried at the next sync.'
+      : `${APP_DATA_PULL_NOTE} (${incomingApps.slice(0, 3).join(', ')}${incomingApps.length > 3 ? ` +${incomingApps.length - 3}` : ''})`;
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note }, needsTaskSync: false };
   }
+  const pc = pullCtx(ctx);
+  const serverOpts = { cwd: ctx.projectRoot, home: ctx.home };
+  const prep = await d.prepareAppPull(pc, ctx.remoteRef, {
+    pause: (slug) => d.pauseForSync(slug, serverOpts),
+    resume: (slug) => d.resumeAfterSync(slug, serverOpts),
+    backup: d.backupAppData,
+  });
+  if (!prep.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: prep.note }, needsTaskSync: false };
+  try {
+    const out = mergeAndMaybeDefer(ctx, opts);
+    if (prep.hashes.length) d.settleAppPulls(pc, prep.hashes);
+    return out;
+  } finally {
+    if (prep.hashes.length) {
+      const fin = d.finishAppPulls(pc, prep.hashes);
+      for (const slug of prep.paused) {
+        if (fin.finished.includes(slug)) await d.resumeAfterSync(slug, serverOpts).catch(() => false);
+      }
+    }
+  }
+}
+
+/** Attempt `attemptMerge`; on conflict, resolve deterministically and defer the rest to the agent. */
+function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcome {
+  const { d, gitCwd, contextRoot } = ctx;
+  // B1-2: incoming NEW agent files landing where this machine holds an untracked one of the same
+  // name park the local one first (moved, so git never refuses the merge).
   // A Super Agent record never comes in either: a pulled member record could start that Super
   // on this Mac with a job a teammate wrote. A guard that cannot answer stops too.
   const incomingSuper = d.incomingSuperRecords(gitCwd, contextRoot, ctx.remoteRef);
@@ -681,8 +809,11 @@ function mergeParked(ctx: Ctx, opts: MergeAndMaybeDeferOpts, sessions: ReturnTyp
     return { result: blocked, needsTaskSync: false };
   }
 
+  const prefix = appsPrefix(ctx);
   const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, {
     fullRepo: ctx.mode === 'full-repo',
+    // App data first, before prose: the team's copy into index and disk (K5 `app-data` lane).
+    ...(prefix !== null ? { appsPrefix: `${prefix}apps/` } : {}),
     contextRoot,
     login: currentLogin(),
     remoteSha: d.git.revParse(gitCwd, 'MERGE_HEAD') ?? undefined,
@@ -778,8 +909,8 @@ async function pushWithRetry(
   // the range whose tree holds app data holds the push. A gate that cannot answer holds it too.
   const appDataHeld = (): SyncResult | null => {
     let hit: string | null;
-    try { hit = d.appDataInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef); } catch { hit = 'unknown'; }
-    return hit ? { action: 'app-data-held', scrub, note: APP_DATA_HELD_NOTE } : null;
+    try { hit = d.appDataInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef, { home: ctx.home }); } catch { hit = 'unknown'; }
+    return hit ? { action: 'app-data-held', scrub, note: `${APP_DATA_HELD_NOTE} (${hit === 'unknown' ? 'git could not answer' : hit})` } : null;
   };
   // The same door for a Super or session file in a commit made outside the sync (2026-11-07).
   // Repaired once when the unpushed commits are the brain's own: they become one without those
@@ -809,7 +940,7 @@ async function pushWithRetry(
     }
   };
 
-  if (await tryPush()) return { action: 'pushed', scrub, pushed: true };
+  if (await tryPush()) { d.afterAppDataPush(pullCtx(ctx)); return { action: 'pushed', scrub, pushed: true }; }
 
   // Rejected (presumed non-FF): fetch → merge → retry ONCE. But non-FF only
   // makes sense when the remote branch exists — a failed push to an EMPTY
@@ -819,12 +950,12 @@ async function pushWithRetry(
   if (!remoteExists) {
     throw new GitSyncError('Push to the empty brain remote failed — check the token has Contents read/write on that repo and the remote URL is correct.');
   }
-  const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
+  const outcome = await mergeWithAppPull(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return outcome.result;
   const heldAfterMerge = appDataHeld() ?? sessionFilesHeld();
   if (heldAfterMerge) return heldAfterMerge;
 
-  if (await tryPush()) return { action: 'pushed', scrub, pushed: true };
+  if (await tryPush()) { d.afterAppDataPush(pullCtx(ctx)); return { action: 'pushed', scrub, pushed: true }; }
 
   throw new GitSyncError('Push rejected (non-fast-forward) twice — the remote is still ahead after a merge + one retry. Run `dreamcontext brain sync` again or resolve manually.');
 }
@@ -867,7 +998,7 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
 
   let needsTaskSync = false;
   if (aheadCount > 0) {
-    const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
+    const outcome = await mergeWithAppPull(ctx, { abortOnDefer: false, markPendingOnDefer: false });
     if (outcome.result) return withMergeOutcome(outcome.result, scrub);
     needsTaskSync = outcome.needsTaskSync;
   }
@@ -938,7 +1069,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
     checkpointSha = d.git.commit(gitCwd, autoCheckpointMessage(ctx), authorFor(ctx)) ?? undefined;
   }
 
-  const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: true, markPendingOnDefer: true, effectiveStrict: !ctx.foreground });
+  const outcome = await mergeWithAppPull(ctx, { abortOnDefer: true, markPendingOnDefer: true, effectiveStrict: !ctx.foreground });
   if (outcome.result) return withMergeOutcome(outcome.result, scrub);
 
   const afterSha = d.git.currentSha(gitCwd);
@@ -990,6 +1121,11 @@ async function continueMerge(ctx: Ctx): Promise<SyncResult> {
   if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
 
   d.git.commit(gitCwd, AGENT_MERGE_COMMIT_MESSAGE, authorFor(ctx));
+  // The merge is committed (no MERGE_HEAD): its app pulls finish now, BEFORE pushWithRetry, so a
+  // re-merge there never opens a new record while the old one stands (K7). `continueMerge` is
+  // never wrapped: it makes no new merge, the records and plans were written when it was made.
+  const fin = d.finishAppPulls(pullCtx(ctx));
+  for (const slug of fin.finished) await d.resumeAfterSync(slug, { cwd: ctx.projectRoot, home: ctx.home }).catch(() => false);
 
   const pushResult = await pushWithRetry(ctx, scrub);
   if (pushResult.action === 'pushed') {
@@ -1028,7 +1164,7 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
   }
 
   // Leave the merge IN PROGRESS on a re-defer (classic auto behavior) — do NOT abort here.
-  const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
+  const outcome = await mergeWithAppPull(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return withMergeOutcome(outcome.result, scrub);
 
   const pushResult = await pushWithRetry(ctx, scrub, session);

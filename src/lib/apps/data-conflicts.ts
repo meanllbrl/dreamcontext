@@ -53,6 +53,13 @@ export interface PullRecord {
   mergeHead: string | null;
   phase: PullPhase;
   parked: ParkedPath[];
+  /**
+   * Incoming paths (data-relative) that were ABSENT from this Mac's disk before the merge. "Mine"
+   * is what the disk held, never HEAD's blob: for these, putting mine back means removing the
+   * file. Written by `parkBeforeMerge` before any move; absent (undefined) = the park never ran,
+   * so what the disk held is unknown and no HEAD blob is ever written back.
+   */
+  absent?: string[];
   plan: PlanEntry[] | null;
   at: string;
 }
@@ -116,6 +123,15 @@ function validRecord(raw: unknown, hash: string): PullRecord | null {
     if (typeof x.path !== 'string' || pathNameRefusal(x.path) || !stashOk(x.stash) || typeof x.tracked !== 'boolean') return null;
     parked.push({ path: x.path, stash: x.stash, tracked: x.tracked });
   }
+  let absent: string[] | undefined;
+  if (r.absent !== undefined) {
+    if (!Array.isArray(r.absent)) return null;
+    absent = [];
+    for (const a of r.absent) {
+      if (typeof a !== 'string' || pathNameRefusal(a)) return null;
+      if (!absent.includes(a)) absent.push(a);
+    }
+  }
   let plan: PlanEntry[] | null = null;
   if (r.plan !== null) {
     if (!Array.isArray(r.plan)) return null;
@@ -127,7 +143,7 @@ function validRecord(raw: unknown, hash: string): PullRecord | null {
       plan.push({ path: x.path, action: x.action as PlanEntry['action'], ...(typeof x.reason === 'string' ? { reason: x.reason.slice(0, 80) } : {}) });
     }
   }
-  return { v: 1, hash, slug: r.slug as string, preHead: r.preHead as string | null, mergeHead: r.mergeHead as string | null, phase: r.phase as PullPhase, parked, plan, at: r.at as string };
+  return { v: 1, hash, slug: r.slug as string, preHead: r.preHead as string | null, mergeHead: r.mergeHead as string | null, phase: r.phase as PullPhase, parked, ...(absent ? { absent } : {}), plan, at: r.at as string };
 }
 
 /** Write (or advance) the record. Throws when it does not validate or cannot be written. */
@@ -328,4 +344,40 @@ export function resolveConflict(home: string, hash: string, dataDir: string, rel
 export function parkTarget(home: string, hash: string, stash: string): string | null {
   if (!stashOk(stash)) return null;
   return containedPath(parkDir(home, hash), stash);
+}
+
+// ─── moving a team folder's state onto the installed app ───────────────────────────
+
+/**
+ * An app installed onto a team folder (Kur, same slug): the per-machine state kept under the team
+ * folder's key (`teamHash`, data-stage.ts) moves to the installed app's hash: the conflict index
+ * and store, and the tombstones. Refused while a pull record of either key exists (a pull is
+ * open: finish it first) and when the target already has state of its own (never merged over).
+ * Lane B calls it from install.ts BEFORE `applyPullRuleForInstall`.
+ */
+export function rekeyAppState(home: string, fromHash: string, toHash: string): { ok: true; moved: string[] } | { ok: false; reason: 'bad_app' | 'pull_open' | 'target_busy' | 'move_failed' } {
+  try { assertAppHash(fromHash); assertAppHash(toHash); } catch { return { ok: false, reason: 'bad_app' }; }
+  if (fromHash === toHash) return { ok: true, moved: [] };
+  if (appPullHeld(home, fromHash) || appPullHeld(home, toHash)) return { ok: false, reason: 'pull_open' };
+  const pairs: { what: string; from: string; to: string }[] = [
+    { what: 'conflict index', from: conflictIndexPath(home, fromHash), to: conflictIndexPath(home, toHash) },
+    { what: 'conflict store', from: conflictDir(home, fromHash), to: conflictDir(home, toHash) },
+    { what: 'tombstones', from: appStateFile(home, 'deletes', fromHash), to: appStateFile(home, 'deletes', toHash) },
+  ];
+  const present = pairs.filter((x) => { try { lstatSync(x.from); return true; } catch { return false; } });
+  for (const x of present) {
+    try { lstatSync(x.to); return { ok: false, reason: 'target_busy' }; } catch { /* free */ }
+    if (lstatSync(x.from).isSymbolicLink()) return { ok: false, reason: 'move_failed' };
+  }
+  const moved: string[] = [];
+  for (const x of present) {
+    try {
+      mkdirSync(dirname(x.to), { recursive: true, mode: 0o700 });
+      renameSync(x.from, x.to);
+      moved.push(x.what);
+    } catch {
+      return { ok: false, reason: 'move_failed' };
+    }
+  }
+  return { ok: true, moved };
 }

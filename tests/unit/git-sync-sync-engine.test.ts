@@ -262,6 +262,98 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     });
   });
 
+  // ── app-veri-ortak K5/K7: the exchange layer's place in the flow (real git: apps-data-exchange-git) ──
+  describe('app data exchange wiring (app-veri-ortak)', () => {
+    function spyDeps(state: FakeState, log: string[], over: Partial<SyncEngineDeps> = {}): Partial<SyncEngineDeps> {
+      const fake = makeFakeGit(state);
+      return {
+        ...baseDeps(state),
+        git: { ...fake, attemptMerge: (c: string, r: string) => { log.push('merge'); return fake.attemptMerge(c, r); }, push: (...a: Parameters<typeof fake.push>) => { log.push('push'); return fake.push(...a); }, commit: (...a: Parameters<typeof fake.commit>) => { log.push('commit'); return fake.commit(...a); } } as typeof git,
+        recoverAppPullsHeld: () => { log.push('recover'); return { recovered: [], skipped: null, notes: [] }; },
+        prepareAppPull: async () => { log.push('prepare'); return { ok: true, hashes: ['h1'], paused: ['rakip'], notes: [] }; },
+        settleAppPulls: () => { log.push('settle'); },
+        finishAppPulls: (_c, hashes) => { log.push(`finish:${hashes ? hashes.join(',') : 'all'}`); return { finished: ['rakip'], notes: [] }; },
+        resumeAfterSync: async (slug) => { log.push(`resume:${slug}`); return true; },
+        stageOutbound: () => { log.push('outbound'); return { add: [], remove: [], apps: [], notes: [], ran: true }; },
+        dropStagedAppData: () => { log.push('drop'); return []; },
+        pendingSharedAppFiles: () => [],
+        afterAppDataPush: () => { log.push('afterPush'); },
+        ...over,
+      };
+    }
+
+    it('every new merge: prepare, merge, settle, then finish and resume; the push clears delivered tombstones', async () => {
+      const log: string[] = [];
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, spyDeps(makeState({ aheadCount: 1 }), log));
+      expect(r.action).toBe('pushed');
+      expect(log.indexOf('recover')).toBe(0);
+      expect(log.slice(log.indexOf('prepare'), log.indexOf('resume:rakip') + 1)).toEqual(['prepare', 'merge', 'commit', 'settle', 'finish:h1', 'resume:rakip']);
+      expect(log.indexOf('afterPush')).toBeGreaterThan(log.indexOf('push'));
+    });
+
+    it('a prepare that cannot go on skips the pull: nothing merged, its note returned', async () => {
+      const log: string[] = [];
+      const state = makeState({ aheadCount: 1 });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, spyDeps(state, log, { prepareAppPull: async () => ({ ok: false, note: 'Skipped the pull: paused app' }) }));
+      expect(r.action).toBe('noop');
+      expect(r.note).toContain('paused app');
+      expect(log).not.toContain('merge');
+      expect(state.commitCalls).toHaveLength(0);
+    });
+
+    it('the re-merge in pushWithRetry is wrapped too', async () => {
+      const log: string[] = [];
+      await runBrainSync({ cwd: contextRoot, mode: 'push-only' }, spyDeps(makeState({ pushFailFirstN: 1 }), log));
+      expect(log.filter((x) => x === 'prepare')).toHaveLength(1);
+      expect(log.indexOf('finish:h1')).toBeGreaterThan(log.indexOf('merge'));
+    });
+
+    it('--continue is not wrapped: its app pulls finish after the commit and BEFORE the push', async () => {
+      writeConflictReport(contextRoot, {
+        remoteRef: 'origin/main', resolvedByCli: [],
+        deferred: [{ path: 'knowledge/x.md', class: 'knowledge-md', reason: 'r', base: 'b', ours: 'o', theirs: 't' }],
+      });
+      const log: string[] = [];
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto', continue: true }, spyDeps(makeState({ hasMergeHead: true }), log));
+      expect(r.action).toBe('pushed');
+      expect(log).not.toContain('prepare');
+      const commit = log.indexOf('commit');
+      const finish = log.indexOf('finish:all');
+      expect(commit).toBeGreaterThan(-1);
+      expect(finish).toBeGreaterThan(commit);
+      expect(log.indexOf('push')).toBeGreaterThan(finish);
+    });
+
+    it('the brain lock is taken BEFORE the merge-in-progress guard, and recovery runs under it', async () => {
+      const log: string[] = [];
+      const locked = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, spyDeps(makeState({ hasMergeHead: true }), log, { acquireBrainLock: () => false }));
+      expect(locked.action).toBe('locked');
+      expect(log).not.toContain('recover');
+      let released = 0;
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, spyDeps(makeState({ hasMergeHead: true }), log, {
+        releaseBrainLock: () => { released++; },
+        recoverAppPullsHeld: () => ({ recovered: [], skipped: null, notes: ['A merge that dreamcontext did not start is open.'] }),
+      }));
+      expect(r.action).toBe('user-merge-in-progress');
+      expect(r.note).toContain('did not start');
+      expect(released).toBe(1); // the guard's early return released it
+    });
+
+    it('stageForSync runs the outbound stage in full-repo; a pull gate refusal names the paths', async () => {
+      const log: string[] = [];
+      await runBrainSync({ cwd: contextRoot, mode: 'auto' }, spyDeps(makeState({ dirty: ['knowledge/x.md'] }), log));
+      expect(log).toContain('outbound');
+      expect(log).not.toContain('drop'); // the outbound stage owned the index
+      const off: string[] = [];
+      await runBrainSync({ cwd: contextRoot, mode: 'auto' }, spyDeps(makeState({ dirty: ['knowledge/x.md'] }), off, {
+        stageOutbound: () => { off.push('outbound'); return { add: [], remove: [], apps: [], notes: [], ran: false }; },
+      }));
+      expect(off).toContain('drop'); // it did not run: what got staged under apps/ by hand comes out
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, spyDeps(makeState({ aheadCount: 1 }), [], { incomingAppData: () => ['_dream_context/apps/x/l (not_plain)'] }));
+      expect(r.note).toContain('_dream_context/apps/x/l (not_plain)');
+    });
+  });
+
   // ── basic auto flow ────────────────────────────────────────────────────
   it('noop on a clean tree', async () => {
     const state = makeState();

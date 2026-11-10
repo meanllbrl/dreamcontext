@@ -30,7 +30,7 @@ import { dc } from './lib/dc.mjs';
 | `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs and the page's colours; the iframe's `dcRetheme()` reloads it after a theme change |
 | `dc.api(method, path, body)` | subset | ✓ | any dashboard API route |
 | `dc.data.status()` | ✓ | ✓ | where this app's data lives: `{ mode: 'shared'\|'pending'\|'local'\|'undecided'\|'sync_off', shared: string[], pending: string[], held: {path, reason}[] }`. See "dc.data" below |
-| `dc.data.read(path, validate)` | ✓ | ✓ | one file of the app's data folder, passed through `validate` (shared data is someone else's) |
+| `dc.data.read(path, validate)` | ✓ | ✓ | one file (`'favorites/a1.json'`), or a folder's files one level down as an array (`'favorites/'`), each passed through `validate` (shared data is someone else's); a missing file is `null`, a missing folder `[]` |
 | `dc.data.write(path, content)` | ✗ | ✓ | writes one file atomically (temp name, then rename) |
 | `dc.data.remove(path)` | ✗ | ✓ | the only real delete of a shared file: it reaches the team |
 
@@ -102,7 +102,7 @@ path and a part starting with a dot are refused. Read shared files with a `valid
 draw them with `textContent`. A file missing on this Mac is never a delete; only `dc.data.remove`
 deletes, and only a shared path of this app. While a team pull is landing the app is paused: calls
 answer 503 `{error:'paused_for_sync'}` for a few seconds (until the merge finishes, if one is left
-open). An older copy of `lib/dc.mjs` lacks these calls: `dreamcontext apps validate --fix-sdk`
+open); in the SDK that is a `DcError` with code `paused_for_sync`: catch it and try again in a moment. An older copy of `lib/dc.mjs` lacks these calls: `dreamcontext apps validate --fix-sdk`
 refreshes it.
 
 ### dc.actions and dc.health (backend only)

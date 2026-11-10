@@ -40,6 +40,7 @@ import { missingRequired, publicConfig, readAppConfig } from './app-config.js';
 import { type AppRecord } from './registry.js';
 import { AppDataError, appDataDir, ensureAppDataDir, migrateAppData, scanAppData } from './data-dir.js';
 import { backupAppData } from './data-backup.js';
+import { appPullHeld } from './data-conflicts.js';
 import { LineLog, makeRedactor, parseDotenv, type Redactor, type SecretValue } from './redact.js';
 import { killPortable, win32PowerShell, win32System32 } from '../proc.js';
 
@@ -75,7 +76,15 @@ export interface SupervisorDeps {
   noWatch?: boolean;
   /** Turn the data backup off (tests). */
   noBackup?: boolean;
+  /**
+   * A team pull holds this app (app-veri-ortak K5): the server retries the pull recovery
+   * (`recoverAppPulls`, under the brain lock). Called when a start is refused for it.
+   */
+  onPullHeld?: (projectRoot: string) => void;
 }
+
+/** The refusal a start meets while a team pull lands this app's data (K5 "tek kapı"). */
+export const PAUSED_FOR_SYNC = 'paused_for_sync: team data is landing for this app; it starts again when the pull is done';
 
 /** While a backend runs, its data is backed up this often (only when something changed). */
 export const BACKUP_INTERVAL_MS = 30 * 60_000;
@@ -286,6 +295,14 @@ function killGroup(child: ChildProcess): void {
   setTimeout(() => { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }, 2000).unref();
 }
 
+/** Is any process of this child's group still there? Off Windows the group is the child's pid; on Windows only the child. */
+function groupAlive(child: ChildProcess): boolean {
+  if (child.exitCode === null && child.signalCode === null) return true;
+  const pid = child.pid;
+  if (!pid || process.platform === 'win32') return false;
+  try { process.kill(-pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
 export interface AppStatus {
   slug: string;
   name: string;
@@ -338,6 +355,14 @@ export class AppRuntime {
   private launchHoldAt = 0;
   /** The build running now, so a stop can end it. */
   private buildChild: ChildProcess | null = null;
+  /**
+   * Every process group this runtime spawned that is not gone yet (app-veri-ortak K7): added at the
+   * one spawn point ({@link spawnChild}) the moment a child exists, removed only when its whole group
+   * is gone. A stop kills all of them; {@link stopAndWait} waits for this set to be empty, so a start
+   * still in flight (a backend spawned but not adopted, in its health poll) is covered by construction.
+   */
+  private live = new Set<ChildProcess>();
+  private liveWaiters = new Set<() => void>();
   /**
    * Bumped by every stop(). A start or update that awaited across a stop sees a different epoch
    * when it resumes, kills what it brought up and leaves the state alone: an owner's Stop (or a
@@ -466,8 +491,20 @@ export class AppRuntime {
     return p;
   }
 
+  /**
+   * A team pull holds this app (its record exists, read from disk every time): nothing starts.
+   * The state stays `stopped` (not `error`), so the window's next heartbeat asks again and the
+   * lease brings the backend back the moment the record goes.
+   */
+  pullHeld(): boolean {
+    if (!appPullHeld(this.home, this.hash)) return false;
+    try { this.deps.onPullHeld?.(this.rec.projectRoot); } catch { /* the next ask retries */ }
+    return true;
+  }
+
   private async start(): Promise<void> {
     const mine = this.epoch;
+    if (this.pullHeld()) { this.state = 'stopped'; this.lastError = PAUSED_FOR_SYNC; return; }
     this.state = 'starting';
     this.lastError = null;
     this.warnings = [];
@@ -495,9 +532,9 @@ export class AppRuntime {
     if (!this.prepareData()) return;
     await this.backup('start');
     if (mine !== this.epoch) return;
-    const built = await this.runBuild();
+    const built = await this.runBuild(mine);
     if (mine !== this.epoch || !built) return;
-    const b = await this.spawnBackend();
+    const b = await this.spawnBackend(mine);
     if (!b) return;
     if (mine !== this.epoch) { killGroup(b.child); return; }
     // Never orphan a backend: whatever else came up meanwhile goes.
@@ -549,16 +586,18 @@ export class AppRuntime {
     this.backupTimer.unref();
   }
 
-  private async runBuild(): Promise<boolean> {
+  private async runBuild(mine: number): Promise<boolean> {
     const cmd = this.manifest?.build;
     if (!cmd) return true;
     const env = { ...(await this.baseEnv()), ...this.dotenv(), DC_DATA_DIR: this.dataDir() };
     // No DC_TOKEN, no DC_GATEWAY_SECRET: a bundler could inline them into the page.
     delete (env as Record<string, string>).DC_TOKEN;
     delete (env as Record<string, string>).DC_GATEWAY_SECRET;
+    const spawned = this.spawnChild(cmd, env, mine);
+    if (!spawned) return false;
+    const child = spawned;
     this.quietUntil = Number.POSITIVE_INFINITY;
     return new Promise((resolve) => {
-      const child = this.spawnShell(cmd, env);
       this.buildChild = child;
       const untrack = this.deps.trackChild?.(() => killGroup(child)) ?? (() => {});
       child.stdout?.on('data', (c) => this.log.write(c, '[build] '));
@@ -589,15 +628,47 @@ export class AppRuntime {
     return ensureAppDataDir(this.rec.projectRoot, this.rec.slug);
   }
 
-  /** Its own process group off Windows; on Windows a hidden child of this server (no groups there). */
-  private spawnShell(cmd: string, env: Record<string, string>): ChildProcess {
+  /**
+   * THE one place this runtime starts a process (build or backend). It refuses, returning null, when
+   * the start that asked was overtaken by a stop (`mine` is not the epoch any more) or when a team
+   * pull holds the app (its record, read NOW, at spawn time). A child it starts is in the live set
+   * from this moment until its whole group is gone. Its own process group off Windows; on Windows a
+   * hidden child of this server (no groups there).
+   */
+  private spawnChild(cmd: string, env: Record<string, string>, mine: number): ChildProcess | null {
+    if (mine !== this.epoch) return null;
+    if (appPullHeld(this.home, this.hash)) {
+      if (this.state === 'starting') this.state = 'stopped';
+      this.lastError = PAUSED_FOR_SYNC;
+      try { this.deps.onPullHeld?.(this.rec.projectRoot); } catch { /* the next ask retries */ }
+      return null;
+    }
     const sh = shellInvocation(cmd);
     const win = process.platform === 'win32';
-    return spawn(sh.file, sh.args, { cwd: this.rec.root, env, detached: !win, windowsHide: true, windowsVerbatimArguments: sh.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(sh.file, sh.args, { cwd: this.rec.root, env, detached: !win, windowsHide: true, windowsVerbatimArguments: sh.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
+    this.live.add(child);
+    const settle = () => {
+      if (groupAlive(child)) { setTimeout(settle, 50).unref(); return; }
+      this.live.delete(child);
+      for (const w of [...this.liveWaiters]) w();
+    };
+    child.once('exit', settle);
+    // A spawn that failed outright (ENOENT) emits 'error' and maybe no 'exit'.
+    child.once('error', () => setTimeout(settle, 0).unref());
+    return child;
   }
 
-  private async spawnBackend(): Promise<Backend | null> {
-    const mine = this.epoch;
+  /** Process groups this runtime started that are not gone yet. */
+  liveChildCount(): number {
+    return this.live.size;
+  }
+
+  /** The pids (group leaders off Windows) of what is still live: server shutdown waits for these. */
+  livePids(): number[] {
+    return [...this.live].map((c) => c.pid).filter((p): p is number => !!p);
+  }
+
+  private async spawnBackend(mine: number): Promise<Backend | null> {
     const be = this.manifest!.backend!;
     const port = await freePort();
     const env: Record<string, string> = {
@@ -611,7 +682,8 @@ export class AppRuntime {
       DC_DATA_DIR: this.dataDir(),
       DC_CONFIG: JSON.stringify(publicConfig(this.manifest!.config, readAppConfig(this.home, this.rec.configId))),
     };
-    const child = this.spawnShell(be.command, env);
+    const child = this.spawnChild(be.command, env, mine);
+    if (!child) return null;
     const release = this.deps.claimPort?.(port) ?? (() => {});
     const untrack = this.deps.trackChild?.(() => killGroup(child)) ?? (() => {});
     const b: Backend = { child, port, release, untrack };
@@ -705,7 +777,7 @@ export class AppRuntime {
   }
 
   /** Stop the backend (and the watch). `byOwner` marks it (the caller persists the mark). */
-  stop(): void {
+  stop(opts: { backup?: boolean } = {}): void {
     this.epoch++;
     // A start or build cut short by this stop is not one a later Start may join.
     this.starting = null;
@@ -716,10 +788,37 @@ export class AppRuntime {
     const b = this.backend;
     this.backend = null;
     if (b) killGroup(b.child);
+    // Every group this runtime started, adopted or not (a start in flight's backend in its health poll).
+    for (const c of this.live) if (c !== b?.child) killGroup(c);
     // After the backend has had a moment to write its last state down.
-    if (b && !this.deps.noBackup) setTimeout(() => { void this.backup('stop'); }, 2000).unref();
+    if (b && !this.deps.noBackup && opts.backup !== false) setTimeout(() => { void this.backup('stop'); }, 2000).unref();
     this.state = 'stopped';
   }
+
+  /**
+   * Stop, and resolve only once everything this runtime started is really GONE (app-veri-ortak K7:
+   * a team pull must not touch the data folder while a backend still writes its last save in its
+   * SIGTERM handler, or boots in a start still in flight). It waits for the live set (every group
+   * spawned at {@link spawnChild}, adopted or not) to be empty: gone = the child exited AND, off
+   * Windows, its whole group answers ESRCH. The stop moves the epoch, so a start in flight cannot
+   * spawn after this. `stop()` escalates to SIGKILL after 2 s; this resolves false at `timeoutMs`.
+   * No delayed stop-backup: the pull takes its own before it parks anything.
+   */
+  async stopAndWait(timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    this.stop({ backup: false });
+    while (this.live.size) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      await new Promise<void>((resolve) => {
+        const done = () => { clearTimeout(t); this.liveWaiters.delete(done); resolve(); };
+        const t = setTimeout(done, left);
+        this.liveWaiters.add(done);
+      });
+    }
+    return true;
+  }
+
 
   // ─── leases ───────────────────────────────────────────────────────────────
 
@@ -847,10 +946,11 @@ export class AppRuntime {
         if (before === 'error' || before === 'stopped') this.state = 'running';
         return;
       }
+      if (this.pullHeld()) return;
       if (before === 'running') this.state = 'updating';
       this.refreshSecrets();
-      const built = await this.runBuild();
-      const fresh = built && mine === this.epoch ? await this.spawnBackend() : null;
+      const built = await this.runBuild(mine);
+      const fresh = built && mine === this.epoch ? await this.spawnBackend(mine) : null;
       if (mine !== this.epoch) { if (fresh) killGroup(fresh.child); return; }
       if (fresh) {
         const old = this.backend;
@@ -917,8 +1017,8 @@ export function forgetRuntime(hash: string): void {
 export function stopAllRuntimes(): void {
   const groups: number[] = [];
   for (const r of runtimes.values()) {
-    const pid = r.backend?.child.pid;
-    if (pid) groups.push(pid);
+    // Every group it started, a start in flight's unadopted backend and a build included.
+    groups.push(...r.livePids());
     r.stop();
   }
   runtimes.clear();

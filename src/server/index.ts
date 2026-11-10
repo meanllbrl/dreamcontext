@@ -322,6 +322,7 @@ import {
   handleAppsList, handleAppsLaunchWindow, handleAppsRunning, handleAppsEmbedCheck, handleAppSay, handleAppChats, handleAppChatClose, handleAppChatTitle, handleAppLaunch, handleAppStop, handleAppStatus,
   handleAppLogs, handleAppSnapshot, handleAppCall, handleAppDelete, handleAppIcon, startAppsSweeper,
   handleAppMcpRequest, handleAppScheduleToggle,
+  handleAppDataShare, handleAppSyncPause, handleAppSyncResume, recoverAppPullsAtStart,
 } from './routes/apps.js';
 import { closeAllGateways, configureGateways } from './apps/gateway.js';
 import {
@@ -579,6 +580,10 @@ export function buildRouter(): Router {
   router.post('/api/apps/:slug/call', handleAppCall);
   router.post('/api/apps/:slug/mcp-request', handleAppMcpRequest);
   router.post('/api/apps/:slug/schedules/:id', handleAppScheduleToggle);
+  // Team data (app-veri-ortak K3, K7): the owner's consent, and a team pull's pause.
+  router.post('/api/apps/:slug/data-share', handleAppDataShare);
+  router.post('/api/apps/:slug/sync-pause', handleAppSyncPause);
+  router.delete('/api/apps/:slug/sync-pause', handleAppSyncResume);
   router.delete('/api/apps/:slug', handleAppDelete);
 
   router.get('/api/launcher/discover', handleLauncherDiscover);
@@ -1619,6 +1624,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
           // dreamcontext Apps: each app's gateway proxies /__dc/api to THIS server and router.
           configureGateways({ dashboardPort: a.port, router, theme: readLauncherTheme });
           stopAppsSweeper = startAppsSweeper();
+          // A team pull of app data this Mac left half done is finished first (K5, under the brain lock).
+          recoverAppPullsAtStart();
         }
       }
       const shutdown = () => {
