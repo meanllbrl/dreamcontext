@@ -44,8 +44,15 @@ describe('the light task list', () => {
 describe('connected projects for the composer', () => {
   it('is one shared query per vault, not a fetch per pane', () => {
     const src = read('hooks/usePeerMentions.ts');
-    expect(src).toContain("queryKey: ['peer-mentions']");
+    expect(src).toContain('queryKey: PEER_MENTIONS_KEY');
     expect(src).not.toMatch(/useEffect\(/);
-    expect(src).toContain('staleTime: Infinity');
+    expect(src).toContain('staleTime: PEERS_FRESH_MS');
+    // A failure is not cached as "no projects": the next mount retries it.
+    expect(src).not.toMatch(/\.catch\(/);
+  });
+
+  it('is refreshed when a connection is added or removed', () => {
+    const src = read('hooks/useConnections.ts');
+    expect(src.match(/invalidateQueries\(\{ queryKey: PEER_MENTIONS_KEY \}\)/g)?.length).toBe(2);
   });
 });

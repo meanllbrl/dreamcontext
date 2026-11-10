@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { PEER_MENTIONS_KEY } from './usePeerMentions';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
@@ -69,6 +70,7 @@ export function useAddConnection() {
       // (vaults + federation graph + status) so an edge added/removed here shows
       // up in the launcher graph without an app restart.
       queryClient.invalidateQueries({ queryKey: ['connections'] });
+      queryClient.invalidateQueries({ queryKey: PEER_MENTIONS_KEY });
       queryClient.invalidateQueries({ queryKey: ['vaults'] });
       queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
       queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
@@ -85,6 +87,7 @@ export function useRemoveConnection() {
       api.del<ConnectionsResponse>(`/connections/${encodeURIComponent(vault)}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] });
+      queryClient.invalidateQueries({ queryKey: PEER_MENTIONS_KEY });
       queryClient.invalidateQueries({ queryKey: ['vaults'] });
       queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
       queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });

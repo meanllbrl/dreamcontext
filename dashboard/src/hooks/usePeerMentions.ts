@@ -24,12 +24,14 @@ export function usePeerMentions(enabled = true): PeerMention[] {
   // project is slow: eleven restored chats asked it 22 times). The query client is per vault,
   // so the key needs no vault id. Held for the window's life, as the effect it replaces held it.
   const { data } = useQuery({
-    queryKey: ['peer-mentions'],
+    queryKey: PEER_MENTIONS_KEY,
+    // An error stays an error (the hook still answers no `@` menu), so the next mount retries it.
     queryFn: () => api.get<{ peers: PeerMention[] }>('/peer/peers')
-      .then((r) => (Array.isArray(r?.peers) ? r.peers : []))
-      .catch(() => [] as PeerMention[]),
+      .then((r) => (Array.isArray(r?.peers) ? r.peers : [])),
     enabled,
-    staleTime: Infinity,
+    // Fresh for a minute: the panes of one open share a request, and a chat opened later sees a
+    // project connected since (the Connections page also invalidates this key).
+    staleTime: PEERS_FRESH_MS,
     refetchInterval: false,
     refetchOnWindowFocus: false,
     retry: false,
@@ -38,3 +40,9 @@ export function usePeerMentions(enabled = true): PeerMention[] {
 }
 
 const NO_PEERS: PeerMention[] = [];
+
+/** How long one fetch of the connected projects serves every pane. */
+export const PEERS_FRESH_MS = 60_000;
+
+/** The query key, for the connection mutations that change the list. */
+export const PEER_MENTIONS_KEY = ['peer-mentions'] as const;

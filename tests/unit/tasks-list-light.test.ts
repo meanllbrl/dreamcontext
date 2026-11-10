@@ -8,12 +8,12 @@
  *   - the bulk read yields to the event loop (another request is answered in between).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleTasksList, handleTasksMembers } from '../../src/server/routes/tasks.js';
-import { LocalTaskBackend, readTaskFile, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
+import { LocalTaskBackend, forgetTaskRead, readTaskFile, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
 import { criteriaProgress } from '../../dashboard/src/components/sleepy/super/tileModel.js';
 import { SUMMARY_WHY_MAX } from '../../src/lib/task-list-summary.js';
 
@@ -159,5 +159,20 @@ describe('LocalTaskBackend.readAll', () => {
     expect(doneFirst).toBe(false);
     expect(all.map((t) => t.slug)).toEqual((await backend.list()).map((s) => s.name));
     expect(all[0]).toEqual(readTaskFile(join(ctx, 'state', `${all[0].slug}.md`)));
+  });
+});
+
+describe('readAll after a write', () => {
+  it('never hands a caller that came after a write the pass that started before it', async () => {
+    for (let i = 0; i < 120; i++) seed(`t-${String(i).padStart(3, '0')}`);
+    const backend = new LocalTaskBackend(join(ctx, 'state'));
+    const first = backend.readAll(); // has listed the files already: the new task is not among them
+    // A create's own steps while that pass still reads: the file appears and this process
+    // forgets its read (every backend write ends that way).
+    seed('t-new');
+    forgetTaskRead(join(ctx, 'state', 't-new.md'));
+    const second = await backend.readAll();
+    expect((await first).some((t) => t.slug === 't-new')).toBe(false);
+    expect(second.some((t) => t.slug === 't-new')).toBe(true);
   });
 });

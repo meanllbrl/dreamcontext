@@ -400,23 +400,36 @@ function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
  * serialises them). Concurrent calls for one directory share one pass.
  */
 const READ_ALL_BATCH = 48;
-const readAllInflight = new Map<string, Promise<TaskData[]>>();
+const readAllInflight = new Map<string, { gen: number; p: Promise<TaskData[]> }>();
+/** Bumped by every write this process makes ({@link forgetTaskRead}): a pass that started before
+ *  a write is never joined after it, so the refetch that follows an edit sees the edit. */
+let taskWriteGen = 0;
+
+/** One file read off the loop, cached only when its stat did not move during the read (a write
+ *  landing mid-read would otherwise cache a half-written file); a moved file is read once more. */
+async function readOneTaskFile(abs: string, statuses: readonly StatusDef[]): Promise<TaskData> {
+  const key = `task\0${abs}`;
+  const sigOf = async () => { const st = await stat(abs); return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; };
+  for (let attempt = 0; ; attempt++) {
+    const sig = await sigOf();
+    const hit = readMemo.get(key);
+    if (hit && hit.sig === sig) return hit.value as TaskData;
+    const value = parseTaskFile(abs, await readFile(abs, 'utf-8'), statuses);
+    if ((await sigOf()) === sig) {
+      readMemo.delete(key);
+      readMemo.set(key, { sig, value });
+      return value;
+    }
+    if (attempt >= 1) return value; // still moving: answer this read, cache nothing
+  }
+}
 
 async function readAllTaskFiles(files: string[], statuses: readonly StatusDef[]): Promise<TaskData[]> {
   const out: (TaskData | null)[] = new Array(files.length).fill(null);
   for (let i = 0; i < files.length; i += READ_ALL_BATCH) {
     await Promise.all(files.slice(i, i + READ_ALL_BATCH).map(async (file, j) => {
       try {
-        const abs = resolve(file);
-        const key = `task\0${abs}`;
-        const st = await stat(abs);
-        const sig = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-        const hit = readMemo.get(key);
-        if (hit && hit.sig === sig) { out[i + j] = hit.value as TaskData; return; }
-        const value = parseTaskFile(abs, await readFile(abs, 'utf-8'), statuses);
-        readMemo.delete(key);
-        readMemo.set(key, { sig, value });
-        out[i + j] = value;
+        out[i + j] = await readOneTaskFile(resolve(file), statuses);
       } catch { /* vanished or unreadable mid-pass: left out, like list() */ }
     }));
   }
@@ -430,6 +443,7 @@ async function readAllTaskFiles(files: string[], statuses: readonly StatusDef[])
 
 /** Drop the memoized reads of one task file (after this process wrote it). */
 export function forgetTaskRead(path: string): void {
+  taskWriteGen += 1;
   const abs = resolve(path);
   readMemo.delete(`fm\0${abs}`);
   readMemo.delete(`task\0${abs}`);
@@ -528,14 +542,15 @@ export class LocalTaskBackend implements TaskBackend {
    * {@link readAllTaskFiles}). Read-only values: the list route serialises them as they are.
    */
   async readAll(): Promise<readonly TaskData[]> {
-    const files = this.taskFiles();
-    const statuses = this.statusDefs();
+    // Join a running pass only when no write landed since it started (it listed the files and
+    // may have read the edited one before the write).
     const running = readAllInflight.get(this.stateDir);
-    if (running) return running;
-    const p = readAllTaskFiles(files, statuses).finally(() => {
-      if (readAllInflight.get(this.stateDir) === p) readAllInflight.delete(this.stateDir);
+    if (running && running.gen === taskWriteGen) return running.p;
+    const gen = taskWriteGen;
+    const p = readAllTaskFiles(this.taskFiles(), this.statusDefs()).finally(() => {
+      if (readAllInflight.get(this.stateDir)?.p === p) readAllInflight.delete(this.stateDir);
     });
-    readAllInflight.set(this.stateDir, p);
+    readAllInflight.set(this.stateDir, { gen, p });
     return p;
   }
 
