@@ -58,6 +58,7 @@ import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
+import { appendAskLog } from './ask-log.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
@@ -771,6 +772,8 @@ export class TelegramHub implements TelegramHubApi {
   interceptText: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
   /** A prompt richer than one single-select question (multi-select, several questions, M3). */
   richQuestion: ((ab: ActiveBinding, sessionId: string, q: PendingQuestion) => Promise<boolean>) | null = null;
+  /** W5: the drawings a rich send already put on Telegram (by request id), for a text fallback. */
+  richDrawn: ((id: string) => ReadonlySet<string> | undefined) | null = null;
   /** "Bu projede Super kapalı" with a Super'i aç button (N5). */
   superOff: ((ab: ActiveBinding) => Promise<void>) | null = null;
   /** The owner just turned away (`flushAway`): the Super-side senders (asks.ts) send what is still
@@ -1292,8 +1295,13 @@ export class TelegramHub implements TelegramHubApi {
     }
     if (this.richQuestion && await this.richQuestion(ab, sessionId, q).catch(() => false)) return;
     if (qs.length) {
-      // No picture went on this path: an option's drawing says it is on the Mac.
-      for (const html of formatAskCardMessages(qs.map((x, i) => withDrawingNotes(x, i, NOTHING_DRAWN)), { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
+      // Text after a rich send that failed part way (its drawings may be on Telegram already) or
+      // that never ran: each drawing says where it truly is, and the log says why it is text.
+      const drawn = this.richDrawn?.(q.requestId);
+      const wanted = qs.reduce((n, x) => n + x.options.filter((o) => o.preview?.trim()).length, 0);
+      if (drawn) appendAskLog(this.home, `${q.requestId} question sent as text: the picture card did not go whole`);
+      else if (wanted) appendAskLog(this.home, `${q.requestId} pictures 0/${wanted} NOT ALL SENT (sent as text: this card has no picture path)`);
+      for (const html of formatAskCardMessages(qs.map((x, i) => withDrawingNotes(x, i, drawn ?? NOTHING_DRAWN)), { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
       return;
     }
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);

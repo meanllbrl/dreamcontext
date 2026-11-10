@@ -29,7 +29,7 @@ import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { cardOut } from './cards.js';
 import type { PreviewShooter } from './page-shot.js';
-import { caption as pictureCaption, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
@@ -149,24 +149,30 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
     const { sent, unsent } = await sendPictures(ab, items, caption);
     for (const m of sent) { const k = keyOf.get(m); if (k) drawn.add(k); }
-    for (const m of unsent) if (keyOf.has(m)) misses.push(`${m.title}: Telegram refused the picture`);
+    for (const m of unsent) if (keyOf.has(m)) misses.push(`${m.title}: ${fitsTelegram(m) ? 'Telegram refused the picture' : "too large for Telegram, not sent"}`);
     // A drawing that did not go is said on its own option's line ("çizim Mac'te"); a --show card here.
     const cards = unsent.filter((m) => !keyOf.has(m));
     if (cards.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${cards.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
     return drawn;
   }
 
-  /** Sends a rich ask: its messages (id + HTML, one per question), or false when it does not fit
-   *  (the caller says "Mac'te seni bekliyor"). Throws when a question message did not go. */
   /** A question with drawings: one log line saying how many went and why the others did not
-   *  (the message itself already says "Çizimi Mac'te" on each option that did not go). */
+   *  (the message itself already says "Çizimi Mac'te" on each option that did not go). Counted
+   *  by `qi:label`, the key the notes use, so two options with one label count once. */
   function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[]): void {
-    const wanted = questions.reduce((n, q) => n + q.options.filter((o) => o.preview?.trim()).length, 0);
+    const wanted = new Set(questions.flatMap((q, qi) => q.options.filter((o) => o.preview?.trim()).map((o) => `${qi}:${o.label}`))).size;
     if (!wanted) return;
     const why = drawn.size < wanted && misses.length ? ` (${misses.join('; ')})` : '';
     appendAskLog(hub.home, `${id} pictures ${drawn.size}/${wanted}${drawn.size < wanted ? ' NOT ALL SENT' : ''}${why}`);
   }
 
+  /** The drawings that reached Telegram for an ask (by its log id), kept so a text fallback after
+   *  a failed send names them truthfully ("yukarıda", not "Mac'te"). */
+  const drawnById = new Map<string, ReadonlySet<string>>();
+  function drawnOf(id: string): ReadonlySet<string> | undefined { return drawnById.get(id); }
+
+  /** Sends a rich ask: its messages (id + HTML, one per question), or false when it does not fit
+   *  (the caller says "Mac'te seni bekliyor"). Throws when a question message did not go. */
   async function send(ab: ActiveBinding, target: RichTarget, questions: RichQuestion[], opts: { title?: string; lead?: string; sessionId: string; itemId?: string }): Promise<false | SentRichAsk> {
     if (!richAskFits(questions)) return false;
     // The ask's --show cards only in a live Telegram turn or streaming (N3); its option drawings
@@ -175,8 +181,12 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const cards = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secret;
     const misses: string[] = [];
     const drawn = secret ? new Set<string>() : await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null, cards, misses)
-      .catch((err) => { misses.push(`pictures failed: ${String((err as Error)?.message ?? err).slice(0, 120)}`); return new Set<string>(); });
-    logPictures(opts.itemId ?? (target.kind === 'super-ask' ? target.item.id : target.requestId), questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+      .catch((err) => { misses.push(`pictures failed: ${redactSecrets(String((err as Error)?.message ?? err)).slice(0, 120)}`); return new Set<string>(); });
+    const logId = opts.itemId ?? (target.kind === 'super-ask' ? target.item.id : target.requestId);
+    logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+    drawnById.delete(logId);
+    drawnById.set(logId, drawn);
+    if (drawnById.size > 200) drawnById.delete(drawnById.keys().next().value as string);
     const a: RichAsk = {
       id: randomBytes(6).toString('hex'), key: ab.key, target, questions,
       picks: questions.map(() => new Set<string>()), notes: questions.map(() => ''), messages: [], done: false,
@@ -297,7 +307,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return true;
   }
 
-  return { send, close, onButton, takeNote, _asks: asks };
+  return { send, close, onButton, takeNote, drawnOf, _asks: asks };
 }
 
 export type RichAsks = ReturnType<typeof wireRichAsks>;

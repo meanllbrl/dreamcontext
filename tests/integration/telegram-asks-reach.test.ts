@@ -229,7 +229,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     const first = tg.texts().find((t) => t.startsWith('❓'))!;
     expect(first).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi). Çubukta");
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 0\/1 NOT ALL SENT \(Bu taslak olur: not drawn\)/));
-    expect(askLog()).toMatch(/q-child question sent/);
+    await vi.waitFor(() => expect(askLog()).toMatch(/q-child question sent/));
   });
 
   it('a drawn picture is logged as sent, and its long note says it is above', async () => {
