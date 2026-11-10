@@ -56,6 +56,23 @@ export function knownMcpServers(projectRoot: string, home: string = homedir()): 
   return out;
 }
 
+/**
+ * The names among `names` that need the OWNER's sign-in: some account's last live reading
+ * (`~/.dreamcontext/mcp-status.json`, cells keyed `name|…`) says `needs-auth` and none says
+ * `connected`. A child cannot sign in (it runs unattended), so a job needing one of these waits
+ * on the owner; delegating it again only repeats the failure (kitUP 2026-11-09, posthog x3).
+ */
+export function mcpNeedingSignIn(
+  names: readonly string[],
+  cache: Readonly<Record<string, { cells: Readonly<Record<string, { status: string }>> }>>,
+): string[] {
+  return names.filter((n) => {
+    const seen = Object.values(cache).flatMap((acc) => Object.entries(acc.cells)
+      .filter(([key]) => key.slice(0, key.lastIndexOf('|')) === n).map(([, c]) => c.status));
+    return seen.includes('needs-auth') && !seen.includes('connected');
+  });
+}
+
 /** The names among `names` the user does not have (empty = all known). */
 export function unknownMcpNames(names: readonly string[], known: ReadonlyMap<string, unknown>): string[] {
   return names.filter((n) => !known.has(n));

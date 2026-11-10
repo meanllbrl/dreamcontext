@@ -5,10 +5,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  actionLabel, allConnected, cardPlace, clearRefused, reportedKey, findServer, mcpReport, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
+  actionLabel, allConnected, cardPlace, clearRefused, reportedKey, findServer, mcpReport, missingRow, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
   type CardReportState,
 } from '../../dashboard/src/components/sleepy/chat/mcpRows.js';
-import type { McpLiveServer } from '../../dashboard/src/lib/mcpWire.js';
+import type { McpLiveServer, McpOverview } from '../../dashboard/src/lib/mcpWire.js';
+import { mcpNeedingSignIn } from '../../src/lib/super/lean-mcp.js';
 
 const s = (name: string, status: McpLiveServer['status'], extra: Partial<McpLiveServer> = {}): McpLiveServer =>
   ({ name, status, home: 'computer', transport: 'http', ...extra });
@@ -103,5 +104,54 @@ describe('end-review fixes', () => {
     const items = [{ id: 'item-1', kind: 'text', text: `expired again\n\n${card('connect-x')}` }];
     expect(cardPlace([...history, ...items], 'item-1', 'connect-x')).toBe('connect-x#1');
     expect(cardPlace([...history, ...items], 'hist-41', 'connect-x')).toBe('connect-x#0');
+  });
+});
+
+describe('a named server the chat does not hold (kitUP 2026-11-09: posthog set up, sign-in expired)', () => {
+  const def = (name: string) => ({
+    name, home: 'computer' as const, transport: 'http', target: 'mcp.posthog.com', headerKeys: [], envKeys: [],
+    imported: true, editedInApp: false, differs: false, removedAtSource: false, key: `${name}|abc`,
+  });
+  const ov = (cells: McpOverview['cells']): Pick<McpOverview, 'servers' | 'live' | 'cells'> =>
+    ({ servers: [def('posthog')], live: [{ name: 'Gmail', home: 'claudeai', transport: 'http' }], cells });
+
+  it('set up and needing a sign-in on this chat\'s account: says so and offers the sign-in, never "add it"', () => {
+    const r = missingRow('posthog', ov({ 'posthog|abc': { ouro: { status: 'needs-auth' }, gmail: { status: 'connected' } } }), 'ouro');
+    expect(r).toEqual({ text: 'on this computer · needs your sign-in', signIn: true });
+    expect(r.text).not.toMatch(/add it/);
+  });
+
+  it('no account known: needs-auth somewhere and connected nowhere is a sign-in; connected somewhere is not', () => {
+    expect(missingRow('PostHog', ov({ 'posthog|abc': { a: { status: 'needs-auth' }, b: { status: 'unchecked' } } })).signIn).toBe(true);
+    expect(missingRow('posthog', ov({ 'posthog|abc': { a: { status: 'needs-auth' }, b: { status: 'connected' } } })).signIn).toBe(false);
+  });
+
+  it('set up and fine, but this chat started without it (a Super child gets only its --mcp names)', () => {
+    expect(missingRow('posthog', ov({ 'posthog|abc': { ouro: { status: 'connected' } } }), 'ouro'))
+      .toEqual({ text: 'on this computer · this chat was started without it', signIn: false });
+  });
+
+  it('a claude.ai connector seen in a probe is matched too', () => {
+    expect(missingRow('gmail', ov({ 'Gmail|claudeai': { ouro: { status: 'needs-auth' } } }), 'ouro'))
+      .toEqual({ text: 'claude.ai connector · needs your sign-in', signIn: true });
+  });
+
+  it('set up nowhere: add it; the overview not read yet: only that it is missing here', () => {
+    expect(missingRow('linear', ov({}), 'ouro')).toEqual({ text: 'not set up yet: add it in Settings → MCP', signIn: false });
+    expect(missingRow('posthog', null)).toEqual({ text: 'not in this chat: see Settings → MCP', signIn: false });
+  });
+});
+
+describe('the Super learns which servers wait on the owner\'s sign-in (super state / delegate)', () => {
+  const cache = {
+    ouro: { cells: { 'posthog|c064': { status: 'needs-auth' }, 'stitch|9a1': { status: 'connected' }, 'fathom|11': { status: 'needs-auth' } } },
+    gmail: { cells: { 'posthog|c064': { status: 'needs-auth' }, 'fathom|11': { status: 'connected' } } },
+  };
+  it('needs-auth on some account and connected on none', () => {
+    expect(mcpNeedingSignIn(['posthog', 'stitch', 'fathom', 'whatsapp'], cache)).toEqual(['posthog']);
+  });
+  it('the key\'s name part is matched whole (a name that prefixes another is not it)', () => {
+    expect(mcpNeedingSignIn(['post'], cache)).toEqual([]);
+    expect(mcpNeedingSignIn([], cache)).toEqual([]);
   });
 });

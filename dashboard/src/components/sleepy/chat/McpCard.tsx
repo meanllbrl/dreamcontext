@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { emitInstance, useApi, useVaultId } from '../../../context/VaultContext';
 import { openExternalUrl } from '../../../lib/desktop';
 import type { McpViewSpec } from '../../../lib/chatViewSpec';
-import type { McpLiveServer } from '../../../lib/mcpWire';
+import type { McpLiveServer, McpOverview } from '../../../lib/mcpWire';
 import type { ChatSession } from '../chatSession';
 import { useChatAccountEmail, useMcpLive } from './useMcpLive';
 import {
   CLAUDE_AI_CONNECTORS_URL, actionLabel, allConnected, connectLabel, findServer, homeLabel, mcpReport,
-  cardPlace, nextCardReport, reportedKey, rowAction, statusLabel, type CardReportState,
+  cardPlace, missingRow, nextCardReport, reportedKey, rowAction, statusLabel, type CardReportState,
 } from './mcpRows';
 import './mcpCard.css';
 
@@ -77,6 +78,23 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
   }, [servers, spec.servers]);
 
   const live = !!session && !!report;
+
+  // A named server this chat cannot show or sign in to (missing from its status, or needing a
+  // sign-in where this card has no live channel, e.g. a Super child's read-only pane): read
+  // Settings → MCP's overview once, so the row says whether it is set up and needs a sign-in
+  // (`missingRow`) and offers the one place that signs it in.
+  const api = useApi();
+  const { bus } = useVaultId();
+  const [overview, setOverview] = useState<McpOverview | null>(null);
+  const needOverview = !!status && rows.some((r) => !r.live || (r.live.status === 'needs-auth' && !live));
+  useEffect(() => {
+    if (!needOverview || overview) return undefined;
+    let gone = false;
+    api.get<McpOverview>('/agent/mcp/overview').then((o) => { if (!gone) setOverview(o); }, () => { /* the plain line stays */ });
+    return () => { gone = true; };
+  }, [needOverview, overview, api]);
+  const chatAccount = session ? (session.getModel().activeAccountId || session.accountId) : '';
+  const openSettings = () => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'mcp' });
   const fallbacks = rows.filter((r) => r.live?.home === 'claudeai' && auth[r.live.name]?.state === 'timeout');
 
   return (
@@ -96,13 +114,16 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
           const action = row ? rowAction(row) : null;
           const inFlight = row ? auth[row.name] : undefined;
           const flight = connectLabel(inFlight?.state, inFlight?.host);
+          const missing = !row && status ? missingRow(name, overview, chatAccount || undefined) : null;
+          // The sign-in lives in Settings → MCP when this card cannot run it itself.
+          const settingsSignIn = !!missing?.signIn || (row?.status === 'needs-auth' && row.home !== 'claudeai' && !live);
           return (
             <li className="chat-mcpcard-row" key={name} data-status={row?.status ?? 'missing'}>
               <span className="chat-mcpcard-icon" aria-hidden>{row?.home === 'claudeai' ? '✉' : '◆'}</span>
               <span className="chat-mcpcard-text">
                 <span className="chat-mcpcard-name">{row?.name ?? name}</span>
                 <span className="chat-mcpcard-sub">
-                  {row ? `${homeLabel(row.home)} · ${flight ?? statusLabel(row)}` : status ? 'not in this chat — add it in Settings → MCP' : 'reading this chat\'s servers…'}
+                  {row ? `${homeLabel(row.home)} · ${flight ?? statusLabel(row)}` : missing ? missing.text : 'reading this chat\'s servers…'}
                 </span>
               </span>
               {row?.status === 'connected' ? (
@@ -113,6 +134,9 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
                     <button type="button" className="chat-btn pill" onClick={() => { void openExternalUrl(CLAUDE_AI_CONNECTORS_URL); }}>
                       Settings on claude.ai ↗
                     </button>
+                  )}
+                  {settingsSignIn && (
+                    <button type="button" className="chat-btn pill primary" onClick={openSettings}>Sign in (Settings → MCP)</button>
                   )}
                   {action && live && (
                     <button
