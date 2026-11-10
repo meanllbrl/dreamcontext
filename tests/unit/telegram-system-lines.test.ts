@@ -81,3 +81,12 @@ describe('telegram system lines', () => {
     });
   });
 });
+
+describe('permission prompt (one shape for the Super and its jobs)', () => {
+  it('puts the ask in bold on its own line, the job under it, then the command', async () => {
+    const { permissionHtml } = await import('../../src/lib/telegram/system-lines.js');
+    expect(permissionHtml('Bash', 'npm test', 'Ödeme testlerini düzelt')).toBe('🔐 <b>İzin istiyor: Bash</b>\n<i>Ödeme testlerini düzelt</i>\n<pre>npm test</pre>');
+    expect(permissionHtml('Bash', 'a < b')).toBe('🔐 <b>İzin istiyor: Bash</b>\n<pre>a &lt; b</pre>');
+    expect(permissionHtml('Bash', 'x', 'iş · uzun')).not.toContain('· İzin');
+  });
+});

@@ -224,10 +224,10 @@ describe('the Super chat\'s own AskUserQuestion (P3 through the window)', () => 
       { question: 'Hangi kart?', options: [{ label: 'Bu taslak', preview: '<div class="dc-card">Kart</div>' }, { label: 'Değişsin' }] },
       { question: 'Ne zaman?', options: [{ label: 'Bugün' }, { label: 'Yarın' }] },
     ] } } });
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak:'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))).toBe(true));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak:'))!;
-    expect(text).toContain('• Bu taslak: Çizimi yukarıda.');
+    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))!;
+    expect(text).toContain('• <b>Bu taslak</b>: Çizimi yukarıda.');
     expect(text).not.toContain("Çizimi Mac'te");
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
     expect(log).toMatch(/req-d pictures 1\/1(?! NOT)/);

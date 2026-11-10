@@ -183,7 +183,7 @@ describe('a child\'s two-question card, one clean message per question', () => {
     expect(msgs[0]).toContain('Onay kartı bu çizimdeki gibi olsun mu? (1/2)');
     expect(msgs[0]).not.toContain('options:');
     expect(msgs[0]).not.toContain("ne zaman gitsin");
-    expect(msgs[0]).toContain('• Bu taslak olur: Çizimi yukarıda.');
+    expect(msgs[0]).toContain('• <b>Bu taslak olur</b>: Çizimi yukarıda.');
     expect(msgs[1]).not.toContain('App onay kartı');
     expect(msgs[1]).toContain("ne zaman gitsin? (2/2)");
     const photoAt = tg.calls.findIndex((c) => c.method === 'sendPhoto');
@@ -205,7 +205,7 @@ describe('a child\'s two-question card, one clean message per question', () => {
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(false);
-    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi).");
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain("• <b>Bu taslak olur</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
   });
 });
 
@@ -227,7 +227,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(false);
     const first = tg.texts().find((t) => t.startsWith('❓'))!;
-    expect(first).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi). Çubukta");
+    expect(first).toContain("• <b>Bu taslak olur</b>: Çizimi Mac'te (Telegram'a çizilemedi). Çubukta");
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 0\/1 NOT ALL SENT \(Bu taslak olur: not drawn\)/));
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child question sent/));
   });
@@ -238,7 +238,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• Bu taslak olur: Çizimi yukarıda. Çubukta');
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• <b>Bu taslak olur</b>: Çizimi yukarıda. Çubukta');
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 1\/1(?! NOT)/));
   });
 
@@ -248,7 +248,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     await writeState({ queue: [childItem()] });
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
-    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi).");
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain("• <b>Bu taslak olur</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 0\/1 NOT ALL SENT \(Bu taslak olur: Telegram refused the picture\)/));
   });
 });
@@ -277,7 +277,7 @@ describe('answered elsewhere', () => {
     for (const e of edits) expect(e.params.reply_markup).toBeUndefined();
   });
 
-  it('the Super\'s ask closed elsewhere: its message says Cevaplandı, buttons gone', async () => {
+  it('the Super\'s ask closed with no answer known: its message says the card closed, never Cevaplandı, buttons gone', async () => {
     await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Yeşil')).toHaveLength(1));
@@ -285,6 +285,9 @@ describe('answered elsewhere', () => {
     await writeState({ queue: [{ ...superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1), state: 'done' }] });
     await afterWrite();
     await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1));
-    expect(String(tg.calls.find((c) => c.method === 'editMessageText')!.params.text)).toContain('✓ Cevaplandı');
+    // Owner 2026-11-10: a card stamped "Cevaplandı" while the Super still waited on him.
+    const text = String(tg.calls.find((c) => c.method === 'editMessageText')!.params.text);
+    expect(text).toContain('<i>Bu kart kapandı.</i>');
+    expect(text).not.toContain('Cevaplandı');
   });
 });

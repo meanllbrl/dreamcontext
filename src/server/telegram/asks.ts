@@ -30,6 +30,7 @@ import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../..
 import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
+import { permissionHtml } from '../../lib/telegram/system-lines.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
@@ -121,17 +122,25 @@ function remember(itemId: string, copy: Copy): void {
   while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
 }
 
-/** Answered elsewhere: each message of its copy says so, with the pick when known, buttons gone. */
+/** The line a closed copy ends with: "✓ Cevaplandı" only with the pick it was answered with.
+ *  A close that carries no answer (the record closed it: a message of his taken as the answer,
+ *  a new session, a hand-over) says only that the card closed, never that he answered it
+ *  (owner 2026-11-10: a card stamped "Cevaplandı" while the Super still waited on him). */
+export function closedCopyLine(pick: string | null): string {
+  return pick ? `<b>✓ Cevaplandı: ${escapeHtml(redactSecrets(pick).slice(0, 300))}</b>` : '<i>Bu kart kapandı.</i>';
+}
+
+/** Closed elsewhere: each message of its copy says how, buttons gone. */
 async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<string, string> | null): Promise<void> {
   const c = copies.get(itemId);
   if (!c) return;
   copies.delete(itemId);
   if (c.askId) rich?.close(c.askId);
-  const all = answers ? Object.values(answers).join(' · ') : '';
+  const all = answers ? Object.values(answers).join('\n') : '';
   for (const m of c.messages) {
     if (!m.messageId) continue;
     const pick = answers && m.question ? answers[m.question] ?? '' : c.messages.length === 1 ? all : '';
-    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n<b>✓ Cevaplandı${pick ? `: ${escapeHtml(redactSecrets(pick).slice(0, 300))}` : ''}</b>`);
+    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${closedCopyLine(pick || null)}`);
   }
 }
 
@@ -275,8 +284,7 @@ async function onChildAsking(hub: TelegramHub, entry: ChatEntry): Promise<void> 
     if (!item) { sentItems.delete(claim); return; }
     if (sentItems.has(item.id)) return;
     sentItems.add(item.id);
-    const job = s.children[entry.sessionId]?.brief ? `${escapeHtml(s.children[entry.sessionId].brief.slice(0, 60))} · ` : '';
-    const body = `🔐 ${job}İzin istiyor: <b>${escapeHtml(pq.toolName)}</b>\n<pre>${escapeHtml(redactSecrets(pq.text).slice(0, 1500))}</pre>`;
+    const body = permissionHtml(pq.toolName, redactSecrets(pq.text), s.children[entry.sessionId]?.brief);
     await hub.sendButtons(ab, body, [['İzin ver (bir kez)', 'Reddet']],
       { kind: 'permission', requestId: pq.requestId, sessionId: entry.sessionId, singleUse: true },
       { queue: true, item: item.id });

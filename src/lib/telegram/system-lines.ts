@@ -29,6 +29,13 @@ export function statusLineHtml(state: StatusState, name: string, note?: string):
   return `${STATUS_GLYPH[state]} <i>${escapeHtml(clip(name, STATUS_NAME_MAX))}</i> · ${STATUS_LABEL[state]}${extra}`;
 }
 
+/** A permission prompt (the Super's own and a child's, one shape): the ask in bold on its own
+ *  line, the job it is for under it, then the exact command. `text` is already redacted. */
+export function permissionHtml(toolName: string, text: string, job?: string): string {
+  const jobLine = job?.trim() ? `\n<i>${escapeHtml(clip(job, 60))}</i>` : '';
+  return `🔐 <b>İzin istiyor: ${escapeHtml(toolName)}</b>${jobLine}\n<pre>${escapeHtml(text.slice(0, 1500))}</pre>`;
+}
+
 /** Status rows go out silently: only the real reply buzzes. */
 export const SILENT = { disable_notification: true } as const;
 

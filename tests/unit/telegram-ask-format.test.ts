@@ -22,14 +22,14 @@ describe('formatAskQuestionHtml', () => {
       '',
       'Ürün sağlam, test eski kalmış: önceden ödenmiş parayı saymıyor.',
       '',
-      '• Evet, testi düzelt: Küçük iş, yerel commit, push yok',
-      '• Şimdilik bırak: Testler kırmızı kalır',
+      '• <b>Evet, testi düzelt</b>: Küçük iş, yerel commit, push yok',
+      '• <b>Şimdilik bırak</b>: Testler kırmızı kalır',
     ].join('\n'));
   });
 
   it('adds no empty lines for missing descriptions, and skips undescribed options', () => {
     expect(formatAskQuestionHtml({ question: 'Q?', options: [{ label: 'A' }, { label: 'B', description: '  ' }] })).toBe('❓ Q?');
-    expect(formatAskQuestionHtml({ question: 'Q?', options: [{ label: 'A' }, { label: 'B', description: 'why' }] })).toBe('❓ Q?\n\n• B: why');
+    expect(formatAskQuestionHtml({ question: 'Q?', options: [{ label: 'A' }, { label: 'B', description: 'why' }] })).toBe('❓ Q?\n\n• <b>B</b>: why');
     expect(formatAskQuestionHtml({ question: 'Q?', description: 'd' })).toBe('❓ Q?\n\nd');
   });
 
@@ -42,7 +42,7 @@ describe('formatAskQuestionHtml', () => {
     expect(html).toContain('<b>&lt;t&gt;</b>');
     expect(html).toContain('iş &amp; &lt;l&gt;');
     expect(html).toContain('a &lt;b&gt; &amp; c?');
-    expect(html).toContain('• &lt;x&gt;: &quot;q&quot; &amp; &lt;i&gt;');
+    expect(html).toContain('• <b>&lt;x&gt;</b>: &quot;q&quot; &amp; &lt;i&gt;');
     expect(html).not.toContain('sk-ant-');
     expect(html).toContain('[gizli]');
   });
@@ -54,7 +54,7 @@ describe('formatAskQuestionHtml', () => {
     expect(html.length).toBeLessThanOrEqual(TG_TEXT_MAX);
     expect(html).toContain('Uzun mu?');
     expect(html).toContain('…');
-    for (let i = 0; i < 8; i++) expect(html).toContain(`• Seçenek ${i}: `);
+    for (let i = 0; i < 8; i++) expect(html).toContain(`• <b>Seçenek ${i}</b>: `);
     const tight = formatAskQuestionHtml(q, { title: 'Başlık', max: 300 });
     expect(tight.length).toBeLessThanOrEqual(300);
     expect(tight.startsWith('❓ <b>Başlık</b>\nUzun mu?')).toBe(true);

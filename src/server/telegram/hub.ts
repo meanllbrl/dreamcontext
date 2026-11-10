@@ -56,7 +56,7 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
@@ -1281,7 +1281,7 @@ export class TelegramHub implements TelegramHubApi {
   /** Shared with child permissions (A4): the prompt as a buttoned message, or the Mac line. */
   async sendPendingQuestion(ab: ActiveBinding, sessionId: string, q: PendingQuestion, prefix = ''): Promise<void> {
     if (q.isPermission) {
-      const body = `${prefix}🔐 İzin istiyor: <b>${escapeHtml(q.toolName)}</b>\n<pre>${escapeHtml(redactSecrets(q.text).slice(0, 1500))}</pre>`;
+      const body = `${prefix}${permissionHtml(q.toolName, redactSecrets(q.text))}`;
       await this.sendButtons(ab, body, [['İzin ver (bir kez)', 'Reddet']], { kind: 'permission', requestId: q.requestId, sessionId, singleUse: true });
       return;
     }

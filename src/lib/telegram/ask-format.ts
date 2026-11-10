@@ -93,7 +93,7 @@ export function formatAskQuestionHtml(q: AskCardQuestion, opts: AskCardOpts = {}
     const d = descMax > 0 ? clip(q.description, descMax) : '';
     if (d) parts.push(escapeHtml(d));
     const rows = optMax > 0
-      ? described.map((o) => ({ l: clip(o.label, 60), d: clip(o.description, optMax) })).filter((r) => r.d).map((r) => `• ${escapeHtml(r.l)}: ${escapeHtml(r.d)}`)
+      ? described.map((o) => ({ l: clip(o.label, 60), d: clip(o.description, optMax) })).filter((r) => r.d).map((r) => `• <b>${escapeHtml(r.l)}</b>: ${escapeHtml(r.d)}`)
       : [];
     if (rows.length) parts.push(rows.join('\n'));
     return `${parts.join('\n\n')}${foot}`;
