@@ -23,6 +23,13 @@ Never: `.env*`, `data/`, `node_modules/`, dotfiles, `CLAUDE.md`/`AGENTS.md`/`.cl
 files over 2 MB. One commit goes out, as the account's noreply address at `+0000`; the app's own
 git history, name, e-mail and time zone never do.
 
+**A publish never carries the app's data**, the team's hand-made data included. That is a separate
+thing: the paths the manifest's `data` field declares shared, once the owner approves them, go to
+teammates of the SAME brain through brain sync (the `/apps` skill, "The app's data"). Someone who
+installs a published app into another brain gets the code with an empty data folder. A teammate
+whose brain already holds the app's shared data and who installs the same app keeps its slug, so
+the app opens on that data.
+
 The gate stops a publish on: a key or token, an `.env` or setting value, an e-mail, a phone
 number, a person's name (people, git name, Mac user), a home path, an account id, image metadata.
 Nobody can pass those, not the owner and not you with `--approve`: fix the app. Generic words of the

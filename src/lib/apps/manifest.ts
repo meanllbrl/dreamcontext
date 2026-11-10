@@ -17,6 +17,7 @@ import { APP_SLUG_RE } from './bundle.js';
 import { safeAppPath } from './safe-path.js';
 import { parseScheduleDetailed } from '../automations/schedule.js';
 import { readToolsOf } from '../agents/read-tools.js';
+import { parseDataDecl, type DataDecl } from './data-share.js';
 
 export const MANIFEST_FILE = 'dreamcontext-app.json';
 /** The app assistant's role: this literal name at the app root, never configurable, so an edit to
@@ -127,6 +128,16 @@ export interface AppManifest {
   config: ConfigField[];
   /** Extra paths a publish may carry beyond the allow-list (same extensions). */
   share: { include: string[] };
+  /**
+   * Which data is the team's (app-veri-ortak K1): hand-made data `shared`, re-fetchable cache,
+   * personal and secret data `local`. null = the field is absent: "undecided", nothing shared.
+   */
+  data: DataDecl | null;
+}
+
+/** The app has not declared which data is shared (`apps validate`: `data_undeclared`). */
+export function dataUndeclared(m: Pick<AppManifest, 'data'>): boolean {
+  return m.data === null;
 }
 
 export interface ManifestProblem {
@@ -356,12 +367,21 @@ export function parseManifest(text: string, appRoot: string | null): ManifestRes
     }
   }
 
+  let data: DataDecl | null = null;
+  const d = parseDataDecl(raw.data);
+  if (!d.ok) {
+    for (const e of d.errors) {
+      const i = e.indexOf(': ');
+      err(i > 0 ? e.slice(0, i) : 'data', i > 0 ? e.slice(i + 2) : e, 'Write data as {"shared": [{"path": "favorites/", "why": "…"}], "local": [{"path": "cache/", "why": "…"}]}: paths relative to the data folder (a folder "x/", a file "x.json" or "dir/*.json"), no dots, no "..", at most 20 each, every "why" one line of at most 120 characters.');
+    }
+  } else data = d.decl;
+
   if (!backend && (actions.length || schedules.length)) {
     err('backend', 'actions and schedules need a backend', 'Add a backend (they call its routes), or remove the actions and schedules.');
   }
 
   if (errors.length) return { ok: false, errors, warnings };
-  return { ok: true, manifest: { slug, name, icon, backend, build, watch, agent, mcp, schedules, actions, config, share }, warnings };
+  return { ok: true, manifest: { slug, name, icon, backend, build, watch, agent, mcp, schedules, actions, config, share, data }, warnings };
 }
 
 const PARAM_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;

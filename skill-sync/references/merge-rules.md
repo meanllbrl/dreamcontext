@@ -115,7 +115,23 @@ Runs before EVERY commit: in-tree commits, the full-repo whole-project push, and
 | `state/.config.json` | `people[]`/`packs[]`/`platforms[]` union; `peopleIdentity` key-union; other scalars — "ours" (local) wins on conflict. |
 | `core/taxonomy.json` | Union tag entries per facet. |
 | `knowledge/**` (incl. `knowledge/features/**` — features are typed knowledge) | **Clean union via `merge3Bodies` ONLY when no section was touched differently by both sides.** Otherwise (see §8) the CLI discards its own remote-wins attempt and defers to an agent. |
+| `apps/<slug>/**` (app data, the `app-data` lane) | **Never text-merged** (`-merge -diff` in `.git/info/attributes`), resolved before the prose lane, never deferred. Detail below. |
 | anything else | Same rule as knowledge/features: clean union or defer. |
+
+**The `app-data` lane.** An app's shared hand-made data (the paths its manifest declares shared
+and the owner approved, under `_dream_context/apps/<slug>/`) travels with the brain; git's general
+staging and merging never touch `apps/`, so its files enter and leave git only through sync's
+app-data exchange. Every merge writes and reads back the attribute line `/<prefix>apps/** -merge
+-diff` first (no line, no pull). The unit is a file. When both sides committed a change to the same
+file, the lane puts the TEAM's version into the index AND onto disk for the duration of the merge
+(so the merge result never pushes mine over theirs, and `git merge --abort` stays clean). Once the
+merge has ended, mine is put back on disk, theirs is stored aside, and the path is marked `conflict`:
+not sent, counted on the app card, until a person picks with `dreamcontext apps data resolve <slug>
+<path> --theirs --confirm` (or `--mine`). On a modify/delete conflict the side that did not delete goes
+into the index. Unsent local changes and colliding untracked files are set aside before a merge and
+put back however it ends (commit, abort, or the first sync after a crash). **`/dream-sync` never
+touches these files**: they are never in a prose report, and an agent resolving a merge leaves them
+as the CLI wrote them.
 
 **CLI does:** every JSON class, task status/changelog, clean markdown unions — fully automatic,
 zero data loss by construction. **Agent (`/dream-sync`) does:** only prose where two people

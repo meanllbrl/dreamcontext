@@ -130,6 +130,8 @@ Three things are true at once here, and none of them contradicts the others:
 
 The other place sleep and automations touch is deference, not ownership: a due automation checks the sleep lock (`inspectSleepLock`) before it spawns, and defers to the next tick rather than racing a consolidation in progress, exactly as a fresh sleep lock holds off other file-touching work. If `sleep-state`'s changelog pass notices an automation shipped or changed during the epoch, record it there like any other meaningful change. A blocked, failed, or orphaned automation, or an agent that needs approval, is a signal for the user to act on directly (the AI Team (Profile), `automations show`, `automations kill`), surfaced in the session snapshot, not something a sleep specialist fixes. Sleep may READ an agent file (who did a run, which tasks an agent was assigned) as material, and an assigned task's changelog lines are ordinary task material for `sleep-tasks`. Full protocol → [automations.md](automations.md).
 
+**Apps: sleep writes the lessons, never the data.** What an app learned (`dc.learn`, `apps learn`) reaches `sleep-product`, which distils it into `knowledge/apps/<slug>.md`. What a teammate gets of an app is that file next to the app's shared hand-made data (the paths its manifest declares shared and the owner approved, synced by brain sync, see [apps.md](apps.md)). Sleep never moves, edits or summarizes that data: its CONTENT never goes into recall, a knowledge file or the snapshot (the snapshot shows counts only).
+
 ---
 
 ## Epoch safety
