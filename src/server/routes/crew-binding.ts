@@ -15,6 +15,7 @@
  *
  * agent-chat.ts calls this in a few lines; the logic lives here (another branch edits that file).
  */
+import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { setChatPermissionMode } from '../../lib/assistant/chat-registry.js';
 import { realProcSys, type ProcSys } from '../../lib/grants/binding.js';
@@ -49,7 +50,12 @@ export interface CrewSpawnFacts {
   mode: string;
   /** Write a live permission-mode switch into the process; false when it cannot. */
   setMode?: (mode: string) => boolean;
+  /** How the process was started (POSIX: its login shell and environment): the same shell, run
+   *  once with the same environment, says the PATH the process and its hook really see. */
+  shellProbe?: ShellProbe;
 }
+
+export interface ShellProbe { file: string; env: NodeJS.ProcessEnv; cwd: string }
 
 export interface CrewSeat {
   readonly pid: number | null;
@@ -61,6 +67,8 @@ export interface CrewSeat {
   readonly mode: string;
   /** Is a binding on disk for it (the process table could be read at spawn)? */
   readonly bound: boolean;
+  /** The PATH the process runs with (its login shell's), or null while unknown or unreadable. */
+  sessionPath(): string | null;
   /** A top-level `system/init` frame: its conversation id joins the binding, its mode is told. */
   init(frame: Record<string, unknown>): void;
   /** The mode changed live (the window's switch, a level narrowing). */
@@ -75,6 +83,8 @@ export interface CrewSeat {
 
 export interface CrewDeps extends StoreOpts {
   sys?: ProcSys;
+  /** Reads a login shell's PATH (tests swap it); resolves null when it cannot. */
+  probePath?: (probe: ShellProbe) => Promise<string | null>;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -96,6 +106,33 @@ const seats = new Map<CrewSeat, { setMode?: (mode: string) => boolean }>();
 /** Tests only: the process table and home every seat reads when the caller passes none. */
 let testDeps: CrewDeps | null = null;
 export function _setCrewDeps(d: CrewDeps | null): void { testDeps = d; }
+
+const PATH_MARK = '__DC_SESSION_PATH__';
+
+/**
+ * The PATH a login shell started like the crew process ends up with: rc files may move it, and
+ * the process runs `exec claude` inside that shell, so its hook sees exactly this. The server's own
+ * PATH is not it (a desktop app's is not a login shell's): an interpreter resolved with the
+ * server's PATH is another binary than the session's, and a grant pinned to it never matches.
+ * Asynchronous, once per process, never blocking the server; rc output around it is ignored.
+ */
+export function readLoginPath(probe: ShellProbe): Promise<string | null> {
+  return new Promise((done) => {
+    try {
+      execFile(probe.file, ['-ilc', `printf '\\n${PATH_MARK}%s\\n' "$PATH"`], {
+        env: probe.env, cwd: probe.cwd, timeout: 15_000, maxBuffer: 1024 * 1024, encoding: 'utf8',
+      }, (_err, stdout) => done(parseLoginPath(typeof stdout === 'string' ? stdout : '')));
+    } catch { done(null); }
+  });
+}
+
+/** The PATH after the last mark, or null (no mark, empty, or a line that is no PATH). */
+export function parseLoginPath(stdout: string): string | null {
+  const at = stdout.lastIndexOf(PATH_MARK);
+  if (at < 0) return null;
+  const v = stdout.slice(at + PATH_MARK.length).split('\n')[0]?.trim() ?? '';
+  return v && v.length <= 32_768 && v.startsWith('/') ? v : null;
+}
 
 function realOr(p: string): string {
   try { return realpathSync.native(p); } catch { return p; }
@@ -130,11 +167,18 @@ export function openCrewSeat(f: CrewSpawnFacts, given: CrewDeps = {}): CrewSeat 
   }
   let mode = f.mode;
   let gone = false;
+  let loginPath: string | null = null;
+  if (f.shellProbe && pid !== null) {
+    void (deps.probePath ?? readLoginPath)(f.shellProbe)
+      .then((p) => { if (!gone) loginPath = p; })
+      .catch(() => { /* unknown: the server's own PATH is used, as before */ });
+  }
   const serverTurns: string[] = [];
   const seat: CrewSeat = {
     pid, pin: f.pin, crew: kind.crew, ...(kind.member ? { member: kind.member } : {}), project,
     get mode() { return mode; },
     get bound() { return bound; },
+    sessionPath() { return gone ? null : loginPath; },
     init(frame) {
       if (gone || frame.type !== 'system' || frame.subtype !== 'init' || frame.parent_tool_use_id) return;
       if (bound && pid !== null && typeof frame.session_id === 'string' && frame.session_id) {

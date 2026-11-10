@@ -310,7 +310,8 @@ async function answerOwnPending(sessionId: string, args: Record<string, unknown>
 
 /** The grant for one stored call (G2: built from the record, never from request text). */
 function buildGrant(root: string, state: SuperState, item: SuperQueueItem, scope: GrantScope, call: { tool: string; input: string; category?: string; scriptSha?: string }, now: number): Grant | null {
-  const ctx = grantCtx(root, call.category);
+  // Resolved in the session's environment: the interpreter pinned is the one its hook will find.
+  const ctx = grantCtx(root, call.category, item.sessionId);
   const e = eligible(call.tool, call.input, scope, ctx);
   if (!e.ok) return null;
   // A once on a script pins what he saw when the refusal was born: a script rewritten since asks again.

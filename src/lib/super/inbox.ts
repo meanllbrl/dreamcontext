@@ -25,7 +25,7 @@ import { bringLiveCard, floatLiveChildren } from './live.js';
 import { REASK_TEXT, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
 import { settleAskShows } from './ask-show.js';
 import {
-  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, dropOwnerWait, getChat, onChatChange, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
+  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
   type ChatActivity, type ChatChange, type ChatEntry, type PendingQuestion,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
@@ -2132,7 +2132,7 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
   }
   for (const w of waits) {
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'owner' && q.state !== 'done' && q.wait?.kind === w.kind && q.wait.id === w.id)) continue;
-    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'owner', state: 'pending', createdAt: now, ...ownerWaitFields(s.member, w, root), ownerText: w.line });
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'owner', state: 'pending', createdAt: now, ...ownerWaitFields(s.member, w, root, sid), ownerText: w.line });
     countEvent(s);
     changed = true;
     added = true;
@@ -2164,16 +2164,31 @@ export function projectOfRoot(contextRoot: string): string {
  *  enforcers read too, policy.ts `grantRoots`): a pinned script lives there, and an interpreter
  *  that resolves there is the agent's own program. Swapped by tests. */
 let grantRootsOf: (project: string) => string[] = (project) => grantRoots(project);
-let grantResolver: () => Resolver = () => realResolver();
-export function setGrantEnvForTest(env: { roots?: ((project: string) => string[]) | null; resolver?: (() => Resolver) | null }): void {
+/**
+ * The environment a session's calls resolve in: the PATH the crew process really runs with (its
+ * login shell's, read at spawn), so an interpreter is pinned to the binary the session's hook will
+ * find. The server's own PATH is another one (a desktop app is no login shell): pinned with it, a
+ * grant never matches. Unknown (no live process, the read not back yet): the server's, as before;
+ * a pin that then misses is offered again, never allowed unseen.
+ */
+export function sessionResolveEnv(sessionId: string | undefined): NodeJS.ProcessEnv {
+  if (!sessionId) return process.env;
+  let path: string | null = null;
+  try { path = crewHandle(sessionId)?.sessionPath?.() ?? null; } catch { path = null; }
+  return path ? { ...process.env, PATH: path } : process.env;
+}
+const realGrantResolver = (sessionId?: string): Resolver => realResolver(sessionResolveEnv(sessionId));
+let grantResolver: (sessionId?: string) => Resolver = realGrantResolver;
+export function setGrantEnvForTest(env: { roots?: ((project: string) => string[]) | null; resolver?: ((sessionId?: string) => Resolver) | null }): void {
   if (env.roots !== undefined) grantRootsOf = env.roots ?? ((project) => grantRoots(project));
-  if (env.resolver !== undefined) grantResolver = env.resolver ?? (() => realResolver());
+  if (env.resolver !== undefined) grantResolver = env.resolver ?? realGrantResolver;
 }
 
-/** The eligibility context for a call in this record's project. */
-export function grantCtx(contextRoot: string, category?: string): EligibleCtx {
+/** The eligibility context for a call in this record's project, made by session `sessionId`
+ *  (its interpreter resolves with that session's PATH, `sessionResolveEnv`). */
+export function grantCtx(contextRoot: string, category?: string, sessionId?: string): EligibleCtx {
   const project = projectOfRoot(contextRoot);
-  return { project, roots: grantRootsOf(project), resolve: grantResolver(), ...(category ? { category } : {}) };
+  return { project, roots: grantRootsOf(project), resolve: grantResolver(sessionId), ...(category ? { category } : {}) };
 }
 
 const NOT_WHOLE_REASON = 'The command was too long to keep whole, so no card can allow it: open the job and run it there yourself.';
@@ -2185,9 +2200,9 @@ const MCP_OR_FILE_RULE = 'This tool can be allowed once or for this job, not alw
  * sizes. A call kept cut (`whole` false) gets no size at all; every other gets Allow once, plus
  * the always sizes `eligible` allows for its scope. `member` is offered only to a member's crew.
  */
-export function grantOffer(contextRoot: string, call: { tool: string; input: unknown; whole: boolean; category?: string }, member: string | undefined): GrantOffer {
+export function grantOffer(contextRoot: string, call: { tool: string; input: unknown; whole: boolean; category?: string }, member: string | undefined, sessionId?: string): GrantOffer {
   if (!call.whole) return { sizes: [], onceOnlyReason: NOT_WHOLE_REASON };
-  const ctx = grantCtx(contextRoot, call.category);
+  const ctx = grantCtx(contextRoot, call.category, sessionId);
   const sizes: GrantSize[] = ['once'];
   let reason: string | undefined;
   let rule: string | undefined;
@@ -2239,34 +2254,34 @@ export function itemCall(pq: PendingQuestion): { tool: string; input: string; wh
 const MAX_PERMISSION_WHOLE = 16_000;
 
 /** The offer for a permission: Allow once is the CLI's own prompt answer; the always sizes need the whole call. */
-export function permissionOffer(contextRoot: string, pq: PendingQuestion, member: string | undefined): GrantOffer {
+export function permissionOffer(contextRoot: string, pq: PendingQuestion, member: string | undefined, sessionId?: string): GrantOffer {
   const call = permissionCall(pq);
   if (!call.whole) return { sizes: ['once'], onceOnlyReason: pq.toolName === 'Bash' ? NOT_WHOLE_REASON : MCP_OR_FILE_RULE };
-  return grantOffer(contextRoot, call, member);
+  return grantOffer(contextRoot, call, member, sessionId);
 }
 
 /** The pinned script of a refused Bash call, read when the refusal is born (K3: a once grant pins
  *  what he saw, so a script rewritten after he looked asks again). */
-function refusalScriptSha(contextRoot: string, r: RefusalFact): string | undefined {
+function refusalScriptSha(contextRoot: string, r: RefusalFact, sessionId: string | undefined): string | undefined {
   if (r.tool !== 'Bash' || !r.whole) return undefined;
   try {
-    const s = scriptForm(r.input, grantCtx(contextRoot));
+    const s = scriptForm(r.input, grantCtx(contextRoot, undefined, sessionId));
     return 'pin' in s ? s.pin.sha256 : undefined;
   } catch { return undefined; }
 }
 
 /** An owner item's wait fields for one registry wait (its refusal fact and offer included).
  *  `root` absent (an older caller): the wait alone, no offer (surfaces then offer Allow once). */
-function ownerWaitFields(member: string | undefined, w: OwnerWait, root: string | undefined): Pick<SuperQueueItem, 'wait' | 'offer'> {
+function ownerWaitFields(member: string | undefined, w: OwnerWait, root: string | undefined, sessionId: string): Pick<SuperQueueItem, 'wait' | 'offer'> {
   const key = w.key && w.key.length <= MAX_WAIT_KEY ? { key: w.key } : {};
   if (w.kind !== 'refusal' || !w.refusal) return { wait: { kind: w.kind, id: w.id, ...key } };
   if (!root) return { wait: { kind: w.kind, id: w.id, ...key, refusal: { ...w.refusal } } };
-  const sha = refusalScriptSha(root, w.refusal);
+  const sha = refusalScriptSha(root, w.refusal, sessionId);
   const refusal: RefusalFact = { ...w.refusal, ...(sha ? { scriptSha: sha } : {}) };
   // A refusal by a settings rule is never overridden (K3): shown, with nothing to allow.
   const offer: GrantOffer = refusal.source === 'rule'
     ? { sizes: [], onceOnlyReason: 'A rule in this Mac\'s Claude settings forbids this call; change that rule to allow it.' }
-    : grantOffer(root, { tool: refusal.tool, input: refusal.input, whole: refusal.whole, ...(refusal.category ? { category: refusal.category } : {}) }, member);
+    : grantOffer(root, { tool: refusal.tool, input: refusal.input, whole: refusal.whole, ...(refusal.category ? { category: refusal.category } : {}) }, member, sessionId);
   return { wait: { kind: w.kind, id: w.id, ...key, refusal }, offer };
 }
 
@@ -2336,7 +2351,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
   }
   for (const w of waits) {
     if (s.queue.some((q) => q.own && q.sessionId === sid && q.kind === 'owner' && q.state !== 'done' && q.wait?.kind === w.kind && q.wait.id === w.id)) continue;
-    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'owner', own: true, state: 'escalated', createdAt: now, ...ownerWaitFields(s.member, w, root), ownerText: w.line });
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'owner', own: true, state: 'escalated', createdAt: now, ...ownerWaitFields(s.member, w, root, sid), ownerText: w.line });
     changed = true;
     added = true;
   }
@@ -2351,7 +2366,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
       if (s.queue.some((q) => q.own && q.sessionId === sid && q.requestId === pq.requestId && q.state !== 'done')) continue;
       if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(pq.requestId)) continue;
       s.queue.push(pq.isPermission
-        ? { id: newQueueId(), sessionId: sid, kind: 'permission', own: true, state: 'escalated', createdAt: now, requestId: pq.requestId, call: itemCall(pq), ...(root ? { offer: permissionOffer(root, pq, s.member) } : {}) }
+        ? { id: newQueueId(), sessionId: sid, kind: 'permission', own: true, state: 'escalated', createdAt: now, requestId: pq.requestId, call: itemCall(pq), ...(root ? { offer: permissionOffer(root, pq, s.member, sid) } : {}) }
         : { id: newQueueId(), sessionId: sid, kind: 'question', own: true, direct: true, state: 'escalated', createdAt: now, requestId: pq.requestId, ownerText: childQuestionText(sid, pq.requestId) });
       changed = true;
       added = true;
@@ -2433,7 +2448,7 @@ export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<strin
     // with its offer read again, so a new Allow pins what he sees this time.
     const { scriptSha: _s, ...fact } = q.wait.refusal ?? ({} as RefusalFact);
     const again = root && q.wait.refusal
-      ? ownerWaitFields(s.member, { kind: 'refusal', id: q.wait.id, line: line ?? '', ...(q.wait.key ? { key: q.wait.key } : {}), refusal: fact as RefusalFact }, root)
+      ? ownerWaitFields(s.member, { kind: 'refusal', id: q.wait.id, line: line ?? '', ...(q.wait.key ? { key: q.wait.key } : {}), refusal: fact as RefusalFact }, root, sid)
       : {};
     s.queue.push({ ...rest, ...again, id: next, createdAt: now, state: q.own ? 'escalated' : 'pending', ...(line ? { ownerText: line } : {}) });
     out.push({ old: q.id, next });
@@ -3716,7 +3731,7 @@ async function onAsking(root: string, entry: ChatEntry): Promise<void> {
       ...(toSuper ? { toSuper: true as const } : {}),
       // What his card may offer for it (K3): computed once, here, from the child's own request,
       // and the call itself, so every surface shows the command it allows.
-      ...(q.isPermission ? { offer: permissionOffer(root, q, s.member), call: itemCall(q) } : {}),
+      ...(q.isPermission ? { offer: permissionOffer(root, q, s.member, sid), call: itemCall(q) } : {}),
     });
     if (toSuper) routed = id;
     countEvent(s);

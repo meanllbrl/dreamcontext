@@ -81,7 +81,8 @@ beforeEach(() => {
   mkdirSync(join(project, '_dream_context', 'state'), { recursive: true });
   rmSync(join(env.home, '.dreamcontext'), { recursive: true, force: true });
   crew._resetCrewSeats();
-  crew._setCrewDeps({ sys: sys() });
+  // Hermetic: no real login shell is read for a seat's PATH here (its own block below drives it).
+  crew._setCrewDeps({ sys: sys(), probePath: async () => null });
   reg._resetChatRegistry();
 });
 afterEach(() => {
@@ -92,6 +93,46 @@ afterEach(() => {
 
 const facts = (over: Partial<Parameters<typeof crew.openCrewSeat>[0]> = {}) => ({
   pid: 600, pin: 'pin-a', projectRoot: project, isSuper: false, superCrew: true, excluded: false, mode: 'auto', ...over,
+});
+
+describe('the PATH a crew process really runs with (its login shell\'s)', () => {
+  it('reads the PATH after the last mark, ignoring what rc files print around it', () => {
+    expect(crew.parseLoginPath('welcome\n__DC_SESSION_PATH__/opt/a/bin:/usr/bin\n')).toBe('/opt/a/bin:/usr/bin');
+    expect(crew.parseLoginPath('__DC_SESSION_PATH__/x\nnoise __DC_SESSION_PATH__/y:/usr/bin\nbye')).toBe('/y:/usr/bin');
+    expect(crew.parseLoginPath('no mark at all')).toBeNull();
+    expect(crew.parseLoginPath('__DC_SESSION_PATH__\n')).toBeNull();
+    expect(crew.parseLoginPath('__DC_SESSION_PATH__relative:/usr/bin\n')).toBeNull();
+  });
+
+  it('a real login shell started with the process environment reports its PATH', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'dc-loginpath-')));
+    try {
+      const got = await crew.readLoginPath({ file: '/bin/sh', env: { HOME: dir, PATH: `${dir}:/usr/bin:/bin` }, cwd: dir });
+      expect(got).not.toBeNull();
+      expect(got!.split(':')).toContain(dir);
+      expect(await crew.readLoginPath({ file: join(dir, 'no-such-shell'), env: {}, cwd: dir })).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('a seat knows the PATH once the read is back, and forgets it when the process exits', async () => {
+    let finish: (v: string | null) => void = () => undefined;
+    const probePath = vi.fn(() => new Promise<string | null>((r) => { finish = r; }));
+    crew._setCrewDeps({ sys: sys(), probePath });
+    const probe = { file: '/bin/zsh', env: { PATH: '/srv/bin' }, cwd: project };
+    const seat = crew.openCrewSeat(facts({ shellProbe: probe }))!;
+    expect(probePath).toHaveBeenCalledWith(probe);
+    expect(seat.sessionPath()).toBeNull();
+    finish('/Users/x/.nvm/bin:/usr/bin');
+    await Promise.resolve(); await Promise.resolve();
+    expect(seat.sessionPath()).toBe('/Users/x/.nvm/bin:/usr/bin');
+    seat.exited();
+    expect(seat.sessionPath()).toBeNull();
+    // No probe when the spawn gave none (win32) or the process has no pid.
+    probePath.mockClear();
+    crew.openCrewSeat(facts({ pid: 602 }));
+    crew.openCrewSeat(facts({ pid: undefined, shellProbe: probe }));
+    expect(probePath).not.toHaveBeenCalled();
+  });
 });
 
 describe('who a crew process is (crewKindOf)', () => {

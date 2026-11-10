@@ -1190,7 +1190,12 @@ export function setChatPermissionMode(sessionId: string, mode: string): void {
 // Super, a child): the injector's mechanism for every crew session. Registered by agent-chat.ts at
 // spawn, unregistered at exit, so every key has its death.
 
-export interface CrewHandle { sendServerTurn(text: string): boolean }
+export interface CrewHandle {
+  sendServerTurn(text: string): boolean;
+  /** The PATH the process really runs with (its login shell's, read once at spawn), or null while
+   *  unknown: a grant resolves its interpreter with it, the way the session's hook will. */
+  sessionPath?(): string | null;
+}
 const crewHandles = new Map<string, CrewHandle>();
 
 /** Returns the unregister, which removes only this handle (a successor's stays). */

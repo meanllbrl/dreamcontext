@@ -71,12 +71,14 @@ const STANDIN = superStandin({
   member: `
     const CMD = ${JSON.stringify(CMD)};
     if (text.includes(${JSON.stringify(ANSWER)})) { report({ kind: 'answer-reached', slug, text: text.slice(0, 2000) }); return 'Tamam, yuzde 20.'; }
-    if (text.includes('GO-ASK')) {
+    // Only the owner's own message starts with the cue: a later turn quotes it again in its owed
+    // block (the server keeps his message owed until a section answers it), and must not replay it.
+    if (text.startsWith('GO-ASK')) {
       const step = cli('super', 'ask', 'Yillik planda indirim yuzde kac olsun?', '--options', '%10|%20', '--no-show');
       report({ kind: 'ask', slug, step });
       return 'Sana bir soru sordum.';
     }
-    if (text.includes('GO-REFUSE')) {
+    if (text.startsWith('GO-REFUSE')) {
       const tu = 'toolu_verify_refused_1';
       out({ type: 'assistant', parent_tool_use_id: null, session_id: sid, message: { id: 'msg_verify_refused', role: 'assistant', content: [{ type: 'tool_use', id: tu, name: 'Bash', input: { command: CMD, description: 'Write the weekly total' } }] } });
       out({ type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: tu, decision_reason_type: 'classifier', message: 'Blocked by the auto mode classifier: it runs a script nobody asked for.', session_id: sid });
@@ -86,7 +88,7 @@ const STANDIN = superStandin({
       return 'Haftalik toplam betigi reddedildi; sahibine kaldi.';
     }
     // The server's one turn after Allow once: it names the call; run it through the real hook.
-    if (/allowed/i.test(text) && text.includes(CMD)) {
+    if (text.startsWith('[dreamcontext server] The owner allowed') && text.includes(CMD)) {
       let onceFiles = [];
       try { onceFiles = (await import('node:fs')).readdirSync(${JSON.stringify(ONCE_DIR)}); } catch {}
       report({ kind: 'allowed-turn', slug, onceFiles, text: text.slice(0, 1200) });
@@ -94,7 +96,7 @@ const STANDIN = superStandin({
       const h = spawnSync(process.execPath, [${JSON.stringify(CLI)}, 'hook', 'pre-tool-use'], { input: JSON.stringify(hookIn), cwd: process.cwd(), env: process.env, encoding: 'utf-8', timeout: 30000 });
       let decision = null; let reason = '';
       try { const o = JSON.parse(h.stdout).hookSpecificOutput; decision = o.permissionDecision; reason = o.permissionDecisionReason || ''; } catch {}
-      report({ kind: 'hook', slug, decision, reason: reason.slice(0, 400), status: h.status, stderr: (h.stderr || '').slice(0, 400) });
+      report({ kind: 'hook', slug, decision, reason: reason.slice(0, 400), status: h.status, stdout: (h.stdout || '').slice(0, 600), stderr: (h.stderr || '').slice(0, 400) });
       if (decision !== 'allow') return 'Hook izin vermedi.';
       const tu = 'toolu_verify_run_1';
       out({ type: 'assistant', parent_tool_use_id: null, session_id: sid, message: { id: 'msg_verify_run', role: 'assistant', content: [{ type: 'tool_use', id: tu, name: 'Bash', input: { command: CMD, description: 'Write the weekly total' } }] } });

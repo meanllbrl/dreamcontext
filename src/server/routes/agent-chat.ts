@@ -2750,6 +2750,7 @@ export function startChatSession(
   const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script, ...(bridgeCommand ? { bridge: bridgeCommand } : {}) });
+  const spawnEnv = { ...process.env, ...childEnv, ...accountEnv } as NodeJS.ProcessEnv;
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -2761,7 +2762,7 @@ export function startChatSession(
     // DREAMCONTEXT_CHAT_TAB arms the UserPromptSubmit reminder to name the tab
     // (lib/chat-tab-title-nudge.ts). ALWAYS set, to '1' or '', so a value the server itself
     // inherited can never leak into another mode; the Assistant has no tab to name.
-    env: { ...process.env, ...childEnv, ...accountEnv } as NodeJS.ProcessEnv,
+    env: spawnEnv,
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
@@ -2781,6 +2782,7 @@ export function startChatSession(
   const crewSeat = openCrewSeat({
     pid: child.pid, pin: chatRegistryId, projectRoot, isSuper, superCrew: superCrewEnv === '1',
     excluded: isAssistant || !!card || !!app || scopedCard, agent: opts.agent, memberCrew: opts.memberCrew, mode: launchedMode,
+    ...(spawnCmd.detached ? { shellProbe: { file: spawnCmd.file, env: spawnEnv, cwd: projectRoot } } : {}),
     setMode: (next) => {
       if (!alive || stdinEnding()) return false;
       if (next !== 'bypassPermissions') registry?.notBypass();
@@ -2838,6 +2840,7 @@ export function startChatSession(
         onWsMessage(frame);
         return true;
       },
+      sessionPath: () => crewSeat.sessionPath(),
     })
     : () => { /* not a crew process */ };
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
