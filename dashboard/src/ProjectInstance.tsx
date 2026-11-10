@@ -5,7 +5,6 @@ import { ProjectProvider } from './context/ProjectContext';
 import { I18nProvider } from './context/I18nContext';
 import { createInstanceQueryClient, registerInstanceClient, setInstanceActive } from './lib/instanceQueryClient';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
-import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
 import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSurface';
 import type { ProjectRollup } from './components/sleepy/agentStatus';
 import { TasksPage } from './pages/TasksPage';
@@ -22,8 +21,6 @@ import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PacksPage } from './pages/PacksPage';
-import { TaxonomyPage } from './pages/TaxonomyPage';
-import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import { AppsPage } from './pages/AppsPage';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
@@ -440,7 +437,7 @@ function AppLinkBridge({
  *  re-renders (a rail fold, the palette), so the open page is left alone then. */
 /** Pages with a title and no toolbar of their own: the new shell gives them a title-only bar
  *  (W2-B). Pages with a toolbar row put the title in that row themselves. */
-const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'taxonomy', 'sleep', 'packs', 'announcements']);
+const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'sleep', 'packs']);
 
 /** The new shell's page header around the router (W2-B): "← Chat" for a page a chat opened,
  *  and the title-only bar. Classic renders the page alone, exactly as before. */
@@ -512,7 +509,7 @@ const PageRouter = memo(function PageRouter({
     case 'sleep':
       return <SleepPage />;
     case 'core':
-      return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} focus={focus} />;
+      return <CorePage focus={focus} />;
     case 'knowledge':
       return <KnowledgePage focus={focus} />;
     case 'council':
@@ -521,10 +518,6 @@ const PageRouter = memo(function PageRouter({
       return <SettingsPage focus={focus} />;
     case 'packs':
       return <PacksPage />;
-    case 'taxonomy':
-      return <TaxonomyPage />;
-    case 'announcements':
-      return <AnnouncementsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
     case 'apps':
@@ -639,13 +632,6 @@ export function ProjectInstance({
   }, [pendingManage, isActive, vault, onManageConsumed, openManage]);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
   const consumeStart = useCallback((nonce: number) => onStartConsumed?.(vault, nonce), [onStartConsumed, vault]);
-  // A project opened (or reached) by "Start with Claude" is about to show the initializer chat,
-  // so the on-load "What's New" popup must not land on top of it. Latched from the first render
-  // (a window built with `?start=` carries the intent at mount), and the popup is never MOUNTED
-  // here, so nothing is marked seen: it pops in the next window as usual and stays reachable from
-  // the sidebar's Announcements page.
-  const [suppressAnnouncements, setSuppressAnnouncements] = useState(() => pendingStart !== null);
-  useEffect(() => { if (pendingStart !== null) setSuppressAnnouncements(true); }, [pendingStart]);
 
   // A board's home agent conversations outlive the Whiteboard page, never their project:
   // closing or evicting this instance ends them (and their `claude`).
@@ -713,9 +699,6 @@ export function ProjectInstance({
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
                     {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} onPageChange={onDrawerDismiss} />}
                     {newShell && <DrawerPageBridge nav={nav} />}
-                    {!suppressAnnouncements && (
-                      <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
-                    )}
                   </>
                 )}
               </Shell>

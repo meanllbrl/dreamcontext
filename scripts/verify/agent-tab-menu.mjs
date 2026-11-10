@@ -112,30 +112,10 @@ try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(`${URL}/?vault=scratch-a`, { waitUntil: 'domcontentloaded' });
 
-    // A never-seen vault raises the "what's new" modal, whose scrim swallows every click.
-    const scrim = page.locator('.announcements-modal-scrim');
-    await scrim.first().waitFor({ state: 'attached', timeout: 12000 }).catch(() => {});
-    for (let i = 0; i < 4 && await scrim.count(); i += 1) {
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(400);
-    }
-    // Escape needs the modal to hold focus, which a headless first paint does not always
-    // give it — the close button is the reliable way out.
-    if (await scrim.count()) {
-      await page.locator('.announcements-modal-close').first().click({ timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(400);
-    }
-
     // Land on Settings → Agents FIRST and leave it mounted under the overlay. T5 is only a
     // real check if the page was already on screen when the menu wrote the preference — a
     // page mounted afterwards would read the new value from the server and pass for the
     // wrong reason.
-    // The modal can land AFTER the dismissal above (it waits on the announcements fetch), so
-    // clear it once more right before the click it would otherwise swallow.
-    for (let i = 0; i < 3 && await scrim.count(); i += 1) {
-      await page.locator('.announcements-modal-close').first().click({ timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(400);
-    }
     await page.locator('.sidebar-item', { hasText: /^Settings$/ }).first().click();
     await page.waitForSelector('.settings-nav', { timeout: 15000 });
     await page.locator('.settings-nav-item', { hasText: /^Agents/ }).first().click();

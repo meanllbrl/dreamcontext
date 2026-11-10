@@ -121,11 +121,11 @@ export default function ExcalidrawCanvas({ elements, files, appState, theme, emb
     const timers = [60, 250, 600].map((ms) => window.setTimeout(fit, ms));
     // First-ever load: the handwriting font arrives AFTER the 600ms timer, the
     // text bounding boxes grow, and the already-fitted board overflows its box
-    // (seen as a cropped teaser in the on-load What's New popup). Re-fit once
+    // (seen as a cropped board in a small card). Re-fit once
     // all pending fonts settle; cancelled on unmount via the flag.
     document.fonts?.ready?.then(() => { if (!cancelled) fit(); });
     let ro: ResizeObserver | null = null;
-    // Excalidraw corrects its own size later in some hosts (the on-load popup): the canvas
+    // Excalidraw corrects its own size later in some hosts (a modal): the canvas
     // width/height attributes are written from appState, so watching them re-fits at exactly
     // the moment that correction lands. No loop: a fit changes zoom/scroll, and hands over a
     // box only when the record differs from it.

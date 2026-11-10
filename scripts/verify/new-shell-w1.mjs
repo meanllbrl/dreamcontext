@@ -85,7 +85,7 @@ async function gotoRail(page, run, page_) {
 }
 
 const RAIL_PAGES = ['tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'knowledge', 'brain', 'settings'];
-const MORE_PAGES = ['council', 'core', 'taxonomy', 'sleep', 'packs', 'announcements'];
+const MORE_PAGES = ['council', 'core', 'sleep', 'packs'];
 const NO_SCROLL = new Set(['tasks', 'roadmap', 'hypotheses', 'relations']);
 
 const browser = await chromium.launch();

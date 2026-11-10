@@ -386,21 +386,10 @@ export async function rawKeys(page, rootSel) {
 }
 
 /**
- * Mark every shipped "What's New" announcement as seen before the page loads, so the on-load
- * popup never opens. Its scrim covers the whole window, and a click aimed at the rail then
- * lands on it instead — a harness artifact that reads like a dead button. The ids come from
- * the server's own `/announcements.json`, so a new release's story is covered without an edit.
+ * A no-op since 0.41.14: the on-load "What's New" popup and its manifest were removed, so
+ * there is nothing left to hide. Kept so the verify scripts that still call it keep running.
  */
-export async function markAnnouncementsSeen(context, base) {
-  let ids = [];
-  try {
-    const res = await fetch(`${base}/announcements.json`);
-    if (res.ok) ids = ((await res.json()) ?? []).map((a) => a?.id).filter((id) => typeof id === 'string');
-  } catch { /* no manifest: nothing to hide */ }
-  await context.addInitScript((seen) => {
-    try { localStorage.setItem('dreamcontext.dashboard.announcementsSeen', JSON.stringify(seen)); } catch { /* private mode */ }
-  }, ids);
-}
+export async function markAnnouncementsSeen(_context, _base) {}
 
 /**
  * Wait until nothing on the page is still animating, so a screenshot shows the settled UI and

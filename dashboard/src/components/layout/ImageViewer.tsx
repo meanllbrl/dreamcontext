@@ -12,7 +12,7 @@ interface Props {
   caption?: ReactNode;
   /** Optional controls for the file BEHIND the picture — handing it to the OS, copying its
    *  path. A slot rather than built in, because this viewer also shows images that are only
-   *  ever URLs (an announcement's screenshots), and those have no file to act on. */
+   *  ever URLs (a page's own screenshots), and those have no file to act on. */
   actions?: ReactNode;
   /** Rendered in the stage INSTEAD of the picture when the bytes never arrive.
    *
@@ -60,7 +60,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * one image pixel per screen pixel, and the readout shows that ratio honestly.
  *
  * Portalled to `<body>` on purpose. It has to sit above the full-screen overlay
- * (z-index 1100) that the announcement reader already puts it inside, and a
+ * (z-index 1100) a surface may already put it inside, and a
  * `position: fixed` child would otherwise be captured by any transformed ancestor
  * between here and the root — which is how a lightbox ends up trapped inside the
  * pane that opened it.

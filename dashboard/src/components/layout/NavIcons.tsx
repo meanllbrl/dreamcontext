@@ -113,16 +113,6 @@ function KnowledgeIcon() {
   );
 }
 
-/** Taxonomy — a label/tag with its eyelet. */
-function TaxonomyIcon() {
-  return (
-    <Svg>
-      <path d="M3 11.4V5a2 2 0 0 1 2-2h6.4a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8l-6.4 6.4a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 11.4z" />
-      <circle cx="7.6" cy="7.6" r="1.3" />
-    </Svg>
-  );
-}
-
 /** Map (brain) — a connected node graph. */
 function BrainIcon() {
   return (
@@ -192,16 +182,6 @@ function LabIcon() {
       <path d="M3 20.2h18" />
       <path d="M6.2 16.4l4-4.6 3.2 2.6 4.6-6.2" />
       <circle cx="18" cy="8.2" r="1.5" fill="currentColor" stroke="none" />
-    </Svg>
-  );
-}
-
-/** Announcements — a megaphone: what's new, said out loud. */
-function AnnouncementsIcon() {
-  return (
-    <Svg>
-      <path d="M3 11 21 6v12L3 14z" />
-      <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
     </Svg>
   );
 }
@@ -280,11 +260,9 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,
-  taxonomy: TaxonomyIcon,
   brain: BrainIcon,
   sleep: SleepIcon,
   stats: StatsIcon,
-  announcements: AnnouncementsIcon,
   packs: PacksIcon,
   settings: SettingsIcon,
 };

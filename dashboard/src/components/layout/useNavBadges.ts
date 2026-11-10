@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
 import { useInstanceEvent } from '../../context/VaultContext';
@@ -9,13 +8,12 @@ import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 
 /**
- * What the project's navigation shows beside its rows: unread announcements, the AI Team's
- * unread, whether the learning layer is off, whether Chat is offered, the live-chat rollup and
- * whether the chat overlay is open. Moved out of `Sidebar` unchanged, so the classic sidebar and
+ * What the project's navigation shows beside its rows: the AI Team's unread, whether the
+ * learning layer is off, whether Chat is offered, the live-chat rollup and whether the chat
+ * overlay is open. Moved out of `Sidebar` unchanged, so the classic sidebar and
  * the new shell's `Rail` read ONE set of badges.
  */
 export function useNavBadges() {
-  const { unread } = useAnnouncementInbox();
   // PROJECT-WIDE unread in the agents channel. The rail is the only place a
   // message is visible from another page, so without this an agent that fired
   // while the user was in Tasks is a thing they find out about tomorrow.
@@ -48,5 +46,5 @@ export function useNavBadges() {
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  return { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen };
+  return { agentUnread, learningOff, showChat, chatRollup, chatOpen };
 }

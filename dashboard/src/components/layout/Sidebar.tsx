@@ -16,7 +16,7 @@ import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats' | 'apps';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'whiteboards' | 'stats' | 'apps';
 
 interface SidebarProps {
   activePage: Page;
@@ -108,7 +108,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'core', labelKey: 'nav.core' },
       { page: 'knowledge', labelKey: 'nav.knowledge' },
-      { page: 'taxonomy', labelKey: 'nav.taxonomy' },
     ],
   },
   {
@@ -125,8 +124,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'packs', labelKey: 'nav.packs' },
       { page: 'settings', labelKey: 'nav.settings' },
-      // 'announcements' is pinned to the footer (below), not this rail — it's an
-      // announcement of dreamcontext itself, not a per-project surface.
     ],
   },
 ];
@@ -150,7 +147,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
-  const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
+  const { agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
   // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.
@@ -263,9 +260,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               const off = page === 'hypotheses' && learningOff;
               const level: MaturityLevel | undefined = off ? 'off' : maturity;
               const tag = level ? t(`maturity.${level}`) : null;
-              const badgeCount = page === 'announcements' ? unread.length
-                : page === 'automations' ? agentUnread
-                  : 0;
+              const badgeCount = page === 'automations' ? agentUnread : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
@@ -295,25 +290,13 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         </div>
       ))}
 
-      {/* Pinned to the bottom. Announcements sits here (not in a nav group)
-          because it's an announcement of dreamcontext itself, not a per-project
-          surface. Below it: the cloud-sync control — not connected → a single
+      {/* Pinned to the bottom: the cloud-sync control — not connected → a single
           connect/set-up button; connected → the sync row: the big button SYNCS
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
         {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
         {!tunnel && <SidebarTeam kind="global" />}
-        <button
-          className={`sidebar-item sidebar-item--announcements ${activePage === 'announcements' ? 'sidebar-item--active' : ''}`}
-          onClick={() => onNavigate('announcements')}
-          {...named(t('nav.announcements'))}
-          aria-current={activePage === 'announcements' ? 'page' : undefined}
-        >
-          <span className="sidebar-icon"><NavIcon page="announcements" /></span>
-          <span className="sidebar-label">{t('nav.announcements')}</span>
-          {unread.length > 0 && <span className="sidebar-badge">{unread.length}</span>}
-        </button>
 
         {tunnel ? null : signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} />

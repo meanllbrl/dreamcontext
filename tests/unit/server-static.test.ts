@@ -17,8 +17,8 @@ beforeAll(() => {
   writeFileSync(join(staticDir, 'index.html'), '<!doctype html><title>app</title>');
   mkdirSync(join(staticDir, 'assets'));
   writeFileSync(join(staticDir, 'assets', 'index-CURRENT.js'), 'export const x = 1;');
-  mkdirSync(join(staticDir, 'announcements', 'clips', 'v0-22-0'), { recursive: true });
-  writeFileSync(join(staticDir, 'announcements', 'clips', 'v0-22-0', 'demo.mp4'), CLIP_BYTES);
+  mkdirSync(join(staticDir, 'clips'), { recursive: true });
+  writeFileSync(join(staticDir, 'clips', 'demo.mp4'), CLIP_BYTES);
 });
 
 afterAll(() => {
@@ -116,43 +116,20 @@ describe('serveStatic — SPA fallback vs missing-asset MIME bug', () => {
   });
 });
 
-// Root cause regression: announcements are HAND-AUTHORED between releases, so
-// the manifest, its stories and their screenshots change bytes while keeping the
-// same URL. Serving them `immutable` pinned the pre-authoring copy in the browser
-// for a year — a new announcement stayed invisible until the next version bump,
-// even across a hard reload (an immutable response is never revalidated).
-describe('serveStatic — cache-control for authored content vs hashed assets', () => {
+describe('serveStatic — cache-control', () => {
   it('keeps immutable caching for content-hashed build assets', () => {
     expect(cacheControlFor('/assets/index-CURRENT.js', '.js')).toMatch(/immutable/);
     const r = run('/assets/index-CURRENT.js');
     expect(String(r.headers?.['Cache-Control'])).toMatch(/immutable/);
   });
 
-  it('never caches the announcements manifest as immutable', () => {
-    expect(cacheControlFor('/announcements.json', '.json')).toBe('no-cache');
-  });
-
-  it('never caches an announcement story as immutable', () => {
-    expect(cacheControlFor('/announcements/v0-22-0.json', '.json')).toBe('no-cache');
-  });
-
-  // Re-shooting a screenshot keeps its filename — the shot is not content-hashed,
-  // so pinning it immutable would show the old picture next to the new copy.
-  it('never caches an announcement screenshot as immutable', () => {
-    expect(cacheControlFor('/announcements/shots/v0-22-0/chat.png', '.png')).toBe('no-cache');
-  });
-
   it('still serves index.html with no-cache', () => {
     expect(cacheControlFor('/index.html', '.html')).toBe('no-cache');
-  });
-
-  it('does not treat a lookalike path outside the announcements root as authored content', () => {
-    expect(cacheControlFor('/assets/announcements-CURRENT.js', '.js')).toMatch(/immutable/);
   });
 });
 
 /**
- * Announcement clips are `<video>` sources. A video element seeks by issuing
+ * A shipped clip is a `<video>` source. A video element seeks by issuing
  * Range requests, and a server that answers 200-with-everything leaves the clip
  * unseekable — WKWebView, which is what the desktop app renders in, refuses to
  * play it at all. Served as `application/octet-stream` it doesn't play either.
@@ -160,7 +137,7 @@ describe('serveStatic — cache-control for authored content vs hashed assets', 
  * network error), so these lock the contract the clip renderer depends on.
  */
 describe('serveStatic — video is streamed with byte ranges', () => {
-  const url = '/announcements/clips/v0-22-0/demo.mp4';
+  const url = '/clips/demo.mp4';
 
   it('serves a clip as video/mp4 and advertises range support', async () => {
     const r = await runMedia(url);
@@ -183,11 +160,6 @@ describe('serveStatic — video is streamed with byte ranges', () => {
     const r = await runMedia(url, 'bytes=99-200');
     expect(r.status).toBe(416);
     expect(r.header('Content-Range')).toBe('bytes */16');
-  });
-
-  it('keeps a re-recorded clip revalidating rather than pinned for a year', async () => {
-    const r = await runMedia(url);
-    expect(r.header('Cache-Control')).toBe('no-cache');
   });
 });
 

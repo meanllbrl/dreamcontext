@@ -290,8 +290,8 @@ export function distFingerprint(toplevel: string, version?: string): string | nu
 /**
  * Ignored files a test run reads besides dist: the installed Claude mirror (`.claude/`, whose
  * skills and agents drift tests compare; its `worktrees/` left out), the root `.env*` files, and
- * the root brain's `core/` (tests/unit/announcements.test.ts reads core/RELEASES.json; the brain
- * is gitignored, often a symlink to its own repo).
+ * the root brain's `core/` (a test may read core/RELEASES.json; the brain is gitignored, often a
+ * symlink to its own repo).
  */
 export function testInputsFingerprint(toplevel: string): string | null {
   const roots = ['.claude', '_dream_context/core', '_agent_context/core'];
@@ -497,9 +497,10 @@ function versionIn(toplevel: string, tree: string): string | null {
 function sameBuild(plan: ReceiptPlan, r: Receipt, state: ReceiptState, paths: string[]): boolean {
   if (typeof r.dist !== 'string' || state.dist === undefined) return false;
   if (!paths.includes('package.json')) return r.dist === state.dist;
-  // A checkout with a brain: tests compare the version with the brain's releases (announcements
-  // gate), so a version move can turn them red while dist and the code say nothing. Release
-  // worktrees carry no brain; the main checkout does, and runs.
+  // A checkout with a brain: a test may compare the version with the brain's releases, so a
+  // version move can turn it red while dist and the code say nothing (the What's New coverage
+  // gate that first needed this is gone; the rule stays conservative). Release worktrees carry
+  // no brain; the main checkout does, and runs.
   if (['_dream_context', '_agent_context'].some((b) => existsSync(join(plan.toplevel, b)))) return false;
   const from = versionIn(plan.toplevel, r.tree);
   const to = versionIn(plan.toplevel, state.tree);

@@ -98,10 +98,9 @@ describe('sidebar rail — nav ↔ icons ↔ i18n (C8)', () => {
     for (const item of items) {
       expect(icons.has(item.page), `nav item "${item.page}" has no ICONS entry`).toBe(true);
     }
-    // The reverse direction, minus the two pages that are deliberately NOT in a nav group:
-    // `announcements` is pinned to the rail's footer and `about` is unlinked (page kept,
-    // entry removed). Both still render a glyph, so both still need one.
-    const footerOnly = new Set(['announcements', 'stats']);
+    // The reverse direction, minus the page that is deliberately NOT in a nav group:
+    // `stats` is reached from More and the composer, and still needs a glyph there.
+    const footerOnly = new Set(['stats']);
     const pages = new Set(items.map((i) => i.page));
     for (const page of icons) {
       if (footerOnly.has(page)) continue;

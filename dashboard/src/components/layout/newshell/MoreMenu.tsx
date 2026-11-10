@@ -6,8 +6,6 @@ interface MoreMenuProps {
   anchor: HTMLElement | null;
   pages: readonly Page[];
   current: Page | null;
-  /** Unread announcements, shown on that row. */
-  unread: number;
   label: (page: Page) => string;
   icon: (page: Page) => ReactNode;
   onPick: (page: Page) => void;
@@ -16,7 +14,7 @@ interface MoreMenuProps {
 
 /** The rail's More: the pages the rail has no row for. Opens beside its button (above it on the
  *  bottom bar) and is clamped inside the window. Esc or a click outside closes it. */
-export function MoreMenu({ anchor, pages, current, unread, label, icon, onPick, onClose }: MoreMenuProps) {
+export function MoreMenu({ anchor, pages, current, label, icon, onPick, onClose }: MoreMenuProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -78,7 +76,6 @@ export function MoreMenu({ anchor, pages, current, unread, label, icon, onPick, 
         >
           <span className="ns-menu-icon" aria-hidden="true">{icon(p)}</span>
           <span className="ns-menu-label">{label(p)}</span>
-          {p === 'announcements' && unread > 0 && <span className="ns-menu-count">{unread}</span>}
         </button>
       ))}
     </div>

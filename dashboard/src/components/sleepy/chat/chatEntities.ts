@@ -67,7 +67,6 @@ export const DREAMCONTEXT_SKILLS: ReadonlySet<string> = new Set([
   'curator',
   'dreamcontext-deep-research',
   'dream-sync',
-  'announcements',
   'patterns',
 ]);
 

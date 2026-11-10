@@ -6042,7 +6042,7 @@ function sendDirListing(res: ServerResponse, rawPath: string, abs: string): void
  * board stores its screenshots as wikilinks in `## Embedded Files` rather than base64 in the
  * scene — so without this the board renders with every image blank. `/api/knowledge-assets`
  * does exactly this job already, but only for boards under `knowledge/`; a board can live
- * anywhere in the project (`dashboard/public/announcements/*.excalidraw.md`, a board beside
+ * anywhere in the project (`docs/*.excalidraw.md`, a board beside
  * its generator), which is what this covers.
  *
  * Two independent containment layers, same as everything else that builds a path from

@@ -30,7 +30,7 @@ const INLINE: Record<string, [string, string, RegExp]> = {
   // opens, "Üyeleri yönet", still in one bar and still only in the new shell.
   automations: ['pages/AiTeamPage.tsx', 'drawer.team.manage', /if \(!newShell\) return page;[\s\S]*<PageBar title=\{t\('drawer\.team\.manage'\)\} \/>/],
 };
-const TITLE_ONLY = ['core', 'taxonomy', 'sleep', 'packs', 'announcements'];
+const TITLE_ONLY = ['core', 'sleep', 'packs'];
 
 describe('page headers', () => {
   it('every inline title sits in its row, from the rail label (the alias page: what it opens), gated on the new shell', () => {
@@ -61,9 +61,9 @@ describe('page headers', () => {
     expect(src).toMatch(/\{newShell \? \(\s*<NewShellPage nav=\{nav\}>/);
   });
 
-  it('covers all fifteen non-chat pages with exactly one title each (Settings is a window with its own crumb)', () => {
+  it('covers all thirteen non-chat pages with exactly one title each (Settings is a window with its own crumb)', () => {
     const pages = [...Object.keys(INLINE), ...TITLE_ONLY, 'settings'];
-    expect(new Set(pages).size).toBe(15);
+    expect(new Set(pages).size).toBe(13);
     // The new shell opens Settings as a window over the page (task settings-konuya-gore-17-menuye…):
     // its title is the window's crumb, never a page bar.
     expect(read('components/settings/window/SettingsWindow.tsx')).toMatch(/<span className="sw-crumb">[\s\S]{0,200}\{t\('nav\.settings'\)\}/);

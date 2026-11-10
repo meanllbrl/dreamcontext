@@ -5,6 +5,7 @@
  * running on that base (super/yeni-kabuk @a5a80264, UPDATE_SHELL_FIXTURES=1); W1 moved code out
  * of both components (useNavBadges, ProjectChipBubbles) and these prove the moves are pure.
  * The sidebar-* fixtures were regenerated for 0.40.0 after 50308a20 (Apps, beta, above the alpha rows): a pure reorder.
+ * Regenerated again for 0.41.14 (super/duyuru-kalkar): the footer's Announcements row and Memory's Taxonomy row are gone, nothing else moved.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -16,7 +17,6 @@ const FIXTURES = join(__dirname, 'fixtures', 'shell-render-equality');
 const UPDATE = process.env.UPDATE_SHELL_FIXTURES === '1';
 
 const state = vi.hoisted(() => ({
-  announcements: [] as unknown[],
   agentUnread: 0,
   learningEnabled: true as boolean | undefined,
   desktop: true,
@@ -37,9 +37,6 @@ vi.mock('../../dashboard/src/context/VaultContext.js', async (orig) => ({
 vi.mock('../../dashboard/src/hooks/useBrainStatus.js', () => ({
   useAuthStatus: () => ({ data: { connected: state.signedIn } }),
   useBrainStatus: () => ({ data: { hasRemote: state.hasRemote } }),
-}));
-vi.mock('../../dashboard/src/hooks/useAnnouncements.js', () => ({
-  useAnnouncementInbox: () => ({ unread: state.announcements }),
 }));
 vi.mock('../../dashboard/src/hooks/useAutomations.js', () => ({
   useAgentFeed: () => ({ data: { unreadTotal: state.agentUnread } }),
@@ -86,13 +83,13 @@ describe('classic sidebar renders as on the base', () => {
   const cases: Array<[string, () => void, Record<string, unknown>]> = [
     ['sidebar-plain', () => {}, { activePage: 'tasks', collapsed: false }],
     ['sidebar-collapsed', () => {}, { activePage: 'knowledge', collapsed: true }],
-    ['sidebar-badges', () => { state.announcements = [{}, {}]; state.agentUnread = 3; state.learningEnabled = false; }, { activePage: 'automations', collapsed: false }],
+    ['sidebar-badges', () => { state.agentUnread = 3; state.learningEnabled = false; }, { activePage: 'automations', collapsed: false }],
     ['sidebar-synced', () => { state.signedIn = true; state.hasRemote = true; }, { activePage: 'agents', collapsed: false }],
     ['sidebar-nochat', () => { state.desktop = false; state.learningEnabled = undefined; }, { activePage: 'settings', collapsed: false }],
   ];
   for (const [name, arrange, props] of cases) {
     it(name, () => {
-      Object.assign(state, { announcements: [], agentUnread: 0, learningEnabled: true, desktop: true, signedIn: false, hasRemote: false });
+      Object.assign(state, { agentUnread: 0, learningEnabled: true, desktop: true, signedIn: false, hasRemote: false });
       arrange();
       check(name, renderToStaticMarkup(createElement(Sidebar, { onNavigate: noop, ...props } as never)));
     });

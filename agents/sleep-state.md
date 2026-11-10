@@ -112,8 +112,6 @@ dreamcontext tasks list --status completed
 
 All tasks on the active planning version `completed` (or only `in_review` left) → surface readiness in your report. A cancelled-kind task neither blocks readiness nor counts as shipped.
 
-**What's New feed** (here `dashboard/public/announcements.json`): a ready version with no announcement is reported, never authored by you (the `announcements` skill's awake work).
-
 **Never run `dreamcontext core releases add --status released`** unless the user's hint explicitly asks for it.
 
 If no active planning version exists, create one before adding entries, then **set it active** so `sleep-tasks`' auto-attach lands on it:
@@ -227,7 +225,7 @@ A problem in YOUR domain that keeps recurring (a Decision stuck behind the ceili
 
 ### Changelog & releases
 - Entries added: <n>: <type(scope): "summary"> each
-- Active version: <version>: <status counts>; release-ready or not; What's New entry present/missing
+- Active version: <version>: <status counts>; release-ready or not
 - Skipped: <non-user-facing commits>
 
 ### Core identity

@@ -798,7 +798,6 @@ const translations: Record<string, Record<string, string>> = {
     'apps.setup.turnOn': 'Turn on notifications',
     'nav.settings': 'Settings',
     'nav.packs': 'Packs',
-    'nav.taxonomy': 'Taxonomy',
     // The new shell (Settings → New layout). Every key the three waves need, pinned in W1.
     'nav.relations': 'Project Relations',
     'nav.more': 'More',
@@ -1158,7 +1157,6 @@ const translations: Record<string, Record<string, string>> = {
     'shell.settings.models.mixed': 'Mixed',
     'shell.settings.models.moved': 'Its model and effort are in Models ›',
     'shell.composer.newChats': 'New chats: {value}',
-    'nav.announcements': 'Announcements',
     // ─── Maturity ladder ─────────────────────────────────────────────────────
     // ONE vocabulary for every "not finished yet" chip in the app — the rail, the
     // composer's mode menu and Settings, which used to say Lab / ALPHA / BETA and
@@ -1279,20 +1277,6 @@ const translations: Record<string, Record<string, string>> = {
     'agents.card.resume': 'Paused: the scheduler skips it. Click to resume.',
     'agents.card.pauseFailed': '{name}: could not pause. {reason}',
     'agents.card.resumeFailed': '{name}: could not resume. {reason}',
-    // ─── Announcements — What's New page + unread popup ──────────────────────
-    'announcements.title': "What's New",
-    'announcements.subtitle': 'One page per release — what shipped, shown in the app itself.',
-    'announcements.empty': 'No announcements yet — check back after the next release.',
-    'announcements.new': 'New',
-    'announcements.whatsNew': "What's New",
-    'announcements.gotIt': 'Got it',
-    'announcements.seeAll': 'See all announcements',
-    'announcements.dismiss': 'Dismiss',
-    'announcements.readStory': 'Read the full story',
-    'announcements.alsoNew': 'Also new',
-    'announcements.earlierReleases': 'Earlier releases',
-    'announcements.newer': 'Newer',
-    'announcements.older': 'Older',
     // ─── Lab (Insights) — missing-credentials banner ─────────────────────────
     'lab.credentials.title': '{n} credential(s) missing — some insights can’t sync',
     'lab.credentials.hint': 'Paste each value below, or run `dreamcontext lab credentials set <key>` from the CLI. Values are stored gitignored and never shown again.',
@@ -2643,7 +2627,6 @@ const translations: Record<string, Record<string, string>> = {
     'upgradeRelaunch.later': 'Later',
     'upgradeRelaunch.failed': "Couldn't relaunch automatically — quit and reopen dreamcontext to finish updating.",
     'upgradeRelaunch.retry': 'Try again',
-    'taxonomy.title': 'Taxonomy',
     'common.loading': 'Loading...',
     'common.error': 'Error',
     'common.empty': 'Nothing here yet.',
