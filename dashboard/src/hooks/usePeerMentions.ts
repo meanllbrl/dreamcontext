@@ -5,9 +5,9 @@ import type { PeerMention } from '../lib/agentComposer';
 /**
  * The connected projects this vault can address, for the composer's `@` menu.
  *
- * Fetched once per vault and held for the pane's life: the list changes only on
- * connect/disconnect, which the user does elsewhere, so re-fetching on every
- * keystroke (or every `@`) would spend a round-trip to learn nothing. The menu
+ * One request serves every pane of a vault for a minute, and a connect/disconnect
+ * refreshes it: re-fetching on every keystroke (or every `@`, or every pane) would
+ * spend a round-trip to learn nothing. The menu
  * opening instantly is the point — a picker that has to load is a picker the
  * user has already typed past.
  *
@@ -22,7 +22,7 @@ export function usePeerMentions(enabled = true): PeerMention[] {
   const api = useApi();
   // ONE request per open, shared by every pane and composer of this vault (task: opening a
   // project is slow: eleven restored chats asked it 22 times). The query client is per vault,
-  // so the key needs no vault id. Held for the window's life, as the effect it replaces held it.
+  // so the key needs no vault id.
   const { data } = useQuery({
     queryKey: PEER_MENTIONS_KEY,
     // An error stays an error (the hook still answers no `@` menu), so the next mount retries it.

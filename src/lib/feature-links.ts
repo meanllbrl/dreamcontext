@@ -4,6 +4,7 @@ import fg from './glob.js';
 import { readFrontmatter, updateFrontmatterFields } from './frontmatter.js';
 import { featuresDir, featureSlug } from './features-path.js';
 import { slugify, today } from './id.js';
+import { noteTaskWrite } from './task-file-lock.js';
 
 /**
  * A task slug is safe when `state/<slug>.md` stays inside `state/` — rejects
@@ -146,6 +147,7 @@ function writeTaskRelatedFeature(contextRoot: string, slug: string, feature: str
   // Hard-fail on a hostile slug — never write a frontmatter field outside state/.
   if (!isSafeTaskSlug(slug)) throw new Error(`Unsafe task slug: ${slug}`);
   updateFrontmatterFields(taskPath(contextRoot, slug), { related_feature: feature });
+  noteTaskWrite(); // written outside the task lock: the bulk read's write generation (task-file-lock.ts)
 }
 
 // ─── Bidirectional writes ─────────────────────────────────────────────────────

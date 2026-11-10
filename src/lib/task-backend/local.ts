@@ -29,7 +29,7 @@ import { isFiledBy, readFilingApproved, readFilingBasis } from '../filing-basis.
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
-import { withTaskFileLock } from '../task-file-lock.js';
+import { noteTaskWrite, taskWriteGeneration, withTaskFileLock } from '../task-file-lock.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
@@ -401,9 +401,6 @@ function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
  */
 const READ_ALL_BATCH = 48;
 const readAllInflight = new Map<string, { gen: number; p: Promise<TaskData[]> }>();
-/** Bumped by every write this process makes ({@link forgetTaskRead}): a pass that started before
- *  a write is never joined after it, so the refetch that follows an edit sees the edit. */
-let taskWriteGen = 0;
 
 /** One file read off the loop, cached only when its stat did not move during the read (a write
  *  landing mid-read would otherwise cache a half-written file); a moved file is read once more. */
@@ -443,7 +440,7 @@ async function readAllTaskFiles(files: string[], statuses: readonly StatusDef[])
 
 /** Drop the memoized reads of one task file (after this process wrote it). */
 export function forgetTaskRead(path: string): void {
-  taskWriteGen += 1;
+  noteTaskWrite();
   const abs = resolve(path);
   readMemo.delete(`fm\0${abs}`);
   readMemo.delete(`task\0${abs}`);
@@ -544,9 +541,10 @@ export class LocalTaskBackend implements TaskBackend {
   async readAll(): Promise<readonly TaskData[]> {
     // Join a running pass only when no write landed since it started (it listed the files and
     // may have read the edited one before the write).
+    // (Every in-process writer bumps the generation: task-file-lock.ts.)
     const running = readAllInflight.get(this.stateDir);
-    if (running && running.gen === taskWriteGen) return running.p;
-    const gen = taskWriteGen;
+    if (running && running.gen === taskWriteGeneration()) return running.p;
+    const gen = taskWriteGeneration();
     const p = readAllTaskFiles(this.taskFiles(), this.statusDefs()).finally(() => {
       if (readAllInflight.get(this.stateDir)?.p === p) readAllInflight.delete(this.stateDir);
     });
