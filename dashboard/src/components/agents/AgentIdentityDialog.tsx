@@ -209,10 +209,11 @@ export function AgentIdentityDialog({
   const ready = original !== null;
   // Opened from the autonomy label: land on the level in force, so the level is what is in view.
   const focused = useRef(false);
+  const modalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focusField !== 'autonomy' || !ready || focused.current) return;
     focused.current = true;
-    const seg = document.querySelector<HTMLButtonElement>('.aid-autonomy [data-autonomy][aria-checked="true"]');
+    const seg = modalRef.current?.querySelector<HTMLButtonElement>('.aid-autonomy [data-autonomy][aria-checked="true"]');
     seg?.focus();
   }, [focusField, ready]);
   const blocker = identityFormError(form);
@@ -316,7 +317,7 @@ export function AgentIdentityDialog({
       className={inline ? 'aid-inline' : 'aid-scrim'}
       onClick={inline ? undefined : (e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
-      <div className="aid-modal" role={inline ? 'form' : 'dialog'} aria-modal={inline ? undefined : true} aria-label={heading}>
+      <div ref={modalRef} className="aid-modal" role={inline ? 'form' : 'dialog'} aria-modal={inline ? undefined : true} aria-label={heading}>
         {!inline && <h2 className="aid-title">{heading}</h2>}
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
