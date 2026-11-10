@@ -54,6 +54,27 @@ function clip(raw: string | undefined, max: number): string {
   return max <= 1 ? '' : `${cps.slice(0, max - 1).join('').trimEnd()}…`;
 }
 
+/** An option as every sender may carry it: a drawing (`preview`, dream-html) beside its note. */
+export interface DrawnOption { label: string; description?: string; preview?: string }
+
+/**
+ * An option that carries a drawing says where it is (owner 2026-11-09: an option with only a
+ * preview showed nothing on Telegram). `drawn` holds the `qi:label` keys whose picture went;
+ * every other drawing is said to be on the Mac. The note goes FIRST: the message trims option
+ * notes from their end when it is long, and a cut note would hide a drawing that never came.
+ */
+export function withDrawingNotes<Q extends { options: readonly DrawnOption[] }>(q: Q, qi: number, drawn: ReadonlySet<string>): Q {
+  if (!q.options.some((o) => o.preview?.trim())) return q;
+  return {
+    ...q,
+    options: q.options.map((o) => {
+      if (!o.preview?.trim()) return o;
+      const where = drawn.has(`${qi}:${o.label}`) ? 'Çizimi yukarıda.' : "Çizimi Mac'te (Telegram'a çizilemedi).";
+      return { ...o, description: o.description?.trim() ? `${where} ${o.description.trim()}` : where };
+    }),
+  };
+}
+
 /** The question message as Telegram HTML (see the module doc). */
 export function formatAskQuestionHtml(q: AskCardQuestion, opts: AskCardOpts = {}): string {
   const max = opts.max ?? TG_TEXT_MAX;

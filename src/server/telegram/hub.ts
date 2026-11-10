@@ -57,12 +57,14 @@ import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
-import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
+import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 
 type Obj = Record<string, unknown>;
+/** A question sent without pictures: every drawing it carries is on the Mac. */
+const NOTHING_DRAWN: ReadonlySet<string> = new Set();
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
 
 /** The pairing target the manager uses on the wire (W3 route proposal): never a member slug. */
@@ -1285,12 +1287,13 @@ export class TelegramHub implements TelegramHubApi {
     const previews = !!this.richQuestion && qs.some((x) => x.options.some((o) => typeof o.preview === 'string' && o.preview.trim()));
     if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8 && !previews) {
       const labels = qs[0].options.map((o) => o.label);
-      await this.sendButtons(ab, formatAskQuestionHtml(qs[0], { title: q.title, prefix }), labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
+      await this.sendButtons(ab, formatAskQuestionHtml(withDrawingNotes(qs[0], 0, NOTHING_DRAWN), { title: q.title, prefix }), labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
       return;
     }
     if (this.richQuestion && await this.richQuestion(ab, sessionId, q).catch(() => false)) return;
     if (qs.length) {
-      for (const html of formatAskCardMessages(qs, { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
+      // No picture went on this path: an option's drawing says it is on the Mac.
+      for (const html of formatAskCardMessages(qs.map((x, i) => withDrawingNotes(x, i, NOTHING_DRAWN)), { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
       return;
     }
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);

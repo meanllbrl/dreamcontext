@@ -22,19 +22,18 @@
  *  - a child permission → `answerChildPermission` (the window's `super allow`, `by: 'owner'`).
  * Each through a single-use, message-bound button record (hub.sendButtons).
  */
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { answerChildPermission, answerChildQuestion, superAnswerText } from '../../lib/super/answer.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
-import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } from '../../lib/telegram/ask-format.js';
+import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
+import { appendAskLog } from './ask-log.js';
 
 /** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
 let rich: RichAsks | null = null;
@@ -64,14 +63,16 @@ function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; 
 /** One line per send to `~/.dreamcontext/logs/telegram-asks.log` (the server's stdout is
  *  /dev/null in the app: without this a lost question leaves no trace). Rotated at 512 KB. */
 function logSend(hub: TelegramHub, item: SuperQueueItem, outcome: SendOutcome): void {
-  try {
-    const dir = join(hub.home, '.dreamcontext', 'logs');
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = join(dir, 'telegram-asks.log');
-    try { if (statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`); } catch { /* none yet */ }
-    const what = 'skipped' in outcome ? 'skipped (answered before it went)' : outcome.ok ? 'sent' : `FAILED ${outcome.why}`;
-    appendFileSync(file, `${new Date().toISOString()} ${item.id} ${item.kind} ${what}\n`, { mode: 0o600 });
-  } catch { /* the log never breaks a send */ }
+  const what = 'skipped' in outcome ? 'skipped (answered before it went)' : outcome.ok ? 'sent' : `FAILED ${outcome.why}`;
+  appendAskLog(hub.home, `${item.id} ${item.kind} ${what}`);
+}
+
+/** Questions sent as text with no picture: each option's drawing says it is on the Mac, and the
+ *  log says the pictures did not go (never a silent loss). */
+function macDrawn<Q extends AskCardQuestion>(hub: TelegramHub, id: string, qs: readonly Q[]): Q[] {
+  const wanted = qs.reduce((n, q) => n + ((q.options ?? []) as readonly DrawnOption[]).filter((o) => o.preview?.trim()).length, 0);
+  if (wanted) appendAskLog(hub.home, `${id} pictures 0/${wanted} NOT ALL SENT (sent as text: this card has no picture path)`);
+  return qs.map((q, i) => (q.options ? withDrawingNotes({ ...q, options: q.options }, i, new Set<string>()) : q));
 }
 
 function failure(err: unknown): string {
@@ -207,7 +208,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
     const card = simpleCard(spec);
     if (card) {
-      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: spec.title }), card.labels,
+      const m = await buttons(hub, ab, formatAskQuestionHtml(macDrawn(hub, item.id, [card.card])[0], { title: spec.title }), card.labels,
         { kind: 'question', requestId: item.id, sessionId: superSession, singleUse: true },
         { queue: true, item: item.id, itemKind: 'ask', session: superSession, question: card.question, labels: card.labels, questions: spec.questions });
       remember(item.id, { ab, messages: [{ ...m, question: card.question }] });
@@ -219,7 +220,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       return { ok: true };
     }
     const htmls = spec.questions.length
-      ? formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })
+      ? formatAskCardMessages(macDrawn(hub, item.id, spec.questions), { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })
       : [escapeHtml(`❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`)];
     remember(item.id, { ab, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
     return { ok: true };
@@ -235,7 +236,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     const base = { ab, sessionId: item.sessionId, requestId: item.requestId };
     const card = simpleCard({ questions: qs as SuperAskSpec['questions'] });
     if (card) {
-      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: pq?.title, lead }), card.labels,
+      const m = await buttons(hub, ab, formatAskQuestionHtml(macDrawn(hub, item.id, [card.card])[0], { title: pq?.title, lead }), card.labels,
         { kind: 'question', requestId: item.requestId, sessionId: item.sessionId, singleUse: true },
         { queue: true, item: item.id, itemKind: 'question', question: card.question, labels: card.labels, questions: qs });
       remember(item.id, { ...base, messages: [{ ...m, question: card.question }] });
@@ -246,7 +247,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       remember(item.id, { ...base, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: qs[i]?.question })) });
       return { ok: true };
     }
-    const htmls = formatAskCardMessages(qs, { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
+    const htmls = formatAskCardMessages(macDrawn(hub, item.id, qs), { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
     remember(item.id, { ...base, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: qs[i]?.question })) });
     return { ok: true };
   }

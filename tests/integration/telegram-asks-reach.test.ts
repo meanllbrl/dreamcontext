@@ -209,6 +209,50 @@ describe('a child\'s two-question card, one clean message per question', () => {
   });
 });
 
+describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
+  const askLog = () => { const f = join(home, '.dreamcontext', 'logs', 'telegram-asks.log'); return existsSync(f) ? readFileSync(f, 'utf8') : ''; };
+  // An option note as long as a real planner's (the message trims option notes at 300 characters).
+  const LONG = `${'Çubukta, Super sohbetinde ve Telegram üzerinde komutun tamamı görünür; '.repeat(5)}sonu.`;
+  function childAsksLong(requestId = 'req-q') {
+    const card = { ...CARD, questions: [{ ...CARD.questions[0], options: [{ label: 'Bu taslak olur', description: LONG, preview: '<div class="dc-card">Kart</div>' }, CARD.questions[0].options[1]] }, CARD.questions[1]] };
+    const child = reg.registerChat({ sessionId: CHILD, conversationId: null, vault, mode: 'basic' });
+    child.observe({ type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: card } });
+  }
+
+  it('a long option note still says its drawing is on the Mac, and the log says which picture did not go', async () => {
+    windowDraws = false; shot = null;
+    childAsksLong();
+    await writeState({ queue: [childItem()] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
+    expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(false);
+    const first = tg.texts().find((t) => t.startsWith('❓'))!;
+    expect(first).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi). Çubukta");
+    await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 0\/1 NOT ALL SENT \(Bu taslak olur: not drawn\)/));
+    expect(askLog()).toMatch(/q-child question sent/);
+  });
+
+  it('a drawn picture is logged as sent, and its long note says it is above', async () => {
+    childAsksLong();
+    await writeState({ queue: [childItem()] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
+    expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• Bu taslak olur: Çizimi yukarıda. Çubukta');
+    await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 1\/1(?! NOT)/));
+  });
+
+  it('Telegram refuses the picture: the question still goes, its option and the log say so', async () => {
+    tg.failing.set('sendPhoto', 400);
+    childAsks();
+    await writeState({ queue: [childItem()] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain("• Bu taslak olur: Çizimi Mac'te (Telegram'a çizilemedi).");
+    await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 0\/1 NOT ALL SENT \(Bu taslak olur: Telegram refused the picture\)/));
+  });
+});
+
 describe('answered elsewhere', () => {
   it('a card answered before it went is not sent', async () => {
     await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
