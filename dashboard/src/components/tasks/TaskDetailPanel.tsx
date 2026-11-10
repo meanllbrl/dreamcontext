@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Task } from '../../hooks/useTasks';
+import type { Task, TaskListItem } from '../../hooks/useTasks';
 import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, useTask, isOpenChildrenRefusal, type AgentJobDetail } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { openChildrenMessage } from '../../lib/taskObjection';
@@ -23,7 +23,7 @@ import './TaskDetailPanel.css';
 interface TaskDetailPanelProps {
   task: Task;
   /** The board's task list: parent, children and the parent select read from it. */
-  allTasks?: Task[];
+  allTasks?: readonly TaskListItem[];
   /** Open another task in this drawer (a subtask, or the parent from the crumb). */
   onOpenTask?: (slug: string) => void;
   onClose: () => void;

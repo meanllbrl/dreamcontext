@@ -420,13 +420,18 @@ export async function handleTasksList(
 ): Promise<void> {
   const backend = backendFor(contextRoot);
   const all = await readAllTasks(backend);
-  // `?view=summary`: the light list (lib/task-list-summary.ts) for every surface that shows a task
-  // as a name, a status and a progress bar. No objection, no attachments: no card of that view reads them.
+  // `?view=summary`: the light list (lib/task-list-summary.ts) for every surface that lists tasks
+  // (the Tasks page included); a task's own page reads its full text from GET /api/tasks/:slug.
+  const ctx = await objectionReadCtx(contextRoot, backend);
   if (listView(req) === 'summary') {
-    sendJson(res, 200, { tasks: all.map((task) => taskListSummary(task, { agent_job: agentJobOf(task.raw ?? {}) })) });
+    // The board's card reads its clip and its objection too (the Tasks page reads this view).
+    sendJson(res, 200, { tasks: all.map((task) => taskListSummary(task, {
+      agent_job: agentJobOf(task.raw ?? {}),
+      objection: objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf),
+      attachments: summarizeAssets(contextRoot, task.slug),
+    })) });
     return;
   }
-  const ctx = await objectionReadCtx(contextRoot, backend);
   const tasks: (ReturnType<typeof toApiTask> & { attachments: { count: number; cover: string | null } })[] = [];
   for (const task of all) {
     // The card's clip: one top-level directory read per task with a folder, none without.

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react';
 import { findAgent, useAgents } from '../../hooks/useAgents';
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useStatusModel, useFeatureOptions } from '../../hooks/useTasks';
 import { HardRefreshChip, SyncChip, useCloudSync } from './SyncChip';
 import type { BoardState } from '../../hooks/useBoard';

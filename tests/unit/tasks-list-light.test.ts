@@ -15,6 +15,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleTasksList, handleTasksMembers } from '../../src/server/routes/tasks.js';
 import { LocalTaskBackend, forgetTaskRead, readTaskFile, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
 import { criteriaProgress } from '../../dashboard/src/components/sleepy/super/tileModel.js';
+import { criteriaCount } from '../../dashboard/src/components/tasks/boardModel.js';
+import { criteriaLines } from '../../src/lib/task-list-summary.js';
 import { SUMMARY_WHY_MAX } from '../../src/lib/task-list-summary.js';
 
 type Body = { tasks: Array<Record<string, unknown>>; members?: Array<{ slug: string }> };
@@ -98,10 +100,10 @@ describe('GET /api/tasks?view=summary', () => {
 
     const l = light.body().tasks[0];
     const f = full.body().tasks[0];
-    for (const k of ['body', 'technical_details', 'changelog', 'notes', 'user_stories', 'constraints', 'sections', 'attachments', 'objection']) {
+    for (const k of ['body', 'technical_details', 'changelog', 'notes', 'user_stories', 'constraints', 'sections']) {
       expect(l, k).not.toHaveProperty(k);
     }
-    for (const k of ['slug', 'id', 'name', 'description', 'priority', 'status', 'updated_at', 'tags', 'agent_job']) {
+    for (const k of ['slug', 'id', 'name', 'description', 'priority', 'status', 'updated_at', 'tags', 'agent_job', 'attachments', 'objection']) {
       expect(l[k], k).toEqual(f[k]);
     }
     expect((l.why as string).length).toBeLessThanOrEqual(SUMMARY_WHY_MAX);
@@ -186,5 +188,35 @@ describe('readAll after a write outside the backend', () => {
     const second = await backend.readAll();
     expect((await first).some((t) => t.slug === 't-locked')).toBe(false);
     expect(second.some((t) => t.slug === 't-locked')).toBe(true);
+  });
+});
+
+describe('the light criteria lines', () => {
+  it('count the same on the board (fences, comments, numbered boxes skipped or kept as before) and on a tile', () => {
+    const md = [
+      'Giriş paragrafı.',
+      '- [x] bir',
+      '1. [ ] numaralı iki',
+      '2) [x] numaralı üç',
+      '```md',
+      '- [ ] çit içinde, sayılmaz',
+      '```',
+      '<!-- yorum başlar',
+      '- [x] yorum içinde, sayılmaz',
+      'yorum biter -->',
+      '<!-- tek satır --> ',
+      `- [ ] uzun ${'kelime '.repeat(200)}`,
+      '~~~',
+      '* [x] tilde çit içinde',
+      '~~~',
+      '+ [X] son',
+    ].join('\n');
+    const light = criteriaLines(md);
+    const asTask = (acceptance_criteria: string) => ({ acceptance_criteria }) as Parameters<typeof criteriaCount>[0];
+    expect(criteriaCount(asTask(light))).toEqual(criteriaCount(asTask(md)));
+    expect(criteriaCount(asTask(md))).toEqual({ done: 3, total: 5 });
+    const a = criteriaProgress(light);
+    const b = criteriaProgress(md);
+    expect([a.done, a.total, a.upcoming.length]).toEqual([b.done, b.total, b.upcoming.length]);
   });
 });

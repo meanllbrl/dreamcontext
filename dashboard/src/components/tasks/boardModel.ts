@@ -11,7 +11,7 @@
  *   LOCAL   (git-ignored `state/board.local.json`)        — "save for yourself"
  * `mergeBoard()` folds them into the runtime view list the UI renders.
  */
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
@@ -400,7 +400,7 @@ export function nestChildren(tasks: Task[]): NestedTasks {
 }
 
 /** `n/m` for a parent: n = done-kind children, m = children that are not cancelled. */
-export function subtaskProgress(children: Task[], sm: StatusModel = DEFAULT_STATUS_MODEL): { done: number; total: number } {
+export function subtaskProgress(children: readonly Task[], sm: StatusModel = DEFAULT_STATUS_MODEL): { done: number; total: number } {
   const live = children.filter((c) => !sm.isCancelled(c.status));
   return { done: live.filter((c) => sm.isDone(c.status)).length, total: live.length };
 }

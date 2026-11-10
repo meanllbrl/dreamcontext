@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Task } from '../../../hooks/useTasks';
+import type { Task, TaskListItem } from '../../../hooks/useTasks';
 import { useApproveFiling, useObjectToTask, useStatusModel } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
 import { canApprove, canObject, filingView, objectionResultLine, shortDate } from '../../../lib/taskObjection';
@@ -148,9 +148,9 @@ export function DetailHeader({
 }: {
   task: Task;
   /** The board's task list: the objection dialog picks its target from it. */
-  allTasks: Task[];
+  allTasks: readonly TaskListItem[];
   featureName: string | null;
-  parent: Task | null;
+  parent: TaskListItem | null;
   parentProgress: { done: number; total: number } | null;
   fullScreen: boolean;
   onToggleFullScreen: () => void;

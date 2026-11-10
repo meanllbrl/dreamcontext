@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import {
   useVersions, useActiveVersion, useSetActiveVersion, useCompleteVersion, useCreateVersion,
   useRenameVersion, useDeleteVersion,

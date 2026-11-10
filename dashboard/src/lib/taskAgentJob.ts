@@ -1,4 +1,4 @@
-import type { AgentJob, AgentJobDelivery, AgentTaskState, StatusHistoryRow, Task } from '../hooks/useTasks';
+import type { AgentJob, AgentJobDelivery, AgentTaskState, StatusHistoryRow, Task, TaskListItem } from '../hooks/useTasks';
 import type { LinkedRepo } from '../hooks/useLinkedRepos';
 import { tr, type Translate } from './assignToAgent';
 
@@ -78,11 +78,11 @@ export function stepAgent(task: Pick<Task, 'agent' | 'agent_job'>): string | nul
  * Where a queued task stands in its step agent's line (1 = next), or null when it is not queued.
  * Same order as the server's drain: oldest `queuedAt` first (an unknown time last).
  */
-export function queuePosition(task: Task, all: readonly Task[]): number | null {
+export function queuePosition(task: TaskListItem, all: readonly TaskListItem[]): number | null {
   if (task.agent_job?.state !== 'queued') return null;
   const who = stepAgent(task);
   if (!who) return null;
-  const at = (x: Task) => Date.parse(x.agent_job?.queuedAt ?? '') || Number.MAX_SAFE_INTEGER;
+  const at = (x: TaskListItem) => Date.parse(x.agent_job?.queuedAt ?? '') || Number.MAX_SAFE_INTEGER;
   const line = all
     .filter((x) => x.agent_job?.state === 'queued' && stepAgent(x) === who)
     .sort((a, b) => at(a) - at(b) || a.slug.localeCompare(b.slug));

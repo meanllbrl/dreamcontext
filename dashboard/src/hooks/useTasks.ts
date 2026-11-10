@@ -235,12 +235,11 @@ export function useTasks() {
 /**
  * One task as the LIGHT list carries it (`GET /api/tasks?view=summary`, server
  * lib/task-list-summary.ts): every frontmatter field and the agent job, `why` capped, and
- * `acceptance_criteria` cut to its checkbox lines. No other section, no body, no objection,
- * no attachments: those are the Tasks page's (`useTasks`) and a task's own page's (`useTask`).
+ * `acceptance_criteria` cut to its checkbox lines (and the fence/comment lines around them), the
+ * objection and the card's clip. No other section, no body: a task's own page reads those (`useTask`).
  */
 export type TaskListItem = Omit<Task,
-  'user_stories' | 'constraints' | 'technical_details' | 'notes' | 'changelog' | 'sections' | 'body'
-  | 'attachments' | 'objection'>;
+  'user_stories' | 'constraints' | 'technical_details' | 'notes' | 'changelog' | 'sections' | 'body'>;
 
 /** The light list's query key: under `['tasks']`, so every task write that refreshes the list
  *  refreshes this too; an object, so no task slug can name it. */

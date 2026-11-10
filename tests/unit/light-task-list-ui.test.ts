@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/${rel}`, import.meta.url)), 'utf8');
 
 const LIGHT_SURFACES = [
+  'components/tasks/KanbanBoard.tsx',
   'components/sleepy/super/SuperSurface.tsx',
   'components/sleepy/super/SuperTiles.tsx',
   'components/sleepy/super/MemberStage.tsx',
@@ -36,8 +37,19 @@ describe('the light task list', () => {
     expect(body).toContain("'/tasks?view=summary'");
     expect(body).toContain('queryKey: TASK_LIST_KEY');
     expect(hook).toMatch(/TASK_LIST_KEY = \['tasks', \{ view: 'summary' \}\]/);
-    // The board keeps the full list.
-    expect(read('components/tasks/KanbanBoard.tsx')).toMatch(/\buseTasks\(\)/);
+    // Nothing in the app asks the full list on open any more.
+    for (const rel of LIGHT_SURFACES) expect(read(rel), rel).not.toMatch(/\buseTasks\(/);
+  });
+});
+
+describe("a task's own page over the board", () => {
+  it('draws from the task\'s own full read, never from the light list item', () => {
+    const board = read('components/tasks/KanbanBoard.tsx');
+    expect(board).toMatch(/<FullTaskDetail[\s\S]*?slug=\{selectedTask\.slug\}/);
+    expect(board).not.toMatch(/<TaskDetailPanel[\s\S]*?task=\{selectedTask\}/);
+    const wrapper = board.slice(board.indexOf('function FullTaskDetail'));
+    expect(wrapper).toContain('useTask(slug)');
+    expect(wrapper).toContain('task={full}');
   });
 });
 
