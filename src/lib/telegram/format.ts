@@ -266,7 +266,7 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
   let last: LineKind = 'blank';
   const levels: number[] = [];
   const push = (html: string, kind: LineKind): void => {
-    if (kind === 'head' || kind === 'text') levels.length = 0;
+    if (kind === 'head') levels.length = 0;
     const gap = out.length > 0 && last !== 'blank' && (
       (kind === 'head' && last !== 'head')
       || (last === 'sub' && kind !== 'sub' && kind !== 'blank')
@@ -315,6 +315,9 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
     if (numbered) { list(numbered[1], `${numbered[2]}.`, numbered[3]); i++; continue; }
     if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { push('──────', 'text'); i++; continue; }
     if (isSectionHead(lines, i) || isBoldHead(line)) { push(`<b>${inline(line.trim().replace(/^\*\*(.*)\*\*$/, '$1'))}</b>`, 'head'); i++; continue; }
+    // An indented line under a list item is its continuation: the run's levels stay; a line at the
+    // margin ends the list.
+    if (line.trim() && !/^[ \t]/.test(line)) levels.length = 0;
     push(inline(line), line.trim() ? 'text' : 'blank');
     i++;
   }

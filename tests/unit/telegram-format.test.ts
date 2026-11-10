@@ -289,6 +289,10 @@ describe('readable on a phone (owner 2026-11-10)', () => {
     }
   });
 
+  it('a continuation line under a list item keeps the next sub-item at its level', () => {
+    expect(markdownToTelegramHtml('- ana madde\n  devam satırı\n  - alt madde', { fold: false })).toBe(`• ana madde\n  devam satırı\n${NB}◦ alt madde`);
+  });
+
   it('a list nested with four spaces per level reads one level deep', () => {
     expect(markdownToTelegramHtml('- a\n    - b\n        - c\n- d', { fold: false })).toBe(`• a\n${NB}◦ b\n${NB}${NB}▪ c\n\n• d`);
   });

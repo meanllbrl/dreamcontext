@@ -88,6 +88,14 @@ describe('a named group of pictures (stage, a question\'s drawings)', () => {
     expect(one.calls.map((c) => c.method)).toEqual(['sendPhoto', 'sendDocument', 'sendMessage']);
   });
 
+  it('a 12 MB camera photo beyond the photo dimensions still goes, as a document', async () => {
+    const big: MediaItem = { kind: 'photo', title: 'Kamera', file: { name: 'k.jpg', data: Buffer.concat([png(6240, 4160), Buffer.alloc(12 * 1024 * 1024)]), contentType: 'image/png' } };
+    const { ab, calls } = fakeBinding();
+    const r = await sendPictures(ab, [big, photo('A'), photo('B')], { heading: (n) => `${n} resim:` });
+    expect(r.unsent).toHaveLength(0);
+    expect(calls.map((c) => c.method)).toEqual(['sendMediaGroup', 'sendDocument', 'sendMessage']);
+  });
+
   it('the list goes silently, and says when it did not go', async () => {
     const ok = fakeBinding();
     const r = await sendPictures(ok.ab, [photo('A'), photo('B')], { heading: (n) => `${n} resim:` });

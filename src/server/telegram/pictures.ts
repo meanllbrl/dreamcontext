@@ -56,7 +56,8 @@ export const REQUEST_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Can Telegram take this item in its form? (A larger photo fails `sendPhoto`.) */
 export function fitsTelegram(item: MediaItem): boolean {
-  return item.file.data.length <= (item.kind === 'photo' ? PHOTO_MAX_BYTES : REQUEST_MAX_BYTES);
+  // A photo beyond Telegram's dimensions goes as a document, so the document limit is its limit.
+  return item.file.data.length <= (item.kind === 'photo' && !overPhotoDimensions(item) ? PHOTO_MAX_BYTES : REQUEST_MAX_BYTES);
 }
 
 /** A picture's width and height from its PNG or JPEG header (null: unknown, treated as ordinary). */
