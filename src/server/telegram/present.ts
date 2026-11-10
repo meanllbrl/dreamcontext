@@ -123,11 +123,12 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   // fail become text lines: the presentation is never just its footer.
   // Several pictures: each its own "N · name" caption and a numbered list under them (the list
   // carries "Ve N kart daha."); one picture: its name as its caption.
-  const { sent: pics, unsent } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), { heading: (n) => (layout === 'open' ? `${word} ${n} resim:` : `${word}, ${n} resim:`), footer: moreLine });
+  const { sent: pics, unsent, listed } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), { heading: (n) => (layout === 'open' ? `${word} ${n} resim:` : `${word}, ${n} resim:`), footer: moreLine });
   for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d);
   const album = pics.length >= 2;
   const fallback = unsent.map((m) => `${m.title} (Mac'te)`);
-  const moreSaid = pics.length >= 2;
+  // The picture list carries "Ve N kart daha." when it went; otherwise this message does.
+  const moreSaid = listed;
   if (lines.length || fallback.length || !pics.length || (moreLine.length && !moreSaid)) {
     // One card per line; a numbered list when nothing went as a picture (the whole presentation
     // is this message), never the old "Başlık: a · b · c" run-on.

@@ -23,8 +23,9 @@ function fakeBinding(fail: string[] = []): { ab: ActiveBinding; calls: Call[] } 
       if (fail.includes(method)) throw new Error('400');
       return method === 'sendMediaGroup' ? [{ message_id: 1 }] : { message_id: calls.length };
     },
-    async sendMessage(_chat: number, text: string) {
-      calls.push({ method: 'sendMessage', params: { text } });
+    async sendMessage(_chat: number, text: string, extra: Record<string, unknown> = {}) {
+      calls.push({ method: 'sendMessage', params: { text, ...extra } });
+      if (fail.includes('sendMessage')) throw new Error('400');
       return { message_id: calls.length, text };
     },
   };
@@ -74,6 +75,28 @@ describe('a named group of pictures (stage, a question\'s drawings)', () => {
     expect(calls[1].params.caption).toBe('2 · Çok uzun');
   });
 
+  it('a picture beyond the photo limits that is NOT tall (a panorama, a banner) leaves the album too, so it cannot sink it', async () => {
+    const { ab, calls } = fakeBinding();
+    const r = await sendPictures(ab, [photo('A'), photo('Panorama', 16000, 3000), photo('B'), photo('Afiş', 4000, 150)], { heading: (n) => `Sahnede ${n} resim:` });
+    expect(calls.map((c) => c.method)).toEqual(['sendMediaGroup', 'sendDocument', 'sendDocument', 'sendMessage']);
+    expect((calls[0].params.media as { caption?: string }[]).map((m) => m.caption)).toEqual(['1 · A', '2 · B']);
+    expect([calls[1].params.caption, calls[2].params.caption]).toEqual(['3 · Panorama', '4 · Afiş']);
+    expect(r.unsent).toHaveLength(0);
+    // The only ordinary picture next to an over-limit one: a photo; the over-limit one a document.
+    const one = fakeBinding();
+    await sendPictures(one.ab, [photo('Panorama', 16000, 3000), photo('A')], { heading: (n) => `${n} resim:` });
+    expect(one.calls.map((c) => c.method)).toEqual(['sendPhoto', 'sendDocument', 'sendMessage']);
+  });
+
+  it('the list goes silently, and says when it did not go', async () => {
+    const ok = fakeBinding();
+    const r = await sendPictures(ok.ab, [photo('A'), photo('B')], { heading: (n) => `${n} resim:` });
+    expect(ok.calls.at(-1)!.params.disable_notification).toBe(true);
+    expect(r.listed).toBe(true);
+    const bad = fakeBinding(['sendMessage']);
+    expect((await sendPictures(bad.ab, [photo('A'), photo('B')], { heading: (n) => `${n} resim:` })).listed).toBe(false);
+  });
+
   it('a failed album leaves its pictures unsent and lists only what went', async () => {
     const { ab, calls } = fakeBinding(['sendMediaGroup']);
     const r = await sendPictures(ab, [photo('A'), photo('B'), photo('Uzun', 500, 3000)], { heading: (n) => `Sahnede ${n} resim:` });
@@ -100,6 +123,12 @@ describe('a named group of pictures (stage, a question\'s drawings)', () => {
 describe('the shared picture text', () => {
   it('escapes, keeps Turkish, and clips a name to one line', () => {
     expect(numberedCaption(2, 'Çağrı <öneri> & şimşek\nikinci satır')).toBe('2 · Çağrı &lt;öneri&gt; &amp; şimşek ikinci satır');
+  });
+
+  it('a secret in a long name is redacted before the name is cut', () => {
+    const name = `${'a'.repeat(190)} sk-ant-api03-${'B'.repeat(40)}`;
+    expect(numberedCaption(1, name)).not.toContain('sk-ant');
+    expect(pictureListMessages('Liste:', [{ n: 1, title: name }]).join('')).not.toContain('sk-ant');
   });
 
   it('splits a long list into messages of whole lines, the footer last', () => {

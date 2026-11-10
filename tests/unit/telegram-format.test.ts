@@ -275,6 +275,24 @@ describe('readable on a phone (owner 2026-11-10)', () => {
     expect(markdownToTelegramHtml(withCode)).not.toContain('expandable');
   });
 
+  it('never folds inside a code block or a quote that has a blank line in it (Telegram would refuse the nesting)', () => {
+    const para = 'Bu paragraf katlamanın hemen ardından gelir ve uzundur. '.repeat(8);
+    const code = `\`\`\`ts\nfunction a() { return ${'1 + '.repeat(50)}1; }\n\nfunction b() { return ${'2 + '.repeat(80)}2; }\n\`\`\``;
+    for (const md of [`Şöyle değiştirdim:\n\n${code}\n\n${para}\n\n${para}`, `Alıntı:\n\n> ${'bir '.repeat(60)}\n>\n> ${'iki '.repeat(80)}\n\n${para}\n\n${para}`]) {
+      const html = markdownToTelegramHtml(md);
+      const at = html.indexOf('<blockquote expandable>');
+      if (at >= 0) {
+        const before = html.slice(0, at);
+        expect((before.match(/<pre>|<blockquote>/g) ?? []).length).toBe((before.match(/<\/pre>|<\/blockquote>/g) ?? []).length);
+        expect(html.slice(at)).not.toMatch(/<\/?pre\b|<blockquote>/);
+      }
+    }
+  });
+
+  it('a list nested with four spaces per level reads one level deep', () => {
+    expect(markdownToTelegramHtml('- a\n    - b\n        - c\n- d', { fold: false })).toBe(`• a\n${NB}◦ b\n${NB}${NB}▪ c\n\n• d`);
+  });
+
   it('a folded answer over 4096 splits with the expandable quote reopened, Turkish intact', () => {
     const md = Array.from({ length: 20 }, (_, i) => `Bölüm ${i}: ${TR.repeat(6)}`).join('\n\n');
     const parts = toTelegramMessages(md);

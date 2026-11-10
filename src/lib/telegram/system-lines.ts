@@ -3,7 +3,7 @@
 // turns each into the same words in the same order when Telegram refuses the entities.
 
 import { STATUS_GLYPH, STATUS_LABEL, type StatusState } from './contract.js';
-import { escapeHtml } from './format.js';
+import { escapeHtml, redactSecrets } from './format.js';
 
 /** A job name longer than this is cut with an ellipsis: a status row stays one line. */
 export const STATUS_NAME_MAX = 50;
@@ -32,7 +32,7 @@ export function statusLineHtml(state: StatusState, name: string, note?: string):
 /** A permission prompt (the Super's own and a child's, one shape): the ask in bold on its own
  *  line, the job it is for under it, then the exact command. `text` is already redacted. */
 export function permissionHtml(toolName: string, text: string, job?: string): string {
-  const jobLine = job?.trim() ? `\n<i>${escapeHtml(clip(job, 60))}</i>` : '';
+  const jobLine = job?.trim() ? `\n<i>${escapeHtml(clip(redactSecrets(job), 60))}</i>` : '';
   return `🔐 <b>İzin istiyor: ${escapeHtml(toolName)}</b>${jobLine}\n<pre>${escapeHtml(text.slice(0, 1500))}</pre>`;
 }
 

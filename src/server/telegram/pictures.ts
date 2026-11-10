@@ -96,7 +96,8 @@ export function overPhotoDimensions(item: MediaItem): boolean {
 
 /** One picture's name on one line, at most 200 characters (a caption is never cut mid-line). */
 function pictureName(title: string): string {
-  const one = title.replace(/\s+/g, ' ').trim();
+  // Redacted whole BEFORE the cut: a secret cut short would slip under its pattern's length.
+  const one = redactSecrets(title).replace(/\s+/g, ' ').trim();
   const cps = Array.from(one);
   return cps.length > 200 ? `${cps.slice(0, 199).join('').trimEnd()}…` : one;
 }
@@ -145,7 +146,7 @@ export interface PictureNames {
  * photo after the album, so it is seen whole; one beyond Telegram's photo dimensions as a document.
  * Without `names` (slices of one card): no captions, as before.
  */
-export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?: PictureNames): Promise<{ sent: MediaItem[]; unsent: MediaItem[] }> {
+export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?: PictureNames): Promise<{ sent: MediaItem[]; unsent: MediaItem[]; listed: boolean }> {
   const fit: MediaItem[] = [];
   const unsent: MediaItem[] = [];
   let total = 0;
@@ -154,20 +155,23 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
     fit.push(it);
     total += it.file.data.length;
   }
-  if (!fit.length) return { sent: [], unsent };
+  if (!fit.length) return { sent: [], unsent, listed: false };
   if (!names) {
     const ok = fit.length === 1 ? !!(await sendMedia(ab, fit[0])) : await sendAlbum(ab, fit);
-    return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
+    return ok ? { sent: fit, unsent, listed: false } : { sent: [], unsent: [...fit, ...unsent], listed: false };
   }
   if (fit.length === 1) {
     const one = fit[0];
     const ok = !!(await sendMedia(ab, overPhotoDimensions(one) ? { ...one, kind: 'document' } : one, caption(pictureName(one.title))));
-    return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
+    return ok ? { sent: fit, unsent, listed: false } : { sent: [], unsent: [...fit, ...unsent], listed: false };
   }
   // Numbers follow the order he sees: the album first (grid order = sent order), then each
   // tall picture on its own.
-  const grid = fit.filter((m) => !isTall(m));
-  const alone = fit.filter((m) => isTall(m));
+  // A picture an album tile would crop (taller than 1:2) or Telegram would refuse as a photo
+  // (beyond its dimensions: it would sink the whole album) goes on its own.
+  const apart = (m: MediaItem): boolean => isTall(m) || overPhotoDimensions(m);
+  const grid = fit.filter((m) => !apart(m));
+  const alone = fit.filter(apart);
   const order = [...grid, ...alone];
   const num = new Map(order.map((m, i) => [m, i + 1]));
   const sent = new Set<MediaItem>();
@@ -179,12 +183,14 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
     if (await sendMedia(ab, asSent, numberedCaption(num.get(m)!, m.title))) sent.add(m);
   }
   const went = order.filter((m) => sent.has(m));
+  // The list goes silently (the pictures already buzzed); `listed` says it (and its footer) went.
+  let listed = went.length > 0;
   if (went.length) {
     for (const html of pictureListMessages(names.heading(went.length), went.map((m) => ({ n: num.get(m)!, title: m.title })), names.footer)) {
-      await ab.transport.sendMessage(ab.binding.chatId, html).catch(() => {});
+      if (!(await ab.transport.sendMessage(ab.binding.chatId, html, { disable_notification: true }).then(() => true, () => false))) listed = false;
     }
   }
-  return { sent: fit.filter((m) => sent.has(m)), unsent: [...fit.filter((m) => !sent.has(m)), ...unsent] };
+  return { sent: fit.filter((m) => sent.has(m)), unsent: [...fit.filter((m) => !sent.has(m)), ...unsent], listed };
 }
 
 const METHOD: Record<MediaKind, string> = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' };

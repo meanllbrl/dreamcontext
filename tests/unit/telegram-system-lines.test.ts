@@ -88,5 +88,6 @@ describe('permission prompt (one shape for the Super and its jobs)', () => {
     expect(permissionHtml('Bash', 'npm test', 'Ödeme testlerini düzelt')).toBe('🔐 <b>İzin istiyor: Bash</b>\n<i>Ödeme testlerini düzelt</i>\n<pre>npm test</pre>');
     expect(permissionHtml('Bash', 'a < b')).toBe('🔐 <b>İzin istiyor: Bash</b>\n<pre>a &lt; b</pre>');
     expect(permissionHtml('Bash', 'x', 'iş · uzun')).not.toContain('· İzin');
+    expect(permissionHtml('Bash', 'x', `${'i'.repeat(50)} sk-ant-api03-${'C'.repeat(40)}`)).not.toContain('sk-ant');
   });
 });
