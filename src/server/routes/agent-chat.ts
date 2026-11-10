@@ -40,7 +40,7 @@ import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
-import { agentChatLevelArgs, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { agentChatLevelArgs, agentLevelToFollow, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { onAgentLevel } from '../../lib/agents/level-follow.js';
 import { agentPath } from '../../lib/agents/store.js';
 import { globalAgentPath } from '../../lib/agents/scope.js';
@@ -126,7 +126,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
-import { levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
+import { levelChatMode, levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
@@ -2801,6 +2801,8 @@ export function startChatSession(
       chatRegistryId,
       sendOwnerText: async (text, meta) => {
         if (!alive || stdinEnding() || handedOff) return { ok: false, reason: 'closed' };
+        // A level respawn waits for a socket: a held message could be dropped by the detach reap.
+        if (respawnTo !== null && (detached || ws.readyState !== ws.OPEN)) return { ok: false, reason: 'closed' };
         const { ref, body } = parseTelegramPrefix(text);
         if (ref !== meta.ref || !body.trim()) return { ok: false, reason: 'refused' };
         const echo = { ref, source: 'telegram' as const };
@@ -3873,6 +3875,8 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    // A level change that came while no socket was here respawns now (it waited for one).
+    if (respawnTo !== null) scheduleRespawn();
     if (registry) { sendMeta(cardsFrame()); flushHeld(); }
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
@@ -5030,11 +5034,11 @@ export function startChatSession(
       id: superInboxId,
       sessionId: chatRegistryId,
       attached: () => alive && !detached && ws.readyState === ws.OPEN,
-      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding(),
+      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding() && respawnTo === null,
       deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
         // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || !!cancelled?.();
+        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
@@ -5083,32 +5087,49 @@ export function startChatSession(
     unlistenAutonomy = () => { assistantAutonomyListeners.delete(listener); };
   }
 
-  // ── A member's level changed under its live chat → the same respawn in place ─────────
+  // ── A member's level changed under a live conversation → the same respawn in place ────
   //
-  // The member's chat runs at its level (`levelArgs`, decided at spawn from the level in force).
-  // When that level moves, by any path, this chat re-reads it (`followLevel`, the ONE check) and
-  // respawns with --resume: at once when idle, else at its turn's end (the boundary above), so a
-  // tightening never waits for the owner's next message. A route of this server says so at once
-  // (level-follow.ts); every other writer is caught by the watch on the agent's file and the
-  // approvals store. A board envelope (`permissionArgs`) is not a level: it is left alone.
-  if (agentChat?.levelArgs && opts.agent) {
-    const slug = opts.agent;
-    const spawnedLevel = agentChat.levelArgs.join(' ');
+  // Every conversation whose permission mode a member's level decides follows that level: the
+  // member's own chat (Chat tab and its Super stage, `levelArgs`), its board conversations (a card,
+  // capped by `card.levelMode`) and a member Super's children (capped by the member, r8-2). The
+  // mode is argv, so when the level in force moves, by any path, this session re-reads it
+  // (`followLevel`, the ONE check, the same expression as its spawn) and respawns with --resume:
+  // at once when idle, else at its turn's end (the boundary above), so a tightening never waits
+  // for the owner's next message. A route of this server says so at once (level-follow.ts); every
+  // other writer is caught by the watch on the agents' files and the approvals store. A board
+  // envelope (`permissionArgs`) is not a level: it is left alone.
+  const levelSlugs: string[] = agentChat?.levelArgs && opts.agent ? [opts.agent]
+    : card && !card.permissionArgs ? [card.manifest.slug]
+      : opts.memberCrew ? [opts.memberCrew, ...(opts.memberCrewCap ?? [])] : [];
+  /** The permission mode this conversation would spawn with now, or null (an agent is gone). */
+  const levelModeNow = (): string | null => {
+    if (agentChat?.levelArgs && opts.agent) return agentChatLevelArgs(contextRoot, opts.agent)?.join(' ') ?? null;
+    if (card && !card.permissionArgs) {
+      const level = agentLevelToFollow(contextRoot, card.manifest.slug);
+      return level ? narrowerMode(permissionModeFor(bypass), levelChatMode(level)) : null;
+    }
+    if (opts.memberCrew) return memberCrewPermissionMode(contextRoot, levelSlugs, bypass);
+    return null;
+  };
+  if (levelSlugs.length > 0 && !isAssistant && !app) {
+    // Exactly what the spawn used (the argv above), never a re-read that a change could beat.
+    const spawnedLevel = agentChat?.levelArgs ? agentChat.levelArgs.join(' ')
+      : card ? narrowerMode(permissionModeFor(bypass), card.levelMode)
+        : memberCrewPermissionMode(contextRoot, levelSlugs, bypass);
     const followLevel = (): void => {
       if (!alive || handedOff) return;
-      let now: string[] | null = null;
-      try { now = agentChatLevelArgs(contextRoot, slug); } catch { return; }
+      let now: string | null = null;
+      try { now = levelModeNow(); } catch { return; }
       // The agent is gone: nothing to follow (its next spawn refuses).
-      if (!now) return;
-      const key = now.join(' ');
+      if (now === null) return;
       const wasPending = respawnTo !== null;
-      respawnTo = key === spawnedLevel ? null : key;
+      respawnTo = now === spawnedLevel ? null : now;
       if (respawnTo !== null) { scheduleRespawn(); return; }
       // Moved back before the turn ended: the messages held for a successor go to this process.
       if (wasPending) for (const raw of heldForSuccessor.splice(0)) onWsMessage(raw);
     };
-    const offRoute = onAgentLevel((root, s) => { if (root === contextRoot && s === slug) followLevel(); });
-    const watched = [agentPath(contextRoot, slug), globalAgentPath(slug), automationsRegistryPath()];
+    const offRoute = onAgentLevel((root, slug) => { if (root === contextRoot && levelSlugs.includes(slug)) followLevel(); });
+    const watched = [...levelSlugs.flatMap((slug) => [agentPath(contextRoot, slug), globalAgentPath(slug)]), automationsRegistryPath()];
     const onFile = (): void => followLevel();
     for (const p of watched) watchFile(p, { persistent: false, interval: LEVEL_WATCH_MS }, onFile);
     unlistenLevel = () => { offRoute(); for (const p of watched) unwatchFile(p, onFile); };
@@ -5143,7 +5164,14 @@ export function startChatSession(
   function respawnInPlace(): void {
     if (!alive || handedOff || respawnTo === null) return;
     // The socket already went (draining): the next summon spawns under the new autonomy anyway.
-    if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
+    if (lingerTimer || lingerKillTimer) return;
+    if (ws.readyState !== ws.OPEN) {
+      // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
+      // with nothing held is ended now instead, so no process keeps running at the old level
+      // in the meantime; the conversation stays on disk and its next open resumes it.
+      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0) drain();
+      return;
+    }
     handedOff = true;
     mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super restarting');
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }

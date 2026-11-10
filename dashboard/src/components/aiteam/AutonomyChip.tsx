@@ -43,7 +43,8 @@ export function MemberAutonomy({ slug, variant }: { slug: string; variant: 'head
   if (!agent) return null;
   return (
     <>
-      <AutonomyChip level={agent.autonomy ?? 'balanced'} variant={variant} onEdit={() => setEditing(true)} />
+      {/* A teammate's read-only member has no edit (its Save would be refused): a plain word. */}
+      <AutonomyChip level={agent.autonomy ?? 'balanced'} variant={variant} onEdit={agent.readOnly ? undefined : () => setEditing(true)} />
       {editing && createPortal(
         <div data-member-card-layer onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <AgentIdentityDialog slug={slug} focusField="autonomy" onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />

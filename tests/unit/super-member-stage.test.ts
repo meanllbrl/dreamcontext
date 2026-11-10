@@ -417,8 +417,8 @@ describe('end review fixes', () => {
     }
   });
 
-  it('M6: Esc closes "Üyeleri yönet" or the Ekip list, never the member\'s stage under it', () => {
-    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list'\)\) return;/);
+  it('M6: Esc closes "Üyeleri yönet", the Ekip list or an agent\'s Edit dialog, never the member\'s stage under it', () => {
+    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim'\)\) return;/);
   });
 });
 

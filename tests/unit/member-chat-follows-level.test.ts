@@ -158,9 +158,12 @@ describe('a member chat mid-turn', () => {
     await vi.waitFor(() => expect(first.stdin.write).toHaveBeenCalled());
     expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
     notifyAgentLevel(ctx(), 'desk');
+    // Settled (the respawn is scheduled behind the switch gate): still not ended mid-turn.
+    await new Promise((r) => setTimeout(r, 50));
     expect(first.stdin.end).not.toHaveBeenCalled();
     ws.emit('message', Buffer.from(JSON.stringify({ type: 'user', text: 'after the switch' })));
     const wrote = (c: FakeChild) => c.stdin.write.mock.calls.map(([s]) => String(s)).join('');
+    await new Promise((r) => setTimeout(r, 50));
     expect(wrote(first)).not.toContain('after the switch');
     first.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'));
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1));
@@ -195,4 +198,51 @@ describe('a synced change waiting for the owner\'s card', () => {
     first.emit('close', 0);
     expect(flag(spawned[1], '--permission-mode')).toBe('default');
   }, 10_000);
+});
+
+describe('a level that cannot be followed', () => {
+  it('an approval with no stored approved text and a change waiting: the chat keeps running, never respawned into a refusal', async () => {
+    const { child: first } = memberChat();
+    // An approval stamped before the approved-text store: the store is empty.
+    rmSync(join(fakeHome, '.dreamcontext', 'approved-texts'), { recursive: true, force: true });
+    const file = join(ctx(), 'agents', 'desk.md');
+    writeFileSync(file, readFileSync(file, 'utf-8').replace(/\nautonomy: \w+/, '\nautonomy: ask'));
+    notifyAgentLevel(ctx(), 'desk');
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(first.stdin.end).not.toHaveBeenCalled();
+    expect(spawned).toHaveLength(1);
+  });
+});
+
+describe('a member chat whose level changed while it was detached', () => {
+  it('an idle detached chat is ended (no process keeps the old level); the conversation stays on disk', async () => {
+    const { ws, child: first } = memberChat();
+    ws.readyState = 3;
+    ws.emit('close');
+    // Detached, not drained: a closed pane keeps its process (until the level moves).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(first.stdin.end).not.toHaveBeenCalled();
+    expect(first.kill).not.toHaveBeenCalled();
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    notifyAgentLevel(ctx(), 'desk');
+    await vi.waitFor(() => expect(first.stdin.end.mock.calls.length + first.kill.mock.calls.length).toBeGreaterThan(0), { timeout: 4000 });
+  });
+});
+
+describe('a member Super\'s child (never wider than the member, r8-2)', () => {
+  it('follows the member down when its level tightens', async () => {
+    const ws = new FakeWs();
+    transcripts.add(CONV);
+    startChatSession(ws as unknown as import('ws').WebSocket, repo, {
+      bypass: true, sessionId: '', resumeId: CONV, model: '', effort: '', mode: 'basic', account: '',
+      initialPrompt: '', deferPrompt: false, vault: 'acme-shop', memberCrew: 'desk',
+    });
+    const first = spawned[spawned.length - 1];
+    expect(flag(first, '--permission-mode')).toBe('bypassPermissions');
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    notifyAgentLevel(ctx(), 'desk');
+    await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1));
+    first.emit('close', 0);
+    expect(flag(spawned[spawned.length - 1], '--permission-mode')).toBe('default');
+  });
 });

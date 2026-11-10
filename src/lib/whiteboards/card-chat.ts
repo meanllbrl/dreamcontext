@@ -265,8 +265,22 @@ export function agentLevelInForce(contextRoot: string, target: AutomationManifes
 /** The permission argv an agent's conversation would spawn with right now, from its level in
  *  force; null when the agent is gone. A live chat compares it with its own (agent-chat.ts). */
 export function agentChatLevelArgs(contextRoot: string, slug: string, home?: string): string[] | null {
+  const level = agentLevelToFollow(contextRoot, slug, home);
+  return level ? levelPermissionArgs(level, 'chat') : null;
+}
+
+/**
+ * The level a live conversation should follow now, or null when nothing can be followed: the
+ * agent is gone, or no approved version can be read (an approval stamped before the approved-text
+ * store, with a change waiting): a respawn would be refused and end the conversation, so the
+ * running one keeps going until the owner decides (owner 2026-11-08).
+ */
+export function agentLevelToFollow(contextRoot: string, slug: string, home?: string): AgentAutonomy | null {
   const raw = getRunTarget(contextRoot, slug, 'agent', home);
-  return raw ? levelPermissionArgs(agentLevelInForce(contextRoot, raw, home), 'chat') : null;
+  if (!raw) return null;
+  const view = approvedTarget(dirname(contextRoot), raw, home, 'identity');
+  if (!view.verdict.approved) return null;
+  return view.manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY;
 }
 
 /**
