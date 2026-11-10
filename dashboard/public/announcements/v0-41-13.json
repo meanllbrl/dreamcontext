@@ -1,0 +1,27 @@
+{
+  "hero": {
+    "eyebrow": "v0.41.13  ·  10 November 2026",
+    "headline": "Every team member can have its own Telegram bot",
+    "sub": "A member's menu now connects that member's own Telegram bot, with its name and photo.",
+    "shot": {
+      "src": "shots/v0-41-13/member-menu.png",
+      "alt": "A team member called Analyst in the orbit demo project. Its three-dot menu is open with three rows: Add a card, New session and Connect to Telegram.",
+      "caption": "A member's menu now has Connect to Telegram. It connects that member's own bot.",
+      "frame": "plain"
+    }
+  },
+  "blocks": [
+    {
+      "kind": "note",
+      "text": "Telegram needs a bot you create yourself and connect in the Mac app. Nothing reaches Telegram until you do. Codex works; Antigravity stays in beta (docs/tool-parity.md lists what was seen in a real turn)."
+    },
+    {
+      "kind": "note",
+      "text": "The rest since 0.41.9, such as the Super's own schedule, automation results on Telegram, one-by-one Telegram questions, the app approval card and readable report pages in dark mode, is in the changelog: those screens cannot be shown here."
+    }
+  ],
+  "closer": {
+    "title": "Get 0.41.13",
+    "body": "The app updates itself. New here? Download it from the latest GitHub release, or run npm i -g dreamcontext."
+  }
+}
