@@ -641,7 +641,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`[super answer] …\`, child questions that waited meanwhile as \`<super-while-you-asked>\`: answer him, then
   take those one at a time. Only a tap or a message written about the card closes it: any other
   message of his leaves it open (\`<super-ask-still-open>\` says so), so answer that message; if his words answer the card
-  anyway or he moved on, \`super queue done <ask id>\`: an open card holds every child question behind it.
+  anyway or he says to drop it, \`super queue done <ask id>\`: an open card holds every child question behind it.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
   \`super resume <child>\` reopens it); \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`

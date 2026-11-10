@@ -1220,7 +1220,7 @@ export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbou
   const open = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin) && !answered.includes(q.id));
   if (!open.length) return null;
   const waiting = (s.held ?? []).length;
-  return `${ASK_STILL_OPEN} items=${open.map((q) => q.id).join(',')} held=${waiting}>This message did not answer your open question card (only a tap or a message written about the card does). Answer this message. If his words answer the card anyway, or he has moved on, close it with \`dreamcontext super queue done <id>\`${waiting ? ` (${waiting} child question${waiting === 1 ? '' : 's'} wait behind it)` : ''}; otherwise leave it open.</super-ask-still-open>`;
+  return `${ASK_STILL_OPEN} items=${open.map((q) => q.id).join(',')} held=${waiting}>This message did not answer your open question card (only a tap or a message written about the card does). Answer this message. If his words answer the card anyway, or he says to drop it, close it with \`dreamcontext super queue done <id>\`${waiting ? ` (${waiting} child question${waiting === 1 ? '' : 's'} wait behind it)` : ''}; otherwise leave it open.</super-ask-still-open>`;
 }
 
 // ─── The owed ledger: what opens and closes it from outside the pump ─────────────
