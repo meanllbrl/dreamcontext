@@ -132,7 +132,7 @@ export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'a
  * is the whole prompt, never a preview.
  */
 export function AgentIdentityDialog({
-  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope,
+  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope, focusField,
 }: {
   /** The agent to edit, or null to create one. */
   slug: string | null;
@@ -154,6 +154,8 @@ export function AgentIdentityDialog({
   /** Create only: `global` makes this machine's global agent from the launcher (D1), with no
    *  project behind the form, so no photo and no home board. */
   scope?: 'global';
+  /** Edit only: the field to land on once the agent has loaded (the autonomy label opens here). */
+  focusField?: 'autonomy';
 }) {
   const { t } = useI18n();
   const editing = slug !== null;
@@ -205,6 +207,14 @@ export function AgentIdentityDialog({
   }, [onClose, busy, inline]);
 
   const ready = original !== null;
+  // Opened from the autonomy label: land on the level in force, so the level is what is in view.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (focusField !== 'autonomy' || !ready || focused.current) return;
+    focused.current = true;
+    const seg = document.querySelector<HTMLButtonElement>('.aid-autonomy [data-autonomy][aria-checked="true"]');
+    seg?.focus();
+  }, [focusField, ready]);
   const blocker = identityFormError(form);
   const agentTitle = detail.data?.agent.title ?? '';
   const heading = editing
