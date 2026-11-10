@@ -172,12 +172,12 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
     for (const rel of paths) {
       const name = rel.split('/').pop() ?? rel;
       // Re-checked at send time: inside the brain (global member: its own folder), then the outbound rules.
-      if (isAbsolute(rel) || !isContainedBrainRel(input.contextRoot, rel)) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
+      if (isAbsolute(rel) || !isContainedBrainRel(input.contextRoot, rel)) { messages.push(escapeHtml(refusalLine(name, 'outside_root'))); continue; }
       const abs = resolve(input.contextRoot, rel);
-      if (!resolvesInsideBrain(input.contextRoot, abs)) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
+      if (!resolvesInsideBrain(input.contextRoot, abs)) { messages.push(escapeHtml(refusalLine(name, 'outside_root'))); continue; }
       const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes: 20 * 1024 * 1024 });
       if (!r.ok) { messages.push(escapeHtml(refusalLine(name, r.reason))); continue; }
-      if (TEXT_DOC.test(name) && wouldRedact(r.file.data.toString('utf-8'))) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
+      if (TEXT_DOC.test(name) && wouldRedact(r.file.data.toString('utf-8'))) { messages.push(escapeHtml(`Mac'te: ${name} (gizli bilgi içeriyor, gönderilmez)`)); continue; }
       files.push(r.file);
     }
   } else {

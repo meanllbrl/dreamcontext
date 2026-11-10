@@ -28,7 +28,7 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 import {
-  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, clearOwnerLease, noteHeld, ownerAbouts, pumpSuper, startSuperInbox, superAnswerDigest,
+  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, clearOwnerLease, noteHeld, ownerAbouts, pumpSuper, superAskStillOpen, startSuperInbox, superAnswerDigest,
   superOwnerSpoke, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -351,6 +351,18 @@ describe('a message about one agenda line', () => {
     expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
     expect(s.held?.map((h) => h.item)).toEqual([HELD]);
     expect(delivered).toHaveLength(0);
+  });
+
+  // Review r1 (edge cases): a card he walked past must never block the queue unseen.
+  it('a message that left his card open tells the super so, with what waits behind it; one about the card does not', async () => {
+    await heldWhileAsked();
+    const note = superAskStillOpen(SUPER, ownerAbouts('boşver, raporu at', []));
+    expect(note).toMatch(/^<super-ask-still-open items=q-ask-1 held=1>/);
+    expect(note).toContain('super queue done <id>');
+    expect(note).toContain('1 child question wait');
+    expect(note!.endsWith('</super-ask-still-open>')).toBe(true);
+    expect(superAskStillOpen(SUPER, [{ kind: 'item', id: 'q-ask-1' }])).toBeNull();
+    expect(superAskStillOpen(SUPER, ownerAbouts('[super answer] item=q-ask-1\nx', []))).toBeNull();
   });
 
   it('a tapped option (`[super answer] item=<ask>`) answers that card; the prefix counts only at the start', () => {

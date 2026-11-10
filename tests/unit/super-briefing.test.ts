@@ -241,7 +241,7 @@ const MEMBER_AMEND_2026_10_31 = 370;
   // 2026-11-10 (owner, telegram-resim-adlari): write for a phone, and the ask card is the question on Telegram.
   const TELEGRAM_PHONE_2026_11_10 = 528;
   // 2026-11-11 (owner): only a tap or a message written about it closes his question card.
-  const CARD_CLOSE_2026_11_11 = 191;
+  const CARD_CLOSE_2026_11_11 = 294;
   it('bolds the few words his eye must land on, on Telegram too', () => {
     expect(brief).toContain('Bold (`**…**`) the few words his eye must land on');
     expect(brief).toContain('never whole sentences');

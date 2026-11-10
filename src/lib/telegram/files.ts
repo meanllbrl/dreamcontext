@@ -129,8 +129,9 @@ export function readOutbound(path: string, opts: ClassifyOptions): { ok: true; f
 }
 
 /**
- * Why a file did not leave the Mac, in his words, and what he can do about it (owner
- * 2026-11-11: never a bare "(Mac'te)"). One short clause, no path.
+ * Why a file did not leave the Mac, in his words (owner 2026-11-11: never a bare "(Mac'te)").
+ * One short clause, no path; the caller adds what HE can do where there is one (a Super's card:
+ * ask it to copy the file into `_dream_context/tmp/`, `cards.ts`).
  */
 export const REFUSAL_WHY: Record<OutboundRefusal, string> = {
   not_absolute: 'yolu geçersiz',
@@ -138,10 +139,10 @@ export const REFUSAL_WHY: Record<OutboundRefusal, string> = {
   symlink: 'kısayol dosyası, güvenlik için gönderilmez; asıl dosyayı açtır',
   not_file: 'bir dosya değil',
   hardlink: 'başka bir yere bağlı dosya, güvenlik için gönderilmez',
-  outside_root: 'proje klasörünün dışında; Super\'den proje içine kopyalamasını iste',
+  outside_root: 'proje klasörünün dışında',
   git_dir: 'git klasöründe, gönderilmez',
   secret_class: 'gizli dosya sayılıyor, gönderilmez',
-  gitignored: 'yalnız bu Mac\'te tutulan bir klasörde; Super\'den _dream_context/tmp/ içine kopyalamasını iste',
+  gitignored: 'yalnız bu Mac\'te tutulan bir klasörde',
   too_large: 'Telegram için çok büyük',
   changed: 'okunurken değişti; tekrar iste',
 };

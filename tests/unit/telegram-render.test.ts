@@ -183,7 +183,8 @@ describe('cards that go as text in v1 (S2, T5)', () => {
       expect(await cardOut(ctx, c('web', 'https://staging.example.com/x', 'Staging'))).toMatchObject({ kind: 'text', button: { url: 'https://staging.example.com/x' } });
       // A gitignored report page → text, no snapshot asked.
       writeFileSync(join(dir, 'r.html'), '<h1>x</h1>');
-      expect(await cardOut({ ...ctx, isGitIgnored: () => true }, c('web', 'r.html', 'Rapor'))).toEqual({ kind: 'text', line: "Mac'te açık: Rapor", title: 'Rapor' });
+      // Owner 2026-11-11: a refused page says why and what to ask, never a bare "Mac'te açık".
+      expect(await cardOut({ ...ctx, isGitIgnored: () => true }, c('web', 'r.html', 'Rapor'))).toEqual({ kind: 'text', line: "Sayfa: Rapor (gönderilmedi: yalnız bu Mac'te tutulan bir klasörde; Super'den _dream_context/tmp/ içine kopyalamasını iste)", title: 'Rapor' });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

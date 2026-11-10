@@ -83,7 +83,7 @@ describe('what a member bot sends', () => {
     expect(text).toContain('• harcama düştü');
     expect(text).toContain("Mac'te: Grafik");
     expect(text).toContain('ROAS: 2.1');
-    expect(text).toContain("Mac'te: escape.png");
+    expect(text).toContain("Mac'te: escape.png (proje klasörünün dışında)");
     expect(tg.sent('sendPhoto')).toHaveLength(1);
   });
 

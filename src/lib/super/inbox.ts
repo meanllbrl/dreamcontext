@@ -1201,6 +1201,28 @@ export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: r
   return { text: [...(held ? [held.text] : []), agenda].join('\n'), items: [...(held?.items ?? []), ...pad.ids] };
 }
 
+/** The block an owner message carries when it left his open question open. */
+export const ASK_STILL_OPEN = '<super-ask-still-open';
+
+/**
+ * Read as the owner's message is written: his own question (`super ask`) is open and this
+ * message did not answer it (owner 2026-11-11: only a tap or a message about the card closes
+ * it). One line telling the super the card is still open and what waits behind it, so a card he
+ * walked past never blocks the queue unseen: answer his message; if it answers the card anyway,
+ * or he moved on, `super queue done <id>`. A block starting with `<` the replay drops.
+ */
+export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbout[] = []): string | null {
+  const root = superKeyOfSession(sessionId);
+  if (!root) return null;
+  const s = lastStates.get(keyOf(root));
+  if (!s || !s.enabled || s.session !== sessionId) return null;
+  const answered = asksAnswered(s, abouts);
+  const open = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin) && !answered.includes(q.id));
+  if (!open.length) return null;
+  const waiting = (s.held ?? []).length;
+  return `${ASK_STILL_OPEN} items=${open.map((q) => q.id).join(',')} held=${waiting}>This message did not answer your open question card (only a tap or a message written about the card does). Answer this message. If his words answer the card anyway, or he has moved on, close it with \`dreamcontext super queue done <id>\`${waiting ? ` (${waiting} child question${waiting === 1 ? '' : 's'} wait behind it)` : ''}; otherwise leave it open.</super-ask-still-open>`;
+}
+
 // ─── The owed ledger: what opens and closes it from outside the pump ─────────────
 
 /** His message, without its reference headers and page block: what a `msg` debt's gist says. */

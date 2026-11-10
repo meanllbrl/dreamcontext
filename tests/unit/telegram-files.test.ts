@@ -158,7 +158,8 @@ describe('outbound classifier', () => {
   it('the refusal line names only the base name', () => {
     expect(refusalLine('.env', 'secret_class')).toBe("Mac'te: .env (gizli dosya sayılıyor, gönderilmez)");
     // Every reason says why in his words, and a fixable one what to do.
-    expect(refusalLine('a.png', 'gitignored')).toContain('_dream_context/tmp/');
+    // The reason alone: what to ask is the caller's (a Super's card names it, a routine never does).
+    expect(refusalLine('a.png', 'gitignored')).toBe("Mac'te: a.png (yalnız bu Mac'te tutulan bir klasörde)");
     for (const w of Object.values(REFUSAL_WHY)) expect(w.length).toBeGreaterThan(8);
   });
 });

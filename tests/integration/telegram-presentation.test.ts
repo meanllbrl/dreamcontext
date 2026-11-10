@@ -204,7 +204,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: [...images, big], view: { mode: 'present', cards: ['image-a', 'image-big', 'image-b'], layout: 'grid' } });
     present(['image-a']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Büyük (gönderilmedi: Telegram kabul etmedi, Mac'te açık)"))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Büyük (gönderilmedi: Telegram'a sığmadı ya da kabul edilmedi, Mac'te açık)"))).toBe(true));
     const album = tg.calls.find((c) => c.method === 'sendMediaGroup')!;
     expect(JSON.parse(String(album.params.media))).toHaveLength(2);
   });
@@ -218,7 +218,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: images, view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' } });
     present(['image-a']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts()).toContain("<b>Karşılaştırma:</b>\n1. Resim A (gönderilmedi: Telegram kabul etmedi, Mac'te açık)\n2. Resim B (gönderilmedi: Telegram kabul etmedi, Mac'te açık)"));
+    await vi.waitFor(() => expect(tg.texts()).toContain("<b>Karşılaştırma:</b>\n1. Resim A (gönderilmedi: Telegram'a sığmadı ya da kabul edilmedi, Mac'te açık)\n2. Resim B (gönderilmedi: Telegram'a sığmadı ya da kabul edilmedi, Mac'te açık)"));
   });
 
   it('Telegram-only hands-free: a photo sends no phone line; an unsent card never gets a mode-change instruction', async () => {
@@ -353,7 +353,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: [{ id: 'insight-mrr', kind: 'insight', ref: 'mrr', shape: 'square', place: 'main', title: 'MRR' }], view: { mode: 'float' } });
     noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['insight-mrr'] });
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Insight: MRR (Mac'te)"))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Insight: MRR (gönderilmedi: çizilemedi, Mac'te açık)"))).toBe(true));
     expect(media()).toHaveLength(0);
   });
 });

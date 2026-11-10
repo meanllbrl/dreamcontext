@@ -625,9 +625,9 @@ export class TelegramHub implements TelegramHubApi {
   /** Markdown → one or more Telegram messages. */
   /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
    *  answer paths call `answerExtras`); every other caller (members, notices) keeps "Mac'te" lines. */
-  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac'): Promise<void> {
-    // A member's result folds when long; the Super's words to him never do (owner 2026-11-11).
-    for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold: ab.target !== 'super' })) {
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac', fold = ab.target !== 'super'): Promise<void> {
+    // A member's result folds when long; the Super's words and any question never do (owner 2026-11-11).
+    for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold })) {
       const sent = await this.send(ab, html);
       if (reply && Number.isSafeInteger(sent?.message_id)) this.noteReply(ab, sent.message_id, { ref: reply.ref, quote: reply.quote ?? md, from: 'super' });
     }

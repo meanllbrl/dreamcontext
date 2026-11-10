@@ -71,8 +71,15 @@ export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgn
 export const NOT_SENT = {
   secret: 'gizli bir kart açıkken resim gönderilmez; kart bitince tekrar iste',
   format: 'bu biçim Telegram\'da açılmıyor, Mac\'te açık',
-  refused: 'Telegram kabul etmedi, Mac\'te açık',
+  refused: 'Telegram\'a sığmadı ya da kabul edilmedi, Mac\'te açık',
+  drawn: 'çizilemedi, Mac\'te açık',
+  pdf: 'PDF\'e çevrilemedi, Mac\'te açık',
 } as const;
+/** A refusal on a card the Super opened: why, and for a file he can get anyway, what to ask. */
+export function cardWhy(reason: OutboundRefusal): string {
+  const fix = reason === 'gitignored' || reason === 'outside_root' ? '; Super\'den _dream_context/tmp/ içine kopyalamasını iste' : '';
+  return `${REFUSAL_WHY[reason]}${fix}`;
+}
 /** "<Kind>: <title> (gönderilmedi: <why>)". */
 export function notSentLine(head: string, title: string, why: string): string {
   return `${head}${title} (gönderilmedi: ${why})`;
@@ -116,7 +123,7 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
         const head = `${KIND_WORD[c.kind]}: `;
         if (!ctx.pictures) return text(notSentLine(head, title, NOT_SENT.secret));
         const f = readProjectFile(ctx, c.ref);
-        if (!f.ok) return text(notSentLine(head, title, REFUSAL_WHY[f.reason]));
+        if (!f.ok) return text(notSentLine(head, title, cardWhy(f.reason)));
         const m = fileMedia(f.file, f.ext, title);
         return m ? { kind: 'media', items: [m], title } : text(notSentLine(head, title, NOT_SENT.format));
       }
@@ -125,7 +132,7 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
           const pngs = await ctx.renderInsight(c.id);
           if (pngs?.length) return { kind: 'media', items: pngs.map((p, i) => ({ kind: 'photo' as const, file: pngFile(`${c.ref}-${i + 1}`, p), title })), title };
         }
-        return text(`Insight: ${title} (Mac'te)`);
+        return text(notSentLine('Insight: ', title, ctx.pictures ? NOT_SENT.drawn : NOT_SENT.secret));
       }
       case 'web': {
         const v = validateSuperWebUrl(c.ref);
@@ -133,11 +140,14 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
           if (!ctx.pictures) return text(notSentLine('Sayfa: ', title, NOT_SENT.secret));
           const ext = extname(v.href).toLowerCase();
           if (ext === '.html' || ext === '.htm') {
+            // A page the gate refuses says why; one it lets through that does not print, that.
+            const gate = readProjectFile(ctx, v.href);
+            if (!gate.ok) return text(notSentLine('Sayfa: ', title, cardWhy(gate.reason)));
             const doc = await reportPdf(ctx, v.href, title);
-            return doc ? { kind: 'media', items: [doc], title } : text(`Mac'te açık: ${title}`);
+            return doc ? { kind: 'media', items: [doc], title } : text(notSentLine('Sayfa: ', title, NOT_SENT.pdf));
           }
           const f = readProjectFile(ctx, v.href);
-          if (!f.ok) return text(notSentLine('Sayfa: ', title, REFUSAL_WHY[f.reason]));
+          if (!f.ok) return text(notSentLine('Sayfa: ', title, cardWhy(f.reason)));
           const m = fileMedia(f.file, f.ext, title);
           return m ? { kind: 'media', items: [m], title } : text(`Mac'te açık: ${title}`);
         }

@@ -134,7 +134,7 @@ import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-lan
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -3539,6 +3539,9 @@ export function startChatSession(
     const abouts = isSuper ? ownerAbouts(text, aboutHeads(text)) : [];
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
+    // His open question left open by this message: the super is told, so it never blocks unseen.
+    const stillOpen = isSuper && !text.startsWith('/') ? superAskStillOpen(chatRegistryId, abouts) : null;
+    if (stillOpen) content.push({ type: 'text', text: stillOpen });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
     const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });

@@ -141,7 +141,7 @@ async function watchRun(
       sent.add(e.id);
       if (e.kind === 'agent' && e.text.trim()) await hub.sendMarkdown(ab, e.text).catch(() => {});
       // Its question (a free-text ask) and a failure reach the owner here too.
-      if (e.kind === 'system' && e.event === 'asked' && e.text.trim()) await hub.sendMarkdown(ab, `❓ ${e.text}`).catch(() => {});
+      if (e.kind === 'system' && e.event === 'asked' && e.text.trim()) await hub.sendMarkdown(ab, `❓ ${e.text}`, undefined, 'mac', false).catch(() => {});
       if (e.kind === 'system' && (e.event === 'failed' || e.event === 'timeout')) await hub.notice(ab, 'warn', `Çalışamadı: ${e.text.slice(0, 300) || e.event}`, true);
       if (e.kind === 'system' && e.event && END_EVENTS.has(e.event)) ended = true;
     }
