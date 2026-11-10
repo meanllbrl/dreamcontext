@@ -26,7 +26,7 @@ import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
-import { useTasks } from '../../../hooks/useTasks';
+import { useTaskList } from '../../../hooks/useTasks';
 import { findAgent, useAgents, useOwnerInbox } from '../../../hooks/useAgents';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
@@ -451,7 +451,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const byId = useMemo(() => new Map(state.containers.map((c) => [c.id, c] as const)), [state.containers]);
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
   // Every card's readable name (superTitles.ts): a task by its title, a file by its name, never a path or slug.
-  const { data: tasks } = useTasks();
+  const { data: tasks } = useTaskList();
   const titleOf = useCallback((c: Container) => {
     if (c.kind === 'agenda') return t('super.agenda.label');
     if (c.kind === 'member') return t(`superStage.member.cards.${c.ref}`);

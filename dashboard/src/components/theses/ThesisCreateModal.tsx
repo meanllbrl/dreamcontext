@@ -8,7 +8,7 @@ import {
 } from '../../hooks/useTheses';
 import { useLabInsights } from '../../hooks/useLab';
 import { useObjectives } from '../../hooks/useObjectives';
-import { useTasks } from '../../hooks/useTasks';
+import { useTaskList } from '../../hooks/useTasks';
 import '../tasks/Board.css';
 import './ThesisCreateModal.css';
 
@@ -142,7 +142,7 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
   const appendChangelog = useAppendChangelog();
   const { data: insightSummaries = [] } = useLabInsights();
   const { data: objectives = [] } = useObjectives();
-  const { data: tasks = [] } = useTasks();
+  const { data: tasks = [] } = useTaskList();
 
   const reviewCandidates = mode === 'review' ? (candidates ?? []) : [];
   const [index, setIndex] = useState(0);

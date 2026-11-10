@@ -13,7 +13,7 @@ import {
 } from '../../hooks/useTheses';
 import { useLabInsights } from '../../hooks/useLab';
 import { useObjectives } from '../../hooks/useObjectives';
-import { useTasks } from '../../hooks/useTasks';
+import { useTaskList } from '../../hooks/useTasks';
 import { ConfidenceBar } from './ConfidenceBar';
 import './theses.css';
 import './ThesisDetailModal.css';
@@ -245,7 +245,7 @@ export function ThesisDetailModal({ slug, onClose, onNavigate, onSeen }: ThesisD
 
   const { data: allInsights = [] } = useLabInsights();
   const { data: allObjectives = [] } = useObjectives();
-  const { data: allTasks = [] } = useTasks();
+  const { data: allTasks = [] } = useTaskList();
 
   const insightsBySlug = useMemo(() => new Map(allInsights.map((i) => [i.slug, i.title])), [allInsights]);
   const objectivesBySlug = useMemo(() => new Map(allObjectives.map((o) => [o.slug, o.title])), [allObjectives]);

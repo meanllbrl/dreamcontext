@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import { useTasks } from '../../../hooks/useTasks';
+import { useTaskList } from '../../../hooks/useTasks';
 import { useKnowledgeList } from '../../../hooks/useKnowledge';
 import { useLabInsight, useLabInsights } from '../../../hooks/useLab';
 import type { SuperContainer as Container, SuperGroup } from '../../../lib/superTypes';
@@ -60,7 +60,7 @@ function TileTop({ kind }: { kind: Container['kind'] | 'group' }) {
 
 function TaskTile({ container: c, title, wide }: { container: Container; title: string; wide: boolean }) {
   const { t } = useI18n();
-  const { data } = useTasks();
+  const { data } = useTaskList();
   const task = data?.find((x) => x.slug === c.ref);
   const name = task?.name || title;
   const crit = criteriaProgress(task?.acceptance_criteria);
@@ -282,7 +282,7 @@ export function ResolvedTitle({ container: c, fallback }: { container: Container
 }
 
 function TaskName({ slug, fallback }: { slug: string; fallback: string }) {
-  const { data } = useTasks();
+  const { data } = useTaskList();
   const name = data?.find((x) => x.slug === slug)?.name || fallback;
   return <span className="super-card-title" title={name}>{name}</span>;
 }
@@ -306,7 +306,7 @@ function NoteName({ slug, fallback }: { slug: string; fallback: string }) {
  * are, before the page itself.
  */
 export function TaskPageHead({ container: c }: { container: Container }) {
-  const { data } = useTasks();
+  const { data } = useTaskList();
   const task = data?.find((x) => x.slug === c.ref);
   if (!task) return null;
   const crit = criteriaProgress(task.acceptance_criteria);

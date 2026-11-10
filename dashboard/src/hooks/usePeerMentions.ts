@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import type { PeerMention } from '../lib/agentComposer';
 
@@ -20,23 +20,21 @@ import type { PeerMention } from '../lib/agentComposer';
  */
 export function usePeerMentions(enabled = true): PeerMention[] {
   const api = useApi();
-  const [peers, setPeers] = useState<PeerMention[]>([]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let alive = true;
-    api
-      .get<{ peers: PeerMention[] }>('/peer/peers')
-      .then((r) => {
-        if (alive) setPeers(Array.isArray(r?.peers) ? r.peers : []);
-      })
-      .catch(() => {
-        if (alive) setPeers([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [api, enabled]);
-
-  return peers;
+  // ONE request per open, shared by every pane and composer of this vault (task: opening a
+  // project is slow: eleven restored chats asked it 22 times). The query client is per vault,
+  // so the key needs no vault id. Held for the window's life, as the effect it replaces held it.
+  const { data } = useQuery({
+    queryKey: ['peer-mentions'],
+    queryFn: () => api.get<{ peers: PeerMention[] }>('/peer/peers')
+      .then((r) => (Array.isArray(r?.peers) ? r.peers : []))
+      .catch(() => [] as PeerMention[]),
+    enabled,
+    staleTime: Infinity,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  return enabled && data ? data : NO_PEERS;
 }
+
+const NO_PEERS: PeerMention[] = [];
