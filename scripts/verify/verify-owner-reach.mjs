@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
 import {
-  cleanEnv, freePort, openMember, pageFetch, readJson, readNd, sayOnStage, stage, stageComposer, superStandin, until,
+  applyTheme, cleanEnv, freePort, openMember, pageFetch, readJson, readNd, sayOnStage, stage, stageComposer, superStandin, until,
 } from './lib/super-scratch.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -49,6 +49,10 @@ const MAIN_RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
 const MEMBERS_DIR = join(PROJ, '_dream_context', 'state', '.super', 'members');
 const ONCE_DIR = join(HOME, '.dreamcontext', 'grants', 'once');
 const OWNER_KEY = randomBytes(32).toString('hex');
+/** OWNER_REACH_SHOTS=<folder>: the screens the owner sees, shot in the real flow before each
+ *  answer, at 1440 and 390 px, light and dark (criterion 15). Off: the walk alone. */
+const SHOTS = process.env.OWNER_REACH_SHOTS || '';
+const consoleErrors = [];
 
 /** The refused script: a plain `node <file>` in the project (no test runner, no verify path, so
  *  the heavy-step gate leaves it alone and only the grant decides). */
@@ -118,6 +122,37 @@ const memberRecord = (slug) => readJson(join(MEMBERS_DIR, `${slug}.json`), null)
 const onceFiles = () => { try { return readdirSync(ONCE_DIR).filter((f) => !f.startsWith('.')); } catch { return []; } };
 
 const results = [];
+
+const SIZES = [{ w: 1440, h: 900 }, { w: 390, h: 844 }];
+/** Every width and theme of the page as it is now; `focus` (a locator) also gets its own crop. */
+async function shots(page, name, focus) {
+  if (!SHOTS) return;
+  mkdirSync(SHOTS, { recursive: true });
+  for (const { w, h } of SIZES) {
+    await page.setViewportSize({ width: w, height: h });
+    for (const theme of ['light', 'dark']) {
+      await applyTheme(page, theme);
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: join(SHOTS, `${name}-${w}-${theme}.png`) });
+      const el = focus?.(page);
+      if (el && await el.count() && await el.first().isVisible().catch(() => false)) {
+        await el.first().scrollIntoViewIfNeeded().catch(() => {});
+        await el.first().screenshot({ path: join(SHOTS, `${name}-${w}-${theme}-crop.png`) }).catch(() => {});
+      } else if (focus) console.log(`  (shot ${name} @${w} ${theme}: its element is not on screen)`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await applyTheme(page, 'light');
+}
+async function toMain(page) {
+  await page.locator('aside, nav').getByText('Super Agent', { exact: true }).first().click().catch(() => {});
+  await page.waitForTimeout(1200);
+}
+async function backToRota(page) {
+  await openMember(page, 'rota');
+  await until(page, async () => (await stageComposer(page, 'm:rota')).isVisible(), 20000);
+}
+const bar = (page) => page.locator('[data-testid="super-job-bar"]:visible');
 function step(label, cond, detail) {
   results.push({ label, pass: !!cond, ...(cond ? {} : { detail: detail === undefined ? undefined : String(detail).slice(0, 900) }) });
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${!cond && detail !== undefined ? `\n      ${String(detail).slice(0, 900)}` : ''}`);
@@ -203,6 +238,7 @@ async function caseAsk(page) {
   step('the bar\'s data (GET /api/super/state) carries the mirror', st.status === 200 && (st.json?.queue ?? []).some((q) => q.id === mirrorId && q.state !== 'done'),
     JSON.stringify({ status: st.status, queue: st.json?.queue?.map((q) => [q.id, q.kind, q.state]) }).slice(0, 600));
 
+  if (SHOTS) { await toMain(page); await shots(page, '1-bar-member-question', bar); await backToRota(page); }
   const body = { record: 'main', item: mirrorId, answer: { kind: 'ask', text: ANSWER }, via: 'bar' };
   const refused = await answer(page, body);
   step('the answer route without the owner key: 403 owner_page_only', refused.status === 403 && refused.json?.error === 'owner_page_only', JSON.stringify(refused));
@@ -236,6 +272,12 @@ async function caseRefusal(page) {
   step('…offering Allow once', !mirror?.offer || (Array.isArray(mirror.offer.sizes) && mirror.offer.sizes.includes('once')), JSON.stringify(mirror?.offer));
   step('no once grant before his tap', onceFiles().length === before, JSON.stringify(onceFiles()));
 
+  if (SHOTS) {
+    await shots(page, '3-member-chat-refusal-card', (pg) => pg.locator('[data-testid="refusal-card"]:visible'));
+    await toMain(page);
+    await shots(page, '2-bar-member-refusal', bar);
+    await backToRota(page);
+  }
   const res = await answer(page, { record: 'main', item: mirror?.id, answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar' });
   step('Allow once through the answer route: 200 allowed (the process is live)', res.status === 200 && res.json?.ok === true && res.json?.outcome === 'allowed', JSON.stringify(res));
   step('one server turn reaches Rota\'s live process, naming the call', await until(page, async () => reports().some((r) => r.kind === 'allowed-turn' && r.slug === 'rota'), 45000),
@@ -259,6 +301,37 @@ async function caseRefusal(page) {
   step('a hook call from outside the bound process, forged environment: no allow', !/"permissionDecision"\s*:\s*"allow"/.test(forged.stdout ?? ''), forged.stdout);
 }
 
+/** Shots only: one saved rule of Rota's (as an Always for Rota answer writes it), then Rota's
+ *  profile, where the owner reads and removes it. */
+async function shotProfile(page) {
+  const { createHash } = await import('node:crypto');
+  const { realpathSync, readFileSync: rf } = await import('node:fs');
+  const project = realpathSync(PROJ);
+  const scriptPath = join(project, SCRIPT_REL);
+  const now = Date.now();
+  const id = `member-${randomBytes(12).toString('base64url')}`;
+  const rules = join(HOME, '.dreamcontext', 'grants', 'rules');
+  mkdirSync(rules, { recursive: true });
+  writeFileSync(join(rules, `${id}.json`), JSON.stringify({
+    id, scope: 'member', project, member: 'rota', tool: 'Bash', input: CMD, form: 'script',
+    script: { interpreter: 'node', interpreterPath: realpathSync(process.execPath), scriptPath, sha256: createHash('sha256').update(rf(scriptPath)).digest('hex') },
+    createdAt: now, expiresAt: Number.MAX_SAFE_INTEGER,
+  }), { mode: 0o600 });
+  await backToRota(page);
+  // The member's head carries "Profile"; the instructions card's pencil opens the same dialog.
+  const profile = stage(page, 'm:rota').getByRole('button', { name: 'Profile', exact: true }).first();
+  const edit = page.locator('[data-testid="member-instructions-edit"]:visible').first();
+  if (await until(page, async () => (await profile.count()) > 0, 10000)) await profile.click();
+  else if (await until(page, async () => (await edit.count()) > 0 && await edit.isEnabled(), 5000)) await edit.click();
+  else { console.log('  (profile: neither Profile nor the edit button is on screen)'); return; }
+  // Permissions live in the profile's edit view (AgentIdentityDialog, editing).
+  const editBtn = page.getByRole('button', { name: 'Edit', exact: true }).first();
+  if (await until(page, async () => (await editBtn.count()) > 0 && await editBtn.isVisible(), 8000)) await editBtn.click();
+  await until(page, async () => (await page.locator('[data-testid="agent-permissions-rule"]').count()) > 0, 15000);
+  await shots(page, '4-profile-permissions', (pg) => pg.locator('[data-testid="agent-permissions"]'));
+  await page.keyboard.press('Escape').catch(() => {});
+}
+
 async function main() {
   if (!existsSync(join(REPO, 'dist', 'dashboard', 'index.html'))) throw new Error('dist/dashboard missing: run npm run build first');
   setupScratch();
@@ -278,11 +351,14 @@ async function main() {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));
+    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 300)); });
     console.log('── setup: hand-over');
     if (!step('main Super handed over', await handOver(page, base))) return;
     await caseAsk(page);
     await caseRefusal(page);
+    if (SHOTS) await shotProfile(page);
     step('no page crash', errors.length === 0, errors.join('\n'));
+    if (SHOTS) console.log(`console errors: ${consoleErrors.length}${consoleErrors.length ? `\n  ${consoleErrors.slice(0, 8).join('\n  ')}` : ''}`);
   } finally {
     await browser?.close().catch(() => {});
     stop();

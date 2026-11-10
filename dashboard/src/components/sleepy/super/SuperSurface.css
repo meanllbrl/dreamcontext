@@ -1153,7 +1153,8 @@
 }
 .super-queue-head[data-kind='owner'] .super-queue-text { min-width: 0; }
 @media (max-width: 640px) {
-  .super-queue-head[data-kind='owner'] .super-queue-needs { display: none; }
+  .super-queue-head[data-kind='owner'] .super-queue-needs,
+  .super-queue-head[data-kind='member'] .super-queue-needs { display: none; }
 }
 .super-queue-more { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-right: 8px; white-space: nowrap; }
 .super-queue-full {

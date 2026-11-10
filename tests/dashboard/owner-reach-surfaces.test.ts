@@ -156,6 +156,21 @@ describe('the bar answers in place (A1-A7)', () => {
     expect(has(html, 'super-queue-always')).toBe(true);
   });
 
+  it("a member's own refused command and its own question on its own bar carry the member's name, never main's", () => {
+    const own = { id: 'q-o2', sessionId: 'S', kind: 'owner', state: 'escalated', createdAt: 1, own: true, ownerText: 'Bash x', wait: { kind: 'refusal', id: 'rf-8', refusal: refusal() }, offer: { sizes: ['once', 'job', 'member'] } } as SuperQueueItem;
+    const ask = { id: 'q-a2', sessionId: 'S', kind: 'ask', state: 'pending', createdAt: 1, ownerText: 'Which discount?' } as SuperQueueItem;
+    const memberLook = { ...look, memberTitleFor: (slug: string) => TITLES[slug] ?? slug };
+    const onMember = (head: SuperQueueItem) => renderToStaticMarkup(createElement(JobBar, {
+      state: { queue: [head], session: 'S', member: 'turing' } as never, head, waiting: 1, look: memberLook, superSession: undefined, vault: 'acme',
+      sessionFor: () => undefined, titleFor: (s: string) => `title-${s}`, onReplyToSuper: () => {}, onShowChild: () => {},
+    }));
+    for (const head of [own, ask]) {
+      const html = onMember(head);
+      expect(html).toContain('>Turing<');
+      expect(html).not.toContain('Super Agent');
+    }
+  });
+
   it('a command is drawn with control and bidi characters as visible escapes', () => {
     const html = bar(refusedMirror({ wait: { kind: 'refusal', id: 'rf-1', refusal: refusal('node run.mjs \u202etxt.exe') } }));
     expect(html).toContain('\\u{202e}');

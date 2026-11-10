@@ -84,6 +84,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   const record = recordOf(state);
   // On a member's own stage, "Always for <member>" names that member.
   const recordName = record === MAIN_RECORD ? undefined : (look.memberTitleFor?.(record) || record);
+  // The Super this record belongs to: a member's own items and questions carry the member's name.
+  const ownTitle = recordName ?? look.superTitle;
   // An `ask` is the super agent's own question: there is no child behind it.
   const child = head && head.kind !== 'ask' ? sessionFor(head.sessionId) : undefined;
   const [, force] = useReducer((n: number) => n + 1, 0);
@@ -152,16 +154,16 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
           {head.kind === 'member' || head.kind === 'routine' ? null : head.own
             // The Super's own refused command (K1): its own name, no child to open.
-            ? <span className="super-queue-who">{look.superTitle}</span>
+            ? <span className="super-queue-who">{ownTitle}</span>
             : !rect && head.kind !== 'ask' && head.kind !== 'approval'
             // In the dock the stage is not on screen: the child's name opens it there (its card
             // beside the agenda), the way the stage's own band reaches an owner card.
             ? <button type="button" className="super-queue-who super-queue-who--link" data-testid="super-queue-open-child" onClick={() => onShowChild(head.sessionId)}>{titleFor(head.sessionId)}</button>
-            : <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>}
+            : <span className="super-queue-who">{head.kind === 'ask' ? ownTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>}
           {allowedWaiting(head) && (head.kind === 'permission' || (head.kind === 'owner' && ownerWaitOf(head) === 'refusal'))
             ? <AllowedHead item={head} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
             : head.kind === 'permission'
-            ? <PermissionHead item={head} record={record} memberName={recordName} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} />
+            ? <PermissionHead item={head} record={record} memberName={recordName} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} showOptions={showOptions} />
             : head.kind === 'ask'
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
@@ -171,7 +173,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               : head.kind === 'routine'
                 ? <RoutineHead item={head} />
               : head.kind === 'owner' && ownerWaitOf(head) === 'refusal'
-                ? <GrantHead item={head} record={record} memberName={recordName} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
+                ? <GrantHead item={head} record={record} memberName={recordName} showOptions={showOptions} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
               : head.kind === 'owner' && ownerWaitOf(head) === 'stalled'
                 ? <StalledHead item={head} record={record} onOpen={() => onShowChild(head.sessionId)} />
               : head.kind === 'owner'
@@ -321,7 +323,7 @@ function QueueText({ full, children }: { full: string; children: ReactNode }) {
   );
 }
 
-function PermissionHead({ item, record, memberName, child, locked, answerOnce, remote = false }: {
+function PermissionHead({ item, record, memberName, child, locked, answerOnce, remote = false, showOptions = true }: {
   item: SuperQueueItem;
   record: string;
   memberName?: string;
@@ -329,6 +331,8 @@ function PermissionHead({ item, record, memberName, child, locked, answerOnce, r
   locked: boolean;
   answerOnce: (send: () => boolean | void) => void;
   remote?: boolean;
+  /** False when the row does not fit (a phone): the Always sizes stay on the card, not the row. */
+  showOptions?: boolean;
 }) {
   const { t } = useI18n();
   // A wider size than once goes through the owner-answer route, which writes the rule from the
@@ -363,7 +367,7 @@ function PermissionHead({ item, record, memberName, child, locked, answerOnce, r
           onClick={() => answerOnce(() => { const ok = child.answer(pending.requestId, { behavior: 'allow', updatedInput: pending.input }); if (ok) noteOwnerWrote(); return ok; })}
         >{t(choices.sizes.length > 1 ? 'owner.answer.allowOnce' : 'super.queue.allow')}</button>
         {/* Main's own crew has no member size (grantChoices); a member's own stage names it. */}
-        <AlwaysMenu choices={choices} memberName={memberName} busy={locked || wide.busy} onPick={(size) => wide.submit(allowAnswer('permission', size))} />
+        {showOptions && <AlwaysMenu choices={choices} memberName={memberName} busy={locked || wide.busy} onPick={(size) => wide.submit(allowAnswer('permission', size))} />}
         <button
           type="button"
           className="super-queue-btn"
@@ -404,7 +408,7 @@ function MemberHead({ item, record, showOptions }: { item: SuperQueueItem; recor
     return (
       <>
         <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
-        <GrantHead item={item} record={record} memberName={name} onOpen={open} />
+        <GrantHead item={item} record={record} memberName={name} showOptions={showOptions} onOpen={open} />
       </>
     );
   }
@@ -463,7 +467,9 @@ function MemberHead({ item, record, showOptions }: { item: SuperQueueItem; recor
  * sizes the server offers, and Deny or Not needed. A command the row cannot show whole (stored
  * cut) or that nothing may allow offers Open, and says why.
  */
-function GrantHead({ item, record, memberName, onOpen }: { item: SuperQueueItem; record: string; memberName?: string; onOpen: () => void }) {
+/** `showOptions` false (the row does not fit, a phone): Allow once alone; the Always sizes and the
+ *  decline stay on the card. */
+function GrantHead({ item, record, memberName, onOpen, showOptions = true }: { item: SuperQueueItem; record: string; memberName?: string; onOpen: () => void; showOptions?: boolean }) {
   const { t } = useI18n();
   const kind = ownerRowKind(item) === 'refusal' ? 'refusal' : 'permission';
   const answer = useOwnerAnswer(record, item, 'bar');
@@ -502,16 +508,19 @@ function GrantHead({ item, record, memberName, onOpen }: { item: SuperQueueItem;
                 onClick={() => answer.submit(allowAnswer(kind, 'once'))}
               >{t('owner.answer.allowOnce')}</button>
             )}
-            <AlwaysMenu choices={choices} memberName={memberName} busy={answer.busy} onPick={(size) => answer.submit(allowAnswer(kind, size))} />
+            {showOptions && <AlwaysMenu choices={choices} memberName={memberName} busy={answer.busy} onPick={(size) => answer.submit(allowAnswer(kind, size))} />}
           </>
         )}
-        <button
-          type="button"
-          className="super-queue-btn"
-          data-testid="super-queue-decline"
-          disabled={answer.busy}
-          onClick={() => answer.submit(declineAnswer(kind))}
-        >{t(kind === 'refusal' ? 'owner.answer.notNeeded' : 'owner.answer.deny')}</button>
+        {/* A row that does not fit keeps its one answer; the card beside it holds the rest. */}
+        {(showOptions || answer.fallback || !choices.sizes.length) && (
+          <button
+            type="button"
+            className="super-queue-btn"
+            data-testid="super-queue-decline"
+            disabled={answer.busy}
+            onClick={() => answer.submit(declineAnswer(kind))}
+          >{t(kind === 'refusal' ? 'owner.answer.notNeeded' : 'owner.answer.deny')}</button>
+        )}
       </span>
       {answer.note && <span className="super-queue-text" data-testid="super-queue-note">{t(answer.note)}</span>}
     </>
