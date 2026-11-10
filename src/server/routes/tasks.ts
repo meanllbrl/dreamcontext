@@ -63,6 +63,7 @@ import {
   type ParentLinkTask,
 } from '../../lib/task-parent.js';
 import { summarizeAssets } from '../../lib/task-assets.js';
+import { taskListSummary } from '../../lib/task-list-summary.js';
 import {
   objectToTask,
   objectionView,
@@ -412,21 +413,46 @@ export async function handleTaskOverrideRemoveStatus(
  * GET /api/tasks - List all tasks
  */
 export async function handleTasksList(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   const backend = backendFor(contextRoot);
-  const summaries = await backend.list();
+  const all = await readAllTasks(backend);
+  // `?view=summary`: the light list (lib/task-list-summary.ts) for every surface that shows a task
+  // as a name, a status and a progress bar. No objection, no attachments: no card of that view reads them.
+  if (listView(req) === 'summary') {
+    sendJson(res, 200, { tasks: all.map((task) => taskListSummary(task, { agent_job: agentJobOf(task.raw ?? {}) })) });
+    return;
+  }
   const ctx = await objectionReadCtx(contextRoot, backend);
   const tasks: (ReturnType<typeof toApiTask> & { attachments: { count: number; cover: string | null } })[] = [];
-  for (const s of summaries) {
-    const task = await backend.get(s.name);
+  for (const task of all) {
     // The card's clip: one top-level directory read per task with a folder, none without.
-    if (task) tasks.push({ ...toApiTask(task, ctx), attachments: summarizeAssets(contextRoot, task.slug) });
+    tasks.push({ ...toApiTask(task, ctx), attachments: summarizeAssets(contextRoot, task.slug) });
   }
   sendJson(res, 200, { tasks });
+}
+
+/** `?view=` of a list request: `summary` or the full list (anything else). */
+function listView(req: IncomingMessage): 'summary' | 'full' {
+  try {
+    return new URL(req.url || '/', 'http://localhost').searchParams.get('view') === 'summary' ? 'summary' : 'full';
+  } catch {
+    return 'full';
+  }
+}
+
+/** Every task's full view: the backend's non-blocking bulk read, else `list()` + `get()` per task. */
+async function readAllTasks(backend: TaskBackend): Promise<readonly TaskData[]> {
+  if (backend.readAll) return backend.readAll();
+  const out: TaskData[] = [];
+  for (const s of await backend.list()) {
+    const task = await backend.get(s.name);
+    if (task) out.push(task);
+  }
+  return out;
 }
 
 /**
@@ -776,9 +802,9 @@ function rosterMembers(contextRoot: string): RemoteMember[] {
 async function taskAssigneeMembers(backend: TaskBackend): Promise<RemoteMember[]> {
   const slugs = new Set<string>();
   try {
-    for (const summary of await backend.list()) {
-      const task = await backend.get(summary.name);
-      if (!task) continue;
+    // Tags and the assignee are frontmatter: the shared bulk read (memoized by each file's stat),
+    // never a second full read of every task per request (task: opening a project is slow).
+    for (const task of await readAllTasks(backend)) {
       for (const tag of task.tags ?? []) {
         if (tag.startsWith('person:')) slugs.add(tag.slice('person:'.length));
       }

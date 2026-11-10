@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from '../glob.js';
 import matter from 'gray-matter';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
 import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from '../task-status.js';
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
-import { insertToSection, listSections, readSection } from '../markdown.js';
+import { insertToSection, sectionNamesOf, sectionOf } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { mergeRice, normalizeRice } from '../rice.js';
 import {
@@ -215,9 +216,9 @@ function renderTaskTemplate(
     .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
 }
 
-function readSectionSafe(filePath: string, sectionName: string): string {
+function sectionSafe(content: string, sectionName: string): string {
   try {
-    return readSection(filePath, sectionName) ?? '';
+    return sectionOf(content, sectionName) ?? '';
   } catch {
     return '';
   }
@@ -234,12 +235,23 @@ function readSectionSafe(filePath: string, sectionName: string): string {
  * empty status falls back to `todo`.
  */
 export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = DEFAULT_STATUSES): TaskData {
+  return parseTaskFile(filePath, readFileSync(filePath, 'utf-8'), statuses);
+}
+
+/**
+ * {@link readTaskFile} over a file's text already read: ONE parse answers the frontmatter, the
+ * section list and every section (it used to read the file nine times, once per section — the
+ * cold cost of a few hundred tasks on the Super screen's open). Same rules, same object.
+ */
+export function parseTaskFile(filePath: string, raw: string, statuses: readonly StatusDef[] = DEFAULT_STATUSES): TaskData {
   const slug = basename(filePath, '.md');
-  const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
+  const parsed = matter(raw);
+  const data = parsed.data as Record<string, unknown>;
+  const content = parsed.content;
 
   let sections: string[] = [];
   try {
-    sections = listSections(filePath);
+    sections = sectionNamesOf(content);
   } catch { /* no sections */ }
 
   // Normalize the status to its key form — hyphens to underscores AND lowercased
@@ -301,13 +313,13 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     filed_by: isFiledBy(data.filed_by) ? data.filed_by : null,
     filing_basis: readFilingBasis(data.filing_basis),
     ...(readFilingApproved(data.filing_approved) ? { filing_approved: readFilingApproved(data.filing_approved) as { at: string } } : {}),
-    why: readSectionSafe(filePath, 'Why'),
-    user_stories: readSectionSafe(filePath, 'User Stories'),
-    acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
-    constraints: readSectionSafe(filePath, 'Constraints & Decisions'),
-    technical_details: readSectionSafe(filePath, 'Technical Details'),
-    notes: readSectionSafe(filePath, 'Notes'),
-    changelog: readSectionSafe(filePath, 'Changelog'),
+    why: sectionSafe(content, 'Why'),
+    user_stories: sectionSafe(content, 'User Stories'),
+    acceptance_criteria: sectionSafe(content, 'Acceptance Criteria'),
+    constraints: sectionSafe(content, 'Constraints & Decisions'),
+    technical_details: sectionSafe(content, 'Technical Details'),
+    notes: sectionSafe(content, 'Notes'),
+    changelog: sectionSafe(content, 'Changelog'),
     sections,
     body: content.trim(),
     rawBody: content,
@@ -375,6 +387,45 @@ function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
     readMemo.delete(oldest.value);
   }
   return structuredClone(value);
+}
+
+/**
+ * Every task file's full view, read WITHOUT blocking the server (task: opening a project is
+ * slow): stats and reads go through `fs/promises` a bounded batch at a time, so another request
+ * (a chat's history, a composer's poll) is answered between them instead of waiting behind a
+ * few hundred synchronous reads. Shares {@link memoRead}'s cache and its rule (re-read only when
+ * the stat before the read moved), so a list after a list costs stats alone.
+ *
+ * The values are the CACHED objects, not clones: read-only for the caller (the list route only
+ * serialises them). Concurrent calls for one directory share one pass.
+ */
+const READ_ALL_BATCH = 48;
+const readAllInflight = new Map<string, Promise<TaskData[]>>();
+
+async function readAllTaskFiles(files: string[], statuses: readonly StatusDef[]): Promise<TaskData[]> {
+  const out: (TaskData | null)[] = new Array(files.length).fill(null);
+  for (let i = 0; i < files.length; i += READ_ALL_BATCH) {
+    await Promise.all(files.slice(i, i + READ_ALL_BATCH).map(async (file, j) => {
+      try {
+        const abs = resolve(file);
+        const key = `task\0${abs}`;
+        const st = await stat(abs);
+        const sig = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+        const hit = readMemo.get(key);
+        if (hit && hit.sig === sig) { out[i + j] = hit.value as TaskData; return; }
+        const value = parseTaskFile(abs, await readFile(abs, 'utf-8'), statuses);
+        readMemo.delete(key);
+        readMemo.set(key, { sig, value });
+        out[i + j] = value;
+      } catch { /* vanished or unreadable mid-pass: left out, like list() */ }
+    }));
+  }
+  while (readMemo.size > READ_MEMO_MAX) {
+    const oldest = readMemo.keys().next();
+    if (oldest.done) break;
+    readMemo.delete(oldest.value);
+  }
+  return out.filter((t): t is TaskData => t !== null);
 }
 
 /** Drop the memoized reads of one task file (after this process wrote it). */
@@ -470,6 +521,22 @@ export class LocalTaskBackend implements TaskBackend {
       } catch { /* skip unreadable */ }
     }
     return filter ? filterTasks(all, { statuses: this.statusDefs(), ...filter }) : all;
+  }
+
+  /**
+   * Every task's full view, in {@link list}'s order, read off the event loop (see
+   * {@link readAllTaskFiles}). Read-only values: the list route serialises them as they are.
+   */
+  async readAll(): Promise<readonly TaskData[]> {
+    const files = this.taskFiles();
+    const statuses = this.statusDefs();
+    const running = readAllInflight.get(this.stateDir);
+    if (running) return running;
+    const p = readAllTaskFiles(files, statuses).finally(() => {
+      if (readAllInflight.get(this.stateDir) === p) readAllInflight.delete(this.stateDir);
+    });
+    readAllInflight.set(this.stateDir, p);
+    return p;
   }
 
   async get(slug: string): Promise<TaskData | null> {
