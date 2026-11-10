@@ -75,7 +75,8 @@ describe('a project HTML page card goes as a PDF document', () => {
       const { hub, ab } = fakeHub(false);
       await sendPresentation(hub, ab, [ok, { kind: 'text', line: 'Görev: X', title: 'X' }], 'open', 0, 's', { phoneLink: () => 'off' });
       const text = String((hub.send as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1]);
-      expect(text).toContain("Rapor (Mac'te)");
+      // Owner 2026-11-11: the line says why it did not go.
+      expect(text).toContain("Rapor (gönderilmedi: Telegram kabul etmedi, Mac'te açık)");
       expect(text).toContain('Görev: X');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

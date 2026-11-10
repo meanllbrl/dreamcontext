@@ -23,7 +23,7 @@ import { onStageVerb, type StageVerbEvent } from '../../lib/super/stage-events.j
 import { readSuperState } from '../../lib/super/store.js';
 import type { SuperContainer, SuperState } from '../../lib/super/types.js';
 import { escapeHtml, splitReplySections } from '../../lib/telegram/format.js';
-import { cardOut, type CardContext, type CardOut } from './cards.js';
+import { NOT_SENT, cardOut, notSentLine, type CardContext, type CardOut } from './cards.js';
 import { caption, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { noticeHtml } from '../../lib/telegram/system-lines.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
@@ -126,7 +126,7 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   const { sent: pics, unsent, listed } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), { heading: (n) => (layout === 'open' ? `${word} ${n} resim:` : `${word}, ${n} resim:`), footer: moreLine });
   for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d);
   const album = pics.length >= 2;
-  const fallback = unsent.map((m) => `${m.title} (Mac'te)`);
+  const fallback = unsent.map((m) => notSentLine('', m.title, NOT_SENT.refused));
   // The picture list carries "Ve N kart daha." when it went; otherwise this message does.
   const moreSaid = listed;
   if (lines.length || fallback.length || !pics.length || (moreLine.length && !moreSaid)) {

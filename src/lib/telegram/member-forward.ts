@@ -31,7 +31,7 @@ import type { ThreadEntry } from '../automations/types.js';
 import { bindingDir, readBinding, readForward, scopeOfContextRoot } from './config.js';
 import { formatAskQuestionHtml } from './ask-format.js';
 import { escapeHtml, redactSecrets, toTelegramMessages, wouldRedact } from './format.js';
-import { readOutbound, type OutboundFile } from './files.js';
+import { readOutbound, refusalLine, type OutboundFile } from './files.js';
 import { TelegramTransport, type FetchLike } from './transport.js';
 
 /** The env var the runner hands its child (Claude and Codex alike: Codex's default
@@ -176,7 +176,7 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
       const abs = resolve(input.contextRoot, rel);
       if (!resolvesInsideBrain(input.contextRoot, abs)) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
       const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes: 20 * 1024 * 1024 });
-      if (!r.ok) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
+      if (!r.ok) { messages.push(escapeHtml(refusalLine(name, r.reason))); continue; }
       if (TEXT_DOC.test(name) && wouldRedact(r.file.data.toString('utf-8'))) { messages.push(escapeHtml(`Mac'te: ${name}`)); continue; }
       files.push(r.file);
     }

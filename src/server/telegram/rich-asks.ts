@@ -27,7 +27,7 @@ import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { dreamHtmlPage } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
-import { cardOut } from './cards.js';
+import { NOT_SENT, cardOut, notSentLine } from './cards.js';
 import type { PreviewShooter } from './page-shot.js';
 import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
@@ -139,7 +139,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
           items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
           // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
           for (const d of out.items.filter((m) => m.kind === 'document')) {
-            if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, `${cleanTitle(d.title, 80)} (Mac'te)`);
+            if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
           }
         } else await hub.reply(ab, out.line);
       }

@@ -13,7 +13,7 @@
  * and web / live browser (a public https page as a link line, never a picture).
  */
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
-import { readOutbound, type ClassifyOptions } from '../../lib/telegram/files.js';
+import { REFUSAL_WHY, readOutbound, type ClassifyOptions, type OutboundRefusal } from '../../lib/telegram/files.js';
 import { cleanTitle, webCardLine } from '../../lib/telegram/urls.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { readWhiteboard } from '../../lib/whiteboards/store.js';
@@ -58,13 +58,24 @@ export function cardTitle(c: Pick<SuperContainer, 'kind' | 'ref' | 'title'>): st
 }
 
 /** A project-relative or absolute path read through H; the project root and nothing else. */
-export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, ref: string): { ok: true; file: UploadFile; ext: string } | { ok: false } {
+export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, ref: string): { ok: true; file: UploadFile; ext: string } | { ok: false; reason: OutboundRefusal } {
   const projectRoot = dirname(ctx.contextRoot);
   const abs = isAbsolute(ref) ? ref : resolve(projectRoot, ref);
   const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes: 20 * 1024 * 1024, ...(ctx.isGitIgnored ? { isGitIgnored: ctx.isGitIgnored } : {}) });
-  if (!r.ok) return { ok: false };
+  if (!r.ok) return { ok: false, reason: r.reason };
   const ext = extname(r.file.name).toLowerCase();
   return { ok: true, file: { name: r.file.name, data: r.file.data, contentType: CONTENT_TYPE[ext] ?? 'application/octet-stream' }, ext };
+}
+
+/** Why a picture the stage shows did not go (owner 2026-11-11: never a bare "(Mac'te)"). */
+export const NOT_SENT = {
+  secret: 'gizli bir kart açıkken resim gönderilmez; kart bitince tekrar iste',
+  format: 'bu biçim Telegram\'da açılmıyor, Mac\'te açık',
+  refused: 'Telegram kabul etmedi, Mac\'te açık',
+} as const;
+/** "<Kind>: <title> (gönderilmedi: <why>)". */
+export function notSentLine(head: string, title: string, why: string): string {
+  return `${head}${title} (gönderilmedi: ${why})`;
 }
 
 function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | null {
@@ -102,10 +113,12 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
   try {
     switch (c.kind) {
       case 'image': case 'video': case 'pdf': {
-        if (!ctx.pictures) return text(`${KIND_WORD[c.kind]}: ${title} (Mac'te)`);
+        const head = `${KIND_WORD[c.kind]}: `;
+        if (!ctx.pictures) return text(notSentLine(head, title, NOT_SENT.secret));
         const f = readProjectFile(ctx, c.ref);
-        const m = f.ok ? fileMedia(f.file, f.ext, title) : null;
-        return m ? { kind: 'media', items: [m], title } : text(`${KIND_WORD[c.kind]}: ${title} (Mac'te)`);
+        if (!f.ok) return text(notSentLine(head, title, REFUSAL_WHY[f.reason]));
+        const m = fileMedia(f.file, f.ext, title);
+        return m ? { kind: 'media', items: [m], title } : text(notSentLine(head, title, NOT_SENT.format));
       }
       case 'insight': {
         if (ctx.pictures && ctx.renderInsight) {
@@ -117,14 +130,15 @@ export async function cardOut(ctx: CardContext, c: SuperContainer): Promise<Card
       case 'web': {
         const v = validateSuperWebUrl(c.ref);
         if (v.ok && v.kind === 'file') {
-          if (!ctx.pictures) return text(`Mac'te açık: ${title}`);
+          if (!ctx.pictures) return text(notSentLine('Sayfa: ', title, NOT_SENT.secret));
           const ext = extname(v.href).toLowerCase();
           if (ext === '.html' || ext === '.htm') {
             const doc = await reportPdf(ctx, v.href, title);
             return doc ? { kind: 'media', items: [doc], title } : text(`Mac'te açık: ${title}`);
           }
           const f = readProjectFile(ctx, v.href);
-          const m = f.ok ? fileMedia(f.file, f.ext, title) : null;
+          if (!f.ok) return text(notSentLine('Sayfa: ', title, REFUSAL_WHY[f.reason]));
+          const m = fileMedia(f.file, f.ext, title);
           return m ? { kind: 'media', items: [m], title } : text(`Mac'te açık: ${title}`);
         }
         const w = webCardLine(v.ok ? v.href : null, title, ctx.tunnelHost ?? null);

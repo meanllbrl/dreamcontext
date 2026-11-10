@@ -88,7 +88,7 @@ beforeEach(async () => {
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
   hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, now: () => clock, openLink: () => {}, handsfree: { streamsTo: () => false, isOn: () => true } });
   unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, {
-    settleMs: 5, isGitIgnored: () => false,
+    settleMs: 5, isGitIgnored: (r, rel) => ignored(r, rel),
     session: () => ({ isOn: () => session.on, startedVia: session.via ? { scope: scopeOfContextRoot(root), target: 'super' } : null, channel: session.channel, status: () => ({ url: session.url }) }),
     commands: { windowWaitMs: 200, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))) },
   })];
@@ -106,6 +106,10 @@ afterEach(async () => {
   await hub.stop();
   rmSync(home, { recursive: true, force: true }); rmSync(project, { recursive: true, force: true });
 });
+
+/** What git ignores in this project (most tests: nothing). */
+let ignored: (root: string, rel: string) => boolean = () => false;
+beforeEach(() => { ignored = () => false; });
 
 const images = ['a', 'b', 'c'].map((n) => ({ id: `image-${n}`, kind: 'image', ref: `${n}.png`, shape: 'square', place: 'main', title: `Resim ${n.toUpperCase()}` }));
 const present = (ids: string[]) => noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'present', ids });
@@ -200,7 +204,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: [...images, big], view: { mode: 'present', cards: ['image-a', 'image-big', 'image-b'], layout: 'grid' } });
     present(['image-a']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Büyük (Mac'te)"))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Büyük (gönderilmedi: Telegram kabul etmedi, Mac'te açık)"))).toBe(true));
     const album = tg.calls.find((c) => c.method === 'sendMediaGroup')!;
     expect(JSON.parse(String(album.params.media))).toHaveLength(2);
   });
@@ -214,7 +218,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: images, view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' } });
     present(['image-a']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts()).toContain("<b>Karşılaştırma:</b>\n1. Resim A (Mac'te)\n2. Resim B (Mac'te)"));
+    await vi.waitFor(() => expect(tg.texts()).toContain("<b>Karşılaştırma:</b>\n1. Resim A (gönderilmedi: Telegram kabul etmedi, Mac'te açık)\n2. Resim B (gönderilmedi: Telegram kabul etmedi, Mac'te açık)"));
   });
 
   it('Telegram-only hands-free: a photo sends no phone line; an unsent card never gets a mode-change instruction', async () => {
@@ -229,14 +233,14 @@ describe('stage presentations (L1, L2, N1)', () => {
     await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true));
     await drained(80);
     expect(tg.texts().some((t) => t.includes('Telefon linki'))).toBe(false);
-    // A card that cannot travel (secret pending): only the "(Mac'te)" line, still no mode text.
+    // A card that cannot travel (secret pending): only its "gönderilmedi" line, still no mode text.
     reg.adoptOwnerWaits(SID, [{ wait: { kind: 'secret', id: 'sec-1', line: 'Firebase token' } as never, since: clock }]);
     await writeState({ containers: images.slice(0, 1), view: { mode: 'float' } });
     tg.push(TOKEN, textUpdate(OWNER, 'tekrar'));
     await vi.waitFor(() => expect(sent).toHaveLength(2));
     noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: ['image-a'] });
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("(Mac'te)"))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('(gönderilmedi: gizli bir kart'))).toBe(true));
     await drained(80);
     expect(tg.texts().some((t) => t.includes('Telefon linki') || t.includes('/handsfree'))).toBe(false);
     expect(tg.sent().some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Telefon linkini aç'))).toBe(false);
@@ -281,7 +285,64 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: images, view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' } });
     present(['image-a', 'image-b']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes("Resim: Resim A (Mac'te)"))).toBe(true));
+    // Owner 2026-11-11: never a bare "(Mac'te)": the line says why, and what to do.
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Resim: Resim A (gönderilmedi: gizli bir kart açıkken resim gönderilmez'))).toBe(true));
+    expect(tg.texts().some((t) => t.includes("(Mac'te)"))).toBe(false);
+    expect(media()).toHaveLength(0);
+  });
+
+  // Owner 2026-11-11 (kitup): "show me the screenshots too"; five screenshots from an app's data
+  // folder (git-ignored by design) went as five "Resim: … (Mac'te)" lines under "Sahnede: A · B · …".
+  it('screenshots from an app\'s data folder reach the phone; one that cannot go says why, numbered, no run-on head', async () => {
+    const shots = ['Headway gerçek alım', 'Liven gerçek alım', 'MyGrowth gerçek alım', 'Liven ekran büyütme', 'Atlas listesi'];
+    mkdirSync(join(root, 'apps', 'atlas', 'shots'), { recursive: true });
+    shots.forEach((_, i) => writeFileSync(join(root, 'apps', 'atlas', 'shots', `s${i}.png`), PNG));
+    mkdirSync(join(project, 'build'), { recursive: true });
+    writeFileSync(join(project, 'build', 'eski.png'), PNG);
+    ignored = (_r, rel) => rel.startsWith('_dream_context/apps/') || rel.startsWith('build/');
+    const cards = [
+      ...shots.map((title, i) => ({ id: `image-s${i}`, kind: 'image', ref: `_dream_context/apps/atlas/shots/s${i}.png`, shape: 'square', place: 'main', title })),
+      { id: 'image-eski', kind: 'image', ref: 'build/eski.png', shape: 'square', place: 'main', title: 'Eski ekran' },
+    ];
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'Tamam bana ekran görüntüsünü de göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: cards });
+    noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: cards.map((c) => c.id) });
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendMediaGroup')).toBe(true));
+    const album = JSON.parse(String(tg.calls.find((c) => c.method === 'sendMediaGroup')!.params.media)) as { caption?: string }[];
+    expect(album.map((i) => i.caption)).toEqual(shots.map((t, i) => `${i + 1} · ${t}`));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Eski ekran (gönderilmedi: '))).toBe(true));
+    const all = tg.texts().join('\n');
+    expect(all).toContain('Resim: Eski ekran (gönderilmedi: yalnız bu Mac\'te tutulan bir klasörde; Super\'den _dream_context/tmp/ içine kopyalamasını iste)');
+    expect(all).not.toContain("(Mac'te)");
+    expect(all).not.toMatch(/Sahnede: .* · /);
+  });
+
+  it('nothing could go: one bold head, then a numbered list, each line with its reason', async () => {
+    writeFileSync(join(project, 'x.svg'), '<svg/>');
+    const cards = [
+      { id: 'image-a', kind: 'image', ref: 'a.png', shape: 'square', place: 'main', title: 'Resim A' },
+      { id: 'image-gone', kind: 'image', ref: 'yok.png', shape: 'square', place: 'main', title: 'Silinen' },
+      { id: 'image-svg', kind: 'image', ref: 'x.svg', shape: 'square', place: 'main', title: 'Logo' },
+    ];
+    ignored = (_r, rel) => rel === 'a.png';
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await writeState({ containers: cards });
+    noteStageVerb({ vault, contextRoot: root, sessionId: SID, superId: 'main', verb: 'open', ids: cards.map((c) => c.id) });
+    endTurn(h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('<b>Sahnede:</b>'))).toBe(true));
+    const msg = tg.texts().find((t) => t.startsWith('<b>Sahnede:</b>'))!;
+    expect(msg.split('\n').slice(1)).toEqual([
+      "1. Resim: Resim A (gönderilmedi: yalnız bu Mac'te tutulan bir klasörde; Super'den _dream_context/tmp/ içine kopyalamasını iste)",
+      "2. Resim: Silinen (gönderilmedi: dosya bulunamadı, silinmiş ya da taşınmış olabilir)",
+      "3. Resim: Logo (gönderilmedi: bu biçim Telegram'da açılmıyor, Mac'te açık)",
+    ]);
     expect(media()).toHaveLength(0);
   });
 
