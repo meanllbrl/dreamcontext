@@ -7,8 +7,9 @@
  * Telegram-started hands-free streams (E3). Sent ONCE per turn, the final arrangement, at the
  * turn's end + 1 s settle (N9). Anything else is never sent.
  *
- * What: each card through `cards.ts`; pictures (photos and clips) as ONE album in stage order
- * with the layout and titles as its caption (one picture: a captioned photo), PDFs as documents,
+ * What: each card through `cards.ts`; pictures (photos and clips) as ONE album in stage order,
+ * each with its own "N · name" caption, then a numbered list (`sendPictures`; one picture: its
+ * name as its caption), PDFs as documents,
  * every text card as one line in one message (a public page with its link button), then the
  * **Telefonda aç** message (N1): with Telegram + link hands-free on for this bot, the bare
  * tunnel origin to the phone page's Super chat under the hub's own "🔐 Mac'in kendi bağlantısı"
@@ -109,8 +110,8 @@ export async function sendPhoneButton(hub: TelegramHub, ab: ActiveBinding, sessi
 
 /** Sends one presentation. Returns what went (tests). */
 export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs: CardOut[], layout: string, more: number, sessionId: string, deps: Pick<PresenterDeps, 'phoneLink'>): Promise<{ photos: number; album: boolean; texts: number }> {
-  const titles = outs.map((o) => o.title).filter(Boolean);
-  const head = `${LAYOUT_WORD[layout] ?? 'Sunum'}: ${titles.join(' · ')}${more > 0 ? ` · ve ${more} kart daha` : ''}`;
+  const word = LAYOUT_WORD[layout] ?? 'Sunum';
+  const moreLine = more > 0 ? [`Ve ${more} kart daha.`] : [];
   const media: MediaItem[] = [];
   const docs: MediaItem[] = [];
   const lines: CardOut[] = [];
@@ -120,12 +121,23 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   }
   // Pictures Telegram refuses (too large, over the request fence, a failed send) and PDFs that
   // fail become text lines: the presentation is never just its footer.
-  const { sent: pics, unsent } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), caption(head));
+  // Several pictures: each its own "N · name" caption and a numbered list under them (the list
+  // carries "Ve N kart daha."); one picture: its name as its caption.
+  const { sent: pics, unsent } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), { heading: (n) => (layout === 'open' ? `${word} ${n} resim:` : `${word}, ${n} resim:`), footer: moreLine });
   for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d);
   const album = pics.length >= 2;
   const fallback = unsent.map((m) => `${m.title} (Mac'te)`);
-  if (lines.length || fallback.length || !pics.length) {
-    const text = [pics.length ? '' : `<b>${escapeHtml(head)}</b>`, ...lines.map((l) => escapeHtml(l.kind === 'text' ? l.line : l.title)), ...fallback.map(escapeHtml)].filter(Boolean).join('\n');
+  const moreSaid = pics.length >= 2;
+  if (lines.length || fallback.length || !pics.length || (moreLine.length && !moreSaid)) {
+    // One card per line; a numbered list when nothing went as a picture (the whole presentation
+    // is this message), never the old "Başlık: a · b · c" run-on.
+    const rows = [...lines.map((l) => (l.kind === 'text' ? l.line : l.title)), ...fallback];
+    const numbered = !pics.length && rows.length > 1;
+    const text = [
+      pics.length ? '' : `<b>${escapeHtml(`${word}:`)}</b>`,
+      ...rows.map((r, i) => escapeHtml(numbered ? `${i + 1}. ${r}` : r)),
+      ...(moreSaid ? [] : moreLine.map(escapeHtml)),
+    ].filter(Boolean).join('\n');
     const keyboard = lines.flatMap((l) => (l.kind === 'text' && l.button ? [[{ text: l.button.text, url: l.button.url }]] : []));
     await hub.send(ab, text, keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}).catch(() => {});
   }

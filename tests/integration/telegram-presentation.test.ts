@@ -147,7 +147,11 @@ describe('stage presentations (L1, L2, N1)', () => {
     const album = tg.calls.find((c) => c.method === 'sendMediaGroup')!;
     const items = JSON.parse(String(album.params.media)) as { type: string; caption?: string }[];
     expect(items.map((i) => i.type)).toEqual(['photo', 'photo', 'photo']);
-    expect(items[0].caption).toBe('Film şeridi: Resim C · Resim A · Resim B');
+    // Each picture names itself, numbered in the album's order; one numbered list follows.
+    expect(items.map((i) => i.caption)).toEqual(['1 · Resim C', '2 · Resim A', '3 · Resim B']);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('<b>Film şeridi, 3 resim:</b>'))).toBe(true));
+    expect(tg.texts().find((t) => t.startsWith('<b>Film şeridi, 3 resim:</b>'))).toBe('<b>Film şeridi, 3 resim:</b>\n1. Resim C\n2. Resim A\n3. Resim B');
+    expect(tg.texts().some((t) => /Resim [ABC] · Resim/.test(t))).toBe(false);
     await drained(80);
     // Every card arrived as a photo: no phone line at all.
     expect(buttonMsg('Telefon linkini aç')).toBeFalsy();
@@ -210,7 +214,7 @@ describe('stage presentations (L1, L2, N1)', () => {
     await writeState({ containers: images, view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' } });
     present(['image-a']);
     endTurn(h);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Karşılaştırma: Resim A · Resim B') && t.includes("Resim A (Mac'te)") && t.includes("Resim B (Mac'te)"))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts()).toContain("<b>Karşılaştırma:</b>\n1. Resim A (Mac'te)\n2. Resim B (Mac'te)"));
   });
 
   it('Telegram-only hands-free: a photo sends no phone line; an unsent card never gets a mode-change instruction', async () => {

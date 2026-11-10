@@ -146,13 +146,12 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     }
     const drawn = new Set<string>();
     if (!items.length) return drawn;
-    const caption = escapeHtml(items.map((m) => cleanTitle(m.title, 40)).join(' · '));
-    const { sent, unsent } = await sendPictures(ab, items, caption);
+    const { sent, unsent } = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Çizim:' : `${n} çizim:`) });
     for (const m of sent) { const k = keyOf.get(m); if (k) drawn.add(k); }
     for (const m of unsent) if (keyOf.has(m)) misses.push(`${m.title}: ${fitsTelegram(m) ? 'Telegram refused the picture' : "too large for Telegram, not sent"}`);
     // A drawing that did not go is said on its own option's line ("çizim Mac'te"); a --show card here.
     const cards = unsent.filter((m) => !keyOf.has(m));
-    if (cards.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${cards.map((m) => cleanTitle(m.title, 40)).join(' · ')}`);
+    if (cards.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${cards.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
     return drawn;
   }
 
