@@ -491,9 +491,13 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
   // is never pruned (only `team done` closes it); open requests are capped per member at the verb.
+  // A routine item is never pruned either: a closed one IS the owner's "Not needed" (evicted, its
+  // fact would be born again and ring him), and its life is already bounded by its fact on disk
+  // (syncRoutineDraft drops it when the fact goes).
+  const evictable = (q: SuperQueueItem): boolean => q.kind !== 'routine';
   while (out.length > MAX_QUEUE) {
-    const done = out.findIndex((q) => q.state === 'done');
-    const other = out.findIndex((q) => q.kind !== 'request');
+    const done = out.findIndex((q) => q.state === 'done' && evictable(q));
+    const other = out.findIndex((q) => q.kind !== 'request' && evictable(q));
     const at = done >= 0 ? done : other;
     if (at < 0) break;
     out.splice(at, 1);
@@ -552,6 +556,11 @@ export function cleanRefusal(raw: unknown): RefusalFact | undefined {
   const category = typeof raw.category === 'string' && REFUSAL_WORD_RE.test(raw.category) ? raw.category : undefined;
   const reason = typeof raw.reason === 'string' && raw.reason.trim() ? stripControls(raw.reason.slice(0, MAX_REFUSAL_REASON)).trim() : undefined;
   const scriptSha = typeof raw.scriptSha === 'string' && /^[0-9a-f]{64}$/.test(raw.scriptSha) ? raw.scriptSha : undefined;
+  const it = isRecord(raw.interpreter) ? raw.interpreter : undefined;
+  const interpreter = it && typeof it.name === 'string' && REFUSAL_WORD_RE.test(it.name) && !it.name.includes('/')
+    && typeof it.path === 'string' && it.path.startsWith('/') && it.path.length <= 4096 && !/[\u0000-\u001f]/.test(it.path)
+    ? { name: it.name, path: it.path } : undefined;
+  const cwd = typeof raw.cwd === 'string' && raw.cwd.startsWith('/') && raw.cwd.length <= 4096 && !/[\u0000-\u001f]/.test(raw.cwd) ? raw.cwd : undefined;
   return {
     tool: raw.tool,
     input: cut ? raw.input.slice(0, MAX_REFUSAL_INPUT) : raw.input,
@@ -560,6 +569,8 @@ export function cleanRefusal(raw: unknown): RefusalFact | undefined {
     ...(category ? { category } : {}),
     ...(reason ? { reason } : {}),
     ...(scriptSha ? { scriptSha } : {}),
+    ...(interpreter ? { interpreter } : {}),
+    ...(cwd ? { cwd } : {}),
   };
 }
 
@@ -1204,6 +1215,8 @@ interface IndexEntry {
   leanMcp: Map<string, string[]>;
   /** Children `super end` closed: a NEW process of one is the owner reopening it. */
   ended: Set<string>;
+  /** The worktree `super delegate --worktree` made for a child (live or ended), by its pin. */
+  worktrees: Map<string, string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -1240,6 +1253,7 @@ function indexState(key: string, state: SuperState): void {
     delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
     leanMcp: new Map(Object.keys(state.children).filter((k) => !state.children[k].adopted).map((k) => [k, state.children[k].mcp ?? []])),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
+    worktrees: new Map(Object.keys(state.children).flatMap((k) => { const w = state.children[k].worktree; return w ? [[k, w] as [string, string]] : []; })),
     notes,
   });
 }
@@ -1366,6 +1380,20 @@ export const MAIN_CLOSED_GRACE_MS = 10 * 60_000;
 export function superOfChild(sessionId: string): SuperRef | null {
   if (!sessionId) return null;
   for (const e of index.values()) if (e.children.has(sessionId)) return { root: e.root, superId: e.superId };
+  return null;
+}
+
+/**
+ * The worktree the server made for a delegated child (`super delegate --worktree`), or null. The
+ * child is told to `cd` there, a move no frame reports, so this is where it works: read by the
+ * grant writer (inbox.ts `grantCtx`), which still accepts it only inside the project's roots.
+ */
+export function childWorktree(sessionId: string): string | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) {
+    const w = e.worktrees.get(sessionId);
+    if (w) return w;
+  }
   return null;
 }
 

@@ -3806,7 +3806,7 @@ function ownerRoute(verb: SuperOwnerVerb) {
 /** The HTTP status an owner answer's refusal is sent with. */
 function answerStatus(r: Extract<OwnerAnswerResult, { ok: false }>): number {
   return r.error === 'owner_page_only' ? 403 : r.error === 'already_answered' ? 409 : r.error === 'not_found' ? 404
-    : r.error === 'no_window' ? 409 : r.error === 'not_offered' ? 409 : 400;
+    : r.error === 'no_window' || r.error === 'not_offered' || r.error === 'changed' ? 409 : 400;
 }
 
 /**
@@ -3823,7 +3823,13 @@ export async function handleSuperOwnerAnswer(req: IncomingMessage, res: ServerRe
   }
   const b = (await parseJsonBody(req)) ?? {};
   const via = b.via === 'bar' || b.via === 'chat' || b.via === 'member-chat' ? b.via : 'bar';
-  const body: OwnerAnswerRequest = { record: typeof b.record === 'string' ? b.record : '', item: typeof b.item === 'string' ? b.item : '', answer: b.answer as OwnerAnswerRequest['answer'], via };
+  // What the surface drew, compared with what would run (answerOwnerItem): only two strings pass.
+  const sh = b.shown && typeof b.shown === 'object' ? b.shown as Record<string, unknown> : null;
+  const shown = sh && typeof sh.tool === 'string' && typeof sh.input === 'string' && sh.tool.length <= 200 && sh.input.length <= 64 * 1024 ? { tool: sh.tool, input: sh.input } : undefined;
+  const body: OwnerAnswerRequest = {
+    record: typeof b.record === 'string' ? b.record : '', item: typeof b.item === 'string' ? b.item : '', answer: b.answer as OwnerAnswerRequest['answer'], via,
+    ...(shown ? { shown } : {}),
+  };
   let r: OwnerAnswerResult;
   try { r = await answerOwnerItem(contextRoot, body); } catch (err) {
     if (!res.headersSent) storeRefusal(res, err);

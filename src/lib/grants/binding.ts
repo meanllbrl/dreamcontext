@@ -6,7 +6,9 @@
  * t3-chat` an agent starts itself, with any forged environment or another session's id, has no
  * binding of its own and gets nothing. A binding counts only when its pid, with the same start
  * time (a reused pid differs), is the caller itself (the bridge) or an ancestor of it (the hook;
- * measured on macOS: the hook's parent IS the spawned `claude`), and its project is the caller's.
+ * measured on macOS: the hook's parent IS the spawned `claude`). The project is the binding's own:
+ * an enforcer never reads it off the cwd (a child works in a worktree or a linked repo); a caller
+ * that names one is held to it.
  * The hook must also report the binding's CURRENT conversation id, so a `claude` an agent starts
  * under a bound process, with its own conversation, is not that process.
  *
@@ -31,7 +33,8 @@ export interface WhoAmIOpts extends StoreOpts { mode?: WhoAmIMode }
 /** How far up the parent chain a hook looks (its parent may be a shell or a runner). */
 export const MAX_ANCESTRY = 12;
 
-function sameProject(b: Binding, project: string, sys: ProcSys): boolean {
+function sameProject(b: Binding, project: string | undefined, sys: ProcSys): boolean {
+  if (project === undefined) return true;
   const mine = sys.realpath(project);
   if (!mine) return false;
   return mine === b.project || sys.realpath(b.project) === mine;
@@ -47,7 +50,7 @@ function sameProcess(b: Binding, pid: number, sys: ProcSys): boolean {
  * Bridge: the caller IS the bound process (its own pid's binding). Hook: the binding is found by
  * the reported conversation id, which must be its current one, and its pid must be an ancestor.
  */
-export function whoAmI(call: { conversationId?: string; project: string }, sys: ProcSys, opts?: WhoAmIOpts): Binding | null {
+export function whoAmI(call: { conversationId?: string; project?: string }, sys: ProcSys, opts?: WhoAmIOpts): Binding | null {
   try {
     const mode = opts?.mode ?? 'hook';
     if (mode === 'bridge') {
@@ -107,4 +110,11 @@ export function realProcSys(platform: NodeJS.Platform = process.platform): ProcS
       try { return realpathSync.native(p); } catch { return null; }
     },
   };
+}
+
+/** Is `cwd` (a real path) the root or inside one of `roots` (grantRoots of the binding's project)?
+ *  The one check both enforcers make before a grant is matched: the cwd only resolves the call's
+ *  paths, and a session that moved outside every root its project's agents work in is asked. */
+export function cwdInRoots(cwd: string, roots: readonly string[]): boolean {
+  return roots.some((r) => cwd === r || cwd.startsWith(r.endsWith('/') ? r : `${r}/`));
 }

@@ -1,5 +1,6 @@
 import { stopAgentTaskJobs } from './task-starter.js';
-import { chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
+import { removeMemberGrants } from '../grants/store.js';
 import { basename, dirname, join } from 'node:path';
 import { lockHolderPid, withFileLockSync } from '../file-lock.js';
 import fg from '../glob.js';
@@ -697,6 +698,7 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
   // Its task jobs: queued steps stop ("agent gone"), its sessions are forgotten (C1-5).
   stopAgentTaskJobs(contextRoot, slug, opts.home);
   reparentReports(contextRoot, slug, agent.reportsTo);
+  dropMemberRules(slug, contextRoot, opts.home);
   return { removed: true };
 }
 
@@ -732,7 +734,22 @@ export function removeGlobalAgent(slug: string, opts: { home?: string } = {}): R
   unlinkSync(path);
   try { rmSync(globalAgentHome(slug), { recursive: true, force: true }); } catch { /* left for a later delete */ }
   revokeAgent(GLOBAL_REGISTRY_KEY, slug, null, opts.home);
+  dropMemberRules(slug, null, opts.home);
   return { removed: true };
+}
+
+/** A deleted member's "Always allowed" rules die with it (K3 "Scopes and their deaths"): in its
+ *  project, or everywhere for a global member. Here, so every delete path (route, CLI, the
+ *  automations route, the member delete) takes them. Best effort: a rule left behind names a
+ *  member that no session can be until the slug is reused. */
+function dropMemberRules(slug: string, contextRoot: string | null, home?: string): void {
+  try {
+    const opts = home ? { home } : undefined;
+    if (contextRoot === null) { removeMemberGrants(slug, undefined, opts); return; }
+    let project = dirname(contextRoot);
+    try { project = realpathSync.native(project); } catch { /* as written */ }
+    removeMemberGrants(slug, project, opts);
+  } catch { /* see above */ }
 }
 
 function pidAlive(pid: number): boolean {

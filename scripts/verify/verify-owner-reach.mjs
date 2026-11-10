@@ -278,7 +278,12 @@ async function caseRefusal(page) {
     await shots(page, '2-bar-member-refusal', bar);
     await backToRota(page);
   }
-  const res = await answer(page, { record: 'main', item: mirror?.id, answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar' });
+  // An Allow carries what the surface drew (the bar draws the mirror's copy of the refusal): one
+  // naming another call is refused as changed and writes nothing.
+  const drawn = mirror?.wait?.refusal ? { tool: mirror.wait.refusal.tool, input: mirror.wait.refusal.input } : undefined;
+  const other = await answer(page, { record: 'main', item: mirror?.id, answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar', shown: { tool: 'Bash', input: `${CMD} --all` } });
+  step('an Allow naming another call than the one shown: 409 changed, no grant', other.status === 409 && other.json?.error === 'changed' && onceFiles().length === before, JSON.stringify(other));
+  const res = await answer(page, { record: 'main', item: mirror?.id, answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar', ...(drawn ? { shown: drawn } : {}) });
   step('Allow once through the answer route: 200 allowed (the process is live)', res.status === 200 && res.json?.ok === true && res.json?.outcome === 'allowed', JSON.stringify(res));
   step('one server turn reaches Rota\'s live process, naming the call', await until(page, async () => reports().some((r) => r.kind === 'allowed-turn' && r.slug === 'rota'), 45000),
     JSON.stringify(reports().filter((r) => r.kind === 'stdin-user' && r.slug === 'rota').slice(-3)));

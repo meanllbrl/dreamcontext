@@ -12,6 +12,10 @@ import { join } from 'node:path';
 import { registerCrewHandle, _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { grantCtx, sessionResolveEnv, setGrantEnvForTest } from '../../src/lib/super/inbox.js';
 import { eligible } from '../../src/lib/grants/eligible.js';
+import { noteSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
+import { emptySuperState } from '../../src/lib/super/types.js';
+import { match } from '../../src/lib/grants/match.js';
+import type { Grant } from '../../src/lib/grants/types.js';
 
 let dir: string;
 let project: string;
@@ -35,7 +39,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   off();
-  setGrantEnvForTest({ roots: null, resolver: null });
+  setGrantEnvForTest({ roots: null, resolver: null, checkout: null });
   _resetChatRegistry();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -63,5 +67,79 @@ describe('a grant resolves its interpreter where the session runs', () => {
     // Without the session the server's PATH decides: another binary (or none), never the session's.
     const servers = eligible('Bash', cmd, 'once', { ...grantCtx(ctxRoot()), cwd: project } as never);
     expect(servers.ok ? servers.script?.interpreterPath : null).not.toBe(join(sessionBin, 'node'));
+  });
+
+  it('a session no longer running: the grant pins the interpreter its refusal\'s birth resolved, never the server\'s', () => {
+    // No crew handle (the session ended, the Allow waits in the outbox): the fact's interpreter decides.
+    const cmd = 'node tools/weekly-total.mjs';
+    const born = { name: 'node', path: join(sessionBin, 'node') };
+    const later = eligible('Bash', cmd, 'job', { ...grantCtx(ctxRoot(), undefined, 'pin-gone', { interpreter: born }), cwd: project } as never);
+    expect(later.ok && later.form).toBe('script');
+    expect(later.ok ? later.script?.interpreterPath : null).toBe(join(sessionBin, 'node'));
+    // Another program on the same line still resolves on the PATH as before.
+    expect(grantCtx(ctxRoot(), undefined, 'pin-gone', { interpreter: born }).resolve.which('sh')).toBe(grantCtx(ctxRoot()).resolve.which('sh'));
+  });
+});
+
+describe('a grant resolves a relative script where the session works (its own worktree)', () => {
+  let wt: string;
+  beforeEach(() => {
+    // A child delegated with --worktree: the same relative name, different bytes, in its own tree.
+    wt = join(dir, 'acme-storefront-wt');
+    mkdirSync(join(wt, 'tools'), { recursive: true });
+    writeFileSync(join(wt, 'tools', 'weekly-total.mjs'), 'console.log("worktree")\n');
+    setGrantEnvForTest({ roots: (p) => [p, wt], checkout: (sid, p) => (sid === 'pin-wt' ? wt : p) });
+  });
+  const cmd = 'node tools/weekly-total.mjs';
+
+  it('the writer pins the worktree\'s script, and the hook running in that worktree matches it', () => {
+    const ctx = grantCtx(ctxRoot(), undefined, 'pin-wt');
+    expect(ctx.cwd).toBe(wt);
+    const e = eligible('Bash', cmd, 'job', ctx);
+    expect(e.ok && e.form).toBe('script');
+    expect(e.ok ? e.script?.scriptPath : null).toBe(join(wt, 'tools', 'weekly-total.mjs'));
+    const g: Grant = { id: 'job_t1', scope: 'job', project, pin: 'pin-wt', tool: 'Bash', input: cmd, form: 'script', script: e.ok ? e.script : undefined, createdAt: Date.now(), expiresAt: Date.now() + 60_000 };
+    // The enforcer side: its own cwd, the same roots and resolver.
+    const hook = { project, roots: [project, wt], cwd: wt, resolve: ctx.resolve };
+    expect(match([g], { project, pin: 'pin-wt', tool: 'Bash', input: cmd }, hook)?.id).toBe('job_t1');
+    // The same session in the project root resolves another file: asked again, never allowed.
+    expect(match([g], { project, pin: 'pin-wt', tool: 'Bash', input: cmd }, { ...hook, cwd: project })).toBeNull();
+  });
+
+  it('the folder recorded at birth wins once the session is gone; a folder outside the roots is never used', () => {
+    expect(grantCtx(ctxRoot(), undefined, 'pin-gone', { cwd: wt }).cwd).toBe(wt);
+    expect(grantCtx(ctxRoot(), undefined, 'pin-gone').cwd).toBeUndefined();
+    const elsewhere = join(dir, 'elsewhere');
+    mkdirSync(elsewhere);
+    expect(grantCtx(ctxRoot(), undefined, 'pin-gone', { cwd: elsewhere }).cwd).toBeUndefined();
+  });
+});
+
+describe('a delegated child that only cd-s into its worktree (no frame reports the move)', () => {
+  let wt: string;
+  beforeEach(() => {
+    wt = join(dir, 'acme-storefront-wt');
+    mkdirSync(join(wt, 'tools'), { recursive: true });
+    writeFileSync(join(wt, 'tools', 'weekly-total.mjs'), 'console.log("worktree")\n');
+    // The real lookup: no checkout stub, only the roots (the worktree is one of the project's).
+    setGrantEnvForTest({ roots: (p) => [p, wt], checkout: null });
+    resetSuperIndex();
+  });
+  afterEach(() => resetSuperIndex());
+
+  it('the writer takes the worktree the server made for it from the Super record, so the hook in it matches', () => {
+    const state = { ...emptySuperState(), session: 'sess-main', enabled: true, children: {
+      'pin-cd': { sessionId: 'pin-cd', brief: 'weekly totals', adopted: false, worktree: wt, branch: 'super/weekly', startedAt: 1 },
+    } } as unknown as Parameters<typeof noteSuperState>[1];
+    noteSuperState(ctxRoot(), state);
+    const ctx = grantCtx(ctxRoot(), undefined, 'pin-cd');
+    expect(ctx.cwd).toBe(wt);
+    const cmd = 'node tools/weekly-total.mjs';
+    const e = eligible('Bash', cmd, 'job', ctx);
+    expect(e.ok ? e.script?.scriptPath : null).toBe(join(wt, 'tools', 'weekly-total.mjs'));
+    const g: Grant = { id: 'job_t2', scope: 'job', project, pin: 'pin-cd', tool: 'Bash', input: cmd, form: 'script', script: e.ok ? e.script : undefined, createdAt: Date.now(), expiresAt: Date.now() + 60_000 };
+    expect(match([g], { project, pin: 'pin-cd', tool: 'Bash', input: cmd }, { project, roots: [project, wt], cwd: wt, resolve: ctx.resolve })?.id).toBe('job_t2');
+    // A session with no worktree of its own works in the project root, as before.
+    expect(grantCtx(ctxRoot(), undefined, 'pin-other').cwd).toBeUndefined();
   });
 });

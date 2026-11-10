@@ -46,7 +46,12 @@ export function match(grants: readonly Grant[], call: MatchCall, ctx: MatchCtx):
     if (!(grantExpiry(g) > now)) continue;
     if (!scopeHolds(g, call)) continue;
     const e = eligible(call.tool, call.input, g.scope, ctx);
-    if (!e.ok || e.form !== g.form) continue;
+    if (!e.ok) continue;
+    // The forms must agree. A script call is never allowed by exact text: its pin (real path and
+    // sha256 taken when he looked) is what he allowed. The writer resolves in the session's folder
+    // (inbox.ts grantCtx); a session that went somewhere the server cannot know is asked again,
+    // never run unpinned.
+    if (e.form !== g.form) continue;
     if (g.form === 'exact') {
       if (g.input === canonical) return g;
       continue;

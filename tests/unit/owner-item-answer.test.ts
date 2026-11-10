@@ -34,7 +34,7 @@ import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.
 import {
   _resetSuperInbox, _superInboxDrained, ownerItems, setGrantEnvForTest, setMemberGateForTest, settleAllowedOnce, wireSuperInbox, writeSuper,
 } from '../../src/lib/super/inbox.js';
-import { ALLOWED_WAITING_TEXT, ALLOW_ONCE_SENTENCE, _resetOwnerAnswers, allowTurnText, answerOwnerItem } from '../../src/lib/super/answer.js';
+import { ALLOWED_WAITING_TEXT, ALLOW_ONCE_SENTENCE, _resetOwnerAnswers, allowTurnText, answerOwnerItem, shownKeyOf } from '../../src/lib/super/answer.js';
 import { readOutbox } from '../../src/lib/super/outbox.js';
 import { consumeOnce, listGrants } from '../../src/lib/grants/store.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -71,6 +71,21 @@ async function verb(token: string, name: string, body: Record<string, unknown> =
   return r;
 }
 const main = () => readSuperState(root);
+
+/** What a surface drew for this item (its stored call: a refusal's fact, a permission's call, or
+ *  their copy on a mirror), sent with an answer as every surface does (G2: consent matches display). */
+async function shownFor(record: string, item: string): Promise<{ tool: string; input: string } | undefined> {
+  const s = await readSuperState(root, record === 'main' ? undefined : `m:${record}`);
+  const q = s.queue.find((x) => x.id === item);
+  const r = q?.wait?.refusal;
+  if (r) return { tool: r.tool, input: r.input };
+  return q?.call ? { tool: q.call.tool, input: q.call.input } : undefined;
+}
+async function answerShown(at: string, req: Parameters<typeof answerOwnerItem>[1]): ReturnType<typeof answerOwnerItem> {
+  const shown = await shownFor(req.record, req.item);
+  return answerOwnerItem(at, { ...req, ...(shown ? { shown } : {}) });
+}
+
 const rota = () => readSuperState(root, 'm:rota');
 
 const RESOLVER: Resolver = {
@@ -151,12 +166,47 @@ describe('the server turn an Allow writes', () => {
   });
 });
 
+describe('consent matches display (G2): an Allow lands only on the call he saw', () => {
+  it('an Allow that says nothing of what it showed is refused as changed, and writes nothing', async () => {
+    const { mirror } = await rotaRefused();
+    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } }))
+      .toMatchObject({ ok: false, error: 'changed' });
+    expect(listGrants()).toEqual([]);
+    // Not needed shows nothing to compare: it is taken as before.
+    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
+      .toEqual({ ok: true, outcome: 'dismissed' });
+  });
+
+  it('the record rewritten between his look and his tap: refused as changed, the rewritten call is never allowed', async () => {
+    const { item, mirror } = await rotaRefused();
+    const seen = await shownFor('main', mirror.id);
+    expect(seen).toEqual({ tool: 'Bash', input: 'node scripts/report.mjs' });
+    // Something with write access to the project rewrites the member's stored refusal.
+    await writeSuper(root, 'm:rota', (s) => {
+      const q = s.queue.find((x) => x.id === item.id);
+      if (q?.wait?.refusal) q.wait.refusal = { ...q.wait.refusal, input: 'node scripts/payout.mjs --all' };
+    });
+    const r = await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', shown: seen, answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    expect(r).toMatchObject({ ok: false, error: 'changed' });
+    expect(listGrants()).toEqual([]);
+  });
+
+  it('Telegram keeps the key of what its card showed: the same key allows, another is refused', async () => {
+    const { mirror } = await rotaRefused();
+    const wrong = await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'telegram', shownKey: shownKeyOf('Bash', 'node scripts/other.mjs'), answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    expect(wrong).toMatchObject({ ok: false, error: 'changed' });
+    const right = await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'telegram', shownKey: shownKeyOf('Bash', 'node scripts/report.mjs'), answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    expect(right.ok).toBe(true);
+    expect(listGrants().map((g) => g.input)).toEqual(['node scripts/report.mjs']);
+  });
+});
+
 describe('a refused call: Allow once', () => {
   it('writes the grant from the STORED item, one server turn into the live session, and closes when spent', async () => {
     const { session, item, mirror } = await rotaRefused();
     const turns: string[] = [];
     registerCrewHandle(session, { sendServerTurn: (t) => { turns.push(t); return true; } });
-    const r = await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    const r = await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
     expect(r).toEqual({ ok: true, outcome: 'allowed' });
     // Allowed, waiting for its call to run: marked on the item and on its mirror (no Allow buttons).
     await _superInboxDrained();
@@ -171,7 +221,7 @@ describe('a refused call: Allow once', () => {
     expect(turns[0]).toContain(ALLOW_ONCE_SENTENCE);
     expect(turns[0]).toContain('node scripts/report.mjs');
     // First answer wins: a second tap anywhere is told so, and writes nothing.
-    const again = await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    const again = await answerShown(root, { record: 'rota', item: item.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
     expect(again).toMatchObject({ ok: false, error: 'already_answered' });
     expect(listGrants()).toHaveLength(1);
     // Open until the grant is used; spent by an enforcer, the item closes.
@@ -187,7 +237,7 @@ describe('a refused call: Allow once', () => {
 
   it('with no live process: the turn waits in the outbox and the item says so', async () => {
     const { session, item } = await rotaRefused();
-    const r = await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow' } });
+    const r = await answerShown(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow' } });
     expect(r).toEqual({ ok: true, outcome: 'allowed_waiting' });
     expect((await rota()).queue.find((q) => q.id === item.id)?.ownerText?.startsWith(ALLOWED_WAITING_TEXT)).toBe(true);
     const box = await readOutbox(superKey(root, 'm:rota'));
@@ -198,16 +248,16 @@ describe('a refused call: Allow once', () => {
     const { item } = await rotaRefused('npm test');
     // `npm test` is no pinned script: Allow once only.
     expect(item.offer?.sizes).toEqual(['once']);
-    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
+    expect(await answerShown(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
       .toMatchObject({ ok: false, error: 'not_offered' });
-    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'phone', answer: { kind: 'refusal', action: 'allow' } }))
+    expect(await answerShown(root, { record: 'rota', item: item.id, via: 'phone', answer: { kind: 'refusal', action: 'allow' } }))
       .toMatchObject({ ok: false, error: 'not_offered', message: 'Allow it on Telegram or the Mac.' });
     expect(listGrants()).toEqual([]);
   });
 
   it('Not needed closes it and writes no grant', async () => {
     const { item, mirror } = await rotaRefused();
-    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'chat', answer: { kind: 'refusal', action: 'not_needed' } }))
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'chat', answer: { kind: 'refusal', action: 'not_needed' } }))
       .toEqual({ ok: true, outcome: 'dismissed' });
     await _superInboxDrained();
     expect((await rota()).queue.find((q) => q.id === item.id)?.state).toBe('done');
@@ -222,7 +272,7 @@ describe('a refused call: Allow once', () => {
     expect(item.wait?.refusal?.whole).toBe(false);
     // No size at all: the record keeps no offer, and the card shows it uncut on the Mac only.
     expect(item.offer).toBeUndefined();
-    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow' } }))
+    expect(await answerShown(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow' } }))
       .toMatchObject({ ok: false, error: 'not_offered' });
     expect(listGrants()).toEqual([]);
   });
@@ -237,7 +287,7 @@ describe('an allowed call refused again is offered again, never locked', () => {
     const h = crew(session);
     // The live process: the Allow's server turn goes in as a turn the registry sees.
     registerCrewHandle(session, { sendServerTurn: (t) => { h.userSent(t, { server: true }); return true; } });
-    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
       .toEqual({ ok: true, outcome: 'allowed' });
     expect(listGrants().map((g) => g.item)).toEqual([item.id]);
     // The rule no longer covers it (the script was edited): the same call is refused again.
@@ -254,7 +304,7 @@ describe('an allowed call refused again is offered again, never locked', () => {
     // Its mirror is a new one, and he can answer it.
     const m2 = (await main()).queue.find((q) => q.kind === 'member' && q.answers === again.id && q.state !== 'done');
     expect(m2).toBeTruthy();
-    expect(await answerOwnerItem(root, { record: 'main', item: m2!.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
+    expect(await answerShown(root, { record: 'main', item: m2!.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
       .toEqual({ ok: true, outcome: 'dismissed' });
   });
 });
@@ -263,13 +313,13 @@ describe('first answer wins, at every size', () => {
   it('allowed for this job while its chat is closed: a second Allow and a Not needed are told it was answered', async () => {
     const { item, mirror } = await rotaRefused();
     expect(item.offer?.sizes).toContain('job');
-    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'job' } }))
       .toEqual({ ok: true, outcome: 'allowed_waiting' });
-    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'member' } }))
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'member' } }))
       .toMatchObject({ ok: false, error: 'already_answered' });
-    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'once' } }))
+    expect(await answerShown(root, { record: 'rota', item: item.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'once' } }))
       .toMatchObject({ ok: false, error: 'already_answered' });
-    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
+    expect(await answerShown(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
       .toMatchObject({ ok: false, error: 'already_answered' });
     // One rule, naming the item it answered; one turn waiting for the chat.
     expect(listGrants().map((g) => [g.scope, g.item])).toEqual([['job', item.id]]);
@@ -284,7 +334,7 @@ describe('first answer wins, at every size', () => {
     const own = (await rota()).queue.find((q) => q.own && q.kind === 'permission') as SuperQueueItem;
     expect(own.offer?.sizes).toContain('job');
     // No window to answer through: the prompt is unanswered, so no rule may stand.
-    expect(await answerOwnerItem(root, { record: 'rota', item: own.id, via: 'bar', answer: { kind: 'permission', behavior: 'allow', size: 'job' } }))
+    expect(await answerShown(root, { record: 'rota', item: own.id, via: 'bar', answer: { kind: 'permission', behavior: 'allow', size: 'job' } }))
       .toMatchObject({ ok: false, error: 'no_window' });
     expect(listGrants()).toEqual([]);
   });
@@ -298,7 +348,7 @@ describe('a member\'s own question and permission', () => {
     await _superInboxDrained();
     const askId = (r.json.result as { item: string }).item;
     const mirror = (await main()).queue.find((q) => q.kind === 'member' && q.answers === askId) as SuperQueueItem;
-    const a = await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'question', answers: { 'May I send the DM?': 'Send it' } } });
+    const a = await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'question', answers: { 'May I send the DM?': 'Send it' } } });
     expect(a).toEqual({ ok: true, outcome: 'answered' });
     const s = await rota();
     const reply = s.queue.find((q) => q.kind === 'reply' && q.answers === askId);
@@ -306,7 +356,7 @@ describe('a member\'s own question and permission', () => {
     expect(reply?.text).toContain('Send it');
     // It left his list at once (first answer wins), and a second surface is told so.
     expect(ownerItems(s).map((q) => q.id)).not.toContain(askId);
-    expect(await answerOwnerItem(root, { record: 'rota', item: askId, via: 'telegram', answer: { kind: 'ask', text: 'no' } }))
+    expect(await answerShown(root, { record: 'rota', item: askId, via: 'telegram', answer: { kind: 'ask', text: 'no' } }))
       .toMatchObject({ ok: false, error: 'already_answered' });
   });
 
@@ -315,10 +365,10 @@ describe('a member\'s own question and permission', () => {
     crew(session, 'default').observe({ type: 'control_request', request_id: 'req-own-p', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'node scripts/report.mjs' }, tool_use_id: 'toolu_op' } });
     await _superInboxDrained();
     const own = (await rota()).queue.find((q) => q.own && q.kind === 'permission') as SuperQueueItem;
-    expect(await answerOwnerItem(root, { record: 'rota', item: own.id, via: 'bar', answer: { kind: 'permission', behavior: 'allow' } }))
+    expect(await answerShown(root, { record: 'rota', item: own.id, via: 'bar', answer: { kind: 'permission', behavior: 'allow' } }))
       .toMatchObject({ ok: false, error: 'no_window' });
     // The phone may answer a permission, never with a grant size.
-    expect(await answerOwnerItem(root, { record: 'rota', item: own.id, via: 'phone', answer: { kind: 'permission', behavior: 'allow', size: 'member' } }))
+    expect(await answerShown(root, { record: 'rota', item: own.id, via: 'phone', answer: { kind: 'permission', behavior: 'allow', size: 'member' } }))
       .toMatchObject({ ok: false, error: 'not_offered' });
     expect(listGrants()).toEqual([]);
   });
@@ -355,8 +405,19 @@ describe('POST /api/super/owner-answer (G4)', () => {
     setOwnerKey(KEY);
     const { mirror } = await rotaRefused();
     const r = res();
-    await handleSuperOwnerAnswer(post({ record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once', input: 'rm -rf /' }, tool: 'Bash', input: 'rm -rf /' }, { ...ORIGIN, [OWNER_KEY_HEADER]: KEY }), r, {}, root);
+    const shown = await shownFor('main', mirror.id);
+    await handleSuperOwnerAnswer(post({ record: 'main', item: mirror.id, via: 'bar', shown, answer: { kind: 'refusal', action: 'allow', size: 'once', input: 'rm -rf /' }, tool: 'Bash', input: 'rm -rf /' }, { ...ORIGIN, [OWNER_KEY_HEADER]: KEY }), r, {}, root);
     expect(r.status).toBe(200);
     expect(listGrants().map((g) => g.input)).toEqual(['node scripts/report.mjs']);
+  });
+
+  it('an Allow whose shown call is not what would run is refused as changed (409), and writes nothing', async () => {
+    setOwnerKey(KEY);
+    const { mirror } = await rotaRefused();
+    const r = res();
+    await handleSuperOwnerAnswer(post({ record: 'main', item: mirror.id, via: 'bar', shown: { tool: 'Bash', input: 'node scripts/other.mjs' }, answer: { kind: 'refusal', action: 'allow', size: 'once' } }, { ...ORIGIN, [OWNER_KEY_HEADER]: KEY }), r, {}, root);
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ ok: false, error: 'changed' });
+    expect(listGrants()).toEqual([]);
   });
 });

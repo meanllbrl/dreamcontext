@@ -27,9 +27,9 @@ import { join } from 'node:path';
 import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { readSuperState } from '../../lib/super/store.js';
-import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText } from '../../lib/super/answer.js';
+import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
-import { memberTitle } from '../../lib/super/inbox.js';
+import { memberTitle, itemCall } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } from '../../lib/telegram/ask-format.js';
@@ -299,8 +299,9 @@ async function sendMemberItem(hub: TelegramHub, ab: ActiveBinding, superSession:
     if (!pq?.isPermission || !item.requestId) return { skipped: true };
     const command = pq.fullText ?? pq.text;
     const { html, rows, choices } = permissionCard(`${escapeHtml(who.slice(0, 60))} · `, pq.toolName, command, item.offer?.sizes ?? ['once'], who, item.offer);
+    const shownCall = itemCall(pq);
     const m = await buttons2(hub, ab, html, rows,
-      { kind: 'permission', requestId: item.requestId, sessionId: item.sessionId, singleUse: true }, { ...data, choices });
+      { kind: 'permission', requestId: item.requestId, sessionId: item.sessionId, singleUse: true }, { ...data, choices, shown: shownKeyOf(shownCall.tool, shownCall.input) });
     remember(item.id, { ab, messages: [m] }, item);
     return { ok: true };
   }
@@ -401,7 +402,7 @@ async function sendAllowCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQue
   const why = r.reason ? `\n${escapeHtml(redactSecrets(r.reason).slice(0, 300))}` : '';
   const html = `${head}${why}\n<pre>${escapeHtml(visibleCommand(r.input))}</pre>${ruleLine(o.offer, sizes, true)}`;
   const m = await buttons2(hub, ab, html, rows, { kind: 'permission', sessionId: item.sessionId, singleUse: true },
-    { ...(o.data ?? {}), queue: true, item: item.id, itemKind: o.data ? 'member' : 'refusal', refusal: true, choices });
+    { ...(o.data ?? {}), queue: true, item: item.id, itemKind: o.data ? 'member' : 'refusal', refusal: true, choices, shown: shownKeyOf(r.tool, r.input) });
   remember(item.id, { ab, messages: [m] }, item);
   return { ok: true };
 }
@@ -428,9 +429,10 @@ async function onChildAsking(hub: TelegramHub, entry: ChatEntry): Promise<void> 
     const command = pq.fullText ?? pq.text;
     // Main's own crew has no member: "for this job" at most (`who` null drops the member size).
     const { html, rows, choices } = permissionCard(job, pq.toolName, command, item.offer?.sizes ?? ['once'], null, item.offer);
+    const shownCall = itemCall(pq);
     await hub.sendButtons(ab, html, rows,
       { kind: 'permission', requestId: pq.requestId, sessionId: entry.sessionId, singleUse: true },
-      { queue: true, item: item.id, choices });
+      { queue: true, item: item.id, choices, shown: shownKeyOf(shownCall.tool, shownCall.input) });
     return;
   }
 }
@@ -443,9 +445,11 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   const choices = Array.isArray(d.choices) ? (d.choices as string[]) : null;
   const choice = choices ? choices[idx] : idx === 0 ? 'once' : 'deny';
   const size = (choice === 'once' || choice === 'job' || choice === 'member' ? choice : undefined) as GrantSize | undefined;
+  // What the card showed (its key, kept when it was sent): an Allow lands only on that call.
+  const shownKey = typeof d.shown === 'string' ? { shownKey: d.shown } : {};
   if (d.itemKind === 'member') {
-    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}) });
-    if (rec.kind === 'permission') return answerMemberPick(hub, ab, String(d.item), { kind: 'permission', allow: !!size, ...(size ? { size } : {}) });
+    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}), ...shownKey });
+    if (rec.kind === 'permission') return answerMemberPick(hub, ab, String(d.item), { kind: 'permission', allow: !!size, ...(size ? { size } : {}), ...shownKey });
     const labels = Array.isArray(d.labels) ? (d.labels as string[]) : [];
     const label = labels[idx];
     if (typeof label !== 'string') return LINES.stale;
@@ -455,11 +459,11 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   }
   // A refused call of main's own crew (K2): Allow once / for this job, or not needed.
   if (rec.kind === 'permission' && d.itemKind === 'refusal') {
-    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) } });
+    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) }, ...shownKey });
     return pickLine(r, sizeLine(size ?? 'not_needed'));
   }
   if (rec.kind === 'permission') {
-    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'permission', behavior: size ? 'allow' : 'deny', ...(size ? { size } : {}) } });
+    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'permission', behavior: size ? 'allow' : 'deny', ...(size ? { size } : {}) }, ...shownKey });
     if (!r.ok && r.error === 'already_answered') return LINES.stale;
     return pickLine(r, sizeLine(size ?? 'deny'));
   }

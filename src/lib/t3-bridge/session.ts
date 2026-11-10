@@ -49,7 +49,7 @@ import * as Scope from 'effect/Scope';
 import * as Stream from 'effect/Stream';
 import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 import { bypassNeedsOwner, claudeRuntimePolicy, codexRuntimePolicy, grantRoots, instanceRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
-import { realProcSys, whoAmI, type ProcSys } from '../grants/binding.js';
+import { cwdInRoots, realProcSys, whoAmI, type ProcSys } from '../grants/binding.js';
 import { match } from '../grants/match.js';
 import { realResolver, type Resolver } from '../grants/eligible.js';
 import { consumeOnce, listGrants } from '../grants/store.js';
@@ -157,15 +157,18 @@ export function bridgeGrantFor(
     if (bypassNeedsOwner(tool, req.input, ctx.cwd)) return null;
     const opts = deps.home ? { home: deps.home } : {};
     const sys = deps.sys ?? realProcSys();
-    const binding = whoAmI({ project: ctx.cwd }, sys, { mode: 'bridge', ...opts });
+    // The project is the binding's (K3 "Identity"); the cwd only has to sit inside its roots.
+    const binding = whoAmI({}, sys, { mode: 'bridge', ...opts });
     if (!binding) return null;
     const grants = listGrants(binding.project, opts);
     if (!grants.length) return null;
     const roots = (deps.roots ?? ((p: string) => grantRoots(p, opts)))(binding.project);
+    const here = sys.realpath(ctx.cwd);
+    if (!here || !cwdInRoots(here, roots)) return null;
     const g = match(grants, {
       project: binding.project, pin: binding.pin, ...(binding.member ? { member: binding.member } : {}), tool, input: req.input,
     }, {
-      project: binding.project, roots, cwd: sys.realpath(ctx.cwd) ?? binding.project, resolve: deps.resolve ?? realResolver(),
+      project: binding.project, roots, cwd: here, resolve: deps.resolve ?? realResolver(),
       ...(deps.home ? { home: deps.home } : {}), ...(deps.now !== undefined ? { now: deps.now } : {}),
     });
     if (!g) return null;

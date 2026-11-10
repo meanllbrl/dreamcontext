@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  addConversationId, bindingByConversation, bindingsByConversation, consumeOnce, grantsDir, listGrants, newGrantId, pruneGrants,
+  addConversationId, bindingByConversation, bindingsByConversation, consumeOnce, dropSessionJobGrants, grantsDir, listGrants, newGrantId, pruneRecordGrants,
   readBinding, removeBinding, removeGrant, removeMemberGrants, writeBinding, writeGrant,
 } from '../../src/lib/grants/store.js';
 import { GRANT_MAX_MS, MEMBER_NO_EXPIRY, type Binding, type Grant } from '../../src/lib/grants/types.js';
@@ -106,35 +106,57 @@ describe('grants store: a one-shot is spent once', () => {
 });
 
 describe('grants store: deaths', () => {
-  const live = { livePins: ['pin-a'], openRequests: [] as string[] };
+  const items = (open: string[], closed: string[] = []) => [...open.map((id) => ({ id, open: true })), ...closed.map((id) => ({ id, open: false }))];
 
-  it('a one-shot dies after a day and when its item closed', () => {
+  it('a one-shot dies after a day and when its item in this record closed; another record\'s is not judged', () => {
     const fresh = once({ item: 'item-open' });
     const closed = once({ item: 'item-closed' });
+    const elsewhere = once({ item: 'item-other-record' });
     const old = once({ createdAt: NOW - GRANT_MAX_MS - 1, expiresAt: NOW + GRANT_MAX_MS });
-    for (const x of [fresh, closed, old]) writeGrant(x, opts());
-    const gone = pruneGrants({ now: NOW, ...live, openItems: ['item-open'] }, opts());
+    const otherProject = once({ item: 'item-closed', project: '/work/other' });
+    for (const x of [fresh, closed, elsewhere, old, otherProject]) writeGrant(x, opts());
+    const gone = pruneRecordGrants({ now: NOW, project: PROJECT, items: items(['item-open'], ['item-closed']) }, opts());
     expect(gone.sort()).toEqual([closed.id, old.id].sort());
-    expect(listGrants(PROJECT, opts()).map((x) => x.id)).toEqual([fresh.id]);
+    expect(listGrants(PROJECT, opts()).map((x) => x.id).sort()).toEqual([fresh.id, elsewhere.id].sort());
+    expect(listGrants('/work/other', opts())).toHaveLength(1);
   });
 
-  it('a job grant dies when its session ends, when its requests close, and after a day; a respawn keeps it', () => {
-    const mine = g({ pin: 'pin-a' });
-    const ended = g({ pin: 'pin-ended' });
-    const requests = g({ pin: 'pin-a', requests: ['req-1', 'req-2'] });
-    const stillOpen = g({ pin: 'pin-a', requests: ['req-3'] });
+  it('a member Super\'s job grant dies when the requests it was given under all close, and after a day', () => {
+    const plain = g({ pin: 'pin-a', item: 'perm-1' });
+    const requests = g({ pin: 'pin-a', item: 'perm-2', requests: ['req-1', 'req-2'] });
+    const stillOpen = g({ pin: 'pin-a', item: 'perm-3', requests: ['req-3'] });
     const old = g({ pin: 'pin-a', createdAt: NOW - GRANT_MAX_MS - 1 });
-    for (const x of [mine, ended, requests, stillOpen, old]) writeGrant(x, opts());
-    // The same pin is live again after a respawn: its grant stays.
-    const gone = pruneGrants({ now: NOW, livePins: ['pin-a'], openRequests: ['req-3'] }, opts());
-    expect(gone.sort()).toEqual([ended.id, requests.id, old.id].sort());
-    expect(listGrants(PROJECT, opts()).map((x) => x.id).sort()).toEqual([mine.id, stillOpen.id].sort());
+    for (const x of [plain, requests, stillOpen, old]) writeGrant(x, opts());
+    const gone = pruneRecordGrants({ now: NOW, project: PROJECT, items: items(['req-3'], ['perm-1', 'perm-2', 'perm-3', 'req-1', 'req-2']) }, opts());
+    expect(gone.sort()).toEqual([requests.id, old.id].sort());
+    expect(listGrants(PROJECT, opts()).map((x) => x.id).sort()).toEqual([plain.id, stillOpen.id].sort());
+  });
+
+  it('a job grant whose item was pruned off the queue is still judged by its requests', () => {
+    const orphan = g({ pin: 'pin-a', item: 'perm-gone', requests: ['req-9'] });
+    const foreign = g({ pin: 'pin-b', item: 'perm-x', requests: ['req-elsewhere'] });
+    for (const x of [orphan, foreign]) writeGrant(x, opts());
+    // Its request still open: kept.
+    expect(pruneRecordGrants({ now: NOW, project: PROJECT, items: items(['req-9'], []) }, opts())).toEqual([]);
+    // Its request closed: gone, though its own item is no longer in the record. Another record's grant stays.
+    expect(pruneRecordGrants({ now: NOW, project: PROJECT, items: items([], ['req-9']) }, opts())).toEqual([orphan.id]);
+    expect(listGrants(PROJECT, opts()).map((x) => x.id)).toEqual([foreign.id]);
+  });
+
+  it('a session that ends takes its job grants with it, never its one-shots or another session\'s', () => {
+    const mine = g({ pin: 'pin-a' });
+    const other = g({ pin: 'pin-b' });
+    const shot = once({ pin: 'pin-a', item: 'item-1' });
+    for (const x of [mine, other, shot]) writeGrant(x, opts());
+    expect(dropSessionJobGrants('pin-a', opts())).toEqual([mine.id]);
+    expect(listGrants(PROJECT, opts()).map((x) => x.id).sort()).toEqual([other.id, shot.id].sort());
   });
 
   it('a member rule is never pruned', () => {
-    const rule = { ...member('scout'), createdAt: NOW - 100 * GRANT_MAX_MS };
+    const rule = { ...member('scout'), createdAt: NOW - 100 * GRANT_MAX_MS, item: 'item-closed' };
     writeGrant(rule, opts());
-    expect(pruneGrants({ now: NOW, livePins: [], openRequests: [], openItems: [] }, opts())).toEqual([]);
+    expect(pruneRecordGrants({ now: NOW, project: PROJECT, items: items([], ['item-closed']) }, opts())).toEqual([]);
+    expect(dropSessionJobGrants('pin-a', opts())).toEqual([]);
     expect(listGrants(PROJECT, opts())).toHaveLength(1);
   });
 });

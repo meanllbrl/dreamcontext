@@ -186,6 +186,37 @@ describe('the binding lives exactly as long as the process', () => {
   });
 });
 
+describe('a job grant lives as long as the SESSION, not one process of it', () => {
+  const job = (pin: string) => ({
+    id: grants.newGrantId('job'), scope: 'job' as const, project, pin, tool: 'Bash', input: 'ls', form: 'exact' as const,
+    createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+  });
+  it('a respawn in place under the same pin keeps it; two processes on one pin keep it; the last one out takes it', () => {
+    const queued: Array<() => void> = [];
+    crew._setCrewDeps({ sys: sys({ 600: STARTED, 601: STARTED, 602: STARTED }), probePath: async () => null, later: (fn) => { queued.push(fn); } });
+    const g = job('pin-a');
+    const other = job('pin-b');
+    grants.writeGrant(g); grants.writeGrant(other);
+    const ids = () => grants.listGrants(project).map((x) => x.id).sort();
+    // Respawn in place: the old seat exits BEFORE the successor opens (agent-chat close -> spawnSuccessor).
+    const old = crew.openCrewSeat(facts({ pid: 600 }))!;
+    old.exited();
+    const successor = crew.openCrewSeat(facts({ pid: 601 }))!;
+    queued.splice(0).forEach((fn) => fn());
+    expect(ids()).toEqual([g.id, other.id].sort());
+    // A second process on the pin (the bridge case): the first one out leaves it alone.
+    const twin = crew.openCrewSeat(facts({ pid: 602 }))!;
+    successor.exited();
+    queued.splice(0).forEach((fn) => fn());
+    expect(ids()).toEqual([g.id, other.id].sort());
+    // The session really ends: no seat holds the pin once the grace passes.
+    twin.exited();
+    expect(ids()).toEqual([g.id, other.id].sort());
+    queued.splice(0).forEach((fn) => fn());
+    expect(ids()).toEqual([other.id]);
+  });
+});
+
 describe('a narrower level reaches the running member now; a wider one at its next start', () => {
   it('moves every running session of that member, in that project, to the narrower mode', () => {
     const setA = vi.fn(() => true);

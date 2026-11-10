@@ -20,6 +20,7 @@ export function pickLine(r: OwnerAnswerResult, ok: string): string {
   if (r.error === 'already_answered') return 'Zaten cevaplandı';
   if (r.error === 'no_window') return LINES.waitingOnMac;
   if (r.error === 'not_offered') return "Bu seçenek burada yok: Mac'te karar ver";
+  if (r.error === 'changed') return "İstek gösterildikten sonra değişti: Mac'te yeniden bak";
   return LINES.stale;
 }
 
@@ -34,8 +35,8 @@ export function sizeLine(size: GrantSize | 'deny' | 'not_needed'): string {
  * (`memberMirrorTarget` finds it; `answerOwnerItem` answers it the way that item is answered).
  */
 export async function answerMemberPick(hub: TelegramHub, ab: ActiveBinding, mirrorId: string, answer:
-  | { kind: 'permission'; allow: boolean; size?: GrantSize }
-  | { kind: 'refusal'; allow: boolean; size?: GrantSize }
+  | { kind: 'permission'; allow: boolean; size?: GrantSize; shownKey?: string }
+  | { kind: 'refusal'; allow: boolean; size?: GrantSize; shownKey?: string }
   | { kind: 'question'; questions: readonly { question: string; options?: unknown[] }[]; picked: Record<string, string>; notes?: Record<string, string>; unclear?: string }): Promise<string | null> {
   const root = ab.contextRoot;
   if (!root) return LINES.stale;
@@ -45,7 +46,7 @@ export async function answerMemberPick(hub: TelegramHub, ab: ActiveBinding, mirr
     const a: OwnerAnswer = answer.kind === 'permission'
       ? { kind: 'permission', behavior: answer.allow ? 'allow' : 'deny', ...(answer.allow && answer.size ? { size: answer.size } : {}) }
       : { kind: 'refusal', action: answer.allow ? 'allow' : 'not_needed', ...(answer.allow && answer.size ? { size: answer.size } : {}) };
-    const r = await answerOwnerItem(root, { record: 'main', item: mirrorId, answer: a, via: 'telegram' });
+    const r = await answerOwnerItem(root, { record: 'main', item: mirrorId, answer: a, via: 'telegram', ...(answer.shownKey ? { shownKey: answer.shownKey } : {}) });
     return pickLine(r, sizeLine(answer.allow ? answer.size ?? 'once' : answer.kind === 'permission' ? 'deny' : 'not_needed'));
   }
   const picked = answer.unclear !== undefined ? '↺ Tekrar sorulacak' : `✓ ${Object.values(answer.picked).join(' · ')}`;

@@ -227,6 +227,19 @@ describe('G1 identity: no binding the server wrote for THIS process, no allow', 
     writeBinding(binding(), {});
     expect(decision(await runHook(hookInput({ cwd: join(project, 'scripts') })))).toBe('allow');
   });
+
+  it('a child working in a worktree or linked repo of the project is still its crew; a folder outside every root is asked', async () => {
+    writeBinding(binding({ crew: 'child' }), {});
+    const worktree = realpathSync(mkdtempSync(join(tmpdir(), 'dc-hook-wt-')));
+    try {
+      _setGrantGateDeps({ sys: procs(), resolve: resolver, roots: () => [project, worktree] });
+      expect(decision(await runHook(hookInput({ cwd: worktree })))).toBe('allow');
+      _setGrantGateDeps({ sys: procs(), resolve: resolver, roots: () => [project] });
+      expect(decision(await runHook(hookInput({ cwd: worktree })))).toBeNull();
+    } finally {
+      rmSync(worktree, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('every existing deny gate still wins over a matching grant (one row per gate)', () => {

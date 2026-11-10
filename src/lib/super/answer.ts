@@ -11,11 +11,12 @@
  *    so the window answers through the child's own session and its card closes; then every queue
  *    item on that request is closed.
  */
+import { createHash } from 'node:crypto';
 import { crewHandle, dropOwnerWait, getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../assistant/chat-registry.js';
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
-  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, newQueueId, noteAllowedOnce, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
+  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, newQueueId, noteAllowedOnce, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
 import { eligible } from '../grants/eligible.js';
@@ -257,7 +258,37 @@ const MSG = {
   notOffered: 'That choice is not offered for this item.',
   noWindow: 'Its chat is not open on the Mac: open it there to answer.',
   phoneRefusal: 'Allow it on Telegram or the Mac.',
+  changed: 'The request changed after it was shown: look at it again before you allow it.',
 } as const;
+
+/** The key of a call as a surface showed it (sha256 of tool and input): what Telegram keeps on
+ *  its card's buttons, and what the server compares an Allow against. */
+export function shownKeyOf(tool: string, input: string): string {
+  return createHash('sha256').update(`${tool}\n${input}`).digest('hex');
+}
+
+/** What an Allow of this item would let run, read where it is decided: the live request for a
+ *  permission (what the CLI allows), the stored fact for a refusal (what the grant is built from).
+ *  Null: nothing to allow any more. */
+function allowTarget(item: SuperQueueItem): { tool: string; input: string } | null {
+  if (item.kind === 'permission') {
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    if (!pq || !pq.isPermission) return null;
+    const c = itemCall(pq);
+    return { tool: c.tool, input: c.input };
+  }
+  const r = item.wait?.refusal;
+  return item.kind === 'owner' && r ? { tool: r.tool, input: r.input } : null;
+}
+
+/** Did the surface show exactly what would be allowed? (G2: consent matches display.) */
+function shownMatches(req: OwnerAnswerRequest, target: { tool: string; input: string }): boolean {
+  const s = req.shown;
+  if (s && typeof s === 'object' && typeof s.tool === 'string' && typeof s.input === 'string') return s.tool === target.tool && s.input === target.input;
+  return typeof req.shownKey === 'string' && /^[0-9a-f]{64}$/.test(req.shownKey) && req.shownKey === shownKeyOf(target.tool, target.input);
+}
+
+const isAllow = (a: OwnerAnswer): boolean => (a.kind === 'permission' && a.behavior === 'allow') || (a.kind === 'refusal' && a.action === 'allow');
 
 /** Items being answered right now: the first answer wins, a second is told so (K5). */
 const answering = new Set<string>();
@@ -309,9 +340,10 @@ async function answerOwnPending(sessionId: string, args: Record<string, unknown>
 }
 
 /** The grant for one stored call (G2: built from the record, never from request text). */
-function buildGrant(root: string, state: SuperState, item: SuperQueueItem, scope: GrantScope, call: { tool: string; input: string; category?: string; scriptSha?: string }, now: number): Grant | null {
-  // Resolved in the session's environment: the interpreter pinned is the one its hook will find.
-  const ctx = grantCtx(root, call.category, item.sessionId);
+function buildGrant(root: string, state: SuperState, item: SuperQueueItem, scope: GrantScope, call: { tool: string; input: string; category?: string; scriptSha?: string } & CallBirth, now: number): Grant | null {
+  // Resolved in the session's context (for a refusal, the interpreter and folder its birth
+  // resolved): the script and interpreter pinned are the ones its hook will find, running or not.
+  const ctx = grantCtx(root, call.category, item.sessionId, { ...(call.interpreter ? { interpreter: call.interpreter } : {}), ...(call.cwd ? { cwd: call.cwd } : {}) });
   const e = eligible(call.tool, call.input, scope, ctx);
   if (!e.ok) return null;
   // A once on a script pins what he saw when the refusal was born: a script rewritten since asks again.
@@ -342,7 +374,7 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   // A cut input, or a call a settings rule forbids (the rule wins anyway): nothing to allow.
   if (!r || !r.whole || r.source === 'rule') return fail('not_offered', MSG.notOffered);
   const now = Date.now();
-  const grant = buildGrant(root, state, item, size, { tool: r.tool, input: r.input, ...(r.category ? { category: r.category } : {}), ...(r.scriptSha ? { scriptSha: r.scriptSha } : {}) }, now);
+  const grant = buildGrant(root, state, item, size, { tool: r.tool, input: r.input, ...(r.category ? { category: r.category } : {}), ...(r.scriptSha ? { scriptSha: r.scriptSha } : {}), ...(r.interpreter ? { interpreter: r.interpreter } : {}), ...(r.cwd ? { cwd: r.cwd } : {}) }, now);
   if (!grant) return fail('not_offered', MSG.notOffered);
   writeGrant(grant);
   if (size === 'once') noteAllowedOnce(superKey(root, superId), item.id, grant.id, item.sessionId);
@@ -423,6 +455,15 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
   if (item.kind !== 'member' && (item.allowed !== undefined || allowedAlready(root, item.id))) return fail('already_answered', MSG.answered);
   const a = req.answer;
   const phone = req.via === 'phone';
+  // Consent matches display (G2), checked here once for every Allow of every surface that draws the
+  // call from the record (the bar, the Super chat's card, a member's chat, Telegram): what he saw
+  // must be what runs. A mirror is checked on its member's item, where the recursion below lands.
+  // The phone draws the live request itself and never writes a grant.
+  if (item.kind !== 'member' && !phone && isAllow(a)) {
+    const target = allowTarget(item);
+    if (!target) return fail('already_answered', MSG.answered);
+    if (!shownMatches(req, target)) return fail('changed', MSG.changed);
+  }
 
   // A member's item mirrored into main: answered on the member's own item; the mirror follows it.
   if (item.kind === 'member') {
@@ -502,8 +543,16 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
       void pumpSuper(root, superId);
       return { ok: true, outcome: 'answered' };
     }
+    case 'routine': {
+      // Never approved or answered here (Review on the Mac); but he can set it aside: closed, it
+      // stays closed while its fact lasts (`syncRoutineDraft` never reopens a done item, and drops
+      // it once the fact leaves the disk), so it no longer holds the head of his list.
+      if (a.kind !== 'dismiss') return fail('not_offered', MSG.notOffered);
+      await closeItem(root, superId, item.id);
+      return { ok: true, outcome: 'dismissed' };
+    }
     default:
-      // A routine (Review on the Mac), an approval, anything else: no answer in place.
+      // An approval, anything else: no answer in place.
       return fail('not_offered', MSG.notOffered);
   }
 }

@@ -126,8 +126,14 @@ describe('the answers it sends', () => {
     expect(declineAnswer('refusal')).toEqual({ kind: 'refusal', action: 'not_needed' });
     expect(declineAnswer('stalled')).toEqual({ kind: 'dismiss' });
     expect(questionAnswer('Send it?', 'Gönder')).toEqual({ kind: 'question', answers: { 'Send it?': 'Gönder' } });
-    // The item is named, never its command or a rule: the server builds the grant from what it stored.
-    expect(answerRequest('main', item(), allowAnswer('refusal', 'once'), 'bar')).toEqual({ record: 'main', item: 'q-1', answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar' });
+    // The item is named, never a rule: the server builds the grant from what it stored. An Allow
+    // also carries the call this window drew, so the server can refuse one rewritten since.
+    const shownItem = item({ wait: { kind: 'refusal', id: 'rf-1', refusal } });
+    expect(answerRequest('main', shownItem, allowAnswer('refusal', 'once'), 'bar')).toEqual({
+      record: 'main', item: 'q-1', answer: { kind: 'refusal', action: 'allow', size: 'once' }, via: 'bar', shown: { tool: refusal.tool, input: refusal.input },
+    });
+    // No Allow, nothing shown is sent.
+    expect(answerRequest('main', shownItem, declineAnswer('refusal'), 'bar')).toEqual({ record: 'main', item: 'q-1', answer: { kind: 'refusal', action: 'not_needed' }, via: 'bar' });
   });
 
   it('a one-tap question is exactly one single-choice question with up to four plain options', () => {
@@ -159,11 +165,16 @@ describe('the route', () => {
   });
 
   it('a 409 that is no window or no longer offered is Open, never "answered already"', async () => {
-    for (const code of ['no_window', 'not_offered']) {
+    for (const code of ['no_window', 'not_offered', 'changed']) {
       const r = await sendOwnerAnswer(poster(async () => { throw new RequestError('Conflict', 409, code); }), answerRequest('main', item(), { kind: 'dismiss' }, 'bar'));
       expect(r).toMatchObject({ ok: false, error: code, openInstead: true });
       expect(answerStateAfter(r)).toMatchObject({ fallback: true });
     }
+  });
+
+  it('a request rewritten after it was drawn says so and opens it', async () => {
+    const r = await sendOwnerAnswer(poster(async () => { throw new RequestError('Changed', 409, 'changed'); }), answerRequest('main', item(), allowAnswer('refusal', 'once'), 'bar'));
+    expect(answerStateAfter(r)).toEqual({ busy: false, fallback: true, note: 'owner.answer.changed' });
   });
 
   it('a second answer is told, never offered Open', async () => {

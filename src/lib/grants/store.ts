@@ -170,29 +170,48 @@ export function consumeOnce(id: string, opts?: StoreOpts): boolean {
   return true;
 }
 
-export interface PruneFacts {
+export interface RecordFacts {
   now: number;
-  /** Pins of the sessions still running. */
-  livePins: Iterable<string>;
-  /** Requests still open (a member Super's job grant lives while one it was given under is). */
-  openRequests: Iterable<string>;
-  /** Owner items still open; when given, a one-shot whose item closed dies. */
-  openItems?: Iterable<string>;
+  /** Real path of the record's project root. */
+  project: string;
+  /** Every item of ONE Super record with whether it is still open. A grant whose item (or, for a
+   *  job grant, none of whose requests) is in this list belongs to another record and is not
+   *  judged here (only its expiry is). */
+  items: ReadonlyArray<{ id: string; open: boolean }>;
 }
 
-/** The deaths (K3 "Scopes and their deaths"). Member rules are never pruned here. Returns the ids removed. */
-export function pruneGrants(facts: PruneFacts, opts?: StoreOpts): string[] {
-  const live = new Set(facts.livePins);
-  const open = new Set(facts.openRequests);
-  const items = facts.openItems === undefined ? null : new Set(facts.openItems);
+/**
+ * The deaths a record write can see (K3), for ONE record of one project: a one-shot whose item
+ * closed, a job grant whose requests all closed, and any once/job past its expiry. Called on
+ * every write of a Super record, so a request or item closing ends what it carried at once.
+ * Member rules are never touched. Returns the ids removed. Never throws.
+ */
+export function pruneRecordGrants(facts: RecordFacts, opts?: StoreOpts): string[] {
   const gone: string[] = [];
-  for (const g of [...readScope('once', opts), ...readScope('job', opts)]) {
-    const expired = !(grantExpiry(g) > facts.now);
-    const dead = g.scope === 'once'
-      ? expired || (items !== null && !!g.item && !items.has(g.item))
-      : expired || !live.has(g.pin ?? '') || (!!g.requests?.length && !g.requests.some((r) => open.has(r)));
-    if (dead && removeGrant(g.id, opts)) gone.push(g.id);
-  }
+  try {
+    const state = new Map(facts.items.map((i) => [i.id, i.open]));
+    for (const g of [...readScope('once', opts), ...readScope('job', opts)]) {
+      if (g.project !== facts.project) continue;
+      const expired = !(grantExpiry(g) > facts.now);
+      // Its item ties it to this record; a job grant's requests tie it too, so one whose item was
+      // pruned off the queue is still judged by the requests it was given under.
+      const mine = (!!g.item && state.has(g.item)) || (g.scope === 'job' && !!g.requests?.some((r) => state.has(r)));
+      const dead = expired || (mine && (g.scope === 'once'
+        ? state.get(g.item as string) === false
+        : !!g.requests?.length && !g.requests.some((r) => state.get(r) === true)));
+      if (dead && removeGrant(g.id, opts)) gone.push(g.id);
+    }
+  } catch { /* the next write judges again */ }
+  return gone;
+}
+
+/** A session ended: its job grants die with it (K3). One-shots stay: an Allow once whose turn
+ *  waits in the outbox is spent by the next run of the same session, or dies with its item. */
+export function dropSessionJobGrants(pin: string, opts?: StoreOpts): string[] {
+  const gone: string[] = [];
+  try {
+    for (const g of readScope('job', opts)) if (g.pin === pin && removeGrant(g.id, opts)) gone.push(g.id);
+  } catch { /* best effort */ }
   return gone;
 }
 

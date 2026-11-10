@@ -170,7 +170,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               : head.kind === 'member'
                 ? <MemberHead item={head} record={record} showOptions={showOptions} />
               : head.kind === 'routine'
-                ? <RoutineHead item={head} />
+                ? <RoutineHead item={head} record={record} />
               : head.kind === 'owner' && ownerWaitOf(head) === 'refusal'
                 ? <GrantHead item={head} record={record} memberName={recordName} showOptions={showOptions} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
               : head.kind === 'owner' && ownerWaitOf(head) === 'stalled'
@@ -575,10 +575,12 @@ function StalledHead({ item, record, onOpen }: { item: SuperQueueItem; record: s
 /**
  * A routine waiting on him (K7, drawing A7), drawn by its OWN title (its member's name before it
  * when it has one): what it waits for, and Review, which brings its row of the Super's approval
- * card into view, where the change is in view; AI Team when no row is drawn. Never approved here.
+ * card into view, where the change is in view; AI Team when no row is drawn. Never approved here;
+ * Not needed sets it aside (it stays closed while its fact lasts), so it never holds his list.
  */
-function RoutineHead({ item }: { item: SuperQueueItem }) {
+function RoutineHead({ item, record }: { item: SuperQueueItem; record: string }) {
   const { t } = useI18n();
+  const answer = useOwnerAnswer(record, item, 'bar');
   const slug = item.routine ?? '';
   const member = item.member ?? '';
   const memberName = useAgent(member || null).data?.agent.title || member;
@@ -597,7 +599,13 @@ function RoutineHead({ item }: { item: SuperQueueItem }) {
           disabled={!slug}
           onClick={() => { if (!showApprovalRow(`routine:${slug}`)) requestOpenAgents({ slug: member || slug }); }}
         >{t('owner.answer.review')}</button>
+        {!answer.fallback && (
+          <button type="button" className="super-queue-btn" data-testid="super-queue-decline" disabled={answer.busy} onClick={() => answer.submit(declineAnswer('routine'))}>
+            {t('owner.answer.notNeeded')}
+          </button>
+        )}
       </span>
+      {answer.note && <span className="super-queue-text" data-testid="super-queue-note">{t(answer.note)}</span>}
     </>
   );
 }

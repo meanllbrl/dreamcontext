@@ -111,6 +111,14 @@ describe('grants match: a hand-written rule of any other form never matches', ()
     // An exact rule over a call that IS the script form: the form must agree.
     expect(match([grant({ form: 'exact', script: undefined })], call(), ctx)).toBeNull();
   });
+
+  it('a one-shot written as exact text never allows a call the enforcer reads as a script (its pin would be lost)', () => {
+    const { ctx } = world();
+    // The session ran `cd scripts` first: the server saw no file and wrote exact text; the hook
+    // resolves a script. Unpinned, it could run a script rewritten after the tap: asked again.
+    const shot = grant({ id: 'once-cwd', scope: 'once', form: 'exact', script: undefined, input: 'node build.mjs' });
+    expect(match([shot], call({ input: { command: 'node build.mjs' } }), { ...ctx, cwd: `${PROJECT}/scripts` })).toBeNull();
+  });
 });
 
 describe('grants match: scopes and their deaths', () => {

@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { setChatPermissionMode } from '../../lib/assistant/chat-registry.js';
 import { realProcSys, type ProcSys } from '../../lib/grants/binding.js';
-import { addConversationId, removeBinding, writeBinding, type StoreOpts } from '../../lib/grants/store.js';
+import { addConversationId, dropSessionJobGrants, removeBinding, writeBinding, type StoreOpts } from '../../lib/grants/store.js';
 import type { CrewKind } from '../../lib/grants/types.js';
 import { narrowerMode } from '../../lib/agents/permission.js';
 
@@ -77,7 +77,8 @@ export interface CrewSeat {
   noteServerTurn(text: string): void;
   /** Was this turn text one the server wrote? Consumes the note. */
   takeServerTurn(text: string): boolean;
-  /** The process exited: its binding goes first, then the seat. Idempotent. */
+  /** The process exited: its binding goes first, then the seat; its job grants only once no seat
+   *  holds the pin after a grace. Idempotent. */
   exited(): void;
 }
 
@@ -87,6 +88,8 @@ export interface CrewDeps extends StoreOpts {
   probePath?: (probe: ShellProbe) => Promise<string | null>;
   now?: () => number;
   log?: (line: string) => void;
+  /** Runs `fn` after `ms` (tests run it at once); default an unref'd timer. */
+  later?: (fn: () => void, ms: number) => void;
 }
 
 /** Whose crew a process is, or null when it is none. */
@@ -209,10 +212,28 @@ export function openCrewSeat(f: CrewSpawnFacts, given: CrewDeps = {}): CrewSeat 
       if (bound && pid !== null) removeBinding(pid, store);
       bound = false;
       seats.delete(seat);
+      // Its "for this job" grants die with the SESSION, not the process (K3): a respawn in place
+      // (mode or account switch, a handoff) exits the old seat before the successor opens one under
+      // the same pin, and two processes can share a pin. So the pin is released only when no seat
+      // holds it once the grace has passed.
+      releasePinLater(f.pin, store, deps);
     },
   };
   seats.set(seat, { ...(f.setMode ? { setMode: f.setMode } : {}) });
   return seat;
+}
+
+/** How long a pin waits for a successor seat before its job grants die. */
+export const JOB_GRANT_GRACE_MS = 2 * 60_000;
+
+function releasePinLater(pin: string, store: StoreOpts, deps: CrewDeps): void {
+  const release = (): void => {
+    for (const s of seats.keys()) if (s.pin === pin) return;
+    dropSessionJobGrants(pin, store);
+  };
+  if (deps.later) { deps.later(release, JOB_GRANT_GRACE_MS); return; }
+  const t = setTimeout(release, JOB_GRANT_GRACE_MS);
+  t.unref?.();
 }
 
 /** The live seats (tests and the level route). */

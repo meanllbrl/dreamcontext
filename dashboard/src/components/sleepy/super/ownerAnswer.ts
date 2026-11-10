@@ -160,9 +160,13 @@ export function questionAnswer(question: string, label: string): OwnerAnswer {
 }
 
 /** The record an item is answered in: a mirror routes to its member's item on the server, so
- *  every item drawn from main's record is answered as main's. */
-export function answerRequest(record: string, item: Pick<SuperQueueItem, 'id'>, answer: OwnerAnswer, via: OwnerAnswerVia): OwnerAnswerRequest {
-  return { record, item: item.id, answer, via };
+ *  every item drawn from main's record is answered as main's. An Allow carries the call this
+ *  window drew (`callOf`, what every surface shows): the server allows only when it is still what
+ *  would run, so a record rewritten after he looked is refused as `changed`, never allowed unseen. */
+export function answerRequest(record: string, item: SuperQueueItem, answer: OwnerAnswer, via: OwnerAnswerVia): OwnerAnswerRequest {
+  const allow = (answer.kind === 'permission' && answer.behavior === 'allow') || (answer.kind === 'refusal' && answer.action === 'allow');
+  const call = allow ? callOf(item) : null;
+  return { record, item: item.id, answer, via, ...(call ? { shown: { tool: call.tool, input: call.input } } : {}) };
 }
 
 export type SendResult =
@@ -172,7 +176,7 @@ export type SendResult =
 /** Errors after which the only true thing to offer is Open: this window cannot decide it (no
  *  owner key: a plain browser, an older shell), the session's window is closed, or the server
  *  no longer offers that size. A second answer is told, never offered Open. */
-const OPEN_INSTEAD = new Set(['owner_page_only', 'no_window', 'not_offered']);
+const OPEN_INSTEAD = new Set(['owner_page_only', 'no_window', 'not_offered', 'changed']);
 
 type OwnerPoster = { ownerPost<T>(path: string, body: unknown): Promise<T> };
 
@@ -247,7 +251,8 @@ export function answerStateAfter(r: SendResult): OwnerAnswerState {
   return {
     busy: false,
     fallback: r.openInstead,
-    note: r.error === 'already_answered' ? 'owner.answer.answered' : r.openInstead ? 'owner.answer.openInstead' : 'owner.answer.failed',
+    note: r.error === 'already_answered' ? 'owner.answer.answered' : r.error === 'changed' ? 'owner.answer.changed'
+      : r.openInstead ? 'owner.answer.openInstead' : 'owner.answer.failed',
   };
 }
 

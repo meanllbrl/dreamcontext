@@ -81,6 +81,21 @@ async function verb(token: string, name: string, body: Record<string, unknown> =
 const main = () => readSuperState(root);
 const member = (slug: string) => readSuperState(root, `m:${slug}`);
 
+/** What a surface drew for this item (its stored call: a refusal's fact, a permission's call, or
+ *  their copy on a mirror), sent with an answer as every surface does (G2: consent matches display). */
+async function shownFor(record: string, item: string): Promise<{ tool: string; input: string } | undefined> {
+  const s = await readSuperState(root, record === 'main' ? undefined : `m:${record}`);
+  const q = s.queue.find((x) => x.id === item);
+  const r = q?.wait?.refusal;
+  if (r) return { tool: r.tool, input: r.input };
+  return q?.call ? { tool: q.call.tool, input: q.call.input } : undefined;
+}
+async function answerShown(at: string, req: Parameters<typeof answerOwnerItem>[1]): ReturnType<typeof answerOwnerItem> {
+  const shown = await shownFor(req.record, req.item);
+  return answerOwnerItem(at, { ...req, ...(shown ? { shown } : {}) });
+}
+
+
 // ─── Stand-ins: the sinks, the processes ──────────────────────────────────────────
 
 let banners: string[] = [];
@@ -151,7 +166,7 @@ async function reach(mainItem: SuperQueueItem | undefined, slug: string | null, 
 /** One in-place answer: a step when the answer function took it (a window that a test has no
  *  stand-in for, `no_window`, is the same step on the Mac). */
 async function step(record: string, item: string, answer: Parameters<typeof answerOwnerItem>[1]['answer'], via: Parameters<typeof answerOwnerItem>[1]['via'] = 'bar'): Promise<number> {
-  const r = await answerOwnerItem(root, { record, item, answer, via });
+  const r = await answerShown(root, { record, item, answer, via });
   return r.ok || r.error === 'no_window' ? 1 : 0;
 }
 
@@ -215,8 +230,9 @@ async function routine(kind: 'awaiting-approval' | 'denials' | 'owner-card' | 'q
   const item = (await main()).queue.find((q) => q.kind === 'routine');
   const seen = await reach(item, null);
   // No answer in place (approval needs the change in view; a card runs in his terminal): modeled
-  // steps on the Mac, after the answer function said it is not its to take.
-  const inPlace = await answerOwnerItem(root, { record: 'main', item: item!.id, via: 'bar', answer: { kind: 'dismiss' } });
+  // steps on the Mac, after the answer function said it is not its to take. (He may still set it
+  // aside with Not needed, so it never holds his list: super-routine-items.test.ts.)
+  const inPlace = await answerOwnerItem(root, { record: 'main', item: item!.id, via: 'bar', answer: { kind: 'ask', text: 'ok' } });
   expect(inPlace).toMatchObject({ ok: false, error: 'not_offered' });
   const steps = kind === 'awaiting-approval' || kind === 'owner-card' ? 2 : 1;
   return { ...seen, steps, asked: 1 };

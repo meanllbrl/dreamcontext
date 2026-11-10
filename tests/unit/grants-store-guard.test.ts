@@ -133,7 +133,7 @@ describe('G2: no CLI verb creates, widens, lists or removes a grant', () => {
       }
     };
     walk(join(ROOT, 'src', 'cli'));
-    const writers = /\b(writeGrant|removeGrant|removeMemberGrants|pruneGrants|writeBinding|removeBinding|addConversationId)\b/;
+    const writers = /\b(writeGrant|removeGrant|removeMemberGrants|pruneGrants|pruneRecordGrants|dropSessionJobGrants|writeBinding|removeBinding|addConversationId)\b/;
     for (const f of files) {
       const text = readFileSync(f, 'utf8');
       const imports = [...text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'[^']*grants\/store\.js'/g)].map((m) => m[1]);

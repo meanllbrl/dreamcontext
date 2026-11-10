@@ -64,7 +64,7 @@ import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
 import { memberFileRefusal, memberFileWriteTarget, ownerStoreRefusal, ownerStoreWriteTarget, shellWriteTarget } from '../../lib/agents/member-file-guard.js';
-import { realProcSys, whoAmI, type ProcSys } from '../../lib/grants/binding.js';
+import { cwdInRoots, realProcSys, whoAmI, type ProcSys } from '../../lib/grants/binding.js';
 import { match } from '../../lib/grants/match.js';
 import { realResolver, type Resolver } from '../../lib/grants/eligible.js';
 import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grants/store.js';
@@ -185,14 +185,18 @@ export function grantGateAllow(
     const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
     const here = sys.realpath(cwd);
     if (!here) return null;
-    // The caller's project is the bound project when the session works inside it (a `cd` into a
-    // subfolder moves the hook's cwd, not the project); anywhere else it is that folder itself.
-    const bound = candidates.find((b) => here === b.project || here.startsWith(b.project.endsWith('/') ? b.project : `${b.project}/`));
-    const binding = whoAmI({ conversationId, project: bound?.project ?? here }, sys, { mode: 'hook', ...opts });
+    // The caller's project is the one the server bound the process to (proven by pid, start time
+    // and the current conversation id), never read off the cwd: a child working in its own
+    // worktree or a linked code repo is still that project's crew.
+    const binding = whoAmI({ conversationId }, sys, { mode: 'hook', ...opts });
     if (!binding) return null;
     const grants = listGrants(binding.project, opts);
     if (!grants.length) return null;
     const roots = (deps.roots ?? ((p: string) => grantRoots(p, opts)))(binding.project);
+    // The cwd only resolves the call's paths, and must sit where that project's agents work (the
+    // project, its linked repos and their worktrees, its own worktrees, the temp folders):
+    // a session that moved anywhere else is asked.
+    if (!cwdInRoots(here, roots)) return null;
     const g = match(grants, {
       project: binding.project, pin: binding.pin, ...(binding.member ? { member: binding.member } : {}), tool: toolName, input: toolInput,
     }, {

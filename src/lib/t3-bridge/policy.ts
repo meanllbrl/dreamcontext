@@ -15,7 +15,7 @@
 import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import nodePath, { isAbsolute, join } from 'node:path';
-import { linkedWritableRoots } from './roots.js';
+import { linkedWritableRoots, ownWorktrees } from './roots.js';
 import { memberFileWriteTarget, ownerStoreWriteTarget } from '../agents/member-file-guard.js';
 import { movesGuardedPlace } from '../antigravity-gate.js';
 import { isMarketingEnvPath } from '../marketing/path-guards.js';
@@ -108,6 +108,8 @@ export function grantRoots(project: string, o: { home?: string; tmp?: readonly s
   };
   add(project);
   try { for (const r of linkedWritableRoots(project, o.home ? { home: o.home } : {})) add(r); } catch { /* the project alone */ }
+  // The project's own worktrees (a child delegated with `--worktree` works in one).
+  try { for (const r of ownWorktrees(project)) add(r); } catch { /* none */ }
   for (const t of o.tmp ?? ['/tmp', '/private/tmp', tmpdir()]) add(t);
   return out;
 }

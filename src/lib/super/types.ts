@@ -805,6 +805,13 @@ export interface RefusalFact {
   reason?: string;
   /** The pinned script's sha256: filled by the server (W5), never by the registry. */
   scriptSha?: string;
+  /** The interpreter the session's own PATH resolved when the refusal was born (server-filled):
+   *  the grant is built from it later, so a session no longer running, or a server whose PATH
+   *  finds another binary, still pins what the session's hook will find. */
+  interpreter?: { name: string; path: string };
+  /** The folder the session worked in when the refusal was born (server-filled, the server's own
+   *  record of the session's checkout): a relative script is resolved there, as its hook does. */
+  cwd?: string;
 }
 export const MAX_REFUSAL_REASON = 300;
 /** The most of a refused input a record keeps: the registry's PERMISSION_FULL_CAP (the same
@@ -836,11 +843,19 @@ export type OwnerAnswerVia = typeof OWNER_ANSWER_VIAS[number];
 
 /** `record`: 'main' or a member slug. The server builds any grant from the STORED item, never
  *  from text in this request (G2). */
-export interface OwnerAnswerRequest { record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia }
+export interface OwnerAnswerRequest {
+  record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia;
+  /** An Allow carries the call the surface DREW (its tool and input as shown), or `shownKey`, the
+   *  `shownKeyOf` of it (Telegram keeps the key of what its card showed). The server allows only
+   *  when it equals what it would allow now: the record is agent-writable, so a call rewritten
+   *  between his look and his tap is refused as `changed`, never allowed unseen (G2). */
+  shown?: { tool: string; input: string };
+  shownKey?: string;
+}
 
 export type OwnerAnswerResult =
   | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
-  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid'; message: string };
+  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
 
 /** What a surface may offer for one item (computed by the server, drawn by the window). */
 export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }

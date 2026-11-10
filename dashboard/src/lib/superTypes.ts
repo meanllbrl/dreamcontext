@@ -463,6 +463,8 @@ export interface RefusalFact {
   category?: string;
   reason?: string;
   scriptSha?: string;
+  interpreter?: { name: string; path: string };
+  cwd?: string;
 }
 
 /** Owner answers and grants on the wire (MIRROR of src/lib/super/types.ts, uye-bildirim K3-K5). */
@@ -476,10 +478,18 @@ export type OwnerAnswer =
   | { kind: 'dismiss' };
 export const OWNER_ANSWER_VIAS = ['bar', 'chat', 'member-chat', 'phone', 'telegram'] as const;
 export type OwnerAnswerVia = typeof OWNER_ANSWER_VIAS[number];
-export interface OwnerAnswerRequest { record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia }
+export interface OwnerAnswerRequest {
+  record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia;
+  /** An Allow carries the call the surface DREW (its tool and input as shown), or `shownKey`, the
+   *  `shownKeyOf` of it (Telegram keeps the key of what its card showed). The server allows only
+   *  when it equals what it would allow now: the record is agent-writable, so a call rewritten
+   *  between his look and his tap is refused as `changed`, never allowed unseen (G2). */
+  shown?: { tool: string; input: string };
+  shownKey?: string;
+}
 export type OwnerAnswerResult =
   | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
-  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid'; message: string };
+  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
 export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
 export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }
 

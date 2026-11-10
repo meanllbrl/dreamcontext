@@ -4,7 +4,9 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { eligible, realResolver, scriptForm, type EligibleCtx, type Resolver } from '../grants/eligible.js';
 import { canonicalInput } from '../grants/canonical.js';
 import { grantRoots } from '../t3-bridge/policy.js';
-import { listGrants, removeGrant } from '../grants/store.js';
+import { sessionCheckout } from '../session-cwd.js';
+import { cwdInRoots } from '../grants/binding.js';
+import { listGrants, pruneRecordGrants, removeGrant } from '../grants/store.js';
 import { readRoutineFacts, routineNeeds, type RoutineFacts, type RoutineNeed } from '../automations/needs.js';
 import { stalledWait, type OwnerWait } from './owner-wait.js';
 import { listVaults } from '../vaults.js';
@@ -41,7 +43,7 @@ import {
   type OwedEnd,
 } from './owed.js';
 import {
-  dropSuperIndex, isSuperChild, keyOfRef, superHasOpenMainRequest, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
+  childWorktree, dropSuperIndex, isSuperChild, keyOfRef, superHasOpenMainRequest, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
@@ -669,6 +671,9 @@ export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state), state.member ? memberTitle(rootOf(contextRoot), state.member) : undefined);
   pushSuperState(contextRoot, state);
   syncSweep(keyOf(contextRoot), state);
+  // The grants this record's items carried die with them (K3): a one-shot with its item, a member
+  // Super's job grant with the last request it was given under. One place, every write.
+  pruneRecordGrants({ now: Date.now(), project: projectOfRoot(contextRoot), items: state.queue.map((q) => ({ id: q.id, open: q.state !== 'done' })) });
   // What the owner must answer in a member's record reaches main's queue (owner 2026-11-10).
   if (idOf(contextRoot) !== 'main' && state.member) {
     void track(syncMemberMirrors(contextRoot, state).catch((err) => console.warn(`[super] member mirror for ${state.member} failed: ${(err as Error).message}`)));
@@ -2165,6 +2170,17 @@ export function projectOfRoot(contextRoot: string): string {
  *  that resolves there is the agent's own program. Swapped by tests. */
 let grantRootsOf: (project: string) => string[] = (project) => grantRoots(project);
 /**
+ * The folder a session works in now, from what the SERVER knows: a checkout move it saw on the
+ * stream (`EnterWorktree`, a declared checkout: session-cwd.ts), else the worktree it made for a
+ * delegated child (the child `cd`s there, which no frame reports), else the project root.
+ */
+function serverCheckout(sessionId: string, project: string): string {
+  const moved = sessionCheckout(sessionId, project);
+  if (moved !== project) return moved;
+  return childWorktree(sessionId) ?? project;
+}
+let sessionCheckoutOf: (sessionId: string, project: string) => string = serverCheckout;
+/**
  * The environment a session's calls resolve in: the PATH the crew process really runs with (its
  * login shell's, read at spawn), so an interpreter is pinned to the binary the session's hook will
  * find. The server's own PATH is another one (a desktop app is no login shell): pinned with it, a
@@ -2179,16 +2195,37 @@ export function sessionResolveEnv(sessionId: string | undefined): NodeJS.Process
 }
 const realGrantResolver = (sessionId?: string): Resolver => realResolver(sessionResolveEnv(sessionId));
 let grantResolver: (sessionId?: string) => Resolver = realGrantResolver;
-export function setGrantEnvForTest(env: { roots?: ((project: string) => string[]) | null; resolver?: ((sessionId?: string) => Resolver) | null }): void {
+export function setGrantEnvForTest(env: { roots?: ((project: string) => string[]) | null; resolver?: ((sessionId?: string) => Resolver) | null; checkout?: ((sessionId: string, project: string) => string) | null }): void {
   if (env.roots !== undefined) grantRootsOf = env.roots ?? ((project) => grantRoots(project));
+  if (env.checkout !== undefined) sessionCheckoutOf = env.checkout ?? serverCheckout;
   if (env.resolver !== undefined) grantResolver = env.resolver ?? realGrantResolver;
 }
 
-/** The eligibility context for a call in this record's project, made by session `sessionId`
- *  (its interpreter resolves with that session's PATH, `sessionResolveEnv`). */
-export function grantCtx(contextRoot: string, category?: string, sessionId?: string): EligibleCtx {
+/** What the session's own context was when a call was born (RefusalFact `interpreter`, `cwd`). */
+export interface CallBirth { interpreter?: { name: string; path: string }; cwd?: string }
+
+/**
+ * The eligibility context for a call in this record's project, made by session `sessionId`: the
+ * ONE place a writer (offer, birth pin, grant) learns the session's context, so it resolves the
+ * call exactly as that session's hook will. Its interpreter resolves with the session's PATH
+ * (`sessionResolveEnv`); its relative script from the folder the session works in (a child in its
+ * own worktree resolves `scripts/x.mjs` THERE, not in the project root). Both come from the birth
+ * when it was recorded (the session may be gone by the answer), else from the live session. A
+ * folder outside the project's roots is never used: the project root then, and a pin that misses
+ * is offered again, never allowed unseen.
+ */
+export function grantCtx(contextRoot: string, category?: string, sessionId?: string, birth: CallBirth = {}): EligibleCtx {
   const project = projectOfRoot(contextRoot);
-  return { project, roots: grantRootsOf(project), resolve: grantResolver(sessionId), ...(category ? { category } : {}) };
+  const base = grantResolver(sessionId);
+  const { interpreter } = birth;
+  const resolve: Resolver = interpreter
+    ? { ...base, which: (n) => (n === interpreter.name ? interpreter.path : base.which(n)) }
+    : base;
+  const roots = grantRootsOf(project);
+  const where = birth.cwd ?? (sessionId ? sessionCheckoutOf(sessionId, project) : project);
+  const real = where && where !== project ? resolve.realpath(where) : null;
+  const cwd = real && real !== project && cwdInRoots(real, roots.map((r) => resolve.realpath(r) ?? r)) ? real : undefined;
+  return { project, roots, resolve, ...(cwd ? { cwd } : {}), ...(category ? { category } : {}) };
 }
 
 const NOT_WHOLE_REASON = 'The command was too long to keep whole, so no card can allow it: open the job and run it there yourself.';
@@ -2261,13 +2298,22 @@ export function permissionOffer(contextRoot: string, pq: PendingQuestion, member
 }
 
 /** The pinned script of a refused Bash call, read when the refusal is born (K3: a once grant pins
- *  what he saw, so a script rewritten after he looked asks again). */
-function refusalScriptSha(contextRoot: string, r: RefusalFact, sessionId: string | undefined): string | undefined {
-  if (r.tool !== 'Bash' || !r.whole) return undefined;
+ *  what he saw, so a script rewritten after he looked asks again), with the interpreter the
+ *  session's own PATH resolved then (the grant is built from that one, never re-resolved). */
+function refusalPin(contextRoot: string, r: RefusalFact, sessionId: string | undefined): Pick<RefusalFact, 'scriptSha' | 'interpreter' | 'cwd'> {
+  if (r.tool !== 'Bash' || !r.whole) return {};
+  let at: Pick<RefusalFact, 'cwd'> = {};
   try {
-    const s = scriptForm(r.input, grantCtx(contextRoot, undefined, sessionId));
-    return 'pin' in s ? s.pin.sha256 : undefined;
-  } catch { return undefined; }
+    const ctx = grantCtx(contextRoot, undefined, sessionId);
+    // The folder is recorded whatever the form: the grant built later resolves where this did.
+    // The project root is recorded too: a birth is complete, never re-read from a later move.
+    at = { cwd: ctx.cwd ?? ctx.project };
+    const s = scriptForm(r.input, ctx);
+    if (!('pin' in s)) return at;
+    const named = s.pin.interpreter;
+    const path = grantResolver(sessionId).which(named);
+    return { ...at, scriptSha: s.pin.sha256, ...(path ? { interpreter: { name: named, path } } : {}) };
+  } catch { return at; }
 }
 
 /** An owner item's wait fields for one registry wait (its refusal fact and offer included).
@@ -2276,8 +2322,7 @@ function ownerWaitFields(member: string | undefined, w: OwnerWait, root: string 
   const key = w.key && w.key.length <= MAX_WAIT_KEY ? { key: w.key } : {};
   if (w.kind !== 'refusal' || !w.refusal) return { wait: { kind: w.kind, id: w.id, ...key } };
   if (!root) return { wait: { kind: w.kind, id: w.id, ...key, refusal: { ...w.refusal } } };
-  const sha = refusalScriptSha(root, w.refusal, sessionId);
-  const refusal: RefusalFact = { ...w.refusal, ...(sha ? { scriptSha: sha } : {}) };
+  const refusal: RefusalFact = { ...w.refusal, ...refusalPin(root, w.refusal, sessionId) };
   // A refusal by a settings rule is never overridden (K3): shown, with nothing to allow.
   const offer: GrantOffer = refusal.source === 'rule'
     ? { sizes: [], onceOnlyReason: 'A rule in this Mac\'s Claude settings forbids this call; change that rule to allow it.' }
@@ -2446,7 +2491,7 @@ export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<strin
     const { allowed: _a, batch: _b, attempts: _t, exits: _e, owedAt: _o, ...rest } = q;
     // Pinned again as it is NOW (the script may have changed: that is why it was refused again),
     // with its offer read again, so a new Allow pins what he sees this time.
-    const { scriptSha: _s, ...fact } = q.wait.refusal ?? ({} as RefusalFact);
+    const { scriptSha: _s, interpreter: _i, cwd: _c, ...fact } = q.wait.refusal ?? ({} as RefusalFact);
     const again = root && q.wait.refusal
       ? ownerWaitFields(s.member, { kind: 'refusal', id: q.wait.id, line: line ?? '', ...(q.wait.key ? { key: q.wait.key } : {}), refusal: fact as RefusalFact }, root, sid)
       : {};

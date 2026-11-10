@@ -9,8 +9,6 @@ import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import { narrowLiveMember } from './crew-binding.js';
 import { levelChatMode, narrowerMode } from '../../lib/agents/permission.js';
-import { removeMemberGrants } from '../../lib/grants/store.js';
-import { realpathSync } from 'node:fs';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
@@ -781,7 +779,6 @@ export async function handleAgentsDelete(
         sendJson(res, 500, { error: 'delete_incomplete', message: `Not everything could be deleted: ${out.left.join(', ')}.`, left: out.left, trash: out.trash });
         return;
       }
-      dropMemberRules(contextRoot, params.slug, out.plan);
       sendJson(res, 200, { ok: true, slug: params.slug, routines: out.plan.routines, trash: out.trash });
     } catch (err) {
       sendWriteError(res, err, 'delete_failed', 'Failed to delete the member.');
@@ -789,7 +786,6 @@ export async function handleAgentsDelete(
     return;
   }
   try {
-    const wasGlobal = isGlobalHere(contextRoot, params.slug);
     const result = removeAgent(contextRoot, params.slug);
     if (!result.removed) {
       sendJson(res, 409, {
@@ -799,23 +795,10 @@ export async function handleAgentsDelete(
       });
       return;
     }
-    dropMemberRules(contextRoot, params.slug, { global: wasGlobal });
     sendJson(res, 200, { ok: true, slug: params.slug });
   } catch (err) {
     sendWriteError(res, err, 'delete_failed', 'Failed to delete the agent.');
   }
-}
-
-/** A deleted member's "Always allowed" rules die with it (K3 "Scopes and their deaths"): in this
- *  project, or everywhere for a global member. Best effort: a rule left behind names a member
- *  that no session can be, so it matches nothing. */
-function dropMemberRules(contextRoot: string, slug: string, plan?: { global?: boolean }): void {
-  try {
-    if (plan?.global === true) { removeMemberGrants(slug); return; }
-    let project = dirname(contextRoot);
-    try { project = realpathSync.native(project); } catch { /* as written */ }
-    removeMemberGrants(slug, project);
-  } catch { /* see above */ }
 }
 
 /** POST /api/agents/:slug/approve — grant the agent's CALL target as it stands
