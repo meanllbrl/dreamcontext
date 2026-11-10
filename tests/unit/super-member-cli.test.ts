@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AddressInfo } from 'node:net';
 import { createProgram } from '../../src/cli/program.js';
-import { callSuper, mayCallSuper } from '../../src/cli/commands/super.js';
+import { callSuper, mayCallSuper, notTheSuperAgent } from '../../src/cli/commands/super.js';
 import { createAgent, getAgent } from '../../src/lib/agents/store.js';
 import {
   AGENT_CHAT_ENV, AGENT_SELF_ENV, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, insideAgentRun, memberSuperProcess,
@@ -121,6 +121,20 @@ describe('dreamcontext super from a member\'s own Super chat', () => {
       const r = await callSuper('state', {}, env);
       expect(r.status, JSON.stringify(markers)).toBe(401);
     }
+    expect(hits).toEqual([]);
+  });
+
+  it('a refusal names the way this process DOES reach the owner (owner 2026-11-10: a run\'s `super ask` went nowhere)', async () => {
+    const runRefusal = (await callSuper('ask', {}, { ...windowEnvOf(), [AGENT_SELF_ENV]: 'rota', DREAMCONTEXT_AUTOMATION_RUN: '1' })).body;
+    expect(runRefusal.error).toBe('not_a_chat');
+    expect(String(runRefusal.todo)).toContain('dreamcontext automations propose rota');
+    expect(String(runRefusal.todo)).toContain('dreamcontext automations post rota');
+    const crew = notTheSuperAgent({ [MEMBER_CREW_ENV]: 'rota' });
+    expect(crew.todo).toContain('AskUserQuestion');
+    expect(crew.todo).toContain('rota');
+    expect(notTheSuperAgent({ [AGENT_CHAT_ENV]: 'rota' }).todo).toContain('AskUserQuestion');
+    // A terminal or a `claude -p` outside any agent: the plain refusal, no invented way.
+    expect(notTheSuperAgent({}).todo).toBeUndefined();
     expect(hits).toEqual([]);
   });
 
