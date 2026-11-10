@@ -426,7 +426,7 @@ export interface SuperQueueItem {
   /** Whose work it is; absent = the owner's. */
   workOrigin?: SuperWorkOrigin;
   /** A `member` item: the kind of the member's item it mirrors. */
-  of?: 'ask' | 'question' | 'permission' | 'owner' | 'approval';
+  of?: typeof MEMBER_OFS[number];
 }
 
 /** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own
@@ -949,6 +949,8 @@ export function dissolveGroups(state: { containers: SuperContainer[]; groups: Su
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** The member items a `member` mirror stands for (MIRROR of src/lib/super/types.ts MEMBER_ITEM_OF). */
+export const MEMBER_OFS = ['ask', 'question', 'permission', 'owner', 'approval'] as const;
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v);
 const isUnit = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
 
@@ -1077,7 +1079,7 @@ export interface SuperDigestWire {
   pad: SuperPadItem[];
   /** Open with the owner, or queued behind an open question. `text`: the item's `ownerText`
    *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
-  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string }>;
+  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string; member?: string; of?: SuperQueueItem['of'] }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
    *  digest from an older server. */
@@ -1110,7 +1112,11 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(typeof p.for === 'string' && p.for ? { for: p.for } : {}),
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     })),
-    waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
+    waiting: waiting.map((q) => ({
+      id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text,
+      ...(q.kind === 'member' && typeof q.member === 'string' && q.member ? { member: q.member.slice(0, 64) } : {}),
+      ...(q.kind === 'member' && oneOf(MEMBER_OFS, q.of) ? { of: q.of } : {}),
+    })),
     ownerBatches, mainBatches, names,
     // Checked and capped; only open ones travel (the phone draws and never drops them).
     ...(Array.isArray(v.owed) ? { owed: readOwed(v.owed, 40).filter((d) => d.closed === undefined) } : {}),

@@ -401,7 +401,7 @@ export const DIGEST_MAX_OWED_GIST = 160;
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true; member?: string; of?: string }>;
   ownerBatches: readonly string[];
   /** A member Super's main-origin turns (plan-r10 1); absent = none. */
   mainBatches?: readonly string[];
@@ -425,7 +425,7 @@ export interface SuperDigest {
   /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
    *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
    *  '' on a permission. */
-  waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }>;
+  waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string; member?: string; of?: string }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
   mainBatches: string[];
@@ -474,10 +474,13 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     && !mainWork(q.workOrigin) && !mainWork(Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId].workOrigin : undefined)
     // A Bypass child's permission its Super decides first (`toSuper`) waits on nobody's phone.
     && !(q.kind === 'permission' && q.toSuper)
-    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
+    // A member waiting on him (its mirror) is his from birth, as on the Mac's bar (`needsOwner`).
+    && (q.kind === 'permission' || q.kind === 'owner' || q.kind === 'member' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
   const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
     id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
-    text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
+    text: q.kind === 'permission' || (q.kind === 'member' && q.of === 'permission') ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
+    // Who waits and on what: the phone names the row by the member, never by a session of this Super.
+    ...(q.kind === 'member' && q.member ? { member: digestText(q.member, 64), ...(q.of ? { of: q.of } : {}) } : {}),
   }));
   const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
   const mainBatches = (state.mainBatches ?? []).filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);

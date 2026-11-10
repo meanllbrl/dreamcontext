@@ -31,6 +31,7 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.MAX_PRESENT).toBe(server.MAX_PRESENT);
     for (const k of server.CONTAINER_KINDS) expect(client.defaultShape(k)).toBe(server.defaultShape(k));
     expect([...client.QUEUE_KINDS]).toEqual([...server.QUEUE_KINDS]);
+    expect([...client.MEMBER_OFS]).toEqual([...server.MEMBER_ITEM_OF]);
     expect([...client.QUEUE_STATES]).toEqual([...server.QUEUE_STATES]);
     expect([...client.CHILD_ROWS]).toEqual([...server.CHILD_ROWS]);
     expect([...client.STUCK_REASONS]).toEqual([...server.STUCK_REASONS]);

@@ -36,7 +36,7 @@ import './SuperAgenda.css';
  * has the same "Write about this" (it asks the Super again through the composer) and, where the
  * owner's own window is (`onDropOwed`), "Gerek yok". The phone only reads them.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -66,6 +66,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onDropOwed?: (id: string) => void;
   /** Drawn after the sections in the full notepad: a member's "Görevleri" (plan-r10 1c). */
   extra?: ReactNode;
+  /** A member's row opens its page (false on the phone, which has none: the row is read only). */
+  canOpenMember?: boolean;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
@@ -105,11 +107,11 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   const press = (r: AgendaRow) => {
     if (!r.item) return;
     // An AI Team member waiting on him: its page, where its own card answers it.
-    if (r.member) { requestOpenAgents({ slug: r.member }); return; }
+    if (r.member) { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (r.member ? true : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && (r.member ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
 
   const rowOf = (r: AgendaRow) => {
     const body = (

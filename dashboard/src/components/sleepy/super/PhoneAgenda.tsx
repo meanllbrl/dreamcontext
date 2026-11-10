@@ -26,6 +26,8 @@ export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { 
   const queue: SuperQueueItem[] = d.waiting.map((w) => ({
     id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
     ...(w.text ? { ownerText: w.text } : {}),
+    ...(w.member ? { member: w.member } : {}),
+    ...(w.of ? { of: w.of } : {}),
   }));
   return {
     // What the Super left unanswered: drawn, never dropped here (the drop door is the Mac's only).
@@ -136,6 +138,8 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
               look={input.look}
               variant="full"
               canShowChild={() => false}
+              // A member's page is the Mac's: on the phone its row is named and read only.
+              canOpenMember={false}
               onShowChild={() => { /* the phone never shows a child */ }}
               onShowQuestion={(item) => {
                 const card = questionCard(item);
