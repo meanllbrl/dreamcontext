@@ -1,3 +1,5 @@
+import { notifyAgentLevel } from '../../lib/agents/level-follow.js';
+import { agentLevelInForce } from '../../lib/whiteboards/card-chat.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { telegramHub } from '../telegram/hub.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
@@ -70,7 +72,6 @@ import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
   AGENT_AUTONOMY_LEVELS,
   AutomationError,
-  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
   type AgentAutonomy,
   type AutomationManifest,
@@ -233,7 +234,9 @@ export function summarizeAgent(
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
-    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    // The level its conversations run at (the last approved text), so the label never shows a
+    // level a waiting change has not put in force yet.
+    autonomy: agentLevelInForce(contextRoot, target, home),
     face: faceOf(target.slug, agent?.face ?? null),
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
@@ -617,6 +620,8 @@ export async function handleAgentsUpdate(
       // was approved as it stood before the save is stamped (`withRestamp`): a teammate's change
       // waiting for its card stays waiting.
       ownerEdit(contextRoot, params.slug, patch, { consent: true, why: 'edited on the AI Team page' });
+      // Its open chats switch to the new level now (idle) or at their turn's end.
+      notifyAgentLevel(contextRoot, params.slug);
       // A new title is the bot's new name in Telegram.
       if (patch.title !== undefined && patch.title !== current.title) telegramHub()?.refreshIdentity(params.slug);
     }
@@ -822,6 +827,8 @@ export async function handleAgentsApprove(
     registerProject(projectRoot);
     approveAutomation(projectRoot, target, new Date());
     settleApprovalQuestions(contextRoot, params.slug);
+    // An approved change may move its level: its open chats follow.
+    notifyAgentLevel(contextRoot, params.slug);
     // Approved on the Super Agent's own card: it hears the decision as an event.
     await tellSuperMember(contextRoot, body.sessionId, params.slug, 'approved');
     sendSummary(res, contextRoot, params.slug);
@@ -1032,7 +1039,7 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     slug,
     title: target.agentTitle || target.title,
     face: faceOf(slug, agent?.face ?? null),
-    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    autonomy: agentLevelInForce(contextRoot, target),
     homeSessionId: home,
     // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
     // moment ago) is not held: the stage adopts it.

@@ -45,6 +45,7 @@ import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chat
 import { patchAgentSettings, readAgentSettings } from '../../../lib/agentSettings';
 import { useIsNewShell } from '../../../lib/uxMode';
 import { savedDefaultReceipt } from './defaultReceipt';
+import { MemberAutonomy } from '../../aiteam/AutonomyChip';
 import { useAgents, findAgent } from '../../../hooks/useAgents';
 import {
   composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, keepFieldTextChildless, measureBodyChrome, readFieldMetrics,
@@ -224,12 +225,15 @@ function PageChipName({ name }: { name: string }) {
 }
 
 /** The leading mode + permission trigger (the mascot is the costly part of it). */
-const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, open, onToggle }: {
+const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, memberLabel, open, onToggle }: {
   mode: ChatMode;
   agent: string;
   agentName: string;
   hasPhoto: boolean;
   permissionMode: 'auto' | 'bypass';
+  /** A member's chat: its autonomy label (MemberAutonomy) stands where the permission word was,
+   *  because this session's permission is not what the member runs under. */
+  memberLabel?: ReactNode;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -241,7 +245,7 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
         {...{ [MENU_TRIGGER_ATTR]: '' }}
         className="chat-cmp-modeltrigger chat-cmp-modetrigger"
         onClick={onToggle}
-        title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version} · Permission: ${permissionMode}`}
+        title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version}${memberLabel ? '' : ` · Permission: ${permissionMode}`}`}
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -258,9 +262,10 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
           </>
         )}
         {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
-        <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
+        {!memberLabel && <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>}
         <Chevron />
       </button>
+      {memberLabel}
     </div>
   );
 });
@@ -2253,6 +2258,10 @@ export function Composer({
     return t('shell.composer.newChats').replace('{value}', value);
   };
   /** Who this box talks to: the agent, else the tool this chat runs on. */
+  // A member's chat (the roster has the agent): its autonomy, read from the member, replaces the
+  // permission control; not-yet-loaded keeps today's trigger rather than guessing a level.
+  const memberKnown = !!agentSummary;
+  const memberLabel = useMemo(() => (memberKnown ? <MemberAutonomy slug={agent} variant="composer" /> : undefined), [memberKnown, agent]);
   const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : session.tool === 'antigravity' ? 'Antigravity' : 'Claude';
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
@@ -2342,6 +2351,7 @@ export function Composer({
             permission={permissionMode}
             projectPermission={projectPermissionMode}
             onPermissionChange={stablePermissionChange}
+            hidePermission={!!memberLabel}
             close={menu.close}
           />
         </div>
@@ -2680,6 +2690,7 @@ export function Composer({
             agentName={agentName}
             hasPhoto={!!agentSummary?.hasPhoto}
             permissionMode={permissionMode}
+            memberLabel={memberLabel}
             open={menu.open === 'mode'}
             onToggle={toggleMode}
           />

@@ -157,7 +157,7 @@ export function AgentTriggerName({ slug, title, hasPhoto }: { slug: string; titl
 }
 
 export function ModeMenu({
-  mode, onModeChange, agent = '', onAgentPick, permission, projectPermission, onPermissionChange, close,
+  mode, onModeChange, agent = '', onAgentPick, permission, projectPermission, onPermissionChange, hidePermission = false, close,
 }: {
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
@@ -184,6 +184,9 @@ export function ModeMenu({
    */
   projectPermission?: PermissionMode;
   onPermissionChange: (mode: PermissionMode) => void;
+  /** A member's chat: its level is set in its Edit dialog (the autonomy label), so this menu
+   *  offers no permission control of its own. */
+  hidePermission?: boolean;
   close: () => void;
 }) {
   const note = (PERMISSIONS.find((p) => p.id === permission) ?? PERMISSIONS[0]).desc;
@@ -242,32 +245,37 @@ export function ModeMenu({
 
       {onAgentPick && <AgentList agent={agent} onPick={onAgentPick} close={close} />}
 
-      <div className="chat-cmp-menu-divider" />
+      {!hidePermission && (
+        <>
+        <div className="chat-cmp-menu-divider" />
 
 
-      <div className="chat-cmp-permrow">
-        <span className="chat-cmp-grouplabel">Permission</span>
-        <span className="chat-cmp-segment">
-          {PERMISSIONS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={p.id === permission}
-              className={`chat-cmp-segment-opt is-${p.id}${p.id === permission ? ' is-active' : ''}`}
-              onClick={() => { onPermissionChange(p.id); close(); }}
-            >
-              <span aria-hidden>{p.glyph}</span>
-              <span>{p.label}</span>
-            </button>
-          ))}
-        </span>
-      </div>
-      {/* Two lines, deliberately: what the mode DOES, then how far a change REACHES. The
-          segment above shows this session's own mode while a click rewrites the project's —
-          so the scope is spelled out rather than left to be inferred from a chip. */}
-      <p className="chat-cmp-permnote">{note}</p>
-      {scopeNote && <p className="chat-cmp-permnote">{scopeNote}</p>}
+        <div className="chat-cmp-permrow">
+          <span className="chat-cmp-grouplabel">Permission</span>
+          <span className="chat-cmp-segment">
+            {PERMISSIONS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={p.id === permission}
+                className={`chat-cmp-segment-opt is-${p.id}${p.id === permission ? ' is-active' : ''}`}
+                onClick={() => { onPermissionChange(p.id); close(); }}
+              >
+                <span aria-hidden>{p.glyph}</span>
+                <span>{p.label}</span>
+              </button>
+            ))}
+          </span>
+        </div>
+        {/* Two lines, deliberately: what the mode DOES, then how far a change REACHES. The
+            segment above shows this session's own mode while a click rewrites the project's —
+            so the scope is spelled out rather than left to be inferred from a chip. */}
+        <p className="chat-cmp-permnote">{note}</p>
+        {scopeNote && <p className="chat-cmp-permnote">{scopeNote}</p>}
+
+        </>
+      )}
 
       {/* NO "Set as default" here, deliberately (owner call). A permission default is
           remembered per project by the surface itself; a MODE is a per-session choice, and a

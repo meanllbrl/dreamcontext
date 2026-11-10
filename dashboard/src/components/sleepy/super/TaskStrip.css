@@ -127,6 +127,7 @@
 }
 @container super-centre (max-width: 559px) {
   .super-member-head .super-member-model { display: none; }
+  .super-member-head .aiteam-autonomy { display: none; }
   .super-centre-head:has(.super-member-head) .super-fresh-btn { padding: 0 var(--space-1); }
   .super-centre-head:has(.super-member-head) .super-fresh-btn-label { display: none; }
 }
