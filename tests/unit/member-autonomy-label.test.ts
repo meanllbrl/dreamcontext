@@ -104,3 +104,14 @@ describe('the stage head', () => {
     expect(read('dashboard/src/components/sleepy/super/TaskStrip.css')).toMatch(/\.super-member-head \.aiteam-autonomy \{ display: none; \}/);
   });
 });
+
+describe('an old member that cannot hold a level', () => {
+  it('its Edit dialog still shows the autonomy field, read-only on Balanced, and says why', () => {
+    const dialog = read('dashboard/src/components/agents/AgentIdentityDialog.tsx');
+    expect(dialog).not.toMatch(/editing && !detail\.data\?\.agent\.implicit &&/);
+    expect(dialog).toMatch(/disabled=\{!ready \|\| !!detail\.data\?\.agent\.implicit\}/);
+    expect(dialog).toMatch(/autonomy: agent\.autonomy \?\? 'balanced'/);
+    const i18n = read('dashboard/src/context/I18nContext.tsx');
+    expect(i18n.match(/'aiteam\.autonomy\.implicit':/g)).toHaveLength(2);
+  });
+});

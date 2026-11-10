@@ -516,8 +516,14 @@ export function AgentIdentityDialog({
           <span>{t('agents.identity.learning')}</span>
         </label>
 
-        {editing && !detail.data?.agent.implicit && (
-          <fieldset className="aid-autonomy" disabled={!ready}>
+        {/* An old member still in its automation file cannot hold a level: it runs Balanced (the
+            default), so the field shows that, read-only, and says why on hover. */}
+        {editing && (
+          <fieldset
+            className="aid-autonomy"
+            disabled={!ready || !!detail.data?.agent.implicit}
+            title={detail.data?.agent.implicit ? t('aiteam.autonomy.implicit') : undefined}
+          >
             <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
             <div
               className="aid-segmented"

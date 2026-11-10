@@ -8,7 +8,7 @@ import { join, dirname, basename, extname, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
-  realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants,
+  realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants, watchFile, unwatchFile,
 } from 'node:fs';
 import { sendJson, sendError, isForeignOriginUpgrade, parseJsonBody } from '../middleware.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
@@ -40,7 +40,11 @@ import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
-import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { agentChatLevelArgs, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { onAgentLevel } from '../../lib/agents/level-follow.js';
+import { agentPath } from '../../lib/agents/store.js';
+import { globalAgentPath } from '../../lib/agents/scope.js';
+import { automationsRegistryPath } from '../../lib/automations/registry.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
   chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
@@ -661,6 +665,10 @@ export function spawnModelFor(o: { isAssistant: boolean; assistantModel?: string
  * its session in place with `--resume` before its next turn.
  */
 const assistantAutonomyListeners = new Set<(autonomy: Autonomy) => void>();
+
+/** How often a live member chat stats its agent's file and the approvals store (a CLI edit, a
+ *  synced pull, an approval from another process): a stat, never a read, until one changes. */
+const LEVEL_WATCH_MS = 1000;
 
 /** Called wherever the Assistant's autonomy is written (routes/assistant.ts). */
 export function notifyAssistantAutonomy(autonomy: Autonomy): void {
@@ -2816,13 +2824,15 @@ export function startChatSession(
   // spawned with; the respawn runs at once when idle, else at the turn boundary, and any
   // owner message that arrives meanwhile is held for the successor (never written here).
   // `handedOff` = this process is being replaced in place: its exit must not end the socket.
-  let respawnTo: Autonomy | null = null;
+  // A string key: the Assistant's new autonomy, or a member chat's new level argv.
+  let respawnTo: string | null = null;
   let handedOff = false;
   const heldForSuccessor: Array<Buffer | string> = [];
   let observedConversation = '';
   /** The model this chat's last init named, so a Super child's record is written once per change. */
   let notedChildModel = '';
   let unlistenAutonomy = () => { /* not the Assistant */ };
+  let unlistenLevel = () => { /* not a member chat */ };
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
   // answer/interrupt frame arriving after the child has exited must never throw on a
@@ -3728,6 +3738,7 @@ export function startChatSession(
     windowControl?.release();
     detachInbox();
     unlistenAutonomy();
+    unlistenLevel();
     // The session's checkout override dies with the session. Left behind it would be answered
     // to a RESUMED conversation of the same id whose agent is back in the project root — and
     // the same holds for its write counts, which would otherwise warn a fresh pane about
@@ -5070,6 +5081,37 @@ export function startChatSession(
     };
     assistantAutonomyListeners.add(listener);
     unlistenAutonomy = () => { assistantAutonomyListeners.delete(listener); };
+  }
+
+  // ── A member's level changed under its live chat → the same respawn in place ─────────
+  //
+  // The member's chat runs at its level (`levelArgs`, decided at spawn from the level in force).
+  // When that level moves, by any path, this chat re-reads it (`followLevel`, the ONE check) and
+  // respawns with --resume: at once when idle, else at its turn's end (the boundary above), so a
+  // tightening never waits for the owner's next message. A route of this server says so at once
+  // (level-follow.ts); every other writer is caught by the watch on the agent's file and the
+  // approvals store. A board envelope (`permissionArgs`) is not a level: it is left alone.
+  if (agentChat?.levelArgs && opts.agent) {
+    const slug = opts.agent;
+    const spawnedLevel = agentChat.levelArgs.join(' ');
+    const followLevel = (): void => {
+      if (!alive || handedOff) return;
+      let now: string[] | null = null;
+      try { now = agentChatLevelArgs(contextRoot, slug); } catch { return; }
+      // The agent is gone: nothing to follow (its next spawn refuses).
+      if (!now) return;
+      const key = now.join(' ');
+      const wasPending = respawnTo !== null;
+      respawnTo = key === spawnedLevel ? null : key;
+      if (respawnTo !== null) { scheduleRespawn(); return; }
+      // Moved back before the turn ended: the messages held for a successor go to this process.
+      if (wasPending) for (const raw of heldForSuccessor.splice(0)) onWsMessage(raw);
+    };
+    const offRoute = onAgentLevel((root, s) => { if (root === contextRoot && s === slug) followLevel(); });
+    const watched = [agentPath(contextRoot, slug), globalAgentPath(slug), automationsRegistryPath()];
+    const onFile = (): void => followLevel();
+    for (const p of watched) watchFile(p, { persistent: false, interval: LEVEL_WATCH_MS }, onFile);
+    unlistenLevel = () => { offRoute(); for (const p of watched) unwatchFile(p, onFile); };
   }
 
   let successorStarted = false;
