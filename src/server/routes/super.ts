@@ -41,7 +41,10 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
-import { pinnedMemberCard } from '../../lib/super/inbox.js';
+import { memberAskReach, pinnedMemberCard, superAnsweredFirst } from '../../lib/super/inbox.js';
+import { answerOwnerItem } from '../../lib/super/answer.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
@@ -1457,13 +1460,16 @@ async function answerMemberMirror(c: SuperCaller, res: ServerResponse, mirror: S
   await writeSuper(root, memberId, (s) => {
     const ask = s.queue.find((q) => q.id === mirror.answers && q.kind === 'ask' && q.state !== 'done');
     if (!s.session || !ask) return;
+    // The Super's words, never marked the owner's (a reply `workOrigin: 'owner'` is his own answer).
     s.queue.push({
       id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(),
-      text: text.slice(0, MAX_REQUEST_TEXT), answers: ask.id, ...(ask.workOrigin ? { workOrigin: ask.workOrigin } : {}),
+      text: text.slice(0, MAX_REQUEST_TEXT), answers: ask.id, ...(ask.workOrigin && ask.workOrigin !== 'owner' ? { workOrigin: ask.workOrigin } : {}),
     });
     replied = true;
   });
   if (!replied) { refuse(res, 409, 'already_done', 'the member\'s question is already closed'); return; }
+  // Answered inside its window: it never rings on any surface (K9).
+  superAnsweredFirst(mirror.id, mirror.answers);
   await writeSuper(root, c.superId, (s) => { const q = s.queue.find((x) => x.id === mirror.id); if (q) q.state = 'done'; });
   void pumpSuper(root, memberId);
   ok(res, { item: mirror.id, answered: true, member: mirror.member });
@@ -2405,7 +2411,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // A start/approve question with no report card, or a preview that is a text to read: sent
     // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
     const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
+    // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
+    const via = callerSuper(c) !== 'main' && !toMain
+      ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
+    const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
+    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}) });
   },
 
   merge: async (c, b, res) => {
@@ -3791,6 +3801,36 @@ function ownerRoute(verb: SuperOwnerVerb) {
       if (!res.headersSent) storeRefusal(res, err);
     }
   };
+}
+
+/** The HTTP status an owner answer's refusal is sent with. */
+function answerStatus(r: Extract<OwnerAnswerResult, { ok: false }>): number {
+  return r.error === 'owner_page_only' ? 403 : r.error === 'already_answered' ? 409 : r.error === 'not_found' ? 404
+    : r.error === 'no_window' ? 409 : r.error === 'not_offered' ? 409 : 400;
+}
+
+/**
+ * POST /api/super/owner-answer (uye-bildirim K5, G4): the owner answers ONE item from his bar or
+ * the Super chat card, in place. Every kind, but only from the app's own page with the shell's
+ * owner key (`fromOwnerPage`): a plain browser on this Mac gets the refusal line and falls back to
+ * Open. Any grant is built from the STORED item (`answerOwnerItem`), never from this body.
+ */
+export async function handleSuperOwnerAnswer(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  if (!fromOwnerPage(req)) {
+    sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can answer this; open the item there.') });
+    return;
+  }
+  const b = (await parseJsonBody(req)) ?? {};
+  const via = b.via === 'bar' || b.via === 'chat' || b.via === 'member-chat' ? b.via : 'bar';
+  const body: OwnerAnswerRequest = { record: typeof b.record === 'string' ? b.record : '', item: typeof b.item === 'string' ? b.item : '', answer: b.answer as OwnerAnswerRequest['answer'], via };
+  let r: OwnerAnswerResult;
+  try { r = await answerOwnerItem(contextRoot, body); } catch (err) {
+    if (!res.headersSent) storeRefusal(res, err);
+    return;
+  }
+  if (r.ok) { sendJson(res, 200, r); return; }
+  sendJson(res, answerStatus(r), r);
 }
 
 export const handleSuperEnable = ownerRoute('enable');

@@ -4,8 +4,8 @@ import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { querySuperId } from '../super-id-query.js';
-import { directQuestion, superSanitizeOpts, superVaultName } from '../../lib/super/inbox.js';
-import { answerChildPermission, answerChildQuestion, childPermission, childQuestions, ownChild } from '../../lib/super/answer.js';
+import { directQuestion, memberTitle, superSanitizeOpts, superVaultName } from '../../lib/super/inbox.js';
+import { answerChildPermission, answerChildQuestion, answerOwnerItem, childPermission, childQuestions, ownChild } from '../../lib/super/answer.js';
 export { cleanPhoneAnswer, phoneAnswerOpen } from '../../lib/super/answer.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
 import { getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
@@ -51,6 +51,10 @@ export interface PhoneSuperQuestion {
    *  text, the agent's one-line description and the CLI's own reason for asking. This response
    *  travels only to the signed-in phone. */
   permission?: PhonePermission;
+  /** An AI Team member's item mirrored into main's queue (K8): its slug and its title, so the
+   *  phone names the member, never only a slug. Answered on the member's own item. */
+  member?: string;
+  memberTitle?: string;
 }
 
 export interface PhonePermission { tool: string; text: string; description?: string; reason?: string; reasonType?: string }
@@ -98,14 +102,19 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
   if (qs) return qs;
   // Still asking it, only too large to carry: the words only. Not asking it: nothing to answer.
   return pendingRequest(getChat(item.sessionId), item.requestId) ? null : 'gone';
-}, permissionOf: (item: SuperQueueItem) => PendingQuestion | null = childPermission): PhoneSuperQuestions {
+}, permissionOf: (item: SuperQueueItem) => PendingQuestion | null = childPermission, titleOf: (slug: string) => string = (slug) => slug): PhoneSuperQuestions {
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
     // A child's question is his from birth (`direct`), not only once the Super escalated it.
-    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q) || phonePermissionOpen(q))
+    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q) || phonePermissionOpen(q) || phoneMirrorOpen(q))
     .sort((a, b) => a.createdAt - b.createdAt);
   const questions: PhoneSuperQuestion[] = [];
   for (const q of open) {
+    if (q.kind === 'member') {
+      const m = phoneMirror(q, titleOf);
+      if (m) questions.push(m);
+      continue;
+    }
     const base = {
       id: q.id, kind: q.kind as PhoneSuperQuestion['kind'], sessionId: q.sessionId, createdAt: q.createdAt,
       ...(q.requestId ? { requestId: q.requestId } : {}), ...(q.ownerText ? { ownerText: q.ownerText } : {}),
@@ -138,6 +147,41 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
   return { session: state.session, questions };
 }
 
+/** A member's mirror the phone answers: its own question, a job's question, a permission (K5:
+ *  the phone answers questions and permissions; a card only he can act on is the Mac's). */
+export function phoneMirrorOpen(item: SuperQueueItem): boolean {
+  return item.kind === 'member' && item.state !== 'done' && (item.of === 'ask' || item.of === 'question' || item.of === 'permission');
+}
+
+/** One mirror as the phone draws it: named by the member's title, its card read like its kind's. */
+function phoneMirror(q: SuperQueueItem, titleOf: (slug: string) => string): PhoneSuperQuestion | null {
+  const slug = q.member ?? '';
+  const named = { member: slug, memberTitle: titleOf(slug) || slug };
+  const base = { id: q.id, sessionId: q.sessionId, createdAt: q.createdAt, ...(q.requestId ? { requestId: q.requestId } : {}), ...(q.ownerText ? { ownerText: q.ownerText } : {}), ...named };
+  if (q.of === 'ask') return { ...base, kind: 'ask', card: q.ask ?? askSpecFromLegacy(q.ownerText ?? '', []) };
+  const pq = pendingRequest(getChat(q.sessionId), q.requestId);
+  if (!pq) return null;
+  if (q.of === 'permission') {
+    if (!pq.isPermission) return null;
+    return { ...base, kind: 'permission', card: null, permission: { tool: pq.toolName, text: pq.text, ...(pq.description ? { description: pq.description } : {}) } };
+  }
+  if (pq.isPermission) return null;
+  return { ...base, kind: 'question', card: pq.questions ? { ...(pq.title ? { title: pq.title } : {}), questions: pq.questions.map((x) => ({ ...x, options: x.options.map((o) => ({ ...o })) })) } : null };
+}
+
+/** A member mirror in main's record, if `id` names one (its answer goes through `answerOwnerItem`). */
+async function mainMirror(contextRoot: string, id: string): Promise<SuperQueueItem | null> {
+  try {
+    const s = await readSuperState(contextRoot, 'main', superSanitizeOpts());
+    return s.queue.find((q) => q.id === id && q.kind === 'member') ?? null;
+  } catch { return null; }
+}
+
+/** The shared answer's refusal, in the phone routes' own words. */
+function sendOwnerAnswerFailure(res: ServerResponse, error: string): void {
+  sendAnswerFailure(res, error === 'already_answered' || error === 'not_found' ? 'stale_request' : error === 'invalid' ? 'invalid_args' : error === 'not_offered' ? 'stale_request' : error);
+}
+
 /** GET /api/agent/super-questions */
 export async function handleSuperPhoneQuestions(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
@@ -153,7 +197,8 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
     return;
   }
   const vault = superVaultName(contextRoot);
-  sendJson(res, 200, phoneSuperQuestions(state, (item) => {
+  const titleOf = (slug: string): string => { try { return memberTitle(contextRoot, slug); } catch { return slug; } };
+  const listed = phoneSuperQuestions(state, (item) => {
     if (!ownChild(state, vault, item)) return 'gone';
     const qs = childQuestions(item);
     if (qs) return qs;
@@ -166,7 +211,10 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
     if (!pq || isPhoneSocket(req)) return pq;
     const { description: _d, reason: _r, ...rest } = pq;
     return { ...rest, text: '' };
-  }));
+  }, titleOf);
+  // A mirror's command text goes to the signed-in phone only, like a child's.
+  if (!isPhoneSocket(req)) for (const q of listed.questions) if (q.member && q.permission) q.permission = { tool: q.permission.tool, text: '' };
+  sendJson(res, 200, listed);
 }
 
 /** POST /api/agent/super-answer {item, requestId, picked?, notes?, unclear?} */
@@ -177,9 +225,20 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   const b = (await parseJsonBody(req)) ?? {};
   const id = typeof b.item === 'string' ? b.item : '';
   const requestId = typeof b.requestId === 'string' ? b.requestId : '';
-  if (!id || !requestId || requestId.length > 200) { sendError(res, 400, 'invalid_args', 'item and requestId are required'); return; }
+  if (!id || requestId.length > 200) { sendError(res, 400, 'invalid_args', 'item and requestId are required'); return; }
   const answerSuper = querySuperId(req, res, contextRoot);
   if (!answerSuper) return;
+  // A member's mirror: answered on the member's own item, through the one answer function (K5).
+  const mirror = answerSuper === 'main' ? await mainMirror(contextRoot, id) : null;
+  if (mirror) {
+    const picked = b.picked && typeof b.picked === 'object' && !Array.isArray(b.picked) ? b.picked as Record<string, string> : {};
+    const answer = mirror.of === 'ask' && typeof b.unclear === 'string' ? { kind: 'ask' as const, text: b.unclear.slice(0, MAX_ANSWER) || 'Unclear, ask again.' } : { kind: 'question' as const, answers: picked };
+    const r = await answerOwnerItem(contextRoot, { record: 'main', item: id, answer, via: 'phone' });
+    if (!r.ok) { sendOwnerAnswerFailure(res, r.error); return; }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (!requestId) { sendError(res, 400, 'invalid_args', 'item and requestId are required'); return; }
   const r = await answerChildQuestion(contextRoot, answerSuper, {
     item: id, requestId, picked: b.picked, notes: b.notes, unclear: typeof b.unclear === 'string' ? b.unclear.slice(0, MAX_ANSWER) : null,
   });
@@ -200,6 +259,14 @@ export async function handleSuperPhonePermission(req: IncomingMessage, res: Serv
   // A member's Super answers through its own record (`?superId=m:<slug>`), as the GET listed it.
   const permSuper = querySuperId(req, res, contextRoot);
   if (!permSuper) return;
+  // A member's mirror: its own permission or a job's, answered there; never a grant from the phone.
+  const mirror = permSuper === 'main' ? await mainMirror(contextRoot, id) : null;
+  if (mirror) {
+    const r = await answerOwnerItem(contextRoot, { record: 'main', item: id, answer: { kind: 'permission', behavior: choice }, via: 'phone' });
+    if (!r.ok) { sendOwnerAnswerFailure(res, r.error === 'already_answered' ? 'stale_permission' : r.error); return; }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   const r = await answerChildPermission(contextRoot, permSuper, { item: id, requestId, choice });
   if (!r.ok) { sendAnswerFailure(res, r.error === 'stale_request' ? 'stale_permission' : r.error); return; }
   sendJson(res, 200, { ok: true });

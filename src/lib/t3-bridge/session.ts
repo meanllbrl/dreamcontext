@@ -48,7 +48,13 @@ import * as Schema from 'effect/Schema';
 import * as Scope from 'effect/Scope';
 import * as Stream from 'effect/Stream';
 import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
-import { bypassNeedsOwner, claudeRuntimePolicy, codexRuntimePolicy, instanceRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
+import { bypassNeedsOwner, claudeRuntimePolicy, codexRuntimePolicy, grantRoots, instanceRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
+import { realProcSys, whoAmI, type ProcSys } from '../grants/binding.js';
+import { match } from '../grants/match.js';
+import { realResolver, type Resolver } from '../grants/eligible.js';
+import { consumeOnce, listGrants } from '../grants/store.js';
+import type { Grant } from '../grants/types.js';
+import type { BridgeRefusalFrame } from '../assistant/chat-registry.js';
 import { ANTIGRAVITY_DEFAULT_MODEL } from '@t3tools/contracts';
 import { pictureAttachments } from './pictures.js';
 import { antigravityInstanceId } from '../antigravity-accounts.js';
@@ -117,6 +123,67 @@ export interface BridgeSessionOptions {
   readonly onCompacting?: () => void;
   /** A frame that is not chat output (bridge diagnostics) — never anything secret. */
   readonly log?: (line: string) => void;
+  /** Tests only: the process table, disk and store the grant check reads (default: the real ones). */
+  readonly grants?: BridgeGrantDeps;
+}
+
+// ─── Grants at the bridge (uye-bildirim K3, G1 for Codex and Antigravity) ─────────────────────
+
+export interface BridgeGrantDeps {
+  sys?: ProcSys;
+  resolve?: Resolver;
+  home?: string;
+  now?: number;
+  roots?: (project: string) => string[];
+}
+
+/**
+ * The owner's grant that answers this approval request, spent when it is a one-shot, or null.
+ * The bridge IS the bound process (the server spawned `dreamcontext t3-chat` itself and wrote
+ * its binding by pid), so `whoAmI` in bridge mode reads no environment and no argument: a
+ * `t3-chat` an agent starts itself, whatever it forges, has no binding and gets nothing.
+ * Never in plan mode, never for a question, and never for what `bypassNeedsOwner` names (the
+ * gates the hook would refuse first). Anything unreadable is null: the request goes on as before.
+ */
+export function bridgeGrantFor(
+  req: { tool_name?: unknown; input?: unknown },
+  ctx: { cwd: string; mode: string },
+  deps: BridgeGrantDeps = {},
+): Grant | null {
+  try {
+    if (ctx.mode === 'plan') return null;
+    const tool = typeof req.tool_name === 'string' ? req.tool_name : '';
+    if (!tool || tool === 'AskUserQuestion') return null;
+    if (bypassNeedsOwner(tool, req.input, ctx.cwd)) return null;
+    const opts = deps.home ? { home: deps.home } : {};
+    const sys = deps.sys ?? realProcSys();
+    const binding = whoAmI({ project: ctx.cwd }, sys, { mode: 'bridge', ...opts });
+    if (!binding) return null;
+    const grants = listGrants(binding.project, opts);
+    if (!grants.length) return null;
+    const roots = (deps.roots ?? ((p: string) => grantRoots(p, opts)))(binding.project);
+    const g = match(grants, {
+      project: binding.project, pin: binding.pin, ...(binding.member ? { member: binding.member } : {}), tool, input: req.input,
+    }, {
+      project: binding.project, roots, cwd: sys.realpath(ctx.cwd) ?? binding.project, resolve: deps.resolve ?? realResolver(),
+      ...(deps.home ? { home: deps.home } : {}), ...(deps.now !== undefined ? { now: deps.now } : {}),
+    });
+    if (!g) return null;
+    if (g.scope === 'once' && !consumeOnce(g.id, opts)) return null;
+    return g;
+  } catch {
+    return null;
+  }
+}
+
+/** The refusal frame a call denied unattended leaves on the stream (chat-registry.ts
+ *  `bridgeRefusalFrame`, which K2 reads): built here, so the bridge process never loads the
+ *  server's registry. `t3-bridge-grants.test.ts` pins it equal to the registry's builder. */
+export function unattendedRefusalFrame(tool: string, input: unknown, message: string, toolUseId?: string): BridgeRefusalFrame {
+  return {
+    type: 'system', subtype: 'permission_denied', decision_reason_type: 'bridge',
+    tool_name: tool, ...(toolUseId ? { tool_use_id: toolUseId } : {}), tool_input: input, message,
+  };
 }
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -559,6 +626,7 @@ export class BridgeSession {
     if (lateEnd) { this.stoppedTurn = null; return; }
     for (const frame of this.wire.translate(event)) {
       if (this.answeredForBypass(frame)) continue;
+      if (this.answeredByGrant(frame)) continue;
       if (!this.hidden) { this.opts.emit(frame); continue; }
       if (frame.type === 'assistant') this.hidden.text += hiddenText(frame);
       // It was told to run no tools: an approval card, or any tool at all, ends it, out of sight.
@@ -612,9 +680,34 @@ export class BridgeSession {
       this.fatal(`${toolLabel(this.opts.tool)} stopped: its write gate did not run, so this child must not go on.`);
       return true;
     }
-    if (bypassNeedsOwner(String(req.tool_name), req.input, this.opts.cwd)) return deny('This needs the owner, and this run has no owner watching. Leave it, and say so in your report.');
+    if (bypassNeedsOwner(String(req.tool_name), req.input, this.opts.cwd)) {
+      const message = 'This needs the owner, and this run has no owner watching. Leave it, and say so in your report.';
+      // Said on the stream too, in the shape Claude Code uses for its own refusals: the server's
+      // registry turns it into the owner's item (K2), so this stop is never silent.
+      const toolUseId = typeof (req as { tool_use_id?: unknown }).tool_use_id === 'string' ? (req as { tool_use_id: string }).tool_use_id : undefined;
+      if (typeof req.tool_name === 'string' && req.tool_name) this.opts.emit({ ...unattendedRefusalFrame(req.tool_name, req.input, message, toolUseId) });
+      return deny(message);
+    }
     this.bypassAnswered.add(id);
     void this.answer(id, { behavior: 'allow' }).catch((err) => this.opts.log?.(`child answer failed: ${String(err).slice(0, 200)}`));
+    return true;
+  }
+
+  /**
+   * A permission request the owner already answered with a grant (G1): allowed here, before any
+   * card is drawn. Every tool on the bridge (Codex, Antigravity, T3's Claude engine) takes this
+   * one path. A hidden turn runs no tools, so it is never answered here.
+   */
+  private answeredByGrant(frame: WireFrame): boolean {
+    if (this.hidden || frame.type !== 'control_request') return false;
+    const id = typeof frame.request_id === 'string' ? frame.request_id : '';
+    const req = frame.request as { subtype?: unknown; tool_name?: unknown; input?: unknown } | undefined;
+    if (!id || req?.subtype !== 'can_use_tool') return false;
+    const g = bridgeGrantFor(req, { cwd: this.opts.cwd, mode: this.mode }, this.opts.grants);
+    if (!g) return false;
+    this.bypassAnswered.add(id);
+    this.opts.log?.(`allowed on the owner's ${g.scope} grant`);
+    void this.answer(id, { behavior: 'allow' }).catch((err) => this.opts.log?.(`grant answer failed: ${String(err).slice(0, 200)}`));
     return true;
   }
 

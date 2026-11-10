@@ -75,6 +75,15 @@ describe('the route policy is exhaustive', () => {
     ]) expect(ROUTE_POLICY[k]?.allow, k).toBe(false);
   });
 
+  it('uye-bildirim: the phone reads a member\'s rules but never answers from the bar or removes a rule (both need the shell\'s owner key)', () => {
+    expect(ROUTE_POLICY['GET /api/agents/:slug/permissions']).toMatchObject({ allow: true, scope: 'request', body: 'json' });
+    expect(ROUTE_POLICY['POST /api/agents/:slug/permissions/remove']?.allow).toBe(false);
+    expect(ROUTE_POLICY['POST /api/super/owner-answer']?.allow).toBe(false);
+    // The routes these rows guard really are registered under these names.
+    expect(registered).toContain('POST /api/super/owner-answer');
+    expect(registered).toContain('POST /api/agents/:slug/permissions/remove');
+  });
+
   it('the phone sends a photo and allows one outside picture for itself, never through the desktop\'s grant file', () => {
     // Task hands-free-phone-shows-every-picture… (owner 2026-10-23): the drop takes a phone photo
     // (its caps live in the handler), and the phone's one-tap consent is its own route; the

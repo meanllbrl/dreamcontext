@@ -111,7 +111,8 @@ import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantC
 import { listCards, onCardsChange } from '../../lib/cards/records.js';
 import { flushHeldReports } from '../runs/delivery.js';
 import { ensureCards } from './run-terminal.js';
-import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, registerCrewHandle, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { openCrewSeat } from './crew-binding.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
 import { takeSuperReactionBlock } from '../../lib/telegram/reactions.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
@@ -132,7 +133,7 @@ import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChi
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
-import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
+import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
@@ -1043,7 +1044,8 @@ setSuperDigestSink((contextRoot, state) => {
     entry.mirrorFrame(stage);
     stageKeys.set(sid, stage);
   }
-  const d = superDigest(state);
+  // Titles of the member and routine rows resolved from that vault's disk (phone-mirror.ts).
+  const d = superDigestFor(contextRoot, state);
   if (digestKeys.get(sid) === d.key) return;
   digestSeq.set(sid, ++digestClock);
   entry.mirrorFrame(superDigestFrame(d));
@@ -2772,6 +2774,19 @@ export function startChatSession(
       seed = seedForConversation(contextRoot, [heldConversation, pinId ? resolveAgentSession(contextRoot, pinId) : '']);
     } catch { seed = {}; }
   }
+  // A Super crew process's seat (uye-bildirim K3, crew-binding.ts): its binding is written now, by
+  // the pid this server spawned, so the hook and the bridge can tell who asks; its mode and crew
+  // flag go to the registry, never read from the stream.
+  const launchedMode = bridgeScript ? bridgeMode : spawnModeAt >= 0 ? argv[spawnModeAt + 1] ?? 'default' : 'default';
+  const crewSeat = openCrewSeat({
+    pid: child.pid, pin: chatRegistryId, projectRoot, isSuper, superCrew: superCrewEnv === '1',
+    excluded: isAssistant || !!card || !!app || scopedCard, agent: opts.agent, memberCrew: opts.memberCrew, mode: launchedMode,
+    setMode: (next) => {
+      if (!alive || stdinEnding()) return false;
+      if (next !== 'bypassPermissions') registry?.notBypass();
+      return writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'set_permission_mode', mode: next } });
+    },
+  }, { log: (line) => console.warn(`[agent-chat] ${line}`) });
   const registry: ChatHandle | null = isAssistant || card ? null : registerChat({
     sessionId: chatRegistryId,
     conversationId: heldConversation || null,
@@ -2779,6 +2794,8 @@ export function startChatSession(
     mode,
     ...(delegated ? { origin: 'assistant' as const } : {}),
     ...(launchedBypass ? { bypass: true } : {}),
+    permissionMode: launchedMode,
+    crew: !!crewSeat,
     seed,
   });
   // An ended Super Agent child running again without `super resume`: the owner reopened it.
@@ -2808,6 +2825,21 @@ export function startChatSession(
       interrupt: () => { if (alive) onWsMessage(JSON.stringify({ type: 'interrupt' })); },
     })
     : () => { /* not a Super */ };
+  // How the server writes ITS OWN turn into any live crew process, window or not (the owner's
+  // Allow once, K3): the injector's path, the turn noted as the server's so it is never read as
+  // his words (it clears no other wait).
+  const unregisterCrewHandle = crewSeat && registry
+    ? registerCrewHandle(chatRegistryId, {
+      sendServerTurn: (text) => {
+        if (!alive || stdinEnding() || handedOff || !text.trim()) return false;
+        crewSeat.noteServerTurn(text);
+        const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
+        return true;
+      },
+    })
+    : () => { /* not a crew process */ };
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -3061,7 +3093,7 @@ export function startChatSession(
         if (!set.has(sock) || sock.readyState !== sock.OPEN) return;
         const frame = stageMediaFrame(stageImageItems(st), true);
         if (frame) sock.send(frame);
-        if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigest(st)));
+        if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigestFor(contextRoot, st)));
       })
       .catch(() => { /* no record, no strip */ });
     return true;
@@ -3467,7 +3499,9 @@ export function startChatSession(
     const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
       || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
-    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
+    // A turn the server wrote through the crew handle (an Allow once) is the server's too.
+    const serverTurn = !tgSource && !!crewSeat?.takeServerTurn(text);
+    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || serverTurn || isServerTurnText(text) ? { server: true } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3720,6 +3754,9 @@ export function startChatSession(
     app?.dispose();
     releaseAppSlot();
     unwatchAuth();
+    // Its binding goes before its crew handle: no enforcer may still name a pid that is gone.
+    crewSeat?.exited();
+    unregisterCrewHandle();
     registry?.exited();
     unregisterInjector();
     unlistenCards();
@@ -4055,6 +4092,9 @@ export function startChatSession(
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
       }
+      // The conversation id joins the crew binding (it can change without a respawn), and the
+      // mode it reports is told to the registry.
+      crewSeat?.init(obj);
       // A Super child's model as it really runs (its own init, a tool's default included): into
       // the record once per change, so `super state` and its card say it (inbox.ts noteChildModel).
       if (!isSuper && obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id
@@ -5258,6 +5298,9 @@ export function startChatSession(
       // Off Bypass: its leftover asks are the owner's again, from this moment and for good
       // (a switch back never re-arms the Super's say: fail closed).
       if (msg.mode === 'auto') registry?.notBypass();
+      // Only the switch that lands live is told now; one into bypass is refused by the CLI, and
+      // the next `init` reports whatever the process really runs.
+      if (msg.mode === 'auto') crewSeat?.modeChanged('auto');
       writeStdin({
         type: 'control_request',
         request_id: requestId,

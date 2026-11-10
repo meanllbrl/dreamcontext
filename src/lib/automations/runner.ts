@@ -79,8 +79,10 @@ import {
   runSlotKey,
   slotLockPath,
   recordRun,
+  readAutomationCache,
   writeRunSidecar,
 } from './store.js';
+import { blockedKind } from './needs.js';
 import {
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
@@ -1136,6 +1138,20 @@ const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
   limit: null,
 };
 
+/**
+ * The approval fact a refused fire stands for (uye-bildirim K7), or null: a changed manifest that
+ * waits for his approval, or one never approved. Its id carries the manifest hash, so the same
+ * manifest is one fact however many ticks hit it. PURE but for hashing.
+ */
+export function approvalFactOf(status: RunStatus, error: string | null, m: AutomationManifest): string | null {
+  if (status !== 'awaiting-approval' && status !== 'blocked') return null;
+  let hash = '';
+  try { hash = manifestHash(m); } catch { return null; }
+  if (status === 'awaiting-approval') return `awaiting-approval:${hash}`;
+  const kind = blockedKind(error);
+  return kind === 'not-approved' ? `not-approved:${hash}` : null;
+}
+
 /** The first line a run writes to end itself as failed (see `declaredRunFailure`). */
 export const RUN_FAILED_PREFIX = 'RUN FAILED:';
 const DECLARED_FAILURE_LINES = 5;
@@ -1985,7 +2001,13 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     reviewStagedPath?: string | null;
     /** The run's final message (see `RunOutcome.result`). */
     resultText?: string | null;
+    /** The calls a light run's mode refused (uye-bildirim K7), recorded on its history row. */
+    deniedCalls?: DeniedCall[];
   }): Promise<RunOutcome> => {
+    // A fact that waits on the owner's approval goes to Telegram once (K7): never again for the
+    // same fact, a coalesced repeat or a later tick included, and with the app closed too.
+    const approvalFact = approvalFactOf(params.status, params.error, manifest as AutomationManifest);
+    const factTold = approvalFact ? readAutomationCache(contextRoot, slug)?.history.some((h) => h.toldFact === approvalFact) === true : false;
     const event: RunEvent = {
       firedAt: fireAt.toISOString(),
       startedAt: params.startedAt.toISOString(),
@@ -1999,6 +2021,10 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       costUsd: params.costUsd,
       numTurns: params.numTurns,
       permissionDenials: params.permissionDenials,
+      // A light run's own record (K7): its refusals are a fact the owner sees, a bypass run's never.
+      ...(opts.override?.light ? { light: true as const } : {}),
+      ...(opts.override?.light && params.deniedCalls?.length ? { deniedCalls: params.deniedCalls.slice(0, 10) } : {}),
+      ...(approvalFact ? { toldFact: approvalFact } : {}),
     };
     const cache = recordRun(contextRoot, slug, event, {
       advanceWatermark: params.advanceWatermark,
@@ -2006,6 +2032,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     });
     // After recordRun (plan W4): the message is built now and sent once the lock is released.
     if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout' || params.status === 'awaiting-review') buildForward(params);
+    else if (approvalFact && !factTold) buildForward({ ...params, approvalNeeded: approvalFact.startsWith('awaiting-approval:') ? 'awaiting-approval' : 'not-approved' });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
     // The run's terminal entry, AFTER `recordRun` so the thread can never claim
     // an outcome the cache does not have. Only the three statuses that mean the
@@ -2137,7 +2164,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   /** The Telegram message for this run, or none (member-forward.ts): its member's bot, else the
    *  project's Super bot (super-rutin). Only a scheduled fire, never a task step or a job the
    *  Super sent; best-effort, never the run's outcome. */
-  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null }): void => {
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: 'awaiting-approval' | 'not-approved' }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
       // A Super automation's answer is the Super's own turn, never a forwarded run result.
@@ -2157,6 +2184,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         question: params.reviewCardId ? forwardQuestion : null,
         scheduled, runId: fireIso, entries, verified: verifiedRunPosts(entries, fireIso, runPostKey),
         home, log: logFn,
+        ...(params.approvalNeeded ? { approvalNeeded: params.approvalNeeded } : {}),
       });
     } catch (err) {
       logFn(`automation "${slug}": telegram forward skipped: ${(err as Error).message}`);
@@ -3187,6 +3215,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       costUsd: claudeResult?.costUsd ?? null,
       numTurns: claudeResult?.numTurns ?? null,
       permissionDenials: claudeResult?.permissionDenials ?? 0,
+      deniedCalls: claudeResult?.deniedCalls ?? [],
       startedAt,
       finishedAt,
       durationMs,

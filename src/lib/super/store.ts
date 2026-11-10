@@ -396,8 +396,15 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire)) ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString() } : undefined;
     if (q.kind === 'schedule' && !scheduled) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
-    const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
+    // Its mirror keeps the wait too (refusal fact included): without it the bar cannot tell a
+    // refused command, which it answers in place, from a sign-in card, which only opens the
+    // member. An older mirror without one stays (it is drawn as Open).
+    const wait = q.kind === 'owner' || (isMirror && mirrorOf === 'owner') ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
+    // A permission's call, on the item and on its mirror (a surface shows it before any Allow).
+    const call = q.kind === 'permission' || (isMirror && mirrorOf === 'permission') ? cleanItemCall(q.call) : undefined;
+    const allowable = q.kind === 'permission' || (q.kind === 'owner' && wait?.kind === 'refusal')
+      || (isMirror && (mirrorOf === 'permission' || (mirrorOf === 'owner' && wait?.kind === 'refusal')));
     const rawText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
     const ownerText = rawText && isAsk ? askLine(rawText) : rawText;
     // An ask's options are re-validated whole: one refused option drops them all (the bar then
@@ -474,9 +481,12 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(q.own === true && q.sessionId === session && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
       ...(routine && fact ? { routine, fact } : {}),
       ...(isRoutine && q.shown === true ? { shown: true as const } : {}),
-      // A grant offer rides only what can be allowed: a permission, a refusal, or their mirror.
-      ...((q.kind === 'permission' || (q.kind === 'owner' && wait?.kind === 'refusal') || (isMirror && (mirrorOf === 'permission' || mirrorOf === 'owner'))) && cleanGrantOffer(q.offer)
-        ? { offer: cleanGrantOffer(q.offer)! } : {}),
+      // A grant offer, and the mark that one was already given, ride only what can be allowed: a
+      // permission, a refusal, or their mirror (a mirror of an owner item only when its wait says
+      // refusal: a sign-in card is never allowed).
+      ...(allowable && cleanGrantOffer(q.offer) ? { offer: cleanGrantOffer(q.offer)! } : {}),
+      ...(allowable && oneOf(GRANT_SIZES, q.allowed) ? { allowed: q.allowed } : {}),
+      ...(call ? { call } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
@@ -519,6 +529,16 @@ export function cleanGrantOffer(raw: unknown): GrantOffer | undefined {
   const notChecked = line(raw.notChecked);
   const rule = typeof raw.rule === 'string' && raw.rule ? raw.rule.slice(0, MAX_REFUSAL_INPUT) : undefined;
   return { sizes, ...(onceOnlyReason ? { onceOnlyReason } : {}), ...(notChecked ? { notChecked } : {}), ...(rule ? { rule } : {}) };
+}
+
+/** A permission item's call, re-validated like a refused one: a tool name of the record's shape
+ *  and a string input. Over the cap it is cut and never `whole`, and `whole` is only what the
+ *  server said it was: a surface offers an Allow only for a call it can show whole. */
+export function cleanItemCall(raw: unknown): { tool: string; input: string; whole: boolean } | undefined {
+  if (!isRecord(raw) || typeof raw.tool !== 'string' || !REFUSAL_WORD_RE.test(raw.tool)) return undefined;
+  if (typeof raw.input !== 'string') return undefined;
+  const cut = raw.input.length > MAX_REFUSAL_INPUT;
+  return { tool: raw.tool, input: cut ? raw.input.slice(0, MAX_REFUSAL_INPUT) : raw.input, whole: !cut && raw.whole === true };
 }
 
 /** A refused call, re-validated. An input over the cap is cut and is then never `whole`: a

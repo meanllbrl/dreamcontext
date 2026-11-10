@@ -713,7 +713,9 @@ export interface SuperQueueItem {
   /** An `automation` item's owner decision on the card. */
   decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
-   *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
+   *  is the server's plain line of what he is asked to do (from the child's card: untrusted).
+   *  Copied onto the item's `member` mirror (`of: 'owner'`), so a surface can tell a refusal it
+   *  answers in place from a card that only opens the member. */
   wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
    *  `sessionId` is the super's own: a team member is not a child. */
@@ -774,6 +776,17 @@ export interface SuperQueueItem {
    *  an `owner` item whose wait is a refusal, copied onto its `member` mirror. A surface draws
    *  exactly the sizes it lists, never more; absent = Allow once and Deny / Not needed only. */
   offer?: GrantOffer;
+  /** A `permission` item's call: the tool and its CANONICAL input (grants `canonicalInput`), cut to
+   *  MAX_REFUSAL_INPUT (= PERMISSION_FULL_CAP) with `whole` false when longer. The server copies it
+   *  onto the item's `member` mirror, because a surface that answers a member's item in place must
+   *  SHOW the call whole before it offers any Allow (consent matches display, G2). Absent on an
+   *  older record: a surface then offers no Allow, only Open. */
+  call?: { tool: string; input: string; whole: boolean };
+  /** The owner already allowed this item at this size and it waits for the call to run (its chat
+   *  is closed, say: "Allowed, runs when its chat is open"). A surface then shows that line and no
+   *  Allow buttons, so a second tap cannot write a second grant. Only on what can be allowed (a
+   *  permission, a refusal, or their `member` mirror, where the server copies it). */
+  allowed?: GrantSize;
 }
 
 /** A refused tool call the owner may allow (K2), as the registry read it from the stream. The

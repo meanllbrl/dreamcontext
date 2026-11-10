@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
-  ensureClaudeHooks, hookCommand, legacyHookCommand, HOOK_SPECS, RETIRED_READ_TASK_GUARD_FILE,
+  ensureClaudeHooks, hookCommand, legacyHookCommand, HOOK_SPECS, MCP_TOOL_MATCHER, RETIRED_READ_TASK_GUARD_FILE,
 } from '../../src/cli/commands/install-skill.js';
 
 interface Handler { type: string; command: string; timeout?: number }
@@ -110,12 +110,26 @@ describe('ensureClaudeHooks: legacy npx handlers are rewritten in place', () => 
     expect(readHooks().Stop).toEqual([{ hooks: [{ type: 'command', command: hookCommand('stop'), timeout: 45 }] }]);
   });
 
-  it('the three PreToolUse gates (same command, different matchers) all survive', () => {
+  it('the four PreToolUse gates (same command, different matchers) all survive', () => {
     writeSettings(legacySettings());
     ensureClaudeHooks(dir);
     const pre = readHooks().PreToolUse;
-    expect(pre.map((g) => g.matcher).sort()).toEqual(['Agent', 'Bash', 'Edit|Write|MultiEdit']);
+    expect(pre.map((g) => g.matcher).sort()).toEqual(['Agent', 'Bash', 'Edit|Write|MultiEdit', MCP_TOOL_MATCHER]);
     for (const g of pre) expect(g.hooks).toEqual([{ type: 'command', command: hookCommand('pre-tool-use'), timeout: 5 }]);
+  });
+
+  it('a project installed with the three older gates gains the MCP gate on update, the others untouched', () => {
+    // Without it an owner's grant on a refused MCP call is never seen by the hook (uye-bildirim K3).
+    const gate = (matcher: string): Group => ({ matcher, hooks: [{ type: 'command', command: hookCommand('pre-tool-use'), timeout: 5 }] });
+    writeSettings({ hooks: { PreToolUse: [gate('Agent'), gate('Edit|Write|MultiEdit'), gate('Bash')] } });
+    const result = ensureClaudeHooks(dir);
+    expect(result.added.length).toBeGreaterThan(0);
+    const pre = readHooks().PreToolUse;
+    expect(pre.slice(0, 3)).toEqual([gate('Agent'), gate('Edit|Write|MultiEdit'), gate('Bash')]);
+    expect(pre.filter((g) => g.matcher === MCP_TOOL_MATCHER)).toEqual([gate(MCP_TOOL_MATCHER)]);
+    // Idempotent: a second run adds nothing.
+    ensureClaudeHooks(dir);
+    expect(readHooks().PreToolUse.filter((g) => g.matcher === MCP_TOOL_MATCHER)).toHaveLength(1);
   });
 });
 

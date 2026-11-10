@@ -523,3 +523,103 @@ describe('uye-bildirim W4: own items, refusals, stalls and routine items survive
     expect(s.queue[0]).toMatchObject({ kind: 'nudge', state: 'pending' });
   });
 });
+
+// The dashboard answers a member's item in place only after it showed the call whole (G2), so the
+// mirror must carry what the member's item holds: the permission's call, the refusal's wait.
+describe('uye-bildirim w5-D: a member mirror carries the call and the wait a surface must show', () => {
+  const item = (over: Record<string, unknown>) => ({ id: 'q1', sessionId: 'c-1', state: 'escalated', createdAt: 1, ...over });
+  const mirror = (over: Record<string, unknown>) => item({ sessionId: 'sess-super', kind: 'member', member: 'rota', answers: 'q-9', ...over });
+  const fact = { tool: 'Bash', input: 'node scripts/build.mjs', whole: true, source: 'classifier', reason: 'blocked' };
+  const call = { tool: 'Bash', input: 'node scripts/build.mjs --fast', whole: true };
+
+  it('a permission and its mirror keep a well-formed call; no other kind or mirror does', () => {
+    const s = sanitizeSuperState(raw({ queue: [
+      item({ id: 'c1', kind: 'permission', requestId: 'r1', call }),
+      mirror({ id: 'c2', of: 'permission', call }),
+      mirror({ id: 'c3', of: 'ask', call }),
+      mirror({ id: 'c4', of: 'owner', call, wait: { kind: 'refusal', id: 'rf-a', refusal: fact } }),
+      item({ id: 'c5', kind: 'question', call }),
+      item({ id: 'c6', kind: 'owner', wait: { kind: 'run', id: 'login', key: 'gcloud auth login' }, call }),
+    ] }));
+    const by = (id: string) => s.queue.find((q) => q.id === id);
+    expect(by('c1')?.call).toEqual(call);
+    expect(by('c2')?.call).toEqual(call);
+    for (const id of ['c3', 'c4', 'c5', 'c6']) expect(by(id)?.call, id).toBeUndefined();
+  });
+
+  it('a call is dropped when malformed, cut and never whole when long, and whole only when the server said so', () => {
+    const long = 'x'.repeat(16_010);
+    const s = sanitizeSuperState(raw({ queue: [
+      item({ id: 'b1', kind: 'permission', requestId: 'r1', call: { tool: 'bad tool name!', input: 'ls', whole: true } }),
+      item({ id: 'b2', kind: 'permission', requestId: 'r2', call: { tool: 'Bash', input: 42, whole: true } }),
+      item({ id: 'b3', kind: 'permission', requestId: 'r3', call: 'rm -rf /' }),
+      mirror({ id: 'b4', answers: 'q-4', of: 'permission', call: { tool: 'Bash', input: long, whole: true } }),
+      mirror({ id: 'b5', answers: 'q-5', of: 'permission', call: { tool: 'Bash', input: 'ls' } }),
+      mirror({ id: 'b6', answers: 'q-6', of: 'permission', call: { tool: 'Bash', input: 'ls', whole: 'yes' } }),
+    ] }));
+    const by = (id: string) => s.queue.find((q) => q.id === id);
+    // A bad call drops the call, never the item: the surface then offers Open only.
+    expect(s.queue.map((q) => q.id)).toEqual(['b1', 'b2', 'b3', 'b4', 'b5', 'b6']);
+    for (const id of ['b1', 'b2', 'b3']) expect(by(id)?.call, id).toBeUndefined();
+    expect(by('b4')?.call?.input.length).toBe(16_000);
+    expect(by('b4')?.call?.whole).toBe(false);
+    expect(by('b5')?.call).toEqual({ tool: 'Bash', input: 'ls', whole: false });
+    expect(by('b6')?.call?.whole).toBe(false);
+  });
+
+  it('a mirror of an owner item keeps its wait, refusal fact included, through the same checks as the item', () => {
+    const long = 'y'.repeat(16_010);
+    const s = sanitizeSuperState(raw({ queue: [
+      mirror({ id: 'w1', answers: 'q-1', of: 'owner', wait: { kind: 'refusal', id: 'rf-0123456789abcdef', key: 'Bash', refusal: fact } }),
+      mirror({ id: 'w2', answers: 'q-2', of: 'owner', wait: { kind: 'run', id: 'login', key: 'gcloud auth login' } }),
+      mirror({ id: 'w3', answers: 'q-3', of: 'owner', wait: { kind: 'refusal', id: 'rf-1' } }),
+      mirror({ id: 'w4', answers: 'q-4', of: 'owner' }),
+      mirror({ id: 'w5', answers: 'q-5', of: 'owner', wait: { kind: 'refusal', id: 'rf-b', refusal: { ...fact, input: long } } }),
+      mirror({ id: 'w6', answers: 'q-6', of: 'permission', wait: { kind: 'refusal', id: 'rf-c', refusal: fact } }),
+    ] }));
+    const by = (id: string) => s.queue.find((q) => q.id === id);
+    expect(by('w1')?.wait).toEqual({ kind: 'refusal', id: 'rf-0123456789abcdef', key: 'Bash', refusal: fact });
+    expect(by('w2')?.wait).toEqual({ kind: 'run', id: 'login', key: 'gcloud auth login' });
+    // A mirror whose wait does not read stays (an older record): it is drawn as Open, without a wait.
+    expect(by('w3')).toBeDefined();
+    expect(by('w3')?.wait).toBeUndefined();
+    expect(by('w4')?.wait).toBeUndefined();
+    expect(by('w5')?.wait?.refusal?.input.length).toBe(16_000);
+    expect(by('w5')?.wait?.refusal?.whole).toBe(false);
+    expect(by('w6')?.wait).toBeUndefined();
+  });
+
+  it('`allowed` is a known size, kept only on what can be allowed and on its mirror', () => {
+    const s = sanitizeSuperState(raw({ queue: [
+      item({ id: 'a1', kind: 'permission', requestId: 'r1', allowed: 'once' }),
+      item({ id: 'a2', kind: 'owner', wait: { kind: 'refusal', id: 'rf-a', refusal: fact }, allowed: 'job' }),
+      mirror({ id: 'a3', answers: 'q-3', of: 'owner', wait: { kind: 'refusal', id: 'rf-a', refusal: fact }, allowed: 'member' }),
+      mirror({ id: 'a4', answers: 'q-4', of: 'permission', allowed: 'once' }),
+      item({ id: 'a5', kind: 'permission', requestId: 'r5', allowed: 'forever' }),
+      item({ id: 'a6', kind: 'owner', wait: { kind: 'run', id: 'login', key: 'gcloud auth login' }, allowed: 'once' }),
+      mirror({ id: 'a7', answers: 'q-7', of: 'owner', allowed: 'once' }),
+      mirror({ id: 'a8', answers: 'q-8', of: 'ask', allowed: 'once' }),
+      item({ id: 'a9', kind: 'question', allowed: 'once' }),
+    ] }));
+    const by = (id: string) => s.queue.find((q) => q.id === id);
+    expect(by('a1')?.allowed).toBe('once');
+    expect(by('a2')?.allowed).toBe('job');
+    expect(by('a3')?.allowed).toBe('member');
+    expect(by('a4')?.allowed).toBe('once');
+    for (const id of ['a5', 'a6', 'a7', 'a8', 'a9']) expect(by(id)?.allowed, id).toBeUndefined();
+  });
+
+  it('a mirror keeps an offer only for a permission or a refusal, never for a sign-in card', () => {
+    const s = sanitizeSuperState(raw({ queue: [
+      mirror({ id: 'o1', answers: 'q-1', of: 'permission', offer: { sizes: ['once', 'member'] } }),
+      mirror({ id: 'o2', answers: 'q-2', of: 'owner', wait: { kind: 'refusal', id: 'rf-a', refusal: fact }, offer: { sizes: ['once'], onceOnlyReason: 'classified' } }),
+      mirror({ id: 'o3', answers: 'q-3', of: 'owner', wait: { kind: 'run', id: 'login', key: 'gcloud auth login' }, offer: { sizes: ['once'] } }),
+      mirror({ id: 'o4', answers: 'q-4', of: 'owner', offer: { sizes: ['once'] } }),
+      mirror({ id: 'o5', answers: 'q-5', of: 'question', offer: { sizes: ['once'] } }),
+    ] }));
+    const by = (id: string) => s.queue.find((q) => q.id === id);
+    expect(by('o1')?.offer).toEqual({ sizes: ['once', 'member'] });
+    expect(by('o2')?.offer).toEqual({ sizes: ['once'], onceOnlyReason: 'classified' });
+    for (const id of ['o3', 'o4', 'o5']) expect(by(id)?.offer, id).toBeUndefined();
+  });
+});

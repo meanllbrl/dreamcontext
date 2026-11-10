@@ -63,7 +63,13 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
-import { memberFileRefusal, memberFileWriteTarget, shellWriteTarget } from '../../lib/agents/member-file-guard.js';
+import { memberFileRefusal, memberFileWriteTarget, ownerStoreRefusal, ownerStoreWriteTarget, shellWriteTarget } from '../../lib/agents/member-file-guard.js';
+import { realProcSys, whoAmI, type ProcSys } from '../../lib/grants/binding.js';
+import { match } from '../../lib/grants/match.js';
+import { realResolver, type Resolver } from '../../lib/grants/eligible.js';
+import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grants/store.js';
+import type { Grant } from '../../lib/grants/types.js';
+import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
@@ -129,6 +135,76 @@ const SKILL_SCORE_THRESHOLD = 1.0;
 /** An app's chat: sleep directives stay out of it, without the ledger paths a spawned marker moves. */
 function inAppChat(): boolean {
   return (process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-');
+}
+
+// ─── The grant gate (uye-bildirim K3, G1, Claude) ──────────────────────────────────────────────
+
+export interface GrantGateDeps {
+  sys?: ProcSys;
+  resolve?: Resolver;
+  /** The home the store lives under (default: the real one). */
+  home?: string;
+  now?: number;
+  roots?: (project: string) => string[];
+}
+
+/** Tests only: what the in-process action reads instead of the real process table and disk. */
+let grantGateDeps: GrantGateDeps | null = null;
+export function _setGrantGateDeps(d: GrantGateDeps | null): void { grantGateDeps = d; }
+
+const GRANT_REASON: Record<Grant['scope'], string> = {
+  once: 'The owner allowed exactly this call, once.',
+  job: 'The owner allowed this for this job.',
+  member: 'The owner always allows this for this AI Team member.',
+};
+
+/**
+ * The owner's grant that lets this Claude call run without asking, or null. Identity comes ONLY
+ * from a binding the server wrote for the process it spawned (`whoAmI`): no environment marker
+ * and no argument counts, so a `claude` an agent starts itself gets nothing. The store is read
+ * only after a binding was found, and fresh on every call, so a removed rule stops at the next
+ * step. A one-shot is spent here: of two hooks racing on it, one wins and the other asks.
+ * Plan mode is the envelope the owner chose: never widened. Anything unreadable is null, which
+ * leaves the CLI's own ladder to decide.
+ */
+export function grantGateAllow(
+  input: Record<string, unknown>,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  deps: GrantGateDeps = grantGateDeps ?? {},
+): { grant: Grant; reason: string } | null {
+  try {
+    if (input.permission_mode === 'plan') return null;
+    const conversationId = typeof input.session_id === 'string' ? input.session_id : '';
+    if (!conversationId || !toolName) return null;
+    const opts = deps.home ? { home: deps.home } : {};
+    // The cheap look first: an unbound session pays one directory read, never the process table.
+    const candidates = bindingsByConversation(conversationId, opts);
+    if (!candidates.length) return null;
+    const sys = deps.sys ?? realProcSys();
+    const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+    const here = sys.realpath(cwd);
+    if (!here) return null;
+    // The caller's project is the bound project when the session works inside it (a `cd` into a
+    // subfolder moves the hook's cwd, not the project); anywhere else it is that folder itself.
+    const bound = candidates.find((b) => here === b.project || here.startsWith(b.project.endsWith('/') ? b.project : `${b.project}/`));
+    const binding = whoAmI({ conversationId, project: bound?.project ?? here }, sys, { mode: 'hook', ...opts });
+    if (!binding) return null;
+    const grants = listGrants(binding.project, opts);
+    if (!grants.length) return null;
+    const roots = (deps.roots ?? ((p: string) => grantRoots(p, opts)))(binding.project);
+    const g = match(grants, {
+      project: binding.project, pin: binding.pin, ...(binding.member ? { member: binding.member } : {}), tool: toolName, input: toolInput,
+    }, {
+      project: binding.project, roots, cwd: here, resolve: deps.resolve ?? realResolver(),
+      ...(deps.home ? { home: deps.home } : {}), ...(deps.now !== undefined ? { now: deps.now } : {}),
+    });
+    if (!g) return null;
+    if (g.scope === 'once' && !consumeOnce(g.id, opts)) return null;
+    return { grant: g, reason: GRANT_REASON[g.scope] };
+  } catch {
+    return null;
+  }
 }
 
 function readStdin(): Record<string, unknown> | null {
@@ -2976,6 +3052,7 @@ export function registerHookCommand(program: Command): void {
         const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
         const pick = calls.find((c) => isMarketingEnvPath(typeof c.toolInput.file_path === 'string' ? c.toolInput.file_path : ''))
           ?? calls.find((c) => memberFileWriteTarget(c.toolName, c.toolInput, at))
+          ?? calls.find((c) => ownerStoreWriteTarget(c.toolName, c.toolInput, at))
           ?? calls[0]!;
         toolName = pick.toolName;
         toolInput = pick.toolInput;
@@ -2985,13 +3062,27 @@ export function registerHookCommand(program: Command): void {
       // children past 300k had made 3-14 edits all session, so the first nudge came at 629-709k and
       // the next never did. This hook already runs before every Bash and Agent call, so the nudge
       // costs no extra process. Claude only: another tool's transcript is not ours to read.
+      // The grant gate (uye-bildirim K3, G1) lives here, in the one exit every allowed call takes:
+      // so it runs LAST, after each deny gate above had its say, and never beside a refusal.
+      // Claude format only: an Antigravity hook never allows on a grant (the bridge decides, once),
+      // and a Codex hook's allow means something else.
       const allow = (): never => {
         if (!hookTool()) {
+          let nudge: string | null = null;
           try {
             const watchRoot = hookContextRoot();
-            const nudge = watchRoot ? maybeNudge(watchRoot, input as Record<string, unknown>) : null;
-            if (nudge) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: nudge } }));
+            nudge = watchRoot ? maybeNudge(watchRoot, input as Record<string, unknown>) : null;
           } catch { /* the nudge is advisory — never let it touch the tool call */ }
+          const granted = agy ? null : grantGateAllow(input as Record<string, unknown>, toolName, toolInput);
+          if (granted || nudge) {
+            console.log(JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                ...(granted ? { permissionDecision: 'allow', permissionDecisionReason: granted.reason } : {}),
+                ...(nudge ? { additionalContext: nudge } : {}),
+              },
+            }));
+          }
         }
         process.exit(0);
       };
@@ -3052,6 +3143,15 @@ export function registerHookCommand(program: Command): void {
         console.log(JSON.stringify({
           hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: memberFileRefusal(memberFile) },
         }));
+        return;
+      }
+
+      // Gate 1f (uye-bildirim G3): the owner's grant store and approval registry. A session that
+      // wrote either could allow itself, so every format refuses it, before the grant gate is
+      // reached (a grant never opens the door to the grants).
+      const ownerStore = ownerStoreWriteTarget(toolName, toolInput, typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
+      if (ownerStore) {
+        deny(ownerStoreRefusal(ownerStore));
         return;
       }
 

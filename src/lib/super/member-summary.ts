@@ -56,7 +56,10 @@ export function summarizeMember(
   const childOrigin = (sid: string) => (Object.prototype.hasOwnProperty.call(s.children, sid) ? s.children[sid].workOrigin : undefined);
   // A permission is the owner's whoever's work it is (D7), unless its Super decides it first.
   const ownerPermission = (q: SuperState['queue'][number]) => q.kind === 'permission' && !q.toSuper;
-  const asking = s.queue.some((q) => q.state !== 'done' && (ownerPermission(q) || (!isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
+  // A refused call or a stall is his whoever's job it was (uye-bildirim K2, K6): only he can allow
+  // it or say it is not needed, so a job main gave counts too.
+  const ownerOnly = (q: SuperState['queue'][number]) => q.kind === 'owner' && (q.wait?.kind === 'refusal' || q.wait?.kind === 'stalled');
+  const asking = s.queue.some((q) => q.state !== 'done' && (ownerPermission(q) || ownerOnly(q) || (!isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true)))));
   const unread = ownerKids.filter(([, c]) => c.finishedAt !== undefined && !(c.seenAt !== undefined && c.seenAt >= c.finishedAt)).length
     + unseenReplies(marks);

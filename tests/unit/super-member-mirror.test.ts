@@ -215,7 +215,10 @@ describe('the Super Agent hears it, and may answer only the member\'s own questi
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     const reply = (await rota()).queue.find((q) => q.kind === 'reply');
     expect(reply).toMatchObject({ answers: ask, text: 'He said yes this morning.', state: 'pending' });
-    expect(reply?.workOrigin).toBe('owner');
+    // The Super's words never carry `workOrigin: 'owner'`: on a reply that marks the OWNER's own
+    // answer (uye-bildirim K5, `REPLY_FROM_OWNER_LINE`), so the member would read the Super's guess
+    // as his word. An owner-origin ask's reply carries no origin and reads as the Super's.
+    expect(reply?.workOrigin).toBeUndefined();
     expect(superEventText(root, await rota(), reply as SuperQueueItem)).toContain(REPLY_OWNER_ASK_LINE);
     expect((await mirrors())[0].state).toBe('done');
     // The Super's answer is the one close that stands while the member's ask is still open.

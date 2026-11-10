@@ -9,7 +9,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { opensSession, phoneSuperOpen, phoneSuperTarget, type PhoneMemberSuper } from '../../src/lib/super/phone-mirror.js';
+import { opensSession, phoneSuperOpen, phoneSuperTarget, superDigestFor, type PhoneMemberSuper } from '../../src/lib/super/phone-mirror.js';
+import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 
 const MAIN = '11111111-2222-4333-8444-555555555555';
 const ROTA = '99999999-8888-4777-8666-555555555555';
@@ -105,5 +106,33 @@ describe('the upgrade handler (agent-chat.ts)', () => {
     // keyed by its session (origin owner), never a queue item.
     expect(src).toMatch(/const frame = Buffer\.from\(raw, 'utf-8'\);\s*mirrorFrames\.add\(frame\);\s*onWsMessage\(frame\);/);
     expect(src).toContain('if (isSuper && wrote && !text.startsWith(\'/\')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);');
+  });
+});
+
+describe('the phone names a waiting member by its title (uye-bildirim K8)', () => {
+  const record = (queue: unknown[]): SuperState => ({ ...emptySuperState(), session: MAIN, enabled: true, queue } as unknown as SuperState);
+  const readers = { member: (_root: string, slug: string) => (slug === 'rota' ? 'Rota, the planner' : null), routine: () => null };
+
+  it('a member\'s mirror in main\'s digest carries the member\'s title next to its slug', () => {
+    const d = superDigestFor('/ctx', record([
+      { id: 'mx', sessionId: MAIN, kind: 'member', state: 'escalated', createdAt: 1, member: 'rota', of: 'question', answers: 'qa' },
+    ]), readers);
+    expect(d.waiting).toEqual([expect.objectContaining({ id: 'mx', member: 'rota', of: 'question', title: 'Rota, the planner' })]);
+  });
+
+  it('a member Super\'s own refusal, read in its own record, is an own row with its wait kind and no title', () => {
+    const d = superDigestFor('/ctx', record([
+      { id: 'ox', sessionId: MAIN, kind: 'owner', state: 'escalated', createdAt: 1, own: true, ownerText: 'Run node x.mjs', wait: { kind: 'refusal', id: 'rf-0123456789abcdef', key: 'Bash' } },
+    ]), readers);
+    expect(d.waiting[0]).toMatchObject({ id: 'ox', own: true, wait: 'refusal' });
+    expect('title' in d.waiting[0]).toBe(false);
+  });
+
+  it('a member that is gone has no title: the phone names it by its slug', () => {
+    const d = superDigestFor('/ctx', record([
+      { id: 'my', sessionId: MAIN, kind: 'member', state: 'escalated', createdAt: 1, member: 'mira', of: 'ask', answers: 'qb' },
+    ]), readers);
+    expect(d.waiting[0]).toMatchObject({ member: 'mira' });
+    expect('title' in d.waiting[0]).toBe(false);
   });
 });

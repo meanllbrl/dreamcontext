@@ -6,6 +6,11 @@ import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import { narrowLiveMember } from './crew-binding.js';
+import { levelChatMode, narrowerMode } from '../../lib/agents/permission.js';
+import { removeMemberGrants } from '../../lib/grants/store.js';
+import { realpathSync } from 'node:fs';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
@@ -291,9 +296,9 @@ function readSoul(v: unknown): string | undefined {
 }
 
 /** An autonomy level from a request body: absent passes through, anything else must be a level.
- *  The agent-run refusal lives on the CLI verb (`insideAgentRun`): this server cannot see the
- *  environment of whoever sent the request, so a run that reaches the local API directly is the
- *  named residual of plan-r9 (an agent can raise its own autonomy by escaping the check). */
+ *  The agent-run refusal lives on the CLI verb (`insideAgentRun`); a run that reaches the local
+ *  API directly (plan-r9's residual) is stopped by the update route itself: a level CHANGE needs
+ *  the owner's proof there (uye-bildirim K3 "Level"), which no agent holds. */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
@@ -325,13 +330,13 @@ function agentTarget(contextRoot: string, slug: string): AutomationManifest | nu
   return isSafeAutomationSlug(slug) ? getRunTarget(contextRoot, slug, 'agent') : null;
 }
 
-function sendSummary(res: ServerResponse, contextRoot: string, slug: string, status = 200): void {
+function sendSummary(res: ServerResponse, contextRoot: string, slug: string, status = 200, extra?: Record<string, unknown>): void {
   const target = getRunTarget(contextRoot, slug, 'agent');
   if (!target) {
     sendError(res, 500, 'read_back_failed', 'The agent could not be read back.');
     return;
   }
-  sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)) });
+  sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)), ...(extra ?? {}) });
 }
 
 /**
@@ -599,6 +604,14 @@ export async function handleAgentsUpdate(
     const soul = readSoul(body.soul);
     if (soul !== undefined) patch.soul = soul;
     const autonomy = readAutonomy(body.autonomy);
+    // A level CHANGE is the owner's alone (uye-bildirim K3 "Level"): the shell's owner key on the
+    // desktop, or the phone's own signed-in session; Origin alone is a header any process can
+    // write. A save that leaves the level as it is keeps the guard above.
+    const levelChange = autonomy !== undefined && autonomy !== current.autonomy;
+    if (levelChange && !fromOwnerPage(req) && !isPhoneSocket(req)) {
+      sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the owner, in the app, changes an AI Team member\'s autonomy level. An agent or a script cannot.'));
+      return;
+    }
     if (autonomy !== undefined) patch.autonomy = autonomy;
     if (Object.keys(patch).length > 0) {
       // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
@@ -609,10 +622,24 @@ export async function handleAgentsUpdate(
       // A new title is the bot's new name in Telegram.
       if (patch.title !== undefined && patch.title !== current.title) telegramHub()?.refreshIdentity(params.slug);
     }
-    sendSummary(res, contextRoot, params.slug);
+    // Where the new level holds: a narrower one reaches the member's running sessions now (the
+    // live mode switch), a wider one only its next session start. The profile says which.
+    const applies = levelChange && autonomy !== undefined
+      ? levelApplies(params.slug, current.autonomy, autonomy, isGlobalHere(contextRoot, params.slug) ? undefined : dirname(contextRoot))
+      : undefined;
+    sendSummary(res, contextRoot, params.slug, 200, applies ? { applies } : undefined);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
   }
+}
+
+/** A level change takes effect: `now` when it narrowed and every running session of the member
+ *  took the narrower mode live, else `next_session`. */
+export function levelApplies(member: string, from: AgentAutonomy, to: AgentAutonomy, project?: string): 'now' | 'next_session' {
+  const target = levelChatMode(to);
+  const narrowing = narrowerMode(target, levelChatMode(from)) === target && target !== levelChatMode(from);
+  if (!narrowing) return 'next_session';
+  return narrowLiveMember(member, target, project).now ? 'now' : 'next_session';
 }
 
 /**
@@ -754,6 +781,7 @@ export async function handleAgentsDelete(
         sendJson(res, 500, { error: 'delete_incomplete', message: `Not everything could be deleted: ${out.left.join(', ')}.`, left: out.left, trash: out.trash });
         return;
       }
+      dropMemberRules(contextRoot, params.slug, out.plan);
       sendJson(res, 200, { ok: true, slug: params.slug, routines: out.plan.routines, trash: out.trash });
     } catch (err) {
       sendWriteError(res, err, 'delete_failed', 'Failed to delete the member.');
@@ -761,6 +789,7 @@ export async function handleAgentsDelete(
     return;
   }
   try {
+    const wasGlobal = isGlobalHere(contextRoot, params.slug);
     const result = removeAgent(contextRoot, params.slug);
     if (!result.removed) {
       sendJson(res, 409, {
@@ -770,10 +799,23 @@ export async function handleAgentsDelete(
       });
       return;
     }
+    dropMemberRules(contextRoot, params.slug, { global: wasGlobal });
     sendJson(res, 200, { ok: true, slug: params.slug });
   } catch (err) {
     sendWriteError(res, err, 'delete_failed', 'Failed to delete the agent.');
   }
+}
+
+/** A deleted member's "Always allowed" rules die with it (K3 "Scopes and their deaths"): in this
+ *  project, or everywhere for a global member. Best effort: a rule left behind names a member
+ *  that no session can be, so it matches nothing. */
+function dropMemberRules(contextRoot: string, slug: string, plan?: { global?: boolean }): void {
+  try {
+    if (plan?.global === true) { removeMemberGrants(slug); return; }
+    let project = dirname(contextRoot);
+    try { project = realpathSync.native(project); } catch { /* as written */ }
+    removeMemberGrants(slug, project);
+  } catch { /* see above */ }
 }
 
 /** POST /api/agents/:slug/approve — grant the agent's CALL target as it stands

@@ -115,6 +115,45 @@ function remember(id: string, reach: OwnerQuestionReach): void {
   while (announced.size > ANNOUNCED_CAP) announced.delete(announced.keys().next().value as string);
 }
 
+// ─── Held rings (uye-bildirim K9) ─────────────────────────────────────────────
+//
+// A member's own question is on his bar at once, but its banner and Telegram copy wait until the
+// Super Agent had its turn at it (at most 90 s). The inbox holds and releases; a hold carries its
+// own deadline, so one whose release never comes frees itself at the next write.
+
+const holds = new Map<string, number>();
+const HOLDS_CAP = 500;
+
+/** Hold this item's banner and Telegram copy until `until` (epoch ms) or {@link releaseOwnerRing}. */
+export function holdOwnerRing(id: string, until: number): void {
+  holds.set(id, until);
+  while (holds.size > HOLDS_CAP) holds.delete(holds.keys().next().value as string);
+}
+
+/** Its hold is over: the next announce rings it (the caller announces again). */
+export function releaseOwnerRing(id: string): void {
+  holds.delete(id);
+}
+
+/** Is this item's ring held right now? */
+export function ringHeld(id: string, now = Date.now()): boolean {
+  const until = holds.get(id);
+  if (until === undefined) return false;
+  if (until <= now) { holds.delete(id); return false; }
+  return true;
+}
+
+/**
+ * Never ring this item in this process: the Super answered it inside its window (K9), or a
+ * routine fact rang once already (K7, its `shown` marker survives a restart). Its Telegram part
+ * reads as carried, so no later write offers it again; `vault` names it for that part.
+ */
+export function muteOwnerRing(id: string, vault?: string): void {
+  holds.delete(id);
+  if (!announced.has(id)) remember(id, { shown: true, ahead: 0, via: [], reached: false, note: '', why: 'the Super Agent or an earlier ring already settled it' });
+  if (vault !== undefined && !tgItems.has(id)) tgItems.set(id, { vault, state: 'sent', tries: 0 });
+}
+
 /** Does the owner answer this item (not a permission: the window rings that one)? The exception is
  *  a Bypass child's permission its Super handed him (`escalated`, `permissionToOwner`): the
  *  registry's own ring for it went to the Super, so it is announced here, once. */
@@ -122,6 +161,10 @@ export function announces(item: SuperQueueItem | null): item is SuperQueueItem {
   // Main Super's work in a member's Super (`main:*`, plan-r10 1) is never the owner's to answer.
   if (typeof item?.workOrigin === 'string' && item.workOrigin.startsWith('main:')) return false;
   if (item?.kind === 'owner') return item.state !== 'done';
+  // A routine stopped on him (K7): his until its fact leaves the disk.
+  if (item?.kind === 'routine') return item.state !== 'done';
+  // A member Super's OWN permission (K1): no window of his rings it, so the server does.
+  if (item?.kind === 'permission' && item.own === true) return item.state !== 'done';
   // An AI Team member's item mirrored into main's queue (owner 2026-11-10): his until it closes.
   // Its banner and push went out from the member's own record (with the member's name); here it
   // is what Telegram offers and what counts ahead of a later question.
@@ -139,6 +182,13 @@ function clip(s: string): string {
 
 function bodyOf(item: SuperQueueItem): string {
   if (item.kind === 'approval') return `An AI Team member needs your approval${item.member ? `: ${item.member}` : ''}.`;
+  if (item.kind === 'routine') return clip(item.ownerText ?? 'A routine is waiting for you.');
+  // A refused call: the tool's NAME only, like a permission (the push rule), never its command.
+  if (item.kind === 'owner' && item.wait?.kind === 'refusal') {
+    const tool = item.wait.refusal?.tool ?? item.wait.key ?? '';
+    return clip(`A job was refused ${/^[A-Za-z0-9_.:-]{1,80}$/.test(tool) ? tool : 'a tool'} and waits for you. Allow it once or say it is not needed.`);
+  }
+  if (item.kind === 'owner' && item.wait?.kind === 'stalled') return clip(`A member stopped without finishing or asking: ${item.ownerText ?? ''}`);
   if (item.kind === 'owner') return clip(`A job needs you: ${item.ownerText ?? 'something only you can do'}`);
   // The tool's NAME only (the push rule, dashboard-server-security §7): never its command or path,
   // and never the Super's words, which it wrote from that command. Those show on the phone card.
@@ -192,7 +242,8 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   if (memberTitle === undefined && tgItems.size) closeTelegramItems(v, state.queue);
   if (!state.enabled || !state.session) return;
   const session = state.session;
-  if (announces(head) && !announced.has(head.id)) announceHead(v(), session, state, head, memberTitle);
+  // A held head (K9) rings later, when its hold ends: nothing is remembered for it yet.
+  if (announces(head) && !announced.has(head.id) && !ringHeld(head.id)) announceHead(v(), session, state, head, memberTitle);
   if (memberTitle === undefined) offerOpenItems(v, session, state.queue);
 }
 
@@ -211,6 +262,7 @@ function announceHead(vault: string, session: string, state: { children?: SuperS
   const job = direct ? clip(state.children?.[head.sessionId]?.brief ?? '').slice(0, JOB_CHARS) : '';
   // A member's Super speaks under the member's own name (plan-r10 2.3): "Rota · acme-storefront".
   const title = memberTitle !== undefined ? `${clip(memberTitle).slice(0, JOB_CHARS) || 'A member'} · ${vault}`
+    : head.kind === 'routine' ? `A routine waits on you · ${vault}`
     : head.kind === 'permission' ? `Permission needed · ${vault}`
     : head.kind === 'owner' ? `A job needs you · ${vault}`
       : direct ? `${job || 'A job'} asks · ${vault}` : `Super Agent asks · ${vault}`;
@@ -247,6 +299,8 @@ function offerOpenItems(v: () => string, session: string, queue: readonly SuperQ
   for (const q of queue) {
     // A child's permission has its own Telegram card (İzin ver / Reddet), never this one.
     if (!announces(q) || q.kind === 'permission') continue;
+    // Held for the Super Agent's turn (K9): offered when the hold ends.
+    if (ringHeld(q.id, now)) continue;
     const t = tgItems.get(q.id);
     if (t && (t.state === 'sent' || t.state === 'sending')) continue;
     if (t?.state === 'failed' && !reachable && (t.tries >= TG_TRIES || now < (t.nextAt ?? 0))) continue;
@@ -371,6 +425,7 @@ export function ownerQuestionReach(state: Pick<SuperState, 'queue'>, itemId: str
 export function _resetOwnerQuestions(): void {
   announced.clear();
   tgItems.clear();
+  holds.clear();
   notchPolledAt = 0;
   sinks = NONE;
 }

@@ -12,9 +12,11 @@
  * `/tmp` are excluded, network is off (so the dashboard port is unreachable), and anything under
  * `~/.dreamcontext` is refused as a root even when it was asked for.
  */
-import { homedir } from 'node:os';
+import { realpathSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import nodePath, { isAbsolute, join } from 'node:path';
-import { memberFileWriteTarget } from '../agents/member-file-guard.js';
+import { linkedWritableRoots } from './roots.js';
+import { memberFileWriteTarget, ownerStoreWriteTarget } from '../agents/member-file-guard.js';
 import { movesGuardedPlace } from '../antigravity-gate.js';
 import { isMarketingEnvPath } from '../marketing/path-guards.js';
 
@@ -78,9 +80,36 @@ export function bypassNeedsOwner(tool: string, input: unknown, cwd: string): boo
   if (tool === 'Edit' && !/[\\/]/.test(path)) return true;
   return /marketing[\\/]+\.env/i.test(JSON.stringify(record))
     || /config[\\/]+hooks\.json/i.test(JSON.stringify(record))
+    // The owner's permission and approval stores (G3): a call that so much as names them is his
+    // to judge, like the token file above, since this tool has no hook reading the shell for us.
+    || OWNER_STORE_NAMED.test(JSON.stringify(record))
     || (!!path && isMarketingEnvPath(isAbsolute(path) ? path : join(cwd, path)))
     || movesGuardedPlace(tool, record, cwd)
-    || !!memberFileWriteTarget(tool, record, cwd);
+    || !!memberFileWriteTarget(tool, record, cwd)
+    || !!ownerStoreWriteTarget(tool, record, cwd);
+}
+
+/** The grant store or the approval registry, named anywhere in a call's input. */
+const OWNER_STORE_NAMED = /\.dreamcontext[\\/]+(?:grants\b|automations\.json)/i;
+
+/**
+ * The agent-writable roots a grant's script form is judged against (grants `EligibleCtx.roots`):
+ * the project, its linked repos and their worktrees, and the temp folders. ONE list for the
+ * writer of a grant and both enforcers: a script outside it, or an interpreter inside it, is
+ * Allow once only. A root that cannot be read is left out, which only asks again, never allows more.
+ */
+export function grantRoots(project: string, o: { home?: string; tmp?: readonly string[] } = {}): string[] {
+  const out: string[] = [];
+  const add = (p: string | null | undefined): void => {
+    if (!p || !isAbsolute(p)) return;
+    let real = p;
+    try { real = realpathSync.native(p); } catch { return; }
+    if (!out.includes(real)) out.push(real);
+  };
+  add(project);
+  try { for (const r of linkedWritableRoots(project, o.home ? { home: o.home } : {})) add(r); } catch { /* the project alone */ }
+  for (const t of o.tmp ?? ['/tmp', '/private/tmp', tmpdir()]) add(t);
+  return out;
 }
 
 /** Normalize anything the client may send to one of our five modes (unknown → `default`). */

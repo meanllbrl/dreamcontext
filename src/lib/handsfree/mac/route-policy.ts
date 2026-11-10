@@ -294,6 +294,10 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/pad': deny(SUPER),
   'POST /api/super/open': deny(SUPER),
   'POST /api/super/member': deny(SUPER),
+  // The bar's in-place answer can write a grant and the owner's words into a member's Super, so it
+  // takes the shell's owner key, which the phone never holds; the phone answers through its own
+  // phone-questions route (question and permission only, never a grant).
+  'POST /api/super/owner-answer': deny('laptop-only: answers an owner item from this Mac\'s bar and may write a grant; it needs the desktop shell\'s owner key, and the phone answers through its own questions route'),
 
   // The chat's mascot
   'GET /api/sleepy/video': agnostic('read: the mascot clip (mp4 from a fixed set); side-effect free', 'media'),
@@ -534,6 +538,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
   'GET /api/agents/:slug/history': allow('read: one page of an agent\'s runs and talks (the stage pane); side-effect free beyond pruning its own machine-local index of glances'),
   'GET /api/agents/:slug/amendments': allow('read: what the Super Agent changed in a member, with the text before and after; side-effect free'),
+  'GET /api/agents/:slug/permissions': allow('read: a member\'s autonomy level and the "Always allowed" rules the owner gave it, secrets redacted; side-effect free'),
+  // Removing a rule is owner proof (the shell's owner key, uye-bildirim G2): the phone never has it.
+  'POST /api/agents/:slug/permissions/remove': deny('laptop-only: removing a member\'s always-allowed rule needs the desktop shell\'s owner key'),
   'POST /api/agents/:slug/amendments/:id/revert': allow('the owner takes a change back, as on the laptop; it only restores text this machine recorded'),
   'GET /api/agents/:slug/photo': allow('read: an agent photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/agents/:slug/photo': allow(PROJECT_WRITE),

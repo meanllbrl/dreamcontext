@@ -71,6 +71,9 @@ const PRE_COMPACT_HOOK = hookCommand('pre-compact');
 const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
 const SESSION_START_MATCHER = 'startup|resume|compact|clear';
+/** Claude Code reads a matcher with anything but letters, digits and `|` as a regex against the tool
+ *  name; every MCP tool is `mcp__<server>__<tool>`, so this reaches them and no built-in tool. */
+export const MCP_TOOL_MATCHER = 'mcp__.*';
 
 /**
  * The 0.33.0 task system (reverted 2026-10-20) installed two hooks this version does not run:
@@ -135,6 +138,12 @@ export const HOOK_SPECS: readonly HookSpec[] = [
   // once appended to from a heredoc, which dropped its approval (`member-file-guard.ts`).
   // (Also) a heavy shell step goes through `builder heavy` (lock + repeat limit, lib/run-budget.ts).
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Bash' },
+  // Fourth: MCP tools, only so the grant gate (hook.ts `allow()`, uye-bildirim K3) can see them. The
+  // owner's "Allow once" or "For this job" on a refused MCP call is written to the grant store, and
+  // without this matcher the hook never ran for that call, so the grant could never be used. No
+  // deny gate reads an MCP tool name: the call falls through to `allow()`, and an unbound session
+  // pays one failed binding lookup. The narrowest matcher that covers every `mcp__<server>__<tool>`.
+  { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: MCP_TOOL_MATCHER },
   { event: 'UserPromptSubmit', name: 'user-prompt-submit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', name: 'post-tool-use', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
   { event: 'PreCompact', name: 'pre-compact', command: PRE_COMPACT_HOOK, timeout: 5 },
