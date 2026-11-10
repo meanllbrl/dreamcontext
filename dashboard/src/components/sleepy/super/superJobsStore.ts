@@ -74,6 +74,9 @@ export function useSuperEventContext(sessionId: string | null): SuperEventContex
  *  the stage is up; null = no live record (taken back): the cards are static. */
 export interface SuperQuestionView {
   open: readonly SuperQueueItem[];
+  /** MAIN's chat only: AI Team members waiting on the owner (`member` mirrors), each drawn as a
+   *  card that opens that member (`openMemberMirrors`). */
+  members?: readonly SuperQueueItem[];
   superSession: ChatSession | undefined;
   sessionFor: (claudeId: string) => ChatSession | undefined;
   /** A surface that holds no child's socket (the hands-free phone): each child question's card

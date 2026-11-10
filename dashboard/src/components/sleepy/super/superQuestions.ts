@@ -161,6 +161,20 @@ export function openOwnerQuestions(queue: readonly SuperQueueItem[]): SuperQueue
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/** An AI Team member's items waiting on the owner, as main's record mirrors them (`member`, the
+ *  server's syncMemberMirrors): the Super chat draws each as a card that opens that member. */
+export function openMemberMirrors(queue: readonly SuperQueueItem[]): SuperQueueItem[] {
+  return queue
+    .filter((q) => q.kind === 'member' && q.state !== 'done' && !!q.member)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** What a member's mirrored item says on one line: its own words, or what kind of wait it is. */
+export function memberItemText(item: Pick<SuperQueueItem, 'of' | 'ownerText'>, t: (key: string) => string): string {
+  if (item.ownerText) return item.ownerText;
+  return item.of === 'permission' ? t('super.queue.memberPermission') : t('super.queue.memberWaiting');
+}
+
 /** open: answerable now. answered: the live record says it is no longer open. static: no live
  *  record in this window (taken back, not loaded yet), or an earlier call for an item asked
  *  again: the question's words only, it claims nothing. */

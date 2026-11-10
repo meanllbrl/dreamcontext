@@ -17,7 +17,7 @@ import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSe
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
-import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
+import { openMemberMirrors, openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
@@ -3964,6 +3964,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const superQuestionSid = superState?.enabled ? superState.session : null;
   const superQueue = superState?.queue;
   const openSuperQuestions = useMemo(() => openOwnerQuestions(superQueue ?? []), [superQueue]);
+  // AI Team members waiting on the owner, as MAIN's record mirrors them: cards in main's chat only.
+  const mainMemberMirrors = useMemo(() => openMemberMirrors(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
+  const memberMirrorKey = mainMemberMirrors.map((q) => [q.id, q.member ?? '', q.of ?? '', q.ownerText ?? ''].join('\u0003')).join('\u0001');
   // Keyed on what a card draws, including whether a child's chat is live here (its options
   // come from it): the super chat's pane is memoised, so only a key change re-renders a card.
   // A Super `ask`'s report cards (`read`), named as the stage names them; a click brings one in
@@ -3993,12 +3996,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // Forget the answer latches of items the record no longer asks for (never during a render).
     if (superQueue && superState?.session) trimOwnerAnswers(superState.session, new Set(superQueue.filter(needsOwner).map((q) => q.id)));
     if (!superQuestionSid) return;
+    const isMain = activeSuperId === MAIN_SUPER;
     publishSuperQuestions(
       superQuestionSid,
-      { open: openSuperQuestions, superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
-      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}`,
+      { open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -4077,10 +4081,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     publishSuperQuestions(
       mainQuestionSid,
       // Its report cards open nothing here: main's stage is not the one up.
-      { open: mainOpenQuestions, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [] },
-      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main`,
+      { open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [] },
+      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}`,
     );
-  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid]);
+  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey]);
   const mainPublishedRef = useRef<string | null>(null);
   mainPublishedRef.current = mainQuestionSid ?? mainPublishedRef.current;
   useEffect(() => () => {
@@ -4096,12 +4100,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const item = fresh[fresh.length - 1];
     raiseAskAttention({
       // A banner the server posted for it (owner-question.ts) is not posted twice.
-      banner: !(superBannered ?? []).includes(item.id),
+      // A member's mirror: the server bannered the member's own item with its name (owner-question.ts).
+      banner: item.kind !== 'member' && !(superBannered ?? []).includes(item.id),
       // The notch's glance lists only the queue HEAD: an open notch takes that one instead of a
       // banner; an item waiting behind it is nowhere on the notch, so its banner still goes.
       notch: queueHead(mainSuperState)?.id === item.id,
       source: vault,
-      detail: item.kind === 'permission' ? t('super.queue.permissionAlarm')
+      detail: item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission') ? t('super.queue.permissionAlarm')
         : item.kind === 'approval' ? t('super.queue.approval').replace('{name}', item.member ?? '')
           : (item.ownerText ?? t('super.queue.escalatedAlarm')),
       sessionId: mainChatSession?.claudeId ?? null,

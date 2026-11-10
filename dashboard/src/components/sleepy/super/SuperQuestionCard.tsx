@@ -5,8 +5,14 @@ import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { surveyDraftKey } from '../chat/surveyDrafts';
 import { RemotePermission } from './SuperPermissionCard';
+import { useI18n } from '../../../context/I18nContext';
+import { useAgent } from '../../../hooks/useAgents';
+import { requestOpenAgents } from '../../../lib/openAgents';
+import { AgentAvatar } from '../../agents/AgentAvatar';
+import { CardHeader } from '../chat/molecules';
+import '../chat/AgentThreadCard.css';
 import {
-  askPendingOf, askQuestionsOf, cardState, childQuestionOf, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
   type AskRef,
 } from './superQuestions';
 
@@ -151,7 +157,8 @@ export function SuperQuestionTail({ session, anchored }: {
   const view = useSuperQuestions(session.claudeId);
   if (!view) return null;
   const rest = view.open.filter((q) => !anchored.has(q.id));
-  if (!rest.length) return null;
+  const members = view.members ?? [];
+  if (!rest.length && !members.length) return null;
   return (
     <>
       {rest.map((q) => (
@@ -161,7 +168,44 @@ export function SuperQuestionTail({ session, anchored }: {
           session={session}
         />
       ))}
+      {members.map((q) => <MemberWaitCard key={`member-${q.id}`} item={q} />)}
     </>
+  );
+}
+
+/**
+ * An AI Team member waiting on the owner (owner 2026-11-10: "üyenin izni kimseye düşmüyor"), as
+ * main's record mirrors it: the member, what it waits for, its options read-only, and ONE button
+ * that opens the member's page, where the member's own card answers it through its own session.
+ * Leaves the chat when the member's item closes, wherever it was answered (Telegram, its page).
+ */
+function MemberWaitCard({ item }: { item: SuperQueueItem }) {
+  const { t } = useI18n();
+  const slug = item.member ?? '';
+  const agent = useAgent(slug || null).data?.agent;
+  const name = agent?.title || slug;
+  const questions = item.ask ? askQuestionsOf(item.ask) : [];
+  return (
+    <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of}>
+      <CardHeader
+        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={agent?.hasPhoto ?? false} size={22} />}
+        title={t('super.queue.memberCard').replace('{name}', name)}
+      />
+      {questions.length
+        ? questions.map((q, i) => (
+          <div key={i} className="chat-agentthread-note">
+            <strong>{q.question}</strong>
+            {q.options && q.options.length > 0 && <ul>{q.options.map((o, j) => <li key={j}>{o.label}</li>)}</ul>}
+          </div>
+        ))
+        : <p className="chat-agentthread-note">{memberItemText(item, t)}</p>}
+      <div className="chat-agentthread-actions">
+        <button type="button" className="chat-agentthread-btn is-primary" data-testid="super-member-open" disabled={!slug} onClick={() => requestOpenAgents({ slug })}>
+          {t('super.queue.openMember')}
+        </button>
+      </div>
+      <p className="chat-agentthread-note">{t('super.queue.memberCardNote')}</p>
+    </div>
   );
 }
 

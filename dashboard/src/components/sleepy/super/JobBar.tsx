@@ -8,7 +8,7 @@ import {
   directChildQuestion, optionsFit, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
-  claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
+  claimOwnerAnswer, memberItemText, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
   releaseOwnerAnswer, useOwnerAnswerVersion,
 } from './superQuestions';
 import type { Rect } from './superLayout';
@@ -140,7 +140,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
     >
       <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
-          {!rect && head.kind !== 'ask' && head.kind !== 'approval'
+          {head.kind === 'member' ? null : !rect && head.kind !== 'ask' && head.kind !== 'approval'
             // In the dock the stage is not on screen: the child's name opens it there (its card
             // beside the agenda), the way the stage's own band reaches an owner card.
             ? <button type="button" className="super-queue-who super-queue-who--link" data-testid="super-queue-open-child" onClick={() => onShowChild(head.sessionId)}>{titleFor(head.sessionId)}</button>
@@ -151,6 +151,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
+              : head.kind === 'member'
+                ? <MemberHead item={head} />
               : head.kind === 'owner'
                 ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
               : directChildQuestion(head)
@@ -336,6 +338,34 @@ function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
           disabled={locked}
           onClick={() => answerOnce(() => { const ok = child.answer(pending.requestId, { behavior: 'deny', message: 'Denied by user.' }); if (ok) noteOwnerWrote(); return ok; })}
         >{t('super.queue.deny')}</button>
+      </span>
+    </>
+  );
+}
+
+/**
+ * An AI Team member waiting on the owner (its own question, a job's question or permission, a
+ * card only he can act on), mirrored into main's queue by the server (owner 2026-11-10): who, what,
+ * and ONE button that opens that member's stage, where its own card answers it. Nothing is
+ * answered from here: the member's session holds the request.
+ */
+function MemberHead({ item }: { item: SuperQueueItem }) {
+  const { t } = useI18n();
+  const member = item.member ?? '';
+  const name = useAgent(member || null).data?.agent.title || member;
+  const text = memberItemText(item, t);
+  return (
+    <>
+      <span className="super-queue-who" data-testid="super-queue-member">{name}</span>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button
+          type="button"
+          className="super-queue-btn super-queue-btn--option"
+          data-testid="super-queue-open-member"
+          disabled={!member}
+          onClick={() => requestOpenAgents({ slug: member })}
+        >{t('super.queue.openMember')}</button>
       </span>
     </>
   );

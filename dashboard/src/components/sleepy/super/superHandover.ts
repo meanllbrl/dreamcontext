@@ -203,7 +203,14 @@ export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
   // A Bypass child's permission is its Super's to decide first; it is his once it falls to him.
   if (item.kind === 'permission' && item.toSuper === true) return false;
-  return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated' || directChildQuestion(item);
+  // An AI Team member waiting on him (the server's mirror of its own record): his from birth,
+  // whether or not the Super Agent has read the event yet (owner 2026-11-10).
+  return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.state === 'escalated' || directChildQuestion(item);
+}
+
+/** A permission of his, a child's or a member's (the mirror of a member's permission): the head of the line. */
+function isPermission(item: SuperQueueItem): boolean {
+  return item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission');
 }
 
 /** A child's question that is the owner's from birth (the server's `direct`), still open: the bar
@@ -220,7 +227,7 @@ export function queueHead(state: Pick<SuperState, 'queue'> | null | undefined): 
   const items = (state?.queue ?? []).filter(needsOwner);
   if (items.length === 0) return null;
   const byAge = (a: SuperQueueItem, b: SuperQueueItem) => a.createdAt - b.createdAt;
-  const permissions = items.filter((q) => q.kind === 'permission').sort(byAge);
+  const permissions = items.filter(isPermission).sort(byAge);
   if (permissions.length) return permissions[0];
   return items.sort(byAge)[0];
 }
