@@ -420,11 +420,18 @@ describe('one inbox per super', () => {
     superOwnerSpoke(session, Date.now(), [], [{ kind: 'task', id: 'fix-login' }]);
     await _superInboxDrained();
     expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('escalated');
+    // A message about nothing answers no card (owner 2026-11-11); about the card, that card only.
     superOwnerSpoke(session);
+    await _superInboxDrained();
+    expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('escalated');
+    superOwnerSpoke(session, Date.now(), [], [{ kind: 'item', id: 'q-rota-0000000b' }]);
     await _superInboxDrained();
     expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('done');
     expect((await main()).queue.find((q) => q.id === 'q-main-0000000a')?.state).toBe('escalated');
-    superOwnerSpoke(MAIN);
+    superOwnerSpoke(MAIN, Date.now(), [], [{ kind: 'item', id: 'q-rota-0000000b' }]);
+    await _superInboxDrained();
+    expect((await main()).queue.find((q) => q.id === 'q-main-0000000a')?.state).toBe('escalated');
+    superOwnerSpoke(MAIN, Date.now(), [], [{ kind: 'item', id: 'q-main-0000000a' }]);
     await _superInboxDrained();
     expect((await main()).queue.find((q) => q.id === 'q-main-0000000a')?.state).toBe('done');
   });

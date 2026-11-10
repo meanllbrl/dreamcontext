@@ -1041,8 +1041,8 @@ export function clearOwnerLease(contextRoot: string): void {
  * the owner's turn (D18): the lease is stamped; the running event turn is marked steered (it
  * spends no question attempt, r2-C3: marked BEFORE the batch is cleared) and stops being the
  * open batch (an `ask` written after this is about the owner's message, not the events); and an
- * open `ask` is closed: this message is its answer (D7), unless every part it is written
- * `about` is another agenda line (`aboutKeepsAsks`).
+ * open `ask` is closed only when this message is written about it (`asksAnswered`): any other
+ * message of his leaves it open (owner 2026-11-11).
  */
 export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false): void {
   const root = superKeyOfSession(sessionId);
@@ -1068,9 +1068,10 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
     // A member's turn for main Super that the owner steered into is his from now on: drawn in full.
     if (idOf(key) !== 'main') void track(writeSuper(key, (s) => { if (s.mainBatches?.includes(ob.batch)) s.mainBatches = s.mainBatches.filter((b) => b !== ob.batch); }));
   }
-  if (aboutKeepsAsks(lastStates.get(key), abouts)) return;
+  const answered = asksAnswered(lastStates.get(key), abouts);
+  if (!answered.length) return;
   // The owed decision waits for this write (it reads before it writes: the lock alone is not order).
-  const p = closeOpenAsks(key, sessionId, told);
+  const p = closeOpenAsks(key, sessionId, told, answered);
   asksInFlight.set(key, p);
   void track(p.finally(() => { if (asksInFlight.get(key) === p) asksInFlight.delete(key); }));
 }
@@ -1084,16 +1085,31 @@ const asksInFlight = new Map<string, Promise<void>>();
 export interface AgendaAbout { kind: 'note' | 'item' | 'owed' | 'reply' | 'card' | 'task'; id: string }
 
 /**
- * A message about agenda lines (owner 2026-10-23; several in one message since 2026-10-24)
- * answers the super's open question only when one of its parts IS the question: about other
- * lines only, the question stays open and what was held while it was open stays held (the super
- * closes it with `queue done` if his words answer it anyway). A message about nothing answers
- * it. Read from the same cached record as the digest, so the two always agree.
+ * The open questions of the super's own (`ask`) an owner message ANSWERS: only those it is
+ * explicitly written about (`[About agenda line item=<ask>]`: the Mac's "write about this" on its
+ * row, or a Telegram reply to the card's own message, which the hub turns into that header).
+ * Any other message of his, about nothing or about other lines, answers none: the question stays
+ * open, what was held while it was open stays held, and the message reaches the super as a
+ * message (owner 2026-11-11, after one question reached him three times: a message about
+ * something else closed the card as "answered"). A tap on a card option answers through its own
+ * path. Read from the same cached record as the digest, so the two always agree.
  */
-function aboutKeepsAsks(s: SuperState | undefined, abouts: readonly AgendaAbout[]): boolean {
-  if (!abouts.length) return false;
+/**
+ * What an owner message is written about, as `asksAnswered` reads it: its reference headers
+ * (`aboutHeads`), and a tapped card option's answer (`[super answer] item=<id>`, built by
+ * `superAnswerText` on the Mac card, a Telegram button or the phone) as that item. The prefix is
+ * only ever the text's very start.
+ */
+export function ownerAbouts(text: string, heads: readonly { kind: AgendaAbout['kind']; id: string }[]): AgendaAbout[] {
+  const out: AgendaAbout[] = heads.map(({ kind, id }) => ({ kind, id }));
+  const m = /^\[super answer\] item=([A-Za-z0-9_-]{1,64})(?: unclear)?(?:\n|$)/.exec(typeof text === 'string' ? text : '');
+  if (m) out.push({ kind: 'item', id: m[1] });
+  return out;
+}
+
+export function asksAnswered(s: Pick<SuperState, 'queue'> | undefined, abouts: readonly AgendaAbout[]): string[] {
   const open = (s?.queue ?? []).filter((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin)).map((q) => q.id);
-  return !abouts.some((a) => a.kind === 'item' && open.includes(a.id));
+  return open.filter((id) => abouts.some((a) => a.kind === 'item' && a.id === id));
 }
 
 /**
@@ -1102,10 +1118,10 @@ function aboutKeepsAsks(s: SuperState | undefined, abouts: readonly AgendaAbout[
  * by its end exactly like an event turn's items (a question still asked comes back once), and out
  * of the ledger, so no later event turn repeats them silently.
  */
-async function closeOpenAsks(key: string, sessionId: string, told: readonly string[]): Promise<void> {
+async function closeOpenAsks(key: string, sessionId: string, told: readonly string[], answered: readonly string[]): Promise<void> {
   const cur = await readSuperState(key, superSanitizeOpts());
   // His message answers HIS question; a member's question to main Super stays open (plan-r10 1).
-  const ownerAsk = (q: SuperQueueItem) => q.kind === 'ask' && !isMainWork(q.workOrigin);
+  const ownerAsk = (q: SuperQueueItem) => q.kind === 'ask' && !isMainWork(q.workOrigin) && answered.includes(q.id);
   if (!cur.queue.some((q) => ownerAsk(q) && q.state !== 'done') && !told.length) return;
   const inbox = inboxOf(sessionId);
   // Agenda note ids told in the same message (`superAnswerDigest`): stamped, never carried.
@@ -1174,7 +1190,7 @@ export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: r
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
   if (!s.queue.some((q) => q.kind === 'ask' && q.state === 'escalated')) return null;
-  if (aboutKeepsAsks(s, abouts)) return null;
+  if (!asksAnswered(s, abouts).length) return null;
   // No event turn runs while his question is open: what the agenda moved by itself (pad.ts)
   // rides in this message too, and its note ids are marked told with the held items.
   const held = heldBlock(root, s, now);

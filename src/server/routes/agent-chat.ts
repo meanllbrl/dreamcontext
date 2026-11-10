@@ -134,7 +134,7 @@ import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-lan
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -3530,12 +3530,13 @@ export function startChatSession(
       const block = text.startsWith('/') ? null : voiceTakeBlock(take);
       if (block) content.push({ type: 'text', text: block });
     }
-    // The Super Agent's own question is open: this message answers it, and everything held
+    // The Super Agent's own question is open and this message answers it: everything held
     // back while it was open rides in the SAME message (inbox.ts `superAnswerDigest`), a block
     // starting with `<` the replay drops.
-    // A message about agenda lines answers the open question only when one of its parts is it;
-    // a reply to a message (its ↩) is about that message, never the open question's answer.
-    const abouts = isSuper ? aboutHeads(text).map(({ kind, id }) => ({ kind, id })) : [];
+    // A message answers the open question only when it is written about it (an agenda line's
+    // "write about this", a Telegram reply to its card) or is a tapped option's answer: any other
+    // message of his, a reply ↩ to some message included, leaves it open (owner 2026-11-11).
+    const abouts = isSuper ? ownerAbouts(text, aboutHeads(text)) : [];
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.

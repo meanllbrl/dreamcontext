@@ -28,7 +28,7 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 import {
-  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, clearOwnerLease, noteHeld, pumpSuper, startSuperInbox, superAnswerDigest,
+  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, clearOwnerLease, noteHeld, ownerAbouts, pumpSuper, startSuperInbox, superAnswerDigest,
   superOwnerSpoke, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -131,11 +131,12 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     attachSuperInbox(inbox);
     await openAsk();
     await finish('c1', 'q-done-c1');
-    const digest = superAnswerDigest(SUPER);
+    const own = [{ kind: 'item' as const, id: 'q-ask-1' }];
+    const digest = superAnswerDigest(SUPER, Date.now(), own);
     expect(digest!.text).toContain('<super-agenda-moved>\n[agenda]');
     expect(digest!.text).toMatch(/- note=n1 moved Now -> Done by itself: its job \(child=c1\) is (done|gone)/);
     expect(digest!.items).toContain('n1');
-    superOwnerSpoke(SUPER, Date.now(), digest!.items);
+    superOwnerSpoke(SUPER, Date.now(), digest!.items, own);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.pad?.[0].toldAt).toBeGreaterThan(0);
@@ -162,7 +163,10 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     // The question never went to the Super while his own card is open.
     for (const d of delivered) expect(d.text).not.toMatch(/event=question/);
 
-    const digest = superAnswerDigest(SUPER);
+    // His answer: a tapped option (`[super answer] item=<ask>`), written about the card.
+    const own = ownerAbouts('[super answer] item=q-ask-1\nUser has answered your questions: "Ship?"="Yes".', []);
+    expect(superAnswerDigest(SUPER)).toBeNull();
+    const digest = superAnswerDigest(SUPER, Date.now(), own);
     expect(digest).not.toBeNull();
     const text = digest!.text;
     expect(text.split('\n')[0]).toBe(`${HELD_OPEN} items=1>`);
@@ -173,14 +177,14 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     expect(digest!.items).toHaveLength(1);
 
     // His answer is written with that block; the ask closes, the question is delivered with it.
-    superOwnerSpoke(SUPER, Date.now(), digest!.items);
+    superOwnerSpoke(SUPER, Date.now(), digest!.items, own);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('done');
       expect(s.queue.find((q) => q.kind === 'question')?.state).toBe('delivered');
       expect(s.held).toBeUndefined();
     }, W);
-    expect(superAnswerDigest(SUPER)).toBeNull();
+    expect(superAnswerDigest(SUPER, Date.now(), own)).toBeNull();
   });
 
   it('no question open: no block, the owner\'s message goes alone', async () => {
@@ -299,7 +303,7 @@ describe('a message about one agenda line', () => {
     }, W);
   });
 
-  it('two questions open: about either one answers them (today\'s close-all); about a note keeps both', async () => {
+  it('two questions open: about one answers that one only; about a note keeps both (owner 2026-11-11)', async () => {
     await heldWhileAsked();
     await writeSuper(root, (s) => {
       s.queue.push({ id: 'q-ask-2', sessionId: SUPER, kind: 'ask', state: 'escalated', ownerText: 'And the docs?', createdAt: Date.now() });
@@ -316,7 +320,7 @@ describe('a message about one agenda line', () => {
     superOwnerSpoke(SUPER, Date.now(), digest!.items, [second]);
     await vi.waitFor(async () => {
       s = await readSuperState(root);
-      expect(s.queue.filter((q) => q.kind === 'ask').map((q) => q.state)).toEqual(['done', 'done']);
+      expect(s.queue.filter((q) => q.kind === 'ask').map((q) => q.state)).toEqual(['escalated', 'done']);
     }, W);
   });
 
@@ -334,9 +338,26 @@ describe('a message about one agenda line', () => {
     expect(delivered).toHaveLength(0);
   });
 
-  it('a plain message (no About header) still answers the open question', async () => {
-    await heldWhileAsked();
-    expect(superAnswerDigest(SUPER)).not.toBeNull();
+  // Owner 2026-11-11 (one question reached him three times): a message of his that is about
+  // nothing is a message, never the card's answer.
+  it('a plain message (no About header) leaves the open question open and the pile held', async () => {
+    const delivered = await heldWhileAsked();
+    const plain = ownerAbouts('Bu arada raporu da at.', []);
+    expect(plain).toEqual([]);
+    expect(superAnswerDigest(SUPER, Date.now(), plain)).toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), [], plain);
+    await new Promise((r) => setTimeout(r, 120));
+    const s = await readSuperState(root);
+    expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
+    expect(s.held?.map((h) => h.item)).toEqual([HELD]);
+    expect(delivered).toHaveLength(0);
+  });
+
+  it('a tapped option (`[super answer] item=<ask>`) answers that card; the prefix counts only at the start', () => {
+    expect(ownerAbouts('[super answer] item=q-ask-1\nUser has answered your questions: "a"="b".', [])).toEqual([{ kind: 'item', id: 'q-ask-1' }]);
+    expect(ownerAbouts('[super answer] item=q-ask-1 unclear\nAsk again.', [])).toEqual([{ kind: 'item', id: 'q-ask-1' }]);
+    expect(ownerAbouts('bak: [super answer] item=q-ask-1\nx', [])).toEqual([]);
+    expect(ownerAbouts('[super answer] item=q-ask-1 then more', [])).toEqual([]);
   });
 
   // Owner 2026-10-24: several references in one message. Other lines keep the question open; a

@@ -166,7 +166,7 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
       for (const row of p.summary ?? []) body.push(`- ${row.key}: ${row.value}`);
     }
     if (result) body.push(`_${result}_`);
-    messages.push(...toTelegramMessages(body.join('\n\n'), { codeFences: 'mac' }));
+    messages.push(...toTelegramMessages(body.join('\n\n'), { codeFences: 'mac', fold: true }));
     const projectRoot = dirname(input.contextRoot);
     const paths = posts.flatMap((p) => p.files ?? []).slice(0, 4);
     for (const rel of paths) {

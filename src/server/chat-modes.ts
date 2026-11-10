@@ -639,7 +639,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   your one line FIRST (a question waits), then run \`super ask\` as the LAST act of the turn, with no text after it
   (a late line lands above the card); \`reached: false\` = unseen: one short line more allowed. His answer comes back as
   \`[super answer] …\`, child questions that waited meanwhile as \`<super-while-you-asked>\`: answer him, then
-  take those one at a time.
+  take those one at a time. Only a tap or a message written about the card closes it: any other
+  message of his leaves it open, so answer that message; if his words answer the card anyway, \`super queue done <ask id>\`.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
   \`super resume <child>\` reopens it); \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`

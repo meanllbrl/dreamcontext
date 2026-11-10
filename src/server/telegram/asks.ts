@@ -31,6 +31,7 @@ import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contra
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { permissionHtml } from '../../lib/telegram/system-lines.js';
+import { agendaItemBlock } from '../../lib/telegram/headers.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
@@ -46,9 +47,26 @@ type Obj = Record<string, unknown>;
 const sentItems = new Set<string>();
 
 /** What an item's Telegram copy is: its messages, so an answer elsewhere can close them. */
-interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; messages: { messageId: number; html: string; question?: string }[] }
+interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: { messageId: number; html: string; question?: string }[] }
 const copies = new Map<string, Copy>();
 const COPIES_CAP = 200;
+/** The kind of each item being sent, so its copy knows whether a reply to it answers it. */
+const kindOf = new Map<string, SuperQueueItem['kind']>();
+
+/**
+ * The open question a Telegram reply answers: a reply to a message of a question card's copy
+ * (the Super's own ask, or a child's question) on this bot. Its header (`[About agenda line
+ * item=<id> section=waiting]`) is what closes it, exactly like the Mac's "write about this" on
+ * its row (owner 2026-11-11: only a tap or an answer written about the card closes it).
+ */
+export function cardReplyItem(ab: Pick<ActiveBinding, 'key'>, replyToMessageId: number): string | null {
+  if (!Number.isSafeInteger(replyToMessageId) || replyToMessageId <= 0) return null;
+  for (const [id, c] of copies) {
+    if (c.ab.key !== ab.key || (c.kind !== 'ask' && c.kind !== 'question')) continue;
+    if (c.messages.some((m) => m.messageId === replyToMessageId)) return id;
+  }
+  return null;
+}
 
 type SendOutcome = { ok: true } | { ok: false; why: string; retryAfterS?: number } | { skipped: true };
 
@@ -118,6 +136,7 @@ async function stillOpen(ab: ActiveBinding, item: SuperQueueItem): Promise<boole
 
 function remember(itemId: string, copy: Copy): void {
   copies.delete(itemId);
+  copy.kind ??= kindOf.get(itemId);
   copies.set(itemId, copy);
   while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
 }
@@ -181,12 +200,22 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   hub.extraButton = async (ab, rec, idx) => (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
     ? onQueueButton(hub, ab, rec, idx)
     : prev ? prev(ab, rec, idx) : LINES.stale;
+  // A reply to a question card's message is written about that question: its header goes first.
+  const prevPrefix = hub.turnPrefix;
+  hub.turnPrefix = (ab, msg) => {
+    const pre = prevPrefix ? prevPrefix(ab, msg) : '';
+    const reply = msg.reply_to_message as Obj | undefined;
+    const item = ab.target === 'super' ? cardReplyItem(ab, Number(reply?.message_id)) : null;
+    const head = item ? agendaItemBlock(item, 'waiting') : '';
+    return [head, pre].filter(Boolean).join('\n\n');
+  };
   // An agent's app request card (app-onay-karti C6): its own away rule and button kind.
   const offApps = wireTelegramAppRequests(hub);
   return () => {
     offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
     setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
     hub.extraButton = prev;
+    hub.turnPrefix = prevPrefix;
   };
 }
 
@@ -213,6 +242,8 @@ async function plain(hub: TelegramHub, ab: ActiveBinding, htmls: string[]): Prom
  */
 async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<SendOutcome> {
   if (!(await stillOpen(ab, item))) return { skipped: true };
+  kindOf.set(item.id, item.kind);
+  if (kindOf.size > COPIES_CAP) kindOf.delete(kindOf.keys().next().value as string);
   if (item.kind === 'ask') {
     const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
     const card = simpleCard(spec);
@@ -322,4 +353,4 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
 }
 
 /** Test seam. */
-export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); }
+export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); kindOf.clear(); }

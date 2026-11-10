@@ -87,6 +87,17 @@ describe('what a member bot sends', () => {
     expect(tg.sent('sendPhoto')).toHaveLength(1);
   });
 
+  it('a long routine result folds after its opening into one expandable quote (owner 2026-11-11)', async () => {
+    optIn();
+    post(Array.from({ length: 6 }, (_, i) => `Bölüm ${i}: ${'Harcama düştü, ROAS arttı, yeni kreatifler iyi gidiyor. '.repeat(5)}`).join('\n\n'));
+    const [e] = readThreadRun(root, 'daily', RUN);
+    const send = buildRoutineForward(input({ entries: [e], verified: verifiedRunPosts([e], RUN, key) }));
+    await send!();
+    const text = tg.texts().join('\n');
+    expect(text).toContain('<b>Günlük rapor</b>');
+    expect(text).toContain('<blockquote expandable>');
+  });
+
   it('not opted in → nothing; failure → "Rutin çalışamadı" either way; review pending → one line (opted in only)', async () => {
     post('rapor');
     expect(buildRoutineForward(input())).toBeNull();

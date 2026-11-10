@@ -19,7 +19,9 @@ import * as reg from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { announceOwnerHead, ownerQuestionReach, settleOwnerReach, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
-import { superQueueHead } from '../../src/lib/super/inbox.js';
+import { ownerAbouts, superQueueHead } from '../../src/lib/super/inbox.js';
+import { aboutHeads } from '../../src/lib/super/types.js';
+import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
@@ -289,5 +291,61 @@ describe('answered elsewhere', () => {
     const text = String(tg.calls.find((c) => c.method === 'editMessageText')!.params.text);
     expect(text).toContain('<i>Bu kart kapandı.</i>');
     expect(text).not.toContain('Cevaplandı');
+  });
+});
+
+/**
+ * Owner 2026-11-11 (one question reached him three times): his card closes only when he taps an
+ * option or answers that card; any other message of his is a message. What the server reads as
+ * "written about the card" is `ownerAbouts(text, aboutHeads(text))` on the injected turn.
+ */
+describe('only a tap or a reply to the card answers it', () => {
+  let injected: string[];
+  beforeEach(() => {
+    injected = [];
+    reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { injected.push(t); return { ok: true }; }, interrupt: () => {} });
+  });
+  const answers = (t: string) => { const { body } = parseTelegramPrefix(t); return ownerAbouts(body, aboutHeads(body)).filter((a) => a.kind === 'item').map((a) => a.id); };
+  async function cardSent() {
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(withButton('Yeşil')).toHaveLength(1));
+    return withButton('Yeşil')[0];
+  }
+
+  it('an unrelated message while the card is open names no card: it reaches the Super as a message', async () => {
+    await cardSent();
+    tg.push(TOKEN, textUpdate(OWNER, 'Bu arada raporu da at.'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1));
+    expect(parseTelegramPrefix(injected[0]).body).toContain('Bu arada raporu da at.');
+    expect(answers(injected[0])).toEqual([]);
+  });
+
+  it('a reply to the card with free text: the card is named first, his words follow as the answer', async () => {
+    const card = await cardSent();
+    tg.push(TOKEN, textUpdate(OWNER, 'İkisi de olmaz, lacivert yap.', { reply_to_message: { message_id: card.result!.message_id } }));
+    await vi.waitFor(() => expect(injected).toHaveLength(1));
+    const { body } = parseTelegramPrefix(injected[0]);
+    expect(body.startsWith('[About agenda line item=ask-1 section=waiting]\n\n')).toBe(true);
+    expect(body).toContain('İkisi de olmaz, lacivert yap.');
+    expect(answers(injected[0])).toEqual(['ask-1']);
+  });
+
+  it('a reply to some other bot message names no card', async () => {
+    await cardSent();
+    const other = await hub.send(hub.superBindingOfVault(vault)!, 'Rapor hazır.');
+    tg.push(TOKEN, textUpdate(OWNER, 'Teşekkürler', { reply_to_message: { message_id: Number(other?.message_id) } }));
+    await vi.waitFor(() => expect(injected).toHaveLength(1));
+    expect(answers(injected[0])).toEqual([]);
+  });
+
+  it('a tap answers the card with its pick', async () => {
+    const card = await cardSent();
+    const kb = (card.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard.flat();
+    tg.push(TOKEN, { callback_query: { id: 'cb1', data: kb[1].callback_data, from: { id: OWNER }, message: { message_id: card.result!.message_id, chat: { id: OWNER, type: 'private' }, text: String(card.params.text).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&') } } });
+    await vi.waitFor(() => expect(injected).toHaveLength(1));
+    expect(parseTelegramPrefix(injected[0]).body).toContain('"Hangi renk?"="Yeşil"');
+    expect(answers(injected[0])).toEqual(['ask-1']);
   });
 });

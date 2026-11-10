@@ -169,7 +169,9 @@ export interface FormatOptions {
    *  insight / agent-thread / automation views) are left out of the text with `'hub'`; with
    *  `'mac'` (the default, e.g. routine forwards) every dream fence is one "Mac'te" line. */
   blocks?: 'mac' | 'hub';
-  /** A long text keeps its first paragraphs open and the rest in an expandable quote (default on). */
+  /** A long text keeps its first paragraphs open and the rest in an expandable quote. Only a
+   *  routine's or an AI Team member's result folds; what the Super writes him never does (owner
+   *  2026-11-11). Off by default. */
   fold?: boolean;
 }
 
@@ -322,7 +324,7 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
     i++;
   }
   const html = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return opts.fold === false ? html : foldLong(html);
+  return opts.fold === true ? foldLong(html) : html;
 }
 
 /** Visible characters past which a text folds (about one phone screen, 24 lines at 360pt). */
