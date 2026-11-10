@@ -67,7 +67,7 @@ export const MODEL_FACTS: readonly ModelFact[] = Object.freeze([
     sleepOption: true,
   },
   {
-    family: 'fable', alias: 'fable', id: 'claude-fable-5-1', label: 'Fable 5.1',
+    family: 'fable', alias: 'fable', id: 'claude-fable-5-2', label: 'Fable 5.2',
     latencyRank: 4, latency: 'slower',
     price: { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 },
     defaultEffort: 'high', contextWindow: 1_000_000,
@@ -132,13 +132,14 @@ export function factForFamily(family: string): ModelFact | undefined {
 
 /** Older ids Claude Code still serves, each priced at its OWN rate. Ordered: first match wins,
  *  and the list is tried BEFORE the family rule so `claude-opus-5` never reads as Opus 5.5.
- *  `mythos` (any id not listed) is the Fable 5.1 row. */
+ *  `mythos` (any id not listed) is the current Fable row. A dotted Fable 5.x (5.1, 5.2) prices as
+ *  the current Fable row; only the bare `claude-fable-5` keeps its own rate. */
 export interface LegacyModelPrice { pattern: RegExp; price: TokenPrice }
 
 const FABLE = factForFamily('fable') as ModelFact;
 
 export const LEGACY_MODEL_PRICES: readonly LegacyModelPrice[] = Object.freeze([
-  { pattern: /fable-5(?!-1)|mythos-5(?!-1)/, price: { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 1 } },
+  { pattern: /fable-5(?!-\d)|mythos-5(?!-\d)/, price: { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 1 } },
   { pattern: /mythos/, price: FABLE.price },
   { pattern: /opus-5(?!-5)/, price: { in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 } },
   { pattern: /opus-4-[5-8]/, price: { in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 } },

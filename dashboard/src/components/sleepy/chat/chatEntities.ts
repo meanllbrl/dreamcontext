@@ -7,6 +7,7 @@ import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
 import type { Attachment } from './composerScratch';
 import { refLabel } from './composerRefs';
 import { cardMentions } from '../../../lib/cardMention';
+import { modelNameFromId } from '../../../lib/agentComposer';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -1221,33 +1222,9 @@ export function runDurationMs(run: SubAgentRun, now: number): number {
   return Math.max(0, end - run.startedAt);
 }
 
-/**
- * A model id → a short human label: `claude-haiku-4-5-20251001` → `Haiku 4.5`,
- * `claude-opus-5` → `Opus 5`. The trailing 8-digit date stamp is dropped (it is a build
- * date, not a version anyone reads), and the remaining version segments join on a dot.
- * A bracketed variant tag (`claude-opus-5-5[1m]`, what the CLI reports for a 1M-context run)
- * is dropped first — left on, it glues to the last segment and the minor version vanishes.
- *
- * An id from a family we don't know is returned VERBATIM rather than relabelled or blanked —
- * a raw id the user can read beats a dash that says nothing, and beats claiming a model ran
- * that didn't. Same rule `modelLabelFor` follows in agentComposer.ts.
- */
-const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
-
-export function formatModelName(model: string): string {
-  const id = model.trim();
-  if (!id) return '';
-  const lower = id.toLowerCase();
-  const family = MODEL_FAMILIES.find((f) => lower.includes(f));
-  if (!family) return id;
-  const after = lower.slice(lower.indexOf(family) + family.length).replace(/\[[^\]]*\]/g, '');
-  const version = after
-    .split('-')
-    .filter((part) => /^\d+$/.test(part) && part.length < 8)
-    .join('.');
-  const label = family.charAt(0).toUpperCase() + family.slice(1);
-  return version ? `${label} ${version}` : label;
-}
+/** A model id → a short human label (`claude-haiku-4-5-20251001` → `Haiku 4.5`). ONE deriver,
+ *  shared with the composer's picker: `modelNameFromId` in lib/agentComposer.ts. */
+export const formatModelName = modelNameFromId;
 
 /**
  * The compact meta line under a run's name — duration, model, tokens, tool uses — as an

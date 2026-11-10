@@ -47,7 +47,7 @@ function mirrorDrift(facts: readonly ModelFact[]): string[] {
     if (facts.find((f) => f.alias === m.id)?.label !== m.label) out.push(`FALLBACK_MODEL_CONFIG label ${m.id}: ${m.label}`);
   }
   eq('AutomationDialog MODELS', quotedList(read('dashboard/src/components/agents/AutomationDialog.tsx'), /const MODELS = /));
-  eq('chatEntities MODEL_FAMILIES', quotedList(read('dashboard/src/components/sleepy/chat/chatEntities.ts'), /const MODEL_FAMILIES = /));
+  // chatEntities no longer keeps its own family list: its formatModelName IS agentComposer's modelNameFromId.
   eq('agentComposer MODEL_FAMILIES', quotedList(read('dashboard/src/lib/agentComposer.ts'), /const MODEL_FAMILIES = /));
   for (const f of facts) {
     if (MODEL_INSIGHTS[f.family]?.insight !== f.note) out.push(`MODEL_INSIGHTS.${f.family}.insight != note`);
@@ -101,7 +101,7 @@ describe('model-facts — readout, window, picker', () => {
       expect(row.price.in).toBeGreaterThan(0);
       expect(row.price.cacheRead).toBeGreaterThan(0);
       for (const f of MODEL_FACTS) {
-        // The Fable 5.1 row is reachable through the `mythos` catch-all by design.
+        // The current Fable row is reachable through the `mythos` catch-all by design.
         if (row.pattern.source === 'mythos') continue;
         expect(row.pattern.test(f.id)).toBe(false);
       }

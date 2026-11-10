@@ -20,7 +20,7 @@ describe('contextLimitFor — window per model', () => {
     for (const id of [
       'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
       'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-mythos-5',
-      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2',
     ]) {
       expect(contextLimitFor(1000, id)).toBe(1_000_000);
     }

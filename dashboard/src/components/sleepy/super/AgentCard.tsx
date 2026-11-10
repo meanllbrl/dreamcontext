@@ -7,7 +7,7 @@ import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
 import { AccountLimitRing } from '../chat/UsageRings';
-import { FALLBACK_MODEL_CONFIG, chatAccountOf } from '../../../lib/agentComposer';
+import { FALLBACK_MODEL_CONFIG, chatAccountOf, modelNameFromId } from '../../../lib/agentComposer';
 import { useAgentModelConfig, useAgentTools } from '../../../hooks/useAgentCapabilities';
 import { ToolMark } from '../chat/model-picker/ModelPicker';
 import { activeRow, claudeState, codexState, type PickerToolState } from '../chat/model-picker/pickerModel';
@@ -233,7 +233,8 @@ export function childChipParts(catalog: PickerToolState[], session: ChatSession 
   const effort = session?.model ? session.effort || child?.effort : child?.effort;
   const own = catalog.find((x) => x.tool === tool);
   const row = own ? activeRow(own, model) : null;
-  return chipFromPickerLabel(row?.label, model, effort, tool);
+  // A Claude id no row names (a version newer than the table) still names itself, never a raw id.
+  return chipFromPickerLabel(row?.label ?? (tool === 'claude' ? modelNameFromId(model) : undefined), model, effort, tool);
 }
 
 /**
