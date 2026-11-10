@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { applyLayoutPatch, patchEchoed } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { deleteDialog, instructionsParts, memberRoutines, plainWords } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
+import { deleteDialog, instructionsParts, memberRoutines, ownAutomation, plainWords } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
 import { panelCloseOf } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/components/sleepy/super/${rel}`, import.meta.url)), 'utf8');
@@ -63,6 +63,17 @@ describe('member cards in the window', () => {
     const all = [r('ua', 'ua'), r('morning', 'ua'), r('other', 'x')];
     expect(memberRoutines(all, 'ua', true).map((a: { slug: string }) => a.slug)).toEqual(['morning']);
     expect(memberRoutines(all, 'ua', false).map((a: { slug: string }) => a.slug)).toEqual(['ua', 'morning']);
+  });
+
+  it('Rutinler: an unsplit member\'s own manifest is reachable as one Edit row (AutomationDialog, no Sil); a split member has none', () => {
+    const r = (slug: string, agent: string) => ({ slug, agent, runKind: 'automation', mode: 'sched', enabled: true, title: slug }) as never;
+    const all = [r('ua', 'ua'), r('morning', 'ua')];
+    expect(ownAutomation(all, 'ua', true)?.slug).toBe('ua');
+    expect(ownAutomation(all, 'ua', false)).toBeNull();
+    expect(ownAutomation(all, 'nobody', true)).toBeNull();
+    const body = read('MemberCardBody.tsx');
+    expect(body).toMatch(/<WindowLayer>\s*\{\/\*[^]*?\*\/\}\s*<AutomationDialog key=\{own\.slug\} automation=\{own\} noDelete/);
+    expect(body).toContain('data-testid="member-own-edit"');
   });
 
   it('the delete dialog is filled from the plan: routines by name, by project for a global member, no undo, a trash copy', () => {

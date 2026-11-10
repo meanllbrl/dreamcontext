@@ -130,7 +130,7 @@ describe('the create dialog picks an agent (S2)', () => {
     expect(existsSync(join(DASH, 'components/agents/AgentDialog.css'))).toBe(false);
     expect(dialog).toMatch(/export function AutomationDialog\(/);
     expect(dialog).toContain("import './AutomationDialog.css';");
-    for (const rel of ['components/agents/AgentsMembers.tsx', 'components/automations/AutomationsEmptyState.tsx']) {
+    for (const rel of ['components/sleepy/super/MemberCardBody.tsx', 'components/automations/AutomationsEmptyState.tsx']) {
       const src = read(rel);
       expect(src, rel).not.toMatch(/agents\/AgentDialog'|\.\/AgentDialog'/);
       expect(src, rel).toMatch(/AutomationDialog/);

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi } from '../../../context/VaultContext';
 import { findAgent, useAgent, useAgents } from '../../../hooks/useAgents';
-import { useAutomations, useDeleteAgent } from '../../../hooks/useAutomations';
+import { useAutomations, useDeleteAgent, type AutomationSummary } from '../../../hooks/useAutomations';
 import { confirmAction } from '../../../lib/desktop';
 import { RoutineCard } from '../../aiteam/TeamPanel';
 import { routineOf, setMemberEnabled, type TeamAutomation } from '../../aiteam/teamModel';
@@ -81,6 +81,12 @@ export function memberRoutines(all: readonly TeamAutomation[], slug: string, imp
   return all.filter((a) => routineOf(a, slug) && !(implicit && a.slug === slug));
 }
 
+/** An unsplit member's OWN scheduled manifest: not a routine row (no Sil, it is the member), but
+ *  still an automation the owner edits whole (schedule, model, "Telegram'a da gelsin"). */
+export function ownAutomation<T extends TeamAutomation>(all: readonly T[], slug: string, implicit: boolean): T | null {
+  return implicit ? all.find((a) => a.slug === slug && routineOf(a, slug)) ?? null : null;
+}
+
 function useMemberRoutines(slug: string): TeamAutomation[] {
   const autos = useAutomations();
   const implicit = !!findAgent(useAgents().data, slug)?.implicit;
@@ -96,7 +102,10 @@ function RoutinesCard(p: CardProps) {
   const agent = findAgent(agents.data, p.slug);
   const remove = useDeleteAgent();
   const [creating, setCreating] = useState(false);
+  const [editingOwn, setEditingOwn] = useState(false);
   const readOnly = !!agent?.readOnly;
+  const autos = useAutomations();
+  const own = ownAutomation((autos.data ?? []) as AutomationSummary[], p.slug, !!agent?.implicit);
   if (p.variant === 'tile') {
     const on = routines.filter((r) => r.enabled).length;
     return (
@@ -119,7 +128,18 @@ function RoutinesCard(p: CardProps) {
   };
   return (
     <div className="mcb-body" data-testid="member-card-routines">
-      {routines.length === 0 && <p className="mcb-muted">{t('superStage.member.cards.routinesEmpty')}</p>}
+      {own && (
+        <div className="mcb-own" data-testid="member-own-automation">
+          <span className="mcb-strong">{own.title}</span>
+          <span className="mcb-muted">{own.enabled ? own.cadenceLabel : t('aiteam.routine.paused')}</span>
+          {!readOnly && (
+            <button type="button" className="mcb-link" data-testid="member-own-edit" onClick={() => setEditingOwn(true)}>
+              {t('superStage.member.cards.ownEdit')}
+            </button>
+          )}
+        </div>
+      )}
+      {routines.length === 0 && !own && <p className="mcb-muted">{t('superStage.member.cards.routinesEmpty')}</p>}
       {routines.map((r) => (
         <RoutineCard key={r.slug} routine={r} agentTitle={agent?.title || p.slug} startOpen={false} onToast={p.onToast}
           {...(readOnly ? {} : { onDelete: () => void del(r) })} />
@@ -129,6 +149,12 @@ function RoutinesCard(p: CardProps) {
           onClick={() => { if (!p.onNewRoutine?.(t('superStage.member.cards.routineNewChip'))) setCreating(true); }}>
           {t('superStage.member.cards.routineNew')}
         </button>
+      )}
+      {editingOwn && own && (
+        <WindowLayer>
+          {/* Keyed by slug: the form state never carries over from one automation to another. */}
+          <AutomationDialog key={own.slug} automation={own} noDelete onToast={p.onToast} onClose={() => setEditingOwn(false)} />
+        </WindowLayer>
       )}
       {creating && (
         <WindowLayer>

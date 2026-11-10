@@ -256,6 +256,7 @@ export function AutomationDialog({
   onToast,
   onCreated,
   initial,
+  noDelete,
 }: {
   /** null ⇒ create. */
   automation: AutomationSummary | null;
@@ -267,6 +268,8 @@ export function AutomationDialog({
   onCreated?: (slug: string) => void;
   /** A create's starting values (a starter). Ignored on an edit. */
   initial?: AutomationDialogInitial;
+  /** No "Delete automation": the automation is a member's own manifest, deleted only through the member's delete. */
+  noDelete?: boolean;
 }) {
   const { t } = useI18n();
   const tx = (key: string, fallback: string) => (t(key) === key ? fallback : t(key));
@@ -932,7 +935,7 @@ export function AutomationDialog({
         {error && <p className="agent-error">{error}</p>}
 
         <div className="agent-modal-foot">
-          {editing && (
+          {editing && !noDelete && (
             /* The `inline-two-click-confirm` pattern: first click relabels and
                arms, second commits, 5s disarms. No native confirm(), and the
                row never vanishes before the second click — the destructive
