@@ -57,22 +57,8 @@ export class TaskFileBusyError extends Error {
  * not leave the file locked for the next 30 seconds.
  */
 export function withTaskFileLock<T>(contextRoot: string, slug: string, fn: () => T): T {
-  try {
-    return withLockFileAt(taskLockPath(contextRoot, slug), () => new TaskFileBusyError(slug), fn);
-  } finally {
-    noteTaskWrite();
-  }
+  return withLockFileAt(taskLockPath(contextRoot, slug), () => new TaskFileBusyError(slug), fn);
 }
-
-/**
- * This process's task-write generation: bumped by every task-file write it makes. Every writer of
- * `state/*.md` holds {@link withTaskFileLock} (bumped there, in one place) or calls
- * {@link noteTaskWrite} itself. The bulk task read never hands a caller that came after a write a
- * pass that started before it (task-backend/local.ts `readAll`).
- */
-let taskWriteGen = 0;
-export function noteTaskWrite(): void { taskWriteGen += 1; }
-export function taskWriteGeneration(): number { return taskWriteGen; }
 
 /**
  * The same bounded-wait mutex at any lock path — for writers of other per-file

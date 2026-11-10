@@ -16,7 +16,6 @@ import { handleTasksList, handleTasksMembers } from '../../src/server/routes/tas
 import { LocalTaskBackend, forgetTaskRead, readTaskFile, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
 import { criteriaProgress } from '../../dashboard/src/components/sleepy/super/tileModel.js';
 import { SUMMARY_WHY_MAX } from '../../src/lib/task-list-summary.js';
-import { withTaskFileLock } from '../../src/lib/task-file-lock.js';
 
 type Body = { tasks: Array<Record<string, unknown>>; members?: Array<{ slug: string }> };
 
@@ -179,11 +178,11 @@ describe('readAll after a write', () => {
 });
 
 describe('readAll after a write outside the backend', () => {
-  it('a writer holding the task lock (agent assignment, status moves) also starts a fresh pass', async () => {
+  it('a write nobody announces is still seen by the next call', async () => {
     for (let i = 0; i < 120; i++) seed(`t-${String(i).padStart(3, '0')}`);
     const backend = new LocalTaskBackend(join(ctx, 'state'));
     const first = backend.readAll();
-    withTaskFileLock(ctx, 't-locked', () => seed('t-locked'));
+    seed('t-locked'); // a writer that tells nobody (another process, a sync mirror write)
     const second = await backend.readAll();
     expect((await first).some((t) => t.slug === 't-locked')).toBe(false);
     expect(second.some((t) => t.slug === 't-locked')).toBe(true);

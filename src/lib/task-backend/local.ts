@@ -29,7 +29,7 @@ import { isFiledBy, readFilingApproved, readFilingBasis } from '../filing-basis.
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
-import { noteTaskWrite, taskWriteGeneration, withTaskFileLock } from '../task-file-lock.js';
+import { withTaskFileLock } from '../task-file-lock.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
@@ -397,10 +397,9 @@ function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
  * the stat before the read moved), so a list after a list costs stats alone.
  *
  * The values are the CACHED objects, not clones: read-only for the caller (the list route only
- * serialises them). Concurrent calls for one directory share one pass.
+ * serialises them).
  */
 const READ_ALL_BATCH = 48;
-const readAllInflight = new Map<string, { gen: number; p: Promise<TaskData[]> }>();
 
 /** One file read off the loop, cached only when its stat did not move during the read (a write
  *  landing mid-read would otherwise cache a half-written file); a moved file is read once more. */
@@ -440,7 +439,6 @@ async function readAllTaskFiles(files: string[], statuses: readonly StatusDef[])
 
 /** Drop the memoized reads of one task file (after this process wrote it). */
 export function forgetTaskRead(path: string): void {
-  noteTaskWrite();
   const abs = resolve(path);
   readMemo.delete(`fm\0${abs}`);
   readMemo.delete(`task\0${abs}`);
@@ -539,17 +537,10 @@ export class LocalTaskBackend implements TaskBackend {
    * {@link readAllTaskFiles}). Read-only values: the list route serialises them as they are.
    */
   async readAll(): Promise<readonly TaskData[]> {
-    // Join a running pass only when no write landed since it started (it listed the files and
-    // may have read the edited one before the write).
-    // (Every in-process writer bumps the generation: task-file-lock.ts.)
-    const running = readAllInflight.get(this.stateDir);
-    if (running && running.gen === taskWriteGeneration()) return running.p;
-    const gen = taskWriteGeneration();
-    const p = readAllTaskFiles(this.taskFiles(), this.statusDefs()).finally(() => {
-      if (readAllInflight.get(this.stateDir)?.p === p) readAllInflight.delete(this.stateDir);
-    });
-    readAllInflight.set(this.stateDir, { gen, p });
-    return p;
+    // Every call is its own pass, never one shared with an earlier caller: a pass that started
+    // before a write (any writer, in this process or not) must not answer the refetch after it.
+    // The memo is shared, so a second pass costs a stat per file and a read of what moved.
+    return readAllTaskFiles(this.taskFiles(), this.statusDefs());
   }
 
   async get(slug: string): Promise<TaskData | null> {
