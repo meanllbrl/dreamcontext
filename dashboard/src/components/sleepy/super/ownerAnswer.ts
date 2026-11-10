@@ -120,6 +120,18 @@ export function grantChoices(item: SuperQueueItem, call: ShownCall | null, recor
   };
 }
 
+/**
+ * Why a call offers no Allow, said for real (one place for the bar, the Super's card and the chat's
+ * card): a Bash command kept cut is too long; any other tool's request never travels whole, so it
+ * is decided where the session runs; a whole call with no size is a rule on this Mac. `canOpen`:
+ * the surface has an Open that takes him there; without it no sentence tells him to open anything.
+ */
+export function noAllowReasonKey(call: ShownCall | null, canOpen: boolean): string {
+  if (call && call.whole) return 'owner.answer.ruleForbids';
+  if (!canOpen) return 'owner.answer.cannotAllowHere';
+  return call && call.tool === 'Bash' ? 'owner.answer.cut' : 'owner.answer.decideInChat';
+}
+
 /** The answer for an Allow of the given size, by what the row is. */
 export function allowAnswer(kind: OwnerRowKind, size: GrantSize): OwnerAnswer {
   return kind === 'refusal' ? { kind: 'refusal', action: 'allow', size } : { kind: 'permission', behavior: 'allow', size };
@@ -173,7 +185,9 @@ export async function sendOwnerAnswer(api: OwnerPoster, req: OwnerAnswerRequest)
     return { ok: false, error, message: r?.message ?? '', openInstead: OPEN_INSTEAD.has(error) };
   } catch (e) {
     if (e instanceof RequestError) {
-      const error = e.status === 403 ? 'owner_page_only' : e.status === 409 ? 'already_answered' : e.code || 'failed';
+      // The route's own slug first: one status carries several (409 is no_window, not_offered or
+      // already_answered), and reading the status alone told him "answered" when nobody had.
+      const error = e.code || (e.status === 403 ? 'owner_page_only' : e.status === 409 ? 'already_answered' : 'failed');
       return { ok: false, error, message: e.message, openInstead: OPEN_INSTEAD.has(error) };
     }
     return { ok: false, error: 'failed', message: e instanceof Error ? e.message : '', openInstead: false };

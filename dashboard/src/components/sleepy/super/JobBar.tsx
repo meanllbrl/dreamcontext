@@ -9,8 +9,7 @@ import {
   directChildQuestion, optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
-  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices,
-} from './ownerAnswer';
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
 import { sizeWords } from '../chat/RefusalCard';
 import {
   claimOwnerAnswer, memberItemText, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
@@ -477,7 +476,7 @@ function GrantHead({ item, record, memberName, onOpen, showOptions = true }: { i
   const choices = grantChoices(item, call, record);
   const input = call ? visibleText(call.input) : '';
   const lead = kind === 'refusal' ? t('owner.answer.refusedBar') : '';
-  const why = !call ? '' : !call.whole ? t('owner.answer.cut') : !choices.sizes.length ? t('owner.answer.ruleForbids') : choices.onceOnlyReason ?? '';
+  const why = !call ? '' : !choices.sizes.length ? t(noAllowReasonKey(call, true)) : choices.onceOnlyReason ?? '';
   const full = [lead, call?.tool, input].filter(Boolean).join(' ') + (why ? ` · ${why}` : '');
   const text = call ? null : memberItemText(item, t);
   return (

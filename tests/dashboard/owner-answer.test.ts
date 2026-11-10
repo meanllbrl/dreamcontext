@@ -158,6 +158,14 @@ describe('the route', () => {
     expect(answerStateAfter(r)).toEqual({ busy: false, fallback: true, note: 'owner.answer.openInstead' });
   });
 
+  it('a 409 that is no window or no longer offered is Open, never "answered already"', async () => {
+    for (const code of ['no_window', 'not_offered']) {
+      const r = await sendOwnerAnswer(poster(async () => { throw new RequestError('Conflict', 409, code); }), answerRequest('main', item(), { kind: 'dismiss' }, 'bar'));
+      expect(r).toMatchObject({ ok: false, error: code, openInstead: true });
+      expect(answerStateAfter(r)).toMatchObject({ fallback: true });
+    }
+  });
+
   it('a second answer is told, never offered Open', async () => {
     const r = await sendOwnerAnswer(poster(async () => { throw new RequestError('Answered', 409, 'already_answered'); }), answerRequest('main', item(), { kind: 'dismiss' }, 'bar'));
     expect(r).toMatchObject({ ok: false, error: 'already_answered', openInstead: false });

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { parseEditDiff } from './chatEntities';
 import { ToolBadge, CodeSentence } from './atoms';
 import { CardHeader, TerminalBlock } from './molecules';
@@ -155,7 +155,11 @@ export function PermissionCard({
           // The owner already allowed it elsewhere (the bar, Telegram): no second Allow here.
           <p className="chat-permcard-why" data-testid="grant-allowed">{t('owner.answer.allowedWaiting')}</p>
         ) : grantItem && grantView && !embed ? (
-          <GrantSizes item={grantItem} record={grantView.record} memberName={grantView.memberTitle} pending={item} onOnce={allow} onDeny={deny} />
+          <GrantSizes
+            item={grantItem} record={grantView.record} memberName={grantView.memberTitle} pending={item} onOnce={allow} onDeny={deny}
+            run={runUpFront ? runButton : null}
+            cliAlways={offerAlways ? { checked: alwaysAllow, set: setAlwaysAllow, label: t('perm.always') } : null}
+          />
         ) : (
         <div className="chat-permcard-decide">
           {offerAlways && (
@@ -185,13 +189,17 @@ export function PermissionCard({
  * which writes the rule from the STORED request and answers it. A command offered once only says
  * why (an outward or deleting command, a classified refusal).
  */
-function GrantSizes({ item, record, memberName, pending, onOnce, onDeny }: {
+function GrantSizes({ item, record, memberName, pending, onOnce, onDeny, run, cliAlways }: {
   item: SuperQueueItem;
   record: string;
   memberName?: string;
   pending: PendingPermission;
   onOnce: () => void;
   onDeny: () => void;
+  /** "Run here" for a command that asks at the keyboard: Allow would hang it headless. */
+  run: ReactNode;
+  /** The CLI's session-wide "always allow" box, kept while the server offers no wider size. */
+  cliAlways: { checked: boolean; set: (v: boolean) => void; label: string } | null;
 }) {
   const { t } = useI18n();
   const answer = useOwnerAnswer(record, item, 'member-chat');
@@ -224,8 +232,16 @@ function GrantSizes({ item, record, memberName, pending, onOnce, onDeny }: {
         </div>
       )}
       <div className="chat-permcard-decide">
+        {/* Every control the plain row offered stays while nothing here replaces it. */}
+        {cliAlways && wide.length === 0 && (
+          <label className="chat-permcard-always" data-testid="grant-cli-always">
+            <input type="checkbox" checked={cliAlways.checked} onChange={(e) => cliAlways.set(e.target.checked)} disabled={answer.busy} />
+            {cliAlways.label}
+          </label>
+        )}
         <div className="chat-permcard-actions">
           <button type="button" className="chat-btn pill" data-testid="grant-decline" disabled={answer.busy} onClick={onDeny}>{t('owner.answer.deny')}</button>
+          {run}
           <button type="button" className="chat-btn pill primary" data-testid="grant-allow" disabled={answer.busy} onClick={allow}>
             {t(wide.length ? 'owner.answer.allow' : 'owner.answer.allowOnce')}
           </button>

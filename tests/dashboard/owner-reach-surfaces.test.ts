@@ -211,6 +211,19 @@ describe("the Super chat's member card (B1, B2)", () => {
     expect(has(html, 'grant-decision')).toBe(false);
   });
 
+  it('a call the card cannot allow is Open with the real reason, never only a button that refuses', () => {
+    // A member's file edit: the server never stores a non-Bash request whole.
+    const edit = tail(mirror({ id: 'q-m5', of: 'permission', call: { tool: 'Edit', input: 'src/pricing.ts', whole: false } }));
+    expect(has(edit, 'grant-open')).toBe(true);
+    expect(has(edit, 'grant-allow')).toBe(false);
+    expect(edit).toContain('owner.answer.decideInChat');
+    expect(edit).not.toContain('owner.answer.cut');
+    // A Bash command really kept cut: "too long", and Open.
+    const cut = tail(refusedMirror({ id: 'q-m6', wait: { kind: 'refusal', id: 'rf-6', refusal: refusal(`${SCRIPT} …`, false) } }));
+    expect(has(cut, 'grant-open')).toBe(true);
+    expect(cut).toContain('owner.answer.cut');
+  });
+
   it("the member's own question takes his words (a reply field and Send)", () => {
     const html = tail(mirror({ id: 'q-m4', member: 'otobot', of: 'ask', ownerText: 'Which list?', ask: { questions: [{ question: 'Which list?', options: [{ label: 'Growth' }, { label: 'Sales' }] }] } }));
     expect(html.match(/data-testid="super-member-option"/g)?.length).toBe(2);
@@ -230,6 +243,14 @@ describe("a refusal card in a member's own chat", () => {
     // The same plain owner item in a MEMBER's own record is that member's: its size is offered.
     const mine = renderToStaticMarkup(createElement(RefusalCard, { record: 'turing', item: own, who: 'Turing', memberName: 'Turing' }));
     expect(has(mine, 'grant-size-member')).toBe(true);
+  });
+
+  it('a cut refusal in the chat that is already open never tells him to open it', () => {
+    const cut = { id: 'q-o3', sessionId: 'S', kind: 'owner', state: 'escalated', createdAt: 1, wait: { kind: 'refusal', id: 'rf-3', refusal: refusal(`${SCRIPT} …`, false) } } as SuperQueueItem;
+    const html = renderToStaticMarkup(createElement(RefusalCard, { record: 'turing', item: cut, who: 'Turing' }));
+    expect(html).toContain('owner.answer.cannotAllowHere');
+    expect(html).not.toContain('owner.answer.cut');
+    expect(has(html, 'grant-open')).toBe(false);
   });
 });
 

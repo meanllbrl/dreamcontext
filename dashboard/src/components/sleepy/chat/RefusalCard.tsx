@@ -5,8 +5,7 @@ import { ToolBadge } from './atoms';
 import { CardHeader } from './molecules';
 import {
   allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, refusalItemsOf, useOwnerAnswer, useSessionGrantItems, visibleText,
-  type GrantChoices, type ShownCall,
-} from '../super/ownerAnswer';
+  type GrantChoices, type ShownCall, noAllowReasonKey } from '../super/ownerAnswer';
 
 /**
  * A command the safety check refused, as a card in a chat (uye-bildirim K4, drawing B1): the
@@ -38,7 +37,7 @@ export function sizeWords(size: GrantSize, t: (k: string) => string, memberName:
   };
 }
 
-export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDecline }: {
+export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDecline, onOpen }: {
   kind: 'permission' | 'refusal';
   call: ShownCall;
   choices: GrantChoices;
@@ -46,6 +45,8 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
   busy: boolean;
   onAllow: (size: GrantSize) => void;
   onDecline: () => void;
+  /** Where he decides a call this card cannot allow: drawn as Open when no Allow is. */
+  onOpen?: () => void;
 }) {
   const { t } = useI18n();
   const [size, setSize] = useState<GrantSize>(choices.sizes[0] ?? 'once');
@@ -60,7 +61,7 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
         <pre className="chat-permcard-raw" data-testid="grant-command">{visibleText(call.input, true)}</pre>
         {choices.onceOnlyReason && <p className="chat-permcard-why" data-testid="grant-once-only">{choices.onceOnlyReason}</p>}
         {choices.sizes.length === 0 && (
-          <p className="chat-permcard-why" data-testid="grant-none">{call.whole ? t('owner.answer.ruleForbids') : t('owner.answer.cut')}</p>
+          <p className="chat-permcard-why" data-testid="grant-none">{t(noAllowReasonKey(call, !!onOpen))}</p>
         )}
       </div>
       {several && (
@@ -86,11 +87,14 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
           <button type="button" className="chat-btn pill" data-testid="grant-decline" disabled={busy} onClick={onDecline}>
             {t(kind === 'refusal' ? 'owner.answer.notNeeded' : 'owner.answer.deny')}
           </button>
-          {pick && (
+          {pick ? (
             <button type="button" className="chat-btn pill primary" data-testid="grant-allow" disabled={busy} onClick={() => onAllow(pick)}>
               {t(several ? 'owner.answer.allow' : 'owner.answer.allowOnce')}
             </button>
-          )}
+          ) : onOpen && !call.whole ? (
+            // Nothing to allow here: the way to decide it, never only a button that refuses.
+            <button type="button" className="chat-btn pill primary" data-testid="grant-open" onClick={onOpen}>{t('owner.answer.open')}</button>
+          ) : null}
         </div>
       </div>
     </div>
@@ -135,6 +139,7 @@ export function RefusalCard({ record, item, who, memberName, via = 'member-chat'
           busy={answer.busy}
           onAllow={(size) => answer.submit(allowAnswer('refusal', size))}
           onDecline={() => answer.submit(declineAnswer('refusal'))}
+          {...(onOpen ? { onOpen } : {})}
         />
       ) : (
         <div className="chat-permcard-body">

@@ -225,6 +225,7 @@ function MemberWaitCard({ item }: { item: SuperQueueItem }) {
           busy={answer.busy}
           onAllow={(size) => answer.submit(allowAnswer(row === 'refusal' ? 'refusal' : 'permission', size))}
           onDecline={() => answer.submit(declineAnswer(row))}
+          onOpen={open}
         />
       ) : questions.length
         ? questions.map((q, i) => (
