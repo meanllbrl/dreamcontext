@@ -148,11 +148,25 @@ pub fn run() {
         // The Node setup screen a first run with no usable Node stops at (src/node_setup.rs).
         .manage(node_setup::NodeSetupState::default());
     // Every web view's `<input type="file">` goes through wry's open-panel delegate, which aborts
-    // the app when AppKit hands back a nil panel (crash report 2026-10-28). Swapped for a
-    // nil-safe one on the first page load, once wry has registered the class (src/open_panel_guard.rs).
+    // the app when AppKit hands back a nil panel (crash report 2026-10-28). App-wide, so EVERY web
+    // view (main, popouts, any window added later) is guarded on its page load; the class is read
+    // from the live web view's own `-UIDelegate`, never by name (src/open_panel_guard.rs).
     #[cfg(target_os = "macos")]
-    let builder = builder.on_page_load(|_, _| {
-        open_panel_guard::install();
+    // Every Tauri web view shares wry's one delegate class, so once it is swapped the hook stops
+    // asking (each `with_webview` call keeps a retain on the view it hands out).
+    let builder = builder.on_page_load(|webview, _| {
+        static GUARDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if GUARDED.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let _ = webview.with_webview(|wv| {
+            // SAFETY: `with_webview` runs on the main thread with the live WKWebView (or null).
+            if let Some(view) = unsafe { (wv.inner() as *const objc2::runtime::AnyObject).as_ref() } {
+                if open_panel_guard::install_on(view) {
+                    GUARDED.store(true, std::sync::atomic::Ordering::Release);
+                }
+            }
+        });
     });
     // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
     // and the Login Item. See src/assistant.rs.
