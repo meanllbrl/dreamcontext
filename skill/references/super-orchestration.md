@@ -152,7 +152,7 @@ Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`)
 
 | Model | Alias | Id | Speed | $/MTok in / out | Default effort |
 |---|---|---|---|---|---|
-| Fable 5.1 | fable | claude-fable-5-1 | slower | 10 / 50 | high |
+| Fable 5.2 | fable | claude-fable-5-2 | slower | 10 / 50 | high |
 | Opus 5.5 | opus | claude-opus-5-5 | moderate | 4 / 20 | medium |
 | Sonnet 5.5 | sonnet | claude-sonnet-5-5 | fast | 2 / 10 | high |
 | Haiku 5.5 | haiku | claude-haiku-5-5 | fastest | 0.1 / 0.5 | medium |

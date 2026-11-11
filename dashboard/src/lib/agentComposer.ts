@@ -194,7 +194,7 @@ export const FALLBACK_MODEL_CONFIG: ModelConfig = {
     { id: 'opus', label: 'Opus 5.5' },
     { id: 'sonnet', label: 'Sonnet 5.5' },
     { id: 'haiku', label: 'Haiku 5.5' },
-    { id: 'fable', label: 'Fable 5.1' },
+    { id: 'fable', label: 'Fable 5.2' },
   ],
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   defaultModel: 'opus',
@@ -237,6 +237,32 @@ export function currentFamilyRow(models: ModelOption[], id: string): ModelOption
   return bare === family || !version || bare === `claude-${family}-${version.replace('.', '-')}` ? row : null;
 }
 
+/**
+ * A model id → the name people read, derived from the id ITSELF: `claude-fable-5-2[1m]` →
+ * `Fable 5.2`, `claude-haiku-4-5-20251001` → `Haiku 4.5`, `claude-opus-5` → `Opus 5`. The
+ * bracketed variant tag and the 8-digit date stamp are dropped; the version segments join on a
+ * dot. A bare family (`fable`) reads as the family. An id from a family we don't know comes back
+ * VERBATIM: a raw id beats a dash, and beats claiming a model ran that didn't.
+ *
+ * This is how a RUNNING session is named: from the id it reports, never from a static row, so
+ * a model newer than this build's table (`claude-fable-5-3`) gets its own name, not an older one.
+ */
+export function modelNameFromId(model: string): string {
+  const id = (model ?? '').trim();
+  if (!id) return '';
+  const lower = id.toLowerCase();
+  const family = MODEL_FAMILIES.find((f) => lower.includes(f));
+  if (!family) return id;
+  const version = lower
+    .slice(lower.indexOf(family) + family.length)
+    .replace(/\[[^\]]*\]/g, '')
+    .split('-')
+    .filter((part) => /^\d+$/.test(part) && part.length < 8)
+    .join('.');
+  const label = family.charAt(0).toUpperCase() + family.slice(1);
+  return version ? `${label} ${version}` : label;
+}
+
 /** The effort levels `model` has: its own list when it carries one, else the config's. */
 export function effortsForModel(config: ModelConfig, model: string): string[] {
   const bare = canonicalModelId(model);
@@ -247,8 +273,10 @@ export function effortsForModel(config: ModelConfig, model: string): string[] {
  * What to print on a model picker for `model`, which reaches us in three different shapes
  * and must never degrade to a bare "—":
  *   • a picker alias  (`opus`)                        → the option's own label,
- *   • a full CLI id   (`claude-opus-4-5-20251101`)    → the same label, matched by family
- *     (this is what `system:init` reports for a chat session, and it is NOT in `models`),
+ *   • a full CLI id   (`claude-fable-5-2[1m]`)        → the name the id ITSELF carries
+ *     (`Fable 5.2`): this is what `system:init` reports for a running session, and the static
+ *     row's label is only what this build believed the alias meant (it said "Fable 5.1" while
+ *     the CLI already ran 5.2),
  *   • empty           (before the first init frame)   → the user's default model's label.
  * A genuinely unknown id is returned verbatim — better a raw id the user can read than a
  * dash that says nothing.
@@ -261,9 +289,10 @@ export function modelLabelFor(config: ModelConfig, model: string): string {
     if (exact) return exact.label;
     const family = modelFamily(id);
     if (!family) return undefined;
-    // A version the list does not know keeps its family's name: never the current version's.
-    if (!config.models.some((m) => m.id === family)) return family;
-    return currentFamilyRow(config.models, id)?.label ?? family.charAt(0).toUpperCase() + family.slice(1);
+    // A family the list does not offer keeps the id's own spelling of the family.
+    if (!config.models.some((m) => m.id === family) && bare === family) return family;
+    // A full id names itself: never a table row's label, which may be an older version's.
+    return modelNameFromId(id);
   };
   // The default stands in ONLY for "not reported yet". An id we simply don't recognize must
   // print as itself: relabelling it as the default would claim a model is running that

@@ -62,7 +62,7 @@ describe('r29 model picker data', () => {
 
   it('Fable and Haiku are not legacy: current families carry their version, most capable first', () => {
     const s = claudeState(real);
-    expect(s.current.map((m) => m.label)).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']);
+    expect(s.current.map((m) => m.label)).toEqual(['Fable 5.2', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']);
     expect(s.legacy.map((m) => m.id)).not.toContain('fable');
     expect(s.legacy.map((m) => m.id)).not.toContain('haiku');
     expect(shortcutFor(s.current.findIndex((m) => m.id === 'fable'))).toBe('⌘1');

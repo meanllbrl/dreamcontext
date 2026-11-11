@@ -38,11 +38,12 @@ const writeTranscript = (lines: string[]): string => {
 };
 
 describe('priceForModel — tier resolution', () => {
-  it('prices the current generation from model-facts (Opus 5.5 4/20, Sonnet 5.5 2/10, Haiku 5.5 0.10/0.50, Fable 5.1 10/50)', () => {
+  it('prices the current generation from model-facts (Opus 5.5 4/20, Sonnet 5.5 2/10, Haiku 5.5 0.10/0.50, Fable 5.2 10/50)', () => {
     expect(priceForModel('claude-opus-5-5')).toEqual({ in: 4, out: 20, cacheWrite: 5, cacheRead: 0.2 });
     expect(priceForModel('claude-sonnet-5-5')).toEqual({ in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.1 });
     expect(priceForModel('claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5, cacheWrite: 0.125, cacheRead: 0.01 });
-    expect(priceForModel('claude-fable-5-1')).toEqual({ in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 });
+    expect(priceForModel('claude-fable-5-2')).toEqual({ in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 });
+    expect(priceForModel('claude-fable-5-1')).toEqual(priceForModel('claude-fable-5-2'));
   });
 
   it('prices the picker aliases as the current model of their family', () => {
@@ -69,7 +70,7 @@ describe('priceForModel — tier resolution', () => {
 
   it('prices Mythos as Fable', () => {
     expect(priceForModel('claude-mythos-5')).toMatchObject({ in: 10, out: 50, cacheRead: 1 });
-    expect(priceForModel('claude-mythos-6')).toEqual(priceForModel('claude-fable-5-1'));
+    expect(priceForModel('claude-mythos-6')).toEqual(priceForModel('claude-fable-5-2'));
   });
 
   it('defaults unknown models to the current Opus tier', () => {
@@ -125,7 +126,7 @@ describe('contextLimitFor — window per model', () => {
     for (const id of [
       'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
       'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-mythos-5',
-      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1', 'haiku',
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2', 'haiku',
     ]) {
       expect(contextLimitFor(1000, id)).toBe(1_000_000);
     }

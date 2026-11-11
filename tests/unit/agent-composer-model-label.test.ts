@@ -9,14 +9,14 @@
  * model was answering.
  */
 import { describe, it, expect } from 'vitest';
-import { modelLabelFor, FALLBACK_MODEL_CONFIG, type ModelConfig } from '../../dashboard/src/lib/agentComposer.js';
+import { modelLabelFor, modelNameFromId, FALLBACK_MODEL_CONFIG, type ModelConfig } from '../../dashboard/src/lib/agentComposer.js';
 
 const CONFIG: ModelConfig = {
   models: [
     { id: 'opus', label: 'Opus 5.5' },
     { id: 'sonnet', label: 'Sonnet 5.5' },
     { id: 'haiku', label: 'Haiku 5.5' },
-    { id: 'fable', label: 'Fable 5.1' },
+    { id: 'fable', label: 'Fable 5.2' },
   ],
   efforts: ['low', 'high'],
   defaultModel: 'opus',
@@ -30,10 +30,31 @@ describe('modelLabelFor', () => {
 
   it("resolves the CLI's full model id by family — this is what system:init actually reports", () => {
     expect(modelLabelFor(CONFIG, 'claude-opus-5-5')).toBe('Opus 5.5');
-    expect(modelLabelFor(CONFIG, 'claude-fable-5-1[1m]')).toBe('Fable 5.1');
-    // An older version the list does not name keeps its family's name, never the current version.
-    expect(modelLabelFor(CONFIG, 'claude-sonnet-4-5-20250929')).toBe('Sonnet');
-    expect(modelLabelFor(CONFIG, 'claude-haiku-4-5-20251001')).toBe('Haiku');
+    expect(modelLabelFor(CONFIG, 'claude-fable-5-2[1m]')).toBe('Fable 5.2');
+    // An older version the list does not name keeps its OWN version, never the current row's.
+    expect(modelLabelFor(CONFIG, 'claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5');
+    expect(modelLabelFor(CONFIG, 'claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+  });
+
+  // Owner, 2026-11-10: a session running Fable 5.2 still read "Fable 5.1" because the label came
+  // from a static row. The running session names itself from the id it reports.
+  it('names a running session from the id it reports, not from a stale table row', () => {
+    const stale: ModelConfig = { ...CONFIG, models: CONFIG.models.map((m) => (m.id === 'fable' ? { ...m, label: 'Fable 5.1' } : m)) };
+    expect(modelLabelFor(stale, 'claude-fable-5-2')).toBe('Fable 5.2');
+    expect(modelLabelFor(stale, 'claude-fable-5-2[1m]')).toBe('Fable 5.2');
+    // A version newer than any table this build ships gets its own derived name.
+    expect(modelLabelFor(CONFIG, 'claude-fable-5-3')).toBe('Fable 5.3');
+    expect(modelLabelFor(FALLBACK_MODEL_CONFIG, 'claude-fable-5-3[1m]')).toBe('Fable 5.3');
+    // Before init the picker alias still reads as its row.
+    expect(modelLabelFor(FALLBACK_MODEL_CONFIG, 'fable')).toBe('Fable 5.2');
+  });
+
+  it('modelNameFromId derives the name from the id alone', () => {
+    expect(modelNameFromId('claude-fable-5-2')).toBe('Fable 5.2');
+    expect(modelNameFromId('claude-opus-5')).toBe('Opus 5');
+    expect(modelNameFromId('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(modelNameFromId('fable')).toBe('Fable');
+    expect(modelNameFromId('gpt-6.1-sol')).toBe('gpt-6.1-sol');
   });
 
   it('falls back to the user\'s default model before the first init frame lands (was: "—")', () => {
