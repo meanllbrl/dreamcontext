@@ -151,6 +151,92 @@ export function dropUnits(elements: readonly DropElement[], dragged: ReadonlySet
     .map((id) => unitOf(byId.get(id)!, live));
 }
 
+/** The ids a selection reference carries at most (the page block's cap). */
+export const SELECTION_IDS_MAX = 12;
+
+/** What the writing field sends for the canvas's current selection (plan K5). */
+export interface SelectionRef {
+  /** Every selected unit, counted (a bound text folds into its container). */
+  n: number;
+  /** Topmost first, at most {@link SELECTION_IDS_MAX}. */
+  ids: string[];
+  /** Rounded scene bounds `[x, y, w, h]` of the selected elements and their bound text. */
+  box: [number, number, number, number];
+  /** The one unit, when exactly one is selected (its chip shows its title or kind). */
+  one: DropUnit | null;
+}
+
+function pointsOf(el: DropElement): Array<[number, number]> | null {
+  if (!Array.isArray(el.points) || el.points.length === 0) return null;
+  const out: Array<[number, number]> = [];
+  for (const p of el.points as unknown[]) {
+    if (Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number' && Number.isFinite(p[0]) && Number.isFinite(p[1])) out.push([p[0], p[1]]);
+  }
+  return out.length ? out : null;
+}
+
+/** An element's axis-aligned scene bounds: a line's points, a rotated shape's corners. */
+function boundsOf(el: DropElement): [number, number, number, number] | null {
+  const pts = pointsOf(el);
+  const local: Array<[number, number]> = pts ?? [[0, 0], [el.width, 0], [el.width, el.height], [0, el.height]];
+  const angle = typeof el.angle === 'number' && Number.isFinite(el.angle) ? el.angle : 0;
+  // Rotation is about the element's box centre (Excalidraw's rule for shapes and lines alike).
+  const cx = el.x + el.width / 2;
+  const cy = el.y + el.height / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const [px, py] of local) {
+    let x = el.x + px;
+    let y = el.y + py;
+    if (angle) {
+      const dx = x - cx; const dy = y - cy;
+      x = cx + dx * cos - dy * sin;
+      y = cy + dx * sin + dy * cos;
+    }
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+  }
+  return Number.isFinite(x0) && Number.isFinite(y0) && Number.isFinite(x1) && Number.isFinite(y1) ? [x0, y0, x1, y1] : null;
+}
+
+/**
+ * The selection as the writing field sends it, or null when nothing live is selected. Units fold
+ * like {@link dropUnits} (a bound text is its container), all are counted, the ids run topmost
+ * first up to {@link SELECTION_IDS_MAX}, and `box` is the union of the selected elements and their
+ * bound text, so a selection larger than the id cap is still located. `dropUnits` is unchanged.
+ */
+export function selectionRef(elements: readonly DropElement[], selectedIds: Iterable<string>): SelectionRef | null {
+  const live = elements.filter((el) => !el.isDeleted);
+  const byId = new Map(live.map((el) => [el.id, el]));
+  const order = new Map(live.map((el, i) => [el.id, i]));
+  const unitIds = new Set<string>();
+  for (const id of selectedIds) {
+    const el = byId.get(id);
+    if (!el) continue;
+    const container = el.type === 'text' && el.containerId ? byId.get(el.containerId) : undefined;
+    unitIds.add(container ? container.id : el.id);
+  }
+  if (unitIds.size === 0) return null;
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const el of live) {
+    const inUnit = unitIds.has(el.id) || (el.type === 'text' && !!el.containerId && unitIds.has(el.containerId));
+    if (!inUnit) continue;
+    const b = boundsOf(el);
+    if (!b) continue;
+    x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
+  }
+  const box: [number, number, number, number] = Number.isFinite(x0)
+    ? [Math.round(x0), Math.round(y0), Math.max(0, Math.round(x1 - x0)), Math.max(0, Math.round(y1 - y0))]
+    : [0, 0, 0, 0];
+  const sorted = [...unitIds].sort((a, b) => (order.get(b) ?? 0) - (order.get(a) ?? 0));
+  return {
+    n: sorted.length,
+    ids: sorted.slice(0, SELECTION_IDS_MAX),
+    box,
+    one: sorted.length === 1 ? unitOf(byId.get(sorted[0])!, live) : null,
+  };
+}
+
 /** The reference the server expands, or null when board or id would not match its token. */
 export function refToken(board: string, elementId: string): string | null {
   if (!BOARD_RE.test(board) || !ELEMENT_ID_RE.test(elementId)) return null;

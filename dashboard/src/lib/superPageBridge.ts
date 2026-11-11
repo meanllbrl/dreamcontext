@@ -80,6 +80,8 @@ export interface SuperPresence {
   busySince: number | null;
   /** The corner pill's model: the field's mark draws the same state. */
   mark: SuperDockPill | null;
+  /** The dock window is open: the board's field moves clear of it. */
+  dockOpen?: boolean;
   children: SuperPresenceChild[];
 }
 

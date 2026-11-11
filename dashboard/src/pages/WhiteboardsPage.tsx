@@ -22,6 +22,10 @@ import { DEFAULT_BOARD_SLUG, goneBoardTarget } from './whiteboards/boardSwitcher
 import { useIsMobile } from '../hooks/useIsMobile';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
+import { useSuperPresence } from '../lib/superPageBridge';
+import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
+import type { SelectionRef } from '../components/whiteboard/agentDrop';
+import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
 import './WhiteboardsPage.css';
 
 interface WhiteboardsPageProps {
@@ -221,8 +225,20 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   explorerToggle?: ReactNode;
 }) {
   const { t } = useI18n();
-  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
-  const { vault } = useVault();
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush } = useWhiteboardEditor(slug);
+  const { vault, bus } = useVault();
+  // The Super's writing field (2026-11-11): only while Super mode is on, on a ready board.
+  const presence = useSuperPresence(bus);
+  const [selection, setSelection] = useState<SelectionRef | null>(null);
+  const [work, setWork] = useState<FieldWork | null>(null);
+  const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
+  const onCanvasApi = useCallback((api: WhiteboardCanvasApi | null) => {
+    canvasRef.current = api;
+    onApi(api);
+  }, [onApi]);
+  const clearSelection = useCallback(() => {
+    canvasRef.current?.excalidraw.updateScene({ appState: { selectedElementIds: {} } as never });
+  }, []);
   const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
   const boards = useWhiteboardList();
@@ -320,13 +336,25 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
         <PagePopupProvider>
           <div className="wbp-canvas">
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onApi} pictures={pictures} onSceneChange={onSceneChange} topRight={topRight} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={topRight} onSelection={setSelection} workBox={work?.box ?? null} />
             </Suspense>
             {explorerToggle && (
               <div className="wbp-float-left">
                 {explorerToggle}
                 <span className="wbp-float-name" title={name}>{name}</span>
               </div>
+            )}
+            {presence?.on && (
+              <BoardSuperField
+                bus={bus}
+                board={slug}
+                boardName={name}
+                selection={selection}
+                onClearSelection={clearSelection}
+                saveKind={saveState.kind}
+                flush={flush}
+                onWork={setWork}
+              />
             )}
           </div>
         </PagePopupProvider>

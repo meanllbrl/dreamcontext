@@ -1,0 +1,265 @@
+/* The board writing field (BoardSuperField.tsx): bottom centre of the canvas, above nothing of
+   Excalidraw's (its zoom and undo sit bottom-left, its help button is hidden on this page). */
+
+.bsf-wrap {
+  /* The Super dock window's width + its inset (SuperDock.css `--super-dock-width`, `--space-5`):
+     with the window open the field moves left of it. */
+  --bsf-dock-reserve: calc(420px + 2 * var(--space-5));
+  /* Excalidraw's bottom-left zoom + undo group. */
+  --bsf-left-reserve: 220px;
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: var(--space-5);
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 2 * var(--bsf-left-reserve)));
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.bsf-wrap > * { pointer-events: auto; }
+
+.bsf-wrap[data-dock-open] {
+  left: var(--bsf-left-reserve);
+  transform: none;
+  width: min(640px, calc(100% - var(--bsf-left-reserve) - var(--bsf-dock-reserve)));
+}
+
+.bsf {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+}
+
+.bsf:focus-within {
+  border-color: var(--color-accent);
+}
+
+.bsf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  min-width: 0;
+}
+
+.bsf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 280px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.bsf-chip--sel {
+  border-color: transparent;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.bsf-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bsf-chip-x {
+  flex: none;
+  margin-left: var(--space-1);
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.bsf-chip-x:hover { opacity: 1; }
+
+.bsf-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.bsf-mark {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  cursor: pointer;
+}
+
+.bsf-mark:hover { box-shadow: var(--shadow-glow); }
+
+.bsf-mark-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-bg-elevated);
+  background: var(--color-accent);
+}
+
+.bsf-mark[data-state='working'] .bsf-mark-dot { background: var(--color-success); }
+
+.bsf-mark-q {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 14px;
+  text-align: center;
+}
+
+.bsf-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  max-height: 120px;
+  padding: 5px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 20px;
+}
+
+.bsf-input::placeholder { color: var(--color-text-tertiary); }
+
+.bsf-send {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  cursor: default;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.bsf-send[data-ready] {
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  cursor: pointer;
+}
+
+.bsf-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.bsf-note--bad { color: var(--color-error-ink); }
+
+.bsf-working {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.bsf-working-dots { display: inline-flex; gap: 3px; }
+
+.bsf-working-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  animation: bsf-dot 1.2s var(--ease-out) infinite;
+}
+
+.bsf-working-dots i:nth-child(2) { animation-delay: 0.15s; }
+.bsf-working-dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes bsf-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bsf-working-dots i { animation: none; opacity: 0.8; }
+}
+
+.bsf-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-ink);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+/* The area the sent message is about, outlined while its work runs (WhiteboardCanvas). */
+.wb-work-outline {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.wb-work-tag {
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 6px);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}

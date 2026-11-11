@@ -6818,6 +6818,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       connected: superChatSession?.status === 'open',
       busy: !!superChatSession?.busy,
       mark: superDockPillModel,
+      dockOpen,
       children: presenceChildren,
     });
   });
