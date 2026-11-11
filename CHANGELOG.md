@@ -4,6 +4,22 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.15] - 2026-11-11
+
+Patch on 0.41.14: thirteen finished jobs built together. Local build; not published.
+
+- **Packs, Announcements and Taxonomy pages are gone.** The council, multi-review, goal-skill and video-watching skills are built in, no install step. The What's New page and the tag vocabulary page are removed.
+- **An AI Team member's question and permission reach the owner.** A member's team card says "asks you" while it waits and shows its current job. An owner's Allow holds what he saw, lasts as long as its job, and works in a child's worktree. The permission screens read clean.
+- **A child's owner card is done where the owner is.** A run, secret or checklist card is done from his bar or the Super chat, in the child's own folder; the result reaches the child even after a pause or a restart. Telegram says it is a Mac step and offers a reminder.
+- **An app's own agent runs its app's changing tools.** After the owner approves a row, the app hands it to its own agent; the main Super passes only in a turn the owner opened. Every refusal names the owner's step.
+- **Team-shared app data.** An app's hand-made data is shared across one brain's teammates, with gates, a pause during a team pull, and an owner notice.
+- **Telegram questions read right.** Only a tap or a reply to the card closes a question; only routine and member results fold. Pictures from an app's data, task assets or a child's worktree reach the phone, and one that cannot go says why. A question with drawings arrives as separate photos "A · label", each drawn whole at a phone's width.
+- **A board has a writing field for the Super Agent.** At the bottom of a ready board; the selection rides along. The Boards toggle takes its clicks again.
+- **The Tasks page opens faster.** It reads a light task list; a task's page reads its own full text.
+- **A running session is named by the model it reports**, not a stale table row.
+- **The file-chooser guard in the desktop web view really installs**, which stops the photo-picker crash.
+- **A second Claude account no longer locks** on a real projects folder.
+
 ## [0.41.14] - 2026-11-10
 
 Patch on 0.41.13: two finished jobs built together. Local build; not published.
