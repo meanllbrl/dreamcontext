@@ -184,7 +184,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const misses: string[] = [];
     const drawn = secret ? new Set<string>() : await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null, cards, misses)
       .catch((err) => { misses.push(`pictures failed: ${redactSecrets(String((err as Error)?.message ?? err)).slice(0, 120)}`); return new Set<string>(); });
-    const logId = opts.itemId ?? (target.kind === 'super-ask' ? target.item.id : target.requestId);
+    const logId = opts.itemId ?? (target.kind === 'super-ask' ? target.item.id : target.kind === 'member' ? target.mirror : target.requestId);
     logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
     drawnById.delete(logId);
     drawnById.set(logId, drawn);
