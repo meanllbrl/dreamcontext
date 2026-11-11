@@ -14,6 +14,10 @@ import {
 import { PAGE_CONTEXT_RE, splitPageContext } from '../../dashboard/src/lib/superTypes.js';
 import type { SelectionRef } from '../../dashboard/src/components/whiteboard/agentDrop.js';
 import { nextNeed, rowOverflow } from '../../dashboard/src/pages/whiteboards/useTopRowFit.js';
+import {
+  CLICK_SLOP_PX, FIELD_MODE_KEY, QUICK_SCOPE_MAX, REGION_MIN_PX, addedIds, areaOf, dragOutcome, effectiveMode, lineOfJob,
+  quickEditScope, readFieldMode, regionChipText, startRefusalKey, writeFieldMode, type ScopeElement,
+} from '../../dashboard/src/components/whiteboard/quickEditLogic.js';
 
 const sel = (over: Partial<SelectionRef> = {}): SelectionRef => ({ n: 2, ids: ['a1', 'b2'], box: [10, 20, 300, 40], one: null, ...over });
 
@@ -136,9 +140,13 @@ describe('the component wiring', () => {
 
   it('the draft is cleared only after an accepted send', () => {
     const accepted = src.indexOf("if (!res.accepted)");
-    const cleared = src.indexOf("setDraft((now)");
+    const cleared = src.indexOf("if (!ask) setDraft((cur)");
     expect(accepted).toBeGreaterThan(0);
     expect(cleared).toBeGreaterThan(accepted);
+    // The quick edit clears it only after the server took the job.
+    const quickTaken = src.indexOf('job = r.job;');
+    expect(src.indexOf("setDraft((cur) => (cur.trim() === words ? '' : cur))")).toBeGreaterThan(quickTaken);
+    expect(quickTaken).toBeGreaterThan(src.indexOf('if (!r.ok) {'));
   });
 
   it('it tells the page it is mounted, so the corner pill steps aside', () => {
@@ -246,7 +254,7 @@ describe('where the field sits (review r1/r2: one rule decides the painted box)'
 
   it('a send settles read-only, so the draft is exactly what went; the track knows a steered turn', () => {
     expect(src).toMatch(/readOnly=\{sending\}/);
-    expect(src).toMatch(/setDraft\(\(now\) => \(now === sent \? '' : now\)\)/);
+    expect(src).toMatch(/if \(!ask\) setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\)/);
     expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
   });
 });
@@ -273,5 +281,182 @@ describe('the page controls in Excalidraw\'s top row (review r2: one place decid
     const page = readFileSync(fileURLToPath(new URL('../../dashboard/src/pages/WhiteboardsPage.tsx', import.meta.url)), 'utf-8');
     expect(page).toMatch(/useTopRowFit\(toggleEl, canvasBox, locale\)/);
     expect(page).toMatch(/topRight=\{controlsAside \? null : controls\}/);
+  });
+});
+
+// ── Hızlı düzenle (task tahta-hizli-duzenle, plan r4) ──────────────────────────────────────────
+
+const tq = (k: string) => ({
+  'whiteboard.quick.regionChip': 'Alan · {w}×{h}',
+  'whiteboard.quick.failed': 'Düzenleme yapılamadı',
+  'whiteboard.quick.notBoard': 'Tahta değişikliği değil',
+  'whiteboard.quick.outOfScope': 'Önce seç',
+  'whiteboard.quick.doneDefault': 'Güncellendi',
+} as Record<string, string>)[k] ?? k;
+
+describe('the mode switch (Decision 1, 2; criteria 1, 17)', () => {
+  const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, m }; };
+
+  it('Hızlı düzenle is the default; the last pick is remembered per machine', () => {
+    const store = mem();
+    expect(readFieldMode(store)).toBe('quick');
+    expect(readFieldMode(null)).toBe('quick');
+    writeFieldMode(store, 'super');
+    expect(store.m.get(FIELD_MODE_KEY)).toBe('super');
+    expect(readFieldMode(store)).toBe('super');
+    writeFieldMode(store, 'quick');
+    expect(readFieldMode(store)).toBe('quick');
+    // A store that throws (private mode) never breaks the field.
+    const broken = { getItem: () => { throw new Error('x'); }, setItem: () => { throw new Error('x'); } };
+    expect(readFieldMode(broken)).toBe('quick');
+    expect(() => writeFieldMode(broken, 'super')).not.toThrow();
+  });
+
+  it('a mode that cannot run falls to the other one; with neither, the pick stands (send disabled with the reason)', () => {
+    expect(effectiveMode('super', false, true)).toBe('quick');
+    expect(effectiveMode('quick', true, false)).toBe('super');
+    expect(effectiveMode('quick', true, true)).toBe('quick');
+    expect(effectiveMode('super', true, true)).toBe('super');
+    expect(effectiveMode('quick', false, false)).toBe('quick');
+  });
+
+  it('the field mounts whatever Super\'s state, and says why a segment is off', () => {
+    const page = readFileSync(fileURLToPath(new URL('../../dashboard/src/pages/WhiteboardsPage.tsx', import.meta.url)), 'utf-8');
+    expect(page).not.toMatch(/presence\?\.on && \(\s*<BoardSuperField/);
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+    expect(src).toMatch(/disabled=\{!superOn\}/);
+    expect(src).toMatch(/t\('whiteboard\.quick\.superOff'\)/);
+    expect(src).toMatch(/disabled=\{!quickOk\}/);
+  });
+});
+
+describe('the empty region (Decision 12; criterion 2)', () => {
+  const base = { origin: { x: 100, y: 100 }, zoom: 1, tool: 'selection', selectedCount: 0, hitElement: false };
+
+  it('a drag of at least 24×24 screen px with nothing selected becomes the region, normalised and rounded', () => {
+    expect(dragOutcome({ ...base, end: { x: 310.4, y: 290.6 } })).toEqual({ kind: 'region', region: [100, 100, 210, 191] });
+    // Dragged up and left: same box.
+    expect(dragOutcome({ ...base, origin: { x: 310, y: 290 }, end: { x: 100, y: 100 } })).toEqual({ kind: 'region', region: [100, 100, 210, 190] });
+  });
+
+  it('the size floor is in SCREEN px: zoom counts', () => {
+    expect(dragOutcome({ ...base, end: { x: 100 + REGION_MIN_PX - 1, y: 200 } }).kind).toBe('none');
+    expect(dragOutcome({ ...base, end: { x: 100 + REGION_MIN_PX, y: 100 + REGION_MIN_PX } }).kind).toBe('region');
+    // At 50% zoom a 40-scene-px drag is 20 screen px: too small.
+    expect(dragOutcome({ ...base, zoom: 0.5, end: { x: 140, y: 140 } }).kind).toBe('none');
+    expect(dragOutcome({ ...base, zoom: 2, end: { x: 113, y: 113 } }).kind).toBe('region');
+  });
+
+  it('a drag that selects shapes, starts on a shape, or uses another tool stays what it is today', () => {
+    expect(dragOutcome({ ...base, selectedCount: 2, end: { x: 400, y: 400 } }).kind).toBe('none');
+    expect(dragOutcome({ ...base, hitElement: true, end: { x: 400, y: 400 } }).kind).toBe('none');
+    expect(dragOutcome({ ...base, tool: 'rectangle', end: { x: 400, y: 400 } }).kind).toBe('none');
+  });
+
+  it('a plain click on the canvas clears it', () => {
+    expect(dragOutcome({ ...base, end: { x: 100 + CLICK_SLOP_PX - 1, y: 101 } })).toEqual({ kind: 'click' });
+  });
+
+  it('the chip reads Alan · W×H; the request area is {x,y,w,h} held to 8..20000', () => {
+    expect(regionChipText([10, 20, 210, 190], tq)).toBe('Alan · 210×190');
+    expect(areaOf([10, 20, 210, 190])).toEqual({ x: 10, y: 20, w: 210, h: 190 });
+    expect(areaOf([0, 0, 3, 50000])).toEqual({ x: 0, y: 0, w: 8, h: 20000 });
+    expect(areaOf(null)).toBeNull();
+  });
+
+  it('both modes carry it: the Super message ends with area= after sel=, and parses back', () => {
+    const text = composeFieldMessage('C ile D\'yi karşılaştır', 'super-sunum', sel(), [40, -80, 320, 240])!;
+    expect(text).toBe('C ile D\'yi karşılaştır\n\n[On page whiteboards board=super-sunum sel=2 box=10,20,300,40 ids=a1,b2 area=40,-80,320,240]');
+    expect(splitPageContext(text).page?.area).toEqual([40, -80, 320, 240]);
+    expect(composeFieldMessage('buraya elma', 'q3', null, [1, 2, 30, 40])).toBe('buraya elma\n\n[On page whiteboards board=q3 area=1,2,30,40]');
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\) \}\)/);
+  });
+
+  it('Escape, a shape selection and another board clear it; the canvas never saves it', () => {
+    const canvas = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/WhiteboardCanvas.tsx', import.meta.url)), 'utf-8');
+    expect(canvas).toMatch(/if \(ids\.length && regionRef\.current\) onRegionRef\.current\?\.\(null\);/);
+    const outline = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/RegionOutline.tsx', import.meta.url)), 'utf-8');
+    expect(outline).toMatch(/if \(e\.key !== 'Escape'\) return;/);
+    const page = readFileSync(fileURLToPath(new URL('../../dashboard/src/pages/WhiteboardsPage.tsx', import.meta.url)), 'utf-8');
+    expect(page).toMatch(/useEffect\(\(\) => \{ setRegion\(null\); setQuickBox\(null\); \}, \[slug\]\);/);
+  });
+});
+
+describe('the quick edit scope (C3)', () => {
+  const el = (id: string, over: Partial<ScopeElement> = {}): ScopeElement => ({ id, type: 'rectangle', version: 3, versionNonce: 77, ...over });
+
+  it('the selection grows by bound text, a text\'s container and every member of its outermost group, with identities', () => {
+    const els = [
+      el('box', { version: 5, versionNonce: 11 }),
+      el('label', { type: 'text', containerId: 'box' }),
+      el('a', { groupIds: ['inner', 'outer'] }),
+      el('b', { groupIds: ['outer'] }),
+      el('c', { groupIds: ['other'] }),
+      el('gone', { isDeleted: true, groupIds: ['outer'] }),
+      el('free'),
+    ];
+    expect(quickEditScope(els, ['box', 'a'])).toEqual({
+      ids: ['box', 'a', 'b', 'label'],
+      identities: { box: '5:11', a: '3:77', b: '3:77', label: '3:77' },
+    });
+    // Selecting the label brings its container.
+    expect(quickEditScope(els, ['label'])?.ids).toEqual(['label', 'box']);
+    expect(quickEditScope(els, [])).toBeNull();
+    expect(quickEditScope(els, ['gone'])).toBeNull();
+  });
+
+  it('it is not the Super wire\'s 12-id cap: 150 elements ride, more are refused in band before any send', () => {
+    const many = Array.from({ length: 200 }, (_, i) => el(`e${i}`));
+    expect(quickEditScope(many, many.slice(0, 150).map((e) => e.id))?.ids).toHaveLength(150);
+    expect(QUICK_SCOPE_MAX).toBe(150);
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+    expect(src).toMatch(/if \(scope && scope\.ids\.length > QUICK_SCOPE_MAX\)/);
+  });
+});
+
+describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
+  const job = (over: Record<string, unknown>) => ({ state: 'done', startedAt: '2026-11-12T00:00:00Z', ...over }) as never;
+
+  it('done: the reply and Geri al for the edit; skipped owner changes are counted', () => {
+    expect(lineOfJob(job({ reply: 'Elma eklendi.', edit: { id: 'q1', added: 3, changed: 0, skipped: [] } }), tq)).toEqual({ kind: 'done', reply: 'Elma eklendi.', editId: 'q1', skipped: 0 });
+    expect(lineOfJob(job({ reply: 'Yeşil yapıldı.', edit: { id: 'q2', added: 0, changed: 2, skipped: ['x'] } }), tq)).toMatchObject({ editId: 'q2', skipped: 1 });
+    expect(lineOfJob(job({ reply: '' }), tq)).toEqual({ kind: 'done', reply: 'Güncellendi', editId: null, skipped: 0 });
+  });
+
+  it('not a board change and out of scope write nothing and offer Super\'e sor; failed and stopped say so', () => {
+    expect(lineOfJob(job({ notBoard: true, reply: 'Bu bir tahta değişikliği değil.' }), tq)).toEqual({ kind: 'notBoard', reply: 'Bu bir tahta değişikliği değil.' });
+    expect(lineOfJob(job({ outOfScope: true, reply: 'Önce Seçenek D şeklini seç.' }), tq)).toEqual({ kind: 'outOfScope', reply: 'Önce Seçenek D şeklini seç.' });
+    expect(lineOfJob(job({ state: 'failed', error: 'anlaşılamadı' }), tq)).toEqual({ kind: 'failed', text: 'anlaşılamadı' });
+    expect(lineOfJob(job({ state: 'stopped' }), tq)).toEqual({ kind: 'stopped' });
+  });
+
+  it('the added shapes are what the edit wrote that the scene did not hold (they become the selection)', () => {
+    expect(addedIds([{ id: 'old' }, { id: 'n1' }, { id: 'n2', isDeleted: true }, { id: 'n3' }], new Set(['old']))).toEqual(['n1', 'n3']);
+  });
+
+  it('a refused start names its reason in band', () => {
+    expect(startRefusalKey(409, 'busy')).toBe('whiteboard.quick.busy');
+    expect(startRefusalKey(429, 'rate')).toBe('whiteboard.quick.rate');
+    expect(startRefusalKey(413, 'scope_too_big')).toBe('whiteboard.quick.tooBig');
+    expect(startRefusalKey(412, 'no_claude')).toBe('whiteboard.quick.noClaude');
+    expect(startRefusalKey(500, '')).toBe('whiteboard.quick.failed');
+  });
+
+  it('the result lands at once, without the poll, and its additions are selected', () => {
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+    expect(src).toMatch(/api\.applyRemoteElements\(written\);\s*const added = addedIds\(written, before\);\s*if \(added\.length\) api\.selectIds\(added\);/);
+    // The save settles before the scope's identities are read.
+    expect(src.indexOf('await settleSave(() => saveRef.current, flush);', src.indexOf('const sendQuick'))).toBeLessThan(src.indexOf('canvasApi()?.quickScope()'));
+  });
+
+  it('every string the field shows exists in both languages', () => {
+    const i18n = readFileSync(fileURLToPath(new URL('../../dashboard/src/context/I18nContext.tsx', import.meta.url)), 'utf-8');
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8')
+      + readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/quickEditLogic.ts', import.meta.url)), 'utf-8');
+    const keys = new Set([...src.matchAll(/'(whiteboard\.quick\.[A-Za-z]+)'/g)].map((m) => m[1]));
+    expect(keys.size).toBeGreaterThan(15);
+    for (const k of keys) expect(i18n.split(`'${k}':`).length - 1, k).toBe(2);
+    expect(i18n).not.toMatch(/'whiteboard\.quick\.[A-Za-z]+': [^\n]*—/);
   });
 });
