@@ -1522,7 +1522,9 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   if (i.app !== undefined) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(i.app)) throw new AutomationError(`Invalid app "${i.app}": it must be an app slug.`);
     // A call target has no job half to keep it on (`legacyPair`).
-    if (mode !== 'sched') throw new AutomationError('An app automation runs on a schedule. To call a member from an app, use dc.team.ask.');
+    // `--app` is a schedule's brief; an on-call job takes `--app-tools` alone (the app's own call,
+    // dc.team.ask, brings the brief and may run that app's tools already).
+    if (mode !== 'sched') throw new AutomationError('--app is for a scheduled job. An on-call job takes --app-tools without --app (the app calls it with dc.team.ask and brings its own brief).');
   }
   // An on-call agent HAS no schedule, so there is nothing to validate — and
   // demanding a placeholder one would put a lie in the manifest that `list`,

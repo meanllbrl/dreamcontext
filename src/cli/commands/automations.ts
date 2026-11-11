@@ -74,7 +74,7 @@ import { approvalCardBlock, nextFireIso, staleApprovalBlock } from '../../lib/au
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
-import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js';
+import { getAgent, setAgentShared, setAppTools, widenViewOf } from '../../lib/agents/store.js';
 import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
@@ -2087,6 +2087,24 @@ export function registerAutomationsCommand(program: Command): void {
         console.log(next ? `  next fire: ${next}` : chalk.dim(updated.enabled ? '  no upcoming fire' : '  disabled — no upcoming fire'));
         console.log(`  catch-up: ${updated.catchupHours}h after a missed slot`);
         if (editing) success(`Schedule saved: ${cadenceLabel(updated)}, catch-up ${updated.catchupHours}h (no re-approval needed).`);
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
+    .command('edit')
+    .argument('<slug>', 'Automation or AI Team member slug')
+    .description("Change what a job or a member may run through an app while nobody watches; the owner's approval card asks again")
+    .requiredOption('--app-tools <refs>', 'The full list, comma-separated <app>/<tool> ("" clears it). A member keeps it in its call settings (what dc.team.ask and super team ask may run)')
+    .action((slug: string, opts: { appTools: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const list = String(opts.appTools ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+        const out = setAppTools(root, slug, list);
+        const what = out.kind === 'member' ? `member "${slug}"` : `"${slug}"`;
+        success(list.length ? `${what} may run: ${out.appTools.join(', ')}.` : `${what} runs no changing app tool unattended now.`);
+        info('A tool removed stops at once. A tool added runs only after the owner approves the change on its card (AI Team page, or the Automations page).');
       } catch (err) {
         handleAutomationsError(err);
       }

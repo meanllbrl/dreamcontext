@@ -28,6 +28,8 @@ import { forgetAgentLocal } from '../local-store.js';
 import { GLOBAL_REGISTRY_KEY, globalAgentExists, globalAgentHome, globalAgentPath, globalAgentsDir, hasProjectMember, isGlobalAgentHere, listGlobalAgentSlugs } from './scope.js';
 import { appendGlobalJournal, consolidateGlobalMemory, readGlobalPattern } from './global-memory.js';
 import {
+  APP_TOOL_REF_RE,
+  appToolsOf,
   assertRegularFile,
   automationFileTarget,
   automationPath,
@@ -150,6 +152,8 @@ export function readAgentFile(filePath: string, scope: AgentScope = 'project'): 
     flow: parseFlowSection(content),
     enabled: call ? call.enabled !== false : true,
     notify: call ? call.notify !== false : true,
+    // Only when set and non-empty: every member file without it keeps its hash.
+    ...(call && appToolsOf(call.app_tools).length ? { appTools: appToolsOf(call.app_tools) } : {}),
   };
   return {
     slug,
@@ -1017,6 +1021,47 @@ export function setAgentCallEnabled(contextRoot: string, slug: string, enabled: 
   const after = getAgent(contextRoot, slug);
   if (!after) throw new AutomationError(`Agent "${slug}" could not be read back after the switch.`);
   return after;
+}
+
+/**
+ * Set the app tools a job or a member may run to CHANGE something (`automations edit --app-tools`,
+ * app-arac-izin). An automation file (scheduled, on-call or a job bound to a member) holds them as
+ * `app_tools:`; a member's own file as `call.app_tools:` (what a call of it, `dc.team.ask` or
+ * `super team ask`, may run). An empty list removes the field. Every entry is `<app>/<tool>`, at
+ * most 20. Nothing is approved here: the field is hashed, so the owner's card asks again.
+ */
+export function setAppTools(contextRoot: string, slug: string, refs: readonly string[]): { kind: 'automation' | 'member'; path: string; appTools: string[] } {
+  const list = [...new Set(refs.map((x) => x.trim()).filter(Boolean))];
+  for (const t of list) if (!APP_TOOL_REF_RE.test(t)) throw new AutomationError(`Invalid app tool "${t}": write it as <app>/<tool>, e.g. yuk-izleme/notify-test.`);
+  if (list.length > 20) throw new AutomationError('At most 20 app tools.');
+  if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid slug "${slug}".`);
+  const file = automationPath(contextRoot, slug);
+  if (pathOccupied(file)) {
+    const parts = readManifestParts(file);
+    const m = parts.kind === 'legacy' ? parts.legacy : parts.job;
+    if (parts.kind === 'legacy' && parts.legacy.target === 'super' && list.length) {
+      throw new AutomationError('A Super automation is a turn of the Super itself: it takes no app tools (the Super runs them in a turn the owner opens; ask it there).');
+    }
+    assertOwned({ owner: m.owner ?? null }, m.title || slug);
+    assertRegularFile(file);
+    const { data, content } = parseManifestFrontmatter(readFileSync(file, 'utf-8'));
+    const next: Record<string, unknown> = { ...data };
+    if (list.length) next.app_tools = list; else delete next.app_tools;
+    rewriteManifestText(file, matter.stringify(content, next));
+    return { kind: 'automation', path: file, appTools: list };
+  }
+  const agent = getAgent(contextRoot, slug);
+  if (!agent) throw new AutomationError(`No automation or AI Team member named "${slug}" in this project.`);
+  if (agent.scope === 'global') throw new AutomationError(`${agent.title || slug} is a member of every project: give the app tools to a job of it here instead (automations create --agent ${slug} --app-tools ...).`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  assertRegularFile(agent.path);
+  const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
+  const call = data.call && typeof data.call === 'object' && !Array.isArray(data.call) ? { ...(data.call as Record<string, unknown>) } : {};
+  if (list.length) call.app_tools = list; else delete call.app_tools;
+  const nextData: Record<string, unknown> = { ...data };
+  if (Object.keys(call).length > 0) nextData.call = call; else delete nextData.call;
+  rewriteManifestText(agent.path, matter.stringify(content, nextData));
+  return { kind: 'member', path: agent.path, appTools: list };
 }
 
 /** The agent's call target first, then every automation file that runs as it

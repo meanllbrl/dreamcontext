@@ -111,6 +111,7 @@ function agentFileText(m: AutomationManifest, content: string): string {
             review: m.review,
             enabled: m.enabled,
             notify: m.notify,
+            ...(m.appTools?.length ? { app_tools: [...m.appTools] } : {}),
           },
         }
       : {}),

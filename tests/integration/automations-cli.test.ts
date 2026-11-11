@@ -264,7 +264,7 @@ describe('automations CLI (integration)', () => {
     const out = run(['automations', '--help'], projectDir, home);
     expect(out.exitCode).toBe(0);
     for (const verb of [
-      'create', 'list', 'show', 'run', 'tick', 'enable', 'disable', 'share', 'unshare',
+      'create', 'edit', 'list', 'show', 'run', 'tick', 'enable', 'disable', 'share', 'unshare',
       'approve', 'kill', 'remove', 'install', 'uninstall', 'logs',
       'questions', 'answer', 'flow',
     ]) {
@@ -272,6 +272,29 @@ describe('automations CLI (integration)', () => {
     }
     // The retired `review` verb must be gone, not merely undocumented.
     expect(out.stdout).not.toMatch(/^\s*review\s/m);
+  });
+
+  it('edit --app-tools sets, replaces and clears a job\'s app_tools; an on-call job keeps them on its call target; each change waits for approval', () => {
+    const created = run(['automations', 'create', 'apply-rows', '--title', 'Apply rows', '--days', 'daily', '--at', '09:00'], projectDir, home);
+    expect(created.exitCode).toBe(0);
+    const path = join(projectDir, '_dream_context', 'automations', 'apply-rows.md');
+    const set = run(['automations', 'edit', 'apply-rows', '--app-tools', 'kitup-ua/apply-result, kitup-ua/approval-check'], projectDir, home);
+    expect(set.exitCode).toBe(0);
+    expect(set.stdout).toContain('kitup-ua/apply-result, kitup-ua/approval-check');
+    expect(set.stdout).toMatch(/approves the change on its card/);
+    expect(readFileSync(path, 'utf-8')).toMatch(/app_tools:\n\s+- kitup-ua\/apply-result\n\s+- kitup-ua\/approval-check/);
+    // A changed hash: show reads it as waiting for the owner.
+    expect(run(['automations', 'show', 'apply-rows'], projectDir, home).stdout).toMatch(/blocked|changed|not approved/i);
+    const bad = run(['automations', 'edit', 'apply-rows', '--app-tools', 'no-slash'], projectDir, home);
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stdout).toMatch(/<app>\/<tool>/);
+    const cleared = run(['automations', 'edit', 'apply-rows', '--app-tools', ''], projectDir, home);
+    expect(cleared.exitCode).toBe(0);
+    expect(readFileSync(path, 'utf-8')).not.toContain('app_tools');
+    // An on-call job may carry app_tools (was: refused with --app); --app itself explains the way.
+    const call = run(['automations', 'create', 'kurucu', '--title', 'Kurucu', '--mode', 'call', '--app-tools', 'kitup-ua/apply-result'], projectDir, home);
+    expect(call.exitCode).toBe(0);
+    expect(run(['automations', 'edit', 'nobody', '--app-tools', 'a/b'], projectDir, home).stdout).toMatch(/No automation or AI Team member named "nobody"/);
   });
 
   it('create → list → show → run --force → approve', () => {

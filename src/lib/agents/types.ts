@@ -45,6 +45,10 @@ export interface AgentCallSettings {
   enabled: boolean;
   /** Unhashed: whether a finished call notifies. */
   notify: boolean;
+  /** `call.app_tools`: app tools a called run of this member may run to CHANGE something
+   *  (`<app>/<tool>`). Hashed through the call target's `appTools`, so adding one re-asks the
+   *  owner's approval (app-arac-izin). Absent when none. */
+  appTools?: string[];
 }
 
 /** The call settings of an agent with no `call:` block. A conversation with an
