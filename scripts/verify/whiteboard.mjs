@@ -460,52 +460,46 @@ async function main() {
       }
       return null;
     };
-    const currentName = async () => (await page.locator('.wbs-current-name').innerText().catch(() => '')).trim();
-    const panel = page.locator('.wbs-panel--boards');
-    /**
-     * The board's ready signal: the editor is past its loading state (no `.wbp-loading`, which
-     * also covers the canvas's Suspense fallback) and shows a canvas or its error card. The
-     * switcher already renders WHILE a board loads, and the editor swaps that loading bar for
-     * the ready one (a remount: the `.wbs` node is replaced), so a popover opened before this
-     * is thrown away under the click that follows it. Never touch the switcher before this.
-     */
+    // The tabs row and its "All boards" popover went on 2026-11-11: the Boards list on the left
+    // (`.wbx`) is the one way between boards, so every helper below drives it.
+    const currentName = async () => (await page.locator('.wbx-row[data-current="true"] .wbx-name').first().innerText().catch(() => '')).trim();
+    const panel = page.locator('.wbx');
+    /** The board's ready signal: the editor is past its loading state and shows a canvas or its error card. */
     const boardReady = () => page.evaluate(() => !!document.querySelector('.wbp-editor')
       && !document.querySelector('.wbp-loading')
       && (!!document.querySelector('.wbp-canvas .excalidraw') || !!document.querySelector('.wbp-card-state')));
     const waitBoardReady = (ms = 15000) => until(boardReady, ms);
+    /** Make sure the Boards list is shown (it can be hidden; the toggle then sits top-left). */
     const openSwitcher = async () => {
       if (!(await panel.count())) {
         await waitBoardReady();
-        await page.locator('.wbs-current').click({ timeout: 5000 });
+        await page.locator('.wbp-explorer-toggle').first().click({ timeout: 5000 });
       }
       await panel.waitFor({ timeout: 5000 });
     };
     /**
-     * Wait for a board's row in All boards. The list is a polled query (stale after 5s, polled
-     * every 15s), so a board the CLI made a moment ago can take a poll to show: close and reopen
-     * the popover (a remount refetches a stale list) until it does, up to `ms`.
+     * Wait for a board's row in the list. The list is a polled query, so a board the CLI made a
+     * moment ago can take a poll to show: hide and show the list (a remount refetches) until it does.
      */
     const waitRow = async (name, ms = 20000) => {
       const end = Date.now() + ms;
-      const row = panel.locator('.wbs-row-open', { hasText: name }).first();
+      const row = panel.locator('.wbx-row-open', { hasText: name }).first();
       while (Date.now() < end) {
         await openSwitcher();
         if (await row.waitFor({ timeout: 2500 }).then(() => true).catch(() => false)) return row;
-        await page.keyboard.press('Escape');
+        await page.locator('.wbx-head .wbx-icon[aria-label="Hide the board list"]').click().catch(() => {});
         await page.waitForTimeout(300);
       }
       await openSwitcher();
       return row;
     };
-    /** Open a board through the switcher's All boards list, as a user does. */
+    /** Open a board from the Boards list, as a user does. */
     const openBoard = async (name) => {
       // A reload lands back on the board in the URL hash (#wb=…, W3): already there is done.
-      if (!(await panel.count()) && (await currentName()) === name && (await scene())?.width > 0) {
+      if ((await currentName()) === name && (await scene())?.width > 0) {
         await page.waitForTimeout(700);
         return;
       }
-      // A row is clicked only in a popover of a READY board (openSwitcher), and a click that
-      // still misses (its popover closed under it) reopens the list rather than hanging.
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const row = await waitRow(name);
         if (await row.click({ timeout: 5000 }).then(() => true).catch(() => false)) break;
@@ -609,10 +603,11 @@ async function main() {
     const delDefault = await fetch(`${ORIGIN}/api/whiteboards/control-panel`, { method: 'DELETE' });
     ok('A15 the server refuses to delete the default board (409)', delDefault.status === 409, String(delDefault.status));
 
-    // ── A4: create from the switcher's "+", open, draw, reload, persisted ─────────────────
-    await page.locator('.wbs-icon-btn').click();
-    await page.locator('.wbs-create-input').fill('Verify board');
-    await page.locator('.wbs-create-input').press('Enter');
+    // ── A4: create from the Boards list's "+", open, draw, reload, persisted ──────────────
+    await openSwitcher();
+    await page.locator('.wbx-head .wbx-icon[aria-label="New board"]').click();
+    await page.locator('.wbx .wbx-field').fill('Verify board');
+    await page.locator('.wbx .wbx-field').press('Enter');
     const opened = await until(async () => (await currentName()) === 'Verify board' && (await scene())?.width > 0, 15000);
     ok('A4 creating a board from "+" opens it', !!opened, await currentName());
     const SLUG = 'verify-board';
@@ -1103,9 +1098,9 @@ async function main() {
     // Back to the board: close the panel (and anything else the click opened).
     await page.locator('.wb-page-panel [aria-label="Close"]').click({ timeout: 2000 }).catch(() => {});
     await page.waitForTimeout(300);
-    if (!(await page.locator('.wbs-current').count()) || (await currentName()) !== 'Verify board') {
+    if (!(await page.locator('.wbp-editor').count()) || (await currentName()) !== 'Verify board') {
       await railItem.click();
-      await page.locator('.wbs-current').waitFor({ timeout: 10000 });
+      await page.locator('.wbp-editor').waitFor({ timeout: 10000 });
       await openBoard('Verify board');
     }
     await clearSelection();
@@ -1273,7 +1268,7 @@ async function main() {
     ok('A11 a corrupt board shows the read-only error card', /cannot be read/i.test(cardText), cardText);
     ok('A11 …naming the file', cardText.includes('_dream_context/whiteboards/broken/broken.excalidraw.md'), cardText);
     ok('A11 …with no canvas mounted', await page.locator('.wbp-canvas').count() === 0);
-    ok('A11 …and the switcher still there to leave it', await page.locator('.wbs-current').count() === 1);
+    ok('A11 …and the Boards list still there to leave it', await page.locator('.wbx, .wbp-state-top .wbp-explorer-toggle').count() >= 1);
     await shoot('corrupt');
     const cliOnBroken = dcTry(['whiteboard', 'add', 'broken', 'note', '--text', 'overwrite?']);
     ok('A11 the CLI refuses to write a corrupt board (non-zero exit)', cliOnBroken.code !== 0, cliOnBroken.out);
@@ -1287,38 +1282,38 @@ async function main() {
     await page.waitForTimeout(2500);
     ok('A11 the corrupt file is byte-unchanged', sha(BROKEN) === brokenHash);
 
-    // ── A16: the board switcher ────────────────────────────────────────────────────────────
+    // ── A16: the Boards list (the tabs row and its popover went 2026-11-11) ────────────────
     dc(['whiteboard', 'create', 'Scratch board']);
     await waitRow('Scratch board');
-    // The list's rows only: the folded "Recently deleted" section under it has `.wbs-row-name`s too.
-    const rowNames = async () => (await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()).map((t) => t.trim());
+    const rowNames = async () => (await panel.locator('.wbx-scroll .wbx-row:not(.wbx-row--group) .wbx-name').allInnerTexts()).map((t) => t.trim());
     const allRows = await rowNames();
-    ok('A16 the board name opens "All boards" listing every board',
-      allRows.length === 5 && ['Control Panel', 'Verify board', 'Sandbox', 'broken', 'Scratch board']
+    ok('A16 the Boards list lists every board',
+      ['Control Panel', 'Verify board', 'Sandbox', 'broken', 'Scratch board']
         .every((n) => allRows.some((r) => r.toLowerCase().startsWith(n.toLowerCase()))),
       JSON.stringify(allRows));
-    const cpRow = panel.locator('.wbs-row', { hasText: 'Control Panel' });
-    ok('A16 the default board wears a Default badge', /Default/.test(await cpRow.locator('.wbs-badge').innerText().catch(() => '')));
-    ok('A16 …and has no delete control', await cpRow.locator('.wbs-row-delete').count() === 0);
-    ok('A16 other boards do have one', await panel.locator('.wbs-row', { hasText: 'Verify board' }).locator('.wbs-row-delete').count() === 1);
-    ok('A16 a corrupt board\'s row says "Cannot be read"', /Cannot be read/.test(await panel.locator('.wbs-row', { hasText: /broken/i }).innerText().catch(() => '')));
-    ok('A16 rows show an element count', /\d+ elements?/.test(await panel.locator('.wbs-row', { hasText: 'Verify board' }).innerText().catch(() => '')),
-      await panel.locator('.wbs-row', { hasText: 'Verify board' }).innerText().catch(() => ''));
-    await page.locator('.wbs-search-input').fill('sand');
+    ok('A16 no tabs row is drawn', await page.locator('.wbp-bar, .wbt-tab').count() === 0);
+    const rowOf = (name) => panel.locator('.wbx-scroll .wbx-row:not(.wbx-row--group)', { hasText: name }).first();
+    ok('A16 the default board wears a Default badge', /Default/.test(await rowOf('Control Panel').locator('.wbx-badge').first().innerText().catch(() => '')));
+    await rowOf('Control Panel').click({ button: 'right' });
+    ok('A16 …and its menu has no Delete', !/Delete/.test(await page.locator('.wbx-menu').innerText().catch(() => 'Delete')));
+    await page.keyboard.press('Escape');
+    await rowOf('Verify board').click({ button: 'right' });
+    ok('A16 other boards\' menus do have Delete', /Delete/.test(await page.locator('.wbx-menu').innerText().catch(() => '')));
+    await page.keyboard.press('Escape');
+    ok('A16 a corrupt board\'s row is marked', await rowOf('broken').locator('.wbx-badge--bad').count() === 1);
+    await page.locator('.wbx-search-input').fill('sand');
     await page.waitForTimeout(200);
     ok('A16 search filters the list', JSON.stringify(await rowNames()) === '["Sandbox"]', JSON.stringify(await rowNames()));
-    await page.locator('.wbs-search-input').fill('');
+    await page.locator('.wbx-search-input').press('Escape');
     await page.waitForTimeout(150);
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(250);
-    ok('A16 Esc closes the popover', await panel.count() === 0);
+    ok('A16 Esc clears the search', (await page.locator('.wbx-search-input').inputValue()) === '');
 
     // "+" names a new board: Günlük, name kept verbatim, slug gunluk.
-    await page.locator('.wbs-icon-btn').click();
-    await page.locator('.wbs-create-input').fill('Günlük');
+    await page.locator('.wbx-head .wbx-icon[aria-label="New board"]').click();
+    await page.locator('.wbx .wbx-field').fill('Günlük');
     await page.waitForTimeout(150);
     await shoot('switcher-new');
-    await page.locator('.wbs-create-input').press('Enter');
+    await page.locator('.wbx .wbx-field').press('Enter');
     const onGunluk = await until(async () => (await currentName()) === 'Günlük' && (await scene())?.width > 0, 15000);
     ok('A16 "+" creates "Günlük" and opens it', !!onGunluk, await currentName());
     ok('A16 …as slug gunluk on disk', existsSync(boardPath('gunluk')), boardDirs().join(','));
@@ -1347,25 +1342,22 @@ async function main() {
     page.off('request', onGunlukPut);
     ok('A16 the edit made on Günlük just before switching is on disk', !!kept,
       `disk ${JSON.stringify(onDisk('gunluk').map((e) => e.type))}; PUTs to gunluk during the switch: ${JSON.stringify(gunlukPuts)}`);
-    // Delete another board through the inline confirm.
+    // Delete another board through the right-click menu's in-app confirm.
     await openSwitcher();
-    const scratchRow = panel.locator('.wbs-row', { hasText: 'Scratch board' });
-    await scratchRow.hover();
-    await scratchRow.locator('.wbs-row-delete').click();
-    const confirmRow = panel.locator('.wbs-row--confirm');
-    ok('A16 delete asks inline first', await confirmRow.count() === 1 && existsSync(boardPath('scratch-board')));
-    await confirmRow.locator('.wbs-btn--danger').click();
+    await rowOf('Scratch board').click({ button: 'right' });
+    await page.locator('.wbx-menu .wbx-menu-item--danger', { hasText: 'Delete' }).click();
+    ok('A16 delete asks in the menu first', await page.locator('.wbx-confirm').count() === 1 && existsSync(boardPath('scratch-board')));
+    await page.locator('.wbx-confirm .wbx-menu-item--danger').click();
     const gone = await until(async () => !existsSync(join(BOARDS, 'scratch-board'))
       && !(await rowNames()).includes('Scratch board'), 6000);
     ok('A16 confirming removes the board (list and disk)', !!gone, `${JSON.stringify(await rowNames())} dirs=${boardDirs().join(',')}`);
     ok('A16 …and the open board stays open', await currentName() === 'Control Panel');
-    // Arrows + Enter pick a board.
-    await page.locator('.wbs-search-input').fill('verif');
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('Enter');
+    // Search + Enter picks a board.
+    await page.locator('.wbx-search-input').fill('verif');
+    await page.locator('.wbx-search-input').press('Enter');
     const byKeys = await until(async () => (await currentName()) === 'Verify board' && (await scene())?.width > 0, 10000);
-    ok('A16 search + Enter opens the highlighted board', !!byKeys, await currentName());
+    ok('A16 search + Enter opens the first hit', !!byKeys, await currentName());
+    await page.locator('.wbx-search-input').press('Escape');
 
     // Opening or switching to a board nobody touched writes nothing back (no PUT of the scene).
     const openPuts = [];
@@ -1382,25 +1374,19 @@ async function main() {
     page.off('request', onOpenPut);
     ok('A16 switching to an untouched board and back sends no save', openPuts.length === 0, JSON.stringify(openPuts));
 
-    // A board deleted on disk (the CLI's or an agent's `rm`, another window) leaves its tab and
-    // the list within a poll, without a reload.
-    const tabNames = async () => (await page.locator('.wbt-tab-name').allInnerTexts()).map((t) => t.trim());
-    ok('A16 fixture: Günlük has a tab', (await tabNames()).includes('Günlük'), JSON.stringify(await tabNames()));
+    // A board deleted on disk (the CLI's or an agent's `rm`, another window) leaves the list
+    // within a poll, without a reload.
+    ok('A16 fixture: Günlük is listed', (await rowNames()).includes('Günlük'), JSON.stringify(await rowNames()));
     rmSync(join(BOARDS, 'gunluk'), { recursive: true, force: true });
-    const tabGone = await until(async () => !(await tabNames()).includes('Günlük'), 6000);
-    ok('A16 a board deleted on disk loses its tab within a poll', !!tabGone, JSON.stringify(await tabNames()));
-    await openSwitcher();
-    ok('A16 …and is gone from All boards', !(await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()).some((n) => n.trim() === 'Günlük'),
-      JSON.stringify(await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()));
-    await page.keyboard.press('Escape');
-    // The OPEN board deleted on disk, nothing unsaved: its tab closes and a neighbour opens.
+    const rowGone = await until(async () => !(await rowNames()).includes('Günlük'), 20000);
+    ok('A16 a board deleted on disk leaves the list within a poll', !!rowGone, JSON.stringify(await rowNames()));
+    // The OPEN board deleted on disk, nothing unsaved: the page moves to another board.
     dc(['whiteboard', 'create', 'Doomed board']);
     await openBoard('Doomed board');
     ok('A16 fixture: Doomed board is open', await currentName() === 'Doomed board', await currentName());
     rmSync(join(BOARDS, 'doomed-board'), { recursive: true, force: true });
-    const movedOn = await until(async () => (await currentName()) !== 'Doomed board' && !(await tabNames()).includes('Doomed board'), 8000);
-    ok('A16 the open board deleted on disk closes its tab and opens another', !!movedOn,
-      `${await currentName()} tabs=${JSON.stringify(await tabNames())}`);
+    const movedOn = await until(async () => (await currentName()) !== 'Doomed board' && (await currentName()) !== '', 20000);
+    ok('A16 the open board deleted on disk opens another', !!movedOn, await currentName());
     const goneBanner = await page.locator('.wbp-banner[role="status"]').innerText().catch(() => '');
     ok('A16 …and says why', /Doomed board/.test(goneBanner) && /deleted/i.test(goneBanner), goneBanner);
 
@@ -1424,9 +1410,8 @@ async function main() {
     // A board the agent just made is in All boards when the user opens it a second later.
     await page.waitForTimeout(1000);
     await openSwitcher();
-    const freshRow = await until(async () => (await panel.locator('.wbs-row-open', { hasText: 'Sizes' }).count()) > 0, 3000);
-    ok('A16 a board the CLI created a second ago is listed when All boards opens', !!freshRow, JSON.stringify(await rowNames()));
-    await page.keyboard.press('Escape');
+    const freshRow = await until(async () => (await panel.locator('.wbx-row-open', { hasText: 'Sizes' }).count()) > 0, 20000);
+    ok('A16 a board the CLI created is listed within a poll', !!freshRow, JSON.stringify(await rowNames()));
     await openBoard('Sizes');
     const ins = (size) => page.locator(`.wb-widget[data-widget-kind="insight"][data-widget-size="${size}"]`);
     await until(async () => /4,?210/.test(await ins('s').textContent().catch(() => '')), 8000);

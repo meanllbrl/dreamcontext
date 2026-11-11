@@ -5,8 +5,9 @@ import { sanitizeExplorerPrefs, type ExplorerPrefs } from './explorerLogic';
 
 /**
  * The board explorer's memory (open, collapsed groups, pins, recents, empty groups), per
- * machine and per project, in whiteboardPrefs.ts beside the tab layout, so it survives the
- * desktop app's relaunch. Written NOW, not inside a state updater, as useTabLayout does.
+ * machine and per project, in whiteboardPrefs.ts, so it survives the
+ * desktop app's relaunch. Written NOW, not inside a state updater: a board switch remounts
+ * its readers before an updater would run.
  */
 const KEY_PREFIX = 'dreamcontext:whiteboard-explorer:';
 const PREF_KEY = 'explorer';

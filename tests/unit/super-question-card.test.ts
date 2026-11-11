@@ -38,7 +38,7 @@ function fakeSession(over: Partial<{ status: string; busy: boolean; steerOk: boo
     busy: over.busy ?? false,
     sent: [] as string[], steered: [] as string[], answered: [] as unknown[],
     pendingList: over.pending ?? [],
-    send(t: string) { s.sent.push(t); },
+    send(t: string) { s.sent.push(t); return true; },
     steer(t: string) { if (over.steerOk === false) return false; s.steered.push(t); return true; },
     answerQuestion(requestId: string, _q: unknown, picked: Record<string, string>) { s.answered.push({ requestId, picked }); },
     getModel() { return { pending: s.pendingList }; },

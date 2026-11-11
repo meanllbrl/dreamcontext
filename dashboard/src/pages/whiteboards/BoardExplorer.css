@@ -398,3 +398,136 @@
 .wbx[data-phone] .wbx-foot-btn,
 .wbx[data-phone] .wbx-field { min-height: var(--touch-target); }
 .wbx[data-phone] .wbx-search { height: var(--touch-target); margin-bottom: var(--space-2); }
+
+/* The glyphs' base (boardGlyphs.tsx). */
+.wbs-glyph {
+  flex-shrink: 0;
+  display: block;
+}
+
+/* A right-click's menu: at the pointer, its own width (it may reach over the canvas). */
+.wbx-menu[data-at-point] {
+  right: auto;
+  width: 240px;
+}
+
+.wbx-menu-hint {
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ─── recently deleted (BoardTrash.tsx): the list's foot ─── */
+
+.wbx-trash {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.wbx-trash-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wbx-trash-toggle:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+.wbx-trash-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+
+.wbx-trash-title { flex: 1; min-width: 0; }
+
+.wbx-trash-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Height + opacity, ~220ms open and ~180ms shut (K18); a plain fade under reduced motion. */
+.wbx-trash-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 180ms var(--ease-out), opacity 180ms var(--ease-out);
+}
+.wbx-trash[data-open] .wbx-trash-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition-duration: 220ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wbx-trash-fold { transition-property: opacity; }
+}
+
+.wbx-trash-list {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.wbx-trash-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) calc(var(--space-2) + 16px + var(--space-2));
+  border-radius: var(--radius-md);
+}
+
+.wbx-trash-row:hover { background: var(--color-bg-secondary); }
+
+.wbx-trash-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wbx-trash-name,
+.wbx-trash-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbx-trash-name { color: var(--color-text); font-weight: var(--font-weight-medium); }
+.wbx-trash-meta { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.wbx-trash-error { font-size: var(--font-size-xs); color: var(--color-error-ink); }
+
+.wbx-trash-restore {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-accent-ink);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.wbx-trash-restore:hover:not(:disabled) { background: var(--color-accent-soft); }
+.wbx-trash-restore:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.wbx-trash-restore:disabled { opacity: 0.6; cursor: default; }

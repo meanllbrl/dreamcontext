@@ -228,10 +228,7 @@ async function main() {
       await sleep(800);
       if (await page.locator('.announcements-modal-scrim').count()) { await page.keyboard.press('Escape'); await sleep(300); }
       await page.locator('.sidebar-item', { hasText: /Whiteboard(?!s)/ }).first().click();
-      await page.locator('.wbt-tab', { hasText: 'Tur iki' }).first().click({ timeout: 10000 }).catch(async () => {
-        await page.locator('.wbt-all').click();
-        await page.locator('.wbs-panel--boards .wbs-row-open', { hasText: 'Tur iki' }).click();
-      });
+      await page.locator('.wbx .wbx-row-open', { hasText: 'Tur iki' }).first().click({ timeout: 10000 });
       await page.locator('.wb-widget').first().waitFor({ state: 'attached', timeout: 15000 });
     }
     async function openBoard(name) {

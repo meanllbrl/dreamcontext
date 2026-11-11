@@ -57,6 +57,24 @@ describe('whiteboardPrefs', () => {
     expect(place.readPanelOpen('acme')).toBe(true);
   });
 
+  it('drops a retired key (the old tab strip) from both copies once, and writes nothing when it is not there', async () => {
+    vi.useFakeTimers();
+    const server = fakeServer();
+    await prefs.hydrateWhiteboardPrefs('acme', server.transport);
+    prefs.writeWhiteboardPref('acme', 'tabs', 'dreamcontext:whiteboard-tabs:acme', '{"tabs":["a"]}');
+    prefs.writeWhiteboardPref('acme', 'explorer', 'dreamcontext:whiteboard-explorer:acme', '{"open":true}');
+    vi.advanceTimersByTime(400);
+    const before = server.saves.length;
+    prefs.dropWhiteboardPref('acme', 'tabs', 'dreamcontext:whiteboard-tabs:acme');
+    expect(store.get('dreamcontext:whiteboard-tabs:acme')).toBeUndefined();
+    vi.advanceTimersByTime(400);
+    expect(server.saves).toHaveLength(before + 1);
+    expect(server.saves.at(-1)).toEqual({ explorer: '{"open":true}' });
+    prefs.dropWhiteboardPref('acme', 'tabs', 'dreamcontext:whiteboard-tabs:acme');
+    vi.advanceTimersByTime(400);
+    expect(server.saves).toHaveLength(before + 1);
+  });
+
   it('falls back to localStorage before the server copy is read or when it has nothing', async () => {
     place.writeLastBoard('acme', 'growth');
     expect(place.readLastBoard('acme')).toBe('growth');

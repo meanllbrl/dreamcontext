@@ -253,17 +253,23 @@ async function runEngine(engineName) {
     ok('Chat stage: the dropped picture and file attach to the Super composer', await until(page, () => holds(page, CENTRE, 'stage-drop'), 10000), JSON.stringify(await held(page, CENTRE)));
     await shot('02-drop-chat-stage-dark');
 
-    console.log('── drop on the docked Super chat: a whiteboard');
-    await nav('Whiteboard');
-    const boardLink = page.getByText('launch-plan', { exact: false }).first();
-    if (await boardLink.count()) { await boardLink.click().catch(() => {}); await page.waitForTimeout(1500); }
-    ok('a board is open', await until(page, async () => (await page.locator('.excalidraw').count()) > 0, 15000));
+    console.log('── drop on the pill (a page without a board)');
+    await nav('Tasks');
     ok('the dock pill is there', await until(page, async () => (await pill.count()) === 1, 8000));
     // On the pill, window closed: the window opens and takes the files.
     const r2 = await dropFiles(page, '[data-testid="super-dock-pill"]', 'pill-drop');
-    ok('a drop on the pill is taken (not left to the board)', r2.dropTaken === true, JSON.stringify(r2));
+    ok('a drop on the pill is taken (not left to the page)', r2.dropTaken === true, JSON.stringify(r2));
     ok('…the Super window opens', await until(page, async () => (await win.count()) === 1 && (await page.locator(`${DOCK} .chat-cmp-input`).count()) === 1, 8000));
     ok('…and the files attach in it', await until(page, () => holds(page, DOCK, 'pill-drop'), 10000), JSON.stringify(await held(page, DOCK)));
+
+    console.log('── drop on the docked Super chat: a whiteboard');
+    await nav('Whiteboard');
+    const boardLink = page.locator('.wbx .wbx-row-open', { hasText: /launch.?plan/i }).first();
+    if (await boardLink.count()) { await boardLink.click().catch(() => {}); await page.waitForTimeout(1500); }
+    ok('a board is open', await until(page, async () => (await page.locator('.excalidraw').count()) > 0, 15000));
+    // A ready board draws the Super's writing field instead of the pill (2026-11-11); its mark opens the window.
+    if (!(await win.count())) await page.locator('[data-testid="board-super-mark"]').click({ timeout: 8000 });
+    ok('the Super window is open over the board', await until(page, async () => (await win.count()) === 1, 8000));
     const r3 = await dropFiles(page, `${DOCK} .chat-cmp-input`, 'board-drop');
     ok('whiteboard: a drop on the docked composer is taken before the board sees it', r3.dropTaken === true && r3.overTaken === true, JSON.stringify(r3));
     ok('whiteboard: the files attach to the docked Super chat', await until(page, () => holds(page, DOCK, 'board-drop'), 10000), JSON.stringify(await held(page, DOCK)));

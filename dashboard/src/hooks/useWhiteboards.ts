@@ -543,5 +543,7 @@ export function useWhiteboardEditor(slug: string) {
 
   /** `gone`: the board is gone and closing it loses nothing (whiteboardListSync.ts): the page
    *  closes its tab and moves on. */
-  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures };
+  /** Send what the board holds now (the writing field, before it hands a message over). */
+  const flush = useCallback(() => { loopRef.current?.flush(); }, []);
+  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush };
 }

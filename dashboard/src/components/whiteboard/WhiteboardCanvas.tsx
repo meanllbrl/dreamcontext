@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
   reconcileElements, restoreElements,
@@ -40,6 +40,7 @@ import { WIDGET_REGISTRY } from './widgets/registry';
 import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
 import { sameWidgetSlot, widgetSlotProps, type WidgetSlotProps } from './widgetSlot';
 import { installImageThemeShim } from '../../lib/excalidrawImageTheme';
+import { selectionRef, type DropElement, type SelectionRef } from './agentDrop';
 import './WhiteboardCanvas.css';
 
 // A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
@@ -84,6 +85,22 @@ export interface WhiteboardCanvasProps {
   /** A clicked `dreamcontext://<kind>/<id>` element link. Default: a task or knowledge page opens
    *  in the board page's page popup when there is one, else on its own page in the app. */
   onInternalLink?: (kind: string, id: string) => void;
+  /** The page's own controls in the canvas's top-right row, before "+ Add" (the save state and
+   *  the agents toggle, 2026-11-11). Read through a context, so a change never re-renders the
+   *  whole Excalidraw. */
+  topRight?: ReactNode;
+  /** The live selection, as the board's writing field sends it (null: nothing selected). Called
+   *  only when the selected ids or the scene changed. */
+  onSelection?: (sel: SelectionRef | null) => void;
+  /** An area (scene coordinates) to outline while the Super works on it: an overlay, never a
+   *  scene element, so it is not saved and leaves no history entry. */
+  workBox?: [number, number, number, number] | null;
+}
+
+/** The page's top-right controls, handed into Excalidraw's own top-right row. */
+const TopRightContext = createContext<ReactNode>(null);
+function TopRightExtra() {
+  return <>{useContext(TopRightContext)}</>;
 }
 
 
@@ -110,7 +127,7 @@ const UI_OPTIONS = {
  * Lazy-loaded through `LazyWhiteboardCanvas`, which points Excalidraw at the self-hosted fonts
  * before this module (and the Excalidraw bundle) is imported.
  */
-export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink, topRight, onSelection, workBox }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
   const { bus, vault } = useVault();
@@ -126,6 +143,18 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
 
   const onSceneChangeRef = useRef(onSceneChange);
   onSceneChangeRef.current = onSceneChange;
+  const onSelectionRef = useRef(onSelection);
+  onSelectionRef.current = onSelection;
+  const selectionKey = useRef('');
+  // The viewport, kept only while an area is outlined (a pan or zoom then moves the outline).
+  const workBoxRef = useRef(workBox);
+  workBoxRef.current = workBox;
+  const [view, setView] = useState<{ scrollX: number; scrollY: number; zoom: number } | null>(null);
+  useEffect(() => {
+    if (!workBox) { setView(null); return; }
+    const s = apiRef.current?.getAppState();
+    if (s) setView({ scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value });
+  }, [workBox]);
   const onInternalLinkRef = useRef(onInternalLink);
   onInternalLinkRef.current = onInternalLink;
   // The board page's page popup (PagePopup.tsx), when this canvas sits under one.
@@ -327,6 +356,19 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     // The panel knows every agent with a card here (heard only when the list really changes).
     // Before the version check: a poll's remote copy has already recorded its version.
     if (boardSlug) setBoardCards(vault, boardSlug, agentCardsOf(elements));
+    // The writing field's selection chip: only when the selected ids or the scene changed.
+    if (onSelectionRef.current) {
+      const ids = Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]);
+      const key = ids.length ? `${ids.sort().join(',')}|${getSceneVersion(elements)}` : '';
+      if (key !== selectionKey.current) {
+        selectionKey.current = key;
+        onSelectionRef.current(ids.length ? selectionRef(elements as unknown as readonly DropElement[], ids) : null);
+      }
+    }
+    if (workBoxRef.current) {
+      const next = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
+      setView((prev) => (prev && prev.scrollX === next.scrollX && prev.scrollY === next.scrollY && prev.zoom === next.zoom ? prev : next));
+    }
 
     // A widget with a visible stroke (Phase-1, CLI-made, or given a colour) draws a second frame
     // around its card; normalise it once. Also before the version check: a poll's remote copy
@@ -444,13 +486,17 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   }, []);
 
   const renderTopRightUI = useCallback(() => (
-    <button type="button" className="wb-add-btn" onClick={openPaletteFromButton}>
-      + {txRef.current('whiteboard.add', 'Add')}
-    </button>
+    <>
+      <TopRightExtra />
+      <button type="button" className="wb-add-btn" onClick={openPaletteFromButton}>
+        + {txRef.current('whiteboard.add', 'Add')}
+      </button>
+    </>
   ), [openPaletteFromButton]);
 
   return (
     <WhiteboardHostContext.Provider value={host}>
+      <TopRightContext.Provider value={topRight ?? null}>
       <div ref={wrapRef} className={widgetsOnly ? 'wb-canvas-wrap wb-canvas-wrap--widgets-selected' : 'wb-canvas-wrap'}>
         <Excalidraw
           excalidrawAPI={handleApi}
@@ -463,6 +509,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
           renderTopRightUI={renderTopRightUI}
           UIOptions={UI_OPTIONS}
         />
+        {workBox && view && <WorkOutline box={workBox} view={view} label={tx('whiteboard.field.outline', 'Super is working on this…')} />}
         {sizePicker && (
           <WidgetSizePicker
             key={sizePicker.id}
@@ -488,7 +535,25 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
           />
         )}
       </div>
+      </TopRightContext.Provider>
     </WhiteboardHostContext.Provider>
+  );
+}
+
+/** The outlined area: scene coordinates mapped through the live viewport, padded a little. */
+function WorkOutline({ box, view, label }: { box: [number, number, number, number]; view: { scrollX: number; scrollY: number; zoom: number }; label: string }) {
+  const pad = 8;
+  const [x, y, w, h] = box;
+  const style = {
+    left: (x + view.scrollX) * view.zoom - pad,
+    top: (y + view.scrollY) * view.zoom - pad,
+    width: w * view.zoom + 2 * pad,
+    height: h * view.zoom + 2 * pad,
+  };
+  return (
+    <div className="wb-work-outline" style={style} data-testid="board-work-outline" aria-hidden>
+      <span className="wb-work-tag">{label}</span>
+    </div>
   );
 }
 

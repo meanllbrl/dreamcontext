@@ -369,9 +369,10 @@ export function parseSuperAnswer(text: string): { item: string; unclear: boolean
 }
 
 /** Into the super chat: a running turn steers (never waits), an idle one gets a turn. False =
- *  nothing could be sent from here (no session, a closed socket). */
+ *  nothing was written (no session, or a socket that reads open but is closing): the caller
+ *  keeps the words. True only when the write itself went out. */
 export function sendToSuper(s: Pick<ChatSession, 'status' | 'busy' | 'steer' | 'send'> | undefined, text: string): boolean {
   if (!s || s.status !== 'open') return false;
-  if (s.busy) { if (!s.steer(text)) s.send(text); } else s.send(text);
-  return true;
+  if (s.busy) return s.steer(text) || s.send(text);
+  return s.send(text);
 }

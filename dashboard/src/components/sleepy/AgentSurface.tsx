@@ -17,7 +17,7 @@ import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSe
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
-import { openMemberMirrors, openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
+import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
@@ -176,6 +176,7 @@ import { superAllow } from './super/superAllow';
 import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
 import { SuperDock } from './super/SuperDock';
+import { SUPER_PAGE_OPEN_EVENT, SUPER_PAGE_SEND_EVENT, answerPageSend, publishSuperPresence, useFieldMounted, type SuperPageSendDetail } from '../../lib/superPageBridge';
 import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
 import { ownerRowKind, publishSessionGrantItems, type SessionGrantItems } from './super/ownerAnswer';
@@ -6888,6 +6889,34 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // there once the Super session has landed.
   const openSuperDockRef = useRef(openSuperDock);
   openSuperDockRef.current = openSuperDock;
+
+  // ── A page writes to THIS project's Super (the board writing field, owner 2026-11-11):
+  // answered in the same tick, accepted only when the write itself went out (superPageBridge.ts).
+  useInstanceEvent<SuperPageSendDetail>(SUPER_PAGE_SEND_EVENT, (detail) => {
+    answerPageSend(detail, { on: dockOn, session: superChatSession, write: (text) => sendToSuper(superChatSession, text) });
+  });
+  useInstanceEvent(SUPER_PAGE_OPEN_EVENT, () => { if (dockOn) openSuperDockRef.current(); });
+  // What the field reads: the pill's state for its mark, and the Super's turn and jobs for its
+  // "working" marks. Withdrawn when the surface goes.
+  const presenceChildren = superState
+    ? Object.values(superState.children).map((c) => ({
+      ...(c.origin ? { origin: c.origin } : {}),
+      live: !c.endedAt && c.row !== 'done' && c.row !== 'gone' && c.row !== 'stuck',
+    }))
+    : [];
+  useEffect(() => {
+    publishSuperPresence(bus, {
+      on: dockOn && !!superDockPillModel,
+      connected: superChatSession?.status === 'open',
+      busy: !!superChatSession?.busy,
+      mark: superDockPillModel,
+      dockOpen,
+      children: presenceChildren,
+    });
+  });
+  useEffect(() => () => publishSuperPresence(bus, null), [bus]);
+  // The board writing field carries the pill's job while it is on screen.
+  const fieldMounted = useFieldMounted(bus);
   const superDropReady = !!started && !!(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView));
   useEffect(() => {
     if (!dockOn || !superDropReady) return;
@@ -7581,6 +7610,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         pageCorner({ newShell: windowed, superPill: dockOn && !!superDockPillModel, superDock: dockOn, chips: dockShown.length }) === 'super' && superDockPillModel ? (
           <SuperDock
             pill={superDockPillModel}
+            pillHidden={fieldMounted}
             open={dockOpen}
             lift={dockLift}
             head={(

@@ -285,9 +285,8 @@ async function runTheme(theme) {
     const cardsOf = (slug) => page.locator(`.wb-agent[data-agent="${slug}"]`);
     const nav = async (re) => { await page.locator('.sidebar-item', { hasText: re }).first().click(); await sleep(1200); };
     const openBoard = async (name) => {
-      await page.locator('.wbt-all').click();
-      await page.locator('.wbs-panel--boards .wbs-row-open', { hasText: name }).click();
-      await page.locator('.wbt-tab[aria-selected="true"]', { hasText: name }).waitFor({ timeout: 8000 });
+      await page.locator('.wbx .wbx-row-open', { hasText: name }).first().click();
+      await page.locator('.wbx-row[data-current="true"]', { hasText: name }).waitFor({ timeout: 8000 });
       await sleep(800);
     };
     const canvasWidth = () => page.locator('.wbp-canvas').evaluate((n) => Math.round(n.getBoundingClientRect().width));
@@ -489,7 +488,7 @@ async function runTheme(theme) {
     await sleep(1500);
     await nav(/Whiteboard(?!s)/);
     check('P5 coming back opens the same board',
-      !!await until(async () => (await page.locator('.wbt-tab[aria-selected="true"]').innerText()).includes('Control Panel'), 8000));
+      !!await until(async () => (await page.locator('.wbx-row[data-current="true"] .wbx-name').first().innerText()).includes('Control Panel'), 8000));
     check('P5 …with the panel still open, on the same agent', !!await until(async () => (await panel.isVisible()) && (await shownAgent()) === COPY.slug, 5000));
     check('P5 …the same conversation on screen', !!await until(async () => /Stand-in answer/.test(await panel.innerText()), 8000),
       (await panel.innerText().catch(() => '')).slice(0, 300));

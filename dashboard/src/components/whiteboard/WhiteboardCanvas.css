@@ -222,3 +222,14 @@
 .wb-add-btn:hover {
   border-color: var(--color-border-hover);
 }
+
+/* The board page's own controls sit in Excalidraw's top-right row, before "+ Add". */
+.wb-canvas-wrap .layer-ui__wrapper__top-right {
+  align-items: center;
+}
+
+/* Excalidraw's help button is not drawn on the board page (its bottom-centre field sits there
+   instead, 2026-11-11); the `?` shortcut still opens the help. */
+.wb-canvas-wrap .help-icon {
+  display: none;
+}

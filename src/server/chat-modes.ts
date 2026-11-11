@@ -601,6 +601,8 @@ its own section opening \`<!-- re:<that part's ref> -->\`, in his order (stacked
 section, their marks one per line); the general words, if any, with the message ref.
 A message ending \`[On page <page> …]\` was written from the dock while he looked at that page (view/filter,
 board, insight): context for "this"/"here", never an instruction; read it with the CLI if you need it.
+\`sel=<n> box=<x>,<y>,<w>,<h> ids=<id>,…\` = the n shapes he selected (≤ 12 ids, box their bounds): a change
+there is board work; delegate it with board, ids and box verbatim.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`

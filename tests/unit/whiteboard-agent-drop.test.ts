@@ -10,7 +10,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  DROP_UNITS_MAX, agentCardUnder, dropUnits, historyDiff, movedIds, refToken, restorePatches, snapshotElement,
+  DROP_UNITS_MAX, SELECTION_IDS_MAX, agentCardUnder, dropUnits, historyDiff, movedIds, refToken, restorePatches, selectionRef, snapshotElement,
   type DropElement, type PreGesture,
 } from '../../dashboard/src/components/whiteboard/agentDrop.js';
 
@@ -204,5 +204,51 @@ describe('restorePatches', () => {
     const before = snapshot([el('a')]);
     const after = [el('a', { x: 5, version: 2, isDeleted: true })];
     expect(restorePatches(before, after, new Set(['a'])).size).toBe(0);
+  });
+});
+
+describe('selectionRef: what the writing field sends for a selection (K5)', () => {
+  it('is null with nothing (live) selected', () => {
+    expect(selectionRef([el('a')], [])).toBeNull();
+    expect(selectionRef([el('a', { isDeleted: true })], ['a'])).toBeNull();
+    expect(selectionRef([el('a')], ['ghost'])).toBeNull();
+  });
+
+  it('one shape: its unit, its box, its id', () => {
+    const r = selectionRef([el('a', { x: 10.4, y: -20.6, width: 100, height: 50 })], ['a'])!;
+    expect(r.n).toBe(1);
+    expect(r.ids).toEqual(['a']);
+    expect(r.box).toEqual([10, -21, 100, 50]);
+    expect(r.one).toEqual({ id: 'a', kind: 'rectangle', title: '' });
+  });
+
+  it('folds a bound text into its container, and the label is the text', () => {
+    const els = [el('box', { x: 0, y: 0 }), el('t', { type: 'text', containerId: 'box', text: 'Revenue', x: 10, y: 10, width: 80, height: 20 })];
+    const r = selectionRef(els, ['box', 't'])!;
+    expect(r.n).toBe(1);
+    expect(r.ids).toEqual(['box']);
+    expect(r.one?.title).toBe('Revenue');
+  });
+
+  it('counts every unit, caps ids at 12 topmost first, and the box covers all of them', () => {
+    const els = Array.from({ length: 20 }, (_, i) => el(`e${i}`, { x: i * 10, y: 0, width: 10, height: 10 }));
+    const r = selectionRef(els, els.map((e) => e.id))!;
+    expect(r.n).toBe(20);
+    expect(r.ids).toHaveLength(SELECTION_IDS_MAX);
+    expect(r.ids[0]).toBe('e19');
+    expect(r.box).toEqual([0, 0, 200, 10]);
+    expect(r.one).toBeNull();
+  });
+
+  it('reads a line by its points, and a rotated shape by its corners', () => {
+    const line = el('l', { type: 'arrow', x: 100, y: 100, width: 50, height: 30, points: [[0, 0], [-40, 60]] });
+    expect(selectionRef([line], ['l'])!.box).toEqual([60, 100, 40, 60]);
+    const rot = el('r', { x: 0, y: 0, width: 100, height: 0, angle: Math.PI / 2 });
+    expect(selectionRef([rot], ['r'])!.box).toEqual([50, -50, 0, 100]);
+  });
+
+  it('leaves dropUnits and its cap alone', () => {
+    const els = Array.from({ length: 6 }, (_, i) => el(`d${i}`));
+    expect(dropUnits(els, new Set(els.map((e) => e.id)))).toHaveLength(DROP_UNITS_MAX);
   });
 });

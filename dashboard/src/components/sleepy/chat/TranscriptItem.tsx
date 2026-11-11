@@ -171,7 +171,7 @@ function UserMessage({
         )
         : about?.kind === 'card' ? <ReplyStrip label={t('super.reply.toCard')} quotes={[about.quote]} />
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
-      {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
+      {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p), (n) => t('whiteboard.field.selCount').replace('{n}', String(n)))} />}
       {(() => { const content = (<>
       {media.length > 0 && (
         <div className="chat-msg-user-media">

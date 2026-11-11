@@ -343,15 +343,22 @@ async function runEngine(engineName) {
     await nav('Whiteboard');
     await until(page, async () => (await page.locator('.excalidraw').count()) > 0, 15000);
     await page.waitForTimeout(1200);
-    const near = await pageControlsNear();
-    const pb = await pill.first().boundingBox();
-    ok('whiteboard (board open): the board\'s bottom-right control is measured', near.some((r) => /help/.test(r.cls)), JSON.stringify(near));
-    ok('…the corner is lifted for the board (data-lift="board")', (await dock.getAttribute('data-lift')) === 'board');
-    ok('whiteboard (board open): the pill is >= 12 px clear of the board\'s bottom-right controls', near.every((r) => !overlaps(pb, r, 12)), JSON.stringify({ pb, near }));
-    await pill.first().click();
+    // Since 2026-11-11 a ready board carries the Super's writing field at the bottom: the pill is
+    // not drawn there, the field's Super mark opens the same dock window.
+    const field = page.locator('[data-testid="board-super-field"]');
+    const mark = page.locator('[data-testid="board-super-mark"]');
+    ok('whiteboard (board open): the writing field is drawn and the pill is not', await until(page, async () => (await field.count()) === 1 && (await pill.count()) === 0, 8000));
+    ok('…the corner is not lifted for the board any more', (await dock.getAttribute('data-lift')) === null);
+    ok('…Excalidraw\'s help button is not drawn', await page.evaluate(() => [...document.querySelectorAll('.excalidraw .help-icon')].every((el) => getComputedStyle(el).display === 'none' || el.getBoundingClientRect().width === 0)));
+    const near = (await pageControlsNear()).filter((r) => !/bsf-/.test(r.cls));
+    const fb0 = await field.boundingBox();
+    ok('…the field is clear of the board\'s own controls', near.every((r) => !overlaps(fb0, r, 8)), JSON.stringify({ fb0, near: near.filter((r) => overlaps(fb0, r, 8)) }));
+    await mark.click();
     await until(page, async () => (await win.count()) === 1, 5000);
     const wb = await win.boundingBox();
-    ok('…and so is the window', near.every((r) => !overlaps(wb, r, 12)), JSON.stringify({ wb, near: near.filter((r) => overlaps(wb, r, 12)) }));
+    const fb = await field.boundingBox();
+    ok('the field\'s Super mark opens the dock window', !!wb);
+    ok('…which covers at most the field\'s right edge', !overlaps(wb, fb) || wb.x >= fb.x + fb.width * 0.6, JSON.stringify({ wb, fb }));
     ok('the chip reads the open board', await until(page, async () => /^Whiteboard · [a-z0-9-]+$/.test(await chipText()), 5000), await chipText());
     const boardSlug = (await chipText()).replace(/^Whiteboard · /, '');
     await shotSet('04-dock-open-whiteboard');

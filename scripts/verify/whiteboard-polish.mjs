@@ -148,38 +148,39 @@ async function main() {
     await sleep(800);
     if (await page.locator('.announcements-modal-scrim').count()) { await page.keyboard.press('Escape'); await sleep(300); }
     await page.locator('.sidebar-item', { hasText: /Whiteboard(?!s)/ }).first().click();
-    await page.locator('.wbt-tab[aria-selected="true"]', { hasText: 'Growth' }).waitFor({ timeout: 10000 }).catch(async () => {
-      await page.locator('.wbt-all').click();
-      await page.locator('.wbs-panel--boards .wbs-row-open', { hasText: 'Growth' }).click();
+    await page.locator('.wbx-row[data-current="true"]', { hasText: 'Growth' }).waitFor({ timeout: 10000 }).catch(async () => {
+      await page.locator('.wbx .wbx-row-open', { hasText: 'Growth' }).first().click();
     });
-    await page.locator('.wbt-tab[aria-selected="true"]', { hasText: 'Growth' }).waitFor({ timeout: 10000 });
+    await page.locator('.wbx-row[data-current="true"]', { hasText: 'Growth' }).waitFor({ timeout: 10000 });
     await page.locator('.wb-widget--insight').first().waitFor({ timeout: 10000 });
     await sleep(800);
 
-    // ── P1 rename ──
-    const tab = page.locator('.wbt-tab[aria-selected="true"]');
-    await tab.locator('.wbt-tab-name').dblclick();
-    const field = page.locator('.wbt-tab-rename');
-    ok('P1 a double-click opens the name field', await field.isVisible().catch(() => false));
+    // ── P1 rename (from the Boards list since the tabs row went, 2026-11-11) ──
+    const tab = page.locator('.wbx-row[data-current="true"]');
+    await tab.locator('.wbx-row-open').focus();
+    await page.keyboard.press('F2');
+    const field = page.locator('.wbx .wbx-field');
+    ok('P1 F2 on the open board\'s row opens the name field', await field.isVisible().catch(() => false));
     await field.fill('Gelir panosu');
     await field.press('Enter');
-    ok('P1 Enter renames the tab', (await until(async () => (await tab.innerText()).includes('Gelir panosu'))) === true, await tab.innerText());
+    ok('P1 Enter renames the board', (await until(async () => (await tab.innerText()).includes('Gelir panosu'))) === true, await tab.innerText());
     const onDisk = await until(() => readFileSync(join(DC, 'whiteboards', BOARD, `${BOARD}.excalidraw.md`), 'utf-8').includes('name: "Gelir panosu"'));
     ok('P1 …the board file carries the new name, under the same slug', !!onDisk);
     ok('P1 …the URL still names the slug', (await page.evaluate(() => location.hash)).includes(`wb=${BOARD}`), await page.evaluate(() => location.hash));
-    await tab.locator('.wbt-tab-name').dblclick();
+    await tab.locator('.wbx-row-open').focus();
+    await page.keyboard.press('F2');
     await field.fill('Throwaway');
     await field.press('Escape');
     ok('P1 Escape cancels', (await tab.innerText()).includes('Gelir panosu') && !(await tab.innerText()).includes('Throwaway'));
     await tab.click({ button: 'right' });
-    await page.locator('.wbt-menu-item', { hasText: 'Rename' }).click();
+    await page.locator('.wbx-menu .wbx-menu-item', { hasText: 'Rename' }).click();
     await field.fill('Growth board');
     await field.press('Enter');
     ok('P1 right-click → Rename renames too', (await until(async () => (await tab.innerText()).includes('Growth board'))) === true, await tab.innerText());
-    await page.screenshot({ path: join(SHOTS, 'tab-renamed.png'), clip: { x: 220, y: 50, width: 900, height: 70 } });
+    await page.screenshot({ path: join(SHOTS, 'board-renamed.png') });
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('.wb-widget--insight').first().waitFor({ timeout: 10000 });
-    ok('P1 a reload keeps the name', (await page.locator('.wbt-tab[aria-selected="true"]').innerText()).includes('Growth board'));
+    ok('P1 a reload keeps the name', (await page.locator('.wbx-row[data-current="true"] .wbx-name').first().innerText()).includes('Growth board'));
     dc(['whiteboard', 'rename', BOARD, 'Growth']);
     const listed = JSON.parse(dc(['whiteboard', 'list', '--json']));
     ok('P1 `whiteboard rename` renames from the CLI, slug kept', listed.some((b) => b.slug === BOARD && b.name === 'Growth'), JSON.stringify(listed));

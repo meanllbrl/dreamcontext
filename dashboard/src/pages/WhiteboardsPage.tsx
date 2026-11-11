@@ -1,6 +1,5 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { PageTitle } from '../components/layout/PageBar';
-import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from '../lib/uxMode';
+import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
@@ -14,14 +13,21 @@ import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
 import { setAgentPanelOpen, useAgentPanelOpen, useBoardCards } from '../components/whiteboard/agentPanelState';
 import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboard/boardAgentScratch';
 import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
-import { hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
-import { BoardTabs } from './whiteboards/BoardTabs';
-import { BoardExplorer, SidebarGlyph } from './whiteboards/BoardExplorer';
+import { dropWhiteboardPref, hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
+import { BoardExplorer } from './whiteboards/BoardExplorer';
+import { SidebarGlyph } from './whiteboards/boardGlyphs';
 import { useExplorerPrefs } from './whiteboards/useExplorerPrefs';
 import { touchRecent } from './whiteboards/explorerLogic';
+import { DEFAULT_BOARD_SLUG, goneBoardTarget } from './whiteboards/boardSwitcherLogic';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
+import { useSuperPresence } from '../lib/superPageBridge';
+import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
+import { useCanvasBox } from './whiteboards/useCanvasBox';
+import { useTopRowFit } from './whiteboards/useTopRowFit';
+import type { SelectionRef } from '../components/whiteboard/agentDrop';
+import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
 import './WhiteboardsPage.css';
 
 interface WhiteboardsPageProps {
@@ -30,8 +36,8 @@ interface WhiteboardsPageProps {
 }
 
 /**
- * Control Panel (A15): one board open full-bleed, with the boards as tabs on top (A16). A
- * board is an Excalidraw scene the user and the agent draw on together; the CLI writes the
+ * Control Panel (A15): one board open full-bleed under the shell bar, the boards in the explorer
+ * on the left (the tabs row is gone, 2026-11-11). A board is an Excalidraw scene the user and the agent draw on together; the CLI writes the
  * same file, and the editor's save + poll loop keeps the two in step (D5, D11).
  *
  * The page id stays `whiteboards` (persisted nav state, the chat's appNav deep links). With
@@ -41,7 +47,7 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
   const { t } = useI18n();
   const { vault } = useVault();
   const api = useApi();
-  // The page's memory (tabs, groups, last board, viewports, panel) is read back from the server
+  // The page's memory (explorer, last board, viewports, panel) is read back from the server
   // before anything reads it synchronously: after a desktop relaunch localStorage is empty.
   const prefsKey = vault ?? '';
   const [readFor, setReadFor] = useState<string | null>(() => (isWhiteboardPrefsHydrated(prefsKey) ? prefsKey : null));
@@ -72,21 +78,14 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // the page, all but the boards' home conversations, which the agent panel keeps alive while
   // the owner is on another page (boardAgentScratch.ts).
   useEffect(() => (vault ? () => dropBoardAgentScratch({ vault, keepHome: true }) : undefined), [vault]);
+  // The retired tab strip's memory (open tabs, coloured groups) leaves the prefs file once.
+  useEffect(() => { if (vault) dropWhiteboardPref(vault, 'tabs', `dreamcontext:whiteboard-tabs:${vault}`); }, [vault]);
   // With no deep link, the board the owner was on when they last left the page (boardPlace.ts),
   // once the list says it still exists; else the default board.
   const [remembered] = useState(() => (vault ? readLastBoard(vault) : null));
   const boards = useWhiteboardList();
-  // A refused rename's reason, here so it outlives the open board: a rename still in flight
-  // when the owner switches boards reports to the next one.
-  const [renameNote, setRenameNote] = useState<{ board: string; text: string } | null>(null);
-  useEffect(() => { setRenameNote(null); }, [openSlug]);
-  // A rename's answer clears only its own board's note: a late success on one board never
-  // wipes another board's refusal.
-  const onRenameNote = useCallback((board: string, text: string | null) => {
-    setRenameNote((prev) => (text ? { board, text } : prev?.board === board ? null : prev));
-  }, []);
-  // A board that was deleted while open (or opened after it was): its tab closed and the page
-  // moved on; this says so on the board it moved to, until the owner moves again.
+  // A board that was deleted while open (or opened after it was): the page moved on to the most
+  // recent other board; this says so on the board it moved to, until the owner moves again.
   const [goneNote, setGoneNote] = useState<{ board: string; text: string } | null>(null);
   useEffect(() => { setGoneNote((prev) => (prev && prev.board === openSlug ? prev : null)); }, [openSlug]);
   const onGone = useCallback((next: string, text: string) => { setGoneNote({ board: next, text }); }, []);
@@ -133,7 +132,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const [wide] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1100);
   const explorerOpen = phone ? drawer : (prefs.open ?? wide);
   // Who asked for the last show/hide: focus follows the owner's own click (to the explorer's
-  // search when shown, back to the bar's toggle when hidden), never a page load.
+  // search when shown, back to the show toggle when hidden), never a page load.
   const [shownByOwner, setShownByOwner] = useState(false);
   const setExplorerOpen = useCallback((next: boolean) => {
     if (phone) setDrawer(next);
@@ -190,10 +189,9 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       <WhiteboardEditor key={openSlug}
         slug={openSlug}
         onOpen={setOpenSlug}
-        renameNote={renameNote?.text ?? null}
-        onRenameNote={onRenameNote}
         goneNote={goneNote?.board === openSlug ? goneNote.text : null}
         onGone={onGone}
+        recent={prefs.recent}
         explorerToggle={explorerToggle}
       />
     );
@@ -201,7 +199,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   if (fallback.isError) {
     return (
       <div className="wbp-editor">
-        {explorerToggle && <div className="wbp-bar">{explorerToggle}</div>}
+        {explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}
         <div className="wbp-card-state" role="alert">
           <h2 className="wbp-state-title">{t('whiteboard.page.defaultFailed')}</h2>
           <p className="wbp-state-reason">{fallback.error?.message}</p>
@@ -212,60 +210,82 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       </div>
     );
   }
-  return <div className="wbp-editor">{explorerToggle && <div className="wbp-bar">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
   }
 }
 
 // ── one board, full-bleed ────────────────────────────────────────────────────────────────────
 
-function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, goneNote, onGone, explorerToggle }: {
+function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerToggle }: {
   slug: string;
   onOpen: (slug: string) => void;
-  renameNote: string | null;
-  onRenameNote: (board: string, note: string | null) => void;
   goneNote: string | null;
   onGone: (next: string, text: string) => void;
+  /** The explorer's recent boards, newest first: where a board deleted elsewhere moves the page. */
+  recent: readonly string[];
   /** The "show the board list" button, when the explorer is hidden. */
   explorerToggle?: ReactNode;
 }) {
-  const { t } = useI18n();
-  const newShell = useIsNewShell();
-  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
-  const { vault } = useVault();
+  const { t, locale } = useI18n();
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush } = useWhiteboardEditor(slug);
+  const { vault, bus } = useVault();
+  // The Super's writing field (2026-11-11): only while Super mode is on, on a ready board.
+  const presence = useSuperPresence(bus);
+  const [selection, setSelection] = useState<SelectionRef | null>(null);
+  const [work, setWork] = useState<FieldWork | null>(null);
+  // The canvas, measured once: the writing field's place and whether the page's controls fit
+  // in Excalidraw's top row both read it.
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+  const canvasBox = useCanvasBox(canvasEl);
+  // The save state and the Agents toggle ride Excalidraw's top-right row while it fits the
+  // canvas, else their own corner group under it (useTopRowFit decides, and re-measures on every
+  // width change of the row or its controls).
+  const [toggleEl, setToggleEl] = useState<HTMLButtonElement | null>(null);
+  const controlsAside = useTopRowFit(toggleEl, canvasBox, locale);
+  const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
+  const onCanvasApi = useCallback((api: WhiteboardCanvasApi | null) => {
+    canvasRef.current = api;
+    onApi(api);
+  }, [onApi]);
+  const clearSelection = useCallback(() => {
+    canvasRef.current?.excalidraw.updateScene({ appState: { selectedElementIds: {} } as never });
+  }, []);
   const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
   const boards = useWhiteboardList();
   useBoardHash(slug);
 
   const doExport = async () => setExportNote(await exportFile());
-  // The list first, as the tabs do: a rename patches it, never the loaded board.
+  // The list first: a rename patches it, never the loaded board.
   const listed = boards.data?.find((b) => b.slug === slug)?.name;
+  const name = listed || (load.kind === 'ready' ? load.name : slug);
 
-  const goneName = listed || (load.kind === 'ready' ? load.name : slug);
-  const switcher = (
-    <BoardTabs
-      slug={slug}
-      name={load.kind === 'ready' ? load.name : undefined}
-      onOpen={onOpen}
-      onRenameNote={onRenameNote}
-      gone={gone}
-      // A function replacement: a `$` in the name is text, never a pattern.
-      onGone={(next) => onGone(next, t('whiteboard.tabs.goneNote').replace('{board}', () => goneName))}
-    />
-  );
-  // The same first child in every state, so the strip keeps its place (and its state) when
-  // the board finishes loading.
-  const heading = <h1 className="wbp-sr-only">{listed || (load.kind === 'ready' ? load.name : slug)}</h1>;
+  // The open board went from disk (the CLI, an agent, another window; useWhiteboardEditor): the
+  // page moves to the most recent other board that still exists, else the default, and says so
+  // there. Never off the default board, which the server makes again on the next ask.
+  const goneRef = useRef({ onGone, onOpen, recent, name, boards: boards.data });
+  goneRef.current = { onGone, onOpen, recent, name, boards: boards.data };
+  useEffect(() => {
+    if (!gone || slug === DEFAULT_BOARD_SLUG) return;
+    const cur = goneRef.current;
+    const existing = cur.boards ? new Set(cur.boards.map((b) => b.slug)) : null;
+    const next = goneBoardTarget(slug, cur.recent, existing);
+    // A function replacement: a `$` in the name is text, never a pattern.
+    cur.onGone(next, t('whiteboard.page.goneNote').replace('{board}', () => cur.name));
+    cur.onOpen(next);
+  }, [gone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const heading = <h1 className="wbp-sr-only">{name}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor">{heading}<div className="wbp-bar">{explorerToggle}{switcher}</div><div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
     return (
       <div className="wbp-editor">
         {heading}
-        <div className="wbp-bar">{explorerToggle}{switcher}</div>
+        {explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}
         {goneNote && <div className="wbp-banner wbp-banner--quiet" role="status">{goneNote}</div>}
         <div className="wbp-card-state" role="alert">
           {load.kind === 'corrupt' && (
@@ -289,43 +309,67 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, goneNote, on
   }
 
   const canExport = saveState.kind === 'failed' || saveState.kind === 'deleted';
+  // The page's controls in the canvas's own top-right row, before "+ Add": the save state, quiet
+  // until it fails, and the board agents panel's toggle.
+  const controls = (
+    <>
+      <SaveStatus state={saveState} />
+      <button
+        ref={setToggleEl}
+        type="button"
+        className="wbp-agent-toggle"
+        aria-pressed={panelOpen}
+        title={t('whiteboard.agentPanel.toggle')}
+        onClick={() => setAgentPanelOpen(vault, !panelOpen)}
+      >
+        <AgentsGlyph />
+        {t('whiteboard.agentPanel.button')}
+      </button>
+    </>
+  );
 
   return (
     <div className="wbp-editor">
       {heading}
-      <div className="wbp-bar" data-page-row={newShell ? '' : undefined}>
-        {newShell && <PageTitle title={t('nav.whiteboard')} />}
-        {explorerToggle}
-        {switcher}
-        <SaveStatus state={saveState} />
-        <button
-          type="button"
-          className="wbp-agent-toggle"
-          aria-pressed={panelOpen}
-          title={t('whiteboard.agentPanel.toggle')}
-          onClick={() => setAgentPanelOpen(vault, !panelOpen)}
-        >
-          {t('whiteboard.agentPanel.title')}
-        </button>
-        {canExport && (
+      {canExport && (
+        <div className="wbp-banner wbp-banner--action" role="alert">
+          <span>{saveState.kind === 'deleted'
+            ? t('whiteboard.page.deleted')
+            : t('whiteboard.page.notSavedReason').replace('{reason}', () => saveState.reason)}</span>
           <button type="button" className="wbp-btn" onClick={() => void doExport()}>
             {saveState.kind === 'deleted' ? t('whiteboard.page.exportFile') : t('whiteboard.page.export')}
           </button>
-        )}
-      </div>
-      {saveState.kind === 'deleted' && (
-        <div className="wbp-banner" role="alert">{t('whiteboard.page.deleted')}</div>
+        </div>
       )}
       {exportNote && <div className="wbp-banner wbp-banner--quiet" role="status">{exportNote.text}</div>}
-      {renameNote && <div className="wbp-banner" role="alert">{renameNote}</div>}
       {goneNote && <div className="wbp-banner wbp-banner--quiet" role="status">{goneNote}</div>}
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
-          <div className="wbp-canvas">
+          <div className="wbp-canvas" ref={setCanvasEl}>
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onApi} pictures={pictures} onSceneChange={onSceneChange} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} />
             </Suspense>
+            {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}
+            {explorerToggle && (
+              <div className="wbp-float-left">
+                {explorerToggle}
+                <span className="wbp-float-name" title={name}>{name}</span>
+              </div>
+            )}
+            {presence?.on && (
+              <BoardSuperField
+                bus={bus}
+                board={slug}
+                boardName={name}
+                selection={selection}
+                onClearSelection={clearSelection}
+                saveKind={saveState.kind}
+                flush={flush}
+                onWork={setWork}
+                canvas={canvasBox}
+              />
+            )}
           </div>
         </PagePopupProvider>
         {panelOpen && <BoardAgentPanel board={slug} />}
@@ -367,12 +411,17 @@ function SaveStatus({ state }: { state: SaveState }) {
     case 'retrying':
       return <span className="wbp-status wbp-status--bad" role="status" title={state.reason}>{t('whiteboard.page.notSaved')}</span>;
     case 'failed':
-      return (
-        <span className="wbp-status wbp-status--bad" role="alert">
-          {t('whiteboard.page.notSavedReason').replace('{reason}', state.reason)}
-        </span>
-      );
+      // Short here; the reason and Export are in the banner over the board.
+      return <span className="wbp-status wbp-status--bad" role="alert" title={state.reason}>{t('whiteboard.page.notSaved')}</span>;
     case 'deleted':
       return <span className="wbp-status wbp-status--bad" role="alert">{t('whiteboard.page.notSaved')}</span>;
   }
+}
+
+function AgentsGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="5.5" r="2.25" /><path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4" /><path d="M10.5 3.5a2.25 2.25 0 0 1 0 4.25M11.5 9.2c1.5.5 2.5 1.9 2.5 3.8" />
+    </svg>
+  );
 }

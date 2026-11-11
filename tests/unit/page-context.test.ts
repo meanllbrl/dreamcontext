@@ -178,3 +178,59 @@ describe('the page store (one per project instance)', () => {
     expect(read('dashboard/src/components/lab/board/BoardPage.tsx')).toMatch(/publishPageDetail\(bus, 'lab-board', \{ page: 'lab', insight: openSlug \}\);/);
   });
 });
+
+describe('a whiteboard selection on the page block (board writing field, 2026-11-11)', () => {
+  const sel = { n: 9, box: [120, -40, 860, 410] as [number, number, number, number], ids: ['rect-a', 'txt_b', 'Card-3'] };
+
+  it('rides the block as one tail: true count, rounded box, ids; round-trips on both sides', () => {
+    const ref: server.PageContextRef = { page: 'whiteboards', board: 'launch-plan', sel };
+    const block = '[On page whiteboards board=launch-plan sel=9 box=120,-40,860,410 ids=rect-a,txt_b,Card-3]';
+    expect(server.pageContextBlock(ref)).toBe(block);
+    expect(client.pageContextBlock(ref)).toBe(block);
+    for (const side of [server, client]) {
+      const back = side.splitPageContext(`3 sunuma düşür\n\n${block}`);
+      expect(back.text).toBe('3 sunuma düşür');
+      expect(back.page).toEqual(ref);
+    }
+  });
+
+  it('without a selection the block is byte-identical to before', () => {
+    expect(server.pageContextBlock({ page: 'whiteboards', board: 'launch-plan' })).toBe('[On page whiteboards board=launch-plan]');
+    expect(server.pageContextBlock({ page: 'whiteboards', board: 'launch-plan', sel: { n: 2, box: [0, 0, 1, 1], ids: [] } })).toBe('[On page whiteboards board=launch-plan]');
+  });
+
+  it('filters ids outside the charset, keeps at most 12, clamps n (never below the ids it names) and the box', () => {
+    const ids = ['ok-1', 'bad id', '../x', ...Array.from({ length: 15 }, (_, i) => `e${i}`)];
+    const tail = server.pageSelectionTail({ n: 123456, box: [1.6, -2.4, 3.5, -7], ids });
+    expect(tail).toBe(` sel=9999 box=2,-2,4,0 ids=ok-1,${Array.from({ length: 11 }, (_, i) => `e${i}`).join(',')}`);
+    expect(server.pageSelectionTail({ n: 1, box: [0, 0, 1, 1], ids: ['a', 'b'] })).toBe(' sel=2 box=0,0,1,1 ids=a,b');
+    expect(server.pageSelectionTail({ n: 3, box: [99_999_999, -99_999_999, 1, 1], ids: ['a'] })).toBe(' sel=3 box=9999999,-9999999,1,1 ids=a');
+    expect(server.pageSelectionTail({ n: 3, box: [0, 0, 1, 1], ids: ['bad id'] })).toBe('');
+    expect(client.pageSelectionTail({ n: 123456, box: [1.6, -2.4, 3.5, -7], ids })).toBe(tail);
+    // What the field may build is always a block the regex reads back.
+    const built = server.pageContextBlock({ page: 'whiteboards', board: 'q3', sel: { n: 123456, box: [1.6, -2.4, 3.5, -7], ids } });
+    expect(server.splitPageContext(`x\n\n${built}`).page?.sel?.ids).toHaveLength(12);
+  });
+
+  it('a malformed tail is his text, untouched', () => {
+    for (const t of [
+      'x\n\n[On page whiteboards board=q3 sel=0 box=0,0,1,1 ids=a]',
+      'x\n\n[On page whiteboards board=q3 sel=2 ids=a]',
+      'x\n\n[On page whiteboards board=q3 sel=2 box=0,0,-1,1 ids=a]',
+      `x\n\n[On page whiteboards board=q3 sel=2 box=0,0,1,1 ids=${Array.from({ length: 13 }, (_, i) => `e${i}`).join(',')}]`,
+    ]) expect(server.splitPageContext(t)).toEqual({ text: t, page: null });
+  });
+
+  it('the bubble draws ONE page chip with the count', () => {
+    const label = (p: string) => (p === 'whiteboards' ? 'Whiteboard' : p);
+    expect(pageChipName({ page: 'whiteboards', board: 'launch-plan', sel }, label, (n) => `${n} seçili öğe`)).toBe('Whiteboard · launch-plan · 9 seçili öğe');
+    expect(pageChipName({ page: 'whiteboards', board: 'launch-plan' }, label, (n) => `${n} seçili öğe`)).toBe('Whiteboard · launch-plan');
+    expect(read('dashboard/src/components/sleepy/chat/TranscriptItem.tsx')).toContain("(n) => t('whiteboard.field.selCount').replace('{n}', String(n))");
+  });
+
+  it('the Super is told what sel/box/ids mean and to delegate with them verbatim', () => {
+    const prompt = read('src/server/chat-modes.ts');
+    expect(prompt).toMatch(/sel=<n> box=<x>,<y>,<w>,<h> ids=<id>/);
+    expect(prompt).toMatch(/delegate it with board, ids and box verbatim/);
+  });
+});
