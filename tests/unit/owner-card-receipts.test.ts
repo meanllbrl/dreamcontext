@@ -12,7 +12,8 @@ import {
   deliverableOwnerReceipts, dropOwnerReceipts, holdOwnerReceipt, listReceiptTargets, markOwnerReceiptDelivered, newSubmitId,
   owedUnverified, ownerReceiptViews, readOwnerReceipts, registerOwnerCardWaker, registerOwnerReceiptDeliverer,
   setOwnerReceiptsHomeForTests, takeInterruptedNotices, verifyOwnerReceipt, wakeForOwnerCard, CUT_OFF_NOTICE_TAIL,
-  type OwnerReceiptTarget,
+  _failOwnerReceiptWritesForTests, closeOwnerItemForCard, ownerCardLookup, registerOwnerCardLookup, registerOwnerItemCloser,
+  type OwnerCardLookup, type OwnerReceiptTarget,
 } from '../../src/server/owner-receipts.js';
 import { readChecklistSubmit } from '../../src/lib/checklist-markdown.js';
 import { answeredBy } from '../../src/lib/super/owner-wait.js';
@@ -266,3 +267,45 @@ describe('deliver and wake registrations', () => {
   });
 });
 
+
+describe('the crew owner-card lookup and the Not needed closer (lane A registers them)', () => {
+  const l = (): OwnerCardLookup => ({ handle: secretHandle(), target: T, itemId: 'q-1', itemOpen: true, superSession: OTHER });
+
+  it('with nothing registered: not a crew card (today\'s path), and nothing closes', async () => {
+    expect(ownerCardLookup(KID, REF)).toBeNull();
+    expect(await closeOwnerItemForCard(l(), 'not_needed')).toBe(false);
+  });
+  it('a registered lookup and closer round trip; unregister restores the defaults', async () => {
+    const seen: Array<[string, string]> = [];
+    const offL = registerOwnerCardLookup((sid, ref) => { seen.push([sid, ref]); return ref === REF ? l() : null; });
+    const closed: string[] = [];
+    const offC = registerOwnerItemCloser(async (x, by) => { closed.push(`${x.itemId}:${by}`); return true; });
+    expect(ownerCardLookup(KID, REF)).toEqual(l());
+    expect(ownerCardLookup(KID, REF2)).toBeNull();
+    expect(seen).toEqual([[KID, REF], [KID, REF2]]);
+    expect(await closeOwnerItemForCard(l(), 'not_needed')).toBe(true);
+    expect(closed).toEqual(['q-1:not_needed']);
+    offL(); offC();
+    expect(ownerCardLookup(KID, REF)).toBeNull();
+    expect(await closeOwnerItemForCard(l(), 'not_needed')).toBe(false);
+  });
+  it('a lookup or closer that throws reads as none', async () => {
+    registerOwnerCardLookup(() => { throw new Error('store'); });
+    registerOwnerItemCloser(async () => { throw new Error('answer'); });
+    expect(ownerCardLookup(KID, REF)).toBeNull();
+    expect(await closeOwnerItemForCard(l(), 'not_needed')).toBe(false);
+  });
+});
+
+describe('a drop whose write fails still forgets the typed secret', () => {
+  it('the full form is gone from memory even though the file could not be rewritten', () => {
+    holdOwnerReceipt(T, { id: 'c-1', cardRef: REF, kind: 'checklist', text: 'kept [secret, 5 chars, sha256:00000000]', full: 'full hunter2' });
+    expect(deliverableOwnerReceipts(T)[0].text).toBe('full hunter2');
+    _failOwnerReceiptWritesForTests(true);
+    expect(dropOwnerReceipts(T)).toEqual([]);
+    _failOwnerReceiptWritesForTests(false);
+    // The entry is still on disk (the write failed), but only its kept form remains.
+    expect(readOwnerReceipts(T)).toHaveLength(1);
+    expect(deliverableOwnerReceipts(T)[0].text).toBe('kept [secret, 5 chars, sha256:00000000]');
+  });
+});

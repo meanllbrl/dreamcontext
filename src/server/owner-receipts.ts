@@ -165,7 +165,12 @@ export function readOwnerReceipts(t: OwnerReceiptTarget): OwnerReceiptEntry[] {
 
 /** Write the whole list (synchronously, atomically, 0600); an empty list removes the file
  *  (every store key needs a death). False when it could not be written. */
+let failWritesForTests = false;
+/** Tests only: make every store write fail. */
+export function _failOwnerReceiptWritesForTests(on: boolean): void { failWritesForTests = on; }
+
 function writeAll(t: OwnerReceiptTarget, list: OwnerReceiptEntry[]): boolean {
+  if (failWritesForTests) return false;
   const p = filePath(t, list.length > 0);
   if (!p) return list.length === 0;
   try {
@@ -235,8 +240,11 @@ export function dropOwnerReceipts(t: OwnerReceiptTarget, filter: { cardRef?: str
   const all = readOwnerReceipts(t);
   const gone = all.filter((e) => !filter.cardRef || e.cardRef === filter.cardRef);
   if (!gone.length) return [];
-  if (!writeAll(t, all.filter((e) => !gone.includes(e)))) return [];
+  // The full forms go first, whatever the write does: a typed secret never outlives its item,
+  // even when the file could not be rewritten (its kept form then stays on disk, unverifiable
+  // as a full receipt after a restart and never holding the value).
   for (const e of gone) fullForms.delete(memKey(t, e.id));
+  if (!writeAll(t, all.filter((e) => !gone.includes(e)))) return [];
   return gone;
 }
 
@@ -370,6 +378,53 @@ export async function wakeForOwnerCard(t: OwnerReceiptTarget): Promise<OwnerWake
   try { return await waker(t); } catch { return 'held:no_window'; }
 }
 
+// ─── Is this a crew child's owner card? Registered by lane A (its queue store) ────────────
+
+/**
+ * What lane B's card actions and runs ask before they act (K1, K6): the card `(postingSession,
+ * cardRef)` is a crew child's owner card; its `handle`, the `target` its result is held for (the
+ * item's `deliverTo`), the owner item's id, whether that item is still open, and the session of
+ * the Super that owns the child. Null = not a crew card: today's path (delivery.ts).
+ */
+export interface OwnerCardLookup {
+  handle: OwnerCardHandle;
+  target: OwnerReceiptTarget;
+  itemId: string;
+  itemOpen: boolean;
+  superSession: string;
+}
+export type OwnerCardLookupFn = (postingSession: string, cardRef: string) => OwnerCardLookup | null;
+export type OwnerItemCloser = (lookup: OwnerCardLookup, by: 'not_needed') => Promise<boolean>;
+
+let lookup: OwnerCardLookupFn | null = null;
+let itemCloser: OwnerItemCloser | null = null;
+
+/** Lane A registers the lookup over its queue store. Returns the unregister. */
+export function registerOwnerCardLookup(fn: OwnerCardLookupFn): () => void {
+  lookup = fn;
+  return () => { if (lookup === fn) lookup = null; };
+}
+
+/** The crew owner card for a record, or null (nothing registered, not a crew card, or the
+ *  lookup threw): the caller then keeps today's path. */
+export function ownerCardLookup(postingSession: string, cardRef: string): OwnerCardLookup | null {
+  if (!lookup) return null;
+  try { return lookup(postingSession, cardRef); } catch { return null; }
+}
+
+/** Lane A registers how an owner item closes on the owner's Not needed (its answer path). */
+export function registerOwnerItemCloser(fn: OwnerItemCloser): () => void {
+  itemCloser = fn;
+  return () => { if (itemCloser === fn) itemCloser = null; };
+}
+
+/** Close the owner item a card stands for (Not needed, an owner-proven action). False when
+ *  nothing is registered or it did not close. */
+export async function closeOwnerItemForCard(l: OwnerCardLookup, by: 'not_needed'): Promise<boolean> {
+  if (!itemCloser) return false;
+  try { return await itemCloser(l, by); } catch { return false; }
+}
+
 /** Tests only: a server restart (a new boot key; full forms and notice memory gone). */
 export function _restartOwnerReceiptsForTests(): void {
   bootKey = randomBytes(32);
@@ -382,5 +437,8 @@ export function _resetOwnerReceiptsForTests(): void {
   _restartOwnerReceiptsForTests();
   deliverer = null;
   waker = null;
+  lookup = null;
+  itemCloser = null;
+  failWritesForTests = false;
   receiptsHome = null;
 }
