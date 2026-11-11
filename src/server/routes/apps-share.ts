@@ -22,7 +22,7 @@ import { appLogoPath, clearAppLogo, LogoError, MAX_LOGO_BYTES, setAppLogo } from
 import { readCappedBody } from './automations.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
-import { publishApp, PublishError } from '../../lib/apps/share/publish.js';
+import { publishApp, PublishError, RESHARE_OK } from '../../lib/apps/share/publish.js';
 import { mintPublishGrant } from '../../lib/apps/share/publish-grant.js';
 import { takeAppGrant, type AppAction, type TakeResult } from '../../lib/apps/share/app-grant.js';
 import { requestLogoBytes, type ActionPlan } from '../../lib/apps/share/app-request.js';
@@ -76,7 +76,8 @@ const ASK_AGAIN = 'Run the same --ask command again: the owner sees a card and o
 function refuseGrant(res: ServerResponse, t: Extract<TakeResult, { ok: false }>, action: AppAction): void {
   if (t.why === 'used') { sendError(res, 409, 'grant_used', `This grant already ran${t.fullName ? ` (${t.fullName})` : ''}. It is done: do not run it again, and never ask for a new grant for it.`); return; }
   if (t.why === 'running') { sendError(res, 409, action === 'publish' ? 'publish_running' : 'grant_running', 'An action on this grant is still running. Wait, then check whether it went through; do not run it again.'); return; }
-  if (t.why === 'expired') { sendError(res, 403, 'grant_expired', `The grant ran out (one hour). The work you did stays. ${ASK_AGAIN}`); return; }
+  // A Share click's grant was never an --ask: the owner presses Share again (A11).
+  if (t.why === 'expired') { sendError(res, 403, 'grant_expired', `The grant ran out (one hour). The work you did stays. ${action === 'publish' ? ASK_AGAIN.replace(/\.$/, ', or ask the owner to press Share again.') : ASK_AGAIN}`); return; }
   if (t.why === 'replaced') { sendError(res, 403, 'grant_replaced', 'The owner opened a newer grant for this: use the newest one.'); return; }
   sendError(res, 403, 'owner_page_only', 'This grant is not for this app and action (made up, used, replaced, for another app or action, or the app restarted). Ask the owner with --ask.');
 }
@@ -144,6 +145,8 @@ export async function handlePublishGrant(req: IncomingMessage, res: ServerRespon
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
   if (rec.origin === 'installed' && (rec.source || !rec.provenance)) { sendError(res, 409, 'not_yours', 'This app was installed from someone else. Make it your own copy first.'); return; }
+  // A copy under a licence that forbids sharing it again: said at the click, before a chat opens (A8).
+  if (rec.provenance && !RESHARE_OK.has(rec.provenance.license)) { sendError(res, 409, 'license_forbids', `This app is a copy of ${rec.provenance.fullName}, whose licence (${rec.provenance.license}) does not allow sharing it again.`); return; }
   // The visibility is the owner's click: Share is private, "Share publicly" public. An app that
   // is already public stays public (a new version).
   const visibility = b.visibility === 'public' || rec.publish?.public ? 'public' : 'private';
@@ -374,7 +377,7 @@ export async function handleAppConfigSet(req: IncomingMessage, res: ServerRespon
     if (!rec.configId) rec = updateAppShare(appsHomeDir(), rec.projectRoot, rec.slug, { configId: newConfigId() }) ?? rec;
     if (b.values && typeof b.values === 'object') setAppConfig(appsHomeDir(), rec.configId!, m.manifest.config, b.values as Record<string, unknown>);
     writeSecrets(rec, b.secrets);
-    refreshAppRuntime(rec);
+    refreshAppRuntime(rec, { restart: true });
     sendJson(res, 200, { ok: true, missing: missingRequired(m.manifest.config, readAppConfig(appsHomeDir(), rec.configId), rec.root) });
   } catch (e) { sendFailure(res, e); }
 }
@@ -391,6 +394,8 @@ export async function handleUpdateCheck(req: IncomingMessage, res: ServerRespons
 
 export async function handleUpdateApply(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
+  // `npm ci` can outlive the 30 s socket idle (A4).
+  holdOpen(req);
   const b = (await parseJsonBody(req)) ?? {};
   if (!preGate(req, res, b.grant)) return;
   const rec = findAppFor(contextRoot, params.slug, res);
@@ -420,6 +425,7 @@ export async function handleUpdateApply(req: IncomingMessage, res: ServerRespons
 
 export async function handleUpdateUndo(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!ownerOnly(req, res)) return;
+  holdOpen(req);
   const rec = findAppFor(contextRoot, params.slug, res);
   if (!rec) return;
   try {
