@@ -70,8 +70,8 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    grant is spent the moment the push goes out; a publish the gate stopped frees it for a retry
    within the hour. Cut off or an error: run the SAME command again, it is safe. `grant_used`:
    it already went out, stop. `publish_running`: wait, never publish twice. Only `grant_expired`
-   or `owner_page_only` (the app restarted), or `grant_replaced` (he opened a newer grant: use that
-   one): ask him to press Share again and publish with the new grant, your work stays. A first
+   or `owner_page_only` (the app restarted), or `grant_replaced` (he opened a newer grant: use the newest, or if
+   none reaches you): ask him to press Share again and publish with the new grant, your work stays. A first
    private publish with no grant: ask with `--ask --invite <logins>`, or he presses Share; an
    `--ask` without `--invite` can go out to nobody.
 7. End with a short plain list: what you cleaned, what went out, where.

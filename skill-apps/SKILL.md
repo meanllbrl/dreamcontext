@@ -254,8 +254,8 @@ chat (the permission is read at session start).
   (each input with its `type`: string, number, boolean, date, enum with `choices`; `required`;
   `desc`), and `topics` (words a question may use). Optional: `output`, `usesAgent: true` (it runs
   an agent turn, so it spends usage), `timeoutSec` (5-300, default 60). Finish with
-  `dreamcontext apps validate`: it warns on a tool missing `does`; `params` and `topics` are
-  yours to add, the agents that find the tool rely on them.
+  `dreamcontext apps validate`: it warns on a tool missing `does` (or free-text `input` with no `params`); `topics` is
+  yours to add, the agents that find the tool rely on it.
 - The backend says which tools it serves: `dc.actions([...ids])` and `dc.health()` on the health
   route (the template does both). A tool listed in the manifest but not served shows as drift on
   the app card; an app without the SDK shows "not checked".
