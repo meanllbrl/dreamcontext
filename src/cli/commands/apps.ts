@@ -499,7 +499,7 @@ export function registerAppsCommand(program: Command): void {
         if (m.manifest.data === null) {
           console.log(`warning data_undeclared: no "data" field: nothing of this app's data is shared with the team yet. Fix: decide with the four questions of /apps (re-fetchable, personal, secret, big or constantly written = local; hand-made = shared) and write data: {"shared": [...], "local": [...]}; see dreamcontext apps data ${m.manifest.slug}`);
         }
-        for (const w of dataFolderWithoutSlash(appDataDir(p.projectRoot, m.manifest.slug), m.manifest.data)) {
+        for (const w of checkAppDataChain(p.projectRoot, m.manifest.slug).ok ? dataFolderWithoutSlash(appDataDir(p.projectRoot, m.manifest.slug), m.manifest.data) : []) {
           console.log(`warning data_path_is_folder: "${w}" is a folder in the data folder but is written without a trailing slash, so it shares nothing. Fix: write "${w}/"`);
         }
         for (const h of dataHtmlSinks(root, m.manifest.data)) {
@@ -636,7 +636,7 @@ export function registerAppsCommand(program: Command): void {
         const lines = toolListLines(list);
         const unread = slug ? [] : listApps(homedir(), p.projectRoot).filter((r) => !list.installed.some((a) => a.slug === r.slug));
         for (const r of unread) info(`${r.slug}: installed here but its manifest cannot be read, so its tools are not listed. Check: dreamcontext apps validate ${r.slug}`);
-        if (!lines.length) { info('This project has no apps on this Mac and none on its list.'); return; }
+        if (!lines.length) { if (!unread.length) info('This project has no apps on this Mac and none on its list.'); return; }
         console.log(fenced('tools', lines.join('\n')));
         if (list.installed.length) info("Run one: dreamcontext apps do <app> <tool> [--input '<json>'] [--json]. A tool that CHANGES runs only with --confirm, after the owner says yes in this chat.");
         if (list.notInstalled.length) info('Not installed: the owner installs it (Apps page). Without it, say the answer will take longer or be approximate, and offer a Lab insight.');
