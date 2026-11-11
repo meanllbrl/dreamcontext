@@ -10,7 +10,8 @@
  *   - "Old Tool" (`eski`): no `data` field, so its own tile says the shared data is not decided yet
  *     (and nothing about it is stacked above the shelves);
  *   - `takim`: a teammate's app whose data is tracked in the brain but not installed here (team-data).
- * Then the two routes: data-share refuses a caller without the owner's key (403 owner_page_only),
+ * Then the same page with cloud sync switched off: no notice card and no tile line (nothing to decide).
+ * The two routes: data-share refuses a caller without the owner's key (403 owner_page_only),
  * sync-pause answers `not_running` for an app with no backend up.
  * Screenshots at 390 and 1440 px; console errors, failed requests and overflow are findings.
  * Fixtures are fictional.
@@ -59,6 +60,14 @@ try {
   put(join(dc, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], setupVersion: '1', brainRepo: { mode: 'full-repo', enabled: true, autoSync: false } }));
 
   cli('apps', 'new', 'rakip', '--name', 'Rival Watch');
+  // The fixture owns its declaration (the template's may change): `notes/` shared, `visits.json` local.
+  const rakipManifest = join(`${app.proj}-apps`, 'rakip', 'dreamcontext-app.json');
+  const rm = JSON.parse(readFileSync(rakipManifest, 'utf-8'));
+  rm.data = {
+    shared: [{ path: 'notes/', why: "The team's hand-made data: notes people write in the app, one file per note" }],
+    local: [{ path: 'visits.json', why: 'A visit counter this Mac produces again on its own' }],
+  };
+  writeFileSync(rakipManifest, `${JSON.stringify(rm, null, 2)}\n`);
   put(join(dc, 'apps', 'rakip', 'notes', 'fb-001.json'), JSON.stringify({ id: 'fb-001', note: 'try this hook' }));
   put(join(dc, 'apps', 'rakip', 'notes', 'tt-002.json'), JSON.stringify({ id: 'tt-002', note: 'strong paywall' }));
   put(join(dc, 'apps', 'rakip', 'visits.json'), '{"visits":12}');
@@ -87,7 +96,8 @@ try {
   console.log(`GET /api/apps others → ${JSON.stringify(list.body.others)}`);
   console.log(`GET /api/apps data → ${JSON.stringify((list.body.apps ?? []).map((a) => ({ slug: a.slug, mode: a.data?.mode, pending: a.data?.pendingPaths })))}`);
 
-  await app.look('/?vault=proj&page=apps', async (page, w) => {
+  /** Go to Apps by the rail, as the owner would. */
+  const toApps = async (page, w) => {
     await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
     // The new shell can open with the chat surface laid OVER the Apps page (the page is mounted and
     // "visible" underneath it). Always go to Apps by the rail, as the owner would: a rail click
@@ -103,6 +113,9 @@ try {
     if (!(await page.locator('.app-tile').first().waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false))) {
       app.findings.push(`apps@${w.name}: the Apps page did not open (no .app-tile)`);
     }
+  };
+  await app.look('/?vault=proj&page=apps', async (page, w) => {
+    await toApps(page, w);
     // The share notice is the owner's click, so it is drawn only in the Mac app (desktop width
     // plays its shell below); the phone shows the tile line but never the notice.
     const notice = [/Rival Watch.*(shared with the team|ekiple ortak)/i, /notes\//];
@@ -125,6 +138,19 @@ try {
     await page.screenshot({ path: join(app.shots, `apps-full-${w.name}.png`), fullPage: true });
     app.taken.push(join(app.shots, `apps-full-${w.name}.png`));
   }, { name: 'apps', init: (w) => (w.width > 600 ? DESKTOP_SHELL : null) });
+
+  // Sharing is not possible here (cloud sync off): nothing to decide, so no notice card above the
+  // shelves and no "not decided yet" line on a tile. The app's own page keeps its one sentence.
+  put(join(dc, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], setupVersion: '1', brainRepo: { mode: 'full-repo', enabled: false, autoSync: false } }));
+  await app.look('/?vault=proj&page=apps', async (page, w) => {
+    await toApps(page, w);
+    await page.waitForTimeout(500);
+    for (const text of [/Rival Watch.*(shared with the team|ekiple ortak)/i, /Shared data not decided yet|Ortak veri henüz belirlenmedi/i]) {
+      if (await page.getByText(text).first().isVisible().catch(() => false)) app.findings.push(`apps-syncoff@${w.name}: ${text} is drawn while sharing is not possible`);
+    }
+    await page.screenshot({ path: join(app.shots, `apps-syncoff-full-${w.name}.png`), fullPage: true });
+    app.taken.push(join(app.shots, `apps-syncoff-full-${w.name}.png`));
+  }, { name: 'apps-syncoff', init: (w) => (w.width > 600 ? DESKTOP_SHELL : null) });
 } catch (err) {
   app.findings.push(`could not finish: ${err instanceof Error ? err.message : err}`);
 }

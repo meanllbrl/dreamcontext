@@ -555,6 +555,10 @@
 
 /* Shelves */
 .apps-shelf { margin: 0 0 var(--space-8); }
+/* The team-data notice reads like a tile: a tile-sized heading and one body size (not a headline). */
+.apps-setup .app-card { font-size: var(--font-size-sm); }
+.app-card__notice-title { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.apps-setup .app-card__state, .apps-setup .app-card__list-meta { font-size: var(--font-size-sm); }
 .apps-shelf__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-4); }
 .apps-shelf__head h2 { font-family: var(--font-family-display); font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); color: var(--color-text); margin: 0; }
 .apps-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: var(--space-3); }

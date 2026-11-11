@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { useApi, useVault, emitInstance } from '../../context/VaultContext';
+import { useApi, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useShareT, useShareN } from './Sheet';
 import { askAgent } from './askAgent';
@@ -75,13 +75,12 @@ export function PullState({ pull }: { pull: AppDataView['pull'] }) {
 /** The first notice: what the team will see, what stays here, where it goes; two buttons. */
 function ApprovalNotice({ app, primary, onChanged }: { app: DataApp; primary: boolean; onChanged: () => void }) {
   const api = useApi();
-  const { bus } = useVault();
   const { locale } = useI18n();
   const t = useShareT();
   const tn = useShareN();
   const titleId = useId();
   const d = app.data!;
-  // Unticked = excluded: that part stays on this Mac, and the agent cannot open it again.
+  // Unticked = excluded: that part stays on this Mac until the owner asks again (the app's page).
   const [off, setOff] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -98,14 +97,14 @@ function ApprovalNotice({ app, primary, onChanged }: { app: DataApp; primary: bo
   const toggle = (p: string, on: boolean) => setOff((cur) => { const next = new Set(cur); if (on) next.delete(p); else next.add(p); return next; });
   return (
     <section className="app-card" aria-labelledby={titleId}>
-      <h2 id={titleId} className="app-card__list-name" style={WRAP}>{t('apps.data.notice.title', { name: app.name })}</h2>
+      <h2 id={titleId} className="app-card__notice-title" style={WRAP}>{t('apps.data.notice.title', { name: app.name })}</h2>
       <div>
         <h3 className="app-card__state">{t('apps.data.notice.team')}</h3>
         <ul className="app-card__list">
           {d.pendingPaths.map((p) => (
             <li key={p.path}>
               <label className="share-link--check" style={WRAP}>
-                <input type="checkbox" checked={!off.has(p.path)} disabled={busy || d.syncOff} onChange={(e) => toggle(p.path, e.target.checked)} />
+                <input type="checkbox" checked={!off.has(p.path)} disabled={busy} onChange={(e) => toggle(p.path, e.target.checked)} />
                 <span className="app-card__list-name" style={WRAP}>{p.path}</span>
                 <span className="app-card__list-meta">{tn('apps.data.files', p.files)} · {formatBytes(p.bytes, locale)}</span>
               </label>
@@ -129,21 +128,13 @@ function ApprovalNotice({ app, primary, onChanged }: { app: DataApp; primary: bo
         </div>
       )}
       <p className="app-card__list-meta">
-        {d.remote ? t('apps.data.notice.where', { repo: d.remote.name }) : t('apps.data.notice.whereNone')}
-        {d.remote?.public === true && <> <span className="app-chip app-chip--warn">{t('apps.data.notice.public')}</span></>}
+        {d.remote ? t(d.remote.public === true ? 'apps.data.notice.wherePublic' : 'apps.data.notice.where', { repo: d.remote.name }) : t('apps.data.notice.whereNone')}
       </p>
-      {d.syncOff ? (
-        <div className="app-card__note app-card__note--warn app-card__mcp">
-          <span>{t('apps.data.syncOff')}</span>
-          <button type="button" className="app-card__stop" onClick={() => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'brain' })}>{t('apps.data.openSettings')}</button>
-        </div>
-      ) : (
-        <div className="app-card__foot">
-          {/* Every part unticked shares nothing: the button that says it shares is off then. */}
-          <button type="button" className={primary ? 'app-card__launch' : 'app-card__stop'} disabled={busy || approve.length === 0} onClick={() => void send({ approve, ...(exclude.length ? { exclude } : {}) })}>{t('apps.data.share')}</button>
-          <button type="button" className="app-card__stop" disabled={busy} onClick={() => void send({ decline: true })}>{t('apps.data.keepLocal')}</button>
-        </div>
-      )}
+      <div className="app-card__foot">
+        {/* Every part unticked shares nothing: the button that says it shares is off then. */}
+        <button type="button" className={primary ? 'app-card__launch' : 'app-card__stop'} disabled={busy || approve.length === 0} onClick={() => void send({ approve, ...(exclude.length ? { exclude } : {}) })}>{t('apps.data.share')}</button>
+        <button type="button" className="app-card__stop" disabled={busy} onClick={() => void send({ decline: true })}>{t('apps.data.keepLocal')}</button>
+      </div>
       {err && <p className="app-card__note app-card__note--bad" role="alert">{err}</p>}
     </section>
   );
@@ -155,7 +146,7 @@ function ApprovalNotice({ app, primary, onChanged }: { app: DataApp; primary: bo
  */
 export function AppDataNotices({ apps, onChanged }: { apps: DataApp[]; onChanged: () => void }) {
   const pulls = apps.filter((a) => a.data && a.data.pull !== 'none');
-  const asks = apps.filter((a) => a.data && a.data.declared === true && a.data.pendingPaths.length > 0 && a.data.pull === 'none');
+  const asks = apps.filter((a) => a.data && a.data.declared === true && a.data.pendingPaths.length > 0 && a.data.pull === 'none' && !a.data.syncOff);
   if (!pulls.length && !asks.length) return null;
   return (
     <div className="apps-setup">
@@ -172,15 +163,16 @@ export function AppDataNotices({ apps, onChanged }: { apps: DataApp[]; onChanged
 /** The tile's short line while the app's data is undecided. Nothing otherwise. */
 export function AppDataTileLine({ app, canLaunch }: { app: DataApp; canLaunch: boolean }) {
   const t = useShareT();
-  const { bus } = useVault();
+  const { bus, vault } = useVault();
   const d = app.data;
-  if (!d || d.declared !== false) return null;
+  // Nothing to decide while this brain cannot share team data at all (sync off, or an in-tree brain).
+  if (!d || d.declared !== false || d.syncOff) return null;
   const installed = app.origin === 'installed';
   return (
     <p className="app-tile__sub">
       {installed ? t('apps.data.undecidedInstalled') : t('apps.data.undecided')}
       {!installed && canLaunch && (
-        <> · <button type="button" className="share-link" onClick={() => askAgent(bus, t('apps.data.askText', { name: app.name }))}>{t('apps.data.askAgent')}</button></>
+        <> · <button type="button" className="share-link" onClick={() => askAgent(bus, t('apps.data.askText', { name: app.name }), { fallback: { vault: vault ?? '', title: app.name } })}>{t('apps.data.askAgent')}</button></>
       )}
     </p>
   );
@@ -189,7 +181,7 @@ export function AppDataTileLine({ app, canLaunch }: { app: DataApp; canLaunch: b
 /** The app's own page: where its data stands now, counts only. */
 export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLaunch: boolean; onChanged: () => void }) {
   const api = useApi();
-  const { bus } = useVault();
+  const { bus, vault } = useVault();
   const { locale } = useI18n();
   const t = useShareT();
   const tn = useShareN();
@@ -202,7 +194,7 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
     return (
       <div className="app-card__note app-card__note--warn app-card__mcp">
         <span>{installed ? t('apps.data.undecidedInstalled') : t('apps.data.undecided')}</span>
-        {!installed && canLaunch && <button type="button" className="app-card__stop" onClick={() => askAgent(bus, t('apps.data.askText', { name: app.name }))}>{t('apps.data.askAgent')}</button>}
+        {!installed && canLaunch && <button type="button" className="app-card__stop" onClick={() => askAgent(bus, t('apps.data.askText', { name: app.name }), { fallback: { vault: vault ?? '', title: app.name } })}>{t('apps.data.askAgent')}</button>}
       </div>
     );
   }
@@ -211,9 +203,14 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
     d.missing > 0 ? tn('apps.data.missing', d.missing) : '',
     d.conflicts > 0 ? tn('apps.data.conflicts', d.conflicts) : '',
   ].filter(Boolean);
+  // Parts the owner unticked in the notice: one row brings them back (`unexclude`), like a declined app.
+  const excluded = d.sharedPaths.filter((p) => p.state === 'excluded').map((p) => p.path);
   const askAgain = async () => {
     setErr(null);
-    try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/data-share`, { decline: false }); onChanged(); } catch (e) { setErr((e as Error).message); }
+    try {
+      await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/data-share`, { ...(d.declined ? { decline: false } : {}), ...(excluded.length ? { unexclude: excluded } : {}) });
+      onChanged();
+    } catch (e) { setErr((e as Error).message); }
   };
   const head = d.mode === 'shared'
     ? t('apps.data.sharedLine', { files: tn('apps.data.files', d.sharedCount), size: formatBytes(d.sharedBytes, locale) })
@@ -227,7 +224,7 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
         {extra.length > 0 && ` · ${extra.join(' · ')}`}
       </p>
       {d.pull !== 'none' && <p className="app-card__note app-card__note--warn" role="status" style={WRAP}><PullState pull={d.pull} /></p>}
-      {d.declined && canLaunch && (
+      {(d.declined || excluded.length > 0) && canLaunch && (
         <div className="app-card__mcp">
           <span className="app-card__list-meta">{t('apps.data.declined')}</span>
           <button type="button" className="share-link" onClick={() => void askAgain()}>{t('apps.data.askAgain')}</button>
