@@ -202,11 +202,33 @@ describe('/api/apps', () => {
     const r = await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'GET', path: '/health' } });
     expect(r.json.error).toBe('app_stopped');
     expect(r.json.message).toContain('apps open echo');
+    // The agent asks the owner first: starting it would clear his Stop (C8).
+    expect(r.json.message).toContain('Ask him before starting it again');
+    expect(r.json.message).not.toMatch(/Start it with/);
     const st = await req({ path: '/api/apps/echo/status' });
     expect(st.json).toMatchObject({ state: 'stopped', stoppedByOwner: true });
     const { updateApp } = await import('../../src/lib/apps/registry.js');
     updateApp(home, project, 'echo', { stoppedByOwner: false });
   });
+
+  it('a saved setting restarts a running backend (D5); a stopped app stays stopped', async () => {
+    const { getApp } = await import('../../src/lib/apps/registry.js');
+    const { refreshAppRuntime } = await import('../../src/server/routes/apps.js');
+    expect((await req({ method: 'POST', path: '/api/apps/echo/call', body: { method: 'GET', path: '/health' } })).status).toBe(200);
+    const before = (await req({ path: '/api/apps/echo/status' })).json;
+    expect(before.state).toBe('running');
+    // Without the option (an update, a detach): a running app is left alone.
+    refreshAppRuntime(getApp(home, project, 'echo')!);
+    expect((await req({ path: '/api/apps/echo/status' })).json.rev).toBe(before.rev);
+    refreshAppRuntime(getApp(home, project, 'echo')!, { restart: true });
+    let after = before;
+    for (let i = 0; i < 100 && after.rev === before.rev; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      after = (await req({ path: '/api/apps/echo/status' })).json;
+    }
+    expect(after.rev).toBeGreaterThan(before.rev);
+    expect(after.state).toBe('running');
+  }, 40_000);
 });
 
 describe('dreamcontext apps (the real CLI against the real router)', () => {

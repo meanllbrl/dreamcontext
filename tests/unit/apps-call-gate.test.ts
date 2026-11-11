@@ -261,6 +261,35 @@ describe('gateAppCall', () => {
       expect(gate(ctx, rec, [...actions, { id: 'send', title: 'Send', method: 'POST', path: '/api/send' }], { method: 'POST', path: '/api/send', confirm: true, claim: { class: 'run', automation: 'tooljob' } }, { home })).toMatchObject({ ok: false, code: 'needs_owner' });
     });
 
+    it('the suggested --app-tools keeps every tool already granted (C3)', async () => {
+      const { createAutomation, getAutomation } = await import('../../src/lib/automations/store.js');
+      const { approveAutomation } = await import('../../src/lib/automations/registry.js');
+      createAutomation(ctx, { slug: 'keepjob', title: 'K', days: 'daily', at: '09:00', prompt: 'p', appTools: ['yuk/notify-test'] });
+      approveAutomation(rec.projectRoot, getAutomation(ctx, 'keepjob', home)!, new Date(), home);
+      const withSend = [...actions, { id: 'send', title: 'Send', method: 'POST' as const, path: '/api/send' }];
+      const r = gate(ctx, rec, withSend, { method: 'POST', path: '/api/send', confirm: true, claim: { class: 'run', automation: 'keepjob' } }, { home });
+      expect(r).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(r.ok ? '' : r.message).toContain('automations edit keepjob --app-tools yuk/notify-test,yuk/send`');
+      // A job with no tools yet: the ref alone, as before.
+      expect((run('nothing-yet') as { message: string }).message).toContain('--app-tools yuk/notify-test`');
+    });
+
+    it('a project registered through a symlink: the app still vouches for its own run (C7)', async () => {
+      const { symlinkSync } = await import('node:fs');
+      const { appendThreadEntry } = await import('../../src/lib/automations/threads.js');
+      const link = join(realpathSync(mkdtempSync(join(tmpdir(), 'dc-gate-link-'))), 'proj');
+      symlinkSync(rec.projectRoot, link);
+      const linkCtx = join(link, '_dream_context');
+      const R = '2026-11-07T15:00:00.000Z';
+      appendThreadEntry(ctx, 'own7', { runId: R, kind: 'user', text: 'app asks', via: 'app', app: 'yuk' });
+      // The job runs under the real path; the gate is asked under the symlinked vault path.
+      seed(ctx, { run: { id: `run-${R}`, slug: 'own7', status: 'running' as const, startedAt: 1, finishedAt: null, outcome: null, error: null, runId: R } });
+      expect(gate(linkCtx, rec, actions, { method: 'POST', path: '/api/notify-test', confirm: true, claim: { class: 'run', automation: 'own7', run: R } }, { home })).toMatchObject({ ok: true });
+      // Another app's run is still refused through the link.
+      const other = { ...rec, slug: 'other-app' } as AppRecord;
+      expect(gate(linkCtx, other, actions, { method: 'POST', path: '/api/notify-test', confirm: true, claim: { class: 'run', automation: 'own7', run: R } }, { home })).toMatchObject({ ok: false, code: 'needs_owner' });
+    });
+
     it("jobStartedByOwner: the owner's dashboard reply delivering now passes; Super's, a settled one, or two do not", async () => {
       const { appendThreadEntry } = await import('../../src/lib/automations/threads.js');
       const R = '2026-11-07T10:00:00.000Z';

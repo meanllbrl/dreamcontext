@@ -279,11 +279,27 @@ async function retireStoppedWindow(rec: AppRecord, rt: AppRuntime): Promise<void
   const runner = shellRunnerPath();
   const id = runnerBundleId(rec.hash);
   if (!runner || !mayRetireRunner({ stoppedByOwner: true, processRunning: probeBundle(id), stale: bundleIsStale(bundleInput(rec, runner)) })) return;
+  await endRunner(rec, rt);
+}
+
+/** End the app's runner process and wait (3 s at most) until the OS says it is gone. */
+async function endRunner(rec: AppRecord, rt: AppRuntime): Promise<void> {
+  const id = runnerBundleId(rec.hash);
   const pid = bundlePid(id);
   if (!pid) return;
   try { process.kill(pid); } catch { return; }
   for (let i = 0; i < 30 && probeBundle(id) !== false; i++) await new Promise((r) => setTimeout(r, 100));
   rt.clearWindows();
+}
+
+/**
+ * The owner opens an app whose start failed (D1): its runner sits on the error screen without a
+ * heartbeat, so a second open would only bring that screen forward. Only a runner that holds no
+ * lease while the app is in `error` ends here; the open then starts a fresh window and backend.
+ */
+async function retireErrorWindow(rec: AppRecord, rt: AppRuntime): Promise<void> {
+  if (rt.status().state !== 'error' || rt.liveWindows() > 0 || probeBundle(runnerBundleId(rec.hash)) !== true) return;
+  await endRunner(rec, rt);
 }
 
 /**
@@ -358,12 +374,19 @@ export async function retireAppRuntime(rec: AppRecord): Promise<void> {
   removePins(home, rec.hash);
 }
 
-/** The runtime reads the new record (settings, an update): an app in error starts over. */
-export function refreshAppRuntime(rec: AppRecord): void {
+/**
+ * The runtime reads the new record (settings, an update): an app in error starts over. With
+ * `restart` (a saved key or setting, D5) a running backend also rolls over: `.env` and
+ * `DC_CONFIG` are read only at spawn, so the new value takes without the owner restarting it.
+ */
+export function refreshAppRuntime(rec: AppRecord, opts: { restart?: boolean } = {}): void {
   const rt = existingRuntime(rec.hash);
   if (!rt) return;
   rt.setRecord(rec);
-  if (rt.status().state === 'error' && !rec.stoppedByOwner) void rt.ensureRunning();
+  if (rec.stoppedByOwner) return;
+  const st = rt.status();
+  if (st.state === 'error') void rt.ensureRunning();
+  else if (opts.restart && st.state === 'running' && st.hasBackend) void rt.update();
 }
 
 function assistantOf(rec: AppRecord): 'own' | 'member' | 'none' {
@@ -919,7 +942,12 @@ export async function handleAppLaunch(req: IncomingMessage, res: ServerResponse,
   const rt = runtime(rec);
   const launchGw = await gatewayFor(rt);
   if (body.owner === true && rec0.stoppedByOwner) await retireStoppedWindow(rec, rt);
+  // A failed app (D2, D1): the owner's Open starts it again. A live window stays and the backend
+  // restarts under it; a stuck error window with no heartbeat ends so a fresh one opens.
+  const failed = body.owner === true && !rec.stoppedByOwner && rt.status().state === 'error';
+  if (failed && liveWindowsOf(rec, rt) === 0) await retireErrorWindow(rec, rt);
   const alive = liveWindowsOf(rec, rt) > 0;
+  if (failed && alive) void rt.ensureRunning();
   // A window already open keeps its page: a link only brings it forward.
   if (linkPath !== null && !alive) launchGw.pendingPath = linkPath;
   const f = await focusApp(rec, { runnerAlive: alive });
@@ -1107,6 +1135,28 @@ function approvedAppTool(contextRoot: string, slug: string, ref: string, home: s
   return false;
 }
 
+/** The job's or member's current `app_tools` plus `ref`, de-duplicated; `ref` alone if unreadable. */
+function grantedPlus(contextRoot: string, slug: string, ref: string, home: string | undefined): string {
+  let have: string[] = [];
+  try { have = getAutomation(contextRoot, slug, home)?.appTools ?? []; } catch { have = []; }
+  return [...new Set([...have, ref])].join(',');
+}
+
+/**
+ * Live jobs are keyed by the root they started under: the registry's real path, while the vault
+ * may be registered through a symlink (C7). The app's own context root is asked too.
+ */
+function eitherRoot(contextRoot: string, rec: AppRecord, ask: (root: string) => boolean): boolean {
+  if (ask(contextRoot)) return true;
+  const own = join(rec.projectRoot, '_dream_context');
+  return own !== contextRoot && ask(own);
+}
+
+/** This app started the run (the app's own member, `dc.team.ask`). */
+function startedByThisApp(contextRoot: string, rec: AppRecord, slug: string, run: string): boolean {
+  return eitherRoot(contextRoot, rec, (root) => runStartedByApp(root, slug, run) === rec.slug);
+}
+
 /**
  * THE gate, called by `handleAppCall` (CLI, MCP, a raw loopback POST) and `runAppAction` (the
  * Assistant). A read passes. A change needs `confirm`, and then who is asking decides
@@ -1137,8 +1187,9 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
   const ref = `${rec.slug}/${action?.id ?? '<tool>'}`;
   // Every refusal says what the owner does to allow it (one line), never a bare needs_owner.
   const refuse = (why: string, allow: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} To allow it: ${allow}`, ...(tool ? { tool } : {}) });
+  // `--app-tools` writes the whole list: the suggestion keeps every tool already granted (C3).
   const editLine = (slug: string): string => action && !ambiguous
-    ? `the owner runs \`dreamcontext automations edit ${slug} --app-tools ${ref}\` and approves ${slug}'s card again (or runs the tool himself in a chat, the Super Agent or the app's window).`
+    ? `the owner runs \`dreamcontext automations edit ${slug} --app-tools ${grantedPlus(contextRoot, slug, ref, deps.home)}\` and approves ${slug}'s card again (or runs the tool himself in a chat, the Super Agent or the app's window).`
     : `this call names no single tool of ${rec.slug}, so only the owner can run it, in a chat, the Super Agent or the app's window.`;
   const cls = call.claim.class;
   if (cls === 'spawned') return refuse('This session runs with nobody at the keyboard (a builder, a peer delivery, a cross-tool ask or sleep).', `the owner runs it in a chat, the Super Agent or the app's window.`);
@@ -1156,11 +1207,11 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
   if (cls === 'run') {
     const slug = call.claim.automation ?? '';
     if (action && slug && !ambiguous && approvedAppTool(contextRoot, slug, ref, deps.home)) return pass;
-    if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return pass;
+    if (slug && call.claim.run && eitherRoot(contextRoot, rec, (root) => jobStartedByOwner(root, slug, call.claim.run!))) return pass;
     // The app's own member (`dc.team.ask` from this app's backend): the app installed and approved
     // on this Mac is the owner's proof, for this app's tools only (owner 2026-11-11).
     // Its LISTED tools only: an unlisted route or an unnamed shared one stays the owner's.
-    if (action && !ambiguous && slug && call.claim.run && runStartedByApp(contextRoot, slug, call.claim.run) === rec.slug) return pass;
+    if (action && !ambiguous && slug && call.claim.run && startedByThisApp(contextRoot, rec, slug, call.claim.run)) return pass;
     if (!slug) return refuse('An unattended run that names no job changes nothing through an app.', `the owner runs it in a chat, the Super Agent or the app's window.`);
     return refuse(`An unattended run of ${slug} changes things only with a tool its approved job or member names (app_tools: ${ref}).`, editLine(slug));
   }
@@ -1182,7 +1233,8 @@ export async function handleAppCall(req: IncomingMessage, res: ServerResponse, p
   holdOpen(req);
   const rec = findApp(contextRoot, params.slug, res);
   if (!rec) return;
-  if (rec.stoppedByOwner) { sendError(res, 409, 'app_stopped', `The owner stopped this app. Start it with: dreamcontext apps open ${rec.slug}`); return; }
+  // Starting it again would clear his Stop: the agent asks him first (C8).
+  if (rec.stoppedByOwner) { sendError(res, 409, 'app_stopped', `The owner stopped this app, so its tools do not run. Ask him before starting it again (dreamcontext apps open ${rec.slug}).`); return; }
   const body = (await parseJsonBody(req)) ?? {};
   const method = typeof body.method === 'string' ? body.method.toUpperCase() : 'GET';
   if (!(ACTION_METHODS as readonly string[]).includes(method)) { sendError(res, 400, 'bad_method', 'method must be GET, POST, PUT, PATCH or DELETE'); return; }
