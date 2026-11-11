@@ -168,13 +168,23 @@ export interface WorkTrack {
   ref: string;
   /** When the write was accepted (ms). */
   sentAt: number;
+  /** The Super was already in a turn when the write went out (a message written while it is
+   *  busy is steered into that turn): that turn's `busySince`. Null when it was idle. */
+  turnSince?: number | null;
+}
+
+/** The track a just-accepted write starts, from the presence read at that moment. */
+export function startTrack(ref: string, presence: SuperPresence | null, now: number): WorkTrack {
+  const steered = presence?.busy && presence.busySince !== null ? presence.busySince : null;
+  return { ref, sentAt: now, turnSince: steered };
 }
 
 /**
  * Is the work a sent message started still going? True while the Super's turn that took it runs
- * (a turn first seen running at or after the send: a turn already running before it, an
- * unrelated event turn, never arms it alone), or any child whose `origin` is the message's ref
- * is live; for {@link WORK_GRACE_MS} after the ACK either way; never past {@link WORK_MAX_MS}.
+ * (a turn first seen running at or after the send, or the turn the message was steered into
+ * because the Super was already busy: `turnSince`; any other turn, an unrelated event turn,
+ * never arms it alone), or any child whose `origin` is the message's ref is live; for
+ * {@link WORK_GRACE_MS} after the ACK either way; never past {@link WORK_MAX_MS}.
  */
 export function workGoing(track: WorkTrack | null, presence: SuperPresence | null, now: number): boolean {
   if (!track) return false;
@@ -182,6 +192,7 @@ export function workGoing(track: WorkTrack | null, presence: SuperPresence | nul
   if (age < 0 || age >= WORK_MAX_MS) return false;
   if (age < WORK_GRACE_MS) return true;
   if (!presence) return false;
-  const turn = presence.busy && presence.busySince !== null && presence.busySince >= track.sentAt;
+  const since = presence.busy ? presence.busySince : null;
+  const turn = since !== null && (since >= track.sentAt || since === (track.turnSince ?? null));
   return turn || presence.children.some((c) => c.live && c.origin === track.ref);
 }

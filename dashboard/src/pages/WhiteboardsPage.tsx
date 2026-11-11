@@ -24,6 +24,7 @@ import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/b
 import { publishPageDetail } from '../lib/pageContext';
 import { useSuperPresence } from '../lib/superPageBridge';
 import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
+import { useCanvasBox } from './whiteboards/useCanvasBox';
 import type { SelectionRef } from '../components/whiteboard/agentDrop';
 import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
 import './WhiteboardsPage.css';
@@ -231,6 +232,26 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const presence = useSuperPresence(bus);
   const [selection, setSelection] = useState<SelectionRef | null>(null);
   const [work, setWork] = useState<FieldWork | null>(null);
+  // The canvas, measured once: the writing field's place and whether the page's controls fit
+  // in Excalidraw's top row both read it.
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+  const canvasBox = useCanvasBox(canvasEl);
+  // The save state and the Agents toggle ride Excalidraw's top-right row while that row fits the
+  // canvas; when it would spill past the edge (a narrow canvas, a longer language) they move to
+  // their own corner group under it. `controlsNeed` is the canvas width the row was measured to
+  // need, so they come back only once the canvas is that wide again (no flip-flop).
+  const [toggleEl, setToggleEl] = useState<HTMLButtonElement | null>(null);
+  const [controlsNeed, setControlsNeed] = useState(0);
+  const controlsAside = canvasBox !== null && canvasBox.width < controlsNeed;
+  useLayoutEffect(() => {
+    if (controlsAside || !canvasBox || !toggleEl) return;
+    const row = toggleEl.parentElement;
+    if (!row) return;
+    let right = 0;
+    for (const c of Array.from(row.children)) right = Math.max(right, c.getBoundingClientRect().right);
+    const over = right - (canvasBox.right - CONTROLS_EDGE_PX);
+    if (over > 0) setControlsNeed(canvasBox.width + Math.ceil(over));
+  }, [controlsAside, canvasBox, toggleEl]);
   const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
   const onCanvasApi = useCallback((api: WhiteboardCanvasApi | null) => {
     canvasRef.current = api;
@@ -300,10 +321,11 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const canExport = saveState.kind === 'failed' || saveState.kind === 'deleted';
   // The page's controls in the canvas's own top-right row, before "+ Add": the save state, quiet
   // until it fails, and the board agents panel's toggle.
-  const topRight = (
+  const controls = (
     <>
       <SaveStatus state={saveState} />
       <button
+        ref={setToggleEl}
         type="button"
         className="wbp-agent-toggle"
         aria-pressed={panelOpen}
@@ -334,10 +356,11 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
-          <div className="wbp-canvas">
+          <div className="wbp-canvas" ref={setCanvasEl}>
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={topRight} onSelection={setSelection} workBox={work?.box ?? null} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} />
             </Suspense>
+            {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}
             {explorerToggle && (
               <div className="wbp-float-left">
                 {explorerToggle}
@@ -354,6 +377,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
                 saveKind={saveState.kind}
                 flush={flush}
                 onWork={setWork}
+                canvas={canvasBox}
               />
             )}
           </div>
@@ -386,6 +410,9 @@ function writeHash(hash: string): void {
   if (window.location.hash === hash || (!hash && !window.location.hash)) return;
   window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hash);
 }
+
+/** The room kept between the top row's last control and the canvas's right edge (px). */
+const CONTROLS_EDGE_PX = 4;
 
 function SaveStatus({ state }: { state: SaveState }) {
   const { t } = useI18n();

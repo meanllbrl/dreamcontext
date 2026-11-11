@@ -257,15 +257,44 @@ async function main() {
       await page.waitForTimeout(600);
       const wb = await win.boundingBox();
       const fb = await field.boundingBox();
-      ok(`${w}: the open dock window covers at most the field's right edge`, !!wb && !!fb && (!overlaps(wb, fb) || wb.x >= fb.x + fb.width * 0.6), JSON.stringify({ wb, fb }));
+      // Review r1: never under the window. Beside it, or stepped aside when there is no room.
+      ok(`${w}: the open dock window never covers the field (beside it, or the field steps aside)`, !!wb && (!fb || !overlaps(wb, fb)), JSON.stringify({ wb, fb }));
       await page.screenshot({ path: join(SHOTS, `dock-acik-${w}-dark.png`) });
     }
     await page.setViewportSize({ width: 1024, height: 768 });
     await dock.locator('[data-testid="super-dock-minimize"]').click();
     await page.waitForTimeout(500);
     await measureField('1024');
+    ok('1024: the field is back once the window closes', !!(await field.boundingBox()));
+    // Review r1: the save state and Agents stay inside the canvas and clickable at every width.
+    for (const [w, h] of [[1024, 768], [1280, 800], [1440, 900]]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.waitForTimeout(600);
+      const cb = await page.locator('.wbp-canvas').boundingBox();
+      const parts = await page.evaluate(() => [...document.querySelectorAll('.wbp-canvas .wbp-status, .wbp-canvas .wbp-agent-toggle')]
+        .map((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
+      ok(`${w}: "Saved" and "Agents" sit whole inside the canvas`, parts.length === 2 && parts.every((r) => r.width > 0 && r.x >= cb.x && r.x + r.width <= cb.x + cb.width + 0.5), JSON.stringify({ cb, parts }));
+    }
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.waitForTimeout(600);
+    await page.locator('.wbp-canvas .wbp-agent-toggle').click();
+    ok('1024: Agents opens the board agents panel', await until(page, async () => (await page.locator('.wb-agent-panel-head').count()) >= 1, 4000));
+    await page.locator('.wbp-canvas .wbp-agent-toggle').click();
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(600);
+    // Review r1: Excalidraw's "Scroll back to content" stays above the field after a pan away.
+    {
+      const cb = await page.locator('.wbp-canvas').boundingBox();
+      await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+      for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 2500);
+      const back = page.locator('.excalidraw .scroll-back-to-content');
+      ok('the scroll-back button appears after a pan away', await until(page, async () => (await back.count()) === 1, 4000));
+      const bb = await back.boundingBox();
+      const fb = await field.boundingBox();
+      ok('the scroll-back button is not under the field', !!bb && !!fb && !overlaps(bb, fb), JSON.stringify({ bb, fb }));
+      if (bb) await back.click();
+      await page.waitForTimeout(500);
+    }
     ok('the pill stays hidden after the window closes', (await pill.count()) === 0 && (await field.count()) === 1);
     await shotPair('1-bos');
 

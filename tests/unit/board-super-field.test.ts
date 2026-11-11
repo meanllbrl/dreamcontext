@@ -8,7 +8,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  composeFieldMessage, fieldKeyAction, selectionChipText, selectionSendable, settleSave, type SaveKind,
+  DOCK_INSET_PX, DOCK_WINDOW_PX, FIELD_INSET_PX, FIELD_LEFT_RESERVE_PX, FIELD_MIN_PX,
+  composeFieldMessage, fieldKeyAction, fieldLayout, selectionChipText, selectionSendable, settleSave, type SaveKind,
 } from '../../dashboard/src/components/whiteboard/superFieldLogic.js';
 import { PAGE_CONTEXT_RE, splitPageContext } from '../../dashboard/src/lib/superTypes.js';
 import type { SelectionRef } from '../../dashboard/src/components/whiteboard/agentDrop.js';
@@ -134,7 +135,7 @@ describe('the component wiring', () => {
 
   it('the draft is cleared only after an accepted send', () => {
     const accepted = src.indexOf("if (!res.accepted)");
-    const cleared = src.indexOf("setDraft('')");
+    const cleared = src.indexOf("setDraft((now)");
     expect(accepted).toBeGreaterThan(0);
     expect(cleared).toBeGreaterThan(accepted);
   });
@@ -142,5 +143,58 @@ describe('the component wiring', () => {
   it('it tells the page it is mounted, so the corner pill steps aside', () => {
     expect(src).toMatch(/publishFieldMounted\(bus, true\)/);
     expect(src).toMatch(/publishFieldMounted\(bus, false\)/);
+  });
+});
+
+describe('where the field sits (review r1: never under the open dock window)', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+  const dockTake = DOCK_WINDOW_PX + 2 * DOCK_INSET_PX;
+  // The field's right edge in canvas px for a layout, at its widest.
+  const fieldRight = (width: number, l: ReturnType<typeof fieldLayout>) => (l.narrow
+    ? Math.min(FIELD_INSET_PX + 640, width - l.dockReserve)
+    : Math.min(FIELD_LEFT_RESERVE_PX + 640, width - l.dockReserve));
+
+  it('no window: centred on a wide canvas, risen above the zoom row on a narrow one', () => {
+    expect(fieldLayout({ width: 1200, right: 1440, viewport: 1440 }, false)).toEqual({ narrow: false, dockReserve: 0, covered: false });
+    expect(fieldLayout({ width: 670, right: 1024, viewport: 1024 }, false)).toEqual({ narrow: true, dockReserve: 0, covered: false });
+    expect(fieldLayout(null, true)).toEqual({ narrow: false, dockReserve: 0, covered: false });
+  });
+
+  it('the window open at 1440 and at 1024 (the Boards list open): the field ends before the window or steps aside', () => {
+    for (const [width, viewport] of [[1108, 1440], [1200, 1440], [960, 1280], [670, 1024], [900, 1024]] as const) {
+      const box = { width, right: viewport, viewport };
+      const l = fieldLayout(box, true);
+      expect(l.dockReserve).toBe(dockTake);
+      if (l.covered) continue;
+      // The window starts dockTake - gap from the canvas's right edge: the field never reaches it.
+      expect(fieldRight(width, l)).toBeLessThanOrEqual(width - dockTake);
+      const left = l.narrow ? FIELD_INSET_PX : FIELD_LEFT_RESERVE_PX;
+      expect(fieldRight(width, l) - left).toBeGreaterThanOrEqual(FIELD_MIN_PX);
+    }
+    // 1024 with the list open: no room for a usable field beside the window.
+    expect(fieldLayout({ width: 670, right: 1024, viewport: 1024 }, true).covered).toBe(true);
+    // 1440: the field fits left of the window, beside the zoom row or above it.
+    expect(fieldLayout({ width: 1108, right: 1440, viewport: 1440 }, true).covered).toBe(false);
+  });
+
+  it('a panel between the canvas and the window keeps part of the window off the canvas', () => {
+    const l = fieldLayout({ width: 900, right: 1100, viewport: 1440 }, true);
+    expect(l.dockReserve).toBe(dockTake - 340);
+    expect(fieldLayout({ width: 900, right: 900, viewport: 1440 }, true).dockReserve).toBe(0);
+  });
+
+  it('the component reads the layout from the page\'s one measurement and lifts Excalidraw\'s scroll-back button', () => {
+    expect(src).toMatch(/fieldLayout\(canvas, !!presence\?\.dockOpen\)/);
+    expect(src).toMatch(/--bsf-clear/);
+    expect(src).not.toMatch(/NARROW_CANVAS_PX = /);
+    const css = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.css', import.meta.url)), 'utf-8');
+    expect(css).toMatch(/scroll-back-to-content \{\s*bottom: var\(--bsf-clear/);
+    expect(css).toMatch(/\.bsf-wrap\[data-covered\] \{\s*display: none/);
+    expect(css).not.toMatch(/max\(320px/);
+  });
+
+  it('only the words that went leave the draft; what was typed during the save wait stays', () => {
+    expect(src).toMatch(/now\.startsWith\(sent\) \? now\.slice\(sent\.length\)/);
+    expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
   });
 });

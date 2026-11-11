@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   SUPER_PAGE_SEND_EVENT, WORK_GRACE_MS, WORK_MAX_MS, answerPageSend, publishFieldMounted, publishSuperPresence,
-  readFieldMounted, readSuperPresence, sendFromPage, workGoing, type SuperPageSendDetail, type SuperPresence,
+  readFieldMounted, readSuperPresence, sendFromPage, startTrack, workGoing, type SuperPageSendDetail, type SuperPresence,
 } from '../../dashboard/src/lib/superPageBridge.js';
 import { sendToSuper } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import { msgRef as clientRef } from '../../dashboard/src/lib/superTypes.js';
@@ -148,6 +148,20 @@ describe('working: tied to the message, not to the Super\'s turn', () => {
 
   it('a busy turn that began before the send (an unrelated event turn) does not arm it alone', () => {
     expect(workGoing(track, p({ busy: true, busySince: sentAt - 5 }), sentAt + 60_000)).toBe(false);
+  });
+
+  it('written while the Super was busy: the turn it was steered into keeps it until that turn ends', () => {
+    const busyAtSend = p({ busy: true, busySince: sentAt - 40_000 });
+    const steered = startTrack('k3f9q0', busyAtSend, sentAt);
+    expect(steered.turnSince).toBe(sentAt - 40_000);
+    expect(workGoing(steered, busyAtSend, sentAt + 60_000)).toBe(true);
+    // That turn ends: only its children (or a newer turn) keep it.
+    expect(workGoing(steered, p({}), sentAt + 60_000)).toBe(false);
+    // A later, different turn that began before the send is still not this message's.
+    expect(workGoing(steered, p({ busy: true, busySince: sentAt - 5 }), sentAt + 60_000)).toBe(false);
+    // Written while idle: no steered turn.
+    expect(startTrack('k3f9q0', p({}), sentAt).turnSince).toBeNull();
+    expect(startTrack('k3f9q0', null, sentAt).turnSince).toBeNull();
   });
 
   it('a live child whose origin is this message keeps it; another message\'s child, or a finished one, does not', () => {

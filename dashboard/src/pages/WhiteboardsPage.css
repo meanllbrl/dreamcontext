@@ -46,6 +46,21 @@
 
 .wbp-float-left > * { pointer-events: auto; }
 
+/* The save state and the Agents toggle, when Excalidraw's top-right row has no room for them:
+   their own group in the canvas's top-right corner, under that row. */
+.wbp-float-right {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--space-4) + var(--space-12));
+  right: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.wbp-float-right > * { pointer-events: auto; }
+
 .wbp-float-name {
   min-width: 0;
   overflow: hidden;

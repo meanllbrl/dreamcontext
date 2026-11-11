@@ -7,30 +7,34 @@
  * Mounted only while Super mode is on (the page checks the presence first); its Super mark
  * carries what the corner pill carried, which steps aside while this is on screen.
  */
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { msgRef } from '../../lib/superTypes';
 import {
-  openSuperFromPage, publishFieldMounted, sendFromPage, useSuperPresence, workGoing,
+  openSuperFromPage, publishFieldMounted, sendFromPage, startTrack, useSuperPresence, workGoing,
   type SuperPageRefusal, type WorkTrack,
 } from '../../lib/superPageBridge';
 import type { SelectionRef } from './agentDrop';
-import { composeFieldMessage, fieldKeyAction, selectionChipText, selectionSendable, settleSave, type SaveKind } from './superFieldLogic';
+import {
+  composeFieldMessage, fieldKeyAction, fieldLayout, selectionChipText, selectionSendable, settleSave,
+  type CanvasBox, type SaveKind,
+} from './superFieldLogic';
 import './BoardSuperField.css';
 
 /** The marks hold this long after the work last read as going (a turn ending, a child starting). */
 const WORK_HYSTERESIS_MS = 3000;
-/** Below this canvas width the field cannot sit beside the zoom/undo group (2 x its 272 px
- *  reserve + a 400 px field): it rises above that row instead. */
-const NARROW_CANVAS_PX = 944;
+/** The gap kept between the field's top and Excalidraw's "Scroll back to content" button. */
+const SCROLL_BACK_GAP_PX = 8;
 
 export interface FieldWork {
   box: [number, number, number, number];
 }
 
-export function BoardSuperField({ bus, board, boardName, selection, onClearSelection, saveKind, flush, onWork }: {
+export function BoardSuperField({ bus, board, boardName, selection, onClearSelection, saveKind, flush, onWork, canvas }: {
   bus: EventTarget;
+  /** The canvas's measured box (the page measures it once for its controls and this field). */
+  canvas: CanvasBox | null;
   board: string;
   boardName: string;
   /** The canvas's live selection (null: nothing selected). */
@@ -56,20 +60,27 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   presenceRef.current = presence;
   const onWorkRef = useRef(onWork);
   onWorkRef.current = onWork;
-  // A canvas too narrow to fit the field between Excalidraw's bottom-left controls and their
-  // mirror raises it above them (measured, not a viewport breakpoint: the list and the agents
-  // panel change the canvas width).
+  // Where the field sits: one rule for every canvas width, with the dock window open or not
+  // (measured, not a viewport breakpoint: the list and the agents panel change the canvas).
+  const layout = fieldLayout(canvas, !!presence?.dockOpen);
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [narrow, setNarrow] = useState(false);
+  // Excalidraw's "Scroll back to content" button sits bottom-centre too: the canvas lifts it
+  // above the field (`--bsf-clear`, read by BoardSuperField.css), whatever the field's height.
   useEffect(() => {
-    const host = wrapRef.current?.parentElement;
-    if (!host || typeof ResizeObserver === 'undefined') return undefined;
-    const read = () => setNarrow(host.clientWidth < NARROW_CANVAS_PX);
+    const wrap = wrapRef.current;
+    const host = wrap?.parentElement;
+    if (!wrap || !host) return undefined;
+    const read = () => {
+      const clear = layout.covered ? 0 : host.getBoundingClientRect().bottom - wrap.getBoundingClientRect().top + SCROLL_BACK_GAP_PX;
+      if (clear > 0) host.style.setProperty('--bsf-clear', `${Math.round(clear)}px`);
+      else host.style.removeProperty('--bsf-clear');
+    };
     read();
-    const ro = new ResizeObserver(read);
-    ro.observe(host);
-    return () => ro.disconnect();
-  }, []);
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(read);
+    ro?.observe(wrap);
+    ro?.observe(host);
+    return () => { ro?.disconnect(); host.style.removeProperty('--bsf-clear'); };
+  }, [layout.covered, layout.narrow, layout.dockReserve]);
 
   // The corner pill steps aside while the field is on screen.
   useEffect(() => {
@@ -81,12 +92,14 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   useEffect(() => {
     if (!track) { setWorking(false); onWorkRef.current(null); return undefined; }
     let lastGoing = Date.now();
+    let reported: boolean | null = null;
     const tick = () => {
       const now = Date.now();
       if (workGoing(track, presenceRef.current, now)) lastGoing = now;
       const shown = now - lastGoing < WORK_HYSTERESIS_MS;
       setWorking(shown);
-      onWorkRef.current(shown && track.box ? { box: track.box } : null);
+      // Told only on a change: the page re-renders the canvas wrapper for each new box.
+      if (reported !== shown) { reported = shown; onWorkRef.current(shown && track.box ? { box: track.box } : null); }
       if (!shown) setTrack(null);
     };
     tick();
@@ -100,7 +113,8 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   const send = useCallback(async () => {
     if (sendingRef.current) return;
     // Board and selection are read at Enter time.
-    const text = composeFieldMessage(draft, board, selection);
+    const sent = draft;
+    const text = composeFieldMessage(sent, board, selection);
     if (!text) return;
     const box = selection && selectionSendable(selection) ? selection.box : null;
     sendingRef.current = true;
@@ -111,9 +125,10 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       if (saved === 'deleted') { setNote({ text: t('whiteboard.field.deleted'), bad: true }); return; }
       const res = sendFromPage(bus, text);
       if (!res.accepted) { setNote({ text: refusal(res.reason), bad: true }); return; }
-      setDraft('');
+      // Only the words that went: anything typed while the save was settling stays.
+      setDraft((now) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\s+/, '') : now));
       if (saved === 'unsaved') setNote({ text: t('whiteboard.field.unsaved'), bad: false });
-      setTrack({ ref: msgRef(text), sentAt: Date.now(), box });
+      setTrack({ ...startTrack(msgRef(text), presenceRef.current, Date.now()), box });
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -142,7 +157,14 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   const typed = draft.trim().length > 0;
 
   return (
-    <div ref={wrapRef} className="bsf-wrap" data-dock-open={presence?.dockOpen ? 'true' : undefined} data-narrow={narrow ? 'true' : undefined}>
+    <div
+      ref={wrapRef}
+      className="bsf-wrap"
+      data-dock-open={layout.dockReserve > 0 ? 'true' : undefined}
+      data-narrow={layout.narrow ? 'true' : undefined}
+      data-covered={layout.covered ? 'true' : undefined}
+      style={{ '--bsf-dock-reserve': `${layout.dockReserve}px` } as CSSProperties}
+    >
       {working && (
         <div className="bsf-working" role="status" data-testid="board-super-working">
           <span className="bsf-working-dots" aria-hidden><i /><i /><i /></span>

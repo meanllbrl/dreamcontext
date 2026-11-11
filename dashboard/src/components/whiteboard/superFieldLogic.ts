@@ -94,3 +94,49 @@ export function selectionChipText(
   }
   return t('whiteboard.field.selMany').replace('{n}', String(sel.n));
 }
+
+// ── where the field sits (review r1: never under the dock window, never on Excalidraw's controls)
+
+/** The Super dock window's width and its inset from the viewport edge (SuperDock.css
+ *  `--super-dock-width`, `--space-5`). */
+export const DOCK_WINDOW_PX = 420;
+export const DOCK_INSET_PX = 20;
+/** Excalidraw's bottom-left zoom + undo group (≈ 252 px from the canvas edge) and a gap. */
+export const FIELD_LEFT_RESERVE_PX = 272;
+/** The field's inset from the canvas edge in the narrow layout (`--space-5`). */
+export const FIELD_INSET_PX = 20;
+/** Below this the field is too cramped to type in: it steps aside for the open window. */
+export const FIELD_MIN_PX = 280;
+/** Below this canvas width the field cannot sit between the zoom/undo group and its mirror
+ *  (2 x 272 px + a 400 px field): it rises above that row instead. */
+export const NARROW_CANVAS_PX = 944;
+
+/** The canvas's measured box: its width, its right edge and the viewport width (px). */
+export interface CanvasBox {
+  width: number;
+  right: number;
+  viewport: number;
+}
+
+export interface FieldLayout {
+  /** Rise above the zoom/undo row and start at the canvas's left inset. */
+  narrow: boolean;
+  /** How much of the canvas's right side the open dock window takes, with its gap (px). */
+  dockReserve: number;
+  /** Not even the narrow layout leaves the field room beside the open window: it steps aside
+   *  (the window has the Super's own composer), keeping its draft and work marks. */
+  covered: boolean;
+}
+
+/** One rule for every width: the field never sits under the open dock window. */
+export function fieldLayout(box: CanvasBox | null, dockOpen: boolean): FieldLayout {
+  if (!box) return { narrow: false, dockReserve: 0, covered: false };
+  let narrow = box.width < NARROW_CANVAS_PX;
+  if (!dockOpen) return { narrow, dockReserve: 0, covered: false };
+  // The window is fixed to the viewport's right edge; whatever stands between it and the
+  // canvas (the board agents panel) already keeps part of it off the canvas.
+  const dockReserve = Math.max(0, DOCK_WINDOW_PX + 2 * DOCK_INSET_PX - Math.max(0, box.viewport - box.right));
+  if (!narrow && box.width - FIELD_LEFT_RESERVE_PX - dockReserve < FIELD_MIN_PX) narrow = true;
+  const covered = narrow && box.width - FIELD_INSET_PX - dockReserve < FIELD_MIN_PX;
+  return { narrow, dockReserve, covered };
+}
