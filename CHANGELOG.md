@@ -4,6 +4,13 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.16] - 2026-11-11
+
+Patch on 0.41.15: two small fixes. Local build; not published.
+
+- **A Codex or Antigravity chat that fails now says so.** When a turn cannot run (for example Codex has no quota left), the chat shows that tool's own message, naming the tool, instead of staying silent.
+- **The data-share check script no longer reports a false "reset".** It reused a stale connection; the route itself was fine. Only the verify scripts changed.
+
 ## [0.41.15] - 2026-11-11
 
 Patch on 0.41.14: thirteen finished jobs built together. Local build; not published.
