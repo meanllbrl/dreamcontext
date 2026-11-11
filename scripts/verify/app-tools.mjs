@@ -13,7 +13,7 @@
  *         offers the install button, the unshared one does not.
  *   UI    a chat turn (a scripted stand-in for claude) runs `apps do` and answers with two
  *         app-install buttons: the row says "<App> › <tool> (reads)"; the shared repo's button
- *         opens the install sheet; the unshared one says who to ask. The app card reads
+ *         opens the install sheet; the unshared one says who to ask. The app page reads
  *         "2 tools · 1 changes things". Screenshots at 390 and 1440, no console errors.
  *
  *   npm run build && dreamcontext builder heavy -- node scripts/verify/app-tools.mjs [--out <dir>]
@@ -230,6 +230,8 @@ async function ui(port) {
     const ok = await until(async () => /\b2\s*tools\b/.test((await sheet.innerText()).replace(/\s+/g, ' ')), 20_000, page);
     const text = ok ? (await sheet.innerText()).replace(/\s+/g, ' ') : '';
     check(ok, `@${w} the app page shows its 2 tools`, text);
+    // The write-tool notice. A merge dropped it from AppCard.tsx once (apps.tools.change is unused); keep this red until it is back.
+    check(ok && /\b1\s*changes things\b/.test(text), `@${w} the app page says 1 tool changes things`, text);
     await shot(page, `apps-card-${w}`);
     await ctx.close();
   }
