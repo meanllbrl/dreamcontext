@@ -21,7 +21,7 @@
  */
 export type HeadlessSurface =
   | 'automation' | 'agent' | 'light' | 'verdict' | 'sleep' | 'super-child'
-  | 'board-agent' | 'task-step' | 'approval-question' | 'builder' | 'peer' | 'ask' | 'ask-write';
+  | 'board-agent' | 'task-step' | 'approval-question' | 'builder' | 'peer' | 'ask' | 'ask-write' | 'board-quick';
 
 export interface HeadlessEnvelope {
   /** The rule this surface has on Claude. */
@@ -52,6 +52,7 @@ export const HEADLESS_ENVELOPES: Readonly<Record<HeadlessSurface, HeadlessEnvelo
   builder: { claude: 'allowlisted tools, forked sessions', codex: null, antigravity: null, brain: false, why: 'Not built yet: Codex threads do fork (thread/fork, a real turn on 0.164.0 kept the parent\'s words), but the builder runner starts Claude sessions only. A Codex lead builds its waves itself, its reviewers as spawn_agent sub-agents.', antigravityWhy: 'Not built yet: the builder runner starts Claude sessions only, and forking an Antigravity conversation was never tried. An Antigravity lead builds its waves itself, its reviewers as invoke_subagent sub-agents.' },
   peer: { claude: 'auto, in the other project', codex: 'auto', antigravity: null, brain: true, antigravityWhy: 'Not built yet: Antigravity has no classifier-gated mode like Claude\'s auto, and its write bridge would let a peer\'s message run any command in another project.' },
   ask: { claude: 'read-only tools', codex: 'default', antigravity: 'read', brain: false, strict: true },
+  'board-quick': { claude: 'no tools, no settings, no MCP, one JSON answer the server applies', codex: null, antigravity: null, brain: false, strict: true, why: "Not in v1: Codex cannot run a turn with zero tools; a read-only sandbox still reads files, and a quick edit's output lands on a board that syncs to teammates, so board text could steer it into drawing a local secret there.", antigravityWhy: "Not in v1: Antigravity cannot run a turn with zero tools; its read mode still reads files, and a quick edit's output lands on a board that syncs to teammates, so board text could steer it into drawing a local secret there." },
   'ask-write': { claude: 'acceptEdits in the project', codex: 'auto', antigravity: null, brain: true, strict: true, antigravityWhy: 'Not built yet: Antigravity has no edits-only mode, and its write bridge would run any command, wider than Claude\'s acceptEdits.' },
 };
 

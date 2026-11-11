@@ -42,7 +42,11 @@ const POST_KEYS = ['name', 'why', 'description', 'priority', 'urgency', 'tags'];
 export function deniedForEveryone(path: string): boolean {
   return /^\/api\/automations\/threads\/say(\/|$)/.test(path)
     || /^\/api\/automations\/[^/]+\/thread\/reply(\/|$)/.test(path)
-    || /^\/api\/apps(\/|$)/.test(path);
+    || /^\/api\/apps(\/|$)/.test(path)
+    // The quick edit spends the owner's Claude account and writes his boards (plan
+    // tahta-hizli-duzenle D14). Anchored, so a board slugged `quick-edit` stays readable.
+    || /^\/api\/whiteboards\/quick-edit\/status$/.test(path)
+    || /^\/api\/whiteboards\/[^/]+\/quick-edit(\/|$)/.test(path);
 }
 
 export interface RouteMatcher {
