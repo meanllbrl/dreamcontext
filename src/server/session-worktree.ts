@@ -4,8 +4,10 @@ import { homedir } from 'node:os';
 import { resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { resolveAgentSession } from '../lib/agent-session-map.js';
-import { readSuperState, acceptableWorktree, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
+import { readSuperState, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
 import { isGovernedCheckout } from '../lib/session-cwd.js';
+import { gitCommonDir } from '../lib/session-facts.js';
+import { resolveLinkedRepos } from '../lib/linked-repos.js';
 import { resolveSessionDir } from './routes/agent-shelf.js';
 
 /**
@@ -56,29 +58,52 @@ async function worktreeCandidates(contextRoot: string, projectRoot: string, sess
       }
     } catch { /* no readable record: the session's own checkout below may still answer */ }
   }
+  // The session's own checkout, unless it IS the project root. By REAL path: a transcript's cwd
+  // is realpath'd (`/private/var/…`) while the project root may be spelled through a symlink
+  // (`/var/…`), and the same folder must never read as a second candidate.
   const moved = resolveSessionDir(session, projectRoot, { home });
-  if (moved !== projectRoot) candidates.push(moved);
+  if (!samePath(moved, projectRoot)) candidates.push(moved);
   return candidates;
 }
 
-/** The widening rules: registered, directly under `~/.claude-worktrees`, a governed checkout,
- *  still there, and by its REAL path not a symlink out. */
+/** Real path, or null when it is gone or unreadable. */
+function realOf(p: string): string | null {
+  try { return realpathSync.native(p); } catch { return null; }
+}
+
+/** The same folder, by REAL path (a spelling through a symlink is the same folder). */
+function samePath(a: string, b: string): boolean {
+  if (resolve(a) === resolve(b)) return true;
+  const ra = realOf(a);
+  return ra !== null && ra === realOf(b);
+}
+
+/** Is this REAL path directly under the REAL worktree home (`~/.claude-worktrees/<name>`)? Both
+ *  sides resolved: a home under a symlinked path (`/var` → `/private/var`) is still the home. */
+function underWorktreeHome(real: string, home: string): boolean {
+  const base = realOf(superWorktreeRoot(home));
+  return !!base && real.startsWith(base + sep) && !real.slice(base.length + 1).includes(sep);
+}
+
+/** The widening rules: registered (a candidate), an absolute normalised path, a governed checkout,
+ *  still a directory, and by its REAL path directly under the REAL worktree home (a symlinked
+ *  `<name>` pointing elsewhere is not a worktree this feature created). */
 function acceptedWorktree(cand: string, projectRoot: string, home: string): boolean {
-  if (!acceptableWorktree(cand, { home }) || !isGovernedCheckout(cand, projectRoot, { home })) return false;
+  if (!cand || cand.length > 1024 || cand.includes('\u0000') || resolve(cand) !== cand) return false;
+  if (!isGovernedCheckout(cand, projectRoot, { home })) return false;
   try {
     if (!statSync(cand).isDirectory()) return false;
-    // The REAL path must still sit directly under the real worktree home: a symlinked
-    // `<name>` pointing elsewhere is not a worktree this feature created.
     const real = realpathSync.native(cand);
-    const base = realpathSync.native(superWorktreeRoot(home));
-    return real.startsWith(base + sep) && !real.slice(base.length + 1).includes(sep);
+    return underWorktreeHome(real, home);
   } catch { return false; /* removed or unreadable — not a root */ }
 }
 
 // ─── The folder an owner card runs and writes in (sahip-karti-yerinde K5) ───────────────────
 
-/** Why a card's working folder was refused: the run does not start, the secret is not written. */
-export type CardRootRefusal = 'symlink' | 'missing' | 'not_same_repo' | 'git_failed' | 'not_accepted';
+/** Why a card's working folder was refused: the run does not start, the secret is not written.
+ *  `not_governed`: not a real worktree of any repository this project governs (its own or a
+ *  linked one), by that repository's own `git worktree list`. */
+export type CardRootRefusal = 'symlink' | 'missing' | 'not_governed' | 'git_failed' | 'not_accepted';
 export class CardRootRefused extends Error {
   readonly code: CardRootRefusal;
   constructor(code: CardRootRefusal) {
@@ -90,58 +115,77 @@ export class CardRootRefused extends Error {
 
 const run = promisify(execFile);
 
-/** The project's git worktrees, by real path (`git worktree list --porcelain`). */
-export async function gitWorktreePaths(projectRoot: string): Promise<string[]> {
-  const { stdout } = await run('git', ['-C', projectRoot, 'worktree', 'list', '--porcelain'], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+/** A repository's git worktrees, by real path (`git worktree list --porcelain`). */
+export async function gitWorktreePaths(repoRoot: string): Promise<string[]> {
+  const { stdout } = await run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain'], { timeout: 5_000, maxBuffer: 1024 * 1024 });
   const out: string[] = [];
   for (const line of String(stdout).split('\n')) {
     if (!line.startsWith('worktree ')) continue;
-    try { out.push(realpathSync.native(line.slice('worktree '.length))); } catch { /* listed but gone */ }
+    const real = realOf(line.slice('worktree '.length));
+    if (real) out.push(real);
   }
   return out;
 }
 
+/** The repositories this project governs, as a checkout to ask: the project itself, then each
+ *  linked repo present on this machine (session-cwd.ts `governedCommonDirs`' set, with paths). */
+function governedRepoRoots(projectRoot: string, home: string): string[] {
+  const roots = [projectRoot];
+  try {
+    for (const repo of resolveLinkedRepos(projectRoot, home)) if (repo.path) roots.push(repo.path);
+  } catch { /* a malformed config leaves the project's own repo governed */ }
+  return roots;
+}
+
 /**
- * The folder an owner card of `postingSession` runs in and writes its secret under (K5, D5):
- * the child's working folder, read at action time from the SERVER's state (the Super records
- * and the session's own checkout directive), never from a request or a card.
+ * The folder an owner card of `postingSession` runs in and writes its secret under (K5, D5, and
+ * the Super's decision for the owner of 11 Nov): the child's working folder, read at action time
+ * from the SERVER's state (the Super records and the session's own checkout directive), never
+ * from a request or a card.
  *
- *  - No recorded worktree: the project root (realpath-resolved).
- *  - A recorded one: it must pass {@link sessionWorktreeRoot}'s rules AND be narrowed: its real
- *    path, not a symlink itself, and one of the project's own `git worktree list` entries (the
- *    same repository). A linked repo, another governed checkout, a symlink or a folder that is
- *    gone is REFUSED ({@link CardRootRefused}): the card never silently runs somewhere else.
+ * Every identity and containment decision compares REAL paths (the project, the candidate, the
+ * worktree home), so a project or a home under a symlinked path (macOS `/var`, `/tmp`) is itself.
+ *
+ *  - No recorded candidate, or one whose real path IS the project's: the project root (real).
+ *  - A recorded one must not be a symlink itself, must still be there, must sit directly under
+ *    the real `~/.claude-worktrees`, and must be a real worktree of a repository the project
+ *    GOVERNS (its own or a linked repo): the governed repository whose git common dir equals the
+ *    candidate's names it in its own `git worktree list`. Anything else is REFUSED
+ *    ({@link CardRootRefused}): the card never silently runs somewhere else.
  *
  * `listWorktrees` is injectable for tests; the real one runs git with an argument array and a
- * timeout.
+ * timeout, against the governed repository the candidate belongs to.
  */
 export async function cardWorkingRoot(
   contextRoot: string,
   projectRoot: string,
   postingSession: string,
-  opts: { home?: string; listWorktrees?: (projectRoot: string) => Promise<string[]> } = {},
+  opts: { home?: string; listWorktrees?: (repoRoot: string) => Promise<string[]> } = {},
 ): Promise<string> {
   const home = opts.home ?? homedir();
-  let realProject: string;
-  try { realProject = realpathSync.native(projectRoot); } catch { throw new CardRootRefused('missing'); }
+  const realProject = realOf(projectRoot);
+  if (!realProject) throw new CardRootRefused('missing');
   const candidates = postingSession ? await worktreeCandidates(contextRoot, projectRoot, postingSession, home) : [];
   if (!candidates.length) return realProject;
   const cand = candidates[0];
-  try {
-    if (lstatSync(cand).isSymbolicLink()) throw new CardRootRefused('symlink');
-  } catch (e) {
-    if (e instanceof CardRootRefused) throw e;
-    throw new CardRootRefused('missing');
-  }
-  if (!acceptedWorktree(cand, projectRoot, home)) throw new CardRootRefused('not_accepted');
-  let real: string;
-  try { real = realpathSync.native(cand); } catch { throw new CardRootRefused('missing'); }
+  let st: ReturnType<typeof lstatSync>;
+  try { st = lstatSync(cand); } catch { throw new CardRootRefused('missing'); }
+  if (st.isSymbolicLink()) throw new CardRootRefused('symlink');
+  if (!st.isDirectory()) throw new CardRootRefused('missing');
+  const real = realOf(cand);
+  if (!real) throw new CardRootRefused('missing');
   if (real === realProject) return realProject;
+  if (!underWorktreeHome(real, home)) throw new CardRootRefused('not_accepted');
+  // The governed repository this checkout belongs to: the one sharing its git common dir.
+  const common = gitCommonDir(real);
+  if (!common) throw new CardRootRefused('not_governed');
+  const repo = governedRepoRoots(realProject, home).find((r) => gitCommonDir(r) === common);
+  if (!repo) throw new CardRootRefused('not_governed');
   let listed: string[];
   try {
-    const raw = await (opts.listWorktrees ?? gitWorktreePaths)(realProject);
-    listed = raw.map((p) => { try { return realpathSync.native(p); } catch { return resolve(p); } });
+    const raw = await (opts.listWorktrees ?? gitWorktreePaths)(repo);
+    listed = raw.map((p) => realOf(p) ?? resolve(p));
   } catch { throw new CardRootRefused('git_failed'); }
-  if (!listed.includes(real)) throw new CardRootRefused('not_same_repo');
+  if (!listed.includes(real)) throw new CardRootRefused('not_governed');
   return real;
 }

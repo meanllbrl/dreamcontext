@@ -15,7 +15,7 @@ vi.hoisted(() => {
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -29,7 +29,7 @@ import {
 import { cardHandleOf } from '../../src/lib/cards/records.js';
 import { handleCardNotNeeded, handleCardState, handleCardTicket, handleChecklistSubmit, CARD_OWNER_ONLY_MESSAGE } from '../../src/server/routes/card-actions.js';
 import { handleAgentSecret } from '../../src/server/routes/agent-secret.js';
-import { setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { cardRootOf, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
 import { isCrossSiteWrite } from '../../src/server/middleware.js';
 import { _resetCardTicketsForTests, consumeCardTicket } from '../../src/server/card-ticket.js';
 import { _resetRunsForTests, configureRuns, startRun, type RunPty } from '../../src/server/runs/registry.js';
@@ -216,48 +216,113 @@ describe('Gate G1: one row per action, with proof and in the Super\'s-Bash shape
 
 // ─── K5: the card's working folder ──────────────────────────────────────────
 
-describe('K5: a card runs and writes in the card\'s working folder', () => {
-  let wt: string;
-  beforeEach(() => {
-    execFileSync('git', ['-C', project, 'commit', '-q', '--allow-empty', '-m', 'init'], { env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' } });
-    wt = join(mkdtempSync(join(tmpdir(), 'owner-card-gate-wt-')), 'child');
-    execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt]);
-    wt = realpathSync(wt);
-    setCardRootResolverForTests(async () => wt);
-  });
-  afterEach(() => { rmSync(join(wt, '..'), { recursive: true, force: true }); });
+describe('K5: a card runs and writes in the card\'s working folder (the REAL resolver)', () => {
+  const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { env: GIT_ENV, stdio: 'ignore' });
+  const GET = () => ({ host: '127.0.0.1:4173', 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: KEY });
+  let wtHome: string;
+  let others: string[];
 
-  it('a secret lands in the worktree\'s .env, with .gitignore checked there, whatever the body names', async () => {
-    crew('key');
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: '/tmp/evil', cwd: '/tmp/evil', entries: [{ key: 'STRIPE_KEY', value: 'sk_live_abc' }] }, OWNER_PAGE);
+  /** The posting session is a child of main with this recorded worktree. */
+  function recordChild(worktree: string): void {
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.super-agent.json'), JSON.stringify({
+      v: 1, session: null, enabled: true,
+      children: { [SID]: { sessionId: SID, brief: 'b', adopted: false, startedAt: 1, worktree, branch: 'super/x' } },
+    }));
+  }
+  /** A fresh repository outside the project, with one commit. */
+  function repo(name: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-gate-repo-')));
+    others.push(dir);
+    const r = join(dir, name);
+    mkdirSync(r);
+    execFileSync('git', ['init', '-q', r]);
+    git(r, 'commit', '-q', '--allow-empty', '-m', 'init');
+    return r;
+  }
+  async function secret(value: string, extra: Record<string, unknown> = {}) {
+    return call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), ...extra, entries: [{ key: 'STRIPE_KEY', value }] }, OWNER_PAGE);
+  }
+  async function runIn(): Promise<string | null> {
+    const root = await cardRootOf(getCard(SID, refOf('login'))!);
+    if (!root) return null;
+    const r = startRun(SID, refOf('login'), 'mac', { root });
+    if ('refused' in r) throw new Error(r.refused);
+    return ptys.at(-1)!.cwd;
+  }
+
+  beforeEach(() => {
+    others = [];
+    setCardRootResolverForTests(null);
+    git(project, 'commit', '-q', '--allow-empty', '-m', 'init');
+    wtHome = join(process.env.HOME!, '.claude-worktrees');
+    mkdirSync(wtHome, { recursive: true });
+  });
+  afterEach(() => {
+    // The worktree home and the linked-repo registry live under the file's HOME: none may leak.
+    rmSync(wtHome, { recursive: true, force: true });
+    rmSync(join(process.env.HOME!, '.dreamcontext', 'linked-repos.json'), { force: true });
+    for (const d of others) rmSync(d, { recursive: true, force: true });
+  });
+
+  it('the project\'s own worktree: the run executes there, the secret lands in its .env with .gitignore checked there, whatever the body names', async () => {
+    const wt = join(wtHome, 'child-own');
+    git(project, 'worktree', 'add', '-q', '-b', 'super/own', wt);
+    recordChild(wt);
+    expect(await runIn()).toBe(realpathSync(wt));
+    const r = await secret('sk_live_abc', { root: '/tmp/evil', cwd: '/tmp/evil' });
     expect(r.status).toBe(200);
     expect(readFileSync(join(wt, '.env'), 'utf-8')).toContain('STRIPE_KEY=');
     expect(readFileSync(join(wt, '.gitignore'), 'utf-8')).toMatch(/\.env/);
     expect(existsSync(join(project, '.env'))).toBe(false);
+    const s = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET());
+    expect(s.body.folder).toEqual({ path: realpathSync(wt), name: 'child-own' });
   });
 
-  it('a refused working folder writes nothing (409 card_root)', async () => {
-    setCardRootResolverForTests(async () => null);
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v' }] }, OWNER_PAGE);
+  it('a LINKED repository\'s real worktree is accepted: the run executes there, the secret lands there with its .gitignore', async () => {
+    const code = repo('code');
+    const url = 'https://github.com/acme/code.git';
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ linkedRepos: [{ name: 'code', gitRemoteUrl: url }] }));
+    writeFileSync(join(process.env.HOME!, '.dreamcontext', 'linked-repos.json'), JSON.stringify({ repos: { [url]: code } }));
+    const wt = join(wtHome, 'child-code');
+    git(code, 'worktree', 'add', '-q', '-b', 'super/code', wt);
+    recordChild(wt);
+    expect(await runIn()).toBe(realpathSync(wt));
+    expect((await secret('sk_live_linked')).status).toBe(200);
+    expect(readFileSync(join(wt, '.env'), 'utf-8')).toContain('STRIPE_KEY=');
+    expect(readFileSync(join(wt, '.gitignore'), 'utf-8')).toMatch(/\.env/);
+    expect(existsSync(join(project, '.env')) || existsSync(join(code, '.env'))).toBe(false);
+  });
+
+  it('another repository\'s checkout is refused: no run, no secret (409 card_root), the card stays open', async () => {
+    const foreign = repo('foreign');
+    const wt = join(wtHome, 'child-foreign');
+    git(foreign, 'worktree', 'add', '-q', '-b', 'super/f', wt);
+    recordChild(wt);
+    expect(await runIn()).toBeNull();
+    const r = await secret('v');
     expect(r.status).toBe(409);
     expect(r.body.error).toBe('card_root');
     expect(existsSync(join(wt, '.env')) || existsSync(join(project, '.env'))).toBe(false);
     expect(getCard(SID, refOf('key'))?.state).toBe('open');
   });
 
-  it('a run started with a root argument runs there, and the folder is what the slot draws', async () => {
-    const r = startRun(SID, refOf('login'), 'mac', { root: wt });
-    expect('refused' in r).toBe(false);
-    expect(ptys[0].cwd).toBe(wt);
-    const GET = { host: '127.0.0.1:4173', 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: KEY };
-    const s = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET);
-    expect(s.body.folder).toEqual({ path: wt, name: 'child' });
+  it('a symlinked worktree is refused, never swapped for the project root', async () => {
+    const elsewhere = join(repo('holder'), '..', 'elsewhere');
+    git(project, 'worktree', 'add', '-q', '-b', 'super/el', elsewhere);
+    const link = join(wtHome, 'child-link');
+    symlinkSync(elsewhere, link);
+    recordChild(link);
+    expect(await runIn()).toBeNull();
+    expect((await secret('v')).status).toBe(409);
+    expect(existsSync(join(elsewhere, '.env')) || existsSync(join(project, '.env'))).toBe(false);
   });
 
-  it('a child with no recorded worktree uses the project root (the real resolver)', async () => {
-    setCardRootResolverForTests(null);
-    const GET = { host: '127.0.0.1:4173', 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: KEY };
-    const s = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET);
+  it('a child with no recorded worktree uses the project root', async () => {
+    expect(await runIn()).toBe(project);
+    const s = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET());
     expect(s.body.folder).toEqual({ path: project, name: basename(project) });
   });
 });

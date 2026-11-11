@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CardRootRefused, cardWorkingRoot } from '../../src/server/session-worktree.js';
+import { enterSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 
 const SESSION = '11111111-2222-4333-8444-555555555555';
 const PLAIN = '99999999-2222-4333-8444-555555555555';
@@ -50,6 +51,7 @@ beforeEach(() => {
   mkdirSync(join(home, '.claude-worktrees'), { recursive: true });
 });
 afterEach(() => {
+  resetSessionCheckouts();
   process.env.HOME = realHome;
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -84,13 +86,62 @@ describe('cardWorkingRoot', () => {
     registerChild(fwt);
     expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, SESSION, { home }))).not.toBe('ok');
   });
-  it('a governed checkout that is not one of this repository\'s worktrees (a linked repo) is refused', async () => {
+  it('a checkout its governed repository\'s own `git worktree list` does not name is refused (not_governed)', async () => {
     const wt = join(home, '.claude-worktrees', 'child-one');
     git(projectRoot, 'worktree', 'add', '-q', '-b', 'super/x', wt);
     registerChild(wt);
-    // As if `git worktree list` of the project did not name it (another repository's checkout).
-    expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, SESSION, { home, listWorktrees: async () => [projectRoot] }))).toBe('not_same_repo');
+    expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, SESSION, { home, listWorktrees: async () => [projectRoot] }))).toBe('not_governed');
     expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, SESSION, { home, listWorktrees: async () => { throw new Error('git'); } }))).toBe('git_failed');
+  });
+  it('a real worktree of a LINKED repository the project governs is accepted (the Super\'s decision, 11 Nov)', async () => {
+    const code = join(scratch, 'code');
+    mkdirSync(code);
+    writeFileSync(join(code, 'c'), 'x');
+    execFileSync('git', ['init', '-q', code]);
+    git(code, 'add', '.');
+    git(code, 'commit', '-qm', 'i');
+    const url = 'https://github.com/acme/code.git';
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ linkedRepos: [{ name: 'code', gitRemoteUrl: url }] }));
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'linked-repos.json'), JSON.stringify({ repos: { [url]: code } }));
+    const wt = join(home, '.claude-worktrees', 'code-child');
+    git(code, 'worktree', 'add', '-q', '-b', 'super/c', wt);
+    registerChild(wt);
+    let asked = '';
+    expect(await cardWorkingRoot(contextRoot, projectRoot, SESSION, { home, listWorktrees: async (repo) => { asked = repo; return [realpathSync(code), realpathSync(wt)]; } })).toBe(realpathSync(wt));
+    // Proven by THAT repository's own worktree list, never the project's.
+    expect(asked).toBe(realpathSync(code));
+    expect(await cardWorkingRoot(contextRoot, projectRoot, SESSION, { home })).toBe(realpathSync(wt));
+  });
+  it('a project and a home under a symlinked path: a child with no worktree runs in the project root, a worktree child in its worktree', async () => {
+    const via = join(realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-wt-link-'))), 'via');
+    symlinkSync(scratch, via);
+    try {
+      const lHome = join(via, 'home');
+      const lProject = join(via, 'project');
+      const lContext = join(lProject, '_dream_context');
+      expect(await cardWorkingRoot(lContext, lProject, PLAIN, { home: lHome })).toBe(realpathSync(projectRoot));
+      const wt = join(lHome, '.claude-worktrees', 'child-sym');
+      git(projectRoot, 'worktree', 'add', '-q', '-b', 'super/s', join(home, '.claude-worktrees', 'child-sym'));
+      registerChild(wt);
+      expect(await cardWorkingRoot(lContext, lProject, SESSION, { home: lHome })).toBe(realpathSync(wt));
+    } finally {
+      rmSync(join(via, '..'), { recursive: true, force: true });
+    }
+  });
+  it('a session whose own checkout is the project root by REAL path (a realpath\'d transcript cwd) is the project root', async () => {
+    const via = join(realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-wt-link-'))), 'via');
+    symlinkSync(scratch, via);
+    try {
+      const lProject = join(via, 'project');
+      const S = '77777777-2222-4333-8444-555555555555';
+      // The session "moved" into the project itself, spelled by its real path.
+      expect(enterSessionCheckout(S, realpathSync(projectRoot), lProject, { home, claim: true })).toBe(true);
+      expect(await cardWorkingRoot(join(lProject, '_dream_context'), lProject, S, { home })).toBe(realpathSync(projectRoot));
+    } finally {
+      rmSync(join(via, '..'), { recursive: true, force: true });
+    }
   });
   it('a recorded worktree that is gone is refused', async () => {
     registerChild(join(home, '.claude-worktrees', 'gone'));

@@ -4,9 +4,41 @@
 .super-job-bar { gap: 8px; align-items: center; }
 .super-job-bar .super-queue-head { flex: 1 1 auto; }
 
-/* ── A child's card on the row (sahip-karti-yerinde K7): the card's own verb is the primary
-   button, then Not needed and an Open link. At phone width Not needed folds into the row's menu
-   and the verb stays. Tokens only. */
+/* ── A child's card on the row (sahip-karti-yerinde K4, K7; drawing A1-A5) ──────────────────
+   The verb acts on what the row shows, so NOTHING on this row is cut: not the job's title, not the
+   command, not its folder. Unlike the one-line question pill, a card row wraps onto as many lines
+   as it needs, at every width (▶ Run is offered only for a command drawn here whole; one that
+   cannot be is offered Show). At phone width it stacks: title line, command, buttons. Tokens only. */
+.super-queue-head[data-card] {
+  flex-wrap: wrap;
+  border-radius: var(--radius-lg);
+}
+.super-queue-head[data-card] .super-queue-who {
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.super-queue-card-line {
+  flex: 1 1 24ch;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.super-queue-card-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+.super-queue-card-folder {
+  margin-left: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  overflow-wrap: anywhere;
+}
+.super-queue-head[data-card] .super-queue-actions { flex-wrap: wrap; }
 .super-queue-open-link {
   border: 0;
   background: none;
@@ -27,8 +59,7 @@
   font-size: var(--font-size-xs);
   white-space: nowrap;
 }
-.super-queue-card-menu { display: none; position: relative; }
 @media (max-width: 480px) {
-  .super-queue-card-notneeded { display: none; }
-  .super-queue-card-menu { display: inline-flex; }
+  .super-queue-head[data-card] .super-queue-card-line,
+  .super-queue-head[data-card] .super-queue-actions { flex-basis: 100%; }
 }

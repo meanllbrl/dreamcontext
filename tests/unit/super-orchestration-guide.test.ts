@@ -113,7 +113,9 @@ describe('super-orchestration guide: shape', () => {
     // Environment, out of scope and decisions; measured 25,860, cap = measured + 1,000 per the plan).
     // +300 (2026-11-08, super-model-secimi: decide the model per job, the briefing carries the map; measured 25,785).
     // +250 (2026-11-08, owner correction: haiku only for read-only research; measured 26,015).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(27_850); // +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
+    // +700 (2026-11-11, sahip-karti-yerinde: a child's card is the owner's on his bar and in the Super chat;
+    // the `parked` and `owner-result` events; `gone` no longer closes a card; measured 28,503).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(28_550); // +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {

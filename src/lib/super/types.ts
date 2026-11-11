@@ -2005,9 +2005,9 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.
  */
-export const SUPER_BRIEF_REV = 38;
+export const SUPER_BRIEF_REV = 39;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

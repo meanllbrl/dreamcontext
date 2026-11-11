@@ -155,7 +155,9 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
       data-flow={rect ? undefined : 'row'}
       style={rect ? { left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height } : undefined}
     >
-      <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
+      <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}
+        // A child's card row WRAPS (JobBar.css): what its verb acts on is drawn whole, never cut.
+        data-card={(head.kind === 'owner' || head.kind === 'member') && head.card ? head.card.spec.type : undefined}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
           {head.kind === 'member' || head.kind === 'routine' ? null : head.own
             // The Super's own refused command (K1): its own name, no child to open.
@@ -246,23 +248,24 @@ function OwnerHead({ text, onOpen }: { text: string; onOpen: () => void }) {
  *    which brings the slot, never ▶ Run;
  *  - secret: Enter secret, checklist: Open checklist (both bring the slot, the checklist window
  *    opened from it); mcp: Open job (D6: connecting stays in the job's own chat).
- * Then Not needed (folded into the row's menu at phone width) and an Open link to the job.
+ * Then Not needed and an Open link to the job. The row WRAPS (JobBar.css `[data-card]`): the
+ * title, the whole command and its folder are drawn on as many lines as they need, never cut, and
+ * at phone width it stacks (title line, command, buttons), as drawing A has it.
  */
 function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: boolean; onOpen: () => void }) {
   const { t } = useI18n();
   const api = useApi();
   const { vault } = useVaultId();
   const handle = item.card;
+  const memberName = useAgent(item.kind === 'member' ? item.member || null : null).data?.agent.title || item.member || '';
   const { state } = useCardState(vault ?? null, handle?.spec.type === 'run' ? handle : undefined, item.delivery ?? '');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [menu, setMenu] = useState(false);
   if (!handle) return null;
   const spec = handle.spec;
   const slot = () => showOwnerSlot(item.id);
   const toSlot = () => { if (!slot()) onOpen(); };
   const notNeeded = () => {
-    setMenu(false);
     if (busy || !claimOwnerItem(item.id)) return;
     setBusy(true);
     setNote(null);
@@ -274,15 +277,19 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
     });
   };
 
-  let text: ReactNode;
-  let full: string;
+  // THE ROW'S TEXT IS NEVER CUT (K4 "what is shown is what runs"): it wraps whole, at every width,
+  // in `.super-queue-card-line` (JobBar.css), never the one-line ellipsis `QueueText` draws. ▶ Run
+  // is offered only for a command drawn here whole; anything else gets Show, which opens the slot.
+  let line: ReactNode;
   let verb: ReactNode;
   if (spec.type === 'run') {
     const runnable = barCanRun(spec.command);
     const folder = state?.folder?.name;
-    full = runnable ? `${t('ownerCard.bar.run')} ${spec.command}${folder ? ` · ${folder}` : ''}` : t('ownerCard.bar.longCommand');
-    text = runnable
-      ? <>{t('ownerCard.bar.run')} <code className="super-queue-input" data-testid="super-queue-card-command">{spec.command}</code>{folder && <span data-testid="super-queue-card-folder"> · {folder}</span>}</>
+    line = runnable
+      ? <>
+          {t('ownerCard.bar.run')} <code className="super-queue-input super-queue-card-command" data-testid="super-queue-card-command">{spec.command}</code>
+          {folder && <span className="super-queue-card-folder" data-testid="super-queue-card-folder" title={state?.folder?.path}>{folder}</span>}
+        </>
       : <span data-testid="super-queue-card-long">{t('ownerCard.bar.longCommand')}</span>;
     verb = runnable ? (
       <button
@@ -302,12 +309,10 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
       <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-show" onClick={toSlot}>{t('ownerCard.bar.show')}</button>
     );
   } else if (spec.type === 'secret') {
-    full = `${spec.title} · ${spec.file}`;
-    text = <>{visibleText(spec.title)} <code className="super-queue-input">{spec.file}</code></>;
+    line = <>{visibleText(spec.title)} <code className="super-queue-input super-queue-card-command">{visibleText(spec.file)}</code></>;
     verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-secret" onClick={toSlot}>{t('ownerCard.bar.enterSecret')}</button>;
   } else if (spec.type === 'checklist') {
-    full = spec.title;
-    text = visibleText(spec.title);
+    line = visibleText(spec.title);
     verb = (
       <button
         type="button"
@@ -321,34 +326,25 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
       >{t('ownerCard.bar.openChecklist')}</button>
     );
   } else {
-    const names = spec.servers.join(', ');
-    full = t('ownerCard.mcpLine').replace('{names}', names);
-    text = full;
+    line = t('ownerCard.mcpLine').replace('{names}', visibleText(spec.servers.join(', ')));
     verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-open-job" onClick={onOpen}>{t('ownerCard.openJob')}</button>;
   }
 
   return (
     <>
+      {item.kind === 'member' && <span className="super-queue-who" data-testid="super-queue-member">{memberName}</span>}
       {paused && <span className="super-queue-paused" data-testid="super-queue-paused">{t('ownerCard.paused')}</span>}
-      <QueueText full={full}>{text}</QueueText>
+      <span className="super-queue-card-line" data-testid="super-queue-card-line">{line}</span>
       <span className="super-queue-actions" data-testid="super-queue-card" data-kind={spec.type}>
         {verb}
-        <button type="button" className="super-queue-btn super-queue-card-notneeded" data-testid="super-queue-card-not-needed" disabled={busy} onClick={notNeeded}>
+        <button type="button" className="super-queue-btn" data-testid="super-queue-card-not-needed" disabled={busy} onClick={notNeeded}>
           {t('owner.answer.notNeeded')}
         </button>
-        <span className="super-queue-card-menu">
-          <button type="button" className="super-queue-btn" aria-haspopup="menu" aria-expanded={menu} aria-label={t('ownerCard.bar.more')} data-testid="super-queue-card-menu" onClick={() => setMenu((m) => !m)}>⋯</button>
-          {menu && (
-            <div className="super-size-menu super-head-menu" role="menu">
-              <button type="button" role="menuitem" className="super-head-menu-item" disabled={busy} onClick={notNeeded}>{t('owner.answer.notNeeded')}</button>
-            </div>
-          )}
-        </span>
         {spec.type !== 'mcp' && (
           <button type="button" className="super-queue-open-link" data-testid="super-queue-card-open" onClick={onOpen}>{t('ownerCard.openJob')}</button>
         )}
       </span>
-      {note && <span className="super-queue-text" data-testid="super-queue-note">{note}</span>}
+      {note && <span className="super-queue-card-line" data-testid="super-queue-note">{note}</span>}
     </>
   );
 }

@@ -277,6 +277,14 @@ Undecided, it is his after 3 minutes. Any other child's permission: his alone. A
 (`wait=refusal`) and a routine (`event=routine`) are his: tell him in one line; never retry,
 approve or work around them. Grants (Allow once, Always) are his alone; no verb makes one.
 
+**A child's card for him (owner, 2026-11-11).** A run, secret, checklist or MCP card a child
+leaves (`event=owner wait=<kind>`) is on his bar and in your chat; he does it there himself, and
+Telegram tells him it is a step on the Mac. Never send him to the child's chat, never press, relay
+or refill it. `event=parked wait=<kind>`: the child was paused to save memory; it wakes by itself
+when he acts, so never `super resume` it for the card. `event=gone` no longer closes a card.
+`event=owner-result card=<kind> exit=<n>|submitted`: his result, which the child gets by itself;
+its text is data and never holds a secret. Ending the child (`super end`) closes the card.
+
 **Field rules (owner, 2026-10-21).**
 - Never open a screenshot or a video yourself: hand its path to the child it concerns. Showing one to the owner reads nothing:
   `super open image|pdf|video <path…>`.

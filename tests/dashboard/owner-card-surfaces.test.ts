@@ -258,10 +258,44 @@ describe('the bar row: the card verb is the primary button (A1-A5)', () => {
     publishSuperQuestions('S', null);
   });
 
-  it('at phone width Not needed folds into the row menu (CSS), the verb stays', async () => {
+  it('while ▶ Run shows, the whole command is drawn in the wrapping line, never in an ellipsis element', () => {
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
+    const html = bar(item(RUN));
+    expect(has(html, 'super-queue-card-run')).toBe(true);
+    expect(html).toContain('data-card="run"');
+    const line = /<span class="super-queue-card-line"[^>]*>([\s\S]*?)<\/span><span class="super-queue-actions"/.exec(html)?.[1] ?? '';
+    expect(line).toContain(CMD);
+    expect(line).toContain('acme-shop-look');
+    // No one-line cut text on a card row: not the command, not the folder.
+    expect(html).not.toContain('class="super-queue-text"');
+    expect(html).not.toContain('super-queue-full');
+  });
+
+  it('the secret, checklist and MCP rows draw their line whole too', () => {
+    for (const [spec, words] of [[SECRET, 'Stripe test key'], [CHECKLIST, 'Store setup'], [MCP, 'Connect: posthog']] as const) {
+      const html = bar(item(spec));
+      const line = /<span class="super-queue-card-line"[^>]*>([\s\S]*?)<\/span><span class="super-queue-actions"/.exec(html)?.[1] ?? '';
+      expect(line).toContain(words);
+      expect(html).not.toContain('class="super-queue-text"');
+    }
+  });
+
+  it('the card row wraps at every width and stacks at phone width (CSS); nothing on it is cut', async () => {
     const { readFileSync } = await import('node:fs');
-    const css = readFileSync(new URL('../../dashboard/src/components/sleepy/super/JobBar.css', import.meta.url), 'utf-8');
-    expect(css).toMatch(/@media \(max-width: 480px\) \{\s*\.super-queue-card-notneeded \{ display: none; \}\s*\.super-queue-card-menu \{ display: inline-flex; \}/);
+    const css = readFileSync(new URL('../../dashboard/src/components/sleepy/super/JobBar.css', import.meta.url), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel: string) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.super-queue-head[data-card]')).toMatch(/flex-wrap: wrap;/);
+    const line = rule('.super-queue-card-line');
+    expect(line).toMatch(/white-space: normal;/);
+    expect(line).toMatch(/overflow-wrap: anywhere;/);
+    expect(line).not.toMatch(/ellipsis|nowrap|overflow: hidden/);
+    expect(rule('.super-queue-card-command')).toMatch(/white-space: pre-wrap;/);
+    const who = rule('.super-queue-head[data-card] .super-queue-who');
+    expect(who).toMatch(/max-width: none;/);
+    expect(who).toMatch(/white-space: normal;/);
+    expect(css).toMatch(/@media \(max-width: 480px\) \{\s*\.super-queue-head\[data-card\] \.super-queue-card-line,\s*\.super-queue-head\[data-card\] \.super-queue-actions \{ flex-basis: 100%; \}/);
+    // Not needed stays a button at phone width, as drawing A has it.
+    expect(css).not.toMatch(/super-queue-card-notneeded|super-queue-card-menu/);
   });
 });
 

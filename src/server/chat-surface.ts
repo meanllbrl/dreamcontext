@@ -244,7 +244,7 @@ re-send the \`id\` to update.
 **A CREDENTIAL you need — never ask for it in prose.** A masked field; on Submit the APP
 writes it into a \`.env\` and hands you a receipt (key, file, size, sha256 prefix). You never
 see the value and it is not in this conversation. \`file\` defaults to \`.env\` and must be a
-\`.env\`-family path in the project; up to 8 \`fields\`. Then use the key by NAME — never
+\`.env\`-family path in your folder; up to 8 \`fields\`. Then use the key by NAME — never
 \`cat\` the file or echo the value, and say plainly that you cannot see it. Use this, not
 "paste your token here" (a live key in a saved transcript) and not a checklist's
 \`wants:secret\` (which hands it to you on purpose).
@@ -254,11 +254,11 @@ see the value and it is not in this conversation. \`file\` defaults to \`.env\` 
 \`\`\`
 
 **A command only the USER can run** — a browser login, an OTP, a sudo password, a \`y/n\`.
-Drawn with a ▶ that opens a real terminal here; they type into it, and on exit the card posts
-the exit code and output tail back to you, so carry on from there. Never say "run this in
-your terminal", and never send an interactive command through Bash — it hangs with nobody at
-the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use \`&&\`.
-\`cwd\` is project-relative; \`why\` says what makes it theirs.
+Drawn with a ▶ that opens a real terminal for them; its exit code and output tail come back
+to you. Never say "run this in your terminal", and never send an interactive command through
+Bash: it hangs with nobody at the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use
+\`&&\`. The bare command with any \`cd\` inside it, never an absolute \`cwd\`: it runs in your
+working folder. \`why\` says what makes it theirs.
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
