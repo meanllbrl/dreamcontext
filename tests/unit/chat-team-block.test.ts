@@ -280,6 +280,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
       // rev 30 (2026-11-06, owed ledger): only a child's question waits behind his card.
       '  `[super answer] …`, what came in meanwhile as `<super-while-you-asked>`: answer him, then',
+      // 2026-11-11 (telegram-resim-adlari): the line now goes on, only a tap or a message about the card closes it.
+      '  take those one at a time.',
       '  `super resume <child>` reopens it); `--idle` lists idle ones; `--force` only if the owner asked.',
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
@@ -362,6 +364,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
       expect.stringContaining('(a late line lands above the card);'),
       expect.stringContaining('child questions that waited meanwhile as'),
+      // 2026-11-11 (telegram-resim-adlari): only a tap or a message written about the card closes it.
+      '  take those one at a time. Only a tap or a message written about the card closes it: any other',
+      '  message of his leaves it open (`<super-ask-still-open>` says so), so answer that message; if his words answer the card',
+      '  anyway or he says to drop it, `super queue done <ask id>`: an open card holds every child question behind it.',
       '  `super resume <child>` reopens it); `--force` only if the owner asked.',
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
@@ -405,6 +411,6 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
       expect.stringContaining('<super-brief rev=39>'),
     ]);
-    expect(after.length).toBe(before.length + 56); // +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 58); // +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

@@ -288,7 +288,8 @@ describe('sidebar rail — the Workspace entry is Whiteboard, the settings group
     expect(groups.map((g) => g.labelKey)).not.toContain('nav.group.control');
     const block = navGroupsBlock(read(SIDEBAR_TSX));
     const system = block.slice(block.indexOf("'nav.group.system'"));
-    expect(system).toMatch(/page: 'packs'[\s\S]*page: 'settings'/);
+    expect(system).toMatch(/page: 'settings'/);
+    expect(system).not.toMatch(/page: 'packs'/);
     const en = read(I18N);
     expect(en).toContain("'nav.group.system': 'System',");
     expect(en).not.toContain("'nav.group.control':");
