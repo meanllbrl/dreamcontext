@@ -65,9 +65,10 @@ take its answer with `apps do` instead of recomputing it: a second calculation i
 from the app. A tool that reads (GET) runs straight away; a tool that changes something is refused
 without `--confirm`, so say in one line what it will do and run it only after the owner says yes in
 this chat. Who may then run it: the owner's chats, his terminal and the main Super Agent's own
-session; the app's own member when that app called it (`dc.team.ask`), for that app's tools only;
+session in a turn he opened (not one a schedule or an event opened); the app's own member when that app called it (`dc.team.ask`), for that app's tools only;
 an unattended run or a member's Super when its approved job or member lists the tool
-(`automations edit <slug> --app-tools <app>/<tool>`, then the owner approves its card again). A
+(`automations edit <slug> --app-tools <app>/<tool>`, then the owner approves its card again; a
+tool removed stops at once). A
 Super child asks the Super Agent; a peer, a builder and sleep never. Every refusal (`needs_owner`)
 names the owner's one step to allow it. `apps do --json` always has `body`: the answer up to 16 KB,
 `null` over it with the whole answer in `bodyFile` (and `bytes`).

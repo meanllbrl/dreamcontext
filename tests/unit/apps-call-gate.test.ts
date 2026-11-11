@@ -37,6 +37,8 @@ describe('callClaim: every real env names its class (first match wins)', () => {
     ['background sleep', { DREAMCONTEXT_AUTO_SLEEP: '1' }, 'spawned'],
     ['a peer inside an automation run: spawned beats run', { DREAMCONTEXT_SPAWNED: 'peer', DREAMCONTEXT_AUTOMATION_RUN: 'r' }, 'spawned'],
     ['Super crew inside a chat: crew beats chat', { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_AGENT_CHAT: 'x' }, 'crew'],
+    // `automations run` from the Super's shell: the run inherits its crew mark and tab session.
+    ['a run started from the Super shell: the run mark beats inherited crew', { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_TAB_SESSION: 'aaaaaaaa-1111-2222-3333-444444444444', DREAMCONTEXT_AUTOMATION_SLUG: 'ua', DREAMCONTEXT_AUTOMATION_RUN: 'R' }, 'run'],
   ];
   it.each(table)('%s', (_name, env, want) => {
     expect(callClaim(env).class).toBe(want);
@@ -209,6 +211,14 @@ describe('gateAppCall', () => {
     // Its session never lifts a builder or a peer it started (they carry the spawned mark).
     expect(call('POST', '/api/notify-test', 'spawned', { confirm: true, sessions: [main] })).toMatchObject({ ok: false, code: 'needs_owner' });
     expect(call('POST', '/api/notify-test', 'run', { confirm: true, sessions: [main] })).toMatchObject({ ok: false, code: 'needs_owner' });
+    // A turn the inbox opened (a schedule, a routine, results): nobody typed it, so no.
+    const { _openEventTurnForTests, markSuperEventTurn } = await import('../../src/lib/super/inbox.js');
+    _openEventTurnForTests(main, 'batch-1', ctx);
+    const event = call('POST', '/api/notify-test', 'crew', { confirm: true, sessions: [main] });
+    expect(event).toMatchObject({ ok: false, code: 'needs_owner' });
+    expect(event.ok ? '' : event.message).toMatch(/opened by a schedule or an event/);
+    markSuperEventTurn(main, false);
+    expect(call('POST', '/api/notify-test', 'crew', { confirm: true, sessions: [main] })).toMatchObject({ ok: true });
     expect(call('POST', '/api/notify-test', 'owner', { confirm: true, sessions: ['99999999-1111-2222-3333-444444444444'] })).toMatchObject({ ok: true });
     noteSuperState(ctx, emptySuperState() as never);
   });
@@ -289,6 +299,9 @@ describe('gateAppCall', () => {
       appendThreadEntry(ctx, 'ua', { runId: C, kind: 'user', text: 'app asks', via: 'app', app: 'yuk' });
       seed(ctx, { run: runJob(C) });
       expect(run('ua', C)).toMatchObject({ ok: true, effect: 'change' });
+      // Its LISTED tools only: an unlisted route of the same app stays the owner's.
+      const raw = gate(ctx, rec, actions, { method: 'POST', path: '/admin/reset', confirm: true, claim: { class: 'run', automation: 'ua', run: C } }, { home });
+      expect(raw).toMatchObject({ ok: false, code: 'needs_owner' });
       const C2 = '2026-11-07T13:30:00.000Z';
       appendThreadEntry(ctx, 'ua', { runId: C2, kind: 'user', text: 'other app asks', via: 'app', app: 'other-app' });
       seed(ctx, { run: runJob(C2) });
@@ -339,8 +352,10 @@ describe('gateAppCall', () => {
       // `--app` stays a schedule's, and its refusal names the way.
       expect(() => createAutomation(ctx, { slug: 'callme-2', title: 'K2', mode: 'call', prompt: 'p', app: 'yuk' })).toThrow(/takes --app-tools without --app/);
 
-      // Cleared: the call block loses it, and the hash moves again (the owner approves the removal).
+      // Cleared: it stops at once (no approval needed to take a tool away), and the call block loses it.
       setAppTools(ctx, 'kurucu', []);
+      expect(as({ class: 'crew', member: 'kurucu' })).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(as({ class: 'run', automation: 'kurucu', run: 'R' })).toMatchObject({ ok: false, code: 'needs_owner' });
       expect(getAgent(ctx, 'kurucu')!.call.appTools).toBeUndefined();
       expect(getRunTarget(ctx, 'kurucu', 'agent', home)!.appTools).toBeUndefined();
     });

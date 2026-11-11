@@ -43,6 +43,7 @@ import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SE
 import { readManifest, ACTION_METHODS, effectOf, toolTimeoutSec, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
 import { decodeClaim, RUN_HEADER, type CallClaim } from '../../lib/apps/call-claim.js';
 import { handedOverChildRoot, isSuperChild, isSuperSessionId, superOfSession } from '../../lib/super/store.js';
+import { isSuperEventTurn } from '../../lib/super/inbox.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { jobStartedByOwner, runStartedByApp } from '../automation-job.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
@@ -824,23 +825,34 @@ function superSession(sessions: readonly string[] | undefined): boolean {
   return false;
 }
 
-/** Is one of these conversations the main Super Agent's own session (the owner talks to it)? The
- *  server's own record decides, never the caller's class. A member's Super is not main. */
-function mainSuperSession(sessions: readonly string[] | undefined): boolean {
+/** Is one of these conversations the main Super Agent's own session in a turn the OWNER opened?
+ *  The server's own record decides, never the caller's class: a member's Super is not main, and a
+ *  turn the inbox opened (a schedule, a routine, results, peer mail) is nobody typing. */
+function mainSuperOwnerTurn(sessions: readonly string[] | undefined): boolean {
   for (const id of sessions ?? []) {
     if (!id) continue;
-    try { if (superOfSession(id)?.superId === 'main') return true; } catch { /* cannot tell: not main */ }
+    try { if (superOfSession(id)?.superId === 'main' && !isSuperEventTurn(id)) return true; } catch { /* cannot tell: not main */ }
   }
   return false;
 }
 
-/** Does `slug`'s APPROVED version name `ref` in its `app_tools`? Judged on the version that may
- *  run: a pending edit never adds an app tool (`approvedTarget`). Both the slot's file and the
- *  agent's call target (a member's `call.app_tools`) count: the owner approved each. */
+/** Is one of these conversations the main Super Agent's own session, whatever opened its turn? */
+function mainSuperAnyTurn(sessions: readonly string[] | undefined): boolean {
+  for (const id of sessions ?? []) {
+    if (!id) continue;
+    try { if (superOfSession(id)?.superId === 'main') return true; } catch { /* cannot tell */ }
+  }
+  return false;
+}
+
+/** Does `slug` name `ref` in its `app_tools` BOTH as written now and in its approved version? A
+ *  pending edit never adds a tool (`approvedTarget` judges the approved text) and a removal takes
+ *  effect at once (the file no longer names it). Both the slot's file and the agent's call target
+ *  (a member's `call.app_tools`) count: the owner approved each. */
 function approvedAppTool(contextRoot: string, slug: string, ref: string, home: string | undefined): boolean {
   const targets = [getAutomation(contextRoot, slug, home), getRunTarget(contextRoot, slug, 'agent', home)];
   for (const m of targets) {
-    if (!m) continue;
+    if (!m || !m.appTools?.includes(ref)) continue;
     const view = approvedTarget(projectRootOf(contextRoot), m, home);
     if (view.verdict.approved && view.manifest.appTools?.includes(ref)) return true;
   }
@@ -882,12 +894,15 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
     : `this call names no single tool of ${rec.slug}, so only the owner can run it, in a chat, the Super Agent or the app's window.`;
   const cls = call.claim.class;
   if (cls === 'spawned') return refuse('This session runs with nobody at the keyboard (a builder, a peer delivery, a cross-tool ask or sleep).', `the owner runs it in a chat, the Super Agent or the app's window.`);
-  // The main Super Agent's own session: the owner is there, as in a normal chat (owner 2026-11-11).
-  if (mainSuperSession(call.sessions) && (cls === 'crew' || cls === 'owner' || cls === 'chat')) return pass;
-  if (cls === 'crew' || superSession(call.sessions)) {
+  // The main Super Agent's own session in a turn the owner opened: he is there, as in a normal
+  // chat (owner 2026-11-11). A run never borrows it (a run's class wins over inherited crew marks).
+  if (mainSuperOwnerTurn(call.sessions) && (cls === 'crew' || cls === 'owner' || cls === 'chat')) return pass;
+  // A run keeps its own strict checks below, whatever session ids it inherited.
+  if (cls === 'crew' || (cls !== 'run' && superSession(call.sessions))) {
     const member = cls === 'crew' ? call.claim.member : undefined;
     if (member && action && !ambiguous && approvedAppTool(contextRoot, member, ref, deps.home)) return pass;
     if (member) return refuse(`${member}'s own work runs a changing app tool only when its approved member file names it.`, editLine(member));
+    if (mainSuperAnyTurn(call.sessions)) return refuse('This Super Agent turn was opened by a schedule or an event, not by the owner.', `the owner asks the Super Agent for it in his next message (it runs it in that turn), or runs it in a chat or the app's window.`);
     return refuse('A Super Agent child runs a changing app tool only through the Super Agent itself.', `ask the Super Agent to run it in its own session (it can), or the owner runs it in a chat or the app's window.`);
   }
   if (cls === 'run') {
@@ -896,7 +911,8 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
     if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return pass;
     // The app's own member (`dc.team.ask` from this app's backend): the app installed and approved
     // on this Mac is the owner's proof, for this app's tools only (owner 2026-11-11).
-    if (slug && call.claim.run && runStartedByApp(contextRoot, slug, call.claim.run) === rec.slug) return pass;
+    // Its LISTED tools only: an unlisted route or an unnamed shared one stays the owner's.
+    if (action && !ambiguous && slug && call.claim.run && runStartedByApp(contextRoot, slug, call.claim.run) === rec.slug) return pass;
     if (!slug) return refuse('An unattended run that names no job changes nothing through an app.', `the owner runs it in a chat, the Super Agent or the app's window.`);
     return refuse(`An unattended run of ${slug} changes things only with a tool its approved job or member names (app_tools: ${ref}).`, editLine(slug));
   }

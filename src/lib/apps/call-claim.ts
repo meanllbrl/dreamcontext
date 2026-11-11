@@ -6,6 +6,9 @@
  *
  *   spawned  DREAMCONTEXT_SPAWNED, DREAMCONTEXT_AUTO_SLEEP or DREAMCONTEXT_ASK_DEPTH set:
  *            peer delivery, a cross-tool ask, a builder, background sleep. A change: never.
+ *   run*     DREAMCONTEXT_AUTOMATION_RUN set (only the runner sets it): a run, even when it
+ *            inherited crew marks from the shell that started it (`automations run` from the
+ *            Super Agent's shell copies its env). Checked before crew (app-arac-izin review).
  *   crew     DREAMCONTEXT_SUPER_CREW or DREAMCONTEXT_MEMBER_CREW set: the Super Agent and its
  *            children (the owner's own Super chat too, which carries the same mark). The main
  *            Super's own session passes (the owner is there, told by the server's own record); a
@@ -58,18 +61,21 @@ const MEMBER_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 export function callClaim(env: NodeJS.ProcessEnv = process.env): CallClaim {
   if (set(env, 'DREAMCONTEXT_SPAWNED') || set(env, 'DREAMCONTEXT_AUTO_SLEEP') || set(env, 'DREAMCONTEXT_ASK_DEPTH')) return { class: 'spawned' };
+  if (set(env, 'DREAMCONTEXT_AUTOMATION_RUN')) return runClaim(env);
   if (set(env, 'DREAMCONTEXT_SUPER_CREW') || set(env, 'DREAMCONTEXT_MEMBER_CREW')) {
     // A member's own Super names it in _MEMBER_SUPER, its children in _MEMBER_CREW ('*' = unsure: none).
     const member = [(env.DREAMCONTEXT_MEMBER_SUPER ?? '').trim(), (env.DREAMCONTEXT_MEMBER_CREW ?? '').trim()].find((v) => MEMBER_RE.test(v));
     return { class: 'crew', ...(member ? { member } : {}) };
   }
   if (set(env, 'DREAMCONTEXT_AGENT_CHAT') && !set(env, 'DREAMCONTEXT_AUTOMATION_RUN')) return { class: 'chat' };
-  if (set(env, 'DREAMCONTEXT_AUTOMATION_RUN') || set(env, 'DREAMCONTEXT_AUTOMATION_SLUG') || set(env, 'DREAMCONTEXT_AGENT_SELF')) {
-    const automation = (env.DREAMCONTEXT_AUTOMATION_SLUG ?? '').trim() || (env.DREAMCONTEXT_AGENT_SELF ?? '').trim();
-    const run = (env.DREAMCONTEXT_AUTOMATION_RUN ?? '').trim();
-    return { class: 'run', ...(automation ? { automation } : {}), ...(run ? { run } : {}) };
-  }
+  if (set(env, 'DREAMCONTEXT_AUTOMATION_SLUG') || set(env, 'DREAMCONTEXT_AGENT_SELF')) return runClaim(env);
   return { class: 'owner' };
+}
+
+function runClaim(env: NodeJS.ProcessEnv): CallClaim {
+  const automation = (env.DREAMCONTEXT_AUTOMATION_SLUG ?? '').trim() || (env.DREAMCONTEXT_AGENT_SELF ?? '').trim();
+  const run = (env.DREAMCONTEXT_AUTOMATION_RUN ?? '').trim();
+  return { class: 'run', ...(automation ? { automation } : {}), ...(run ? { run } : {}) };
 }
 
 /** The header value: compact JSON, slug and run id cut to safe lengths. */

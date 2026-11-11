@@ -2104,7 +2104,7 @@ export function registerAutomationsCommand(program: Command): void {
         const out = setAppTools(root, slug, list);
         const what = out.kind === 'member' ? `member "${slug}"` : `"${slug}"`;
         success(list.length ? `${what} may run: ${out.appTools.join(', ')}.` : `${what} runs no changing app tool unattended now.`);
-        info('The owner approves the change on its card (AI Team page, or the Automations page); until then the version he approved keeps running.');
+        info('A tool removed stops at once. A tool added runs only after the owner approves the change on its card (AI Team page, or the Automations page).');
       } catch (err) {
         handleAutomationsError(err);
       }

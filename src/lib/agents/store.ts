@@ -1040,7 +1040,7 @@ export function setAppTools(contextRoot: string, slug: string, refs: readonly st
     const parts = readManifestParts(file);
     const m = parts.kind === 'legacy' ? parts.legacy : parts.job;
     if (parts.kind === 'legacy' && parts.legacy.target === 'super' && list.length) {
-      throw new AutomationError('A Super automation is a turn of the Super itself: it takes no app tools (the Super runs them as the owner does).');
+      throw new AutomationError('A Super automation is a turn of the Super itself: it takes no app tools (the Super runs them in a turn the owner opens; ask it there).');
     }
     assertOwned({ owner: m.owner ?? null }, m.title || slug);
     assertRegularFile(file);
