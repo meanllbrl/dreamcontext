@@ -1,6 +1,6 @@
 /**
- * The Whiteboard page's per-machine memory (open tabs and their groups, the last board, each
- * board's viewport, the agent panel), kept where a relaunch cannot wipe it.
+ * The Whiteboard page's per-machine memory (the explorer, the last board, each board's
+ * viewport, the agent panel), kept where a relaunch cannot wipe it.
  *
  * localStorage alone is not enough: the desktop app picks a fresh loopback port every launch,
  * so the origin and its localStorage are new each time and every tab came back closed (owner,
@@ -79,6 +79,17 @@ export function writeWhiteboardPref(vault: string, key: string, localKey: string
   const prefs = hydrated.get(vault);
   if (!prefs || prefs.values[key] === value) return;
   prefs.values[key] = value;
+  if (prefs.timer) clearTimeout(prefs.timer);
+  prefs.timer = setTimeout(() => flush(vault), SAVE_DELAY_MS);
+}
+
+/** Forget a key for good (a retired feature's memory): gone from localStorage now and from the
+ *  server's file on the next save. A key that is not there writes nothing. */
+export function dropWhiteboardPref(vault: string, key: string, localKey: string): void {
+  try { localStorage.removeItem(localKey); } catch { /* best-effort */ }
+  const prefs = hydrated.get(vault);
+  if (!prefs || !(key in prefs.values)) return;
+  delete prefs.values[key];
   if (prefs.timer) clearTimeout(prefs.timer);
   prefs.timer = setTimeout(() => flush(vault), SAVE_DELAY_MS);
 }

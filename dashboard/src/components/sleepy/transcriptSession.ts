@@ -85,7 +85,7 @@ export function createTranscriptSession(
     dispose: () => { subscribers.clear(); },
     subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
     getModel: () => conv,
-    send: noop,
+    send: () => false,
     steer: () => false,
     canSteer: () => false,
     enqueue: noop,

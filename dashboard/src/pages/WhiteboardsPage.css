@@ -1,6 +1,7 @@
 /*
- * Control Panel: one board open full-bleed under a toolbar (the board tabs, the save state).
- * The tabs' own rules live in whiteboards/BoardTabs.css and BoardSwitcher.css.
+ * Control Panel: one board open full-bleed under the shell bar (no tabs row, 2026-11-11). The
+ * save state and the agents toggle sit in the canvas's own top-right row; the explorer's show
+ * toggle floats top-left on the canvas, or above the state card when no board is drawn.
  *
  * Accent budget (K8): none here beyond the focus ring. Save state is plain text; the one
  * failure ink is the error token, on "Not saved" and the corrupt-board card.
@@ -21,24 +22,51 @@
   font-size: var(--font-size-sm);
 }
 
-/* The toolbar sits above the canvas: `z-index` so the switcher's panels overlay Excalidraw,
-   whose own layers stay contained by `.wbp-canvas`'s isolation. */
-.wbp-bar {
-  position: relative;
-  z-index: 2;
+/* No board drawn (loading, missing, corrupt, error): the explorer's show toggle above the card. */
+.wbp-state-top {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  height: var(--space-12);
-  padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg);
+  padding: var(--space-3) var(--space-3) 0;
 }
 
-.wbp-head-spacer {
-  flex: 1;
+/* A board drawn and the explorer hidden: its show toggle and the board's name float top-left on
+   the canvas, right of Excalidraw's own menu button. */
+.wbp-float-left {
+  position: absolute;
+  z-index: 5;
+  top: var(--space-4);
+  left: calc(var(--space-4) + var(--space-12));
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(40%, 320px);
+  pointer-events: none;
+}
+
+.wbp-float-left > * { pointer-events: auto; }
+
+.wbp-float-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* The save state and the agents toggle in the canvas's top-right row, beside "+ Add". */
+.wbp-canvas .wbp-status {
+  max-width: 200px;
+  padding: 0 var(--space-1);
+}
+
+.wbp-canvas .wbp-agent-toggle {
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
 }
 
 .wbp-btn {
@@ -93,6 +121,13 @@
   background: var(--color-error-subtle);
   color: var(--color-error-ink);
   font-size: var(--font-size-sm);
+}
+
+.wbp-banner--action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
 .wbp-banner--quiet {
@@ -185,7 +220,7 @@
 
 .wbp-shell-main > .wbp-editor { flex: 1; min-height: 0; }
 
-/* Shown at the bar's left end only while the explorer is hidden. */
+/* Shown only while the explorer is hidden. */
 .wbp-explorer-toggle {
   flex-shrink: 0;
   display: grid;

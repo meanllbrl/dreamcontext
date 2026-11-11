@@ -15,11 +15,14 @@ import './SuperDock.css';
  * band, the dock's session tile), and the chat itself is the Super session's own container, homed
  * into `[data-super-slot="dock"]` by AgentSurface's placement like the stage centre's.
  */
-export function SuperDock({ pill, open, lift, head, band, rows, connecting, slotRef, pillRef, onOpen, onMinimize }: {
+export function SuperDock({ pill, pillHidden, open, lift, head, band, rows, connecting, slotRef, pillRef, onOpen, onMinimize }: {
   pill: SuperDockPill;
+  /** A page's own Super field carries the pill (the board writing field, 2026-11-11): the closed
+   *  pill is not drawn; the window, its chat slot and the asking rows render as ever. */
+  pillHidden?: boolean;
   open: boolean;
-  /** The page lifts the corner above its own bottom control (a board's zoom bar, AI Team's composer). */
-  lift: 'board' | 'team' | null;
+  /** The page lifts the corner above its own bottom control (AI Team's composer). */
+  lift: 'team' | null;
   /** The window's head (SuperCentreHead with its two buttons). */
   head: ReactNode;
   /** The question band (the stage's JobBar, as a row). */
@@ -70,7 +73,7 @@ export function SuperDock({ pill, open, lift, head, band, rows, connecting, slot
           </div>
         </section>
       )}
-      {!open && (
+      {!open && !pillHidden && (
         <StagePill
           buttonRef={pillRef}
           testId="super-dock-pill"

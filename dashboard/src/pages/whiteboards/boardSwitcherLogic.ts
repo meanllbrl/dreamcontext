@@ -80,3 +80,19 @@ export function newBoardName(raw: string): string | null {
   const name = raw.trim();
   return name ? name : null;
 }
+
+/**
+ * Where the page goes when the open board was deleted elsewhere (the CLI, an agent, another
+ * window): the most recent other board that still exists, else the default. Only against a list
+ * that loaded; unknown → the default. Never the gone board itself (2026-11-11, moved from the
+ * retired tab strip).
+ */
+export function goneBoardTarget(
+  gone: string,
+  recent: readonly string[],
+  existing: ReadonlySet<string> | null,
+  fallback: string = DEFAULT_BOARD_SLUG,
+): string {
+  if (!existing) return fallback;
+  return recent.find((s) => s !== gone && existing.has(s)) ?? fallback;
+}

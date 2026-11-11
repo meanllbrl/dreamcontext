@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
   reconcileElements, restoreElements,
@@ -84,6 +84,16 @@ export interface WhiteboardCanvasProps {
   /** A clicked `dreamcontext://<kind>/<id>` element link. Default: a task or knowledge page opens
    *  in the board page's page popup when there is one, else on its own page in the app. */
   onInternalLink?: (kind: string, id: string) => void;
+  /** The page's own controls in the canvas's top-right row, before "+ Add" (the save state and
+   *  the agents toggle, 2026-11-11). Read through a context, so a change never re-renders the
+   *  whole Excalidraw. */
+  topRight?: ReactNode;
+}
+
+/** The page's top-right controls, handed into Excalidraw's own top-right row. */
+const TopRightContext = createContext<ReactNode>(null);
+function TopRightExtra() {
+  return <>{useContext(TopRightContext)}</>;
 }
 
 
@@ -110,7 +120,7 @@ const UI_OPTIONS = {
  * Lazy-loaded through `LazyWhiteboardCanvas`, which points Excalidraw at the self-hosted fonts
  * before this module (and the Excalidraw bundle) is imported.
  */
-export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink, topRight }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
   const { bus, vault } = useVault();
@@ -444,13 +454,17 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   }, []);
 
   const renderTopRightUI = useCallback(() => (
-    <button type="button" className="wb-add-btn" onClick={openPaletteFromButton}>
-      + {txRef.current('whiteboard.add', 'Add')}
-    </button>
+    <>
+      <TopRightExtra />
+      <button type="button" className="wb-add-btn" onClick={openPaletteFromButton}>
+        + {txRef.current('whiteboard.add', 'Add')}
+      </button>
+    </>
   ), [openPaletteFromButton]);
 
   return (
     <WhiteboardHostContext.Provider value={host}>
+      <TopRightContext.Provider value={topRight ?? null}>
       <div ref={wrapRef} className={widgetsOnly ? 'wb-canvas-wrap wb-canvas-wrap--widgets-selected' : 'wb-canvas-wrap'}>
         <Excalidraw
           excalidrawAPI={handleApi}
@@ -488,6 +502,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
           />
         )}
       </div>
+      </TopRightContext.Provider>
     </WhiteboardHostContext.Provider>
   );
 }

@@ -1326,11 +1326,11 @@ export interface SuperDockPill {
   news: boolean;
 }
 
-/** How far the corner lifts on this page (D4): a whiteboard WITH a board open (its help button),
- *  AI Team (its composer); any other page, and the whiteboard page with no board open, none. */
-export function superDockLift(ctx: { page: string; board?: string } | null | undefined): 'board' | 'team' | null {
+/** How far the corner lifts on this page (D4): AI Team (its composer); any other page none. The
+ *  whiteboard page no longer lifts it: its help button is gone and its own field carries the pill
+ *  (2026-11-11). */
+export function superDockLift(ctx: { page: string; board?: string } | null | undefined): 'team' | null {
   if (!ctx) return null;
-  if (ctx.page === 'whiteboards') return ctx.board ? 'board' : null;
   return ctx.page === 'automations' || ctx.page === 'agents' ? 'team' : null;
 }
 

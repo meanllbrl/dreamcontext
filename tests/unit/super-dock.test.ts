@@ -29,9 +29,10 @@ describe('the gate and the slot', () => {
     expect(superDockOn({ ...on, enabled: undefined })).toBe(false);
   });
 
-  it('lifts only on a whiteboard WITH a board open and on AI Team (criterion 16)', () => {
-    expect(superDockLift({ page: 'whiteboards', board: 'launch-plan' })).toBe('board');
+  it('lifts only on AI Team; the whiteboard page no longer lifts it (its field carries the pill, 2026-11-11)', () => {
+    expect(superDockLift({ page: 'whiteboards', board: 'launch-plan' })).toBeNull();
     expect(superDockLift({ page: 'whiteboards' })).toBeNull();
+    expect(read('dashboard/src/components/sleepy/super/SuperDock.css')).not.toMatch(/data-lift='board'/);
     expect(superDockLift({ page: 'agents' })).toBe('team');
     expect(superDockLift({ page: 'automations' })).toBe('team');
     for (const page of ['tasks', 'lab', 'knowledge']) expect(superDockLift({ page })).toBeNull();
@@ -132,6 +133,27 @@ describe('the pill', () => {
       + '<button type="button" class="super-others-stack" data-testid="super-others-stack" data-asking="true" aria-haspopup="dialog" aria-expanded="false" aria-label="1 cards in Others">'
       + '<span class="super-others-sheets" aria-hidden="true"><span></span><span></span><span></span></span><span class="super-others-name">Others</span>'
       + '<span class="super-others-dots" aria-hidden="true"><span class="super-others-dot" data-status="asking" data-super-tone="asking"></span></span><span class="super-others-count">1</span></button></div>');
+  });
+
+  it('pillHidden skips only the closed pill: the window, its chat slot and the asking rows render as ever', async () => {
+    const { createElement } = await import('../../dashboard/node_modules/react/index.js');
+    const { renderToStaticMarkup } = await import('../../dashboard/node_modules/react-dom/server.node.js');
+    const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+    const { SuperDock } = await import('../../dashboard/src/components/sleepy/super/SuperDock.js');
+    const draw = (open: boolean, pillHidden: boolean) => renderToStaticMarkup(createElement(I18nProvider, null, createElement(SuperDock as never, {
+      pill: { count: 1, dots: [{ id: 'a', status: 'working' }], asking: true, news: false }, pillHidden, open, lift: null,
+      head: createElement('div', { className: 'head' }), band: null, connecting: false,
+      rows: createElement('div', { 'data-testid': 'super-dock-rows' }, 'Other asks'),
+      slotRef: () => {}, pillRef: { current: null }, onOpen: () => {}, onMinimize: () => {},
+    })));
+    expect(draw(false, false)).toContain('data-testid="super-dock-pill"');
+    expect(draw(false, true)).not.toContain('data-testid="super-dock-pill"');
+    const win = draw(true, true);
+    expect(win).toContain('data-testid="super-dock-window"');
+    expect(win).toContain('data-super-slot="dock"');
+    expect(win).toContain('data-testid="super-dock-rows"');
+    // AgentSurface hides it only while a page's field is mounted (superPageBridge.ts).
+    expect(read('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/pillHidden=\{fieldMounted\}/);
   });
 
   it('re-bounces while asking, at rest in its first 0.6 s, never with reduced motion', () => {

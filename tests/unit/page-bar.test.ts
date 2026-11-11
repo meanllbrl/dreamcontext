@@ -25,12 +25,14 @@ const INLINE: Record<string, [string, string, RegExp]> = {
   knowledge: ['pages/KnowledgePage.tsx', 'nav.knowledge', /pageTitle=\{newShell \? t\('nav\.knowledge'\) : undefined\}/],
   brain: ['pages/BrainPage.tsx', 'nav.brain', /newShell \? \(\s*<>\s*<PageTitle title=\{t\('nav\.brain'\)\} \/>/],
   council: ['components/council/CouncilHall.tsx', 'nav.council', /\{newShell && <PageTitle title=\{t\('nav\.council'\)\} \/>\}/],
-  whiteboards: ['pages/WhiteboardsPage.tsx', 'nav.whiteboard', /\{newShell && <PageTitle title=\{t\('nav\.whiteboard'\)\} \/>\}/],
   // No rail row any more (plan-r10 1d): the `automations`/`agents` alias page is titled by what it
   // opens, "Üyeleri yönet", still in one bar and still only in the new shell.
   automations: ['pages/AiTeamPage.tsx', 'drawer.team.manage', /if \(!newShell\) return page;[\s\S]*<PageBar title=\{t\('drawer\.team\.manage'\)\} \/>/],
 };
 const TITLE_ONLY = ['core', 'taxonomy', 'sleep', 'packs', 'announcements'];
+/** Full-bleed pages with no title row: the rail marks the page (the whiteboard's tabs row went,
+ *  2026-11-11: the canvas starts under the shell bar). */
+const NO_TITLE: Record<string, string> = { whiteboards: 'pages/WhiteboardsPage.tsx' };
 
 describe('page headers', () => {
   it('every inline title sits in its row, from the rail label (the alias page: what it opens), gated on the new shell', () => {
@@ -61,8 +63,14 @@ describe('page headers', () => {
     expect(src).toMatch(/\{newShell \? \(\s*<NewShellPage nav=\{nav\}>/);
   });
 
-  it('covers all fifteen non-chat pages with exactly one title each (Settings is a window with its own crumb)', () => {
-    const pages = [...Object.keys(INLINE), ...TITLE_ONLY, 'settings'];
+  it('a full-bleed page draws no title row at all', () => {
+    for (const [page, file] of Object.entries(NO_TITLE)) {
+      expect(read(file), page).not.toMatch(/<PageTitle|<PageBar|data-page-row/);
+    }
+  });
+
+  it('covers all fifteen non-chat pages: one title each, or none for a full-bleed page (Settings is a window with its own crumb)', () => {
+    const pages = [...Object.keys(INLINE), ...TITLE_ONLY, ...Object.keys(NO_TITLE), 'settings'];
     expect(new Set(pages).size).toBe(15);
     // The new shell opens Settings as a window over the page (task settings-konuya-gore-17-menuye…):
     // its title is the window's crumb, never a page bar.

@@ -634,8 +634,9 @@ export interface ChatSession {
   /** Ask the process for a fresh reading. */
   mcpRefresh: () => void;
   /** Submit a user message: sends the `user` control frame and appends it to the
-   *  transcript optimistically (the protocol never echoes the user's own text back). */
-  send: (text: string) => void;
+   *  transcript optimistically (the protocol never echoes the user's own text back). False =
+   *  the frame was not written (the socket is not open). */
+  send: (text: string) => boolean;
   /**
    * Hand a message to the turn ALREADY in flight — the composer's ⏎ while `busy`. The CLI
    * folds it in at its next tool boundary (measured on 2.1.220: same turn, one `result`), so

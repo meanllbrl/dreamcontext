@@ -2,12 +2,14 @@
  * The board explorer (owner, 2026-10-28: "a page explorer with grouped pages, like a wiki"):
  * the left sidebar of the Whiteboard page listing EVERY board — Pinned, Recent, the groups
  * (a board's own frontmatter `group`), Ungrouped — with search, drag a board onto a group, and
- * a ⋯ menu that does everything a drag does, so the keyboard reaches it all.
+ * a ⋯ menu that does everything a drag does, so the keyboard reaches it all. A right-click on a
+ * board or group row (or Shift+F10 / the Menu key on it) opens the same menu at the pointer;
+ * "Recently deleted" sits at the list's foot (both moved from the retired tab strip, 2026-11-11).
  *
  * Rendered above the slug-keyed editor (WhiteboardsPage.tsx), so a board switch keeps its
  * search, its fields and its scroll. The pure half is explorerLogic.ts.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
@@ -15,7 +17,8 @@ import {
   useCreateWhiteboard, useDeleteWhiteboard, useRenameWhiteboard, useRenameWhiteboardGroup, useSetWhiteboardGroup,
   useSetWhiteboardGroupOrder, useWhiteboardGroupOrder, useWhiteboardList, type GroupMoveNote, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
-import { BoardGlyph, PlusGlyph, SearchGlyph } from './BoardSwitcher';
+import { BoardGlyph, ChevronRightGlyph, ClockGlyph, DotsGlyph, FolderGlyph, PinGlyph, PlusGlyph, SearchGlyph, SidebarGlyph } from './boardGlyphs';
+import { TrashSection } from './BoardTrash';
 import { DEFAULT_BOARD_SLUG, canDeleteBoard, fold, isDefaultBoard, newBoardName } from './boardSwitcherLogic';
 import {
   addEmptyGroup, buildExplorer, keepGroupIfEmptied, moveGroup, pruneExplorerPrefs, realGroupNames, removeEmptyGroup,
@@ -24,8 +27,9 @@ import {
 import './BoardExplorer.css';
 
 type Change = (update: (p: ExplorerPrefs) => ExplorerPrefs) => void;
-/** Where a menu opens: below its button, or above it when the room below is short. */
-type MenuAt = { top: number } | { bottom: number };
+/** Where a menu opens: below its button, or above it when the room below is short; a right-click
+ *  also places it at the pointer (`left`). */
+type MenuAt = ({ top: number } | { bottom: number }) & { left?: number };
 type Menu = ({ kind: 'board'; slug: string } & MenuAt) | ({ kind: 'group'; key: string } & MenuAt) | null;
 /** An inline name field: a new board (in a group, or none), a new group, a board or group rename. */
 type Field =
@@ -58,6 +62,13 @@ const focusLost = () => {
 
 /** The room a menu needs below its button before it opens upward instead. */
 const MENU_ROOM = 320;
+/** `.wbx-menu[data-at-point]`'s width, so a pointer menu is kept inside the window. */
+const POINT_MENU_WIDTH = 240;
+
+/** A right-click on a text field keeps the native menu (copy, paste, spelling). */
+const isTextField = (el: EventTarget | null) => el instanceof HTMLElement && !!el.closest('input, textarea, [contenteditable="true"]');
+/** Shift+F10 or the Menu key: the keyboard's right-click. */
+const isMenuKey = (e: KeyboardEvent<HTMLElement>) => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
 
 export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, focusOnMount }: BoardExplorerProps) {
   const { t } = useI18n();
@@ -288,6 +299,24 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
     return host.bottom - r.bottom < MENU_ROOM ? { bottom: host.bottom - r.top + 4 } : { top: r.bottom - host.top + 4 };
   };
 
+  /** A right-click's menu: at the pointer, kept inside the window; focus goes back to `el`. */
+  const menuAtPoint = (e: ReactMouseEvent, el: HTMLElement | null, slug: string | null): MenuAt => {
+    trigger.current = { el, slug };
+    const host = rootRef.current?.getBoundingClientRect();
+    if (!host) return { top: e.clientY, left: e.clientX };
+    const left = Math.max(4, Math.min(e.clientX - host.left, window.innerWidth - host.left - POINT_MENU_WIDTH - 8));
+    return window.innerHeight - e.clientY < MENU_ROOM
+      ? { bottom: Math.max(4, host.bottom - e.clientY), left }
+      : { top: Math.max(4, e.clientY - host.top), left };
+  };
+  const onRowContextMenu = (e: ReactMouseEvent<HTMLElement>, next: { kind: 'board'; slug: string } | { kind: 'group'; key: string }) => {
+    if (isTextField(e.target)) return;
+    e.preventDefault();
+    setConfirm(null);
+    const open = e.currentTarget.querySelector<HTMLElement>('.wbx-row-open');
+    setMenu({ ...next, ...menuAtPoint(e, open, next.kind === 'board' ? next.slug : null) });
+  };
+
   const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') { e.preventDefault(); setQuery(''); }
     if (e.key === 'Enter' && view.searching && view.hits[0]) { e.preventDefault(); open(view.hits[0].slug); }
@@ -308,6 +337,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         draggable={!b.corrupt}
         onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', b.name); setMenu(null); setDrag(b.slug); }}
         onDragEnd={() => { setDrag(null); setDropAt(null); }}
+        onContextMenu={(e) => onRowContextMenu(e, { kind: 'board', slug: b.slug })}
       >
         <button
           type="button"
@@ -315,7 +345,10 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
           aria-current={current ? 'page' : undefined}
           title={b.description || b.name}
           onClick={() => open(b.slug)}
-          onKeyDown={(e) => { if (e.key === 'F2') { e.preventDefault(); startRename(b.slug); } }}
+          onKeyDown={(e) => {
+            if (e.key === 'F2') { e.preventDefault(); startRename(b.slug); return; }
+            if (isMenuKey(e)) { e.preventDefault(); setConfirm(null); setMenu({ kind: 'board', slug: b.slug, ...menuAt(e.currentTarget, b.slug) }); }
+          }}
         >
           <BoardGlyph />
           <span className="wbx-name">{b.name || b.slug}</span>
@@ -371,12 +404,16 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
               setDragGroup(g.key);
             }}
             onDragEnd={endDrag}
+            onContextMenu={(e) => onRowContextMenu(e, { kind: 'group', key: g.key })}
           >
             <button
               type="button"
               className="wbx-row-open"
               aria-expanded={!g.collapsed}
               onClick={() => change((p) => toggleCollapsed(p, g.name))}
+              onKeyDown={(e) => {
+                if (isMenuKey(e)) { e.preventDefault(); setConfirm(null); setMenu({ kind: 'group', key: g.key, ...menuAt(e.currentTarget, null) }); }
+              }}
             >
               <span className="wbx-twisty" data-open={g.collapsed ? undefined : ''}><ChevronRightGlyph /></span>
               <FolderGlyph />
@@ -490,6 +527,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
           )}
         </div>
         {view.searching && view.hits.length === 0 && <p className="wbx-hint">{t('whiteboard.switcher.noMatch')}</p>}
+        {!view.searching && <TrashSection onRestored={open} />}
       </div>
 
       <div className="wbx-foot">
@@ -502,7 +540,13 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
       </div>
 
       {menu && (
-        <div className="wbx-menu" role="menu" ref={menuRef} style={'top' in menu ? { top: menu.top } : { bottom: menu.bottom }}>
+        <div
+          className="wbx-menu"
+          role="menu"
+          ref={menuRef}
+          data-at-point={menu.left !== undefined ? '' : undefined}
+          style={{ ...('top' in menu ? { top: menu.top } : { bottom: menu.bottom }), ...(menu.left !== undefined ? { left: menu.left } : {}) }}
+        >
           {menuBoard && (confirm === menuBoard.slug ? (
             <div className="wbx-confirm">
               <p>{t('whiteboard.switcher.deleteAsk').replace('{name}', menuBoard.name)}</p>
@@ -514,7 +558,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
           ) : (
             <>
               <MenuButton label={t('whiteboard.explorer.open')} onClick={() => open(menuBoard.slug)} autoFocus />
-              <MenuButton label={t('whiteboard.tabs.rename')} onClick={() => startRename(menuBoard.slug)} />
+              <MenuButton label={t('whiteboard.tabs.rename')} hint="F2" onClick={() => startRename(menuBoard.slug)} />
               <MenuButton
                 label={prefs.pinned.includes(menuBoard.slug) ? t('whiteboard.explorer.unpin') : t('whiteboard.explorer.pin')}
                 onClick={() => { change((p) => togglePin(p, menuBoard.slug)); closeMenu(); }}
@@ -589,12 +633,14 @@ function Section({ label, icon, action, children }: { label: string; icon?: Reac
   );
 }
 
-function MenuButton({ label, onClick, disabled, danger, icon, autoFocus }: {
+function MenuButton({ label, onClick, disabled, danger, icon, autoFocus, hint }: {
   label: string; onClick: () => void; disabled?: boolean; danger?: boolean; icon?: ReactNode; autoFocus?: boolean;
+  /** Its keyboard shortcut, drawn quiet at the right. */
+  hint?: string;
 }) {
   return (
     <button type="button" role="menuitem" className={danger ? 'wbx-menu-item wbx-menu-item--danger' : 'wbx-menu-item'} disabled={disabled} autoFocus={autoFocus} onClick={onClick}>
-      {icon}{label}
+      {icon}{label}{hint && <kbd className="wbx-menu-hint">{hint}</kbd>}
     </button>
   );
 }
@@ -629,35 +675,5 @@ function InlineField({ initial, label, placeholder, maxLength = 200, onDone, onC
         else onCancel();
       }}
     />
-  );
-}
-
-// ── glyphs (16px, the rail's stroke hand, as BoardSwitcher's) ──────────────────────────────────
-
-const glyph = {
-  width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor',
-  strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true,
-};
-
-export function SidebarGlyph() {
-  return <svg {...glyph} className="wbs-glyph"><rect x="2" y="2.5" width="12" height="11" rx="2" /><path d="M6 2.5v11" /></svg>;
-}
-function FolderGlyph() {
-  return <svg {...glyph} className="wbs-glyph"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3L8 4.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /></svg>;
-}
-function ChevronRightGlyph() {
-  return <svg {...glyph} className="wbs-glyph"><path d="M6 4l4 4-4 4" /></svg>;
-}
-function PinGlyph() {
-  return <svg {...glyph} className="wbs-glyph"><path d="M6 2.5h4l-.5 4 2 2v1h-7v-1l2-2zM8 9.5V14" /></svg>;
-}
-function ClockGlyph() {
-  return <svg {...glyph} className="wbs-glyph"><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3l2 1.5" /></svg>;
-}
-function DotsGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className="wbs-glyph">
-      <circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" />
-    </svg>
   );
 }

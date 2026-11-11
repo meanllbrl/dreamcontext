@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  DEFAULT_BOARD_SLUG, canDeleteBoard, filterBoards, isDefaultBoard, moveActive, newBoardName, pickActive,
+  DEFAULT_BOARD_SLUG, canDeleteBoard, filterBoards, goneBoardTarget, isDefaultBoard, moveActive, newBoardName, pickActive,
   type SwitcherBoard,
 } from '../../dashboard/src/pages/whiteboards/boardSwitcherLogic';
 
@@ -60,13 +60,15 @@ describe('whiteboard switcher — the default board is protected (A15/A16)', () 
     }
   });
 
-  it('the component gates the delete button on canDeleteBoard and never uses a browser dialog', () => {
-    const src = readFileSync(join(ROOT, 'dashboard/src/pages/whiteboards/BoardSwitcher.tsx'), 'utf-8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, ''); // a comment may NAME confirm()
-    expect(src).toMatch(/canDeleteBoard\(board\.slug\) && \(/);
-    // confirm()/alert() are silent no-ops in the desktop WKWebView.
-    expect(src).not.toMatch(/\b(window\.)?(confirm|alert|prompt)\(/);
+  it('the Boards list gates Delete on canDeleteBoard and never uses a browser dialog', () => {
+    for (const f of ['BoardExplorer.tsx', 'BoardTrash.tsx']) {
+      const src = readFileSync(join(ROOT, 'dashboard/src/pages/whiteboards', f), 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, ''); // a comment may NAME confirm()
+      if (f === 'BoardExplorer.tsx') expect(src).toMatch(/canDeleteBoard\(menuBoard\.slug\) && \(/);
+      // confirm()/alert() are silent no-ops in the desktop WKWebView.
+      expect(src, f).not.toMatch(/\b(window\.)?(confirm|alert|prompt)\(/);
+    }
   });
 
   it('the page asks the server for the default board and never creates it itself', () => {
@@ -111,5 +113,32 @@ describe('whiteboard switcher — creating a board inline (A16)', () => {
     expect(newBoardName('   ')).toBeNull();
     expect(newBoardName('')).toBeNull();
     expect(newBoardName('  Günlük plan ')).toBe('Günlük plan');
+  });
+});
+
+describe('the tabs row is gone; what it did has a home (2026-11-11)', () => {
+  it('a board deleted elsewhere moves the page to the most recent other board that still exists, else the default', () => {
+    const existing = new Set(['gunluk', 'roadmap-q4', DEFAULT_BOARD_SLUG]);
+    // The open (gone) board heads the recents: it is skipped, so is one deleted too.
+    expect(goneBoardTarget('old', ['old', 'deleted-too', 'roadmap-q4', 'gunluk'], existing)).toBe('roadmap-q4');
+    expect(goneBoardTarget('old', ['old'], existing)).toBe(DEFAULT_BOARD_SLUG);
+    expect(goneBoardTarget('old', [], existing)).toBe(DEFAULT_BOARD_SLUG);
+    // The list never loaded: no guess, the default.
+    expect(goneBoardTarget('old', ['gunluk'], null)).toBe(DEFAULT_BOARD_SLUG);
+  });
+
+  it('the page runs that move itself, never off the default board, and says so on the board it lands on', () => {
+    const page = readFileSync(join(ROOT, 'dashboard/src/pages/WhiteboardsPage.tsx'), 'utf-8');
+    expect(page).toMatch(/if \(!gone \|\| slug === DEFAULT_BOARD_SLUG\) return;/);
+    expect(page).toMatch(/goneBoardTarget\(slug, cur\.recent, existing\)/);
+    expect(page).toContain("t('whiteboard.page.goneNote')");
+    expect(page).not.toMatch(/BoardTabs|wbp-bar|PageTitle/);
+  });
+
+  it('"Recently deleted" sits at the Boards list\'s foot; Restore opens the restored board', () => {
+    const explorer = readFileSync(join(ROOT, 'dashboard/src/pages/whiteboards/BoardExplorer.tsx'), 'utf-8');
+    expect(explorer).toContain('<TrashSection onRestored={open} />');
+    const trash = readFileSync(join(ROOT, 'dashboard/src/pages/whiteboards/BoardTrash.tsx'), 'utf-8');
+    expect(trash).toMatch(/restore\.mutate\(item\.id, \{ onSuccess: \(res\) => \{ if \(res\?\.slug\) onRestored\(res\.slug\); \} \}\)/);
   });
 });

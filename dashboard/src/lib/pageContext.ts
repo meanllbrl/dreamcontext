@@ -93,8 +93,11 @@ export function pageKeyOf(ctx: PageContext | null): string {
 
 /** What the chip and the sent strip read: the page's name, then the open item ("Tasks · Current
  *  Version", "Whiteboard · launch-plan"). `labelOf` is the sidebar's name for a page. */
-export function pageChipName(ref: PageContextRef, labelOf: (page: string) => string): string {
+export function pageChipName(ref: PageContextRef, labelOf: (page: string) => string, selLabel?: (n: number) => string): string {
   const item = ref.view ?? ref.board ?? ref.insight;
   const name = labelOf(ref.page) || ref.page;
-  return item ? `${name} · ${item}` : name;
+  const head = item ? `${name} · ${item}` : name;
+  // A whiteboard message sent with shapes selected (the board writing field): one chip, with
+  // the count, never a second chip type (2026-11-11).
+  return ref.sel && ref.sel.n > 0 ? `${head} · ${selLabel ? selLabel(ref.sel.n) : String(ref.sel.n)}` : head;
 }
