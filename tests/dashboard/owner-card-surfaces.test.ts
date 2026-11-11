@@ -357,11 +357,21 @@ describe('the child own chat: what is shown is what runs', () => {
     expect(has(html, 'run-card-unsafe')).toBe(true);
   });
 
-  it('a safe command is drawn whole, wrapped, with its Run', () => {
+  it('a safe command is drawn whole, wrapped, with its Run once its folder is drawn', async () => {
+    const { applyCardsFrame } = await import('../../dashboard/src/lib/cardRecords.js');
+    applyCardsFrame(CHILD, [{ id: RUN.id, cardRef: REF, kind: 'run', spec: { ...RUN, command: CMD }, state: 'open', run: null }]);
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
     const html = own(CMD);
     expect(html).toContain(CMD);
     expect(html).toContain('white-space:pre-wrap');
     expect(has(html, 'run-card-play')).toBe(true);
+    expect(html).toContain('acme-shop-look');
+  });
+
+  it('the child own chat offers no Run while its folder is not drawn', () => {
+    const html = own(CMD);
+    expect(html).toContain(CMD);
+    expect(has(html, 'run-card-play')).toBe(false);
   });
 
   it('the slot run card is the same: escapes and no Run (record host)', () => {

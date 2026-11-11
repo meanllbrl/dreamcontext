@@ -172,20 +172,32 @@ describe('cardWorkingRoot', () => {
     expect(enterSessionCheckout(S, wt, projectRoot, { home, claim: true })).toBe(true);
     expect(await cardWorkingRoot(contextRoot, projectRoot, S, { home })).toBe(realpathSync(wt));
   });
-  it('a folder inside a governed repository that is not a worktree root is refused', async () => {
+  it('a claimed SUBFOLDER of a governed checkout stands for that checkout\'s root (git toplevel)', async () => {
     // A Super record cannot name it (the store keeps only `~/.claude-worktrees/<name>`); a
-    // session's claimed checkout can, so that is the candidate here.
+    // session's claimed checkout can (a checkout directive "<repo>/packages/app").
     const wt = join(home, '.claude-worktrees', 'child-sub');
     git(projectRoot, 'worktree', 'add', '-q', '-b', 'super/sub', wt);
-    mkdirSync(join(wt, 'sub'));
+    mkdirSync(join(wt, 'packages', 'app'), { recursive: true });
     const S = '88888888-4444-4333-8444-555555555555';
-    expect(enterSessionCheckout(S, join(wt, 'sub'), projectRoot, { home, claim: true })).toBe(true);
-    expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, S, { home }))).toBe('not_governed');
+    expect(enterSessionCheckout(S, join(wt, 'packages', 'app'), projectRoot, { home, claim: true })).toBe(true);
+    expect(await cardWorkingRoot(contextRoot, projectRoot, S, { home })).toBe(realpathSync(wt));
     const inProject = join(projectRoot, 'sub');
     mkdirSync(inProject);
     const S2 = '88888888-5555-4333-8444-555555555555';
     expect(enterSessionCheckout(S2, inProject, projectRoot, { home, claim: true })).toBe(true);
-    expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, S2, { home }))).toBe('not_governed');
+    expect(await cardWorkingRoot(contextRoot, projectRoot, S2, { home })).toBe(realpathSync(projectRoot));
+  });
+  it('a subfolder of an UNGOVERNED repository recorded as a worktree is refused (its toplevel is not governed)', async () => {
+    const foreign = join(scratch, 'foreign3');
+    mkdirSync(foreign);
+    writeFileSync(join(foreign, 'f'), 'x');
+    execFileSync('git', ['init', '-q', foreign]);
+    git(foreign, 'add', '.');
+    git(foreign, 'commit', '-qm', 'i');
+    const fwt = join(home, '.claude-worktrees', 'foreign-sub');
+    git(foreign, 'worktree', 'add', '-q', '-b', 'super/fs', fwt);
+    registerChild(fwt);
+    expect(await refusal(cardWorkingRoot(contextRoot, projectRoot, SESSION, { home }))).toBe('not_governed');
   });
   it('an ungoverned repository\'s worktree outside the worktree home is never the card\'s folder', async () => {
     const foreign = join(scratch, 'foreign2');

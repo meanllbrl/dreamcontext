@@ -127,6 +127,16 @@ export async function gitWorktreePaths(repoRoot: string): Promise<string[]> {
   return out;
 }
 
+/** The real path of the checkout a folder belongs to (`git rev-parse --show-toplevel`, an
+ *  argument array, a timeout), or null when it is in no work tree. */
+async function checkoutTopLevel(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await run('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    const top = String(stdout).trim();
+    return top ? realOf(top) : null;
+  } catch { return null; }
+}
+
 /** The repositories this project governs, as a checkout to ask: the project itself, then each
  *  linked repo present on this machine (session-cwd.ts `governedCommonDirs`' set, with paths). */
 function governedRepoRoots(projectRoot: string, home: string): string[] {
@@ -148,12 +158,13 @@ function governedRepoRoots(projectRoot: string, home: string): string[] {
  * itself.
  *
  *  - No candidate, or one whose real path IS the project's: the project root (real).
- *  - Otherwise the candidate must not be a symlink itself, must be a real directory, must share its
+ *  - Otherwise the candidate must not be a symlink itself and must be a real directory; a folder
+ *    inside a checkout stands for that checkout's root (`--show-toplevel`). That root must share its
  *    git common dir with a repository the project GOVERNS (its own or a linked repo), and THAT
  *    repository's own `git worktree list` must name its real path. So a linked repo's main
  *    checkout passes, and so does a worktree anywhere (`~/.claude-worktrees/<x>`,
- *    `<repo>/.claude/worktrees/<x>`); a folder inside a repository that is not a worktree root,
- *    an ungoverned repository's checkout, a symlink or a folder that is gone is REFUSED
+ *    `<repo>/.claude/worktrees/<x>`); an ungoverned repository's checkout, a folder in no work
+ *    tree, a symlink or a folder that is gone is REFUSED
  *    ({@link CardRootRefused}): the card never silently runs somewhere else.
  *
  * `listWorktrees` is injectable for tests; the real one runs git with an argument array and a
@@ -176,8 +187,12 @@ export async function cardWorkingRoot(
   try { st = lstatSync(cand); } catch { throw new CardRootRefused('missing'); }
   if (st.isSymbolicLink()) throw new CardRootRefused('symlink');
   if (!st.isDirectory()) throw new CardRootRefused('missing');
-  const real = realOf(cand);
-  if (!real) throw new CardRootRefused('missing');
+  const realCand = realOf(cand);
+  if (!realCand) throw new CardRootRefused('missing');
+  // A claimed subfolder (`<repo>/packages/app`, `<project>/sub`) is its checkout: the card's folder
+  // is that checkout's ROOT (`git rev-parse --show-toplevel`), proven below like any other.
+  const real = await checkoutTopLevel(realCand);
+  if (!real) throw new CardRootRefused('not_governed');
   if (real === realProject) return realProject;
   // The governed repository this checkout belongs to: the one sharing its git common dir.
   const common = gitCommonDir(real);

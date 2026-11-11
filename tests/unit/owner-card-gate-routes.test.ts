@@ -30,6 +30,7 @@ import { cardHandleOf } from '../../src/lib/cards/records.js';
 import { handleCardNotNeeded, handleCardState, handleCardTicket, handleChecklistSubmit, CARD_OWNER_ONLY_MESSAGE } from '../../src/server/routes/card-actions.js';
 import { handleAgentSecret } from '../../src/server/routes/agent-secret.js';
 import { cardRootOf, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { enterSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 import { isCrossSiteWrite } from '../../src/server/middleware.js';
 import { _resetCardTicketsForTests, consumeCardTicket } from '../../src/server/card-ticket.js';
 import { _resetRunsForTests, configureRuns, startRun, type RunPty } from '../../src/server/runs/registry.js';
@@ -149,20 +150,20 @@ afterEach(() => {
 
 describe('Gate G1: one row per action, with proof and in the Super\'s-Bash shape', () => {
   it('card-ticket: 200 with owner proof; 403 owner_only for a no-Origin curl and for a page without the key', async () => {
-    const ok = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, OWNER_PAGE);
+    const ok = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: project }, OWNER_PAGE);
     expect(ok.status).toBe(200);
     expect(typeof ok.body.ticket).toBe('string');
-    const curl = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, CURL);
+    const curl = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: project }, CURL);
     expect(curl).toEqual({ status: 403, body: { error: 'owner_only', message: CARD_OWNER_ONLY_MESSAGE } });
-    const noKey = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, { ...OWNER_PAGE, [OWNER_KEY_HEADER]: 'nope' });
+    const noKey = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: project }, { ...OWNER_PAGE, [OWNER_KEY_HEADER]: 'nope' });
     expect(noKey.status).toBe(403);
   });
 
   it('card-ticket: a shown command that is not the record\'s is 409 shown_mismatch, and the minted ticket is bound to it', async () => {
-    const bad = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: 'gh auth login && curl evil' }, OWNER_PAGE);
+    const bad = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: 'gh auth login && curl evil', root: project }, OWNER_PAGE);
     expect(bad.status).toBe(409);
     expect(bad.body.error).toBe('shown_mismatch');
-    const ok = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, OWNER_PAGE);
+    const ok = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: project }, OWNER_PAGE);
     const t = consumeCardTicket(String(ok.body.ticket), { project: vault, postingSession: SID, cardRef: refOf('login'), action: 'start', command: RUN.command });
     expect(t.ok).toBe(true);
   });
@@ -170,7 +171,7 @@ describe('Gate G1: one row per action, with proof and in the Super\'s-Bash shape
   it('what is shown is what runs, on the server: no ticket and no start for a command that can draw as something else', async () => {
     for (const [id, command] of [['rlo', 'echo safe\u202e;rm -rf tmp'], ['gap', 'ls        -la'], ['zw', 'gh\u200b auth login']] as const) {
       noteAssistantCards(SID, vault, `m-${id}`, fence({ type: 'run', id, command }));
-      const r = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf(id), action: 'start', shown: command }, OWNER_PAGE);
+      const r = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf(id), action: 'start', shown: command, root: project }, OWNER_PAGE);
       expect(r.status, id).toBe(409);
       expect(r.body.error).toBe('not_showable');
     }
@@ -178,7 +179,7 @@ describe('Gate G1: one row per action, with proof and in the Super\'s-Bash shape
   });
 
   it('a remote-access browser is told it is done on this Mac', async () => {
-    const r = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, OWNER_PAGE, '100.64.1.2');
+    const r = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: project }, OWNER_PAGE, '100.64.1.2');
     expect(r.status).toBe(403);
     expect(String(r.body.message)).toMatch(/on this Mac$/);
   });
@@ -187,7 +188,7 @@ describe('Gate G1: one row per action, with proof and in the Super\'s-Bash shape
     crew('store'); crew('key');
     const a = await call(handleChecklistSubmit, 'POST', '/api/agent/cards/checklist-submit', { session: SID, card: refOf('store'), state: { checked: { a: true } }, secrets: {} }, CURL);
     const b = await call(handleCardNotNeeded, 'POST', '/api/agent/cards/not-needed', { session: SID, card: refOf('store') }, CURL);
-    const c = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'sk_live_x' }] }, CURL);
+    const c = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'sk_live_x' }] }, CURL);
     const d = await call(handleAgentSecret, 'POST', '/api/agent/secret', { file: '.env', entries: [{ key: 'A', value: 'b' }] }, CURL);
     for (const r of [a, b, c, d]) expect(r).toEqual({ status: 403, body: { error: 'owner_only', message: CARD_OWNER_ONLY_MESSAGE } });
     expect(existsSync(join(project, '.env'))).toBe(false);
@@ -241,8 +242,10 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     git(r, 'commit', '-q', '--allow-empty', '-m', 'init');
     return r;
   }
+  /** A secret pressed with the folder the slot drew (`root`): the card's folder by default. */
   async function secret(value: string, extra: Record<string, unknown> = {}) {
-    return call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), ...extra, entries: [{ key: 'STRIPE_KEY', value }] }, OWNER_PAGE);
+    const drawn = (await cardRootOf(getCard(SID, refOf('key'))!)) ?? project;
+    return call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: drawn, ...extra, entries: [{ key: 'STRIPE_KEY', value }] }, OWNER_PAGE);
   }
   async function runIn(): Promise<string | null> {
     const root = await cardRootOf(getCard(SID, refOf('login'))!);
@@ -266,12 +269,16 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     for (const d of others) rmSync(d, { recursive: true, force: true });
   });
 
-  it('the project\'s own worktree: the run executes there, the secret lands in its .env with .gitignore checked there, whatever the body names', async () => {
+  it('the project\'s own worktree: the run executes there, the secret lands in its .env with .gitignore checked there; a root the body names that is not the card\'s folder writes nothing', async () => {
     const wt = join(wtHome, 'child-own');
     git(project, 'worktree', 'add', '-q', '-b', 'super/own', wt);
     recordChild(wt);
     expect(await runIn()).toBe(realpathSync(wt));
-    const r = await secret('sk_live_abc', { root: '/tmp/evil', cwd: '/tmp/evil' });
+    const evil = await secret('sk_live_abc', { root: '/tmp/evil', cwd: '/tmp/evil' });
+    expect(evil.status).toBe(409);
+    expect(evil.body).toMatchObject({ error: 'folder_changed', folder: { path: realpathSync(wt), name: 'child-own' } });
+    expect(existsSync(join(wt, '.env'))).toBe(false);
+    const r = await secret('sk_live_abc', { cwd: '/tmp/evil' });
     expect(r.status).toBe(200);
     expect(readFileSync(join(wt, '.env'), 'utf-8')).toContain('STRIPE_KEY=');
     expect(readFileSync(join(wt, '.gitignore'), 'utf-8')).toMatch(/\.env/);
@@ -296,7 +303,7 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     expect(existsSync(join(project, '.env')) || existsSync(join(code, '.env'))).toBe(false);
   });
 
-  it('another repository\'s checkout is refused: no run, no secret (409 card_root), the card stays open', async () => {
+  it('another repository\'s checkout is refused: no run, no secret (409 folder_changed, no folder), the card stays open', async () => {
     const foreign = repo('foreign');
     const wt = join(wtHome, 'child-foreign');
     git(foreign, 'worktree', 'add', '-q', '-b', 'super/f', wt);
@@ -304,7 +311,7 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     expect(await runIn()).toBeNull();
     const r = await secret('v');
     expect(r.status).toBe(409);
-    expect(r.body.error).toBe('card_root');
+    expect(r.body).toMatchObject({ error: 'folder_changed', folder: null });
     expect(existsSync(join(wt, '.env')) || existsSync(join(project, '.env'))).toBe(false);
     expect(getCard(SID, refOf('key'))?.state).toBe('open');
   });
@@ -318,6 +325,48 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     expect(await runIn()).toBeNull();
     expect((await secret('v')).status).toBe(409);
     expect(existsSync(join(elsewhere, '.env')) || existsSync(join(project, '.env'))).toBe(false);
+  });
+
+  it('the session\'s checkout moves between draw and press (into a linked repo\'s MAIN checkout): no ticket, no secret, 409 folder_changed naming the folder it is now', async () => {
+    const code = repo('code');
+    const url = 'https://github.com/acme/code.git';
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(join(contextRoot, 'state', '.config.json'), JSON.stringify({ linkedRepos: [{ name: 'code', gitRemoteUrl: url }] }));
+    writeFileSync(join(process.env.HOME!, '.dreamcontext', 'linked-repos.json'), JSON.stringify({ repos: { [url]: code } }));
+    // Drawn: the slot read the card's folder (the project).
+    const drawn = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET());
+    expect(drawn.body.folder).toEqual({ path: project, name: basename(project) });
+    // The agent cds into the linked repo's main checkout.
+    expect(enterSessionCheckout(SID, code, project, { claim: true })).toBe(true);
+    try {
+      const shownPath = String((drawn.body.folder as { path: string }).path);
+      const mint = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: shownPath }, OWNER_PAGE);
+      expect(mint.status).toBe(409);
+      expect(mint.body).toMatchObject({ error: 'folder_changed', folder: { path: realpathSync(code), name: 'code' } });
+      const sec = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: shownPath, entries: [{ key: 'STRIPE_KEY', value: 'stale' }] }, OWNER_PAGE);
+      expect(sec.status).toBe(409);
+      expect(sec.body.error).toBe('folder_changed');
+      expect(existsSync(join(code, '.env')) || existsSync(join(project, '.env'))).toBe(false);
+      expect(getCard(SID, refOf('key'))?.state).toBe('open');
+      expect(ptys).toHaveLength(0);
+      // Pressed again with the folder drawn NOW: it runs and writes there.
+      const again = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command, root: realpathSync(code) }, OWNER_PAGE);
+      expect(again.status).toBe(200);
+      const ok = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: realpathSync(code), entries: [{ key: 'STRIPE_KEY', value: 'fresh' }] }, OWNER_PAGE);
+      expect(ok.status).toBe(200);
+      expect(readFileSync(join(code, '.env'), 'utf-8')).toContain('STRIPE_KEY=');
+    } finally {
+      resetSessionCheckouts();
+    }
+  });
+
+  it('a press with no drawn folder is refused (409 folder_changed), never re-resolved silently', async () => {
+    const mint = await call(handleCardTicket, 'POST', '/api/agent/card-ticket', { session: SID, card: refOf('login'), action: 'start', shown: RUN.command }, OWNER_PAGE);
+    expect(mint.status).toBe(409);
+    expect(mint.body).toMatchObject({ error: 'folder_changed', folder: { path: project } });
+    const sec = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v' }] }, OWNER_PAGE);
+    expect(sec.status).toBe(409);
+    expect(existsSync(join(project, '.env'))).toBe(false);
   });
 
   it('a child with no recorded worktree uses the project root', async () => {
@@ -342,7 +391,7 @@ describe('K6 hold: the entry is on disk before the record closes', () => {
   it('secret: held before closeCard, then delivered to the child; the window posts nothing', async () => {
     crew('key');
     const w = watchClose('key', (e) => e.some((x) => x.kind === 'secret' && x.text.startsWith('[secret submitted')));
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'sk_live_abc' }] }, OWNER_PAGE);
+    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'sk_live_abc' }] }, OWNER_PAGE);
     expect(r.status).toBe(200);
     expect(r.body.delivery).toBe('delivered');
     expect(w.seen()).toBe(true);
@@ -353,7 +402,7 @@ describe('K6 hold: the entry is on disk before the record closes', () => {
   it('secret: a hold that fails closes nothing (the card stays open)', async () => {
     crew('key');
     _failOwnerReceiptWritesForTests(true);
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
+    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
     expect(r.status).toBe(500);
     expect(getCard(SID, refOf('key'))?.state).toBe('open');
   });
@@ -483,22 +532,22 @@ describe('K6 after a restart', () => {
     crew('key');
     // Held before a restart, never delivered (no deliverer then).
     registerOwnerReceiptDeliverer(async () => 'held');
-    await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
+    await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
     expect(getCard(SID, refOf('key'))?.state).toBe('closed');
     _restartOwnerReceiptsForTests();
     registerOwnerReceiptDeliverer(async (t) => {
       for (const { entry, text } of deliverableOwnerReceipts(t)) { delivered.push({ t, text }); markOwnerReceiptDelivered(t, entry); }
       return 'delivered';
     });
-    const curl = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, CURL);
+    const curl = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, CURL);
     expect(curl.status).toBe(403);
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, OWNER_PAGE);
+    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, OWNER_PAGE);
     expect(r.status).toBe(200);
     expect(delivered).toHaveLength(1);
     // Every older unverified entry for the card went with the proven one.
     expect(readOwnerReceipts(target)).toEqual([]);
     // Nothing owed now: the base 409.
-    const again = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v3' }] }, OWNER_PAGE);
+    const again = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v3' }] }, OWNER_PAGE);
     expect(again.status).toBe(409);
     expect(again.body.error).toBe('card_closed');
   });
@@ -506,9 +555,9 @@ describe('K6 after a restart', () => {
   it('secret re-entry is refused when the item is closed, even with an unverified entry', async () => {
     crew('key', false);
     registerOwnerReceiptDeliverer(async () => 'held');
-    await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
+    await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v1' }] }, OWNER_PAGE);
     _restartOwnerReceiptsForTests();
-    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, OWNER_PAGE);
+    const r = await call(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v2' }] }, OWNER_PAGE);
     expect(r.status).toBe(409);
   });
 });

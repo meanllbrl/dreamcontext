@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createStyledTerm, currentTermTheme, currentZoom, BASE_FONT, openWhenFontsReady } from '../termCore';
 import { appendTail, finishTail } from './runReport';
-import { OWNER_ONLY_LINE, cardTerminalUrl, type CardActionResult, type CardTarget } from '../../../lib/cardRecords';
+import { FOLDER_CHANGED, OWNER_ONLY_LINE, cardTerminalUrl, type CardActionResult, type CardTarget } from '../../../lib/cardRecords';
 
 /**
  * A REAL PTY inside the transcript — one command, bounded height, and an exit code that
@@ -43,7 +43,7 @@ export function InlineTerminal({
   /** Fires ONCE, when the socket ends. `code` is null when it died without one. `exited`: the
    *  server's exit frame arrived (the process really ended). `opened`: the socket ever opened;
    *  a refused start (busy, no PTY, a closed card) never does. */
-  onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean }) => void;
+  onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean; reason?: string }) => void;
   onStatus?: (status: InlineTermStatus) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -71,11 +71,13 @@ export function InlineTerminal({
     let disposed = false;
     let opened = false;
     let revealTimer: ReturnType<typeof setTimeout> | undefined;
-    const settle = (code: number | null, exited = false) => {
+    // `reason`: the server's close reason, when it refused the upgrade with one (`folder_changed`:
+    // the folder the owner saw is not the folder that would run, end review r2).
+    const settle = (code: number | null, exited = false, reason?: string) => {
       if (settled) return;
       settled = true;
       onStatusRef.current?.(code === null ? 'failed' : 'exited');
-      onExitRef.current({ code, tail: finishTail(tail), exited, opened });
+      onExitRef.current({ code, tail: finishTail(tail), exited, opened, ...(reason ? { reason } : {}) });
     };
     // Only a terminal the user opened with ▶ (or a thread card's own) scrolls into view and takes
     // the keyboard. One that mounts by itself to watch a run started on the phone or Telegram
@@ -117,7 +119,7 @@ export function InlineTerminal({
       // A socket that closes with no exit frame is a process whose fate we do not know — the
       // server went away, the upgrade was refused, node-pty is missing. That is `code: null`,
       // and the card says so rather than inventing a zero for the agent to act on.
-      sock.onclose = () => settle(null);
+      sock.onclose = (ev) => settle(null, false, typeof ev?.reason === 'string' && ev.reason ? ev.reason : undefined);
       sock.onerror = () => {
         if (settled) return;
         setError(target
@@ -135,8 +137,10 @@ export function InlineTerminal({
       void mintTicket(target).then((r) => {
         if (disposed || settled) return;
         if (r.ok) { connect(r.value); return; }
-        setError(r.message || OWNER_ONLY_LINE);
-        settle(null);
+        // A folder that changed is the CARD's line to say (it reads the folder again); any other
+        // refusal is said here.
+        if (r.error !== FOLDER_CHANGED) setError(r.message || OWNER_ONLY_LINE);
+        settle(null, false, r.error);
       });
     } else {
       connect();

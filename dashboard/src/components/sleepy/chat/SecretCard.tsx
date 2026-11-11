@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useApi } from '../../../context/VaultContext';
-import { OWNER_ONLY_LINE, cardFolderText, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { useApi, useVaultId } from '../../../context/VaultContext';
+import { OWNER_ONLY_LINE, cardFolderText, folderLine, isFolderChanged, secretSaveBody, useHostCard, useShownFolder, type CardHost } from '../../../lib/cardRecords';
 import { RequestError } from '../../../api/client';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -45,7 +45,7 @@ interface SecretResponse {
 
 type Phase = 'idle' | 'saving' | 'saved' | 'failed';
 
-export function SecretCard({ spec, report, sessionId: chatSid, host, folder, reentry = false, onSaved }: {
+export function SecretCard({ spec, report, sessionId: chatSid, host, folder, reentry = false, onSaved, onReread }: {
   spec: SecretViewSpec;
   /** Where the receipt goes: the chat's session, or an agent thread's reply. */
   report?: (text: string) => void;
@@ -62,6 +62,8 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   reentry?: boolean;
   /** Saved (the slot reads its state again). */
   onSaved?: () => void;
+  /** The server said the folder changed: the slot reads the card's state again (never saves). */
+  onReread?: () => void;
 }) {
   const api = useApi();
   const t = useOwnerCardT();
@@ -70,6 +72,17 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   const { loaded, record, sessionId } = useHostCard(chatHost, spec, fetchJson);
   const recordHost = !!host && 'record' in host;
   const phone = isMacPhoneSurface();
+  const { vault } = useVaultId();
+  // THE FOLDER THIS CARD DRAWS IS WHERE THE .env IS WRITTEN (end review r2): the save names it
+  // (`root`), and the server refuses when the folder it resolves now is another. A card naming an
+  // app keeps the app's root (the app is what it draws); the phone draws no folder. With a record,
+  // on the Mac, no folder drawn means no Save.
+  const shownFolder = useShownFolder(vault ?? null, sessionId && record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, folder, onReread);
+  const drawnRoot = shownFolder.folder?.path ?? null;
+  const needsFolder = !!sessionId && !!record && !phone && !spec.app;
+  const noFolder = needsFolder && !drawnRoot;
+  // A save refused because the folder moved: the path it named, until the owner saves again.
+  const [changedFrom, setChangedFrom] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState('');
@@ -81,18 +94,17 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   );
 
   const submit = useCallback(async () => {
-    if (!filled || phase === 'saving' || phase === 'saved') return;
+    if (!filled || phase === 'saving' || phase === 'saved' || noFolder) return;
     setPhase('saving');
     setError('');
+    setChangedFrom(null);
+    const root = drawnRoot;
     try {
-      // Every path is the owner's own press (K4): the owner key rides with it.
-      const res = await api.ownerPost<SecretResponse>('/agent/secret', {
-        ...(sessionId && record ? { sessionId, cardRef: record.cardRef } : {}),
-        file: spec.file,
-        title: spec.title,
-        ...(spec.app ? { app: spec.app } : {}),
-        entries: spec.fields.map((f) => ({ key: f.key, value: (values[f.key] ?? '').trim() })),
-      });
+      // Every path is the owner's own press (K4): the owner key rides with it, and the folder the
+      // owner saw (end review r2).
+      const res = await api.ownerPost<SecretResponse>('/agent/secret', secretSaveBody({
+        sessionId, cardRef: record?.cardRef, root, spec, values,
+      }));
       // Cleared before anything else can run: from here on the value exists only in the
       // file. A React state update is not a secure erase (the string stays in the heap
       // until GC), and pretending otherwise would be the dishonest comment — but leaving
@@ -105,12 +117,20 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
       if (res.receipt && !recordHost) report?.(res.receipt);
       onSaved?.();
     } catch (err) {
+      // The folder moved since the owner looked: say so, draw the new one, save nothing again.
+      // What he typed stays in the fields.
+      if (isFolderChanged(err)) {
+        setChangedFrom(root ?? '');
+        shownFolder.reread();
+        setPhase('failed');
+        return;
+      }
       setError(err instanceof RequestError && err.status === 403
         ? (err.message && !/^Request failed/.test(err.message) ? err.message : OWNER_ONLY_LINE)
         : err instanceof Error ? err.message : 'The secret could not be written.');
       setPhase('failed');
     }
-  }, [api, filled, phase, record, report, sessionId, spec.app, spec.fields, spec.file, spec.title, values, recordHost, onSaved]);
+  }, [api, filled, phase, record, report, sessionId, spec.app, spec.fields, spec.file, spec.title, values, recordHost, onSaved, noFolder, drawnRoot, shownFolder]);
 
   if (phase === 'saved' && result) {
     return (
@@ -156,7 +176,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
 
   return (
     <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
-      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : cardFolderText(folder, spec) ? `${cardFolderText(folder, spec)} · ${spec.file}` : spec.file}</span>} />
+      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : cardFolderText(shownFolder.folder, spec) ? `${cardFolderText(shownFolder.folder, spec)} · ${spec.file}` : spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
       {reentry && <p className="chat-secretcard-note" data-testid="secret-card-reentry">{t('ownerCard.secretAgain')}</p>}
 
@@ -171,7 +191,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
               id={`secret-${spec.id}-${f.key}`}
               value={values[f.key] ?? ''}
               onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
-              onSubmit={spec.fields.length === 1 ? () => { void submit(); } : undefined}
+              onSubmit={spec.fields.length === 1 && !noFolder ? () => { void submit(); } : undefined}
               ariaLabel={f.label ?? f.key}
               disabled={phase === 'saving' || unfillable}
             />
@@ -181,6 +201,10 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
       </div>
 
       {error && <p className="chat-secretcard-error">{error}</p>}
+      {(() => {
+        const line = folderLine(t, { changedFrom, folder: shownFolder.folder, spec, unknown: noFolder && loaded });
+        return line && <p className={changedFrom !== null ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
+      })()}
       {sessionId && loaded && phone && !record && (
         <p className="chat-secretcard-note">This card is older than the chat's newest cards; fill it on the Mac.</p>
       )}
@@ -192,14 +216,18 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
         <p className="chat-secretcard-note">
           Saved straight to <code>{spec.file}</code> by the app. Not sent to the agent, not in this chat.
         </p>
-        <button
-          type="button"
-          className="chat-btn pill primary"
-          onClick={() => { void submit(); }}
-          disabled={!filled || phase === 'saving' || unfillable}
-        >
-          {phase === 'saving' ? 'Saving…' : spec.submitLabel ?? `Save to ${spec.file}`}
-        </button>
+        {/* No folder drawn, no Save: nothing would say where the file is written. */}
+        {!noFolder && (
+          <button
+            type="button"
+            className="chat-btn pill primary"
+            data-testid="secret-card-save"
+            onClick={() => { void submit(); }}
+            disabled={!filled || phase === 'saving' || unfillable}
+          >
+            {phase === 'saving' ? 'Saving…' : spec.submitLabel ?? `Save to ${spec.file}`}
+          </button>
+        )}
       </div>
     </div>
   );

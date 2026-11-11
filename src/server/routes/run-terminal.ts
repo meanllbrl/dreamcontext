@@ -30,7 +30,7 @@
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { basename, join } from 'node:path';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { CARD_REF_RE, ensureCardsFor, getCard, isRebuilt, isSessionUuid, listCards, rebuildCards, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { RunViewSpec } from '../../lib/chat-view-spec.js';
 import { consumeCardTicket, type CardTicketAction } from '../card-ticket.js';
@@ -169,15 +169,59 @@ export function cardRootOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>): P
 /** Tests: where cards run (null restores the real `cardWorkingRoot`). */
 export function setCardRootResolverForTests(fn: CardRootResolver | null): void { cardRootResolver = fn ?? realCardRoot; }
 
+/** The folder a press is refused for, as the refusal names it (the folder it would be now). */
+export type PressFolder = { path: string; name: string } | null;
+export type PressRootResult = { ok: true; root: string } | { ok: false; why: 'folder_changed' | 'no_folder'; current: PressFolder };
+
+const realOrSame = (p: string): string => { try { return realpathSync.native(p); } catch { return p; } };
+
+/**
+ * THE one layer for "the folder the owner SAW is the folder that runs or is written to" (end
+ * review r2). Every press resolves the card's folder NOW (`cardRootOf`) and compares it, by real
+ * path, with the folder that surface drew (`shownRoot`): the ticket mint, a run start at the ws
+ * upgrade (the root the ticket bound), the phone's start, the secret submit and the Telegram Run
+ * press. A difference refuses (`folder_changed`, with the folder it is now); a missing drawn
+ * folder refuses; nothing is ever re-resolved silently. Only this function picks a press's root.
+ */
+export async function pressRoot(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>, shownRoot: string | null | undefined): Promise<PressRootResult> {
+  const root = await cardRootOf(rec);
+  if (!root) return { ok: false, why: 'no_folder', current: null };
+  const current = { path: root, name: basename(root) };
+  if (typeof shownRoot !== 'string' || !shownRoot) return { ok: false, why: 'folder_changed', current };
+  if (realOrSame(shownRoot) !== realOrSame(root)) return { ok: false, why: 'folder_changed', current };
+  return { ok: true, root };
+}
+
+/** The HTTP body of a refused press (409). */
+export function folderRefusalBody(r: Extract<PressRootResult, { ok: false }>): { error: 'folder_changed'; folder: PressFolder; message: string } {
+  return {
+    error: 'folder_changed',
+    folder: r.current,
+    message: r.current ? `This card's folder changed: it is now ${r.current.name}. Look again, then press.` : 'This card\'s folder could not be checked, so nothing ran.',
+  };
+}
+
+/** The folder a surface that draws NO folder stands for (the phone page): the project root, so
+ *  such a press runs only when the card's folder is the project root. */
+export function projectRootShown(rec: Pick<CardRecordEntry, 'vault'>): string | null {
+  const p = runProjectRootOf(rec.vault);
+  return p ? realOrSame(p) : null;
+}
+
 /** What the surface may show of a card's folder (the bar, the slot): its path and its name. */
 export async function cardFolderOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>): Promise<{ path: string; name: string } | null> {
   const root = await cardRootOf(rec);
   return root ? { path: root, name: basename(root) } : null;
 }
 
-/** Refusal as an HTTP status, or the run to serve and whether THIS request started it (an attach,
- *  the raced one included, never counts as started). The card's folder is resolved first (K5). */
-async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry): Promise<{ run: Run; started: boolean } | number> {
+/** A ws start refused because the folder the owner saw is not the folder now: the socket opens and
+ *  closes with this code and the reason `folder_changed` (the client re-reads the card's state). */
+export const FOLDER_CHANGED_CLOSE = 4412;
+
+/** Refusal as an HTTP status (or `folder_changed`), or the run to serve and whether THIS request
+ *  started it (an attach, the raced one included, never counts as started). A start runs only in
+ *  the folder the press drew (`pressRoot`). */
+async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry, shownRoot: string | null | undefined): Promise<{ run: Run; started: boolean } | number | 'folder_changed'> {
   const live = attachRun(c.sessionId, c.cardRef);
   if (live) return { run: live, started: false };
   if (!c.start) return 409;
@@ -185,8 +229,9 @@ async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry)
   // What is shown is what runs (K4): no start, from any surface, of a command that can draw as
   // something else. Attaching to a run already going is unaffected.
   if (!commandShowableAsIs((rec.spec as RunViewSpec).command)) return 409;
-  const root = await cardRootOf(rec);
-  if (!root) return 400;
+  const press = await pressRoot(rec, shownRoot);
+  if (!press.ok) return 'folder_changed';
+  const root = press.root;
   // Another start may have raced the await: attach to it rather than refuse.
   const raced = attachRun(c.sessionId, c.cardRef);
   if (raced) return { run: raced, started: false };
@@ -230,10 +275,17 @@ export function handleMacCardUpgrade(req: IncomingMessage, socket: Duplex, head:
   });
   if (!t.ok) { rejectUpgrade(socket, 403); return; }
   void (async () => {
-    const got = await runFor(c, 'mac', rec).catch(() => 500);
+    // The start runs only in the folder the ticket bound at mint (the folder the owner saw).
+    const got = await runFor(c, 'mac', rec, t.binding.root).catch(() => 500);
+    if (got === 'folder_changed') { void upgradeTo(req, socket, head, closeFolderChanged); return; }
     if (typeof got === 'number') { rejectUpgrade(socket, got); return; }
     void upgradeTo(req, socket, head, (ws) => serveRunSocket(ws, got.run));
   })();
+}
+
+/** Open, then close with `folder_changed`: nothing ran, no byte of any run was sent. */
+function closeFolderChanged(ws: WS): void {
+  try { ws.close(FOLDER_CHANGED_CLOSE, 'folder_changed'); } catch { /* closing */ }
 }
 
 // ─── The phone ──────────────────────────────────────────────────────────────
@@ -295,7 +347,11 @@ export function handlePhoneRunUpgrade(req: IncomingMessage, socket: Duplex, head
   void (async () => {
     // The phone's own scope (its device session is owner proof); the run now starts in the
     // card's working folder (K5), and a crew card's result is held like any other (K6).
-    const got = await runFor(c, 'phone', rec).catch(() => 500);
+    // The phone page sends the folder it drew (`root`); a page that draws none stands for the
+    // project root, so it starts a run only when the card's folder is the project root.
+    const shown = url.searchParams.get('root') ?? projectRootShown(rec);
+    const got = await runFor(c, 'phone', rec, shown).catch(() => 500);
+    if (got === 'folder_changed') { void upgradeTo(req, socket, head, closeFolderChanged); return; }
     if (typeof got === 'number') { rejectUpgrade(socket, got); return; }
     armRevoke();
     void upgradeTo(req, socket, head, (ws) => {

@@ -34,7 +34,7 @@ import { getCard, newestCard, onCardsChange, openCards, type CardRecordEntry } f
 import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from '../../lib/chat-view-spec.js';
 import { OWNER_CARD_TELEGRAM_LINE } from '../../lib/super/types.js';
 import { ownerCardLookup } from '../owner-receipts.js';
-import { cardRootOf } from '../routes/run-terminal.js';
+import { cardRootOf, pressRoot } from '../routes/run-terminal.js';
 import { escapeHtml, redactSecrets, wouldRedact } from '../../lib/telegram/format.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { lastLine, relayLine, runOfSession, SECRET_PROMPT_RE, startRun, type Run } from '../runs/registry.js';
@@ -67,6 +67,7 @@ export const RUN_LINES = {
   mcp: (names: string) => `🔌 Bağlanacak: ${names}`,
   notHere: "Bu kart buradan çalıştırılamaz; Mac'te çalıştır.",
   noFolder: "Kartın klasörü doğrulanamadı; Mac'ten çalıştır.",
+  folderChanged: "Kartın klasörü değişti; hiçbir şey çalışmadı. Mac'te karta yeniden bakıp oradan bas.",
 } as const;
 
 /** Characters a shown command may not hold (H3, I5): C0/C1, bidi and zero-width, and their kin. */
@@ -146,12 +147,20 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     else await hub.notice(ab, 'phone', `${line.replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '')} ${RUN_LINES.noPhone}`, true);
   };
 
-  const announceRun = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
+  /** Cards told once that their folder could not be proven (a retry announces it later). */
+  const noFolderNoted = new Set<string>();
+
+  /** False when the card's folder could not be proven now: nothing with a Run was sent, so a
+   *  later change may announce it again (the caller lets go of its `announced` mark). */
+  const announceRun = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<boolean> => {
     const spec = rec.spec as RunViewSpec;
     // The folder it runs in, as the Mac draws it (the slot, the bar): the card root's name, then
     // ` · <cwd>` when the card has one. A root that cannot be proven gets no Run here.
     const root = await cardRootOf(rec);
-    if (!root) { await hub.notice(ab, 'info', RUN_LINES.noFolder, true); return; }
+    if (!root) {
+      if (!noFolderNoted.has(rec.cardRef)) { noFolderNoted.add(rec.cardRef); await hub.notice(ab, 'info', RUN_LINES.noFolder, true); }
+      return false;
+    }
     const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
     const parts = [
       `<b>${escapeHtml(RUN_LINES.ask)}</b>`,
@@ -162,11 +171,13 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     ];
     if (!commandShowable(spec.command)) {
       await sendPhoneLink(ab, rec, RUN_LINES.noButton, 'Telefonda çalıştır');
-      return;
+      return true;
     }
+    // The button keeps the folder this message DREW: the press runs there or nowhere (`pressRoot`).
     await hub.sendButtons(ab, parts.join('\n'), [['Çalıştır'], ['Çalıştır, çıktıyı ajana verme'], ['İptal']], {
       kind: 'run', sessionId: rec.sessionId, cardRef: rec.cardRef, singleUse: true,
-    }, { cmdHash: sha(spec.command), cardId: rec.id });
+    }, { cmdHash: sha(spec.command), cardId: rec.id, root });
+    return true;
   };
 
   const announceSecret = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
@@ -185,13 +196,14 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
   };
 
   /** Each of the four kinds by name (sahip-karti-yerinde K1): a new kind is a compile error here. */
-  const announce = (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
+  /** True once the card was announced for good (false: try again on a later change). */
+  const announce = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<boolean> => {
     switch (rec.kind) {
       case 'run': return announceRun(ab, rec);
-      case 'secret': return announceSecret(ab, rec);
+      case 'secret': await announceSecret(ab, rec); return true;
       case 'checklist':
-      case 'mcp': return announceMacOnly(ab, rec);
-      default: { const never: never = rec.kind; void never; return Promise.resolve(); }
+      case 'mcp': await announceMacOnly(ab, rec); return true;
+      default: { const never: never = rec.kind; void never; return true; }
     }
   };
 
@@ -201,9 +213,14 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     if (!hub.hasTelegramTurn(sessionId) && !deps.streams(ab)) return;
     for (const rec of openCards(sessionId)) {
       if (rec.rebuilt || rec.run || announced.has(rec.cardRef)) continue;
+      // Marked before the await (two changes never announce one card twice), let go when its
+      // folder could not be proven yet, so a later change retries (a single git failure is no
+      // card left without its Run for ever).
       announced.add(rec.cardRef);
       if (announced.size > 500) announced.delete(announced.values().next().value as string);
-      void announce(ab, rec).catch(() => { /* the Mac card is still there */ });
+      void announce(ab, rec)
+        .then((done) => { if (!done) announced.delete(rec.cardRef); })
+        .catch(() => { announced.delete(rec.cardRef); /* the Mac card is still there */ });
     }
   };
 
@@ -273,9 +290,10 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       if (fresh && fresh.state === 'open' && fresh.cardRef !== cardRef) void announceRun(ab, fresh).catch(() => {});
       return RUN_LINES.changed;
     }
-    const root = await cardRootOf(live);
-    if (!root) return RUN_LINES.noFolder;
-    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root });
+    // The folder this message drew is the folder now, or nothing runs (end review r2).
+    const press = await pressRoot(live, typeof rec.data?.root === 'string' ? rec.data.root : null);
+    if (!press.ok) return press.why === 'no_folder' ? RUN_LINES.noFolder : RUN_LINES.folderChanged;
+    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root: press.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;
     void followRun(ab, live, run).catch(() => { /* the run goes on; its report still arrives */ });
     return RUN_LINES.started(idx === 1);

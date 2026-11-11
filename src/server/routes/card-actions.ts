@@ -11,7 +11,8 @@
  *    the owner key.
  *
  * Routes (JSON):
- *  - POST /api/agent/card-ticket          {session, card, action, shown} → {ticket, expiresAt}
+ *  - POST /api/agent/card-ticket          {session, card, action, shown, root} → {ticket, expiresAt}
+ *    (409 `{error:'folder_changed', folder}` when `root` is not the card's folder now)
  *  - POST /api/agent/cards/checklist-submit {session, card, state, secrets} → {ok, outcome}
  *  - POST /api/agent/cards/not-needed     {session, card} → {ok}
  *  - GET  /api/agent/cards/state?session=&card= → {folder, views, cutOff, gone}
@@ -34,7 +35,7 @@ import {
 } from '../owner-receipts.js';
 import { fromOwnerPage } from './assistant.js';
 import { isLoopback, isSameOriginStrict } from './agent-spawn-shared.js';
-import { cardFolderOf, resolveCardRecord } from './run-terminal.js';
+import { cardFolderOf, folderRefusalBody, pressRoot, resolveCardRecord } from './run-terminal.js';
 import { commandShowableAsIs } from '../telegram/runs.js';
 
 type Params = Record<string, string>;
@@ -90,7 +91,11 @@ export async function handleCardTicket(req: IncomingMessage, res: ServerResponse
   // What is shown is what runs (K4), held on the server for every surface: a command that can draw
   // as something else is never minted a ticket, whatever the client drew.
   if (!commandShowableAsIs(command)) { sendJson(res, 409, { error: 'not_showable', message: 'This command cannot be shown as it is, so it cannot be run from a card.' }); return; }
-  sendJson(res, 200, mintCardTicket({ project: rec.vault, postingSession: rec.sessionId, cardRef: rec.cardRef, action, shown: b.shown }));
+  // The folder the owner SAW (`root`, the `folder.path` of cards/state) is the folder now, or no
+  // ticket; the ticket binds it, and the start compares it again (end review r2).
+  const press = await pressRoot(rec, typeof b.root === 'string' ? b.root : null);
+  if (!press.ok) { sendJson(res, 409, folderRefusalBody(press)); return; }
+  sendJson(res, 200, mintCardTicket({ project: rec.vault, postingSession: rec.sessionId, cardRef: rec.cardRef, action, shown: b.shown, root: press.root }));
 }
 
 // ─── POST /api/agent/cards/checklist-submit ─────────────────────────────────

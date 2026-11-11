@@ -17,7 +17,7 @@ import { _resetCardsForTests, listCards, noteAssistantCards, setCardsHomeForTest
 import { _resetCardTicketsForTests, mintCardTicket } from '../../src/server/card-ticket.js';
 import { _resetRunsForTests, configureRuns, startRun, type RunPty } from '../../src/server/runs/registry.js';
 import { _lastCrewDeliveryForTests, runDelivery, setHeldHomeForTests } from '../../src/server/runs/delivery.js';
-import { setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { FOLDER_CHANGED_CLOSE, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
 import { handleCardTicket } from '../../src/server/routes/card-actions.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import {
@@ -47,20 +47,26 @@ let ptys: Array<{ cwd: string; pty: FakePty }>;
 const refOf = (id: string) => listCards(SID).filter((c) => c.id === id).at(-1)!.cardRef;
 const url = (q: Record<string, string>) => `ws://127.0.0.1:${port}/api/agent/terminal?${new URLSearchParams(q).toString()}`;
 const ownOrigin = () => `http://127.0.0.1:${port}`;
-const ticketFor = (id: string, action: 'start' | 'attach' | 'rerun', shown: string, now = Date.now()) =>
-  mintCardTicket({ project: vault, postingSession: SID, cardRef: refOf(id), action, shown }, now).ticket;
+/** A ticket as the mint route makes it: bound to the folder the owner saw (`root`, the card's
+ *  folder unless a row names another). */
+const ticketFor = (id: string, action: 'start' | 'attach' | 'rerun', shown: string, now = Date.now(), root: string = project) =>
+  mintCardTicket({ project: vault, postingSession: SID, cardRef: refOf(id), action, shown, root }, now).ticket;
 
 /** Open, collect what arrives for a beat, close. `status` is the refusal's HTTP code. */
-function connect(u: string, origin?: string): Promise<{ opened: boolean; status: number | null; bytes: string }> {
+function connect(u: string, origin?: string): Promise<{ opened: boolean; status: number | null; bytes: string; closeCode: number | null; closeReason: string }> {
   return new Promise((resolve) => {
     const ws = new WebSocket(u, origin ? { origin } : {});
     let bytes = '';
     let opened = false;
     let status: number | null = null;
-    ws.on('unexpected-response', (_req, res) => { status = res.statusCode ?? null; res.resume(); resolve({ opened, status, bytes }); });
-    ws.on('open', () => { opened = true; setTimeout(() => { ws.close(); resolve({ opened, status, bytes }); }, 80); });
+    let closeCode: number | null = null;
+    let closeReason = '';
+    const done = () => resolve({ opened, status, bytes, closeCode, closeReason });
+    ws.on('unexpected-response', (_req, res) => { status = res.statusCode ?? null; res.resume(); done(); });
+    ws.on('open', () => { opened = true; setTimeout(() => { ws.close(); setTimeout(done, 20); }, 80); });
+    ws.on('close', (code: number, reason: Buffer) => { if (closeCode === null) { closeCode = code; closeReason = reason.toString('utf-8'); } });
     ws.on('message', (m: Buffer) => { bytes += m.toString('utf-8'); });
-    ws.on('error', () => resolve({ opened, status, bytes }));
+    ws.on('error', () => done());
   });
 }
 
@@ -129,7 +135,7 @@ describe('a ticket carries the press', () => {
   it('a ticket minted on the owner page starts the run in the card\'s folder; the socket gets its output', async () => {
     setOwnerKey(KEY);
     const res = { status: 0, body: {} as Record<string, unknown> };
-    const r0 = Object.assign(Readable.from([Buffer.from(JSON.stringify({ session: SID, card: refOf('a'), action: 'start', shown: A.command }))]), {
+    const r0 = Object.assign(Readable.from([Buffer.from(JSON.stringify({ session: SID, card: refOf('a'), action: 'start', shown: A.command, root: project }))]), {
       method: 'POST', url: '/api/agent/card-ticket',
       headers: { host: `127.0.0.1:${port}`, origin: ownOrigin(), 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: KEY },
       socket: { remoteAddress: '127.0.0.1', setTimeout() {} }, setTimeout() {},
@@ -138,6 +144,26 @@ describe('a ticket carries the press', () => {
     expect(res.status).toBe(200);
     const r = await connect(url({ session: SID, card: refOf('a'), start: '1', ticket: String(res.body.ticket) }), ownOrigin());
     expect(r.opened).toBe(true);
+    expect(ptys).toHaveLength(1);
+    expect(ptys[0].cwd).toBe(project);
+  });
+
+  it('a ticket minted for folder A refuses the start once the card\'s folder is B: closed with folder_changed, nothing spawned', async () => {
+    const t = ticketFor('a', 'start', A.command);
+    const b = realpathSync(mkdtempSync(join(dir, 'moved-')));
+    setCardRootResolverForTests(async () => b);
+    const r = await connect(url({ session: SID, card: refOf('a'), start: '1', ticket: t }), ownOrigin());
+    expect(r.closeCode).toBe(FOLDER_CHANGED_CLOSE);
+    expect(r.closeReason).toBe('folder_changed');
+    expect(r.bytes).toBe('');
+    expect(ptys).toHaveLength(0);
+    rmSync(b, { recursive: true, force: true });
+  });
+
+  it('the matching folder still runs (a ticket bound to the card\'s folder now)', async () => {
+    const r = await connect(url({ session: SID, card: refOf('a'), start: '1', ticket: ticketFor('a', 'start', A.command) }), ownOrigin());
+    expect(r.opened).toBe(true);
+    expect(r.closeCode).not.toBe(FOLDER_CHANGED_CLOSE);
     expect(ptys).toHaveLength(1);
     expect(ptys[0].cwd).toBe(project);
   });

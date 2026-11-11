@@ -32,6 +32,9 @@ export interface CardTicketBinding {
   cardRef: string;
   action: CardTicketAction;
   shown: string;
+  /** The card's folder the owner SAW, as the server proved it at mint (end review r2: what is
+   *  shown is what runs). A start compares it with the folder at that moment (`pressRoot`). */
+  root?: string;
 }
 
 /** What the upgrade checks a ticket against: the record as it is NOW. `action` may list several

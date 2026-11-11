@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { OWNER_ONLY_LINE, cardFolderText, mintCardTicket, ticketActionOf, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { FOLDER_CHANGED, OWNER_ONLY_LINE, cardFolderText, folderLine as folderLineOf, pressRun, ticketActionOf, useHostCard, useShownFolder, type CardHost } from '../../../lib/cardRecords';
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
@@ -45,7 +45,7 @@ import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded, onStartRequest }: {
+export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
   spec: RunViewSpec;
   /** Where the exit report goes on a host without a chat (an agent thread's reply). */
   report?: (text: string) => void;
@@ -63,9 +63,11 @@ export function RunCard({ spec, report, sessionId, host, folder, startRequest, o
   onEnded?: () => void;
   /** The bar's request `n` was handled here (started, or told it did not): the slot forgets it. */
   onStartRequest?: (n: number) => void;
+  /** The server said the folder changed: the slot reads the card's state again (never presses). */
+  onReread?: () => void;
 }) {
   const chatHost: CardHost | undefined = host ?? (sessionId ? { session: sessionId } : undefined);
-  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} />;
+  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} onReread={onReread} />;
   return <ThreadRunCard spec={spec} report={report} />;
 }
 
@@ -120,13 +122,14 @@ interface Shown {
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
-function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest }: {
+function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
   spec: RunViewSpec;
   host: CardHost;
   folder?: { name: string; path: string } | null;
   startRequest?: { n: number; shown: string };
   onEnded?: () => void;
   onStartRequest?: (n: number) => void;
+  onReread?: () => void;
 }) {
   const api = useApi();
   const t = useOwnerCardT();
@@ -135,18 +138,36 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   const { loaded, record, sessionId: hostSid } = useHostCard(host, spec, fetchJson);
   const sessionId = hostSid ?? '';
   const unsafe = commandUnsafe(spec.command);
-  // Every Mac press carries a ticket minted for it, bound to the command drawn here (K4). A
-  // refusal (no owner key: a plain browser) keeps its one line on the card.
+  const recordHost = 'record' in host;
+  // THE FOLDER THIS CARD DRAWS IS THE FOLDER ITS PRESS NAMES (end review r2): the slot hands it
+  // in; the card's own chat reads it here. No folder drawn, no press offered on the Mac.
+  const shownFolder = useShownFolder(vault, record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, folder, onReread);
+  const drawnRoot = shownFolder.folder?.path ?? null;
+  const drawnRootRef = useRef(drawnRoot);
+  drawnRootRef.current = drawnRoot;
+  // A press refused because the folder moved: the path it named, until the owner presses again.
+  const [changedFrom, setChangedFrom] = useState<string | null>(null);
+  const folderChanged = useCallback((from: string | null) => {
+    setChangedFrom(from ?? '');
+    shownFolder.reread();
+  }, [shownFolder]);
+  // Every Mac press carries a ticket minted for it, bound to the command AND the folder drawn here
+  // (K4, end review r2). A refusal (no owner key: a plain browser) keeps its one line on the card;
+  // a folder that changed shows its own line and reads the folder again, and is NEVER pressed again
+  // by the card itself.
   const [refusal, setRefusal] = useState<string | null>(null);
   const mintTicket = useCallback(async (target: CardTarget) => {
-    const r = await mintCardTicket(api, {
-      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command,
-    });
+    const r = await pressRun(api, {
+      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command, root: drawnRootRef.current ?? '',
+    }, { folderChanged: (root) => { setRefusal(null); folderChanged(root); } });
+    if (!r.ok && r.error === FOLDER_CHANGED) return r;
     setRefusal(r.ok ? null : r.message || OWNER_ONLY_LINE);
     return r;
-  }, [api, spec.command]);
+  }, [api, spec.command, folderChanged]);
   const phone = isMacPhoneSurface();
   const desktop = isDesktop();
+  // The phone's own path draws no folder (the server runs it only in the project root).
+  const pressable = phone || !!drawnRoot;
   const [includeOutput, setIncludeOutput] = useState(true);
   const [copied, copy] = useCopy(spec.command);
   // The terminal in this card. It STAYS mounted after its process ends (read-only), so the last
@@ -166,15 +187,23 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   // A connected terminal is only tagged with its run; one whose run already ended here, or whose
   // watch already dropped once, is kept (no reconnect loop); otherwise the new run is attached.
   useEffect(() => {
-    if (!liveRunId || !cardRef) return;
+    // Attaching on the Mac is a press too: it waits until the folder is drawn.
+    if (!liveRunId || !cardRef || !pressable) return;
     setShown((cur) => {
       if (cur && !cur.ended) return cur.runId ? cur : { ...cur, runId: liveRunId };
       if (cur && cur.runId === liveRunId && (cur.exited || !cur.user)) return cur;
       return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone }, user: false, ended: false, exited: false };
     });
-  }, [liveRunId, cardRef, sessionId, phone, shownEnded]);
+  }, [liveRunId, cardRef, sessionId, phone, shownEnded, pressable]);
 
-  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean }) => {
+  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean; reason?: string }) => {
+    // The upgrade refused: the folder bound at the press is not the folder now. Say so, draw the
+    // new one; nothing is pressed again.
+    if (r.reason === FOLDER_CHANGED && !r.opened) {
+      setShown((cur) => (cur?.key === key ? null : cur));
+      if (!changedFrom) folderChanged(drawnRootRef.current);
+      return;
+    }
     if (user && !r.opened && !r.exited) {
       // Refused before it opened (busy, too many starts, no terminal): nothing ran.
       setShown((cur) => (cur?.key === key ? null : cur));
@@ -204,8 +233,9 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   });
 
   const start = () => {
-    if (!record || unsafe) return;
+    if (!record || unsafe || !pressable) return;
     setRefusal(null);
+    setChangedFrom(null);
     starts.current += 1;
     setOutcome(null);
     setShown({
@@ -228,20 +258,32 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   useEffect(() => {
     if (!startRequest || startRequest.n === handledRequest.current || !loaded) return;
     handledRequest.current = startRequest.n;
-    if (startRequest.shown === spec.command && view.startable) startRef.current();
-    else setRefusal(t('ownerCard.notStarted'));
+    if (startRequest.shown === spec.command && view.startable && pressable) startRef.current();
+    // Said as the card stands: already running, its folder not known, the button it offers, or none.
+    else if (view.phase === 'running') setRefusal(t('ownerCard.barRunning'));
+    else if (!pressable) setRefusal(t('ownerCard.barNoFolder'));
+    else if (view.runLabel && view.startable) setRefusal(t('ownerCard.notStarted').replace('{label}', view.runLabel === 'Run again' ? t('ownerCard.runAgainLabel') : t('ownerCard.bar.runVerb')));
+    else setRefusal(t('ownerCard.barCannotRun'));
     onStartRequest?.(startRequest.n);
-  }, [startRequest, spec.command, loaded, view.startable, t, onStartRequest]);
+  }, [startRequest, spec.command, loaded, view.startable, view.phase, view.runLabel, pressable, t, onStartRequest]);
 
-  // The one folder text every surface draws (cardFolderText); a chat with no root read draws its cwd.
-  const where = cardFolderText(folder, spec) ?? spec.cwd;
+  // The one folder text every surface draws (cardFolderText); with no root read, the spec's cwd.
+  const where = cardFolderText(shownFolder.folder, spec) ?? spec.cwd;
+  // The slot's run executes on this Mac whoever pressed it: never "in chat" there.
+  const title = recordHost && view.title === 'Ran in chat' ? t('ownerCard.ranOnMac')
+    : recordHost && view.title === 'Running in chat' ? t('ownerCard.runningOnMac')
+      : view.title;
+  // The folder line: changed (and what it is now, once read again), or not known on the Mac.
+  const folderLine = folderLineOf(t, {
+    changedFrom, folder: shownFolder.folder, spec, unknown: !pressable && loaded && view.phase !== 'running' && !unsafe,
+  });
 
   return (
     <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>
       <CardHeader
         glyph={view.phase === 'running' ? '▸' : '>_'}
-        title={view.title}
-        aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={folder?.path}>{where}</span> : undefined}
+        title={title}
+        aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={shownFolder.folder?.path}>{where}</span> : undefined}
       />
 
       {spec.why && view.phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
@@ -251,7 +293,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {view.runLabel && !unsafe && (
+        {view.runLabel && !unsafe && pressable && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"
@@ -266,7 +308,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
 
       {unsafe && <p className="chat-runcard-note" data-testid="run-card-unsafe">{t('ownerCard.unsafe')}</p>}
 
-      {view.startable && (
+      {view.startable && pressable && (
         <label className="chat-runcard-share">
           <input type="checkbox" checked={includeOutput} onChange={(e) => setIncludeOutput(e.target.checked)} />
           Send the output back to the agent when it finishes
@@ -286,7 +328,9 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
 
       {refusal
         ? <p className="chat-runcard-note" data-testid="run-card-refused">{refusal}</p>
-        : view.note && <p className="chat-runcard-note">{view.note}</p>}
+        : folderLine
+          ? <p className="chat-runcard-note" data-testid="run-card-folder-line">{folderLine}</p>
+          : view.note && <p className="chat-runcard-note">{view.note}</p>}
     </div>
   );
 }

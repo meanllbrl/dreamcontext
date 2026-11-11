@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { CARD_REF_RE, closeCard, isSessionUuid, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { SecretViewSpec } from '../../lib/chat-view-spec.js';
 import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
-import { cardRootOf, resolveCardRecord } from './run-terminal.js';
+import { folderRefusalBody, pressRoot, projectRootShown, resolveCardRecord } from './run-terminal.js';
 import { resolveVaultProjectRoot } from './agent-spawn-shared.js';
 import { cardOwnerProof, sendCardOwnerOnly } from './card-actions.js';
 import { deliverOwnerReceipt, holdOwnerReceipt, newSubmitId, owedUnverified, type OwnerCardLookup, type OwnerDeliverOutcome } from '../owner-receipts.js';
@@ -106,11 +106,14 @@ export async function handleAgentSecret(
       return;
     }
     if (!(rec.spec as SecretViewSpec).app) {
-      writeRoot = await cardRootOf(rec);
-      if (!writeRoot) {
-        sendError(res, 409, 'card_root', 'This card\'s working folder could not be checked, so nothing was written.');
-        return;
-      }
+      // The folder the owner SAW (`root`) is the folder written to, or nothing is written (end
+      // review r2). The phone page draws no folder: it stands for the project root.
+      const shown = typeof body.root === 'string' ? body.root : phone ? projectRootShown(rec) : null;
+      const press = await pressRoot(rec, shown);
+      // One refusal shape for every press (409 `folder_changed`, `folder` null when it cannot be
+      // proven at all): nothing is written.
+      if (!press.ok) { sendJson(res, 409, folderRefusalBody(press)); return; }
+      writeRoot = press.root;
     }
     crew = lookup;
     const spec = rec.spec as SecretViewSpec;

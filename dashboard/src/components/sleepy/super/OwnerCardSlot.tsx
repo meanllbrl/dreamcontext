@@ -116,9 +116,9 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
   if (state?.gone) {
     body = <p className="chat-agentthread-note" data-testid="super-owner-gone">{t('ownerCard.gone')}</p>;
   } else if (spec.type === 'run') {
-    body = <RunCard spec={spec} host={host} folder={state?.folder} startRequest={runRequest} onEnded={reload} onStartRequest={(n) => takeSlotRun(item.id, n)} />;
+    body = <RunCard spec={spec} host={host} folder={state?.folder} startRequest={runRequest} onEnded={reload} onStartRequest={(n) => takeSlotRun(item.id, n)} onReread={reload} />;
   } else if (spec.type === 'secret') {
-    body = <SecretCard spec={spec} host={host} folder={state?.folder} reentry={open && kept.some((k) => k.kind === 'secret')} onSaved={reload} />;
+    body = <SecretCard spec={spec} host={host} folder={state?.folder} reentry={open && kept.some((k) => k.kind === 'secret')} onSaved={reload} onReread={reload} />;
   } else if (spec.type === 'checklist') {
     body = <ChecklistCard spec={spec} host={host} />;
   } else {

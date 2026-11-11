@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
@@ -28,6 +28,7 @@ import { noteOwnerAtMac, setOwnerCardRemindBanner } from '../../src/lib/telegram
 import { _resetCardsForTests, cardHandleOf, listCards, noteAssistantCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
 import { _resetRunsForTests, configureRuns, type RunPty } from '../../src/server/runs/registry.js';
 import { runDelivery, setHeldHomeForTests } from '../../src/server/runs/delivery.js';
+import { setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
 import { _resetOwnerReceiptsForTests, registerOwnerCardLookup, registerOwnerItemCloser, setOwnerReceiptsHomeForTests, type OwnerCardLookup } from '../../src/server/owner-receipts.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -187,6 +188,32 @@ describe('the Super\'s own run card names the folder the Mac draws', () => {
     const texts = tg.texts().filter((t) => t.includes('Klasör:'));
     expect(texts.some((t) => t.includes(`Klasör: <code>${basename(project)} · apps/web</code>`))).toBe(true);
     expect(texts.some((t) => t.includes(`Klasör: <code>${basename(project)}</code>`))).toBe(true);
+  });
+});
+
+describe('the folder the message drew is the folder that runs (end review r2)', () => {
+  it('a Run press after the card\'s folder moved refuses and runs nothing; the matching folder runs', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'çalıştır?'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
+    noteAssistantCards(SID, vault, 'm5', fence({ type: 'run', id: 'mv', command: 'gh auth status' }));
+    await vi.waitFor(() => expect(msgWith('Çalıştır, çıktıyı')).toBeTruthy());
+    const first = msgWith('Çalıştır, çıktıyı')!;
+    const moved = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-moved-')));
+    setCardRootResolverForTests(async () => moved);
+    try {
+      tap(first, 0);
+      const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
+      await vi.waitFor(() => expect(said(RUN_LINES.folderChanged)).toBe(true));
+      expect(ptys).toBe(0);
+    } finally {
+      setCardRootResolverForTests(null);
+      rmSync(moved, { recursive: true, force: true });
+    }
+    noteAssistantCards(SID, vault, 'm6', fence({ type: 'run', id: 'ok', command: 'gh auth login' }));
+    await vi.waitFor(() => expect(tg.texts().filter((t) => t.includes('gh auth login')).length).toBeGreaterThan(0));
+    const second = [...tg.sent()].reverse().find((c) => String(c.params.text).includes('gh auth login') && JSON.stringify(c.params.reply_markup ?? {}).includes('Çalıştır'))!;
+    tap(second, 0);
+    await vi.waitFor(() => expect(ptys).toBe(1));
   });
 });
 

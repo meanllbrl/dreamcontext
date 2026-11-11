@@ -193,9 +193,20 @@ function failure(e: unknown): { ok: false; error: string; message: string } {
   return { ok: false, error: 'failed', message: e instanceof Error ? e.message : '' };
 }
 
+/**
+ * A press names what the owner SAW (end review r2, shown-is-not-what-runs): the command (`shown`)
+ * and the folder it was drawn in (`root`, the `folder.path` of GET /api/agent/cards/state). The
+ * server compares that folder with the one it resolves at the press and refuses on any difference
+ * (409 `folder_changed`); it never re-resolves silently.
+ */
+export type CardTicketPress = CardTicketMintRequest & { root: string };
+
+/** The refusal when the folder the owner saw is not the folder that would run. */
+export const FOLDER_CHANGED = 'folder_changed';
+
 /** Mint one single-use ticket for a run card's press, right before its terminal's socket opens.
- *  `shown` is the full command the surface drew. Never throws. */
-export async function mintCardTicket(api: OwnerPoster, req: CardTicketMintRequest): Promise<CardActionResult<string>> {
+ *  `shown` is the full command the surface drew, `root` the folder it drew. Never throws. */
+export async function mintCardTicket(api: OwnerPoster, req: CardTicketPress): Promise<CardActionResult<string>> {
   try {
     const r = await api.ownerPost<CardTicketMintResponse>('/agent/card-ticket', req);
     if (r && typeof r.ticket === 'string' && r.ticket) return { ok: true, value: r.ticket };
@@ -238,7 +249,8 @@ function cleanState(r: unknown): CardStateView | null {
  */
 export function cardFolderText(folder: { name: string } | null | undefined, spec: { cwd?: string } | RecordSpec): string | null {
   if (!folder?.name) return null;
-  const cwd = 'cwd' in spec && typeof spec.cwd === 'string' ? spec.cwd.trim() : '';
+  // The RAW cwd, exactly as the server resolves it: never a cleaned-up copy of it.
+  const cwd = 'cwd' in spec && typeof spec.cwd === 'string' ? spec.cwd : '';
   return cwd ? `${folder.name} · ${cwd}` : folder.name;
 }
 
@@ -265,7 +277,7 @@ const STATE_CACHE_CAP = 64;
 
 /** A card's state, read again whenever `refresh` changes (the item's delivery line moving, an
  *  action of the owner's). */
-export function useCardState(vault: string | null, handle: OwnerCardHandle | undefined, refresh: string): {
+export function useCardState(vault: string | null, handle: Pick<OwnerCardHandle, 'postingSession' | 'cardRef'> | undefined, refresh: string): {
   state: CardStateView | null; reload: () => void;
 } {
   const session = handle?.postingSession;
@@ -286,6 +298,79 @@ export function useCardState(vault: string | null, handle: OwnerCardHandle | und
   }, [vault, session, card, refresh, tick]);
   const reload = useCallback(() => setTick((n) => n + 1), []);
   return { state, reload };
+}
+
+/** A card's folder as the server reports it (GET /api/agent/cards/state). */
+export type CardFolder = { path: string; name: string };
+
+/**
+ * ONE press of a run card on the Mac (end review r2): the ticket is minted for the command AND the
+ * folder the card drew. A `folder_changed` refusal calls `folderChanged` with the folder it named
+ * (the card says so and reads the folder again) and returns: nothing here, nor the caller, presses
+ * again by itself.
+ */
+export async function pressRun(api: OwnerPoster, req: CardTicketPress, on: { folderChanged: (root: string) => void }): Promise<CardActionResult<string>> {
+  const r = await mintCardTicket(api, req);
+  if (!r.ok && r.error === FOLDER_CHANGED) on.folderChanged(req.root);
+  return r;
+}
+
+/** The body of a secret save: the record it is for, the folder it was drawn in (`root`), the
+ *  file, title, app and the typed values. The values never leave in any other shape. */
+export function secretSaveBody(a: {
+  sessionId?: string; cardRef?: string; root: string | null;
+  spec: Pick<SecretViewSpec, 'file' | 'title' | 'app' | 'fields'>; values: Record<string, string>;
+}): Record<string, unknown> {
+  return {
+    ...(a.sessionId && a.cardRef ? { sessionId: a.sessionId, cardRef: a.cardRef } : {}),
+    ...(a.root ? { root: a.root } : {}),
+    file: a.spec.file,
+    title: a.spec.title,
+    ...(a.spec.app ? { app: a.spec.app } : {}),
+    entries: a.spec.fields.map((f) => ({ key: f.key, value: (a.values[f.key] ?? '').trim() })),
+  };
+}
+
+/** The server refused a press because the folder the owner saw is not the folder now. */
+export function isFolderChanged(e: unknown): boolean {
+  return e instanceof RequestError && e.code === FOLDER_CHANGED;
+}
+
+/**
+ * The card's folder line (both cards): after a `folder_changed` refusal, what the folder is now
+ * once read again (or that it is being read); otherwise, on the Mac, that no folder is known, so
+ * nothing can be pressed. Null when there is nothing to say.
+ */
+export function folderLine(
+  t: (key: string) => string,
+  o: { changedFrom: string | null; folder: CardFolder | null; spec: { cwd?: string } | RecordSpec; unknown: boolean },
+): string | null {
+  if (o.changedFrom !== null) {
+    return o.folder && o.folder.path !== o.changedFrom
+      ? t('ownerCard.folderChanged').replace('{name}', cardFolderText(o.folder, o.spec) ?? o.folder.name)
+      : t('ownerCard.folderChangedReading');
+  }
+  return o.unknown ? t('ownerCard.folderUnknown') : null;
+}
+
+/**
+ * The folder a card DRAWS, and so the folder its press names (`root`). Given by the caller (the
+ * slot reads the state once for the whole card), else read here for the card's own chat. `known`
+ * false (loading, the read failed, a card past its transcript): the card offers no press, since
+ * nothing would say where it runs. `reread` reads it again (after a `folder_changed` refusal),
+ * never presses.
+ */
+export function useShownFolder(
+  vault: string | null,
+  target: { postingSession: string; cardRef: string } | undefined,
+  given: CardFolder | null | undefined,
+  onReread?: () => void,
+): { folder: CardFolder | null; reread: () => void } {
+  const own = useCardState(vault, given === undefined ? target : undefined, '');
+  const folder = given !== undefined ? given : own.state?.folder ?? null;
+  const ownReload = own.reload;
+  const reread = useCallback(() => { if (given !== undefined) onReread?.(); else ownReload(); }, [given, onReread, ownReload]);
+  return { folder, reread };
 }
 
 /** Tests only: a card's state as if it had been read. */
