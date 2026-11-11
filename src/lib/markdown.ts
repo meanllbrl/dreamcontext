@@ -90,8 +90,12 @@ function findSection(sections: Section[], sectionName: string): Section | null {
 export function listSections(filePath: string): string[] {
   const raw = readFileSync(filePath, 'utf-8');
   const parsed = matter(raw);
-  const sections = parseSections(parsed.content);
-  return sections.map((s) => s.name);
+  return sectionNamesOf(parsed.content);
+}
+
+/** {@link listSections} over a body already read (the frontmatter stripped): no file access. */
+export function sectionNamesOf(content: string): string[] {
+  return parseSections(content).map((s) => s.name);
 }
 
 /**
@@ -100,11 +104,17 @@ export function listSections(filePath: string): string[] {
 export function readSection(filePath: string, sectionName: string): string | null {
   const raw = readFileSync(filePath, 'utf-8');
   const parsed = matter(raw);
-  const sections = parseSections(parsed.content);
+  return sectionOf(parsed.content, sectionName);
+}
+
+/** {@link readSection} over a body already read (the frontmatter stripped): no file access, same
+ *  rules, so a reader that parsed the file once answers every section from that one parse. */
+export function sectionOf(content: string, sectionName: string): string | null {
+  const sections = parseSections(content);
   const section = findSection(sections, sectionName);
   if (!section) return null;
 
-  const lines = parsed.content.split('\n');
+  const lines = content.split('\n');
   // Return lines after the header, up to the end of the section
   const bodyLines = lines.slice(section.startLine + 1, section.endLine + 1);
   return bodyLines.join('\n').trim();

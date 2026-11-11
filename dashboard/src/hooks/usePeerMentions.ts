@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import type { PeerMention } from '../lib/agentComposer';
 
 /**
  * The connected projects this vault can address, for the composer's `@` menu.
  *
- * Fetched once per vault and held for the pane's life: the list changes only on
- * connect/disconnect, which the user does elsewhere, so re-fetching on every
- * keystroke (or every `@`) would spend a round-trip to learn nothing. The menu
+ * One request serves every pane of a vault for a minute, and a connect/disconnect
+ * refreshes it: re-fetching on every keystroke (or every `@`, or every pane) would
+ * spend a round-trip to learn nothing. The menu
  * opening instantly is the point — a picker that has to load is a picker the
  * user has already typed past.
  *
@@ -20,23 +20,29 @@ import type { PeerMention } from '../lib/agentComposer';
  */
 export function usePeerMentions(enabled = true): PeerMention[] {
   const api = useApi();
-  const [peers, setPeers] = useState<PeerMention[]>([]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let alive = true;
-    api
-      .get<{ peers: PeerMention[] }>('/peer/peers')
-      .then((r) => {
-        if (alive) setPeers(Array.isArray(r?.peers) ? r.peers : []);
-      })
-      .catch(() => {
-        if (alive) setPeers([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [api, enabled]);
-
-  return peers;
+  // ONE request per open, shared by every pane and composer of this vault (task: opening a
+  // project is slow: eleven restored chats asked it 22 times). The query client is per vault,
+  // so the key needs no vault id.
+  const { data } = useQuery({
+    queryKey: PEER_MENTIONS_KEY,
+    // An error stays an error (the hook still answers no `@` menu), so the next mount retries it.
+    queryFn: () => api.get<{ peers: PeerMention[] }>('/peer/peers')
+      .then((r) => (Array.isArray(r?.peers) ? r.peers : [])),
+    enabled,
+    // Fresh for a minute: the panes of one open share a request, and a chat opened later sees a
+    // project connected since (the Connections page also invalidates this key).
+    staleTime: PEERS_FRESH_MS,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  return enabled && data ? data : NO_PEERS;
 }
+
+const NO_PEERS: PeerMention[] = [];
+
+/** How long one fetch of the connected projects serves every pane. */
+export const PEERS_FRESH_MS = 60_000;
+
+/** The query key, for the connection mutations that change the list. */
+export const PEER_MENTIONS_KEY = ['peer-mentions'] as const;

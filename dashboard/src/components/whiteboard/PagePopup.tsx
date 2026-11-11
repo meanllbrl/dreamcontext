@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { emitInstance, useApi, useVault } from '../../context/VaultContext';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
-import { useTasks } from '../../hooks/useTasks';
+import { useTaskList } from '../../hooks/useTasks';
 import { openExternalUrl } from '../../lib/desktop';
 import { revealLabel } from '../../lib/reveal';
 import { externalHref } from '../../lib/externalLinks';
@@ -474,7 +474,7 @@ function menuRowLook(item: PanelMenuItem, tx: (key: string, fallback: string) =>
 /** The panel's heading: a knowledge page's or a task's own title, else a readable file name. */
 function usePageTitle(path: string, owner: { page: 'knowledge' | 'tasks'; id: string } | null): string {
   const knowledge = useKnowledgeList();
-  const tasks = useTasks();
+  const tasks = useTaskList();
   if (owner?.page === 'knowledge') {
     const entry = knowledge.data?.find((e) => e.slug === owner.id);
     if (entry) return knowledgeTitle(entry);

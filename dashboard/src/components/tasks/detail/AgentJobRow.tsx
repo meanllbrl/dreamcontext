@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentJobDetail, OwnerInboxRow, Task, TaskAgentAction } from '../../../hooks/useTasks';
+import type { AgentJobDetail, OwnerInboxRow, Task, TaskListItem, TaskAgentAction } from '../../../hooks/useTasks';
 import { useStatusModel, useTaskAgentAction, useUpdateTask } from '../../../hooks/useTasks';
 import { findAgent, useAgents } from '../../../hooks/useAgents';
 import { useAnswerQuestion, useAutomationQuestions } from '../../../hooks/useAutomations';
@@ -58,7 +58,7 @@ function actionLabel(a: TaskAgentAction | 'unassign', t: Translate): string {
 }
 
 /** The state line: who, doing what, in words. */
-function stateLine(task: Task, job: AgentJobDetail, all: readonly Task[], t: Translate, nameOf: (s: string) => string): string {
+function stateLine(task: Task, job: AgentJobDetail, all: readonly TaskListItem[], t: Translate, nameOf: (s: string) => string): string {
   const name = nameOf(task.agent ?? '');
   const reviewer = job.reviewer ? nameOf(job.reviewer) : '';
   const round = String(job.round);
@@ -119,7 +119,7 @@ function stateActions(job: AgentJobDetail): Array<TaskAgentAction | 'unassign'> 
  * delivered) and this machine's owner-inbox rows about the task (Continue, I'll take it, One more
  * round…). Rows need no Super session: they render here whatever runs in the Super pane.
  */
-export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: AgentJobDetail; allTasks: readonly Task[] }) {
+export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: AgentJobDetail; allTasks: readonly TaskListItem[] }) {
   const { t } = useI18n();
   const { data: agents } = useAgents();
   const nameOf = (slug: string) => findAgent(agents, slug)?.title ?? slug;

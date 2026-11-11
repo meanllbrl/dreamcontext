@@ -232,6 +232,35 @@ export function useTasks() {
   });
 }
 
+/**
+ * One task as the LIGHT list carries it (`GET /api/tasks?view=summary`, server
+ * lib/task-list-summary.ts): every frontmatter field and the agent job, `why` capped, and
+ * `acceptance_criteria` cut to its checkbox lines (and the fence/comment lines around them), the
+ * objection and the card's clip. No other section, no body: a task's own page reads those (`useTask`).
+ */
+export type TaskListItem = Omit<Task,
+  'user_stories' | 'constraints' | 'technical_details' | 'notes' | 'changelog' | 'sections' | 'body'>;
+
+/** The light list's query key: under `['tasks']`, so every task write that refreshes the list
+ *  refreshes this too; an object, so no task slug can name it. */
+export const TASK_LIST_KEY = ['tasks', { view: 'summary' }] as const;
+
+/**
+ * The light task list, for every surface that shows a task as a name, a status and a progress
+ * bar (the Super screen, a member's task list, board widgets, link pickers). Task: opening a
+ * project is slow: the full list was the whole text of every task (19.9 MB for 867 tasks),
+ * refetched every 15 s while an agent worked. Same live poll as {@link useTasks}.
+ */
+export function useTaskList() {
+  const api = useApi();
+  return useQuery({
+    queryKey: TASK_LIST_KEY,
+    queryFn: () => api.get<{ tasks: TaskListItem[] }>('/tasks?view=summary'),
+    select: (data) => data.tasks,
+    refetchInterval: (q) => ((q.state.data?.tasks ?? []).some((t) => LIVE_JOB_STATES.has(t.agent_job?.state ?? '')) ? pollMs(15_000) : false),
+  });
+}
+
 export function useTask(slug: string) {
   const api = useApi();
   return useQuery({

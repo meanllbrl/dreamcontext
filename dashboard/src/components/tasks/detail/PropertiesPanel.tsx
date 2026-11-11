@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Task, RiceInput, UpdateTaskInput } from '../../../hooks/useTasks';
+import type { Task, TaskListItem, RiceInput, UpdateTaskInput } from '../../../hooks/useTasks';
 import { useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides, useStatusModel } from '../../../hooks/useTasks';
 import { useObjectives } from '../../../hooks/useObjectives';
 import { usePlanningVersions } from '../../../hooks/useVersions';
@@ -21,7 +21,7 @@ export type Updates = UpdateTaskInput['updates'];
 
 interface PropertiesPanelProps {
   task: Task;
-  allTasks: Task[];
+  allTasks: readonly TaskListItem[];
   /** Every edit goes through the task PATCH, via the drawer shell. */
   update: (updates: Updates, onError?: (err: Error) => void) => void;
   onDelete: () => void;

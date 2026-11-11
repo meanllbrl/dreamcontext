@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ObjectionKind, Task } from '../../../hooks/useTasks';
+import type { ObjectionKind, Task, TaskListItem } from '../../../hooks/useTasks';
 import { MIN_OBJECTION_NOTE_CHARS, OBJECTION_TARGETED, useObjectToTask, useStatusModel } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
 import { OBJECTION_KINDS, fill, objectionConfirmLabel, objectionPreview, objectionTargets } from '../../../lib/taskObjection';
@@ -15,7 +15,7 @@ import './ObjectionDialog.css';
  * The target list is open tasks only; for "sub-task of" only tasks that are not sub-tasks
  * themselves (two levels max). The server checks every rule again.
  */
-export function ObjectionDialog({ task, allTasks, onClose }: { task: Task; allTasks: Task[]; onClose: () => void }) {
+export function ObjectionDialog({ task, allTasks, onClose }: { task: Task; allTasks: readonly TaskListItem[]; onClose: () => void }) {
   const { t } = useI18n();
   const sm = useStatusModel();
   const object = useObjectToTask();

@@ -1,4 +1,4 @@
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import type { CardProps } from './boardModel';
 import { BoardCard } from './BoardCard';
 

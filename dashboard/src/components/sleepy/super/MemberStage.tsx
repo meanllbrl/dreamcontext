@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { findAgent, useAgents, type AgentSummary } from '../../../hooks/useAgents';
-import { useStatusModel, useTasks, type AgentJobDelivery } from '../../../hooks/useTasks';
+import { useStatusModel, useTaskList, type AgentJobDelivery } from '../../../hooks/useTasks';
 import { jobChip, reviewRounds } from '../../../lib/taskAgentJob';
 import { requestManageMembers } from '../../../lib/openAgents';
 import { AgentAvatar } from '../../agents/AgentAvatar';
@@ -135,7 +135,7 @@ export function MemberRefusalLine({ slug, refusal, onRetry }: { slug: string; re
  */
 export function MemberAgendaTasks({ slug, selected, onPick }: { slug: string; selected: string | null; onPick: (task: string) => void }) {
   const { t } = useI18n();
-  const { data: tasks } = useTasks();
+  const { data: tasks } = useTaskList();
   const statusModel = useStatusModel();
   const rows = useMemo(() => memberTasks(tasks ?? [], slug, (s) => statusModel.isTerminal(s)), [tasks, slug, statusModel]);
   return (

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Task } from '../../../hooks/useTasks';
+import type { Task, TaskListItem } from '../../../hooks/useTasks';
 import { useCreateTask, useStatusModel } from '../../../hooks/useTasks';
 import { criteriaCount, subtaskProgress, taskName } from '../boardModel';
 
@@ -8,7 +8,7 @@ import { criteriaCount, subtaskProgress, taskName } from '../boardModel';
  * (status, name, criteria count; click opens it) and "+ Add subtask" (Enter creates it under
  * this task: it inherits version and feature; Esc cancels; an empty name is ignored).
  */
-export function SubtasksSection({ task, children, onOpen }: { task: Task; children: Task[]; onOpen: (slug: string) => void }) {
+export function SubtasksSection({ task, children, onOpen }: { task: Task; children: readonly TaskListItem[]; onOpen: (slug: string) => void }) {
   const sm = useStatusModel();
   const create = useCreateTask();
   const [adding, setAdding] = useState(false);

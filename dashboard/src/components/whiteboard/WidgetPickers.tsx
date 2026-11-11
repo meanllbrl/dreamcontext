@@ -3,7 +3,7 @@ import { useLabInsights } from '../../hooks/useLab';
 import { useAgents } from '../../hooks/useAgents';
 import { useBoards } from '../../hooks/useBoards';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
-import { useTasks } from '../../hooks/useTasks';
+import { useTaskList } from '../../hooks/useTasks';
 import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
 import { useWhiteboardList } from '../../hooks/useWhiteboards';
 import { isAgentSlugShape, isLabCardRef, type PageKind, type WidgetPayload } from '../../lib/whiteboardWidgets';
@@ -222,7 +222,7 @@ export function KnowledgePicker({ onPick }: { onPick: Pick }) {
 
 export function TaskPicker({ onPick }: { onPick: Pick }) {
   const tx = useWbText();
-  const { data, isLoading, isError } = useTasks();
+  const { data, isLoading, isError } = useTaskList();
   const rows = useMemo(() => data?.map((t) => ({ slug: t.slug, title: taskTitle(t), meta: t.status })), [data]);
   return (
     <PickList

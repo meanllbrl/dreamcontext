@@ -1,4 +1,4 @@
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
 /** SHIPPED status → CSS color var. Live views use `StatusModel.colorOf` (declared statuses included). */

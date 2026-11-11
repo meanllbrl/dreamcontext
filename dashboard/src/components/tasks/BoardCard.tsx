@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { Task } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useStatusModel } from '../../hooks/useTasks';
 import { useVault } from '../../context/VaultContext';
 import { taskAssetUrl } from '../../api/client';

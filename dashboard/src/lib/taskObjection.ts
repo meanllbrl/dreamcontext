@@ -1,4 +1,4 @@
-import type { ObjectionKind, Task } from '../hooks/useTasks';
+import type { ObjectionKind, Task, TaskListItem } from '../hooks/useTasks';
 
 /**
  * What the task page decides about "why was this opened" and "Object to this task", with no
@@ -84,10 +84,10 @@ export function canApprove(task: Pick<Task, 'filed_by' | 'status' | 'objection' 
  */
 export function objectionTargets(
   task: Pick<Task, 'slug'>,
-  allTasks: readonly Task[],
+  allTasks: readonly TaskListItem[],
   as: ObjectionKind,
   isTerminal: (status: string) => boolean,
-): Task[] {
+): TaskListItem[] {
   const exists = new Set(allTasks.map((x) => x.slug));
   return allTasks
     .filter((x) => x.slug !== task.slug && !isTerminal(x.status))
@@ -120,7 +120,7 @@ export function openChildrenMessage(
   t: Translate,
   where: 'board' | 'detail',
   task: Pick<Task, 'slug' | 'name'>,
-  allTasks: readonly Task[],
+  allTasks: readonly Pick<Task, 'slug' | 'name' | 'parent_task' | 'status'>[],
   isTerminal: (status: string) => boolean,
   serverMessage = '',
 ): string {

@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
-import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import type { TaskListItem as Task } from '../../hooks/useTasks';
+import { useTask, useTaskList, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { useVault } from '../../context/VaultContext';
 import { publishPageDetail } from '../../lib/pageContext';
@@ -45,7 +45,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     publishPageDetail(bus, 'tasks', { page: 'tasks', view: viewName, filters: filterCount });
     return () => publishPageDetail(bus, 'tasks', null);
   }, [bus, viewName, filterCount]);
-  const { data: tasks = [], isLoading } = useTasks();
+  const { data: tasks = [], isLoading } = useTaskList();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();
   const { data: activeVersion = null } = useActiveVersion();
@@ -376,9 +376,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       )}
 
       {selectedTask && (
-        <TaskDetailPanel
+        <FullTaskDetail
           key={selectedTask.slug}
-          task={selectedTask}
+          slug={selectedTask.slug}
           allTasks={tasks}
           onOpenTask={(slug) => setSelectedSlug(slug)}
           onClose={() => setSelectedSlug(null)}
@@ -525,4 +525,20 @@ function EmptyState({ onClear }: { onClear: () => void }) {
       <span className="bd-chip" onClick={onClear} style={{ marginTop: 4, padding: '8px 16px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 13, fontWeight: 600, border: '1px solid var(--color-accent)' }}>Clear all filters</span>
     </div>
   );
+}
+
+/**
+ * A task's page over the board, drawn from the task's OWN full read (`GET /api/tasks/:slug`): the
+ * board lists the light view, which carries no body (task: opening a project is slow). The panel
+ * reads the same query itself, so this costs no second request; it appears once that read lands.
+ */
+function FullTaskDetail({ slug, allTasks, onOpenTask, onClose }: {
+  slug: string;
+  allTasks: readonly Task[];
+  onOpenTask: (slug: string) => void;
+  onClose: () => void;
+}) {
+  const { data: full } = useTask(slug);
+  if (!full) return null;
+  return <TaskDetailPanel task={full} allTasks={allTasks} onOpenTask={onOpenTask} onClose={onClose} />;
 }

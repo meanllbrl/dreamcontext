@@ -1,4 +1,4 @@
-import { useTasks } from '../../../hooks/useTasks';
+import { useTaskList } from '../../../hooks/useTasks';
 import { emitInstance, useVault } from '../../../context/VaultContext';
 import { humaniseSlug, isValidWidgetRef, stampedTitle, taskTitle } from '../widgetModel';
 import { usePagePopup } from '../PagePopup';
@@ -17,7 +17,7 @@ export function TaskWidget({ elementId, payload, active, size }: WidgetProps) {
   const { bus } = useVault();
   const popup = usePagePopup();
   const ref = isValidWidgetRef(payload.ref) ? payload.ref : null;
-  const { data, isLoading, isError } = useTasks();
+  const { data, isLoading, isError } = useTaskList();
   const task = ref ? data?.find((t) => t.slug === ref) : undefined;
   // A title stamped as the bare slug (older pickers did) reads as no title; the label stays "Task".
   const title = stampedTitle(payload.title, ref) || (task ? taskTitle(task) : ref ? humaniseSlug(ref) : '')

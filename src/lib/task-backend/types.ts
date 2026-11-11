@@ -337,6 +337,9 @@ export interface TaskBackend {
 
   list(filter?: TaskFilter): Promise<TaskSummary[]>;
   get(slug: string): Promise<TaskData | null>;
+  /** Every task's full view in `list()` order, read without blocking the server. Read-only
+   *  values. Optional: a caller without it falls back to `list()` + `get()` per task. */
+  readAll?(): Promise<readonly TaskData[]>;
   create(input: CreateTaskInput): Promise<TaskData>;
   updateFields(
     slug: string,
