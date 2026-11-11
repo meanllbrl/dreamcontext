@@ -151,7 +151,7 @@ function ApprovalRow({
           {item.change ? (
             <span className="aiteam-approval-fields" data-approval-change> {pendingChangeLine(item.change, t, changedFields)}</span>
           ) : changedFields && changedFields.length > 0 && (
-            <span className="aiteam-approval-fields" data-approval-fields> {t('agents.approval.synced').replace('{fields}', changedFields.join(', '))}</span>
+            <span className="aiteam-approval-fields" data-approval-fields> {t('agents.approval.synced').replace('{fields}', changedFields.map((f) => { const k = `aiteam.approval.field.${f}`; const said = t(k); return said === k ? f : said; }).join(', '))}</span>
           )}
         </span>
         <button type="button" className="agent-btn aiteam-approval-btn" onClick={toggle} aria-expanded={open}>

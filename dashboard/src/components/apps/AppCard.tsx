@@ -260,7 +260,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
         {(app.configMissing?.length ?? 0) > 0 && (
           <div className="app-card__note app-card__note--warn app-card__mcp">
-            <span>{ts('share.card.settingsNeeded', { keys: app.configMissing!.join(', ') })}</span>
+            <span>{t('share.card.settingsNeeded')}</span>
             {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           </div>
         )}
@@ -285,12 +285,17 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         {!installed && app.iconPlaceholder && (
           <div className="app-card__note app-card__note--warn app-card__mcp">
             <span>{t('store.icon.placeholder')}</span>
-            <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.icon', { slug: app.slug })); }}>{t('store.ask')}</button>
+            <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.icon', { slug: app.slug }), { fallback: { vault, title: app.name } }); }}>{t('store.ask')}</button>
           </div>
         )}
         {app.unguarded && <p className="app-card__note app-card__note--warn">{t('apps.unguarded')}</p>}
         {app.portFallback && <p className="app-card__note app-card__note--warn">{t('apps.portFallback')}</p>}
-        {state === 'error' && app.lastError && <p className="app-card__note app-card__note--bad">{app.lastError}</p>}
+        {state === 'error' && app.lastError && (
+          <div className="app-card__note app-card__note--bad app-card__mcp">
+            <span>{app.lastError}</span>
+            {canLaunch && <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.startFailed', { slug: app.slug, error: app.lastError! }), { fallback: { vault, title: app.name } }); }}>{t('store.ask')}</button>}
+          </div>
+        )}
         {err && <p className="app-card__note app-card__note--bad">{err}</p>}
       </div>
       <Shots shots={s?.shots ?? []} />

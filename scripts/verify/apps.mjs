@@ -2,7 +2,7 @@
 /**
  * The Apps page in a real Chromium, on the shared harness (scripts/verify/lib/app.mjs: scratch
  * vault, fake HOME, Vite dev server), at 390 and 1440 px (dreamcontext-apps plan r19, W2):
- *   1. empty: "No apps yet" and the one action, "Ask an agent for an app";
+ *   1. empty: "No apps yet" and the one action, "Ask Claude for an app";
  *   2. after `dreamcontext apps new demo`: the card with its name, state and agent; in a browser
  *      (not the Mac app) it says "Opens in the Mac app" and offers no Launch.
  *   3. a PNG icon draws, and an app whose icon is the logo as .icns shows its letter and says so.
@@ -42,7 +42,7 @@ try {
   await app.look('/?vault=proj', async (page, w) => {
     await goApps(page, w);
     await expectText(page, w, 'No apps yet');
-    await expectText(page, w, 'Ask an agent for an app');
+    await expectText(page, w, 'Ask Claude for an app');
   }, { name: 'apps-empty' });
 
   const made = spawnSync(join(REPO, 'node_modules', '.bin', 'vite-node'), ['--root', REPO, join(REPO, 'src', 'cli', 'index.ts'), 'apps', 'new', 'demo', '--name', 'Demo Ads'], {

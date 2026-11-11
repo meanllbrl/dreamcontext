@@ -162,7 +162,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
             <section className="apps-empty">
               <h2>{t('apps.empty.title')}</h2>
               <p>{t('apps.empty.body')}</p>
-              <button type="button" className="apps-empty__cta" onClick={() => askAgent(bus, '/apps ')}>{t('apps.empty.cta')}</button>
+              <button type="button" className="apps-empty__cta" onClick={() => askAgent(bus, '/apps ', { fallback: { vault: vault ?? '', title: t('apps.empty.cta') } })}>{t('apps.empty.cta')}</button>
             </section>
           )}
           {shelf(t('store.madeHere'), own, 'apps-made-h')}
