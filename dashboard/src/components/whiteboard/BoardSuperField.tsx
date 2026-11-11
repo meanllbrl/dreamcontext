@@ -7,7 +7,7 @@
  * Mounted only while Super mode is on (the page checks the presence first); its Super mark
  * carries what the corner pill carried, which steps aside while this is on screen.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { msgRef } from '../../lib/superTypes';
@@ -80,7 +80,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     ro?.observe(wrap);
     ro?.observe(host);
     return () => { ro?.disconnect(); host.style.removeProperty('--bsf-clear'); };
-  }, [layout.covered, layout.narrow, layout.dockReserve]);
+  }, [layout.covered, layout.bottom, layout.width]);
 
   // The corner pill steps aside while the field is on screen.
   useEffect(() => {
@@ -125,8 +125,8 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       if (saved === 'deleted') { setNote({ text: t('whiteboard.field.deleted'), bad: true }); return; }
       const res = sendFromPage(bus, text);
       if (!res.accepted) { setNote({ text: refusal(res.reason), bad: true }); return; }
-      // Only the words that went: anything typed while the save was settling stays.
-      setDraft((now) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\s+/, '') : now));
+      // The field is read-only while a send settles, so the draft is still exactly what went.
+      setDraft((now) => (now === sent ? '' : now));
       if (saved === 'unsaved') setNote({ text: t('whiteboard.field.unsaved'), bad: false });
       setTrack({ ...startTrack(msgRef(text), presenceRef.current, Date.now()), box });
     } finally {
@@ -160,10 +160,9 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     <div
       ref={wrapRef}
       className="bsf-wrap"
-      data-dock-open={layout.dockReserve > 0 ? 'true' : undefined}
       data-narrow={layout.narrow ? 'true' : undefined}
       data-covered={layout.covered ? 'true' : undefined}
-      style={{ '--bsf-dock-reserve': `${layout.dockReserve}px` } as CSSProperties}
+      style={{ left: layout.left, bottom: layout.bottom, width: layout.width }}
     >
       {working && (
         <div className="bsf-working" role="status" data-testid="board-super-working">
@@ -208,6 +207,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
             value={draft}
             placeholder={t('whiteboard.field.placeholder')}
             aria-label={t('whiteboard.field.label')}
+            readOnly={sending}
             onChange={(e) => { setDraft(e.target.value); if (note) setNote(null); }}
             onKeyDown={onKeyDown}
             onKeyUp={(e) => e.stopPropagation()}

@@ -252,7 +252,7 @@ async function main() {
     await measureField('1440');
     await page.locator('[data-testid="board-super-mark"]').click();
     ok('the field\'s Super mark opens the dock window (criterion 5)', await until(page, async () => (await win.count()) === 1, 6000));
-    for (const [w, h] of [[1440, 900], [1024, 768]]) {
+    for (const [w, h] of [[1440, 900], [1366, 768], [1024, 768]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.waitForTimeout(600);
       const wb = await win.boundingBox();
@@ -280,6 +280,30 @@ async function main() {
     await page.locator('.wbp-canvas .wbp-agent-toggle').click();
     ok('1024: Agents opens the board agents panel', await until(page, async () => (await page.locator('.wb-agent-panel-head').count()) >= 1, 4000));
     await page.locator('.wbp-canvas .wbp-agent-toggle').click();
+    // Review r2: a page overlay never paints over Excalidraw's Library sidebar.
+    {
+      const aside = page.locator('[data-testid="wbp-controls-aside"]');
+      ok('1024: the save state and Agents stand aside in their own group', (await aside.count()) === 1);
+      const trigger = page.locator('.excalidraw .default-sidebar-trigger').first();
+      const tb = await trigger.boundingBox().catch(() => null);
+      const cb = await page.locator('.wbp-canvas').boundingBox();
+      // Excalidraw's own trigger may spill past the canvas edge at this width (its row, not ours).
+      if (tb && tb.x + tb.width <= cb.x + cb.width) {
+        await trigger.click();
+        await page.waitForTimeout(500);
+      }
+      const sidebarOpen = (await page.locator('.excalidraw .sidebar').count()) > 0;
+      if (sidebarOpen) {
+        const ab = await aside.boundingBox();
+        const onTop = await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.excalidraw .sidebar'), { x: ab.x + ab.width / 2, y: ab.y + ab.height / 2 });
+        ok('1024: the open Library sidebar is on top of the aside group, not under it', onTop, JSON.stringify(ab));
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+        if ((await page.locator('.excalidraw .sidebar').count()) > 0 && tb) await trigger.click().catch(() => {});
+      } else {
+        console.log('  · Library trigger not reachable at 1024 (Excalidraw\'s own row spills): sidebar check skipped');
+      }
+    }
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(600);
     // Review r1: Excalidraw's "Scroll back to content" stays above the field after a pan away.

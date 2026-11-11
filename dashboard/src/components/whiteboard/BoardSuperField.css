@@ -1,22 +1,13 @@
-/* The board writing field (BoardSuperField.tsx): bottom centre of the canvas, above nothing of
-   Excalidraw's (its zoom and undo sit bottom-left, its help button is hidden on this page).
-   Painted UNDER Excalidraw's layer UI (z-index 4): a control of Excalidraw's that reaches the
-   field (the properties panel on a short window) stays on top and clickable. Its canvases and
-   widgets (1-2) stay under the field. */
+/* The board writing field (BoardSuperField.tsx). Its box (left, bottom, width) is set inline
+   from `fieldLayout` and nowhere else: no width, floor or offset here, so what is painted is what
+   the rule reasoned about (clear of the zoom/undo group and of the open dock window).
+   Painted in the page-overlay layer (`--wbp-overlay-z`, WhiteboardsPage.css): under every
+   Excalidraw UI layer (text editing 3, layer UI 4, sidebars 5, menus and dialogs above), so none
+   of Excalidraw's controls is ever under the field; over its canvases and widgets. */
 
 .bsf-wrap {
-  /* How much of the canvas's right side the open dock window takes (set inline by the field
-     from the measured canvas, `fieldLayout`): the field stays left of it. */
-  --bsf-dock-reserve: 0px;
-  /* Excalidraw's bottom-left zoom + undo group (≈ 252 px from the canvas edge) and a gap. */
-  --bsf-left-reserve: 272px;
   position: absolute;
-  z-index: 3;
-  left: 50%;
-  bottom: var(--space-5);
-  transform: translateX(-50%);
-  width: min(640px, calc(100% - 2 * var(--bsf-left-reserve)));
-  min-width: 320px;
+  z-index: var(--wbp-overlay-z, 2);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -26,28 +17,8 @@
 
 .bsf-wrap > * { pointer-events: auto; }
 
-.bsf-wrap[data-dock-open] {
-  left: var(--bsf-left-reserve);
-  transform: none;
-  width: min(640px, calc(100% - var(--bsf-left-reserve) - var(--bsf-dock-reserve)));
-}
-
-/* A narrow canvas: the field rises above the zoom/undo row (36 px at the bottom inset) and may
-   use the full width; with the dock window open it starts at the left edge and ends before the
-   window (`fieldLayout` steps it aside when that leaves too little room). */
-.bsf-wrap[data-narrow] {
-  bottom: calc(var(--space-5) + 36px + var(--space-3));
-  width: min(640px, calc(100% - 2 * var(--space-5)));
-}
-
-.bsf-wrap[data-narrow][data-dock-open] {
-  left: var(--space-5);
-  width: min(640px, calc(100% - var(--space-5) - var(--bsf-dock-reserve)));
-  min-width: 0;
-}
-
-/* No room beside the open window: the field steps aside (the window has the Super's composer)
-   and keeps its draft and work marks for when the window closes. */
+/* No room beside the open window (or not measured yet): the field steps aside and keeps its
+   draft and work marks for when the window closes. */
 .bsf-wrap[data-covered] {
   display: none;
 }
@@ -276,7 +247,7 @@
 /* The area the sent message is about, outlined while its work runs (WhiteboardCanvas). */
 .wb-work-outline {
   position: absolute;
-  z-index: 3;
+  z-index: var(--wbp-overlay-z, 2);
   pointer-events: none;
   box-sizing: border-box;
   border: 2px solid var(--color-accent);

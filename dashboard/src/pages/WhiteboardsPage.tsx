@@ -25,6 +25,7 @@ import { publishPageDetail } from '../lib/pageContext';
 import { useSuperPresence } from '../lib/superPageBridge';
 import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
 import { useCanvasBox } from './whiteboards/useCanvasBox';
+import { useTopRowFit } from './whiteboards/useTopRowFit';
 import type { SelectionRef } from '../components/whiteboard/agentDrop';
 import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
 import './WhiteboardsPage.css';
@@ -225,7 +226,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   /** The "show the board list" button, when the explorer is hidden. */
   explorerToggle?: ReactNode;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush } = useWhiteboardEditor(slug);
   const { vault, bus } = useVault();
   // The Super's writing field (2026-11-11): only while Super mode is on, on a ready board.
@@ -236,22 +237,11 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   // in Excalidraw's top row both read it.
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
   const canvasBox = useCanvasBox(canvasEl);
-  // The save state and the Agents toggle ride Excalidraw's top-right row while that row fits the
-  // canvas; when it would spill past the edge (a narrow canvas, a longer language) they move to
-  // their own corner group under it. `controlsNeed` is the canvas width the row was measured to
-  // need, so they come back only once the canvas is that wide again (no flip-flop).
+  // The save state and the Agents toggle ride Excalidraw's top-right row while it fits the
+  // canvas, else their own corner group under it (useTopRowFit decides, and re-measures on every
+  // width change of the row or its controls).
   const [toggleEl, setToggleEl] = useState<HTMLButtonElement | null>(null);
-  const [controlsNeed, setControlsNeed] = useState(0);
-  const controlsAside = canvasBox !== null && canvasBox.width < controlsNeed;
-  useLayoutEffect(() => {
-    if (controlsAside || !canvasBox || !toggleEl) return;
-    const row = toggleEl.parentElement;
-    if (!row) return;
-    let right = 0;
-    for (const c of Array.from(row.children)) right = Math.max(right, c.getBoundingClientRect().right);
-    const over = right - (canvasBox.right - CONTROLS_EDGE_PX);
-    if (over > 0) setControlsNeed(canvasBox.width + Math.ceil(over));
-  }, [controlsAside, canvasBox, toggleEl]);
+  const controlsAside = useTopRowFit(toggleEl, canvasBox, locale);
   const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
   const onCanvasApi = useCallback((api: WhiteboardCanvasApi | null) => {
     canvasRef.current = api;
@@ -410,9 +400,6 @@ function writeHash(hash: string): void {
   if (window.location.hash === hash || (!hash && !window.location.hash)) return;
   window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hash);
 }
-
-/** The room kept between the top row's last control and the canvas's right edge (px). */
-const CONTROLS_EDGE_PX = 4;
 
 function SaveStatus({ state }: { state: SaveState }) {
   const { t } = useI18n();

@@ -34,7 +34,7 @@
    the canvas, right of Excalidraw's own menu button. */
 .wbp-float-left {
   position: absolute;
-  z-index: 5;
+  z-index: var(--wbp-overlay-z);
   top: var(--space-4);
   left: calc(var(--space-4) + var(--space-12));
   display: flex;
@@ -50,7 +50,7 @@
    their own group in the canvas's top-right corner, under that row. */
 .wbp-float-right {
   position: absolute;
-  z-index: 5;
+  z-index: var(--wbp-overlay-z);
   top: calc(var(--space-4) + var(--space-12));
   right: var(--space-4);
   display: flex;
@@ -167,6 +167,12 @@
 }
 
 .wbp-canvas {
+  /* The page-overlay layer: everything the page floats on the canvas (the Boards list toggle
+     and name, the save state and Agents when the top row has no room, the writing field) paints
+     here. Under every Excalidraw UI layer (text editing and canvas buttons 3, layer UI 4,
+     sidebars 5, menus and dialogs above), so none of Excalidraw's controls is ever under a page
+     overlay; over its canvases and widgets (1-2, earlier in the tree). */
+  --wbp-overlay-z: 2;
   position: relative;
   isolation: isolate;
   flex: 1;

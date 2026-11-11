@@ -95,16 +95,23 @@ export function selectionChipText(
   return t('whiteboard.field.selMany').replace('{n}', String(sel.n));
 }
 
-// ── where the field sits (review r1: never under the dock window, never on Excalidraw's controls)
+// ── where the field sits (review r1/r2: never under the open dock window, never on Excalidraw's
+//    controls). This function is the ONLY place the field's geometry is decided: the component
+//    applies its box inline and the CSS carries no width, floor or offset of its own, so what is
+//    painted is exactly what was reasoned about here.
 
 /** The Super dock window's width and its inset from the viewport edge (SuperDock.css
- *  `--super-dock-width`, `--space-5`). */
+ *  `--super-dock-width`, `--space-5`; a drift test pins the width). */
 export const DOCK_WINDOW_PX = 420;
 export const DOCK_INSET_PX = 20;
 /** Excalidraw's bottom-left zoom + undo group (≈ 252 px from the canvas edge) and a gap. */
 export const FIELD_LEFT_RESERVE_PX = 272;
-/** The field's inset from the canvas edge in the narrow layout (`--space-5`). */
+/** The field's inset from the canvas edges (`--space-5`). */
 export const FIELD_INSET_PX = 20;
+/** The zoom/undo row's height (36 px) and a gap: how far the narrow field rises above it. */
+export const ZOOM_ROW_RISE_PX = 48;
+/** The field's widest. */
+export const FIELD_MAX_PX = 640;
 /** Below this the field is too cramped to type in: it steps aside for the open window. */
 export const FIELD_MIN_PX = 280;
 /** Below this canvas width the field cannot sit between the zoom/undo group and its mirror
@@ -118,25 +125,56 @@ export interface CanvasBox {
   viewport: number;
 }
 
+/** The field's box in canvas px (left and bottom offsets, width), or covered. */
 export interface FieldLayout {
-  /** Rise above the zoom/undo row and start at the canvas's left inset. */
+  left: number;
+  bottom: number;
+  width: number;
+  /** Risen above the zoom/undo row. */
   narrow: boolean;
-  /** How much of the canvas's right side the open dock window takes, with its gap (px). */
-  dockReserve: number;
-  /** Not even the narrow layout leaves the field room beside the open window: it steps aside
-   *  (the window has the Super's own composer), keeping its draft and work marks. */
+  /** No room beside the open window: the field steps aside (the window has the Super's own
+   *  composer), keeping its draft and work marks. Also before the canvas is measured. */
   covered: boolean;
 }
 
-/** One rule for every width: the field never sits under the open dock window. */
+/** How much of the canvas's right side the open dock window takes, with its gap (px). The
+ *  window is fixed to the viewport's right edge; whatever stands between it and the canvas (the
+ *  board agents panel) already keeps part of it off the canvas. */
+export function dockReserveOf(box: CanvasBox, dockOpen: boolean): number {
+  if (!dockOpen) return 0;
+  return Math.max(0, DOCK_WINDOW_PX + 2 * DOCK_INSET_PX - Math.max(0, box.viewport - box.right));
+}
+
+const COVERED: FieldLayout = { left: 0, bottom: FIELD_INSET_PX, width: 0, narrow: false, covered: true };
+
+/** One rule for every width: the field never sits under the open dock window, never on the
+ *  zoom/undo group, never wider than {@link FIELD_MAX_PX}. */
 export function fieldLayout(box: CanvasBox | null, dockOpen: boolean): FieldLayout {
-  if (!box) return { narrow: false, dockReserve: 0, covered: false };
-  let narrow = box.width < NARROW_CANVAS_PX;
-  if (!dockOpen) return { narrow, dockReserve: 0, covered: false };
-  // The window is fixed to the viewport's right edge; whatever stands between it and the
-  // canvas (the board agents panel) already keeps part of it off the canvas.
-  const dockReserve = Math.max(0, DOCK_WINDOW_PX + 2 * DOCK_INSET_PX - Math.max(0, box.viewport - box.right));
-  if (!narrow && box.width - FIELD_LEFT_RESERVE_PX - dockReserve < FIELD_MIN_PX) narrow = true;
-  const covered = narrow && box.width - FIELD_INSET_PX - dockReserve < FIELD_MIN_PX;
-  return { narrow, dockReserve, covered };
+  if (!box || box.width <= 0) return COVERED;
+  const reserve = dockReserveOf(box, dockOpen);
+  const narrowCanvas = box.width < NARROW_CANVAS_PX;
+  if (reserve === 0) {
+    // Centred: beside the zoom/undo group on a wide canvas, above it on a narrow one.
+    const room = narrowCanvas ? box.width - 2 * FIELD_INSET_PX : box.width - 2 * FIELD_LEFT_RESERVE_PX;
+    const width = Math.max(0, Math.floor(Math.min(FIELD_MAX_PX, room)));
+    if (width < FIELD_MIN_PX) return COVERED;
+    return {
+      left: Math.floor((box.width - width) / 2),
+      bottom: narrowCanvas ? FIELD_INSET_PX + ZOOM_ROW_RISE_PX : FIELD_INSET_PX,
+      width,
+      narrow: narrowCanvas,
+      covered: false,
+    };
+  }
+  // The window open: left-aligned, ending before the window; beside the zoom/undo group when
+  // that leaves room, else risen above it from the canvas's left inset, else stepped aside.
+  const wideRoom = box.width - FIELD_LEFT_RESERVE_PX - reserve;
+  if (!narrowCanvas && wideRoom >= FIELD_MIN_PX) {
+    return { left: FIELD_LEFT_RESERVE_PX, bottom: FIELD_INSET_PX, width: Math.floor(Math.min(FIELD_MAX_PX, wideRoom)), narrow: false, covered: false };
+  }
+  const narrowRoom = box.width - FIELD_INSET_PX - reserve;
+  if (narrowRoom >= FIELD_MIN_PX) {
+    return { left: FIELD_INSET_PX, bottom: FIELD_INSET_PX + ZOOM_ROW_RISE_PX, width: Math.floor(Math.min(FIELD_MAX_PX, narrowRoom)), narrow: true, covered: false };
+  }
+  return COVERED;
 }

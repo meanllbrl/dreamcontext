@@ -9,10 +9,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   DOCK_INSET_PX, DOCK_WINDOW_PX, FIELD_INSET_PX, FIELD_LEFT_RESERVE_PX, FIELD_MIN_PX,
-  composeFieldMessage, fieldKeyAction, fieldLayout, selectionChipText, selectionSendable, settleSave, type SaveKind,
+  composeFieldMessage, dockReserveOf, fieldKeyAction, fieldLayout, selectionChipText, selectionSendable, settleSave, type SaveKind,
 } from '../../dashboard/src/components/whiteboard/superFieldLogic.js';
 import { PAGE_CONTEXT_RE, splitPageContext } from '../../dashboard/src/lib/superTypes.js';
 import type { SelectionRef } from '../../dashboard/src/components/whiteboard/agentDrop.js';
+import { nextNeed, rowOverflow } from '../../dashboard/src/pages/whiteboards/useTopRowFit.js';
 
 const sel = (over: Partial<SelectionRef> = {}): SelectionRef => ({ n: 2, ids: ['a1', 'b2'], box: [10, 20, 300, 40], one: null, ...over });
 
@@ -146,55 +147,120 @@ describe('the component wiring', () => {
   });
 });
 
-describe('where the field sits (review r1: never under the open dock window)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
-  const dockTake = DOCK_WINDOW_PX + 2 * DOCK_INSET_PX;
-  // The field's right edge in canvas px for a layout, at its widest.
-  const fieldRight = (width: number, l: ReturnType<typeof fieldLayout>) => (l.narrow
-    ? Math.min(FIELD_INSET_PX + 640, width - l.dockReserve)
-    : Math.min(FIELD_LEFT_RESERVE_PX + 640, width - l.dockReserve));
+describe('where the field sits (review r1/r2: one rule decides the painted box)', () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf-8');
+  const src = read('dashboard/src/components/whiteboard/BoardSuperField.tsx');
+  const css = read('dashboard/src/components/whiteboard/BoardSuperField.css');
+  // Excalidraw's zoom + undo group: bottom-left, 36 px tall at the 20 px inset, ≈ 252 px wide.
+  const zoom = { left: 0, right: FIELD_LEFT_RESERVE_PX - 20, top: FIELD_INSET_PX + 36 };
 
-  it('no window: centred on a wide canvas, risen above the zoom row on a narrow one', () => {
-    expect(fieldLayout({ width: 1200, right: 1440, viewport: 1440 }, false)).toEqual({ narrow: false, dockReserve: 0, covered: false });
-    expect(fieldLayout({ width: 670, right: 1024, viewport: 1024 }, false)).toEqual({ narrow: true, dockReserve: 0, covered: false });
-    expect(fieldLayout(null, true)).toEqual({ narrow: false, dockReserve: 0, covered: false });
+  it('every canvas width 300-1700, window open or closed, panel or not: inside the canvas, clear of the window and the zoom row, 280-640 px or stepped aside', () => {
+    let checked = 0;
+    for (let width = 300; width <= 1700; width++) {
+      for (const gapRight of [0, 340]) {
+        const box = { width, right: 1800 - gapRight, viewport: 1800 };
+        for (const dock of [false, true]) {
+          const l = fieldLayout(box, dock);
+          if (l.covered) {
+            // Only when there is truly no room for a usable field.
+            const reserve = dockReserveOf(box, dock);
+            expect(width - FIELD_INSET_PX - reserve, `w=${width} dock=${dock}`).toBeLessThan(FIELD_MIN_PX + (reserve ? 0 : FIELD_INSET_PX));
+            continue;
+          }
+          checked++;
+          const right = l.left + l.width;
+          expect(l.width, `w=${width}`).toBeGreaterThanOrEqual(FIELD_MIN_PX);
+          expect(l.width).toBeLessThanOrEqual(640);
+          expect(l.left).toBeGreaterThanOrEqual(0);
+          expect(right).toBeLessThanOrEqual(width);
+          // Never under the window: the window (and its gap) starts `reserve` px from the right.
+          expect(right, `w=${width} dock=${dock} gap=${gapRight}`).toBeLessThanOrEqual(width - dockReserveOf(box, dock));
+          // Never on the zoom/undo group: beside it, or risen above it.
+          expect(l.left >= zoom.right || l.bottom >= zoom.top, `w=${width}`).toBe(true);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(4000);
   });
 
-  it('the window open at 1440 and at 1024 (the Boards list open): the field ends before the window or steps aside', () => {
-    for (const [width, viewport] of [[1108, 1440], [1200, 1440], [960, 1280], [670, 1024], [900, 1024]] as const) {
-      const box = { width, right: viewport, viewport };
-      const l = fieldLayout(box, true);
-      expect(l.dockReserve).toBe(dockTake);
-      if (l.covered) continue;
-      // The window starts dockTake - gap from the canvas's right edge: the field never reaches it.
-      expect(fieldRight(width, l)).toBeLessThanOrEqual(width - dockTake);
-      const left = l.narrow ? FIELD_INSET_PX : FIELD_LEFT_RESERVE_PX;
-      expect(fieldRight(width, l) - left).toBeGreaterThanOrEqual(FIELD_MIN_PX);
+  it('the cases the reviews named', () => {
+    // 1366 with the Boards list open (canvas ≈ 1012-1031): beside the window, never under it.
+    for (const width of [1012, 1020, 1031]) {
+      const l = fieldLayout({ width, right: 1366, viewport: 1366 }, true);
+      expect(l.covered).toBe(false);
+      expect(l.left + l.width).toBeLessThanOrEqual(width - (DOCK_WINDOW_PX + 2 * DOCK_INSET_PX));
     }
-    // 1024 with the list open: no room for a usable field beside the window.
+    // 1024 with the list open: no room for a usable field beside the window, it steps aside.
     expect(fieldLayout({ width: 670, right: 1024, viewport: 1024 }, true).covered).toBe(true);
-    // 1440: the field fits left of the window, beside the zoom row or above it.
-    expect(fieldLayout({ width: 1108, right: 1440, viewport: 1440 }, true).covered).toBe(false);
+    // Not measured yet: not drawn.
+    expect(fieldLayout(null, false).covered).toBe(true);
+    // No window: centred on a wide canvas, risen on a narrow one.
+    expect(fieldLayout({ width: 1200, right: 1440, viewport: 1440 }, false)).toEqual({ left: 280, bottom: 20, width: 640, narrow: false, covered: false });
+    expect(fieldLayout({ width: 670, right: 1024, viewport: 1024 }, false)).toEqual({ left: 20, bottom: 68, width: 630, narrow: true, covered: false });
   });
 
   it('a panel between the canvas and the window keeps part of the window off the canvas', () => {
-    const l = fieldLayout({ width: 900, right: 1100, viewport: 1440 }, true);
-    expect(l.dockReserve).toBe(dockTake - 340);
-    expect(fieldLayout({ width: 900, right: 900, viewport: 1440 }, true).dockReserve).toBe(0);
+    expect(dockReserveOf({ width: 900, right: 1100, viewport: 1440 }, true)).toBe(DOCK_WINDOW_PX + 2 * DOCK_INSET_PX - 340);
+    expect(dockReserveOf({ width: 900, right: 900, viewport: 1440 }, true)).toBe(0);
+    expect(dockReserveOf({ width: 900, right: 1440, viewport: 1440 }, false)).toBe(0);
   });
 
-  it('the component reads the layout from the page\'s one measurement and lifts Excalidraw\'s scroll-back button', () => {
-    expect(src).toMatch(/fieldLayout\(canvas, !!presence\?\.dockOpen\)/);
-    expect(src).toMatch(/--bsf-clear/);
-    expect(src).not.toMatch(/NARROW_CANVAS_PX = /);
-    const css = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.css', import.meta.url)), 'utf-8');
-    expect(css).toMatch(/scroll-back-to-content \{\s*bottom: var\(--bsf-clear/);
+  it('the dock window width is the one SuperDock.css draws (drift)', () => {
+    expect(read('dashboard/src/components/sleepy/super/SuperDock.css')).toMatch(new RegExp(`--super-dock-width: ${DOCK_WINDOW_PX}px;`));
+  });
+
+  it('the painted box is the rule\'s box: applied inline, and the CSS has no geometry of its own', () => {
+    expect(src).toMatch(/style=\{\{ left: layout\.left, bottom: layout\.bottom, width: layout\.width \}\}/);
+    const wrap = css.slice(css.indexOf('.bsf-wrap {'), css.indexOf('}', css.indexOf('.bsf-wrap {')));
+    expect(wrap).not.toMatch(/\b(width|min-width|left|right|bottom|transform)\s*:/);
+    expect(css).not.toMatch(/\.bsf-wrap\[data-(narrow|dock-open)\]/);
     expect(css).toMatch(/\.bsf-wrap\[data-covered\] \{\s*display: none/);
-    expect(css).not.toMatch(/max\(320px/);
   });
 
-  it('only the words that went leave the draft; what was typed during the save wait stays', () => {
-    expect(src).toMatch(/now\.startsWith\(sent\) \? now\.slice\(sent\.length\)/);
+  it('every page overlay paints in one layer under Excalidraw\'s UI (text editing 3, layer UI 4, sidebars 5)', () => {
+    const page = read('dashboard/src/pages/WhiteboardsPage.css');
+    expect(page).toMatch(/--wbp-overlay-z: 2;/);
+    for (const sel of ['.wbp-float-left', '.wbp-float-right']) {
+      const i = page.indexOf(`${sel} {`);
+      expect(page.slice(i, page.indexOf('}', i))).toMatch(/z-index: var\(--wbp-overlay-z\);/);
+    }
+    expect(css).toMatch(/\.bsf-wrap \{[^}]*z-index: var\(--wbp-overlay-z, 2\);/);
+    expect(css).toMatch(/\.wb-work-outline \{[^}]*z-index: var\(--wbp-overlay-z, 2\);/);
+  });
+
+  it('Excalidraw\'s scroll-back button is lifted above the field', () => {
+    expect(src).toMatch(/--bsf-clear/);
+    expect(css).toMatch(/\.wbp-canvas \.excalidraw \.scroll-back-to-content \{\s*bottom: var\(--bsf-clear/);
+  });
+
+  it('a send settles read-only, so the draft is exactly what went; the track knows a steered turn', () => {
+    expect(src).toMatch(/readOnly=\{sending\}/);
+    expect(src).toMatch(/setDraft\(\(now\) => \(now === sent \? '' : now\)\)/);
     expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
+  });
+});
+
+describe('the page controls in Excalidraw\'s top row (review r2: one place decides)', () => {
+  it('a spill past the canvas edge (with its 4 px room) reads as overflow; a fit does not', () => {
+    expect(rowOverflow([600, 700, 990], 1000)).toBe(-6);
+    expect(rowOverflow([600, 700, 997], 1000)).toBe(1);
+    expect(rowOverflow([], 1000)).toBeLessThan(0);
+  });
+
+  it('the need only rises on a spill, and never below what was measured', () => {
+    expect(nextNeed(0, 670, 30.2)).toBe(701);
+    expect(nextNeed(900, 670, 30)).toBe(900);
+    expect(nextNeed(701, 900, -5)).toBe(701);
+  });
+
+  it('the hook watches the row and each control in it, re-measures on any change, and tries again on a language switch', () => {
+    const hook = readFileSync(fileURLToPath(new URL('../../dashboard/src/pages/whiteboards/useTopRowFit.ts', import.meta.url)), 'utf-8');
+    expect(hook).toMatch(/ro\.observe\(row\);/);
+    expect(hook).toMatch(/for \(const c of Array\.from\(row\.children\)\) ro\.observe\(c\);/);
+    expect(hook).toMatch(/new MutationObserver/);
+    expect(hook).toMatch(/useEffect\(\(\) => \{ setNeed\(0\); \}, \[locale\]\);/);
+    const page = readFileSync(fileURLToPath(new URL('../../dashboard/src/pages/WhiteboardsPage.tsx', import.meta.url)), 'utf-8');
+    expect(page).toMatch(/useTopRowFit\(toggleEl, canvasBox, locale\)/);
+    expect(page).toMatch(/topRight=\{controlsAside \? null : controls\}/);
   });
 });
