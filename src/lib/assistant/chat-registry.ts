@@ -36,8 +36,9 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
-import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
+import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, refusalWait, refusalWaitId, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
+import { canonicalInput } from '../grants/canonical.js';
 import {
   parseTelegramPrefix, telegramSideSource, TG_PENDING_REF_TTL_MS,
   type ChatInjector, type InjectedSource, type PendingTelegramRef, type PendingTelegramRefStore, type TelegramRefDropped,
@@ -170,6 +171,13 @@ export interface ChatEntry {
    *  `permissionGoesToSuper`). Fail closed: once cleared (an init frame reporting another mode,
    *  or {@link ChatHandle.notBypass}) it never comes back for this process. */
   bypass?: true;
+  /** A Super-crew process (main, a member Super, their children), told by the server at
+   *  registration, never read from the stream: only a crew chat turns a refused call into an
+   *  owner wait (K2). A plain chat keeps its card, tab dot and chime as they are. */
+  crew?: true;
+  /** The permission mode the server spawned it with or switched it to (`setChatPermissionMode`).
+   *  A refusal by mode in `plan` or `dontAsk` is the envelope the owner chose, never his item. */
+  permissionMode?: string;
   /** How the last top-level turn ended, stamped BEFORE the move to `idle` is emitted: when, and
    *  whether the owner interrupted it. `resultSeq` is unique across the process (a respawned
    *  chat gets a fresh entry and must never repeat an earlier number). */
@@ -326,10 +334,11 @@ const clone = (e: ChatEntry): ChatEntry => ({
   ...e, lastAssistantText: [...e.lastAssistantText],
   pendingQuestion: e.pendingQuestion ? clonePending(e.pendingQuestion) : null,
   ...(e.earlierPending ? { earlierPending: e.earlierPending.map(clonePending) } : {}),
-  ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map((w) => ({ ...w })) } : {}),
+  ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map(cloneWait) } : {}),
   ...(e.ownerAnswered ? { ownerAnswered: [...e.ownerAnswered] } : {}),
 });
 
+const cloneWait = (w: OwnerWait): OwnerWait => ({ ...w, ...(w.refusal ? { refusal: { ...w.refusal } } : {}) });
 const waitKey = (w: { kind: string; id: string }) => `${w.kind}:${w.id}`;
 const MAX_ANSWERED = 16;
 
@@ -381,7 +390,7 @@ export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: 
   if (used.size) unheard.set(sessionId, texts.filter((_, i) => !used.has(i)));
   const newly = fresh.filter(({ wait }) => answered.has(waitKey(wait))).map(({ wait }) => waitKey(wait));
   if (newly.length) e.ownerAnswered = [...(e.ownerAnswered ?? []), ...newly].slice(-MAX_ANSWERED);
-  const held = fresh.filter(({ wait }) => !answered.has(waitKey(wait))).map(({ wait }) => ({ ...wait }));
+  const held = fresh.filter(({ wait }) => !answered.has(waitKey(wait))).map(({ wait }) => cloneWait(wait));
   if (held.length) e.ownerWaits = [...(e.ownerWaits ?? []), ...held].slice(-MAX_OWNER_WAITS);
   return answered;
 }
@@ -569,7 +578,12 @@ export function chatTopic(e: Pick<ChatEntry, 'title' | 'lastAssistantText'>, max
 /** Register a live chat. Returns the handle the bridge feeds. `seed` carries what an existing
  *  conversation is already about (a `--resume` respawn replays no history, chat-seed.ts reads it
  *  from disk); it sets title and texts only — never status or updatedAt. */
-export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; bypass?: boolean; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
+export function registerChat(init: {
+  sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; bypass?: boolean;
+  seed?: { title?: string; lastAssistantText?: string[] };
+  /** Told by the server (W4 field): the process's permission mode, and whether it is Super crew. */
+  permissionMode?: string; crew?: boolean;
+}): ChatHandle {
   const existingDeath = deathTimers.get(init.sessionId);
   if (existingDeath) { clearTimeout(existingDeath); deathTimers.delete(init.sessionId); }
   const e: ChatEntry = {
@@ -586,6 +600,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     toolsInFlight: 0,
     ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
     ...(init.bypass === true ? { bypass: true as const } : {}),
+    ...(init.crew === true ? { crew: true as const } : {}),
+    ...(typeof init.permissionMode === 'string' && init.permissionMode ? { permissionMode: init.permissionMode } : {}),
   };
   const before = entries.get(init.sessionId);
   if (before && before.status !== 'gone') displaced.set(init.sessionId, [...(displaced.get(init.sessionId) ?? []).filter((x) => x !== before), before]);
@@ -629,6 +645,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   };
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
+  const refusals = newTurnRefusals();
 
   /** A request left (answered or cancelled). Others still waiting: the chat keeps asking and the
    *  listeners close only this one. An id it is not waiting on (a card that outlived its turn)
@@ -658,6 +675,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.permissionMode === 'string' && frame.permissionMode !== 'bypassPermissions') {
         delete e.bypass;
       }
+      // K2: what this turn refused, and what it ran after all (a crew chat only).
+      if (e.crew) noteRefusalFacts(e, refusals, frame);
       if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
         const tasks = Array.isArray(frame.tasks) ? frame.tasks as unknown[] : [];
         const n = tasks.length;
@@ -744,6 +763,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         return;
       }
       if (frame.type === 'result' && topLevel) {
+        // The turn's refusals become owner waits once the whole turn is in: a call refused and
+        // then run after all was never his to settle.
+        if (e.crew && !isLocalCommandFrame(frame)) settleTurnRefusals(e, refusals, frame);
         e.pendingQuestion = null;
         delete e.earlierPending;
         openTools.clear();
@@ -775,10 +797,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // Super Agent steering the child (a send the server noted for it) clears nothing. A
       // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
       if (!telegramSideSource(opts?.source) && !steered) {
-        if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
+        // The server's own turn (an Allow-once note, a usage continue) is never his words: the
+        // refusal it carries closes when its grant is used, and a stall when the server says so.
+        if (e.ownerWaits?.length && opts?.server === true) answerWaits(e, answeredBy(text, e.ownerWaits).filter((w) => w.kind !== 'refusal' && w.kind !== 'stalled'));
+        else if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
-        else if (text.trim()) unheard.set(e.sessionId, [...(unheard.get(e.sessionId) ?? []), { text: text.slice(0, UNHEARD_CHARS), at: Date.now() }].slice(-UNHEARD_MAX));
+        else if (text.trim() && opts?.server !== true) unheard.set(e.sessionId, [...(unheard.get(e.sessionId) ?? []), { text: text.slice(0, UNHEARD_CHARS), at: Date.now() }].slice(-UNHEARD_MAX));
       }
       setStatus(e, 'working');
     },
@@ -797,6 +822,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     },
     stopSettled() {
       if (dead) return;
+      // A turn stopped with no `result`: its refusals belong to no turn the owner can act on.
+      resetTurnRefusals(refusals);
       interruptAsked = false;
       messagesOwed = 0;
       if (e.status !== 'working' && e.status !== 'asking') return;
@@ -916,6 +943,7 @@ export function _resetChatRegistry(): void {
   userSentListeners.clear();
   injectors.clear();
   injectorListeners.clear();
+  crewHandles.clear();
   tgRefs.clear();
   tgDropListeners.clear();
   tgWrittenListeners.clear();
@@ -953,6 +981,232 @@ function emitUserSent(sessionId: string, text: string, source: InjectedSource | 
   for (const fn of [...userSentListeners]) {
     try { fn(sessionId, text, source, server); } catch { /* a listener's failure is its own */ }
   }
+}
+
+// ─── Refusal capture (uye-bildirim K2) ──────────────────────────────────────
+//
+// A refused tool call ends its turn `success`, byte-identical to an allowed one for every reader
+// that keeps only `is_error`: the agent says "I could not" in prose and the owner never hears.
+// The stream does say it (Claude Code 2.1.322, measured): the `user` frame's
+// `tool_result_meta[].permission_decision`, a `system/permission_denied` event with the reason,
+// and `result.permission_denials`. Read here, at the resource, so no caller has to remember.
+
+/** What one turn refused and ran, kept until its `result` (bounded: a runaway turn cannot grow it). */
+interface TurnRefusals {
+  seq: number;
+  /** tool_use id → the call (every level: a sub-agent's refused call stops the work too). */
+  calls: Map<string, { tool: string; input: unknown }>;
+  /** tool_use id (or a synthetic key for an event that names none) → its `permission_denied`. */
+  denied: Map<string, { seq: number; frame: Record<string, unknown> }>;
+  /** tool_use id → its rejecting meta and the tool_result's own text. */
+  rejected: Map<string, { seq: number; meta: Record<string, unknown>; text?: string }>;
+  /** Refusal-wait ids of calls that RAN this turn, and when. */
+  ran: Array<{ id: string; seq: number }>;
+}
+const MAX_TURN_FACTS = 256;
+
+function newTurnRefusals(): TurnRefusals {
+  return { seq: 0, calls: new Map(), denied: new Map(), rejected: new Map(), ran: [] };
+}
+function resetTurnRefusals(t: TurnRefusals): void {
+  t.seq = 0; t.calls.clear(); t.denied.clear(); t.rejected.clear(); t.ran.length = 0;
+}
+function boundedSet<V>(m: Map<string, V>, k: string, v: V): void {
+  m.delete(k);
+  m.set(k, v);
+  if (m.size > MAX_TURN_FACTS) m.delete(m.keys().next().value as string);
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const TOOL_NAME_RE = /^[A-Za-z0-9_.:/-]{1,120}$/;
+
+/**
+ * Who refused a call, as the owner must hear it, or null when it is not his to settle. TOTAL:
+ * a shape nobody wrote a row for is a refusal (`unknown`), never read as allowed.
+ *  - an accept is no refusal;
+ *  - `source: hook` is dreamcontext's own guidance (most recorded refusals): never;
+ *  - a refusal by mode while the process runs `plan` or `dontAsk` is the envelope he chose: never;
+ *  - the decider's own no (a `user*` source, `user_reject`, an interrupted call): never;
+ *  - a classifier block, a settings deny or ask rule, the bridge's unattended deny: a refusal.
+ * A headless ask-rule reject reads `non_execution_kind: user-rejected` with `source: config`
+ * (premise step 2), so the decider is told by its SOURCE, never by that kind alone.
+ */
+export function refusalSource(
+  meta: Record<string, unknown> | null | undefined,
+  deniedEvent: Record<string, unknown> | null | undefined,
+  mode: string | null | undefined,
+): RefusalFact['source'] | null {
+  const pd = isObj(meta?.permission_decision) ? meta!.permission_decision as Record<string, unknown> : null;
+  if (pd && (pd.decision === 'accept' || pd.decision === 'allow')) return null;
+  if (!pd && !deniedEvent) return null;
+  const source = str(pd?.source);
+  const reasonType = str(pd?.reason_type) || str(deniedEvent?.decision_reason_type);
+  const kind = str(meta?.non_execution_kind);
+  if (source === 'hook' || (!source && reasonType === 'hook')) return null;
+  if (reasonType === 'mode' && (mode === 'plan' || mode === 'dontAsk')) return null;
+  if (/^user/.test(source) || reasonType === 'user_reject' || kind === 'interrupted') return null;
+  if (reasonType === 'classifier' || kind === 'automode-blocked') return 'classifier';
+  if (reasonType === 'bridge' || source === 'bridge') return 'bridge';
+  if (reasonType === 'rule' || (source === 'config' && !reasonType)) return 'rule';
+  if (reasonType === 'mode') return 'mode';
+  return 'unknown';
+}
+
+/** The refusal frame the t3 bridge writes for a call it denied unattended (Codex, Antigravity):
+ *  the same `permission_denied` event Claude Code emits, with the call itself in it (the bridge
+ *  has no `tool_result_meta`). */
+export interface BridgeRefusalFrame {
+  type: 'system';
+  subtype: 'permission_denied';
+  decision_reason_type: 'bridge';
+  tool_name: string;
+  tool_use_id?: string;
+  tool_input: unknown;
+  message: string;
+}
+export function bridgeRefusalFrame(tool: string, input: unknown, message: string, toolUseId?: string): BridgeRefusalFrame {
+  return {
+    type: 'system', subtype: 'permission_denied', decision_reason_type: 'bridge',
+    tool_name: tool, ...(toolUseId ? { tool_use_id: toolUseId } : {}), tool_input: input, message,
+  };
+}
+
+/** The canonical input of a call (grants `canonicalInput`), '' when there is none to read. */
+function canonOf(tool: string, input: unknown): string {
+  if (input === undefined || input === null) return '';
+  try { return canonicalInput(tool, input); } catch { return ''; }
+}
+
+/** The text of a tool_result block (its string, or its text parts). */
+function resultText(b: Record<string, unknown>): string {
+  if (typeof b.content === 'string') return b.content;
+  if (Array.isArray(b.content)) return b.content.filter(isObj).map((x) => str(x.text)).join('\n');
+  return '';
+}
+
+/** One frame of a crew chat: remember calls, refusals and what ran. A call that ran closes an
+ *  open refusal of the same call at once, in this turn or any later one. */
+function noteRefusalFacts(e: ChatEntry, t: TurnRefusals, frame: Record<string, unknown>): void {
+  if (frame.type === 'assistant') {
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (isObj(b) && b.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string') boundedSet(t.calls, b.id, { tool: b.name, input: b.input });
+    }
+    return;
+  }
+  if (frame.type === 'system' && frame.subtype === 'permission_denied') {
+    const id = typeof frame.tool_use_id === 'string' && frame.tool_use_id ? frame.tool_use_id : `ev-${t.seq + 1}`;
+    boundedSet(t.denied, id, { seq: ++t.seq, frame });
+    return;
+  }
+  if (frame.type !== 'user') return;
+  const metas = new Map<string, Record<string, unknown>>();
+  if (Array.isArray(frame.tool_result_meta)) {
+    for (const m of frame.tool_result_meta) if (isObj(m) && typeof m.id === 'string') metas.set(m.id, m);
+  }
+  const blocks = new Map<string, Record<string, unknown>>();
+  const content = (frame.message as { content?: unknown } | undefined)?.content;
+  if (Array.isArray(content)) {
+    for (const b of content) if (isObj(b) && b.type === 'tool_result' && typeof b.tool_use_id === 'string') blocks.set(b.tool_use_id, b);
+  }
+  for (const id of new Set([...blocks.keys(), ...metas.keys()])) {
+    const meta = metas.get(id);
+    const block = blocks.get(id);
+    const pd = isObj(meta?.permission_decision) ? meta!.permission_decision as Record<string, unknown> : null;
+    const accepted = pd ? pd.decision === 'accept' || pd.decision === 'allow' : !!block && block.is_error !== true && !t.denied.has(id);
+    if (pd && !accepted) {
+      const text = block ? resultText(block) : '';
+      boundedSet(t.rejected, id, { seq: ++t.seq, meta: meta!, ...(text ? { text } : {}) });
+      continue;
+    }
+    if (!accepted) continue;
+    const call = t.calls.get(id);
+    if (!call) continue;
+    const wid = refusalWaitId(call.tool, canonOf(call.tool, call.input));
+    t.ran.push({ id: wid, seq: ++t.seq });
+    if (t.ran.length > MAX_TURN_FACTS) t.ran.shift();
+    const held = (e.ownerWaits ?? []).filter((w) => w.kind === 'refusal' && w.id === wid);
+    if (held.length) answerWaits(e, held);
+  }
+}
+
+/** The turn's `result`: every refusal the owner must settle, and not run later in the turn,
+ *  becomes an owner wait (deduped by call, newest kept up to MAX_OWNER_WAITS). */
+function settleTurnRefusals(e: ChatEntry, t: TurnRefusals, result: Record<string, unknown>): void {
+  try {
+    const backstop = new Map<string, { tool: string; input: unknown }>();
+    if (Array.isArray(result.permission_denials)) {
+      for (const d of result.permission_denials) {
+        if (isObj(d) && typeof d.tool_use_id === 'string' && typeof d.tool_name === 'string') backstop.set(d.tool_use_id, { tool: d.tool_name, input: d.tool_input });
+      }
+    }
+    const ids = [...new Set([...t.rejected.keys(), ...t.denied.keys()])];
+    const seqOf = (id: string) => Math.min(t.rejected.get(id)?.seq ?? Infinity, t.denied.get(id)?.seq ?? Infinity);
+    ids.sort((a, b) => seqOf(a) - seqOf(b));
+    const fresh: OwnerWait[] = [];
+    for (const id of ids) {
+      const rej = t.rejected.get(id);
+      const ev = t.denied.get(id)?.frame ?? null;
+      const source = refusalSource(rej?.meta ?? null, ev, e.permissionMode);
+      if (!source) continue;
+      const fromEvent = ev && typeof ev.tool_name === 'string' ? { tool: ev.tool_name, input: ev.tool_input } : null;
+      const call = t.calls.get(id) ?? fromEvent ?? backstop.get(id) ?? null;
+      // The input from the call itself; an event or the result's list only when the call frame
+      // never came (a bridge refusal, an older CLI).
+      const input = call?.input !== undefined ? call.input : fromEvent?.input !== undefined ? fromEvent.input : backstop.get(id)?.input;
+      const tool = call && TOOL_NAME_RE.test(call.tool) ? call.tool : 'unknown';
+      const canon = canonOf(tool, input);
+      const wid = refusalWaitId(tool, canon);
+      if (t.ran.some((r) => r.id === wid && r.seq > seqOf(id))) continue;
+      if (fresh.some((w) => w.id === wid)) continue;
+      const pd = isObj(rej?.meta.permission_decision) ? rej!.meta.permission_decision as Record<string, unknown> : null;
+      const category = str(pd?.classifier_category) || str(ev?.classifier_category);
+      const reason = str(ev?.message) || rej?.text || '';
+      fresh.push(refusalWait(tool, canon, PERMISSION_FULL_CAP, { source, ...(category ? { category } : {}), ...(reason ? { reason } : {}) }));
+    }
+    if (!fresh.length) return;
+    const ids2 = new Set(fresh.map(waitKey));
+    // Refused again: a new ask, even when he settled the same call before.
+    if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !ids2.has(k));
+    const keep = (e.ownerWaits ?? []).filter((w) => !ids2.has(waitKey(w)));
+    setOwnerWaits(e, [...keep, ...fresh]);
+  } finally {
+    resetTurnRefusals(t);
+  }
+}
+
+/** The server tells a live chat its permission mode changed (a level change, a live switch). */
+export function setChatPermissionMode(sessionId: string, mode: string): void {
+  const e = entries.get(sessionId);
+  if (!e || e.status === 'gone') return;
+  if (mode) e.permissionMode = mode; else delete e.permissionMode;
+}
+
+// ─── Crew handles (uye-bildirim K3 "Allow once") ────────────────────────────
+//
+// How the server writes ITS OWN turn into a live crew process that may have no window (a member
+// Super, a child): the injector's mechanism for every crew session. Registered by agent-chat.ts at
+// spawn, unregistered at exit, so every key has its death.
+
+export interface CrewHandle {
+  sendServerTurn(text: string): boolean;
+  /** The PATH the process really runs with (its login shell's, read once at spawn), or null while
+   *  unknown: a grant resolves its interpreter with it, the way the session's hook will. */
+  sessionPath?(): string | null;
+}
+const crewHandles = new Map<string, CrewHandle>();
+
+/** Returns the unregister, which removes only this handle (a successor's stays). */
+export function registerCrewHandle(sessionId: string, handle: CrewHandle): () => void {
+  crewHandles.set(sessionId, handle);
+  return () => { if (crewHandles.get(sessionId) === handle) crewHandles.delete(sessionId); };
+}
+
+/** The crew handle of the chat with pin id `sessionId`, or null. Server-internal. */
+export function crewHandle(sessionId: string): CrewHandle | null {
+  return crewHandles.get(sessionId) ?? null;
 }
 
 // ─── Chat injectors (plan "Injector", B1, D1) ───────────────────────────────

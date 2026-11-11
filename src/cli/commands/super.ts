@@ -6,7 +6,7 @@ import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
-import { insideAgentRun, memberSuperProcess } from '../../lib/automations/types.js';
+import { AGENT_CHAT_ENV, AGENT_SELF_ENV, MEMBER_CREW_ENV, insideAgentRun, memberSuperProcess } from '../../lib/automations/types.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
@@ -46,10 +46,30 @@ export function mayCallSuper(env: NodeJS.ProcessEnv = process.env): boolean {
   return !insideAgentRun(env) || memberSuperProcess(env) !== null;
 }
 
+/**
+ * The refusal, naming the way this process DOES reach the owner (owner 2026-11-10: a member's run
+ * called `super ask`, was told only "not the Super Agent", and the owner never heard the question).
+ * A refusal that names no way leaves the agent ending its turn with a question nobody sees.
+ */
+export function notTheSuperAgent(env: NodeJS.ProcessEnv = process.env): { error: 'not_a_chat'; message: string; todo?: string } {
+  const base = { error: 'not_a_chat' as const, message: NOT_THE_SUPER_AGENT };
+  if (env[MEMBER_CREW_ENV]) {
+    return { ...base, todo: `you are a job of member ${env[MEMBER_CREW_ENV]}'s Super Agent: ask with your own AskUserQuestion tool and stop; it reaches the owner through that Super Agent. Do not end your turn with a question in plain text.` };
+  }
+  const self = env[AGENT_SELF_ENV] || env.DREAMCONTEXT_AUTOMATION_SLUG;
+  if (env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
+    return { ...base, todo: `you are a run${self ? ` of ${self}` : ''}: to ask the owner, \`dreamcontext automations propose ${self || '<slug>'} --title "…" --body "…" --choice "A" --choice "B"\` and stop; the answer resumes you. If propose refuses (review is off), post the question with \`dreamcontext automations post ${self || '<slug>'} "<question>"\` and stop. Never end with a question in plain text only.` };
+  }
+  if (env[AGENT_CHAT_ENV] !== undefined) {
+    return { ...base, todo: 'you are in a conversation with the owner: ask him here with your AskUserQuestion tool.' };
+  }
+  return base;
+}
+
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
   // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
   const e = mayCallSuper(env) ? windowEnv(env) : null;
-  if (!e) return Promise.resolve({ status: 401, body: { error: 'not_a_chat', message: NOT_THE_SUPER_AGENT } });
+  if (!e) return Promise.resolve({ status: 401, body: notTheSuperAgent(env) });
   const url = new URL(`/api/super/v/${verb}`, e.url);
   const payload = JSON.stringify(body);
   return new Promise((resolve) => {

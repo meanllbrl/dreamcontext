@@ -233,3 +233,21 @@ describe('the wiring', () => {
     expect(pane).toMatch(/item\.kind === 'user' && superView && parseSuperAnswer\(item\.text\)/);
   });
 });
+
+describe('a member waiting on the owner reaches the phone (end review r2)', () => {
+  it('born pending, it crosses the wire with its member and kind, and the phone names the row by it, read only', () => {
+    const s = { ...emptySuperState(), session: 'super-1', enabled: true, children: {}, pad: [], ownerBatches: [],
+      queue: [
+        { id: 'q-mp', sessionId: 'member-child', kind: 'member', state: 'pending', createdAt: 1, member: 'otobot', answers: 'x1', of: 'permission' },
+        { id: 'q-ma', sessionId: 'member-sid', kind: 'member', state: 'escalated', createdAt: 2, member: 'otobot', answers: 'x2', of: 'ask', ownerText: 'Send it?' },
+      ],
+    } as unknown as SuperState;
+    const d = wire(s);
+    expect(d.waiting.map((w) => [w.id, w.member, w.of, w.text])).toEqual([['q-mp', 'otobot', 'permission', ''], ['q-ma', 'otobot', 'ask', 'Send it?']]);
+    const input = digestToNotepadInput(d, 'Super');
+    const rows = superNotepad(input.state, input.look).waiting;
+    expect(rows.map((r) => [r.text, r.member, r.chip])).toEqual([['otobot', 'otobot', 'permission'], ['otobot', 'otobot', 'question']]);
+    const html = renderToStaticMarkup(createElement(SuperAgenda as never, { state: input.state, look: input.look, variant: 'full', canShowChild: () => false, canOpenMember: false, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {} } as never));
+    expect(html).toContain('otobot');
+  });
+});

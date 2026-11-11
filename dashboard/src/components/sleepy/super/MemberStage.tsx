@@ -6,6 +6,7 @@ import { jobChip, reviewRounds } from '../../../lib/taskAgentJob';
 import { requestManageMembers } from '../../../lib/openAgents';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { TeamApproval } from '../../aiteam/TeamApproval';
+import { MemberAutonomy } from '../../aiteam/AutonomyChip';
 import { pendingApprovals } from '../../aiteam/teamModel';
 import { JobChipView } from '../../tasks/JobChipView';
 import type { MemberCardRef } from '../../../lib/superTypes';
@@ -72,6 +73,7 @@ export function MemberStageHead({ info, spawn }: { info: MemberStageInfo; spawn:
       <span className="super-member-name" data-testid="super-member-name">{name}</span>
       <span className="super-member-sub">{t('superStage.member.subtitle').replace('{job}', job || name)}</span>
       <span className="super-member-model" data-testid="super-member-model">{memberModelLabel(tool ? null : agent, spawn)}</span>
+      <MemberAutonomy slug={info.slug} variant="head" />
       {tool && <span className="super-member-note" data-testid="super-member-claude-only">{t('superStage.member.claudeOnly').replace('{tool}', toolName)}</span>}
       {global && (
         <label className="super-member-chip" data-testid="member-project-chip" title={t('superStage.member.projectChip')}>

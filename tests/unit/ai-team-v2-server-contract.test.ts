@@ -42,6 +42,7 @@ import { tickProject } from '../../src/lib/automations/tick.js';
 import type { RunOutcome } from '../../src/lib/automations/runner.js';
 import { listAgentSessions, localDir, projectKey, readStageHomeSession, recordAgentSession, recordStageHomeSession } from '../../src/lib/local-store.js';
 import { buildStageView, handleAgentsHistory, handleAgentsStage, handleAgentsUpdate, stageFileKind } from '../../src/server/routes/agents.js';
+import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import { registerLiveChat, unregisterLiveChat, type LiveChatEntry } from '../../src/server/routes/agent-chat-live.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import {
@@ -183,13 +184,23 @@ describe('AC-A1-1 autonomy', () => {
   });
 
   it('the dashboard route sets it and refuses anything that is not a level', async () => {
-    // The agent-run refusal is the CLI verb's (the server cannot see a caller's environment; a run
-    // that reaches the local API directly is plan-r9's named residual).
+    // The agent-run refusal is the CLI verb's; a run that reaches the local API directly meets the
+    // route's own owner-proof check for a level change (plan-r9's residual, closed by uye-bildirim).
     makeAgent();
     // Toward free widens the member, and his own save of it is his approval (owner 2026-11-07):
     // written and stamped at once, no inline confirm.
+    // A level CHANGE takes the shell's owner key (uye-bildirim K3 "Level"); Origin alone is refused.
+    const key = 'c5'.repeat(32);
+    setOwnerKey(key);
+    onTestFinished(() => setOwnerKey(null));
+    const noKey = fakeRes();
+    await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), noKey, { slug: 'scout' }, contextRoot);
+    expect(noKey.status).toBe(403);
+    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('balanced');
     const res = fakeRes();
-    await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), res, { slug: 'scout' }, contextRoot);
+    const own = fakeReq({ autonomy: 'free' });
+    Object.assign((own as unknown as { headers: Record<string, string> }).headers, { 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: key });
+    await handleAgentsUpdate(own, res, { slug: 'scout' }, contextRoot);
     expect(res.status).toBe(200);
     expect((res.json().agent as { autonomy: string }).autonomy).toBe('free');
     const bad = fakeRes();

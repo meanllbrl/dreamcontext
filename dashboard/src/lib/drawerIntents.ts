@@ -122,11 +122,16 @@ export interface DrawerSurfaceState {
   chats?: DrawerChatFact[];
   /** The tab on screen in the window on screen. */
   activeChatId?: string;
+  /** Open items per AI Team member in MAIN's record (`memberWaitCounts`: its mirrors and
+   *  routines). The member's own summary says only "asking" and misses a refusal or a stalled
+   *  job, so the side menu's red count is read from here. Absent: the summary is all it knows. */
+  memberWaits?: Record<string, number>;
 }
 
 export function sameSurfaceState(a: DrawerSurfaceState | null, b: DrawerSurfaceState): boolean {
   return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected
     && a.activeWindowId === b.activeWindowId && a.member === b.member && JSON.stringify([a.shown, a.superMarks]) === JSON.stringify([b.shown, b.superMarks])
+    && JSON.stringify(a.memberWaits ?? null) === JSON.stringify(b.memberWaits ?? null)
     && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? [])
     && a.activeChatId === b.activeChatId && JSON.stringify(a.chats ?? null) === JSON.stringify(b.chats ?? null);
 }

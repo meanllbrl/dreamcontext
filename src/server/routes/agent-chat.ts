@@ -8,7 +8,7 @@ import { join, dirname, basename, extname, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
-  realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants,
+  realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants, watchFile, unwatchFile,
 } from 'node:fs';
 import { sendJson, sendError, isForeignOriginUpgrade, parseJsonBody } from '../middleware.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
@@ -40,7 +40,11 @@ import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
-import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { agentChatLevelArgs, agentLevelToFollow, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { onAgentLevel } from '../../lib/agents/level-follow.js';
+import { agentPath } from '../../lib/agents/store.js';
+import { globalAgentPath } from '../../lib/agents/scope.js';
+import { automationsRegistryPath } from '../../lib/automations/registry.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
   chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
@@ -111,7 +115,8 @@ import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantC
 import { listCards, onCardsChange } from '../../lib/cards/records.js';
 import { flushHeldReports } from '../runs/delivery.js';
 import { ensureCards } from './run-terminal.js';
-import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, registerCrewHandle, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { openCrewSeat } from './crew-binding.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
 import { takeSuperReactionBlock } from '../../lib/telegram/reactions.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
@@ -122,7 +127,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
-import { levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
+import { levelChatMode, levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
@@ -132,7 +137,7 @@ import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChi
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-language.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
-import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
+import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
@@ -662,6 +667,10 @@ export function spawnModelFor(o: { isAssistant: boolean; assistantModel?: string
  */
 const assistantAutonomyListeners = new Set<(autonomy: Autonomy) => void>();
 
+/** How often a live member chat stats its agent's file and the approvals store (a CLI edit, a
+ *  synced pull, an approval from another process): a stat, never a read, until one changes. */
+const LEVEL_WATCH_MS = 1000;
+
 /** Called wherever the Assistant's autonomy is written (routes/assistant.ts). */
 export function notifyAssistantAutonomy(autonomy: Autonomy): void {
   for (const fn of [...assistantAutonomyListeners]) {
@@ -1043,7 +1052,8 @@ setSuperDigestSink((contextRoot, state) => {
     entry.mirrorFrame(stage);
     stageKeys.set(sid, stage);
   }
-  const d = superDigest(state);
+  // Titles of the member and routine rows resolved from that vault's disk (phone-mirror.ts).
+  const d = superDigestFor(contextRoot, state);
   if (digestKeys.get(sid) === d.key) return;
   digestSeq.set(sid, ++digestClock);
   entry.mirrorFrame(superDigestFrame(d));
@@ -2748,6 +2758,7 @@ export function startChatSession(
   const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script, ...(bridgeCommand ? { bridge: bridgeCommand } : {}) });
+  const spawnEnv = { ...process.env, ...childEnv, ...accountEnv } as NodeJS.ProcessEnv;
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -2759,7 +2770,7 @@ export function startChatSession(
     // DREAMCONTEXT_CHAT_TAB arms the UserPromptSubmit reminder to name the tab
     // (lib/chat-tab-title-nudge.ts). ALWAYS set, to '1' or '', so a value the server itself
     // inherited can never leak into another mode; the Assistant has no tab to name.
-    env: { ...process.env, ...childEnv, ...accountEnv } as NodeJS.ProcessEnv,
+    env: spawnEnv,
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
@@ -2772,6 +2783,20 @@ export function startChatSession(
       seed = seedForConversation(contextRoot, [heldConversation, pinId ? resolveAgentSession(contextRoot, pinId) : '']);
     } catch { seed = {}; }
   }
+  // A Super crew process's seat (uye-bildirim K3, crew-binding.ts): its binding is written now, by
+  // the pid this server spawned, so the hook and the bridge can tell who asks; its mode and crew
+  // flag go to the registry, never read from the stream.
+  const launchedMode = bridgeScript ? bridgeMode : spawnModeAt >= 0 ? argv[spawnModeAt + 1] ?? 'default' : 'default';
+  const crewSeat = openCrewSeat({
+    pid: child.pid, pin: chatRegistryId, projectRoot, isSuper, superCrew: superCrewEnv === '1',
+    excluded: isAssistant || !!card || !!app || scopedCard, agent: opts.agent, memberCrew: opts.memberCrew, mode: launchedMode,
+    ...(spawnCmd.detached ? { shellProbe: { file: spawnCmd.file, env: spawnEnv, cwd: projectRoot } } : {}),
+    setMode: (next) => {
+      if (!alive || stdinEnding()) return false;
+      if (next !== 'bypassPermissions') registry?.notBypass();
+      return writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'set_permission_mode', mode: next } });
+    },
+  }, { log: (line) => console.warn(`[agent-chat] ${line}`) });
   const registry: ChatHandle | null = isAssistant || card ? null : registerChat({
     sessionId: chatRegistryId,
     conversationId: heldConversation || null,
@@ -2779,6 +2804,8 @@ export function startChatSession(
     mode,
     ...(delegated ? { origin: 'assistant' as const } : {}),
     ...(launchedBypass ? { bypass: true } : {}),
+    permissionMode: launchedMode,
+    crew: !!crewSeat,
     seed,
   });
   // An ended Super Agent child running again without `super resume`: the owner reopened it.
@@ -2793,6 +2820,8 @@ export function startChatSession(
       chatRegistryId,
       sendOwnerText: async (text, meta) => {
         if (!alive || stdinEnding() || handedOff) return { ok: false, reason: 'closed' };
+        // A level respawn waits for a socket: a held message could be dropped by the detach reap.
+        if (respawnTo !== null && (detached || ws.readyState !== ws.OPEN)) return { ok: false, reason: 'closed' };
         const { ref, body } = parseTelegramPrefix(text);
         if (ref !== meta.ref || !body.trim()) return { ok: false, reason: 'refused' };
         const echo = { ref, source: 'telegram' as const };
@@ -2808,6 +2837,22 @@ export function startChatSession(
       interrupt: () => { if (alive) onWsMessage(JSON.stringify({ type: 'interrupt' })); },
     })
     : () => { /* not a Super */ };
+  // How the server writes ITS OWN turn into any live crew process, window or not (the owner's
+  // Allow once, K3): the injector's path, the turn noted as the server's so it is never read as
+  // his words (it clears no other wait).
+  const unregisterCrewHandle = crewSeat && registry
+    ? registerCrewHandle(chatRegistryId, {
+      sendServerTurn: (text) => {
+        if (!alive || stdinEnding() || handedOff || !text.trim()) return false;
+        crewSeat.noteServerTurn(text);
+        const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
+        return true;
+      },
+      sessionPath: () => crewSeat.sessionPath(),
+    })
+    : () => { /* not a crew process */ };
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -2816,13 +2861,15 @@ export function startChatSession(
   // spawned with; the respawn runs at once when idle, else at the turn boundary, and any
   // owner message that arrives meanwhile is held for the successor (never written here).
   // `handedOff` = this process is being replaced in place: its exit must not end the socket.
-  let respawnTo: Autonomy | null = null;
+  // A string key: the Assistant's new autonomy, or a member chat's new level argv.
+  let respawnTo: string | null = null;
   let handedOff = false;
   const heldForSuccessor: Array<Buffer | string> = [];
   let observedConversation = '';
   /** The model this chat's last init named, so a Super child's record is written once per change. */
   let notedChildModel = '';
   let unlistenAutonomy = () => { /* not the Assistant */ };
+  let unlistenLevel = () => { /* not a member chat */ };
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
   // answer/interrupt frame arriving after the child has exited must never throw on a
@@ -3061,7 +3108,7 @@ export function startChatSession(
         if (!set.has(sock) || sock.readyState !== sock.OPEN) return;
         const frame = stageMediaFrame(stageImageItems(st), true);
         if (frame) sock.send(frame);
-        if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigest(st)));
+        if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigestFor(contextRoot, st)));
       })
       .catch(() => { /* no record, no strip */ });
     return true;
@@ -3467,7 +3514,9 @@ export function startChatSession(
     const serverContinue = text === RESET_CONTINUE_TEXT || text === LIMIT_CONTINUE_TEXT || text === AUTH_CONTINUE_TEXT
       || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
-    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
+    // A turn the server wrote through the crew handle (an Allow once) is the server's too.
+    const serverTurn = !tgSource && !!crewSeat?.takeServerTurn(text);
+    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || serverTurn || isServerTurnText(text) ? { server: true } : undefined);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3720,6 +3769,9 @@ export function startChatSession(
     app?.dispose();
     releaseAppSlot();
     unwatchAuth();
+    // Its binding goes before its crew handle: no enforcer may still name a pid that is gone.
+    crewSeat?.exited();
+    unregisterCrewHandle();
     registry?.exited();
     unregisterInjector();
     unlistenCards();
@@ -3728,6 +3780,7 @@ export function startChatSession(
     windowControl?.release();
     detachInbox();
     unlistenAutonomy();
+    unlistenLevel();
     // The session's checkout override dies with the session. Left behind it would be answered
     // to a RESUMED conversation of the same id whose agent is back in the project root — and
     // the same holds for its write counts, which would otherwise warn a fresh pane about
@@ -3862,6 +3915,8 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    // A level change that came while no socket was here respawns now (it waited for one).
+    if (respawnTo !== null) scheduleRespawn();
     if (registry) { sendMeta(cardsFrame()); flushHeld(); }
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
@@ -4055,6 +4110,9 @@ export function startChatSession(
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
       }
+      // The conversation id joins the crew binding (it can change without a respawn), and the
+      // mode it reports is told to the registry.
+      crewSeat?.init(obj);
       // A Super child's model as it really runs (its own init, a tool's default included): into
       // the record once per change, so `super state` and its card say it (inbox.ts noteChildModel).
       if (!isSuper && obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id
@@ -5019,11 +5077,11 @@ export function startChatSession(
       id: superInboxId,
       sessionId: chatRegistryId,
       attached: () => alive && !detached && ws.readyState === ws.OPEN,
-      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding(),
+      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding() && respawnTo === null,
       deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
         // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || !!cancelled?.();
+        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
@@ -5072,6 +5130,54 @@ export function startChatSession(
     unlistenAutonomy = () => { assistantAutonomyListeners.delete(listener); };
   }
 
+  // ── A member's level changed under a live conversation → the same respawn in place ────
+  //
+  // Every conversation whose permission mode a member's level decides follows that level: the
+  // member's own chat (Chat tab and its Super stage, `levelArgs`), its board conversations (a card,
+  // capped by `card.levelMode`) and a member Super's children (capped by the member, r8-2). The
+  // mode is argv, so when the level in force moves, by any path, this session re-reads it
+  // (`followLevel`, the ONE check, the same expression as its spawn) and respawns with --resume:
+  // at once when idle, else at its turn's end (the boundary above), so a tightening never waits
+  // for the owner's next message. A route of this server says so at once (level-follow.ts); every
+  // other writer is caught by the watch on the agents' files and the approvals store. A board
+  // envelope (`permissionArgs`) is not a level: it is left alone.
+  const levelSlugs: string[] = agentChat?.levelArgs && opts.agent ? [opts.agent]
+    : card && !card.permissionArgs ? [card.manifest.slug]
+      : opts.memberCrew ? [opts.memberCrew, ...(opts.memberCrewCap ?? [])] : [];
+  /** The permission mode this conversation would spawn with now, or null (an agent is gone). */
+  const levelModeNow = (): string | null => {
+    if (agentChat?.levelArgs && opts.agent) return agentChatLevelArgs(contextRoot, opts.agent)?.join(' ') ?? null;
+    if (card && !card.permissionArgs) {
+      const level = agentLevelToFollow(contextRoot, card.manifest.slug);
+      return level ? narrowerMode(permissionModeFor(bypass), levelChatMode(level)) : null;
+    }
+    if (opts.memberCrew) return memberCrewPermissionMode(contextRoot, levelSlugs, bypass);
+    return null;
+  };
+  if (levelSlugs.length > 0 && !isAssistant && !app) {
+    // Exactly what the spawn used (the argv above), never a re-read that a change could beat.
+    const spawnedLevel = agentChat?.levelArgs ? agentChat.levelArgs.join(' ')
+      : card ? narrowerMode(permissionModeFor(bypass), card.levelMode)
+        : memberCrewPermissionMode(contextRoot, levelSlugs, bypass);
+    const followLevel = (): void => {
+      if (!alive || handedOff) return;
+      let now: string | null = null;
+      try { now = levelModeNow(); } catch { return; }
+      // The agent is gone: nothing to follow (its next spawn refuses).
+      if (now === null) return;
+      const wasPending = respawnTo !== null;
+      respawnTo = now === spawnedLevel ? null : now;
+      if (respawnTo !== null) { scheduleRespawn(); return; }
+      // Moved back before the turn ended: the messages held for a successor go to this process.
+      if (wasPending) for (const raw of heldForSuccessor.splice(0)) onWsMessage(raw);
+    };
+    const offRoute = onAgentLevel((root, slug) => { if (root === contextRoot && levelSlugs.includes(slug)) followLevel(); });
+    const watched = [...levelSlugs.flatMap((slug) => [agentPath(contextRoot, slug), globalAgentPath(slug)]), automationsRegistryPath()];
+    const onFile = (): void => followLevel();
+    for (const p of watched) watchFile(p, { persistent: false, interval: LEVEL_WATCH_MS }, onFile);
+    unlistenLevel = () => { offRoute(); for (const p of watched) unwatchFile(p, onFile); };
+  }
+
   let successorStarted = false;
   let closedDuringHandoff = false;
   const holdFrame = (raw: Buffer | string): void => { heldForSuccessor.push(raw); };
@@ -5101,7 +5207,14 @@ export function startChatSession(
   function respawnInPlace(): void {
     if (!alive || handedOff || respawnTo === null) return;
     // The socket already went (draining): the next summon spawns under the new autonomy anyway.
-    if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
+    if (lingerTimer || lingerKillTimer) return;
+    if (ws.readyState !== ws.OPEN) {
+      // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
+      // with nothing held is ended now instead, so no process keeps running at the old level
+      // in the meantime; the conversation stays on disk and its next open resumes it.
+      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0) drain();
+      return;
+    }
     handedOff = true;
     mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super restarting');
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
@@ -5258,6 +5371,9 @@ export function startChatSession(
       // Off Bypass: its leftover asks are the owner's again, from this moment and for good
       // (a switch back never re-arms the Super's say: fail closed).
       if (msg.mode === 'auto') registry?.notBypass();
+      // Only the switch that lands live is told now; one into bypass is refused by the CLI, and
+      // the next `init` reports whatever the process really runs.
+      if (msg.mode === 'auto') crewSeat?.modeChanged('auto');
       writeStdin({
         type: 'control_request',
         request_id: requestId,

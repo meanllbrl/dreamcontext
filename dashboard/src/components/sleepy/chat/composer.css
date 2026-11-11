@@ -2132,7 +2132,8 @@
 /* 1. The permission word is the first qualifier to go: the mode name is what you are
       choosing between, and the permission has its own segment one click away. */
 @container chatcmp (max-width: 560px) {
-  .chat-cmp-perm-wrap .chat-cmp-modeltrigger-effort { display: none; }
+  .chat-cmp-perm-wrap .chat-cmp-modeltrigger-effort,
+  .chat-cmp-perm-wrap .aiteam-autonomy { display: none; }
 }
 
 /* 1b. The resting voice instruction ("Shift+V to talk") is the longest

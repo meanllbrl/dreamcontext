@@ -6,7 +6,8 @@ import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, OWED_ID_RE, SENT_RE, type SuperOwed,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
+  MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -373,8 +374,19 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     // An automation item may name a member instead of an automation: the owner's decision on a
     // member's approval (Super's approval card), never both.
-    const member = (q.kind === 'approval' || q.kind === 'automation') && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
+    // A `member` mirror (inbox.ts `syncMemberMirrors`) names its member, the member item it mirrors
+    // (`answers`) and that item's kind (`of`); one missing any of them is dropped.
+    const isMirror = q.kind === 'member';
+    // A `routine` item (K7) names its routine and the fact on disk it stands for; its member only
+    // when the routine has one. One missing either is dropped: nothing could close it.
+    const isRoutine = q.kind === 'routine';
+    const routine = isRoutine && typeof q.routine === 'string' && okMember(q.routine) ? q.routine : undefined;
+    const fact = isRoutine && typeof q.fact === 'string' && ROUTINE_FACT_RE.test(q.fact) ? q.fact : undefined;
+    if (isRoutine && (!routine || !fact)) continue;
+    const member = (q.kind === 'approval' || q.kind === 'automation' || isMirror || isRoutine) && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
+    const mirrorOf = isMirror && oneOf(MEMBER_ITEM_OF, q.of) ? q.of : undefined;
+    if (isMirror && (!member || !mirrorOf || typeof q.answers !== 'string' || !QUEUE_ID_RE.test(q.answers))) continue;
     // An automation item exists only for its automation (or member) and a decision the owner made.
     const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
@@ -384,8 +396,15 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire)) ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString() } : undefined;
     if (q.kind === 'schedule' && !scheduled) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
-    const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
+    // Its mirror keeps the wait too (refusal fact included): without it the bar cannot tell a
+    // refused command, which it answers in place, from a sign-in card, which only opens the
+    // member. An older mirror without one stays (it is drawn as Open).
+    const wait = q.kind === 'owner' || (isMirror && mirrorOf === 'owner') ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
+    // A permission's call, on the item and on its mirror (a surface shows it before any Allow).
+    const call = q.kind === 'permission' || (isMirror && mirrorOf === 'permission') ? cleanItemCall(q.call) : undefined;
+    const allowable = q.kind === 'permission' || (q.kind === 'owner' && wait?.kind === 'refusal')
+      || (isMirror && (mirrorOf === 'permission' || (mirrorOf === 'owner' && wait?.kind === 'refusal')));
     const rawText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
     const ownerText = rawText && isAsk ? askLine(rawText) : rawText;
     // An ask's options are re-validated whole: one refused option drops them all (the bar then
@@ -394,7 +413,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // Its AskUserQuestion-shaped spec, re-validated whole: a refused one is dropped (the card
     // then draws the question from its text and options). Kept only while the question is open:
     // nothing draws a closed one, and its previews (up to 32 KB) would ride every write and push.
-    const askSpec = isAsk && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
+    const askSpec = (isAsk || isMirror) && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
     const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
     // A team job's ending names its job; only an ending kind does.
     const team = (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question') && typeof q.team === 'string' && TEAM_JOB_ID_RE.test(q.team) ? q.team : undefined;
@@ -405,7 +424,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const teamText = !!team && (q.kind === 'done' || q.kind === 'question');
     const text = isRequest || isReply || teamText ? cap(q.text, MAX_REQUEST_TEXT) : undefined;
     if ((isRequest || isReply) && !text) continue;
-    const answers = (isReply || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
+    const answers = (isReply || isMirror || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
     const result = isRequest ? cap(q.result, MAX_REQUEST_RESULT) : undefined;
     const acceptedAt = isRequest ? finite(q.acceptedAt) : undefined;
     const workOrigin = parseWorkOrigin(q.workOrigin);
@@ -457,13 +476,28 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(workOrigin ? { workOrigin } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
+      ...(mirrorOf ? { of: mirrorOf } : {}),
+      // An own item (K1) is a question, a permission or an owner wait of the record's own session.
+      ...(q.own === true && q.sessionId === session && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
+      ...(routine && fact ? { routine, fact } : {}),
+      ...(isRoutine && q.shown === true ? { shown: true as const } : {}),
+      // A grant offer, and the mark that one was already given, ride only what can be allowed: a
+      // permission, a refusal, or their mirror (a mirror of an owner item only when its wait says
+      // refusal: a sign-in card is never allowed).
+      ...(allowable && cleanGrantOffer(q.offer) ? { offer: cleanGrantOffer(q.offer)! } : {}),
+      ...(allowable && oneOf(GRANT_SIZES, q.allowed) ? { allowed: q.allowed } : {}),
+      ...(call ? { call } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
   // is never pruned (only `team done` closes it); open requests are capped per member at the verb.
+  // A routine item is never pruned either: a closed one IS the owner's "Not needed" (evicted, its
+  // fact would be born again and ring him), and its life is already bounded by its fact on disk
+  // (syncRoutineDraft drops it when the fact goes).
+  const evictable = (q: SuperQueueItem): boolean => q.kind !== 'routine';
   while (out.length > MAX_QUEUE) {
-    const done = out.findIndex((q) => q.state === 'done');
-    const other = out.findIndex((q) => q.kind !== 'request');
+    const done = out.findIndex((q) => q.state === 'done' && evictable(q));
+    const other = out.findIndex((q) => q.kind !== 'request' && evictable(q));
     const at = done >= 0 ? done : other;
     if (at < 0) break;
     out.splice(at, 1);
@@ -472,11 +506,72 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
 }
 
 /** An owner item's wait, re-validated: a known kind and a card id of the chat's own shape. */
-function cleanOwnerWait(raw: unknown): { kind: OwnerWaitKind; id: string; key?: string } | undefined {
+function cleanOwnerWait(raw: unknown): { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact } | undefined {
   if (!isRecord(raw) || !oneOf(OWNER_WAIT_KINDS, raw.kind)) return undefined;
   if (typeof raw.id !== 'string' || !/^[a-zA-Z0-9._-]{1,64}$/.test(raw.id)) return undefined;
   const key = typeof raw.key === 'string' && raw.key.length <= MAX_WAIT_KEY && !/[\r\n]/.test(raw.key) ? raw.key : undefined;
-  return { kind: raw.kind, id: raw.id, ...(key ? { key } : {}) };
+  // A refusal is nothing without the call it refused (the card shows it, a grant is built from
+  // it): one whose fact does not read is dropped with its item.
+  const refusal = raw.kind === 'refusal' ? cleanRefusal(raw.refusal) : undefined;
+  if (raw.kind === 'refusal' && !refusal) return undefined;
+  return { kind: raw.kind, id: raw.id, ...(key ? { key } : {}), ...(refusal ? { refusal } : {}) };
+}
+
+/** A grant offer, re-validated: known sizes only (deduped, at most three), one-line texts capped.
+ *  Control and bidi characters stay as text: every surface escapes what it draws. No size left:
+ *  no offer (the surface then offers what is always true). */
+export function cleanGrantOffer(raw: unknown): GrantOffer | undefined {
+  if (!isRecord(raw) || !Array.isArray(raw.sizes)) return undefined;
+  const sizes = [...new Set(raw.sizes.filter((x): x is GrantSize => oneOf(GRANT_SIZES, x)))].slice(0, 3);
+  if (!sizes.length) return undefined;
+  const line = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') return undefined;
+    const t = v.replace(/[\r\n]+/g, ' ').trim().slice(0, MAX_REFUSAL_REASON);
+    return t || undefined;
+  };
+  const onceOnlyReason = line(raw.onceOnlyReason);
+  const notChecked = line(raw.notChecked);
+  const rule = typeof raw.rule === 'string' && raw.rule ? raw.rule.slice(0, MAX_REFUSAL_INPUT) : undefined;
+  return { sizes, ...(onceOnlyReason ? { onceOnlyReason } : {}), ...(notChecked ? { notChecked } : {}), ...(rule ? { rule } : {}) };
+}
+
+/** A permission item's call, re-validated like a refused one: a tool name of the record's shape
+ *  and a string input. Over the cap it is cut and never `whole`, and `whole` is only what the
+ *  server said it was: a surface offers an Allow only for a call it can show whole. */
+export function cleanItemCall(raw: unknown): { tool: string; input: string; whole: boolean } | undefined {
+  if (!isRecord(raw) || typeof raw.tool !== 'string' || !REFUSAL_WORD_RE.test(raw.tool)) return undefined;
+  if (typeof raw.input !== 'string') return undefined;
+  const cut = raw.input.length > MAX_REFUSAL_INPUT;
+  return { tool: raw.tool, input: cut ? raw.input.slice(0, MAX_REFUSAL_INPUT) : raw.input, whole: !cut && raw.whole === true };
+}
+
+/** A refused call, re-validated. An input over the cap is cut and is then never `whole`: a
+ *  surface offers a grant only for an input it can show whole. An unknown source reads as
+ *  `unknown` (still a refusal, never allowed by reading it). */
+export function cleanRefusal(raw: unknown): RefusalFact | undefined {
+  if (!isRecord(raw) || typeof raw.tool !== 'string' || !REFUSAL_WORD_RE.test(raw.tool)) return undefined;
+  if (typeof raw.input !== 'string') return undefined;
+  const cut = raw.input.length > MAX_REFUSAL_INPUT;
+  const source = oneOf(REFUSAL_SOURCES, raw.source) ? raw.source : 'unknown';
+  const category = typeof raw.category === 'string' && REFUSAL_WORD_RE.test(raw.category) ? raw.category : undefined;
+  const reason = typeof raw.reason === 'string' && raw.reason.trim() ? stripControls(raw.reason.slice(0, MAX_REFUSAL_REASON)).trim() : undefined;
+  const scriptSha = typeof raw.scriptSha === 'string' && /^[0-9a-f]{64}$/.test(raw.scriptSha) ? raw.scriptSha : undefined;
+  const it = isRecord(raw.interpreter) ? raw.interpreter : undefined;
+  const interpreter = it && typeof it.name === 'string' && REFUSAL_WORD_RE.test(it.name) && !it.name.includes('/')
+    && typeof it.path === 'string' && it.path.startsWith('/') && it.path.length <= 4096 && !/[\u0000-\u001f]/.test(it.path)
+    ? { name: it.name, path: it.path } : undefined;
+  const cwd = typeof raw.cwd === 'string' && raw.cwd.startsWith('/') && raw.cwd.length <= 4096 && !/[\u0000-\u001f]/.test(raw.cwd) ? raw.cwd : undefined;
+  return {
+    tool: raw.tool,
+    input: cut ? raw.input.slice(0, MAX_REFUSAL_INPUT) : raw.input,
+    whole: !cut && raw.whole === true,
+    source,
+    ...(category ? { category } : {}),
+    ...(reason ? { reason } : {}),
+    ...(scriptSha ? { scriptSha } : {}),
+    ...(interpreter ? { interpreter } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
 }
 
 /** An AI Team member's agent slug, as the automation store accepts it (a path segment there). */
@@ -1120,6 +1215,8 @@ interface IndexEntry {
   leanMcp: Map<string, string[]>;
   /** Children `super end` closed: a NEW process of one is the owner reopening it. */
   ended: Set<string>;
+  /** The worktree `super delegate --worktree` made for a child (live or ended), by its pin. */
+  worktrees: Map<string, string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -1156,6 +1253,7 @@ function indexState(key: string, state: SuperState): void {
     delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
     leanMcp: new Map(Object.keys(state.children).filter((k) => !state.children[k].adopted).map((k) => [k, state.children[k].mcp ?? []])),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
+    worktrees: new Map(Object.keys(state.children).flatMap((k) => { const w = state.children[k].worktree; return w ? [[k, w] as [string, string]] : []; })),
     notes,
   });
 }
@@ -1282,6 +1380,20 @@ export const MAIN_CLOSED_GRACE_MS = 10 * 60_000;
 export function superOfChild(sessionId: string): SuperRef | null {
   if (!sessionId) return null;
   for (const e of index.values()) if (e.children.has(sessionId)) return { root: e.root, superId: e.superId };
+  return null;
+}
+
+/**
+ * The worktree the server made for a delegated child (`super delegate --worktree`), or null. The
+ * child is told to `cd` there, a move no frame reports, so this is where it works: read by the
+ * grant writer (inbox.ts `grantCtx`), which still accepts it only inside the project's roots.
+ */
+export function childWorktree(sessionId: string): string | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) {
+    const w = e.worktrees.get(sessionId);
+    if (w) return w;
+  }
   return null;
 }
 

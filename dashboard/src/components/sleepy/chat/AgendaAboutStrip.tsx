@@ -9,7 +9,7 @@ export function AgendaAboutStrip({ about, superSid }: { about: AgendaAbout; supe
   const { t } = useI18n();
   const view = useSuperQuestions(about.kind === 'item' ? superSid : null);
   const ctx = useSuperEventContext(about.kind === 'item' ? superSid : null);
-  const strip = agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
+  const strip = agendaAboutStrip(about, [...(view?.open ?? []), ...(view?.members ?? [])], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
     superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
   });
@@ -88,7 +88,7 @@ export function ReplySectionHead({ head, superSid, onReplyTarget }: {
     );
   }
   const strip = about
-    ? agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
+    ? agendaAboutStrip(about, [...(view?.open ?? []), ...(view?.members ?? [])], (sid) => ctx?.titleFor(sid) ?? '', {
       about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
       superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
     })
@@ -132,7 +132,7 @@ export function useRefChipLabel(about: MessageAbout, superSid: string | null): s
   if (about.kind === 'reply') return `${t(about.from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${about.quote}`;
   if (about.kind === 'card') return `${t('super.ref.card')} ${about.quote}`;
   if (about.kind === 'note') return about.line ?? '';
-  return agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
+  return agendaAboutStrip(about, [...(view?.open ?? []), ...(view?.members ?? [])], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
     superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered'),
   }).text;

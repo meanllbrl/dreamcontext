@@ -66,6 +66,7 @@ import {
 } from './board-scope.js';
 import { renderBoardContext, renderBoardIndex } from '../whiteboards/board-context.js';
 import { expandBoardRefs } from '../whiteboards/board-refs.js';
+import { canonicalInput } from '../grants/canonical.js';
 import {
   clearRunSidecar,
   extractSection,
@@ -78,8 +79,10 @@ import {
   runSlotKey,
   slotLockPath,
   recordRun,
+  readAutomationCache,
   writeRunSidecar,
 } from './store.js';
+import { blockedKind } from './needs.js';
 import {
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
@@ -1067,6 +1070,32 @@ export function outputPathFor(contextRoot: string, m: AutomationManifest, fireAt
 
 // ─── claude -p --output-format json parsing ─────────────────────────────────
 
+/** One call the run's permission mode refused. `input` is the Bash command itself, or the
+ *  tool's input as stable-key JSON, cut. */
+export interface DeniedCall { tool: string; input: string }
+/** A run that hits the mode over and over is told by its count; the owner reads the first few. */
+export const MAX_DENIED_CALLS = 10;
+export const DENIED_INPUT_CAP = 2000;
+
+/** PURE. The envelope's `permission_denials`, read leniently: an entry without a tool name says
+ *  nothing the owner could act on and is skipped, never guessed. */
+export function deniedCallsOf(raw: unknown): DeniedCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DeniedCall[] = [];
+  for (const d of raw) {
+    if (out.length >= MAX_DENIED_CALLS) break;
+    if (!d || typeof d !== 'object') continue;
+    const r = d as Record<string, unknown>;
+    if (typeof r.tool_name !== 'string' || !r.tool_name) continue;
+    const inp = r.tool_input;
+    // Spelled exactly as a grant and a refusal item spell it (grants/canonical.ts), so the same
+    // call reads the same everywhere the owner meets it.
+    const text = inp === undefined ? '' : canonicalInput(r.tool_name, inp);
+    out.push({ tool: r.tool_name.slice(0, 200), input: text.slice(0, DENIED_INPUT_CAP) });
+  }
+  return out;
+}
+
 export interface ClaudeResult {
   raw: string;
   parsed: boolean;
@@ -1077,6 +1106,13 @@ export interface ClaudeResult {
   numTurns: number | null;
   durationMs: number | null;
   permissionDenials: number;
+  /**
+   * The refused calls themselves (`permission_denials`), not just their count: a light run that
+   * ended ok while the mode refused what it needed has to show the owner WHAT was refused
+   * (routine needs, plan K7). At most {@link MAX_DENIED_CALLS}, each input cut to
+   * {@link DENIED_INPUT_CAP}. Always set on a parsed envelope (empty when none).
+   */
+  deniedCalls?: DeniedCall[];
   subtype: string | null;
   /**
    * The account's own refusal, when this envelope IS one. Read once here rather than at
@@ -1101,6 +1137,20 @@ const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
   // reaches `outputPath` on that path, which is the pre-existing behaviour for garbage.
   limit: null,
 };
+
+/**
+ * The approval fact a refused fire stands for (uye-bildirim K7), or null: a changed manifest that
+ * waits for his approval, or one never approved. Its id carries the manifest hash, so the same
+ * manifest is one fact however many ticks hit it. PURE but for hashing.
+ */
+export function approvalFactOf(status: RunStatus, error: string | null, m: AutomationManifest): string | null {
+  if (status !== 'awaiting-approval' && status !== 'blocked') return null;
+  let hash = '';
+  try { hash = manifestHash(m); } catch { return null; }
+  if (status === 'awaiting-approval') return `awaiting-approval:${hash}`;
+  const kind = blockedKind(error);
+  return kind === 'not-approved' ? `not-approved:${hash}` : null;
+}
 
 /** The first line a run writes to end itself as failed (see `declaredRunFailure`). */
 export const RUN_FAILED_PREFIX = 'RUN FAILED:';
@@ -1153,6 +1203,7 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
       numTurns: typeof p.num_turns === 'number' ? p.num_turns : null,
       durationMs: typeof p.duration_ms === 'number' ? p.duration_ms : null,
       permissionDenials: Array.isArray(p.permission_denials) ? p.permission_denials.length : 0,
+      deniedCalls: deniedCallsOf(p.permission_denials),
       subtype: typeof p.subtype === 'string' ? p.subtype : null,
       // Computed HERE because this is the one place that holds both halves at once: the
       // whole envelope (for the structured readers, which carry the window and the reset)
@@ -1950,7 +2001,13 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     reviewStagedPath?: string | null;
     /** The run's final message (see `RunOutcome.result`). */
     resultText?: string | null;
+    /** The calls a light run's mode refused (uye-bildirim K7), recorded on its history row. */
+    deniedCalls?: DeniedCall[];
   }): Promise<RunOutcome> => {
+    // A fact that waits on the owner's approval goes to Telegram once (K7): never again for the
+    // same fact, a coalesced repeat or a later tick included, and with the app closed too.
+    const approvalFact = approvalFactOf(params.status, params.error, manifest as AutomationManifest);
+    const factTold = approvalFact ? readAutomationCache(contextRoot, slug)?.history.some((h) => h.toldFact === approvalFact) === true : false;
     const event: RunEvent = {
       firedAt: fireAt.toISOString(),
       startedAt: params.startedAt.toISOString(),
@@ -1964,6 +2021,10 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       costUsd: params.costUsd,
       numTurns: params.numTurns,
       permissionDenials: params.permissionDenials,
+      // A light run's own record (K7): its refusals are a fact the owner sees, a bypass run's never.
+      ...(opts.override?.light ? { light: true as const } : {}),
+      ...(opts.override?.light && params.deniedCalls?.length ? { deniedCalls: params.deniedCalls.slice(0, 10) } : {}),
+      ...(approvalFact ? { toldFact: approvalFact } : {}),
     };
     const cache = recordRun(contextRoot, slug, event, {
       advanceWatermark: params.advanceWatermark,
@@ -1971,6 +2032,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     });
     // After recordRun (plan W4): the message is built now and sent once the lock is released.
     if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout' || params.status === 'awaiting-review') buildForward(params);
+    else if (approvalFact && !factTold) buildForward({ ...params, approvalNeeded: approvalFact.startsWith('awaiting-approval:') ? 'awaiting-approval' : 'not-approved' });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
     // The run's terminal entry, AFTER `recordRun` so the thread can never claim
     // an outcome the cache does not have. Only the three statuses that mean the
@@ -2102,7 +2164,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   /** The Telegram message for this run, or none (member-forward.ts): its member's bot, else the
    *  project's Super bot (super-rutin). Only a scheduled fire, never a task step or a job the
    *  Super sent; best-effort, never the run's outcome. */
-  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null }): void => {
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: 'awaiting-approval' | 'not-approved' }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
       // A Super automation's answer is the Super's own turn, never a forwarded run result.
@@ -2122,6 +2184,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         question: params.reviewCardId ? forwardQuestion : null,
         scheduled, runId: fireIso, entries, verified: verifiedRunPosts(entries, fireIso, runPostKey),
         home, log: logFn,
+        ...(params.approvalNeeded ? { approvalNeeded: params.approvalNeeded } : {}),
       });
     } catch (err) {
       logFn(`automation "${slug}": telegram forward skipped: ${(err as Error).message}`);
@@ -3152,6 +3215,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       costUsd: claudeResult?.costUsd ?? null,
       numTurns: claudeResult?.numTurns ?? null,
       permissionDenials: claudeResult?.permissionDenials ?? 0,
+      deniedCalls: claudeResult?.deniedCalls ?? [],
       startedAt,
       finishedAt,
       durationMs,

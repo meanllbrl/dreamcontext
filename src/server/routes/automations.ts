@@ -1,3 +1,4 @@
+import { syncRoutineNeeds } from '../../lib/super/inbox.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { telegramHub } from '../telegram/hub.js';
 import { deleteRoutine } from '../member-delete.js';
@@ -2002,6 +2003,9 @@ export async function handleAutomationsAttention(
   try {
     const projectRoot = dirname(contextRoot);
     const since = attentionWatermark(projectRoot);
+    // The poll reads the routines' facts for the owner's bar too (uye-bildirim K7): what waits on
+    // him lands in the Super's queue as a `routine` item, its one writer being syncRoutineNeeds.
+    void syncRoutineNeeds(contextRoot).catch(() => { /* the next poll or sweep reads them again */ });
     sendJson(res, 200, { runs: attentionRuns(contextRoot, since), watermark: since });
   } catch {
     sendError(res, 500, 'attention_failed', 'Failed to read runs needing attention.');

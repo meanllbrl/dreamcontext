@@ -25,9 +25,10 @@ export function useMemberSuperSession(vault: string, member: string, enabled: bo
   return useMemberSuperRecord(vault, member, enabled, null).session;
 }
 
-/** What the card shows of the request from the member's own record: main's text and, once the
- *  member closed it (`super team done`), its result. */
-export interface MemberRequestView { text: string; result: string | null }
+/** What the card shows of the request from the member's own record: main's text, once the
+ *  member closed it (`super team done`) its result, and whether its turn has not reached the
+ *  member's session yet (`pending`, or delivered and not taken: no `acceptedAt`). */
+export interface MemberRequestView { text: string; result: string | null; undelivered: boolean }
 
 /**
  * The member's record for its card (super-team.mjs T4): its Super session and the request item
@@ -49,7 +50,11 @@ export function useMemberSuperRecord(vault: string, member: string, enabled: boo
   const item = requestId ? rec?.queue.find((x) => x.id === requestId && x.kind === 'request') : undefined;
   return {
     session: rec?.session ?? null,
-    request: item && item.text ? { text: item.text, result: typeof item.result === 'string' && item.result ? item.result : null } : null,
+    request: item && item.text ? {
+      text: item.text,
+      result: typeof item.result === 'string' && item.result ? item.result : null,
+      undelivered: item.state !== 'done' && item.acceptedAt === undefined,
+    } : null,
   };
 }
 
@@ -91,7 +96,11 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
   // A request to the member's own Super (Wave 3): the card IS that member's one conversation, read
   // from its record's session, never an empty new chat. The owner talks to it on its stage.
   const isRequest = !!card.job.request;
-  const memberRec = useMemberSuperRecord(vault, card.job.member, isRequest, card.job.request ?? null);
+  // The card is the member's ONE conversation, keyed by its first job (the chain root); the request
+  // that can still be waiting is the NEWEST one (2026-11-11, kitup Turing: the root's 6 Nov brief
+  // stood under the 11 Nov exchange as "waiting").
+  const requestId = card.job.chain?.newest.request ?? card.job.request ?? null;
+  const memberRec = useMemberSuperRecord(vault, card.job.member, isRequest, requestId);
   const memberSession = memberRec.session;
   const name = useAgent(card.job.member).data?.agent?.title || card.job.member;
   const status = teamStatusOf(card);
@@ -134,8 +143,11 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
           {memberSession
             ? <ChildTranscript key={memberSession} claudeId={memberSession} live={running} foot="own" />
             : <p className="aiteam-stage-note">{running ? t('super.team.reply.starting') : card.lastLine}</p>}
-          {memberRec.request && (
-            <RequestFallback session={memberSession} running={running} itemId={card.job.request ?? ''} text={memberRec.request.text} />
+          {/* Only a request that has not reached the member's session yet: one it took or closed is
+              in the transcript it was delivered to (a batched turn, or a session before a rotation,
+              is not this card's to redraw at the end). */}
+          {memberRec.request?.undelivered && requestId && (
+            <RequestFallback session={memberSession} running={running} itemId={requestId} text={memberRec.request.text} />
           )}
         </div>
         <button type="button" className="aiteam-pill" data-testid="team-job-open-member" onClick={() => requestOpenAgents({ slug: card.job.member })}>

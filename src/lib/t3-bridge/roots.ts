@@ -46,6 +46,19 @@ export function isWorktreeOf(commonDir: string, folder: string): boolean {
   }
 }
 
+/** The worktrees of the project's own repo (when the project is one), each proven to point back. */
+export function ownWorktrees(project: string, o: { worktrees?: (repo: string) => string[] } = {}): string[] {
+  const common = gitCommonDir(project);
+  if (!common) return [];
+  const out: string[] = [];
+  for (const w of (o.worktrees ?? gitWorktrees)(project)) {
+    let folder = w;
+    try { folder = realpathSync(w); } catch { continue; }
+    if (isWorktreeOf(common, folder) && !out.includes(folder)) out.push(folder);
+  }
+  return out.slice(0, MAX_ROOTS);
+}
+
 export function linkedWritableRoots(
   projectRoot: string,
   o: { home?: string; worktrees?: (repo: string) => string[] } = {},

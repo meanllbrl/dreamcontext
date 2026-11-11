@@ -1240,6 +1240,9 @@ video.chat-msg-user-media-el { cursor: default; }
   cursor: pointer;
 }
 .chat-permcard-always input { width: 16px; height: 16px; accent-color: var(--color-accent); cursor: pointer; }
+/* A size's words may hold a long folder path: they wrap inside the card, never push it wider. */
+.chat-permcard-always input { flex: none; }
+.chat-permcard-always > span { min-width: 0; overflow-wrap: anywhere; }
 .chat-permcard-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
 .chat-permcard-explainer {
   margin: 0;

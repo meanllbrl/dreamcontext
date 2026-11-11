@@ -1220,12 +1220,15 @@ export class TelegramHub implements TelegramHubApi {
       if (!pending) return LINES.stale;
       const token = superTokenOfSession(sessionId) ?? (await import('../../lib/window-control.js')).tokenOfSession(sessionId);
       if (!token) return LINES.waitingOnMac;
+      // A card that could not show its command whole offered Reddet only (its `choices`).
+      const choices = Array.isArray(rec.data?.choices) ? rec.data.choices as string[] : null;
+      const allow = choices ? choices[idx] === 'once' : idx === 0;
       const args = rec.kind === 'permission'
-        ? { kind: 'permission', requestId: rec.requestId, choice: idx === 0 ? 'allow_once' : 'deny' }
+        ? { kind: 'permission', requestId: rec.requestId, choice: allow ? 'allow_once' : 'deny' }
         : { kind: 'question', requestId: rec.requestId, picked: { [String(rec.data?.question ?? '')]: String((rec.data?.labels as string[] | undefined)?.[idx] ?? '') } };
       const r = await sendHubCommand(token, 'answer_pending', args);
       if (!r.ok) return r.error === 'no_window' ? LINES.waitingOnMac : LINES.stale;
-      return rec.kind === 'permission' ? (idx === 0 ? '✓ İzin verildi (bir kez)' : '✗ Reddedildi') : `✓ ${String((rec.data?.labels as string[] | undefined)?.[idx] ?? '')}`;
+      return rec.kind === 'permission' ? (allow ? '✓ İzin verildi (bir kez)' : '✗ Reddedildi') : `✓ ${String((rec.data?.labels as string[] | undefined)?.[idx] ?? '')}`;
     }
     return this.extraButton ? this.extraButton(ab, rec, idx) : LINES.stale;
   }
@@ -1276,8 +1279,11 @@ export class TelegramHub implements TelegramHubApi {
   /** Shared with child permissions (A4): the prompt as a buttoned message, or the Mac line. */
   async sendPendingQuestion(ab: ActiveBinding, sessionId: string, q: PendingQuestion, prefix = ''): Promise<void> {
     if (q.isPermission) {
-      const body = `${prefix}🔐 İzin istiyor: <b>${escapeHtml(q.toolName)}</b>\n<pre>${escapeHtml(redactSecrets(q.text).slice(0, 1500))}</pre>`;
-      await this.sendButtons(ab, body, [['İzin ver (bir kez)', 'Reddet']], { kind: 'permission', requestId: q.requestId, sessionId, singleUse: true });
+      // An Allow only for a command the message shows whole and as it is (G2): else Reddet and the Mac.
+      const command = q.fullText ?? q.text;
+      const whole = shownWhole(command);
+      const body = `${prefix}🔐 İzin istiyor: <b>${escapeHtml(q.toolName)}</b>\n<pre>${escapeHtml(visibleCommand(command))}</pre>${whole ? '' : `\n${escapeHtml(NOT_SHOWN_WHOLE_LINE)}`}`;
+      await this.sendButtons(ab, body, whole ? [['İzin ver (bir kez)', 'Reddet']] : [['Reddet']], { kind: 'permission', requestId: q.requestId, sessionId, singleUse: true }, { choices: whole ? ['once', 'deny'] : ['deny'] });
       return;
     }
     const qs = q.questions ?? [];
@@ -1296,6 +1302,31 @@ export class TelegramHub implements TelegramHubApi {
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);
   }
 }
+
+// ─── Consent matches display (uye-bildirim G2, K4) ──────────────────────────────────────────────
+
+/** The most of a command a Telegram message shows: more would be consent to text he never saw. */
+export const TG_COMMAND_MAX = 1500;
+/** Control, hidden and direction-changing characters (built from a string so the file holds only
+ *  escapes, never the raw characters). */
+const HIDDEN_CHARS = '\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2060-\\u2069\\ufeff';
+const HIDDEN_ONE = new RegExp(`[${HIDDEN_CHARS}]`);
+const HIDDEN_ALL = new RegExp(`[${HIDDEN_CHARS}]`, 'g');
+
+/** Does a message show this command whole and as it is: it fits, the redactor changes nothing, and
+ *  no hidden or direction-changing character is in it? Only then may a card offer any Allow. */
+export function shownWhole(command: string): boolean {
+  return command.length <= TG_COMMAND_MAX && redactSecrets(command) === command && !HIDDEN_ONE.test(command);
+}
+
+/** A command as a Telegram card draws it: secrets redacted, every hidden or direction-changing
+ *  character drawn as a visible escape (as the profile's rules are), cut at the message's size. */
+export function visibleCommand(command: string): string {
+  return redactSecrets(command).replace(HIDDEN_ALL, (c) => `\\u{${c.codePointAt(0)!.toString(16).padStart(4, '0')}}`).slice(0, TG_COMMAND_MAX);
+}
+
+/** The line a card says when it cannot show the command whole: no Allow there, the Mac has it. */
+export const NOT_SHOWN_WHOLE_LINE = "Komutun tamamı burada gösterilemiyor: Mac'te izin ver.";
 
 export class HubError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }

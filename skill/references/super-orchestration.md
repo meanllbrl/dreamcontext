@@ -32,7 +32,7 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    a child that is `starting`, parked or ended has none, so it is not the number of children (read
    those from `status`). Removing worktrees or files frees disk, never memory or swap: do not offer
    it for a RAM squeeze. A `light mode is on` note is the app slowing its animations and polling:
-   it holds no job and nothing needs closing or switching off. The server parks idle chats itself.
+   it holds no job and nothing needs closing or switching off.
    Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very
    hot (`machine.heat.heavyLimit` 1). Heat limits heavy STEPS, never children: keep delegating (§5).
 8. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
@@ -117,7 +117,7 @@ Ask only for:
 - **Two readings** that lead to different work when neither the brief nor the brain settles it.
 - **An answer that grows the owner's intent.** Answer a child's question for him only inside what
   he said he wants. An answer that raises a limit, changes a default or widens the scope is his:
-  `super ask` (a 183-day limit once became a whole school year on a super's own call).
+  `super ask`.
 - **Your objection to his idea** (above): the card, never only your text.
 Never ask about the split, modes, models, order, names or worktrees: decide, and show it in the list.
 
@@ -179,8 +179,7 @@ run Opus `high` whatever the child's effort.
 
 Rules: raise effort before switching to a bigger model. After a failure go up ONE tier; never retry the
 same setting. Fable costs 2.5x Opus per token and is slower: only for its row. Reviewers and
-validators inside a flow keep their own models; never override them. On a subscription the same
-ratios burn quota.
+validators inside a flow keep their own models; never override them.
 
 ## 4. Flow map
 Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one. A task only for big work: a small
@@ -213,9 +212,10 @@ there; wait. Its events come like a child's: `team=<job> member=<slug> event=don
 done is its `super team done` and carries its `Answer:` (its head; `dreamcontext super read <team-id>`
 gives it whole). When the owner waits on it (`awaited=owner`), relay the answer in 1-2 sentences and
 say who answered. Its question about your job comes to YOUR queue, never his: `super team answer <item>
-"<answer>"`, or your own `super ask`, never forwarding it. A follow-up is another `super team ask` to
-the same member: its one conversation and its one card. A member never gives another member work.
-One owner per job: never give a member what a child already does.
+"<answer>"`, or your own `super ask`, never forwarding it. Waiting on HIM: `event=member`, its line
+says what is yours; its own question rings him after your turn or 90 s (`superFirst`); his answer reaches it as his words. Silent on your
+job: nudged once (`event=nudge`), then on his bar (`wait=stalled`): tell him in one line. A follow-up is another `super team ask` to the same member. A member never gives
+another member work. One owner per job: never a member for what a child already does.
 
 **A member made a mistake? Fix it yourself, and say why.** You saw it go wrong in its own work:
 `super team amend <member> --why "<the mistake>" --prompt-file <file>` (also `--soul-file`,
@@ -265,7 +265,7 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
   prints its receipt instead (`--fresh` re-runs). A child that starts a dev server
   pins it and stops it before reporting done.
 - A note from the owner on a running job: before its first reviewer starts, into that child; after,
-  a new small job (a late note restarts the whole proof loop: measured 2026-10-31).
+  a new small job.
 - Independent units start together. The cheapest model that fits. End your turn after delegating:
   never poll, never wait idle. A finished child is ended (`super end`) the turn you use its result.
 
@@ -273,11 +273,12 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 those come as `event=permission`. Allow (`super allow <child> <request>`) work inside its own
 worktree or the project that its brief covers; deny (`--deny --why`) what is wrong for the job;
 `super queue ask <item> "<why>"` anything outside, a push, publish, merge or outward send, or doubt.
-Undecided, it is his after 3 minutes. Any other child's permission: his alone.
+Undecided, it is his after 3 minutes. Any other child's permission: his alone. A refused call
+(`wait=refusal`) and a routine (`event=routine`) are his: tell him in one line; never retry,
+approve or work around them. Grants (Allow once, Always) are his alone; no verb makes one.
 
 **Field rules (owner, 2026-10-21).**
-- Never open a screenshot or a video yourself: hand its path to the child it concerns (a super that
-  read 8 images and 2 videos filled its context in 73 minutes). Showing one to the owner reads nothing:
+- Never open a screenshot or a video yourself: hand its path to the child it concerns. Showing one to the owner reads nothing:
   `super open image|pdf|video <path…>`.
 - One owner per job: the same job once ran in two sessions and had to be rolled back. A job moving
   to a new child goes through `delegate --succeeds <old child>` (card, brief and task pass on, the old
@@ -286,8 +287,6 @@ Undecided, it is his after 3 minutes. Any other child's permission: his alone.
   child's carry `--for <child>`: they go to Others once its job moves on (new work sent, ended, a later result seen).
 - A dreamcontext whiteboard opens with `super open whiteboard <slug>`, never `board` (a project .excalidraw.md file).
 - The owner opens cards himself too: a card you did not open is normal.
-- `super read` gives the child's last reply whole; for the state of a long job, read its task and
-  its git log as well.
 - Only one integrator updates the test app (the build the owner tries); no other child installs
   or restarts it.
 

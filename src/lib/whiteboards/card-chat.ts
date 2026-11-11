@@ -9,7 +9,7 @@ import {
   buildBoardTurn, buildHomeBoardLine, buildPatternBlock, buildScopeLine, buildSoulBlock, buildTurnLearningDirective, markerNonce, newTurnNonce,
   sanitizeAutomationPrompt,
 } from '../automations/runner.js';
-import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../automations/types.js';
+import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AgentAutonomy, type AutomationManifest } from '../automations/types.js';
 import { levelBrief, levelChatMode, levelPermissionArgs } from '../agents/permission.js';
 import { resolveWhiteboardPath } from './store.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from '../automations/history.js';
@@ -253,6 +253,37 @@ export function agentRecentBlock(contextRoot: string, slug: string, excludeSessi
 }
 
 /**
+ * The autonomy level an agent's conversations run at: the level of its last APPROVED text (a
+ * change waiting for the owner's card is not in force yet), Balanced when none is written. The ONE
+ * reading for the spawn (`prepareAgentChat`), the roster's label (`summarizeAgent`) and a live
+ * chat following a change (`agentChatLevelArgs`), so the label and the process cannot disagree.
+ */
+export function agentLevelInForce(contextRoot: string, target: AutomationManifest, home?: string): AgentAutonomy {
+  return approvedTarget(dirname(contextRoot), target, home, 'identity').manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY;
+}
+
+/** The permission argv an agent's conversation would spawn with right now, from its level in
+ *  force; null when the agent is gone. A live chat compares it with its own (agent-chat.ts). */
+export function agentChatLevelArgs(contextRoot: string, slug: string, home?: string): string[] | null {
+  const level = agentLevelToFollow(contextRoot, slug, home);
+  return level ? levelPermissionArgs(level, 'chat') : null;
+}
+
+/**
+ * The level a live conversation should follow now, or null when nothing can be followed: the
+ * agent is gone, or no approved version can be read (an approval stamped before the approved-text
+ * store, with a change waiting): a respawn would be refused and end the conversation, so the
+ * running one keeps going until the owner decides (owner 2026-11-08).
+ */
+export function agentLevelToFollow(contextRoot: string, slug: string, home?: string): AgentAutonomy | null {
+  const raw = getRunTarget(contextRoot, slug, 'agent', home);
+  if (!raw) return null;
+  const view = approvedTarget(dirname(contextRoot), raw, home, 'identity');
+  if (!view.verdict.approved) return null;
+  return view.manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY;
+}
+
+/**
  * Decide one agent Chat tab's envelope right before its spawn (every spawn: Resume, a mode or
  * account switch, a relaunch). A home-board agent's card env names its home board, so the
  * UserPromptSubmit hook hands it the board in full with every owner message.
@@ -277,7 +308,7 @@ export function prepareAgentChat(
   // The level decides the mode, on the server, from the approved manifest: the pane's own
   // Auto/Bypass switch never reaches an agent's conversation. A home-board agent keeps its
   // board's scoped envelope (stricter than any level).
-  if (prep.ok && !prep.permissionArgs) prep.levelArgs = levelPermissionArgs(target.autonomy ?? DEFAULT_AGENT_AUTONOMY, 'chat');
+  if (prep.ok && !prep.permissionArgs) prep.levelArgs = levelPermissionArgs(agentLevelInForce(contextRoot, raw, home), 'chat');
   return prep;
 }
 

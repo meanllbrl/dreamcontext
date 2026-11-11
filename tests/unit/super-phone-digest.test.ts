@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  DIGEST_MAX_NAMES, DIGEST_MAX_PAD, DIGEST_MAX_PAD_TEXT, DIGEST_MAX_OWNER_TEXT, SUPER_DIGEST_FIELDS, superDigest, superDigestFrame,
+  DIGEST_MAX_NAMES, DIGEST_MAX_PAD, DIGEST_MAX_PAD_TEXT, DIGEST_MAX_OWNER_TEXT, SUPER_DIGEST_FIELDS, superDigest, superDigestFor, superDigestFrame,
 } from '../../src/lib/super/phone-mirror.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { readSuperDigest } from '../../dashboard/src/lib/superTypes.js';
@@ -90,5 +90,111 @@ describe('superDigest', () => {
     const d = superDigest(state());
     expect(readSuperDigest(JSON.parse(superDigestFrame(d)))).toEqual(d);
     expect(readSuperDigest({ pad: [] })).toBeNull();
+  });
+});
+
+// ─── Who waits, by title (uye-bildirim K8: the phone names a member or a routine by its title) ───
+
+describe('superDigest: member and routine rows by title, refusals told from sign-in cards', () => {
+  const ROWS = [
+    { id: 'm1', sessionId: 'super-1', kind: 'member', state: 'escalated', createdAt: 20, member: 'rota', of: 'ask', answers: 'a1', ownerText: 'Which plan?' },
+    { id: 'm2', sessionId: 'super-1', kind: 'member', state: 'escalated', createdAt: 21, member: 'rota', of: 'owner', answers: 'a2', ownerText: 'Run node x.mjs', wait: { kind: 'refusal', id: 'rf-0123456789abcdef', key: 'Bash' } },
+    { id: 'r1', sessionId: 'super-1', kind: 'routine', state: 'escalated', createdAt: 22, routine: 'daily-digest', fact: 'q:abc', ownerText: 'Daily digest asks a question' },
+    { id: 'o1', sessionId: 'c2', kind: 'owner', state: 'escalated', createdAt: 23, ownerText: 'Sign in to gcloud', wait: { kind: 'run', id: 'gcloud-login' } },
+    { id: 'o2', sessionId: 'super-1', kind: 'owner', state: 'escalated', createdAt: 24, ownerText: 'Run rm -rf build', own: true, wait: { kind: 'refusal', id: 'rf-fedcba9876543210', key: 'Bash' } },
+    { id: 'p1', sessionId: 'super-1', kind: 'question', state: 'delivered', createdAt: 25, own: true, ownerText: 'Ship it?' },
+    { id: 'n1', sessionId: 'super-1', kind: 'nudge', state: 'pending', createdAt: 26 },
+  ];
+  const titles = { members: { rota: 'Rota\nPlanner' }, routines: { 'daily-digest': 'Daily digest' } };
+  const rowsState = () => state({ queue: ROWS as never });
+  const row = (d: ReturnType<typeof superDigest>, id: string) => d.waiting.find((w) => w.id === id)!;
+
+  it('a member mirror row carries the member\'s title, flattened', () => {
+    const d = superDigest(rowsState(), { titles });
+    expect(row(d, 'm1')).toMatchObject({ member: 'rota', of: 'ask', title: 'Rota Planner' });
+  });
+
+  it('a routine row carries its routine slug and title', () => {
+    const d = superDigest(rowsState(), { titles });
+    expect(row(d, 'r1')).toMatchObject({ kind: 'routine', routine: 'daily-digest', title: 'Daily digest' });
+    // A routine row never names a member or a wait.
+    expect(row(d, 'r1').member).toBeUndefined();
+    expect(row(d, 'r1').wait).toBeUndefined();
+  });
+
+  it('an owner item row carries its wait kind (a refusal is not a sign-in card), a mirror of one too', () => {
+    const d = superDigest(rowsState(), { titles });
+    expect(row(d, 'o1').wait).toBe('run');
+    expect(row(d, 'o2').wait).toBe('refusal');
+    expect(row(d, 'm2')).toMatchObject({ of: 'owner', wait: 'refusal' });
+    // Only the kind travels: never the refusal's id, key or input.
+    expect(superDigestFrame(d)).not.toContain('rf-0123456789abcdef');
+    // A wait on a mirror of anything but an owner item is not carried.
+    const odd = superDigest(state({ queue: [{ ...ROWS[0], wait: { kind: 'refusal', id: 'x' } }] as never }));
+    expect(odd.waiting[0].wait).toBeUndefined();
+  });
+
+  it('an own item carries own and waits on him from birth; a nudge never reaches the phone', () => {
+    const d = superDigest(rowsState(), { titles });
+    expect(row(d, 'o2').own).toBe(true);
+    expect(row(d, 'p1')).toMatchObject({ own: true, text: 'Ship it?' });
+    expect(d.waiting.map((w) => w.id)).not.toContain('n1');
+    expect(row(d, 'o1').own).toBeUndefined();
+  });
+
+  it('a missing title is just absent, never the slug or an empty string', () => {
+    const d = superDigest(rowsState());
+    expect('title' in row(d, 'm1')).toBe(false);
+    expect('title' in row(d, 'r1')).toBe(false);
+    const blank = superDigest(rowsState(), { titles: { members: { rota: '   ' }, routines: {} } });
+    expect('title' in row(blank, 'm1')).toBe(false);
+  });
+
+  it('caps a title', () => {
+    const d = superDigest(rowsState(), { titles: { members: { rota: 't'.repeat(300) } } });
+    expect(row(d, 'm1').title).toHaveLength(80);
+  });
+
+  it('the digest key changes when a title changes', () => {
+    const a = superDigest(rowsState(), { titles });
+    expect(superDigest(rowsState(), { titles }).key).toBe(a.key);
+    expect(superDigest(rowsState(), { titles: { ...titles, members: { rota: 'Rota' } } }).key).not.toBe(a.key);
+    expect(superDigest(rowsState(), { titles: { ...titles, routines: { 'daily-digest': 'Morning digest' } } }).key).not.toBe(a.key);
+  });
+
+  it('the phone reads the new fields back', () => {
+    const d = superDigest(rowsState(), { titles });
+    expect(readSuperDigest(JSON.parse(superDigestFrame(d)))).toEqual(d);
+  });
+});
+
+describe('superDigestFor: titles read from this machine, never a throw', () => {
+  const q = [
+    { id: 'm1', sessionId: 'super-1', kind: 'member', state: 'escalated', createdAt: 20, member: 'rota', of: 'ask', answers: 'a1', ownerText: 'Which plan?' },
+    { id: 'm2', sessionId: 'super-1', kind: 'member', state: 'escalated', createdAt: 21, member: 'rota', of: 'question', answers: 'a2', ownerText: 'Another' },
+    { id: 'm3', sessionId: 'super-1', kind: 'member', state: 'escalated', createdAt: 22, member: 'gone', of: 'ask', answers: 'a3', ownerText: 'Left' },
+    { id: 'm4', sessionId: 'super-1', kind: 'member', state: 'done', createdAt: 23, member: 'closed', of: 'ask', answers: 'a4' },
+    { id: 'r1', sessionId: 'super-1', kind: 'routine', state: 'escalated', createdAt: 24, routine: 'daily-digest', fact: 'q:abc', ownerText: 'Daily digest' },
+    { id: 'r2', sessionId: 'super-1', kind: 'routine', state: 'escalated', createdAt: 25, routine: 'broken', fact: 'q:def', ownerText: 'Broken' },
+  ];
+
+  it('reads each open slug once, through the readers it is given', () => {
+    const asked: string[] = [];
+    const d = superDigestFor('/ctx', state({ queue: q as never }), {
+      member: (root, slug) => { asked.push(`m:${root}:${slug}`); return slug === 'rota' ? 'Rota Planner' : null; },
+      routine: (root, slug) => { asked.push(`r:${root}:${slug}`); if (slug === 'broken') throw new Error('unreadable'); return 'Daily digest'; },
+    });
+    expect(asked).toEqual(['m:/ctx:rota', 'm:/ctx:gone', 'r:/ctx:daily-digest', 'r:/ctx:broken']);
+    expect(d.waiting.find((w) => w.id === 'm1')!.title).toBe('Rota Planner');
+    expect(d.waiting.find((w) => w.id === 'm2')!.title).toBe('Rota Planner');
+    expect('title' in d.waiting.find((w) => w.id === 'm3')!).toBe(false);
+    expect(d.waiting.find((w) => w.id === 'r1')!.title).toBe('Daily digest');
+    expect('title' in d.waiting.find((w) => w.id === 'r2')!).toBe(false);
+  });
+
+  it('with the real stores, a context root holding no such member or routine names nothing and does not throw', () => {
+    const d = superDigestFor('/nonexistent/acme/_dream_context', state({ queue: q as never }));
+    for (const w of d.waiting) expect(w.title).toBeUndefined();
+    expect(d.key).toBe(superDigest(state({ queue: q as never })).key);
   });
 });

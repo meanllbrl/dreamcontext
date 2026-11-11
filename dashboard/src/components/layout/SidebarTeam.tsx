@@ -6,7 +6,8 @@ import { useAgents } from '../../hooks/useAgents';
 import { identitiesOf, membersOf } from '../../hooks/useDrawerProjects';
 import { onWindowActivity, pollMs } from '../../lib/windowActivity';
 import { requestManageMembers, requestOpenAgents } from '../../lib/openAgents';
-import { buildEkip, projectEkip, type EkipSummary } from '../aiteam/teamModel';
+import { buildEkip, memberWaitCounts, projectEkip, type EkipSummary } from '../aiteam/teamModel';
+import { fetchSuperState } from '../sleepy/super/superApi';
 import { buildGlobalTeam, DRAWER_POLL_MS } from './newshell/drawerModel';
 import { TeamSection } from './newshell/TeamSection';
 
@@ -30,15 +31,22 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
   const { vault: vaultId } = useVaultId();
   const agentsQ = useAgents();
   const [summaries, setSummaries] = useState<EkipSummary[] | undefined>(undefined);
+  // What each member has waiting in main's record (its mirrors, its routines): the red count
+  // counts every item, not just the summary's one `asking` (a refused or stalled job is there only).
+  const [waits, setWaits] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let gone = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
-      void api.get<{ members?: unknown }>('/agent/sessions?summary=1').then(
-        (s) => { if (!gone) setSummaries(membersOf(s)); },
-        () => { /* the last answer stays */ },
-      ).finally(() => { if (!gone) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
+      void Promise.all([
+        api.get<{ members?: unknown }>('/agent/sessions?summary=1').then(
+          (s) => { if (!gone) setSummaries(membersOf(s)); },
+          () => { /* the last answer stays */ },
+        ),
+        // Unreadable (null): the last counts stay, like the summary's.
+        fetchSuperState(api).then((st) => { if (!gone && st) setWaits(memberWaitCounts(st.enabled ? st.queue : [])); }),
+      ]).finally(() => { if (!gone) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
     };
     read();
     // Back in front: read at once (plan r4 D8).
@@ -50,7 +58,7 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
     return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
   }, [api]);
 
-  const all = useMemo(() => buildEkip(summaries, identitiesOf(agentsQ.data ?? [])), [summaries, agentsQ.data]);
+  const all = useMemo(() => buildEkip(summaries, identitiesOf(agentsQ.data ?? []), [], waits), [summaries, agentsQ.data, waits]);
   const own = useMemo(() => projectEkip(all), [all]);
   const global = useMemo(() => buildGlobalTeam([{ vault: '', members: all }], ''), [all]);
 

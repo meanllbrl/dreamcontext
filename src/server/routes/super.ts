@@ -17,7 +17,7 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -41,7 +41,10 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
-import { pinnedMemberCard } from '../../lib/super/inbox.js';
+import { memberAskReach, pinnedMemberCard, superAnsweredFirst } from '../../lib/super/inbox.js';
+import { answerOwnerItem } from '../../lib/super/answer.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
@@ -1439,6 +1442,39 @@ async function askMainSuper(c: SuperCaller, res: ServerResponse, spec: SuperAskS
   ok(res, { item: askId, asked: true, audience: 'main', reached: added });
 }
 
+/**
+ * `super team answer <item>` on a `member` mirror: the member's own `super ask` gets the Super
+ * Agent's answer as a `reply` in its queue (its words, never the owner's: a member that needs HIS
+ * word keeps waiting for it on his card). A child's question, a permission or a card only he can
+ * act on is his: refused with where it waits.
+ */
+async function answerMemberMirror(c: SuperCaller, res: ServerResponse, mirror: SuperQueueItem, text: string): Promise<void> {
+  if (mirror.state === 'done') { refuse(res, 409, 'already_done', 'that question is already answered'); return; }
+  if (mirror.of !== 'ask' || !mirror.member || !mirror.answers) {
+    refuse(res, 409, 'owner_only', 'only the owner answers this one (a child\'s question, a permission or a card only he can act on): it waits on his bar and, while he is away, on Telegram. Tell him in one line which member waits and why');
+    return;
+  }
+  const root = c.who.contextRoot;
+  const memberId = superIdOfMember(mirror.member);
+  let replied = false;
+  await writeSuper(root, memberId, (s) => {
+    const ask = s.queue.find((q) => q.id === mirror.answers && q.kind === 'ask' && q.state !== 'done');
+    if (!s.session || !ask) return;
+    // The Super's words, never marked the owner's (a reply `workOrigin: 'owner'` is his own answer).
+    s.queue.push({
+      id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(),
+      text: text.slice(0, MAX_REQUEST_TEXT), answers: ask.id, ...(ask.workOrigin && ask.workOrigin !== 'owner' ? { workOrigin: ask.workOrigin } : {}),
+    });
+    replied = true;
+  });
+  if (!replied) { refuse(res, 409, 'already_done', 'the member\'s question is already closed'); return; }
+  // Answered inside its window: it never rings on any surface (K9).
+  superAnsweredFirst(mirror.id, mirror.answers);
+  await writeSuper(root, c.superId, (s) => { const q = s.queue.find((x) => x.id === mirror.id); if (q) q.state = 'done'; });
+  void pumpSuper(root, memberId);
+  ok(res, { item: mirror.id, answered: true, member: mirror.member });
+}
+
 /** Verbs only the project's own Super may run, and verbs only a member's Super may run. */
 const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-ask': { error: 'member_cannot_assign', message: 'a member\'s Super does not give other members work: tell whoever gave you this job what it needs' },
@@ -1494,6 +1530,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text.trim() : '';
     if (!id || !QUEUE_ID_RE.test(id)) { refuse(res, 404, 'unknown_item', 'name a member\'s question in your queue (`dreamcontext super state`)'); return; }
     if (!text) { refuse(res, 400, 'invalid_args', 'write the answer'); return; }
+    // A member's question to the OWNER, mirrored into this queue (owner 2026-11-10): the Super may
+    // answer it like a child's, as its own words; what only he decides stays his.
+    const mirror = c.state.queue.find((q) => q.id === id && q.kind === 'member');
+    if (mirror) { await answerMemberMirror(c, res, mirror, text); return; }
     const item = c.state.queue.find((q) => q.id === id && q.kind === 'question' && !!q.team && !!q.answers);
     const job = item ? c.state.team.find((j) => j.id === item.team && !!j.request) : undefined;
     if (!item || !job) { refuse(res, 404, 'unknown_item', 'no member question with that id waits in your queue'); return; }
@@ -2162,6 +2202,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const item = id ? c.state.queue.find((q) => q.id === id) : undefined;
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is closed only by the owner\'s answer'); return; }
+    // A member waiting on him closes when the member's own item closes (syncMemberMirrors), never
+    // by a Super verb: said, with what IS yours, so nothing is closed in silence (end review r1).
+    if (item.kind === 'member') {
+      refuse(res, 403, 'member_item', item.of === 'ask'
+        ? 'a member\'s question closes when it is answered: answer it with `super team answer <item> "<answer>"` if what the owner told you settles it, else it waits on his bar'
+        : 'this waits on the owner (his bar, his Telegram, the member\'s page) and closes when he answers it there: tell him in one line which member waits and why');
+      return;
+    }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
     if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
@@ -2363,7 +2411,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // A start/approve question with no report card, or a preview that is a text to read: sent
     // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
     const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
+    // A member's Super: what really carries it is main's bar (its mirror), Super first (K8, K9).
+    const via = callerSuper(c) !== 'main' && !toMain
+      ? await memberAskReach(superKey(c.who.contextRoot, callerSuper(c)), state, id).catch(() => null) : null;
+    const told = via ? { ...reach, note: via.note, mirrored: via.mirrored, ...(via.superFirst ? { superFirst: true } : {}), ...(via.mirrored ? { reached: true } : {}) } : reach;
+    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...told, show, ...(warning ? { warning } : {}) });
   },
 
   merge: async (c, b, res) => {
@@ -3749,6 +3801,42 @@ function ownerRoute(verb: SuperOwnerVerb) {
       if (!res.headersSent) storeRefusal(res, err);
     }
   };
+}
+
+/** The HTTP status an owner answer's refusal is sent with. */
+function answerStatus(r: Extract<OwnerAnswerResult, { ok: false }>): number {
+  return r.error === 'owner_page_only' ? 403 : r.error === 'already_answered' ? 409 : r.error === 'not_found' ? 404
+    : r.error === 'no_window' || r.error === 'not_offered' || r.error === 'changed' ? 409 : 400;
+}
+
+/**
+ * POST /api/super/owner-answer (uye-bildirim K5, G4): the owner answers ONE item from his bar or
+ * the Super chat card, in place. Every kind, but only from the app's own page with the shell's
+ * owner key (`fromOwnerPage`): a plain browser on this Mac gets the refusal line and falls back to
+ * Open. Any grant is built from the STORED item (`answerOwnerItem`), never from this body.
+ */
+export async function handleSuperOwnerAnswer(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  if (!fromOwnerPage(req)) {
+    sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can answer this; open the item there.') });
+    return;
+  }
+  const b = (await parseJsonBody(req)) ?? {};
+  const via = b.via === 'bar' || b.via === 'chat' || b.via === 'member-chat' ? b.via : 'bar';
+  // What the surface drew, compared with what would run (answerOwnerItem): only two strings pass.
+  const sh = b.shown && typeof b.shown === 'object' ? b.shown as Record<string, unknown> : null;
+  const shown = sh && typeof sh.tool === 'string' && typeof sh.input === 'string' && sh.tool.length <= 200 && sh.input.length <= 64 * 1024 ? { tool: sh.tool, input: sh.input } : undefined;
+  const body: OwnerAnswerRequest = {
+    record: typeof b.record === 'string' ? b.record : '', item: typeof b.item === 'string' ? b.item : '', answer: b.answer as OwnerAnswerRequest['answer'], via,
+    ...(shown ? { shown } : {}),
+  };
+  let r: OwnerAnswerResult;
+  try { r = await answerOwnerItem(contextRoot, body); } catch (err) {
+    if (!res.headersSent) storeRefusal(res, err);
+    return;
+  }
+  if (r.ok) { sendJson(res, 200, r); return; }
+  sendJson(res, answerStatus(r), r);
 }
 
 export const handleSuperEnable = ownerRoute('enable');

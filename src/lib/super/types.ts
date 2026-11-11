@@ -647,8 +647,33 @@ Its `sessionId` is the super's own.
 `restarted`: the app went down while this child was mid-job; the server resumes it with a continue
 turn of its own (outbox.ts) and its row stays `working` (`SuperChild.resuming`). One line in the next
 batch, never a `done`; the Super has nothing to send.
+`member` (owner 2026-11-10, "üyenin izni kimseye düşmüyor"): something the owner must answer that
+sits in an AI Team member's OWN Super record (its `super ask`, a child's question, a permission, a
+card only he can act on), MIRRORED into MAIN's queue by the server (`syncMemberMirrors`, inbox.ts,
+on every write of a member record), so it reaches his bar, the Super chat, Telegram and the Super
+Agent like any other item of his. `member` names the member, `answers` the member item it mirrors,
+`of` that item's kind; `ownerText`/`ask`/`requestId` are copied from it. Born `pending` (one event
+line to the Super Agent), then `escalated` until the member's item closes, whoever answered it.
+OWN items (uye-bildirim K1, `own: true`): a `question`, `permission` or `owner` item whose
+`sessionId` is the record's OWN session, not a child's. A member Super's own AskUserQuestion, tool
+permission, owner card, refusal or silent stop has no child row to hang on, yet the owner must
+see it; it is mirrored into main like any member item. Main's own refusals are own items too,
+born `escalated` (no event to itself). Answered through that session's own window, never through
+the child verbs.
+`owner` items now also wait on a `refusal` (a tool call the safety check, a settings rule or the
+bridge refused, read from the stream: K2) and a `stalled` member (it stopped without closing its
+job or asking: K6). Both are the server's facts, never an agent's words.
+`nudge` (K6): the server's one solo turn into a member Super that stopped without closing its
+request or asking ("close it with team done, or ask properly"). In the MEMBER's queue; never
+mirrored, never counted on any surface.
+`routine` (K7): something a routine (an automation) waits on the owner for, derived from disk by
+`syncRoutineNeeds`, the ONLY writer that opens or closes it: a pending question, an approval or
+review, a blocked or orphaned run, a light run's denials, an unanswered owner card. In MAIN's
+queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it stands for (its id
+is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
+`shown` once it has rung (a coalesced fact never rings twice).
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -688,8 +713,10 @@ export interface SuperQueueItem {
   /** An `automation` item's owner decision on the card. */
   decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
-   *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
-  wait?: { kind: OwnerWaitKind; id: string; key?: string };
+   *  is the server's plain line of what he is asked to do (from the child's card: untrusted).
+   *  Copied onto the item's `member` mirror (`of: 'owner'`), so a surface can tell a refusal it
+   *  answers in place from a card that only opens the member. */
+  wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
    *  `sessionId` is the super's own: a team member is not a child. */
   team?: string;
@@ -735,7 +762,110 @@ export interface SuperQueueItem {
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
    *  names it). The job text is read from the approved manifest at delivery, never stored here. */
   fire?: string;
+  /** A `member` item: the kind of the member's item it mirrors (`answers` names that item). */
+  of?: MemberItemOf;
+  /** An OWN item (K1): its `sessionId` is the record's own session. Only on `question`,
+   *  `permission` and `owner`; the answer goes through that session's own window. */
+  own?: true;
+  /** A `routine` item's routine (automation) slug and the fact on disk it stands for (K7). */
+  routine?: string;
+  fact?: string;
+  /** A `routine` item has rung once (banner, Telegram): never again for the same fact. */
+  shown?: true;
+  /** What a surface may offer for this item (K3, G2): server-computed for a `permission` item or
+   *  an `owner` item whose wait is a refusal, copied onto its `member` mirror. A surface draws
+   *  exactly the sizes it lists, never more; absent = Allow once and Deny / Not needed only. */
+  offer?: GrantOffer;
+  /** A `permission` item's call: the tool and its CANONICAL input (grants `canonicalInput`), cut to
+   *  MAX_REFUSAL_INPUT (= PERMISSION_FULL_CAP) with `whole` false when longer. The server copies it
+   *  onto the item's `member` mirror, because a surface that answers a member's item in place must
+   *  SHOW the call whole before it offers any Allow (consent matches display, G2). Absent on an
+   *  older record: a surface then offers no Allow, only Open. */
+  call?: { tool: string; input: string; whole: boolean };
+  /** The owner already allowed this item at this size and it waits for the call to run (its chat
+   *  is closed, say: "Allowed, runs when its chat is open"). A surface then shows that line and no
+   *  Allow buttons, so a second tap cannot write a second grant. Only on what can be allowed (a
+   *  permission, a refusal, or their `member` mirror, where the server copies it). */
+  allowed?: GrantSize;
 }
+
+/** A refused tool call the owner may allow (K2), as the registry read it from the stream. The
+ *  input is the CANONICAL input (grants `canonicalInput`), cut to PERMISSION_FULL_CAP: `whole`
+ *  false means it was cut, and no surface may offer a grant for it (consent matches display). */
+export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'unknown'] as const;
+export type RefusalSource = typeof REFUSAL_SOURCES[number];
+export interface RefusalFact {
+  tool: string;
+  input: string;
+  whole: boolean;
+  source: RefusalSource;
+  /** The classifier's category, when the classifier refused it. */
+  category?: string;
+  /** The stream's own message, capped (MAX_REFUSAL_REASON). */
+  reason?: string;
+  /** The pinned script's sha256: filled by the server (W5), never by the registry. */
+  scriptSha?: string;
+  /** The interpreter the session's own PATH resolved when the refusal was born (server-filled):
+   *  the grant is built from it later, so a session no longer running, or a server whose PATH
+   *  finds another binary, still pins what the session's hook will find. */
+  interpreter?: { name: string; path: string };
+  /** The folder the session worked in when the refusal was born (server-filled, the server's own
+   *  record of the session's checkout): a relative script is resolved there, as its hook does. */
+  cwd?: string;
+}
+export const MAX_REFUSAL_REASON = 300;
+/** The most of a refused input a record keeps: the registry's PERMISSION_FULL_CAP (the same
+ *  number, pinned equal in a test; the record cannot import the registry). */
+export const MAX_REFUSAL_INPUT = 16_000;
+/** A classifier category or a tool name as a record keeps it. */
+export const REFUSAL_WORD_RE = /^[A-Za-z0-9_.:/-]{1,120}$/;
+/** A `routine` item's fact id (automations/needs.ts `RoutineNeed.fact`): a stable id of a fact on
+ *  disk (a run id, a question id, a post id), never free text. */
+export const ROUTINE_FACT_RE = /^[A-Za-z0-9_.:@-]{1,200}$/;
+
+// ─── Owner answers and grants on the wire (uye-bildirim K3-K5; MIRRORED in
+// dashboard/src/lib/superTypes.ts) ─────────────────────────────────────────────────────────
+
+/** How far an Allow reaches: this call once, this job (the asking session), this member. */
+export const GRANT_SIZES = ['once', 'job', 'member'] as const;
+export type GrantSize = typeof GRANT_SIZES[number];
+
+/** The owner's answer to one item, whatever surface it came from (K5 `answerOwnerItem`). */
+export type OwnerAnswer =
+  | { kind: 'question'; answers: Record<string, string> }
+  | { kind: 'permission'; behavior: 'allow' | 'deny'; size?: GrantSize }
+  | { kind: 'refusal'; action: 'allow' | 'not_needed'; size?: GrantSize }
+  | { kind: 'ask'; text: string }
+  | { kind: 'dismiss' };
+
+export const OWNER_ANSWER_VIAS = ['bar', 'chat', 'member-chat', 'phone', 'telegram'] as const;
+export type OwnerAnswerVia = typeof OWNER_ANSWER_VIAS[number];
+
+/** `record`: 'main' or a member slug. The server builds any grant from the STORED item, never
+ *  from text in this request (G2). */
+export interface OwnerAnswerRequest {
+  record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia;
+  /** An Allow carries the call the surface DREW (its tool and input as shown), or `shownKey`, the
+   *  `shownKeyOf` of it (Telegram keeps the key of what its card showed). The server allows only
+   *  when it equals what it would allow now: the record is agent-writable, so a call rewritten
+   *  between his look and his tap is refused as `changed`, never allowed unseen (G2). */
+  shown?: { tool: string; input: string };
+  shownKey?: string;
+}
+
+export type OwnerAnswerResult =
+  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
+  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
+
+/** What a surface may offer for one item (computed by the server, drawn by the window). */
+export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
+
+/** One saved "always allowed" rule in a member profile's Permissions list (`rule` redacted). */
+export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }
+
+/** The member items a `member` mirror stands for: everything the owner answers in a member's record. */
+export const MEMBER_ITEM_OF = ['ask', 'question', 'permission', 'owner', 'approval'] as const;
+export type MemberItemOf = typeof MEMBER_ITEM_OF[number];
 
 /**
  * Which super a record, a token or a verb belongs to (plan-r10 1): the project's own Super Agent

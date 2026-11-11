@@ -23,10 +23,30 @@ import './PhoneAgenda.css';
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
  *  the Mac's job card title (the short session id when the digest names none). */
 export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad' | 'owed'>; look: JobLook } {
-  const queue: SuperQueueItem[] = d.waiting.map((w) => ({
-    id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
-    ...(w.text ? { ownerText: w.text } : {}),
-  }));
+  // What a newer Mac adds to a waiting row (contracts-w5b): the owner wait kind of an `owner`
+  // item or its member mirror (a refused command says where it can be allowed), a routine's slug,
+  // an own item, and the member's or routine's title. Read structurally: an older digest has none.
+  type Row = (typeof d.waiting)[number] & { wait?: unknown; routine?: unknown; own?: unknown; title?: unknown };
+  const memberTitles = new Map<string, string>();
+  const routineTitles = new Map<string, string>();
+  const queue: SuperQueueItem[] = d.waiting.map((w) => {
+    const extra = w as Row;
+    const raw = typeof extra.wait === 'string' ? extra.wait : (extra.wait as { kind?: unknown } | undefined)?.kind;
+    const waitKind = raw === 'refusal' || raw === 'stalled' ? raw : null;
+    const routine = typeof extra.routine === 'string' && extra.routine ? extra.routine : null;
+    const title = typeof extra.title === 'string' ? extra.title.trim() : '';
+    if (title && routine) routineTitles.set(routine, title);
+    else if (title && w.member && w.kind === 'member') memberTitles.set(w.member, title);
+    return {
+      id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
+      ...(w.text ? { ownerText: w.text } : {}),
+      ...(w.member ? { member: w.member } : {}),
+      ...(w.of ? { of: w.of } : {}),
+      ...(waitKind ? { wait: { kind: waitKind, id: w.id } } : {}),
+      ...(routine ? { routine } : {}),
+      ...(extra.own === true ? { own: true as const } : {}),
+    };
+  });
   return {
     // What the Super left unanswered: drawn, never dropped here (the drop door is the Mac's only).
     state: { queue, pad: d.pad, ...(d.owed?.length ? { owed: d.owed } : {}) },
@@ -34,6 +54,9 @@ export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { 
       live: () => null,
       titleFor: (c) => d.names[c] ?? c.slice(0, 8),
       nameFor: (c) => d.names[c] ?? '',
+      // A member or a routine row is named by its title on the Mac, else its slug.
+      memberTitleFor: (slug) => memberTitles.get(slug) ?? '',
+      routineTitleFor: (slug) => routineTitles.get(slug) ?? '',
       superTitle,
     },
   };
@@ -136,6 +159,10 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
               look={input.look}
               variant="full"
               canShowChild={() => false}
+              // A member's page is the Mac's: on the phone its row is named and read only.
+              canOpenMember={false}
+              // A refused command is allowed on Telegram or the Mac, never from this web view.
+              remote
               onShowChild={() => { /* the phone never shows a child */ }}
               onShowQuestion={(item) => {
                 const card = questionCard(item);

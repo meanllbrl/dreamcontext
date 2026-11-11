@@ -14,7 +14,7 @@
  *    back on or share it;
  *  - a teammate's member never asks; the hash and its 17 fields are untouched.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -29,6 +29,7 @@ import { approvalFields, approveAutomation, changedApprovalFields, checkApproval
 import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
 import { handleAgentsSetEnabled, handleAgentsUpdate } from '../../src/server/routes/agents.js';
 import { handleAutomationsEnable, handleAutomationsUpdate } from '../../src/server/routes/automations.js';
+import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 
 const ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_MEMBER_CREW', 'DREAMCONTEXT_AUTOMATION_RUN', 'DREAMCONTEXT_SUPER_CREW', 'DREAMCONTEXT_AGENT_CHAT'];
 const PROMPT = 'Plan the projects.\nWrite the plan as a list.';
@@ -250,7 +251,13 @@ describe('the owner\'s widening save', () => {
   it('stamps at once: no 409, no confirm step', async () => {
     member();
     const r = res();
-    await handleAgentsUpdate(req({ autonomy: 'free' }), r, { slug: 'gantt' }, contextRoot);
+    // A level change takes the shell's owner key (uye-bildirim K3 "Level"): his own page sends it.
+    const key = 'c4'.repeat(32);
+    setOwnerKey(key);
+    onTestFinished(() => setOwnerKey(null));
+    const own = req({ autonomy: 'free' });
+    Object.assign(own.headers, { 'sec-fetch-site': 'same-origin', [OWNER_KEY_HEADER]: key });
+    await handleAgentsUpdate(own, r, { slug: 'gantt' }, contextRoot);
     expect(r.status).toBe(200);
     expect(getAgent(contextRoot, 'gantt')?.autonomy).toBe('free');
     expect(approved('gantt')).toBe(true);

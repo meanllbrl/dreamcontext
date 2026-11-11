@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
 /**
  * A member's file is written through the CLI, never by hand. The PreToolUse hook asks this before
@@ -308,6 +308,76 @@ export function shellWriteTarget(command: string, cwd: string, guarded: (abs: st
     }
     return null;
   });
+}
+
+// ─── The owner's stores (uye-bildirim K3, gate G3) ──────────────────────────────────────────
+//
+// `~/.dreamcontext/grants/` (rules, one-shots, bindings: what lets a call run without asking)
+// and `~/.dreamcontext/automations.json` (which member may run, at what level) are the owner's.
+// A session that wrote either would allow itself, so the same seatbelt that guards a member's
+// file guards these. It reads command text, so it is a floor, not a wall (plan K3 "Trust anchor").
+
+/**
+ * The real path of `p`: its deepest existing folder resolved, the missing rest appended. Compared
+ * this way, a link inside the project that points into the store names the store.
+ */
+function realish(p: string): string {
+  let at = resolve(p);
+  const rest: string[] = [];
+  for (let i = 0; i < 256; i += 1) {
+    try {
+      const real = slashes(realpathSync.native(at));
+      return rest.length ? `${real}/${rest.reverse().join('/')}` : real;
+    } catch { /* not there yet */ }
+    const up = dirname(at);
+    if (up === at) break;
+    rest.push(basename(at));
+    at = up;
+  }
+  return slashes(resolve(p));
+}
+
+/** Is `abs` inside the grant store, or the approval registry itself? Both spellings count: the
+ *  path as written and its real path. */
+export function isOwnerStorePath(abs: string, home: string = homedir()): boolean {
+  const base = (h: string) => `${slashes(h).replace(/\/+$/, '')}/.dreamcontext`;
+  const hit = (p: string, h: string): boolean => {
+    const b = base(h);
+    return p === `${b}/grants` || p.startsWith(`${b}/grants/`) || p === `${b}/automations.json`;
+  };
+  const written = slashes(resolve(abs));
+  if (hit(written, home)) return true;
+  return hit(realish(written), realish(home));
+}
+
+/** The owner's store this tool call would write, or null (Edit, Write, MultiEdit, NotebookEdit, Bash). */
+export function ownerStoreWriteTarget(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  cwd: string,
+  home: string = homedir(),
+): string | null {
+  const me = slashes(home);
+  if (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
+    const named = typeof toolInput.file_path === 'string' ? toolInput.file_path : typeof toolInput.notebook_path === 'string' ? toolInput.notebook_path : '';
+    const raw = named ? expandHome(slashes(named), me) : '';
+    if (!raw) return null;
+    const abs = isAbsolute(raw) || /^[A-Za-z]:\//.test(raw) ? raw : slashes(resolve(slashes(cwd), raw));
+    return isOwnerStorePath(abs, home) ? abs : null;
+  }
+  if (toolName !== 'Bash') return null;
+  const command = typeof toolInput.command === 'string' ? toolInput.command : '';
+  if (!command) return null;
+  return shellWriteTarget(command, cwd, (abs) => isOwnerStorePath(abs, home), home);
+}
+
+/** The refusal the hook gives for a write to the owner's stores: why, and what to do instead. */
+export function ownerStoreRefusal(file: string): string {
+  return [
+    `Blocked: ${file} is the owner's permission store on this Mac (what may run without asking, and which AI Team member is approved).`,
+    'Agents never write it: a session that could would allow itself.',
+    'If you need a permission or an approval, ask the owner (super ask --for owner, or say so in your report); he gives it with one tap.',
+  ].join(' ');
 }
 
 /** The refusal the hook gives. It names the door, so the session does not hunt for another way. */

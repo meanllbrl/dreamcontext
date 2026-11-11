@@ -1,3 +1,5 @@
+import { notifyAgentLevel } from '../../lib/agents/level-follow.js';
+import { agentLevelInForce } from '../../lib/whiteboards/card-chat.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { telegramHub } from '../telegram/hub.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
@@ -6,6 +8,9 @@ import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import { narrowLiveMember } from './crew-binding.js';
+import { levelChatMode, narrowerMode } from '../../lib/agents/permission.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
@@ -67,7 +72,6 @@ import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
   AGENT_AUTONOMY_LEVELS,
   AutomationError,
-  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
   type AgentAutonomy,
   type AutomationManifest,
@@ -230,7 +234,9 @@ export function summarizeAgent(
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
-    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    // The level its conversations run at (the last approved text), so the label never shows a
+    // level a waiting change has not put in force yet.
+    autonomy: agentLevelInForce(contextRoot, target, home),
     face: faceOf(target.slug, agent?.face ?? null),
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
@@ -291,9 +297,9 @@ function readSoul(v: unknown): string | undefined {
 }
 
 /** An autonomy level from a request body: absent passes through, anything else must be a level.
- *  The agent-run refusal lives on the CLI verb (`insideAgentRun`): this server cannot see the
- *  environment of whoever sent the request, so a run that reaches the local API directly is the
- *  named residual of plan-r9 (an agent can raise its own autonomy by escaping the check). */
+ *  The agent-run refusal lives on the CLI verb (`insideAgentRun`); a run that reaches the local
+ *  API directly (plan-r9's residual) is stopped by the update route itself: a level CHANGE needs
+ *  the owner's proof there (uye-bildirim K3 "Level"), which no agent holds. */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
@@ -325,13 +331,13 @@ function agentTarget(contextRoot: string, slug: string): AutomationManifest | nu
   return isSafeAutomationSlug(slug) ? getRunTarget(contextRoot, slug, 'agent') : null;
 }
 
-function sendSummary(res: ServerResponse, contextRoot: string, slug: string, status = 200): void {
+function sendSummary(res: ServerResponse, contextRoot: string, slug: string, status = 200, extra?: Record<string, unknown>): void {
   const target = getRunTarget(contextRoot, slug, 'agent');
   if (!target) {
     sendError(res, 500, 'read_back_failed', 'The agent could not be read back.');
     return;
   }
-  sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)) });
+  sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)), ...(extra ?? {}) });
 }
 
 /**
@@ -599,6 +605,14 @@ export async function handleAgentsUpdate(
     const soul = readSoul(body.soul);
     if (soul !== undefined) patch.soul = soul;
     const autonomy = readAutonomy(body.autonomy);
+    // A level CHANGE is the owner's alone (uye-bildirim K3 "Level"): the shell's owner key on the
+    // desktop, or the phone's own signed-in session; Origin alone is a header any process can
+    // write. A save that leaves the level as it is keeps the guard above.
+    const levelChange = autonomy !== undefined && autonomy !== current.autonomy;
+    if (levelChange && !fromOwnerPage(req) && !isPhoneSocket(req)) {
+      sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the owner, in the app, changes an AI Team member\'s autonomy level. An agent or a script cannot.'));
+      return;
+    }
     if (autonomy !== undefined) patch.autonomy = autonomy;
     if (Object.keys(patch).length > 0) {
       // His save is his consent (owner 2026-11-07: nothing made on this Mac asks), a widening one and
@@ -606,13 +620,29 @@ export async function handleAgentsUpdate(
       // was approved as it stood before the save is stamped (`withRestamp`): a teammate's change
       // waiting for its card stays waiting.
       ownerEdit(contextRoot, params.slug, patch, { consent: true, why: 'edited on the AI Team page' });
+      // Its open chats switch to the new level now (idle) or at their turn's end.
+      notifyAgentLevel(contextRoot, params.slug);
       // A new title is the bot's new name in Telegram.
       if (patch.title !== undefined && patch.title !== current.title) telegramHub()?.refreshIdentity(params.slug);
     }
-    sendSummary(res, contextRoot, params.slug);
+    // Where the new level holds: a narrower one reaches the member's running sessions now (the
+    // live mode switch), a wider one only its next session start. The profile says which.
+    const applies = levelChange && autonomy !== undefined
+      ? levelApplies(params.slug, current.autonomy, autonomy, isGlobalHere(contextRoot, params.slug) ? undefined : dirname(contextRoot))
+      : undefined;
+    sendSummary(res, contextRoot, params.slug, 200, applies ? { applies } : undefined);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
   }
+}
+
+/** A level change takes effect: `now` when it narrowed and every running session of the member
+ *  took the narrower mode live, else `next_session`. */
+export function levelApplies(member: string, from: AgentAutonomy, to: AgentAutonomy, project?: string): 'now' | 'next_session' {
+  const target = levelChatMode(to);
+  const narrowing = narrowerMode(target, levelChatMode(from)) === target && target !== levelChatMode(from);
+  if (!narrowing) return 'next_session';
+  return narrowLiveMember(member, target, project).now ? 'now' : 'next_session';
 }
 
 /**
@@ -797,6 +827,8 @@ export async function handleAgentsApprove(
     registerProject(projectRoot);
     approveAutomation(projectRoot, target, new Date());
     settleApprovalQuestions(contextRoot, params.slug);
+    // An approved change may move its level: its open chats follow.
+    notifyAgentLevel(contextRoot, params.slug);
     // Approved on the Super Agent's own card: it hears the decision as an event.
     await tellSuperMember(contextRoot, body.sessionId, params.slug, 'approved');
     sendSummary(res, contextRoot, params.slug);
@@ -1007,7 +1039,7 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     slug,
     title: target.agentTitle || target.title,
     face: faceOf(slug, agent?.face ?? null),
-    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    autonomy: agentLevelInForce(contextRoot, target),
     homeSessionId: home,
     // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
     // moment ago) is not held: the stage adopts it.

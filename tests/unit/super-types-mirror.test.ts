@@ -31,10 +31,15 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.MAX_PRESENT).toBe(server.MAX_PRESENT);
     for (const k of server.CONTAINER_KINDS) expect(client.defaultShape(k)).toBe(server.defaultShape(k));
     expect([...client.QUEUE_KINDS]).toEqual([...server.QUEUE_KINDS]);
+    expect([...client.MEMBER_OFS]).toEqual([...server.MEMBER_ITEM_OF]);
     expect([...client.QUEUE_STATES]).toEqual([...server.QUEUE_STATES]);
     expect([...client.CHILD_ROWS]).toEqual([...server.CHILD_ROWS]);
     expect([...client.STUCK_REASONS]).toEqual([...server.STUCK_REASONS]);
     expect([...client.OWNER_WAIT_KINDS]).toEqual([...ownerWait.OWNER_WAIT_KINDS]);
+    // uye-bildirim W4: the refusal fact, the grant sizes and where an answer came from.
+    expect([...client.REFUSAL_SOURCES]).toEqual([...server.REFUSAL_SOURCES]);
+    expect([...client.GRANT_SIZES]).toEqual([...server.GRANT_SIZES]);
+    expect([...client.OWNER_ANSWER_VIAS]).toEqual([...server.OWNER_ANSWER_VIAS]);
     expect([...client.TEAM_JOB_STATUSES]).toEqual([...server.TEAM_JOB_STATUSES]);
     expect(client.MAX_TEAM_JOBS).toBe(server.MAX_TEAM_JOBS);
     expect([...client.SUPER_NOTES]).toEqual([...server.SUPER_NOTES]);
@@ -233,6 +238,76 @@ describe('super types — server record <-> window mirror', () => {
     const entry: server.SuperMemberSummary = { slug: 'rota', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: true, lastAt: 1, pending: 2 };
     const mirrored: client.SuperMemberSummary = entry;
     expect(mirrored.pending).toBe(2);
+  });
+
+  it('uye-bildirim W5: a queue item\'s grant offer reaches the window as the server wrote it', () => {
+    const offer: server.GrantOffer = { sizes: ['once', 'job'], onceOnlyReason: 'outward', notChecked: 'its imports', rule: 'node scripts/x.mjs' };
+    const mirrored: client.GrantOffer = offer;
+    const view: server.SuperStateView = {
+      ...server.emptySuperState(), vault: 'acme-app', session: 'sess-super', enabled: true,
+      queue: [{ id: 'q1', sessionId: 'child-1', kind: 'permission', requestId: 'r1', state: 'escalated', createdAt: 2, offer }],
+    };
+    expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))?.queue[0].offer).toEqual(mirrored);
+  });
+
+  it('uye-bildirim w5-D: a permission\'s call and a mirrored refusal\'s wait reach the window as the server wrote them', () => {
+    const call: NonNullable<server.SuperQueueItem['call']> = { tool: 'Bash', input: 'node scripts/x.mjs', whole: true };
+    const mirroredCall: NonNullable<client.SuperQueueItem['call']> = call;
+    const wait: NonNullable<server.SuperQueueItem['wait']> = {
+      kind: 'refusal', id: 'rf-0123456789abcdef', key: 'Bash',
+      refusal: { tool: 'Bash', input: 'node scripts/x.mjs', whole: true, source: 'classifier', reason: 'blocked' },
+    };
+    const view: server.SuperStateView = {
+      ...server.emptySuperState(), vault: 'acme-app', session: 'sess-super', enabled: true,
+      queue: [
+        { id: 'q1', sessionId: 'sess-super', kind: 'member', member: 'rota', answers: 'q-9', of: 'permission', state: 'escalated', createdAt: 2, call },
+        { id: 'q2', sessionId: 'sess-super', kind: 'member', member: 'rota', answers: 'q-8', of: 'owner', state: 'escalated', createdAt: 3, wait, offer: { sizes: ['once'] }, allowed: 'once' },
+      ],
+    };
+    const allowedSize: client.SuperQueueItem['allowed'] = view.queue[1].allowed;
+    expect(store.sanitizeSuperState(JSON.parse(JSON.stringify(view))).queue[1].allowed).toBe('once');
+    expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))?.queue[1].allowed).toBe(allowedSize);
+    // What the server's sanitizer keeps is exactly what the window reads back.
+    const stored = store.sanitizeSuperState(JSON.parse(JSON.stringify(view)));
+    expect(stored.queue[0].call).toEqual(call);
+    expect(stored.queue[1].wait).toEqual(wait);
+    const read = client.readSuperStateView(JSON.parse(JSON.stringify(view)));
+    expect(read?.queue[0].call).toEqual(mirroredCall);
+    expect(read?.queue[1].wait).toEqual(wait);
+    expect(read?.queue[1].offer).toEqual({ sizes: ['once'] });
+  });
+
+  it('uye-bildirim w5-D: the phone digest reader keeps wait, routine, own and title only where they belong, checked and capped', () => {
+    const row = (over: Record<string, unknown>) => ({ id: 'q1', kind: 'owner', state: 'escalated', createdAt: 1, sessionId: 's', text: '', ...over });
+    const d = client.readSuperDigest({
+      key: 'k', pad: [], ownerBatches: [], names: {},
+      waiting: [
+        row({ id: 'w1', kind: 'owner', wait: 'refusal', own: true }),
+        row({ id: 'w2', kind: 'member', member: 'rota', of: 'owner', wait: 'stalled', title: '  Rota\n\u0007Planner  ' }),
+        row({ id: 'w3', kind: 'member', member: 'rota', of: 'permission', wait: 'refusal', title: 'R'.repeat(120) }),
+        row({ id: 'w4', kind: 'owner', wait: 'teleport' }),
+        row({ id: 'w5', kind: 'routine', routine: 'daily-report', title: 'Daily report' }),
+        row({ id: 'w6', kind: 'routine', routine: '../x', title: 42 }),
+        row({ id: 'w7', kind: 'question', routine: 'daily-report', title: 'Not a title here', own: true, wait: 'run' }),
+        row({ id: 'w8', kind: 'done', own: true }),
+        row({ id: 'w9', kind: 'permission', own: 'yes' }),
+      ],
+    });
+    const by = (id: string) => d?.waiting.find((q) => q.id === id);
+    expect(by('w1')).toMatchObject({ wait: 'refusal', own: true });
+    expect(by('w2')).toMatchObject({ wait: 'stalled', title: 'Rota Planner' });
+    // A mirror of a permission carries no wait; a title is cut to its cap.
+    expect(by('w3')?.wait).toBeUndefined();
+    expect(by('w3')?.title).toBe('R'.repeat(client.DIGEST_MAX_TITLE));
+    expect(client.DIGEST_MAX_TITLE).toBe(80);
+    expect(by('w4')?.wait).toBeUndefined();
+    expect(by('w5')).toMatchObject({ routine: 'daily-report', title: 'Daily report' });
+    expect(by('w6')?.routine).toBeUndefined();
+    expect(by('w6')?.title).toBeUndefined();
+    // A question cannot be dressed as a routine, a titled row or a refusal; it may be an own item.
+    expect(by('w7')).toEqual({ id: 'w7', kind: 'question', state: 'escalated', createdAt: 1, sessionId: 's', text: '', own: true });
+    expect(by('w8')?.own).toBeUndefined();
+    expect(by('w9')?.own).toBeUndefined();
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {

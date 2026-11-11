@@ -15,6 +15,7 @@ import {
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
+import { teamChainOf } from '../../dashboard/src/lib/superTypes';
 import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, newRoutineCardId, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
@@ -417,8 +418,8 @@ describe('end review fixes', () => {
     }
   });
 
-  it('M6: Esc closes "Üyeleri yönet" or the Ekip list, never the member\'s stage under it', () => {
-    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list'\)\) return;/);
+  it('M6: Esc closes "Üyeleri yönet", the Ekip list or an agent\'s Edit dialog, never the member\'s stage under it', () => {
+    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim'\)\) return;/);
   });
 });
 
@@ -573,5 +574,23 @@ describe('"+ New routine" on a member stage goes to its Super as a chip (owner 2
     expect(newRoutineCardId('m:rota' as never, 'rota', mine, { containers: [] } as never)).toBeNull();
     expect(newRoutineCardId('m:rota' as never, 'rota', mine, null)).toBeNull();
     expect(newRoutineCardId('m:rota' as never, '', mine, state)).toBeNull();
+  });
+});
+
+describe("a member's one card never redraws an old request at the end (2026-11-11, kitup Turing)", () => {
+  it('the chain names its newest request', () => {
+    const job = (id: string, startedAt: number, extra: Record<string, unknown> = {}) =>
+      ({ id, member: 'turing', runId: new Date(startedAt).toISOString(), jobKind: 'run' as const, queued: false, brief: id, startedAt, ...extra });
+    const root = job('t-root', 1, { request: 'q-6nov' });
+    const follow = job('t-follow', 2, { request: 'q-11nov', followUpOf: 't-root', by: 'super' });
+    const chain = teamChainOf([follow, root], root);
+    expect(chain.newest.request).toBe('q-11nov');
+    expect(teamChainOf([root], root).newest.request).toBe('q-6nov');
+  });
+  it("the card's fallback is the newest request, and only while it has not reached the member", () => {
+    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
+    expect(card).toContain('const requestId = card.job.chain?.newest.request ?? card.job.request ?? null;');
+    expect(card).toContain("undelivered: item.state !== 'done' && item.acceptedAt === undefined,");
+    expect(card).toMatch(/\{memberRec\.request\?\.undelivered && requestId && \(\s*<RequestFallback session=\{memberSession\} running=\{running\} itemId=\{requestId\}/);
   });
 });

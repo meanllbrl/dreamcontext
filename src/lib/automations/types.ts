@@ -758,6 +758,13 @@ export interface RunEvent {
   /** 0 does not mean "none occurred" on every status — see the runner's
    *  operator-kill path, where telemetry was never collected. */
   permissionDenials: number;
+  /** A light (read-only, `dontAsk`) run (uye-bildirim K7): its refusals are the owner's to see. */
+  light?: true;
+  /** A light run's refused calls (the runner's `deniedCallsOf`, capped), for the routine's need. */
+  deniedCalls?: Array<{ tool: string; input: string }>;
+  /** The fact this row stands for was already sent to Telegram (awaiting-approval, not-approved):
+   *  the runner's forward sends each fact once, also while the app is closed. */
+  toldFact?: string;
 }
 
 /** Cache snapshot at `automations/cache/<slug>.json` — brain-synced. */

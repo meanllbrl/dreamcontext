@@ -25,6 +25,10 @@
  * is no longer signed in or Mac mode returns.
  */
 
+import { getAgent } from '../agents/store.js';
+import { getAutomation } from '../automations/store.js';
+import { OWNER_WAIT_KINDS } from './owner-wait.js';
+
 /** The socket surface a mirror needs (the `ws` package's WebSocket satisfies it). */
 export interface MirrorSocket {
   readonly readyState: number;
@@ -394,6 +398,8 @@ export const DIGEST_MAX_OWNER_TEXT = 300;
 export const DIGEST_MAX_BATCHES = 50;
 export const DIGEST_MAX_NAMES = 40;
 export const DIGEST_MAX_NAME = 80;
+/** The most of a member's or a routine's title a waiting row carries (mirrored by the dashboard). */
+export const DIGEST_MAX_TITLE = 80;
 /** Open debts a digest carries (owed.ts), and how much of each gist. */
 export const DIGEST_MAX_OWED = 40;
 export const DIGEST_MAX_OWED_GIST = 160;
@@ -401,7 +407,15 @@ export const DIGEST_MAX_OWED_GIST = 160;
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true }>;
+  queue: ReadonlyArray<{
+    id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true; member?: string; of?: string;
+    /** An `owner` item's wait (or a mirror's copy of it): only its kind travels. */
+    wait?: { kind: string };
+    /** A `routine` item's routine slug. */
+    routine?: string;
+    /** An own item (K1): the record's own session asks. */
+    own?: true;
+  }>;
   ownerBatches: readonly string[];
   /** A member Super's main-origin turns (plan-r10 1); absent = none. */
   mainBatches?: readonly string[];
@@ -425,7 +439,19 @@ export interface SuperDigest {
   /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
    *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
    *  '' on a permission. */
-  waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }>;
+  waiting: Array<{
+    id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string; member?: string; of?: string;
+    /** The wait kind of an `owner` item, or of a mirror whose `of` is `owner`: the phone tells a
+     *  refused command or a stalled member from a sign-in card by it. */
+    wait?: string;
+    /** A `routine` item's routine slug. */
+    routine?: string;
+    /** An own item: the record's own session asks, not one of its children. */
+    own?: true;
+    /** The member's title on a mirror, the routine's title on a routine item. Absent = the phone
+     *  names the row by its slug. */
+    title?: string;
+  }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
   mainBatches: string[];
@@ -459,8 +485,18 @@ export function childDigestName(state: Pick<SuperDigestSource, 'containers' | 'c
   return digestText(card?.title || brief, DIGEST_MAX_NAME);
 }
 
+/** Titles a digest names its member and routine rows by, keyed by slug. Read from disk by
+ *  {@link superDigestFor}; passed in so {@link superDigest} stays pure. */
+export interface DigestTitles {
+  members?: Readonly<Record<string, string>>;
+  routines?: Readonly<Record<string, string>>;
+}
+
+const ownKey = (m: Readonly<Record<string, string>> | undefined, k: string): string | undefined =>
+  m && Object.prototype.hasOwnProperty.call(m, k) && typeof m[k] === 'string' ? m[k] : undefined;
+
 /** The digest of `state`. Pure. */
-export function superDigest(state: SuperDigestSource): SuperDigest {
+export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTitles } = {}): SuperDigest {
   const pad = (state.pad ?? []).slice(-DIGEST_MAX_PAD)
     .map((p) => ({
       id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at,
@@ -474,11 +510,31 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     && !mainWork(q.workOrigin) && !mainWork(Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId].workOrigin : undefined)
     // A Bypass child's permission its Super decides first (`toSuper`) waits on nobody's phone.
     && !(q.kind === 'permission' && q.toSuper)
-    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
-  const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
-    id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
-    text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
-  }));
+    // The server's nudge to a silent member is the member's turn, never his (K6).
+    && q.kind !== 'nudge'
+    // A member waiting on him (its mirror), a routine waiting on him and a session's own request
+    // are his from birth, as on the Mac's bar (`needsOwner`).
+    && (q.kind === 'permission' || q.kind === 'owner' || q.kind === 'member' || q.kind === 'routine' || q.own === true
+      || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
+  const titles = opts.titles ?? {};
+  const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => {
+    const waitKind = (q.kind === 'owner' || (q.kind === 'member' && q.of === 'owner')) && q.wait
+      && (OWNER_WAIT_KINDS as readonly string[]).includes(q.wait.kind) ? q.wait.kind : undefined;
+    const routine = q.kind === 'routine' ? digestText(q.routine, 100) : '';
+    const title = q.kind === 'member' && q.member ? digestText(ownKey(titles.members, q.member), DIGEST_MAX_TITLE)
+      : routine ? digestText(ownKey(titles.routines, routine), DIGEST_MAX_TITLE) : '';
+    return {
+      id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
+      text: q.kind === 'permission' || (q.kind === 'member' && q.of === 'permission') ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
+      // Who waits and on what: the phone names the row by the member, never by a session of this Super.
+      ...(q.kind === 'member' && q.member ? { member: digestText(q.member, 64), ...(q.of ? { of: q.of } : {}) } : {}),
+      // A refusal and a stall read differently from a sign-in card on the phone.
+      ...(waitKind ? { wait: waitKind } : {}),
+      ...(routine ? { routine } : {}),
+      ...(q.own === true && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
+      ...(title ? { title } : {}),
+    };
+  });
   const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
   const mainBatches = (state.mainBatches ?? []).filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
   // The children the phone may name: the ones it waits on first, then the newest.
@@ -497,6 +553,42 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
   }));
   const body = { pad, waiting, ownerBatches, mainBatches, names, owed };
   return { ...body, key: fnv(JSON.stringify(body)) };
+}
+
+/** How a {@link superDigestFor} reads a title (tests pass their own; the default reads the stores). */
+export interface DigestTitleReaders {
+  member: (contextRoot: string, slug: string) => string | null | undefined;
+  routine: (contextRoot: string, slug: string) => string | null | undefined;
+}
+
+const DISK_TITLES: DigestTitleReaders = {
+  member: (root, slug) => getAgent(root, slug)?.title,
+  routine: (root, slug) => getAutomation(root, slug)?.title,
+};
+
+/**
+ * The digest of `state` with its member and routine rows named by their titles on this machine.
+ * Only the slugs of rows that can reach the phone are read, each once. Never throws: a member or
+ * routine that is gone or unreadable has no title, and the phone names that row by its slug.
+ */
+export function superDigestFor(contextRoot: string, state: SuperDigestSource, readers: DigestTitleReaders = DISK_TITLES): SuperDigest {
+  const members: Record<string, string> = {};
+  const routines: Record<string, string> = {};
+  const read = (fn: () => string | null | undefined): string => {
+    try { const t = fn(); return typeof t === 'string' ? t : ''; } catch { return ''; }
+  };
+  let reads = 0;
+  for (const q of state.queue) {
+    if (q.state === 'done' || reads >= DIGEST_MAX_WAITING) continue;
+    if (q.kind === 'member' && q.member && !Object.prototype.hasOwnProperty.call(members, q.member)) {
+      reads++;
+      members[q.member] = read(() => readers.member(contextRoot, q.member!));
+    } else if (q.kind === 'routine' && q.routine && !Object.prototype.hasOwnProperty.call(routines, q.routine)) {
+      reads++;
+      routines[q.routine] = read(() => readers.routine(contextRoot, q.routine!));
+    }
+  }
+  return superDigest(state, { titles: { members, routines } });
 }
 
 /** The `_meta` frame carrying `d` to a phone mirror. */

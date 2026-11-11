@@ -65,7 +65,7 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
   // Primitive keys: arrays rebuilt with the same rows must not re-render the window.
   const teamKey = team.map((m) => `${m.slug}:${m.status}:${m.superOnly ? 1 : 0}:${m.preview ?? ''}`).join('|');
   const ekipKey = JSON.stringify([members ?? null, identities]);
-  const windowsKey = JSON.stringify([surface.activeWindowId, surface.windows, surface.shown, surface.member, surface.superMarks, surface.chats, surface.activeChatId]);
+  const windowsKey = JSON.stringify([surface.activeWindowId, surface.windows, surface.shown, surface.member, surface.superMarks, surface.chats, surface.activeChatId, surface.memberWaits ?? null]);
   useEffect(() => {
     onFacts?.(vault, {
       superOn: surface.superOn, superSelected: surface.superSelected, chatOpen, team,
@@ -76,6 +76,9 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
       ...(surface.superMarks ? { superMarks: surface.superMarks } : {}),
       ...(surface.chats ? { chats: surface.chats } : {}),
       ...(surface.activeChatId ? { activeChatId: surface.activeChatId } : {}),
+      // What main's record holds for each member: a refusal or a stalled job the member's own
+      // summary never reports still reaches the side menu's red count.
+      ...(surface.memberWaits ? { waits: surface.memberWaits } : {}),
     });
     // `team`, the members and the windows are read through their keys.
     // eslint-disable-next-line react-hooks/exhaustive-deps

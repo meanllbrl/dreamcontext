@@ -38,7 +38,7 @@ import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -191,6 +191,7 @@ import {
   handleAgentsPhotoGet, handleAgentsStage, handleAgentsHistory,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
+import { handleAgentPermissions, handleAgentPermissionRemove } from './routes/grants.js';
 import {
   handleAgentSyncState,
   handleAgentSyncConfirm,
@@ -648,6 +649,8 @@ export function buildRouter(): Router {
   // recorded super session; the owner's routes answer only this machine's desktop window.
   router.post('/api/super/v/:verb', handleSuperVerb);
   router.get('/api/super/state', handleSuperStateGet);
+  // The owner answers one item in place from his bar or the Super chat card (uye-bildirim K5, G4).
+  router.post('/api/super/owner-answer', handleSuperOwnerAnswer);
   router.post('/api/super/enable', handleSuperEnable);
   router.post('/api/super/disable', handleSuperDisable);
   router.post('/api/super/layout', handleSuperLayout);
@@ -999,6 +1002,9 @@ export function buildRouter(): Router {
   router.get('/api/agents/:slug', handleAgentsShow);
   router.post('/api/agents/:slug/bring-here', handleAgentsBringHere);
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
+  // A member's Permissions (uye-bildirim K3): its saved rules, removed by the owner only.
+  router.get('/api/agents/:slug/permissions', handleAgentPermissions);
+  router.post('/api/agents/:slug/permissions/remove', handleAgentPermissionRemove);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
   router.post('/api/agents/:slug/board-scope', handleAgentsBoardScope);

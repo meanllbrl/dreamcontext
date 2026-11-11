@@ -12,7 +12,10 @@
  *    outbound rules;
  *  - a proposal or report waiting for his verdict + opted in: "✋ <başlık>: Mac'te kararını bekliyor";
  *  - `failed` / `timeout` (usage limit included): "Rutin çalışamadı: <neden>", opted in or not;
- *  - a run that stopped to ask him (a no-choice question): the question text, opted in or not.
+ *  - a run that stopped to ask him (a no-choice question): the question text, opted in or not;
+ *  - a fire refused because its changed manifest waits for his approval, or because it was never
+ *    approved (uye-bildirim K7): one line, opted in or not, once per fact (the runner keeps the
+ *    marker on the fact's own history row), approved on the Mac with the change in view.
  * Nothing else. A run post counts only if the parent verified its stamp (HMAC with the run's own
  * key, never on disk), so a synced teammate entry, a forged `via:'runner'` entry or an unstamped
  * post is never sent. Nothing about the binding enters the routine's prompt or environment except
@@ -81,6 +84,8 @@ export interface ForwardInput {
   question?: string | null;
   /** The published document's headline, from the runner's memory (never the thread file). */
   resultText?: string | null;
+  /** A fire refused until he approves (K7): a changed manifest, or one never approved. */
+  approvalNeeded?: 'awaiting-approval' | 'not-approved';
   /** Only scheduled fires forward (Y2): never an ask, an app, a task, a board, a light job. */
   scheduled: boolean;
   runId: string;
@@ -130,7 +135,8 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
     }
   }
   const failed = input.status === 'failed' || input.status === 'timeout';
-  const asked = !!input.question && input.status.startsWith('awaiting');
+  const approval = input.approvalNeeded ?? null;
+  const asked = !approval && !!input.question && input.status.startsWith('awaiting');
   const optedIn = viaSuper
     ? input.reply === 'telegram'
     : readForward(bindingDir(scope, target, home), home).routines.some((r) => r.projectKey === projectKey(dirname(input.contextRoot)) && r.slug === input.slug && r.approvalHash === input.approvalHash);
@@ -147,7 +153,11 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
 
   const messages: string[] = [];
   const files: OutboundFile[] = [];
-  if (failed) {
+  if (approval) {
+    messages.push(approval === 'awaiting-approval'
+      ? `✋ <b>${escapeHtml(title)}</b>: talimatı değişti, çalışmadan önce onayını bekliyor. Değişikliği Mac'te görüp onaylarsın.`
+      : `✋ <b>${escapeHtml(title)}</b>: hiç onaylanmadığı için çalışmadı. Mac'te, Agents sayfasında onaylarsın.`);
+  } else if (failed) {
     messages.push(`⚠ <b>${escapeHtml(title)}</b>: Rutin çalışamadı: ${escapeHtml(line(input.error ?? input.status))}`);
   } else if (asked) {
     messages.push(formatAskQuestionHtml({ question: line(input.question!, 1500) }, { title }));

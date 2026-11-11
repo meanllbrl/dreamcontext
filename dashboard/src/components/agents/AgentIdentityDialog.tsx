@@ -16,6 +16,7 @@ import { useWhiteboardList } from '../../hooks/useWhiteboards';
 import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { SOUL_MAX_CHARS, SOUL_TEMPLATES, normalizeSoul, soulProblem, soulTemplate, type SoulTemplateId } from '../../generated/soul-templates';
 import { AgentAvatar } from './AgentAvatar';
+import { AgentPermissionsSection } from './AgentPermissionsSection';
 import { tx } from './AgentRosterCard';
 import './AgentIdentityDialog.css';
 
@@ -132,7 +133,7 @@ export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'a
  * is the whole prompt, never a preview.
  */
 export function AgentIdentityDialog({
-  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope,
+  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope, focusField,
 }: {
   /** The agent to edit, or null to create one. */
   slug: string | null;
@@ -154,6 +155,8 @@ export function AgentIdentityDialog({
   /** Create only: `global` makes this machine's global agent from the launcher (D1), with no
    *  project behind the form, so no photo and no home board. */
   scope?: 'global';
+  /** Edit only: the field to land on once the agent has loaded (the autonomy label opens here). */
+  focusField?: 'autonomy';
 }) {
   const { t } = useI18n();
   const editing = slug !== null;
@@ -205,6 +208,15 @@ export function AgentIdentityDialog({
   }, [onClose, busy, inline]);
 
   const ready = original !== null;
+  // Opened from the autonomy label: land on the level in force, so the level is what is in view.
+  const focused = useRef(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusField !== 'autonomy' || !ready || focused.current) return;
+    focused.current = true;
+    const seg = modalRef.current?.querySelector<HTMLButtonElement>('.aid-autonomy [data-autonomy][aria-checked="true"]');
+    seg?.focus();
+  }, [focusField, ready]);
   const blocker = identityFormError(form);
   const agentTitle = detail.data?.agent.title ?? '';
   const heading = editing
@@ -301,12 +313,58 @@ export function AgentIdentityDialog({
   const boardList = boards.data ?? [];
   const boardMissing = form.whiteboard && !boardList.some((b) => b.slug === form.whiteboard);
 
+  const levelControl = (
+    <fieldset
+      className="aid-autonomy"
+      disabled={!ready || !!detail.data?.agent.implicit}
+      title={detail.data?.agent.implicit ? t('aiteam.autonomy.implicit') : undefined}
+    >
+      <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
+      <div
+        className="aid-segmented"
+        role="radiogroup"
+        aria-labelledby="aid-autonomy-legend"
+        onKeyDown={(e) => {
+          // One Tab stop; the arrows move the choice (the radio pattern).
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
+          const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
+          set('autonomy', next);
+          (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
+        }}
+      >
+        {AUTONOMY_LEVELS.map((level) => (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={form.autonomy === level}
+            tabIndex={form.autonomy === level ? 0 : -1}
+            className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
+            onClick={() => set('autonomy', level)}
+            data-autonomy={level}
+          >
+            {t(`aiteam.autonomy.${level}`)}
+          </button>
+        ))}
+      </div>
+      <ul className="aid-autonomy-lines">
+        {AUTONOMY_LEVELS.map((level) => (
+          <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
+            <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
+          </li>
+        ))}
+      </ul>
+    </fieldset>
+  );
+
   return (
     <div
       className={inline ? 'aid-inline' : 'aid-scrim'}
       onClick={inline ? undefined : (e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
-      <div className="aid-modal" role={inline ? 'form' : 'dialog'} aria-modal={inline ? undefined : true} aria-label={heading}>
+      <div ref={modalRef} className="aid-modal" role={inline ? 'form' : 'dialog'} aria-modal={inline ? undefined : true} aria-label={heading}>
         {!inline && <h2 className="aid-title">{heading}</h2>}
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
@@ -505,47 +563,12 @@ export function AgentIdentityDialog({
           <span>{t('agents.identity.learning')}</span>
         </label>
 
-        {editing && !detail.data?.agent.implicit && (
-          <fieldset className="aid-autonomy" disabled={!ready}>
-            <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
-            <div
-              className="aid-segmented"
-              role="radiogroup"
-              aria-labelledby="aid-autonomy-legend"
-              onKeyDown={(e) => {
-                // One Tab stop; the arrows move the choice (the radio pattern).
-                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-                e.preventDefault();
-                const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
-                const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
-                set('autonomy', next);
-                (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
-              }}
-            >
-              {AUTONOMY_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.autonomy === level}
-                  tabIndex={form.autonomy === level ? 0 : -1}
-                  className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
-                  onClick={() => set('autonomy', level)}
-                  data-autonomy={level}
-                >
-                  {t(`aiteam.autonomy.${level}`)}
-                </button>
-              ))}
-            </div>
-            <ul className="aid-autonomy-lines">
-              {AUTONOMY_LEVELS.map((level) => (
-                <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
-                  <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
-                </li>
-              ))}
-            </ul>
-          </fieldset>
-        )}
+        {/* The level is ONE control (form.autonomy, the same setting the header's Autonomy label
+            reads). A member with Permissions draws it at the top of that section, as the approved
+            drawing C1 has it; an old member still in its automation file cannot hold a level: it runs
+            Balanced (the default), so the field shows that, read-only, and says why on hover. */}
+        {editing && (!slug || detail.data?.agent.implicit) && levelControl}
+        {editing && slug && !detail.data?.agent.implicit && <AgentPermissionsSection slug={slug} name={form.title || slug} chosenLevel={form.autonomy} levelControl={levelControl} />}
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 

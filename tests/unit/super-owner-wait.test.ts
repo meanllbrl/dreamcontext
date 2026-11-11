@@ -39,7 +39,7 @@ import {
   BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
   reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
-import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn } from '../../src/lib/super/owner-wait.js';
+import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import { superBriefing } from '../../src/server/chat-modes.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
@@ -514,5 +514,41 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     expect(await ofKind('done', 'c1')).toHaveLength(0);
     await advance(5 * 60_000 + STALE_SWEEP_MS + DONE_SETTLE_MS + 5_000, 30_000);
     expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+});
+
+// ─── uye-bildirim W4: waits the server reads, not cards ──────────────────────────
+
+describe('owner-wait: refusal and stalled waits are no cards', () => {
+  it('a refusal wait is keyed by the tool and the WHOLE input, carries its fact, and is cut past the cap', () => {
+    const w = refusalWait('Bash', 'node scripts/build.mjs --prod', 16_000, { source: 'classifier', category: 'interfere_with_workloads', reason: 'blocked\n  by the check' });
+    expect(w).toEqual({
+      kind: 'refusal', id: refusalWaitId('Bash', 'node scripts/build.mjs --prod'), line: 'Bash: node scripts/build.mjs --prod', key: 'Bash',
+      refusal: { tool: 'Bash', input: 'node scripts/build.mjs --prod', whole: true, source: 'classifier', category: 'interfere_with_workloads', reason: 'blocked by the check' },
+    });
+    expect(w.id).toMatch(/^rf-[0-9a-f]{16}$/);
+    expect(refusalWaitId('Bash', 'a')).not.toBe(refusalWaitId('Edit', 'a'));
+    const long = `echo ${'x'.repeat(50)}`;
+    const cut = refusalWait('Bash', long, 20, { source: 'rule' });
+    expect(cut.refusal).toMatchObject({ input: long.slice(0, 20), whole: false });
+    // The id names the whole call, so two long calls that share a head stay two waits.
+    expect(cut.id).toBe(refusalWaitId('Bash', long));
+    expect(cut.id).not.toBe(refusalWait('Bash', `${long}y`, 20, { source: 'rule' }).id);
+    expect(cut.line.length).toBeLessThanOrEqual(160);
+    expect(refusalWait('Bash', 'ls', 100, { source: 'unknown', category: 'not a word' }).refusal?.category).toBeUndefined();
+  });
+
+  it('a stalled wait names its request and the member\'s last sentence', () => {
+    expect(stalledWait('req-1', '  I will wait for the owner.  ')).toEqual({ kind: 'stalled', id: 'st-req-1', line: 'I will wait for the owner.' });
+    expect(stalledWait('req-1', '')?.line).toBeTruthy();
+    expect(stalledWait('bad id!', 'x')).toBeNull();
+  });
+
+  it('a chat text never makes a refusal or a stall, and a receipt never answers one; his own words do', () => {
+    expect(ownerCardsIn(fence({ type: 'refusal', id: 'rf-1', tool: 'Bash' }))).toEqual([]);
+    expect(ownerCardsIn(fence({ type: 'stalled', id: 'st-1' }))).toEqual([]);
+    const open = [refusalWait('Bash', 'ls', 100, { source: 'rule' }), stalledWait('r1', 'stopped')!];
+    expect(answeredBy(runReport(), open)).toEqual([]);
+    expect(answeredBy('ok, run it', open)).toEqual(open);
   });
 });

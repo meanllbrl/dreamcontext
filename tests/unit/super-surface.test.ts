@@ -250,7 +250,8 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(surface).toMatch(/const mainChatSession = activeSuperId === MAIN_SUPER \? superChatSession : /);
     expect((surface.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
     // A banner the server posted (owner-question.ts names it in the view) is never posted twice.
-    expect(effect).toMatch(/banner: !\(superBannered \?\? \[\]\)\.includes\(item\.id\),/);
+    // A member's mirror never: the server bannered the member's own item with its name.
+    expect(effect).toMatch(/banner: item\.kind !== 'member' && !\(superBannered \?\? \[\]\)\.includes\(item\.id\),/);
     // The super chat's tab gets the attention badge, like any asking chat.
     expect(effect).toMatch(/mainChatSession\.attention = true;\s*bumpStatus\(\);/);
   });

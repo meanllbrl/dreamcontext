@@ -50,6 +50,9 @@ export interface DrawerEkipFacts {
   members?: EkipSummary[];
   /** `GET /agents`: names and faces. */
   identities?: EkipIdentity[];
+  /** Open items per member in MAIN's record (`memberWaitCounts`: its mirrors and routines), from
+   *  the mounted surface. Absent: the summary's one `asking` is all the row knows. */
+  waits?: Readonly<Record<string, number>>;
 }
 
 /** What a mounted instance publishes up (`DrawerFactsBridge`). */
@@ -77,6 +80,8 @@ export interface DrawerFacts {
   /** The Ekip row's read (plan-r10 1d). */
   members?: EkipSummary[];
   identities?: EkipIdentity[];
+  /** What waits on the owner per member, in main's record (`DrawerEkipFacts.waits`). */
+  waits?: Readonly<Record<string, number>>;
 }
 
 /** What the fan-out reads for an expanded project that is not mounted (D7). No ring: nothing
@@ -223,7 +228,7 @@ export function headlessRowsOf(roster: readonly TeamRow[]): DrawerTeamRow[] {
 /** One project's members, globals included, from what the window read for it. */
 export function ekipOf(read: (DrawerEkipFacts & { team?: readonly DrawerTeamRow[] }) | undefined): EkipMember[] {
   if (!read?.members) return [];
-  return buildEkip(read.members, read.identities, read.team ?? []);
+  return buildEkip(read.members, read.identities, read.team ?? [], read.waits ?? {});
 }
 
 /** The Ekip row of a project, or null when it has no member of its own. With `empty` (the desktop,
@@ -262,7 +267,7 @@ export function ekipByProject(input: Pick<DrawerModelInput, 'projects' | 'facts'
     const far = p.mounted ? undefined : input.fanout[p.name];
     if (input.device) {
       const live = input.device.members?.find((x) => x.vault === p.name)?.members;
-      return { vault: p.name, members: ekipOf({ members: live, identities: mine?.identities }) };
+      return { vault: p.name, members: ekipOf({ members: live, identities: mine?.identities, waits: mine?.waits }) };
     }
     return { vault: p.name, members: ekipOf(mine ?? far) };
   });
@@ -532,7 +537,7 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
   // The phone's Ekip row (r8-05 at 390): from `live-chats` `members`; names from a mounted
   // project's read, else the slug.
   const live = o.device.members?.find((x) => x.vault === p.name)?.members;
-  const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities }), onChat && !!mine?.member, false, mine?.member);
+  const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities, waits: mine?.waits }), onChat && !!mine?.member, false, mine?.member);
   if (!isOpen) {
     const chats = children.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
     const asking = chats.filter((c) => c.state === 'asking').length;

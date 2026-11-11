@@ -4,7 +4,8 @@ import { nextOwedReveal, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
 import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
-import { superApprovalSentence, type SuperApproval } from './superApprovals';
+import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
+import { requestOpenAgents } from '../../../lib/openAgents';
 import './SuperAgenda.css';
 
 /**
@@ -35,7 +36,7 @@ import './SuperAgenda.css';
  * has the same "Write about this" (it asks the Super again through the composer) and, where the
  * owner's own window is (`onDropOwed`), "Gerek yok". The phone only reads them.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -65,6 +66,11 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onDropOwed?: (id: string) => void;
   /** Drawn after the sections in the full notepad: a member's "Görevleri" (plan-r10 1c). */
   extra?: ReactNode;
+  /** A member's row opens its page (false on the phone, which has none: the row is read only). */
+  canOpenMember?: boolean;
+  /** The phone: a refused command cannot be allowed from its web view (no grant writer there,
+   *  uye-bildirim G2), so its row says where it can be. */
+  remote?: boolean;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
@@ -100,13 +106,22 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // child's permission, or a child waiting on something only he can do (`needsYou`), shows that
   // child beside the centre, its card in view (SuperSurface.showChild). A note is only read.
   // A child's own question (`direct`) opens that child: its card is in its chat.
-  const showsChild = (r: AgendaRow) => r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || !!r.direct;
+  // A refused command or a stalled job of a child of this Super shows that child too.
+  const showsChild = (r: AgendaRow) => !r.member && !r.routine
+    && (r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || r.chip === 'refusal' || r.chip === 'stalled' || !!r.direct);
   const press = (r: AgendaRow) => {
     if (!r.item) return;
+    // A routine waiting on him (K7): its approval row, where the change is in view; else its member.
+    if (r.routine) {
+      if (canOpenMember && !showApprovalRow(`routine:${r.routine}`)) requestOpenAgents({ slug: r.member || r.routine });
+      return;
+    }
+    // An AI Team member waiting on him: its page, where its own card answers it.
+    if (r.member) { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
 
   const rowOf = (r: AgendaRow) => {
     const body = (
@@ -131,7 +146,10 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
               </button>
             )}
           </span>
-          {r.line && <span className="super-agenda-line" title={r.line}>{r.line}</span>}
+          {r.allowed
+            ? <span className="super-agenda-line" data-testid="super-agenda-allowed">{t('owner.answer.allowedWaiting')}</span>
+            : r.line && <span className="super-agenda-line" title={r.line}>{r.line}</span>}
+          {remote && r.chip === 'refusal' && !r.allowed && <span className="super-agenda-line" data-testid="super-agenda-phone-refusal">{t('owner.answer.phoneRefusal')}</span>}
         </>
       );
       return (

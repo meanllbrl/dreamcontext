@@ -370,7 +370,14 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  `checklist`): his from birth, closed when his answer reaches the child. */
 /** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
  *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule'] as const;
+/** `member`: something the owner must answer in an AI Team member's own record, mirrored into
+ *  main's queue (`member` the slug, `answers` its item, `of` that item's kind). */
+/** `nudge`: the server's one turn into a member Super that stopped without closing its job or
+ *  asking (never mirrored, never counted). `routine`: something a routine waits on the owner for,
+ *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
+ *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
+ *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -399,8 +406,8 @@ export interface SuperQueueItem {
    *  src/lib/super/types.ts). */
   automation?: string;
   decision?: 'approved' | 'rejected';
-  /** An `owner` item's wait: the child's card he must act on. */
-  wait?: { kind: OwnerWaitKind; id: string };
+  /** An `owner` item's wait: the child's card he must act on; a refusal's refused call. */
+  wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
   team?: string;
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
@@ -423,7 +430,68 @@ export interface SuperQueueItem {
   answers?: string;
   /** Whose work it is; absent = the owner's. */
   workOrigin?: SuperWorkOrigin;
+  /** A `member` item: the kind of the member's item it mirrors. */
+  of?: typeof MEMBER_OFS[number];
+  /** An OWN item: the record's own session asks (answered through its own window). */
+  own?: true;
+  /** A `routine` item's routine slug, its fact on disk, and that it already rang once. */
+  routine?: string;
+  fact?: string;
+  shown?: true;
+  /** What a surface may offer (server-computed for a permission or a refusal, copied onto its
+   *  mirror): draw exactly these sizes; absent = Allow once and Deny / Not needed only (MIRROR of
+   *  src/lib/super/types.ts `SuperQueueItem.offer`). */
+  offer?: GrantOffer;
+  /** A `permission` item's call (tool and canonical input; `whole` false = cut), copied onto its
+   *  `member` mirror: drawn whole before any Allow; absent = no Allow, only Open (MIRROR of
+   *  src/lib/super/types.ts `SuperQueueItem.call`). */
+  call?: { tool: string; input: string; whole: boolean };
+  /** Already allowed at this size, waiting for the call to run: draw that line, no Allow buttons
+   *  (MIRROR of src/lib/super/types.ts `SuperQueueItem.allowed`). */
+  allowed?: GrantSize;
 }
+
+/** A refused tool call (MIRROR of src/lib/super/types.ts `RefusalFact`): `whole` false = the
+ *  input was cut, and no grant may be offered for it. */
+export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'unknown'] as const;
+export type RefusalSource = typeof REFUSAL_SOURCES[number];
+export interface RefusalFact {
+  tool: string;
+  input: string;
+  whole: boolean;
+  source: RefusalSource;
+  category?: string;
+  reason?: string;
+  scriptSha?: string;
+  interpreter?: { name: string; path: string };
+  cwd?: string;
+}
+
+/** Owner answers and grants on the wire (MIRROR of src/lib/super/types.ts, uye-bildirim K3-K5). */
+export const GRANT_SIZES = ['once', 'job', 'member'] as const;
+export type GrantSize = typeof GRANT_SIZES[number];
+export type OwnerAnswer =
+  | { kind: 'question'; answers: Record<string, string> }
+  | { kind: 'permission'; behavior: 'allow' | 'deny'; size?: GrantSize }
+  | { kind: 'refusal'; action: 'allow' | 'not_needed'; size?: GrantSize }
+  | { kind: 'ask'; text: string }
+  | { kind: 'dismiss' };
+export const OWNER_ANSWER_VIAS = ['bar', 'chat', 'member-chat', 'phone', 'telegram'] as const;
+export type OwnerAnswerVia = typeof OWNER_ANSWER_VIAS[number];
+export interface OwnerAnswerRequest {
+  record: string; item: string; answer: OwnerAnswer; via: OwnerAnswerVia;
+  /** An Allow carries the call the surface DREW (its tool and input as shown), or `shownKey`, the
+   *  `shownKeyOf` of it (Telegram keeps the key of what its card showed). The server allows only
+   *  when it equals what it would allow now: the record is agent-writable, so a call rewritten
+   *  between his look and his tap is refused as `changed`, never allowed unseen (G2). */
+  shown?: { tool: string; input: string };
+  shownKey?: string;
+}
+export type OwnerAnswerResult =
+  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
+  | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
+export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
+export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }
 
 /** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own
  *  (`main`) or an AI Team member's (`m:<member slug>`). Absent anywhere = `main`. MIRROR of
@@ -474,8 +542,9 @@ export interface SuperWindowCommand {
   superId?: SuperId;
 }
 
-/** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
-export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
+/** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`):
+ *  `refusal` a refused tool call, `stalled` a member that stopped without finishing or asking. */
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp', 'refusal', 'stalled'] as const;
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 
 /** `super ask` in AskUserQuestion's shape (MIRROR of src/lib/super/types.ts). */
@@ -531,7 +600,7 @@ export interface SuperTeamJob {
  *  one (its brief, model, whether it waits its turn) and the run before a rotation. */
 export interface TeamChain {
   jobs: number;
-  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt'>;
+  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt' | 'request'>;
   /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
   previous?: { id: string; runId: string; sessionId?: string };
 }
@@ -551,6 +620,7 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
     jobs: Math.max(1, mine.length),
     newest: {
       id: newest.id, brief: newest.brief, queued: newest.queued, startedAt: newest.startedAt,
+      ...(newest.request ? { request: newest.request } : {}),
       ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
     },
     ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
@@ -945,6 +1015,8 @@ export function dissolveGroups(state: { containers: SuperContainer[]; groups: Su
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** The member items a `member` mirror stands for (MIRROR of src/lib/super/types.ts MEMBER_ITEM_OF). */
+export const MEMBER_OFS = ['ask', 'question', 'permission', 'owner', 'approval'] as const;
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v);
 const isUnit = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
 
@@ -1073,7 +1145,16 @@ export interface SuperDigestWire {
   pad: SuperPadItem[];
   /** Open with the owner, or queued behind an open question. `text`: the item's `ownerText`
    *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
-  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string }>;
+  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string; member?: string; of?: SuperQueueItem['of'];
+    /** An `owner` item's wait kind, or a mirror's whose `of` is `owner` (a refusal, a stall, a card). */
+    wait?: OwnerWaitKind;
+    /** A `routine` item's routine slug. */
+    routine?: string;
+    /** An own item: the record's own session asks. */
+    own?: true;
+    /** The member's title on a mirror, the routine's title on a routine item (flattened, at most
+     *  DIGEST_MAX_TITLE characters): the phone names the row by it. Absent = name it by the slug. */
+    title?: string }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
    *  digest from an older server. */
@@ -1083,6 +1164,15 @@ export interface SuperDigestWire {
   /** The open debts (server owed.ts), read only. Absent in a digest from an older server. */
   owed?: SuperOwed[];
   key: string;
+}
+
+/** The most of a member's or a routine's title a digest row carries (phone-mirror.ts caps it the same). */
+export const DIGEST_MAX_TITLE = 80;
+/** A title as a remote screen draws it: one line, no control or line-separator characters, capped. */
+function digestTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const flat = raw.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(flat).slice(0, DIGEST_MAX_TITLE).join('').trim();
 }
 
 /** A `super_digest` frame's body, or null when it is not one. Drops what it does not know. */
@@ -1106,7 +1196,17 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(typeof p.for === 'string' && p.for ? { for: p.for } : {}),
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     })),
-    waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
+    waiting: waiting.map((q) => ({
+      id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text,
+      ...(q.kind === 'member' && typeof q.member === 'string' && q.member ? { member: q.member.slice(0, 64) } : {}),
+      ...(q.kind === 'member' && oneOf(MEMBER_OFS, q.of) ? { of: q.of } : {}),
+      // Each new field only on the kind that can carry it, so a hostile row cannot dress a
+      // question as a refusal or a routine.
+      ...((q.kind === 'owner' || (q.kind === 'member' && q.of === 'owner')) && oneOf(OWNER_WAIT_KINDS, q.wait) ? { wait: q.wait } : {}),
+      ...(q.kind === 'routine' && typeof q.routine === 'string' && MEMBER_SLUG_RE.test(q.routine) ? { routine: q.routine } : {}),
+      ...(q.own === true && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
+      ...((q.kind === 'member' || q.kind === 'routine') && digestTitle(q.title) ? { title: digestTitle(q.title) } : {}),
+    })),
     ownerBatches, mainBatches, names,
     // Checked and capped; only open ones travel (the phone draws and never drops them).
     ...(Array.isArray(v.owed) ? { owed: readOwed(v.owed, 40).filter((d) => d.closed === undefined) } : {}),

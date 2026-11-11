@@ -17,7 +17,7 @@ import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSe
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
-import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
+import { openMemberMirrors, openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
@@ -131,6 +131,35 @@ import type { HomeRow } from './phoneHome';
 import { arrivalCovers, DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
+
+/**
+ * Per session, the open permission and refusal items its own chat card answers, with the record
+ * they are answered in (`main` or the member's slug) and the member's title (the card's "For
+ * <member>" size). PURE: the surface publishes the result (`publishSessionGrantItems`).
+ */
+export function sessionGrantViews(
+  records: ReadonlyArray<{ superId: SuperId; record: Pick<SuperStateView, 'queue'> }>,
+  titleOf: (slug: string) => string,
+): Map<string, SessionGrantItems> {
+  const out = new Map<string, SessionGrantItems>();
+  for (const { superId, record } of records) {
+    const member = memberOf(superId);
+    for (const q of record.queue) {
+      // A mirror is main's copy of a member's item: the member's own record publishes the original.
+      if (q.state === 'done' || q.kind === 'member') continue;
+      const kind = ownerRowKind(q);
+      if (kind !== 'permission' && kind !== 'refusal') continue;
+      const cur = out.get(q.sessionId);
+      if (cur) { (cur.items as SuperQueueItem[]).push(q); continue; }
+      out.set(q.sessionId, { record: member ?? 'main', ...(member ? { memberTitle: titleOf(member) } : {}), items: [q] });
+    }
+  }
+  return out;
+}
+
+/** Open items each member has in main's record (its mirrors and its routines), for the side
+ *  menu's count. Rides the drawer's surface event beside the documented fields. */
+export type DrawerSurfaceWithWaits = DrawerSurfaceState & { memberWaits?: Record<string, number> };
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
 /** The window was opened to land a link (`&open=`, `openVaultWindow`): its page wins over Chat.
@@ -149,6 +178,8 @@ import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlig
 import { SuperDock } from './super/SuperDock';
 import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
+import { ownerRowKind, publishSessionGrantItems, type SessionGrantItems } from './super/ownerAnswer';
+import { memberWaitCounts } from '../aiteam/teamModel';
 import { IconButton, chatStatus } from './super/SuperContainer';
 import { DockChip } from './AgentDock';
 import { pageBlockOf, pageChipName, pageKeyOf, usePageContext } from '../../lib/pageContext';
@@ -3964,6 +3995,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const superQuestionSid = superState?.enabled ? superState.session : null;
   const superQueue = superState?.queue;
   const openSuperQuestions = useMemo(() => openOwnerQuestions(superQueue ?? []), [superQueue]);
+  // AI Team members waiting on the owner, as MAIN's record mirrors them: cards in main's chat only.
+  const mainMemberMirrors = useMemo(() => openMemberMirrors(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
+  const memberMirrorKey = mainMemberMirrors.map((q) => [q.id, q.member ?? '', q.of ?? '', q.ownerText ?? ''].join('\u0003')).join('\u0001');
   // Keyed on what a card draws, including whether a child's chat is live here (its options
   // come from it): the super chat's pane is memoised, so only a key change re-renders a card.
   // A Super `ask`'s report cards (`read`), named as the stage names them; a click brings one in
@@ -3993,12 +4027,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // Forget the answer latches of items the record no longer asks for (never during a render).
     if (superQueue && superState?.session) trimOwnerAnswers(superState.session, new Set(superQueue.filter(needsOwner).map((q) => q.id)));
     if (!superQuestionSid) return;
+    const isMain = activeSuperId === MAIN_SUPER;
     publishSuperQuestions(
       superQuestionSid,
-      { open: openSuperQuestions, superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
-      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}`,
+      { open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -4077,10 +4112,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     publishSuperQuestions(
       mainQuestionSid,
       // Its report cards open nothing here: main's stage is not the one up.
-      { open: mainOpenQuestions, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [] },
-      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main`,
+      { open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [] },
+      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}`,
     );
-  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid]);
+  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey]);
   const mainPublishedRef = useRef<string | null>(null);
   mainPublishedRef.current = mainQuestionSid ?? mainPublishedRef.current;
   useEffect(() => () => {
@@ -4096,12 +4131,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const item = fresh[fresh.length - 1];
     raiseAskAttention({
       // A banner the server posted for it (owner-question.ts) is not posted twice.
-      banner: !(superBannered ?? []).includes(item.id),
+      // A member's mirror: the server bannered the member's own item with its name (owner-question.ts).
+      banner: item.kind !== 'member' && !(superBannered ?? []).includes(item.id),
       // The notch's glance lists only the queue HEAD: an open notch takes that one instead of a
       // banner; an item waiting behind it is nowhere on the notch, so its banner still goes.
       notch: queueHead(mainSuperState)?.id === item.id,
       source: vault,
-      detail: item.kind === 'permission' ? t('super.queue.permissionAlarm')
+      detail: item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission') ? t('super.queue.permissionAlarm')
         : item.kind === 'approval' ? t('super.queue.approval').replace('{name}', item.member ?? '')
           : (item.ownerText ?? t('super.queue.escalatedAlarm')),
       sessionId: mainChatSession?.claudeId ?? null,
@@ -4204,6 +4240,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const memberSpawnRef = useRef<(slug: string) => { model: string; effort: string }>(() => memberSuperSpawn(null));
   const memberRoster = useAgents();
   memberSpawnRef.current = (slug) => memberSuperSpawn(findAgent(memberRoster.data, slug));
+  // Each session's own chat card offers the sizes the server computed for it (K4): the record
+  // lives here, the card lives in the session's pane, so the items are published by session id.
+  // Every super's record counts (main's children ask too); a session whose items closed is
+  // unpublished, so its card falls back to what it always offered.
+  const grantViews = useMemo(
+    () => sessionGrantViews(vaultSupers, (slug) => findAgent(memberRoster.data, slug)?.title || slug),
+    [vaultSupers, memberRoster.data],
+  );
+  // The bar names a member's mirror by its title on this Mac ('' falls back to the slug). A
+  // routine's head fetches its own title (RoutineHead): this surface never reads the automations
+  // list (S3, chat-whiteboard-agents.test.ts).
+  const barMemberTitle = useCallback((slug: string) => findAgent(memberRoster.data, slug)?.title ?? '', [memberRoster.data]);
+  const publishedGrantSids = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const next = new Set(grantViews.keys());
+    for (const sid of publishedGrantSids.current) if (!next.has(sid)) publishSessionGrantItems(sid, null);
+    for (const [sid, view] of grantViews) publishSessionGrantItems(sid, view);
+    publishedGrantSids.current = next;
+  }, [grantViews]);
+  useEffect(() => () => {
+    for (const sid of publishedGrantSids.current) publishSessionGrantItems(sid, null);
+    publishedGrantSids.current = new Set();
+  }, []);
   const ensureSuperSession = useCallback((session: string, superId: SuperId = MAIN_SUPER): ChatSession | null => {
     const open = sessionListRef.current.find((m) => m.claudeId === session);
     if (open) {
@@ -5632,7 +5691,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (document.querySelector('.chat-cmp-ref-pop')) return;
       // "Üyeleri yönet" (its scrim) and the Ekip list's popover own Esc as well: they portal to
       // <body> and close themselves on it; the member's stage under them stays (end review M6).
-      if (document.querySelector('.mm-scrim, .ns-team-list')) return;
+      // So does an agent's Edit dialog (the autonomy label's, a member card's): Esc closes it alone.
+      if (document.querySelector('.mm-scrim, .ns-team-list, .aid-scrim')) return;
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;
@@ -6702,14 +6762,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }];
   });
   const activeChatId = activePane?.active;
-  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown, chatFacts, activeChatId]);
+  // Main's record is the one list of what is his: a member's mirrors and routines there are its
+  // side-menu count, even when the member's own summary says nothing (a refusal, a stalled job).
+  const memberWaits = memberWaitCounts(mainSuperState?.enabled ? mainSuperState.queue : []);
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown, chatFacts, activeChatId, memberWaits]);
   useEffect(() => {
-    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, {
+    emitInstance<DrawerSurfaceWithWaits>(bus, DRAWER_SURFACE_EVENT, {
       superOn, superSelected: (superSelected || arriving === 'super') && !peekMember,
       // Before the roster is restored every window reads empty: the drawer must not believe it.
       ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId, chats: chatFacts } : {}),
       ...(rosterKnown && activeChatId ? { activeChatId } : {}),
       shown: shownFacts, ...(peekMember ? { member: peekMember } : {}), superMarks,
+      memberWaits,
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7517,7 +7581,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                 head={queueHead(superState)}
                 waiting={ownerQueueCount(superState)}
                 vault={vault ?? ''}
-                look={jobLookOf({ sessionFor: chatByClaudeId, titleFor: superTitleFor, nameFor: superNameFor, children: superState.children, superTitle: t('super.centre.name') })}
+                look={{
+                  ...jobLookOf({ sessionFor: chatByClaudeId, titleFor: superTitleFor, nameFor: superNameFor, children: superState.children, superTitle: t('super.centre.name') }),
+                  memberTitleFor: barMemberTitle,
+                }}
                 superSession={superChatSession}
                 sessionFor={chatByClaudeId}
                 titleFor={superTitleFor}

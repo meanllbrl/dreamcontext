@@ -312,9 +312,12 @@ describe('ONE question component: the chat\'s own card, no look-alike', () => {
   it('the super chat mounts SurveyCard (its own ask: an adapter to the super; a child\'s: the child\'s session)', () => {
     expect(card).toMatch(/<SurveyCard key=\{own\.requestId\} item=\{pending\} session=\{child\} \/>/);
     expect(card).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} reads=\{reads\} \/>/);
-    // No option buttons, pills or receipts of its own, and no class of its own.
-    expect(card).not.toMatch(/<button/);
-    expect(card).not.toMatch(/className=/);
+    // No option buttons, pills or receipts of its own, and no class of its own. The member card
+    // below it is another card (uye-bildirim K11: a member's item is answered in place there).
+    const question = card.slice(0, card.indexOf('function MemberWaitCard'));
+    expect(question.length).toBeGreaterThan(0);
+    expect(question).not.toMatch(/<button/);
+    expect(question).not.toMatch(/className=/);
     expect(card).not.toMatch(/chat-surveycard-/);
   });
 
