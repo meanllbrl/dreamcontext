@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { embedFrameGrant } from './apps/embed-token.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
@@ -43,14 +44,39 @@ export async function parseJsonBody(req: IncomingMessage): Promise<Record<string
 
 /**
  * Send JSON response.
+ *
+ * GET with a 200 body carries a weak ETag (size + content hash); a request whose `If-None-Match`
+ * matches is answered 304 with no body, so a poll of an unchanged list costs headers only.
+ * Pass `req` to enable it; callers that omit it get the plain response.
  */
-export function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
+export function sendJson(res: ServerResponse, statusCode: number, data: unknown, req?: IncomingMessage): void {
   const body = JSON.stringify(data);
-  res.writeHead(statusCode, {
+  const headers: Record<string, string | number> = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
-  });
+  };
+  if (req && req.method === 'GET' && statusCode === 200) {
+    const etag = `W/"${Buffer.byteLength(body).toString(16)}-${createHash('sha1').update(body).digest('base64url').slice(0, 22)}"`;
+    headers.ETag = etag;
+    headers['Cache-Control'] = 'no-cache';
+    if (etagMatches(req.headers['if-none-match'], etag)) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' });
+      res.end();
+      return;
+    }
+  }
+  res.writeHead(statusCode, headers);
   res.end(body);
+}
+
+/** Weak comparison of an `If-None-Match` header against our tag (`*` and lists included). */
+function etagMatches(header: string | string[] | undefined, etag: string): boolean {
+  if (!header) return false;
+  const raw = Array.isArray(header) ? header.join(',') : header;
+  return raw.split(',').some((t) => {
+    const v = t.trim();
+    return v === '*' || v.replace(/^W\//, '') === etag.replace(/^W\//, '');
+  });
 }
 
 /**

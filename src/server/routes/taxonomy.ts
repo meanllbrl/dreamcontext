@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { loadProjectVocabulary, auditCorpus, resolveAlias } from '../../lib/taxonomy.js';
-import { buildCorpus } from '../../lib/recall.js';
+import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import { sendJson } from '../middleware.js';
 
 /**
@@ -12,7 +12,7 @@ import { sendJson } from '../middleware.js';
  * Read-only. No filesystem writes. No body parsing.
  */
 export async function handleTaxonomyGet(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
@@ -23,7 +23,7 @@ export async function handleTaxonomyGet(
   // the alias map, then tally onto the canonical form.
   const usage: Record<string, number> = {};
 
-  const corpus = buildCorpus(contextRoot);
+  const corpus = buildCorpusCached(contextRoot);
   for (const doc of corpus) {
     for (const tag of doc.tags) {
       const canonical = resolveAlias(tag, vocabulary);
@@ -36,5 +36,5 @@ export async function handleTaxonomyGet(
     vocabulary,
   );
 
-  sendJson(res, 200, { vocabulary, usage, audit });
+  sendJson(res, 200, { vocabulary, usage, audit }, req);
 }

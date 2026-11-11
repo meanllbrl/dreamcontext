@@ -429,7 +429,7 @@ export async function handleTasksList(
       agent_job: agentJobOf(task.raw ?? {}),
       objection: objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf),
       attachments: summarizeAssets(contextRoot, task.slug),
-    })) });
+    })) }, req);
     return;
   }
   const tasks: (ReturnType<typeof toApiTask> & { attachments: { count: number; cover: string | null } })[] = [];
@@ -437,7 +437,7 @@ export async function handleTasksList(
     // The card's clip: one top-level directory read per task with a folder, none without.
     tasks.push({ ...toApiTask(task, ctx), attachments: summarizeAssets(contextRoot, task.slug) });
   }
-  sendJson(res, 200, { tasks });
+  sendJson(res, 200, { tasks }, req);
 }
 
 /** `?view=` of a list request: `summary` or the full list (anything else). */
