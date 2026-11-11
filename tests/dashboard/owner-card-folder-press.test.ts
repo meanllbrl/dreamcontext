@@ -174,7 +174,7 @@ describe('the phone is shown the folder and presses with it (end review r3)', ()
     const run = read('components/sleepy/chat/RunCard.tsx');
     expect(run).toMatch(/rerun: closed, phone, \.\.\.\(phone && drawnRoot \? \{ root: drawnRoot \} : \{\}\) \}/);
     expect(run).toMatch(/start: false, phone, \.\.\.\(phone && drawnRootRef\.current \? \{ root: drawnRootRef\.current \} : \{\}\) \}/);
-    expect(run).toMatch(/const given = folder !== undefined \? folder : phone \? phoneFolderOf\(sessionId, record\?\.cardRef\) : undefined;/);
+    expect(run).toMatch(/const phoneFolder = phone \? phoneFolderState\(sessionId, record\?\.cardRef\) : null;\s*const given = folder !== undefined \? folder : phone \? phoneFolder!\.folder : undefined;/);
     expect(run).toMatch(/const pressable = canPressWith\(drawnRoot, check\);/);
   });
 
@@ -182,7 +182,7 @@ describe('the phone is shown the folder and presses with it (end review r3)', ()
     const body = secretSaveBody({ sessionId: SID, cardRef: REF, root: FOLDER.path, spec: SECRET, values: { STRIPE_SECRET_KEY: 'x' } });
     expect(body.root).toBe(FOLDER.path);
     const secret = read('components/sleepy/chat/SecretCard.tsx');
-    expect(secret).toMatch(/const given = folder !== undefined \? folder : phone \? phoneFolderOf\(sessionId, record\?\.cardRef\) : undefined;/);
+    expect(secret).toMatch(/const phoneFolder = phone \? phoneFolderState\(sessionId, record\?\.cardRef\) : null;\s*const given = folder !== undefined \? folder : phone \? phoneFolder!\.folder : undefined;/);
     // The phone is no longer exempt: with a record and no app, no folder means no Save.
     expect(secret).toMatch(/const needsFolder = !!sessionId && !!record && !spec\.app;/);
   });

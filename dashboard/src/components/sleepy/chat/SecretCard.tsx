@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import {
-  OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine, isFolderChanged, phoneFolderOf, refreshCards, secretSaveBody, settleFolderCheck,
+  OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine, isFolderChanged, phoneFolderOf, phoneFolderState, refreshCards, secretSaveBody, settleFolderCheck,
   useHostCard, useShownFolder, type CardHost, type FolderCheck,
 } from '../../../lib/cardRecords';
 import { RequestError } from '../../../api/client';
@@ -83,7 +83,10 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   // The phone too (end review r3): it is shown the card's folder through its own card read and
   // saves with it; it is never pinned to the project root behind the owner's back.
   const phoneRead = useCallback((sid: string, c: string) => refreshCards(sid, fetchJson).then(() => phoneFolderOf(sid, c)), [fetchJson]);
-  const given = folder !== undefined ? folder : phone ? phoneFolderOf(sessionId, record?.cardRef) : undefined;
+  // The phone: its folder from its card read; a card whose folder was not read yet is being read
+  // (the store reads it once), never "not known".
+  const phoneFolder = phone ? phoneFolderState(sessionId, record?.cardRef) : null;
+  const given = folder !== undefined ? folder : phone ? phoneFolder!.folder : undefined;
   const shownFolder = useShownFolder(vault ?? null, sessionId && record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, given, onReread, phone ? phoneRead : undefined);
   const drawnRoot = shownFolder.folder?.path ?? null;
   const needsFolder = !!sessionId && !!record && !spec.app;
@@ -211,7 +214,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
 
       {error && <p className="chat-secretcard-error">{error}</p>}
       {(() => {
-        const line = folderLine(t, { check, spec, unknown: needsFolder && !drawnRoot && loaded });
+        const line = folderLine(t, { check, spec, unknown: needsFolder && !drawnRoot && loaded, reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading });
         return line && <p className={check ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
       })()}
       {sessionId && loaded && phone && !record && (

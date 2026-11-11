@@ -23,7 +23,9 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => {
 vi.mock('../../dashboard/src/context/VaultContext.js', () => ({ useApi: () => ({ get: async () => ({}), ownerPost: async () => ({}) }), useVaultId: () => ({ vault: 'acme-shop' }) }));
 vi.mock('../../dashboard/src/components/sleepy/chat/InlineTerminal.js', () => ({ InlineTerminal: () => null }));
 
-const { _resetCardRecords, applyCardsFrame, cardTerminalUrl, phoneFolderOf, refreshCards, secretSaveBody } = await import('../../dashboard/src/lib/cardRecords.js');
+const {
+  _resetCardRecords, applyCardsFrame, cardTerminalUrl, loadCards, phoneFolderOf, phoneFolderState, refreshCards, secretSaveBody, settleFolderCheck,
+} = await import('../../dashboard/src/lib/cardRecords.js');
 const { isMacPhoneSurface } = await import('../../dashboard/src/lib/phoneSurface.js');
 const { RunCard } = await import('../../dashboard/src/components/sleepy/chat/RunCard.js');
 const { SecretCard } = await import('../../dashboard/src/components/sleepy/chat/SecretCard.js');
@@ -102,5 +104,100 @@ describe('the phone draws the folder from { session, cards, folders } and presse
     await refreshCards(SID, async () => ({ session: SID, cards: PHONE_ANSWER.cards }));
     const html = renderToStaticMarkup(createElement(RunCard, { spec: RUN as never, sessionId: SID }));
     expect(has(html, 'run-card-play')).toBe(false);
+  });
+});
+
+describe('a card whose folder was not read yet is read once; "cannot prove" is never "not read yet" (end review r4)', () => {
+  const NEW_REF = 'e'.repeat(32);
+  const NEW_RUN = { type: 'run', id: 'deploy', command: 'npm run deploy' } as const;
+  const newCard = { id: NEW_RUN.id, cardRef: NEW_REF, kind: 'run', spec: NEW_RUN, state: 'open', run: null };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  /** A phone read that counts its calls; `folders` is what the server answers for the chat now. */
+  function server(folders: (added: boolean) => Record<string, unknown>) {
+    const reads: string[] = [];
+    let cards: unknown[] = [...PHONE_ANSWER.cards];
+    let added = false;
+    // The server answers for the cards it has NOW: the new card's folder only once it exists.
+    const fetchJson = async (path: string) => { reads.push(path); return { session: SID, cards, folders: folders(added) }; };
+    return { reads, fetchJson, add: (c: unknown) => { cards = [...cards, c]; added = true; } };
+  }
+
+  it('a frame adds a run card after the read: ONE read, then the card draws its folder and offers Run', async () => {
+    _resetCardRecords();
+    const srv = server((added) => ({ ...PHONE_ANSWER.folders, ...(added ? { [NEW_REF]: FOLDER } : {}) }));
+    loadCards(SID, srv.fetchJson);
+    await tick();
+    expect(srv.reads).toHaveLength(1);
+    // The agent posts a card: it reaches the open page by the chat socket's `cards` frame (no folders).
+    srv.add(newCard);
+    applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]);
+    // While its read is in flight the card says it is reading, never "not known yet".
+    expect(phoneFolderState(SID, NEW_REF)).toEqual({ folder: null, reading: true });
+    const before = renderToStaticMarkup(createElement(RunCard, { spec: NEW_RUN as never, sessionId: SID }));
+    expect(before).toContain('ownerCard.folderReading');
+    expect(before).not.toContain('ownerCard.folderUnknown');
+    expect(has(before, 'run-card-play')).toBe(false);
+    await tick();
+    expect(srv.reads).toHaveLength(2);
+    expect(phoneFolderOf(SID, NEW_REF)).toEqual(FOLDER);
+    const after = renderToStaticMarkup(createElement(RunCard, { spec: NEW_RUN as never, sessionId: SID }));
+    expect(after).toContain('acme-shop-look');
+    expect(has(after, 'run-card-play')).toBe(true);
+    // Another frame with the same cards reads nothing more.
+    applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]);
+    await tick();
+    expect(srv.reads).toHaveLength(2);
+  });
+
+  it('a card mounting after the store loaded (or a Super slot child card) gets its read too', async () => {
+    _resetCardRecords();
+    const srv = server((added) => ({ ...PHONE_ANSWER.folders, ...(added ? { [NEW_REF]: FOLDER } : {}) }));
+    // The store learned the cards from a frame alone (no read yet, no fetcher yet).
+    applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]);
+    expect(srv.reads).toHaveLength(0);
+    expect(phoneFolderState(SID, NEW_REF).reading).toBe(true);
+    srv.add(newCard);
+    loadCards(SID, srv.fetchJson);
+    await tick();
+    expect(srv.reads).toHaveLength(1);
+    expect(phoneFolderOf(SID, NEW_REF)).toEqual(FOLDER);
+  });
+
+  it('a null entry stays "cannot" (do it on the Mac) and is never read again in a loop', async () => {
+    _resetCardRecords();
+    const srv = server((added) => ({ ...PHONE_ANSWER.folders, ...(added ? { [NEW_REF]: null } : {}) }));
+    srv.add(newCard);
+    loadCards(SID, srv.fetchJson);
+    await tick();
+    expect(phoneFolderState(SID, NEW_REF)).toEqual({ folder: null, reading: false });
+    for (let i = 0; i < 3; i++) { applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]); loadCards(SID, srv.fetchJson); }
+    await tick();
+    expect(srv.reads).toHaveLength(1);
+    const html = renderToStaticMarkup(createElement(RunCard, { spec: NEW_RUN as never, sessionId: SID }));
+    expect(html).toContain('ownerCard.cannotConfirm');
+    expect(html).not.toContain('ownerCard.folderReading');
+    expect(has(html, 'run-card-play')).toBe(false);
+  });
+
+  it('a read that names no folder for a new ref settles to "cannot" after ONE read', async () => {
+    _resetCardRecords();
+    const srv = server(() => ({ ...PHONE_ANSWER.folders }));
+    loadCards(SID, srv.fetchJson);
+    await tick();
+    srv.add(newCard);
+    applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]);
+    await tick();
+    expect(srv.reads).toHaveLength(2);
+    expect(phoneFolderState(SID, NEW_REF)).toEqual({ folder: null, reading: false });
+    applyCardsFrame(SID, [...PHONE_ANSWER.cards, newCard]);
+    await tick();
+    expect(srv.reads).toHaveLength(2);
+  });
+
+  it('a re-read naming the same folder, trailing slash or not, is "cannot" (fails closed)', () => {
+    expect(settleFolderCheck('/w/acme-shop-look', { path: '/w/acme-shop-look/', name: 'acme-shop-look' }).state).toBe('cannot');
+    expect(settleFolderCheck('/w/acme-shop-look/', { path: '/w/acme-shop-look', name: 'acme-shop-look' }).state).toBe('cannot');
+    expect(settleFolderCheck('/w/acme-shop-look', { path: '/w/other', name: 'other' }).state).toBe('now');
   });
 });

@@ -3,7 +3,7 @@ import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import {
-  FOLDER_CHANGED, OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine as folderLineOf, phoneFolderOf, pressRun, refreshCards, settleFolderCheck, ticketActionOf,
+  FOLDER_CHANGED, OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine as folderLineOf, phoneFolderOf, phoneFolderState, pressRun, refreshCards, settleFolderCheck, ticketActionOf,
   useHostCard, useShownFolder, type CardActionResult, type CardHost, type FolderCheck,
 } from '../../../lib/cardRecords';
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
@@ -147,7 +147,10 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   // the phone alike: the slot hands it in; the card's own chat reads it (the Mac's card state, or
   // the phone's own card read). No folder drawn, no press offered.
   const phoneRead = useCallback((s: string, c: string) => refreshCards(s, fetchJson).then(() => phoneFolderOf(s, c)), [fetchJson]);
-  const given = folder !== undefined ? folder : phone ? phoneFolderOf(sessionId, record?.cardRef) : undefined;
+  // The phone: its folder from its card read; a card whose folder was not read yet is being read
+  // (the store reads it once), never "not known".
+  const phoneFolder = phone ? phoneFolderState(sessionId, record?.cardRef) : null;
+  const given = folder !== undefined ? folder : phone ? phoneFolder!.folder : undefined;
   const shownFolder = useShownFolder(vault, record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, given, onReread, phone ? phoneRead : undefined);
   const drawnRoot = shownFolder.folder?.path ?? null;
   const drawnRootRef = useRef(drawnRoot);
@@ -291,6 +294,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   // The folder line: changed (and what it is now, once read again), or not known on the Mac.
   const folderLine = folderLineOf(t, {
     check, spec, unknown: !drawnRoot && loaded && view.phase !== 'running' && !unsafe,
+    reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading,
   });
 
   return (

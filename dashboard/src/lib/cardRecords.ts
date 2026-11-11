@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { canonicalJson, type CardCloseReason, type PublicCard } from '../../../src/lib/cards/public.js';
 import { RequestError } from '../api/client';
+import { isMacPhoneSurface } from './phoneSurface';
 import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from './chatViewSpec';
 import type {
   CardTicketAction, CardTicketMintRequest, CardTicketMintResponse, OwnerCardHandle, OwnerReceiptView,
@@ -60,6 +61,59 @@ function emit(): void {
   for (const fn of [...listeners]) fn();
 }
 
+// ─── The phone's folders: "not read yet" is never "cannot prove" (end review r4) ──────────────
+//
+// On the phone a run or secret card's folder comes ONLY from its card read (GET /api/agent/cards:
+// `folders[cardRef]`). A key that is present but null is a real "cannot prove" (do it on the Mac).
+// A key that is MISSING means the folder was not read yet: a card that arrived by a `cards` frame
+// (which carries no folders), or one that mounted after the read. THE ONE RULE, kept here in the
+// store and nowhere else: whenever a chat's cards are set and some run or secret ref has no folder
+// key, ONE read of that chat's cards is made (deduped per chat while in flight), with the fetcher
+// any card of that chat registered (`loadCards`). Each ref gets at most one such read: a read that
+// still names no folder for it settles to "cannot", never a loop.
+
+type Fetch = (path: string) => Promise<unknown>;
+const fetchers = new Map<string, Fetch>();
+const folderReads = new Set<string>();
+const folderRead = new Set<string>();
+const refKey = (sessionId: string, cardRef: string): string => `${sessionId}\n${cardRef}`;
+const needsFolder = (c: PublicCard): boolean => c.kind === 'run' || c.kind === 'secret';
+
+/** A read of this chat's cards just landed: every run and secret ref in it has had its read. */
+function markFolderRead(sessionId: string): void {
+  for (const c of store.get(sessionId)?.cards ?? []) if (needsFolder(c)) folderRead.add(refKey(sessionId, c.cardRef));
+}
+
+/** THE trigger (phone only): a ref with no folder key and no read yet gets one read of its chat. */
+function ensurePhoneFolders(sessionId: string): void {
+  if (!isMacPhoneSurface()) return;
+  const s = store.get(sessionId);
+  const fetchJson = fetchers.get(sessionId);
+  if (!s?.loaded || !fetchJson || folderReads.has(sessionId) || inflight.has(sessionId)) return;
+  const missing = s.cards.some((c) => needsFolder(c) && !(s.folders && c.cardRef in s.folders) && !folderRead.has(refKey(sessionId, c.cardRef)));
+  if (!missing) return;
+  folderReads.add(sessionId);
+  emit();
+  void refreshCards(sessionId, fetchJson).finally(() => {
+    // Whatever came back, every ref the chat had has now had its read.
+    markFolderRead(sessionId);
+    folderReads.delete(sessionId);
+    emit();
+  });
+}
+
+/**
+ * A card's folder on the phone: drawn (`folder`), being read (`reading`: its read is in flight or
+ * about to be made), or `cannot` be proven (a null entry, or a read that named none).
+ */
+export function phoneFolderState(sessionId: string | undefined, cardRef: string | undefined): { folder: CardFolder | null; reading: boolean } {
+  if (!sessionId || !cardRef) return { folder: null, reading: false };
+  const s = store.get(sessionId);
+  if (s?.folders && cardRef in s.folders) return { folder: s.folders[cardRef] ?? null, reading: false };
+  const reading = !s?.loaded || inflight.has(sessionId) || folderReads.has(sessionId) || !folderRead.has(refKey(sessionId, cardRef));
+  return { folder: null, reading };
+}
+
 function isCards(v: unknown): v is PublicCard[] {
   return Array.isArray(v) && v.every((c) => !!c && typeof c === 'object' && typeof (c as PublicCard).cardRef === 'string' && typeof (c as PublicCard).id === 'string');
 }
@@ -71,12 +125,18 @@ export function applyCardsFrame(sessionId: unknown, cards: unknown): boolean {
   const folders = store.get(sessionId)?.folders;
   store.set(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
   emit();
+  // A frame may bring a card the last read did not have: its folder is read (the store's one rule).
+  ensurePhoneFolders(sessionId);
   return true;
 }
 
 /** Load one chat's records once (mount, reload). `fetchJson` is the vault-scoped api's GET. */
 export function loadCards(sessionId: string, fetchJson: (path: string) => Promise<unknown>): void {
-  if (!sessionId || store.get(sessionId)?.loaded || inflight.has(sessionId)) return;
+  if (!sessionId) return;
+  fetchers.set(sessionId, fetchJson);
+  // Already loaded (a card mounting later, a Super slot's child card): its folder, if missing, is read.
+  if (store.get(sessionId)?.loaded) { ensurePhoneFolders(sessionId); return; }
+  if (inflight.has(sessionId)) return;
   inflight.add(sessionId);
   void fetchJson(`/agent/cards?session=${encodeURIComponent(sessionId)}`)
     .then((r) => {
@@ -89,7 +149,13 @@ export function loadCards(sessionId: string, fetchJson: (path: string) => Promis
       else if (folders) store.set(sessionId, { ...cur, folders });
     })
     .catch(() => { if (!store.get(sessionId)?.loaded) store.set(sessionId, { loaded: true, cards: [] }); })
-    .finally(() => { inflight.delete(sessionId); emit(); });
+    .finally(() => {
+      inflight.delete(sessionId);
+      markFolderRead(sessionId);
+      emit();
+      // A frame that landed during this read may have added a ref this read did not see.
+      ensurePhoneFolders(sessionId);
+    });
 }
 
 /** The record a drawn card is: same kind, same id, same canonical spec; the newest such. */
@@ -375,7 +441,9 @@ export type FolderCheck =
 
 /** Settle a re-read: another folder is `now`; none, or the same one, is `cannot`. */
 export function settleFolderCheck(from: string, read: CardFolder | null): FolderCheck {
-  return read && read.path && read.path !== from ? { from, state: 'now', folder: read } : { from, state: 'cannot' };
+  // Compared as the same folder whatever its trailing slashes; anything unclear fails closed.
+  const norm = (p: string): string => p.replace(/\/+$/, '') || '/';
+  return read && read.path && norm(read.path) !== norm(from) ? { from, state: 'now', folder: read } : { from, state: 'cannot' };
 }
 
 /** A card may be pressed only with a drawn folder and no unsettled or unconfirmable refusal. */
@@ -390,19 +458,23 @@ export function canPressWith(root: string | null, check: FolderCheck): boolean {
  */
 export function folderLine(
   t: (key: string) => string,
-  o: { check: FolderCheck; spec: { cwd?: string } | RecordSpec; unknown: boolean },
+  o: { check: FolderCheck; spec: { cwd?: string } | RecordSpec; unknown: boolean; reading?: boolean; cannot?: boolean },
 ): string | null {
   if (o.check?.state === 'now') return t('ownerCard.folderChanged').replace('{name}', cardFolderText(o.check.folder, o.spec) ?? o.check.folder.name);
   if (o.check?.state === 'reading') return t('ownerCard.folderChangedReading');
   if (o.check?.state === 'cannot') return t('ownerCard.cannotConfirm');
-  return o.unknown ? t('ownerCard.folderUnknown') : null;
+  if (!o.unknown) return null;
+  // No folder drawn: being read (the phone's first read of a new card), cannot be proven here
+  // (the phone: do it on the Mac), or not known yet.
+  if (o.reading) return t('ownerCard.folderReading');
+  if (o.cannot) return t('ownerCard.cannotConfirm');
+  return t('ownerCard.folderUnknown');
 }
 
 /** The folder the phone's card read carries for a card (GET /api/agent/cards on the phone, its
  *  passphrase-proven read), or null when it carries none. */
 export function phoneFolderOf(sessionId: string | undefined, cardRef: string | undefined): CardFolder | null {
-  if (!sessionId || !cardRef) return null;
-  return store.get(sessionId)?.folders?.[cardRef] ?? null;
+  return phoneFolderState(sessionId, cardRef).folder;
 }
 
 /** Read one chat's records again (the phone's re-read after a refusal). Null when it failed. */
@@ -413,6 +485,7 @@ export async function refreshCards(sessionId: string, fetchJson: (path: string) 
     if (!isCards(cards)) return null;
     const folders = cleanFolders((r as { folders?: unknown } | null)?.folders);
     store.set(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
+    markFolderRead(sessionId);
     emit();
     return cards;
   } catch { return null; }
@@ -460,6 +533,9 @@ export function _seedCardStateForTests(session: string, card: string, state: Car
 export function _resetCardRecords(): void {
   store.clear();
   inflight.clear();
+  fetchers.clear();
+  folderReads.clear();
+  folderRead.clear();
   stateCache.clear();
   emit();
 }
