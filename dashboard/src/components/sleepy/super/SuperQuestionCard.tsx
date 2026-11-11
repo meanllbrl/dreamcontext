@@ -3,6 +3,7 @@ import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingQuestion } from '../chatSession';
 import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
+import { OwnerCardSlot } from './OwnerCardSlot';
 import { surveyDraftKey } from '../chat/surveyDrafts';
 import { RemotePermission } from './SuperPermissionCard';
 import { useI18n } from '../../../context/I18nContext';
@@ -162,7 +163,8 @@ export function SuperQuestionTail({ session, anchored }: {
   if (!view) return null;
   const rest = view.open.filter((q) => !anchored.has(q.id));
   const members = view.members ?? [];
-  if (!rest.length && !members.length) return null;
+  const cards = view.cards ?? [];
+  if (!rest.length && !members.length && !cards.length) return null;
   return (
     <>
       {rest.map((q) => (
@@ -172,7 +174,15 @@ export function SuperQuestionTail({ session, anchored }: {
           session={session}
         />
       ))}
-      {members.map((q) => <MemberWaitCard key={`member-${q.id}`} item={q} />)}
+      {cards.map((q) => (
+        <OwnerCardSlot
+          key={`card-${q.id}`}
+          item={q}
+          title={view.titleFor?.(q.sessionId) || q.ownerText || ''}
+          paused={!!view.pausedFor?.(q.sessionId)}
+        />
+      ))}
+      {members.map((q) => <MemberWaitCard key={`member-${q.id}`} item={q} paused={!!view.pausedFor?.(q.sessionId)} />)}
     </>
   );
 }
@@ -186,11 +196,17 @@ export function SuperQuestionTail({ session, anchored }: {
  * member's page draws) is one Open button that brings the member's page, as before.
  * Leaves the chat when the member's item closes, wherever it was answered (Telegram, its page).
  */
-function MemberWaitCard({ item }: { item: SuperQueueItem }) {
-  const { t } = useI18n();
+function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem; paused?: boolean }) {
   const slug = item.member ?? '';
   const agent = useAgent(slug || null).data?.agent;
   const name = agent?.title || slug;
+  // A member's child left a card (K7): the slot draws it from the record the mirror carries.
+  if (item.card) return <OwnerCardSlot item={item} title={name} paused={paused} />;
+  return <MemberWaitBody item={item} name={name} slug={slug} hasPhoto={agent?.hasPhoto ?? false} />;
+}
+
+function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; name: string; slug: string; hasPhoto: boolean }) {
+  const { t } = useI18n();
   const row = ownerRowKind(item);
   // Member mirrors are drawn in MAIN's chat only (SuperQuestionView.members): main's record.
   const answer = useOwnerAnswer(MAIN_RECORD, item, 'chat');
@@ -208,7 +224,7 @@ function MemberWaitCard({ item }: { item: SuperQueueItem }) {
   return (
     <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of} data-row={row}>
       <CardHeader
-        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={agent?.hasPhoto ?? false} size={22} />}
+        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={hasPhoto} size={22} />}
         title={t(title).replace('{name}', name)}
       />
       {allowed ? (

@@ -12,7 +12,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, isCrossSiteWrite, refuseForeignFrame, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { handleCors, isCrossSiteWrite, isOwnerCardWrite, refuseForeignFrame, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
 import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSocket } from './phone-origin.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
@@ -271,6 +271,9 @@ import { handleAgentPickPaths } from './routes/agent-pick.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import { attachPhoneRunTerminal, handleAgentCards, wireRunRegistry } from './routes/run-terminal.js';
+import { CARD_ACTION_ROUTES, CARD_OWNER_ONLY_MESSAGE } from './routes/card-actions.js';
+import { setOwnerCardRemindBanner } from '../lib/telegram/back-at-mac.js';
+import { redactTicketUrl } from './card-ticket.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus, handleVoiceLog,
   handleVoiceRetranscribe,
@@ -604,17 +607,20 @@ export function buildRouter(): Router {
   // The notch draws that reply as a row, so an open notch holds the banner back (notchShows).
   setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, notchShows: true, ...(sound ? { sound } : {}) }); });
   // A question the Super Agent puts to the owner reaches him whatever page the window shows.
+  // The notch glance lists the queue head. While the notch is on screen no banner is posted,
+  // the history row still is, and this says `held`: not a channel in `via` (he may not have
+  // looked), and the window's job bar posts no banner of its own for it (`serverBannered`).
+  const ownerBanner = (title: string, body: string, link: string | null): boolean | 'held' => {
+    if (!isDesktop()) return false;
+    if (notchCovers(true)) { recordNotification({ title: title.replace(/[\r\n]+/g, ' '), body, link, file: null }); return 'held'; }
+    return notifyViaBundle(title, body, undefined, { link });
+  };
   setOwnerQuestionSinks({
     presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
-    // The notch glance lists the queue head. While the notch is on screen no banner is posted,
-    // the history row still is, and this says `held`: not a channel in `via` (he may not have
-    // looked), and the window's job bar posts no banner of its own for it (`serverBannered`).
-    banner: (title, body, link) => {
-      if (!isDesktop()) return false;
-      if (notchCovers(true)) { recordNotification({ title: title.replace(/[\r\n]+/g, ' '), body, link, file: null }); return 'held'; }
-      return notifyViaBundle(title, body, undefined, { link });
-    },
+    banner: ownerBanner,
   });
+  // Telegram's "Mac'e dönünce hatırlat" (sahip-karti-yerinde K7) rings through the same path.
+  setOwnerCardRemindBanner(ownerBanner);
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);
   router.post('/api/assistant/inbox/seen', handleAssistantInboxSeen);
@@ -852,6 +858,10 @@ export function buildRouter(): Router {
   router.post('/api/agent/secret', handleAgentSecret);
   // A chat's run/secret card records (plan I1): what the Mac card and the phone page match against.
   router.get('/api/agent/cards', handleAgentCards);
+  // The owner's card actions wherever he is (sahip-karti-yerinde K4): the ws ticket, a checklist's
+  // submit, Not needed, and what the slot draws. Owner page only (Gate G1); vault-agnostic (the
+  // RECORD names its project).
+  for (const r of CARD_ACTION_ROUTES) router[r.method](r.path, r.handler);
   // Assistant mode's two audio legs. Desktop-gated, and the ONLY routes in this server
   // that spend money — hence the server-side concurrency and rate caps in
   // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.
@@ -1172,7 +1182,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1374,7 +1384,9 @@ export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessag
       // paths / exception details never leak to the browser (defense in depth).
       // The phone listener never logs a query string (it can carry a session, a resume id or a
       // one-time login token).
-      const shown = isPhoneSocket(req) ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
+      // Nor does an agent terminal's URL (a card ticket rides in it, K4).
+      const shown = isPhoneSocket(req) ? (req.url ?? '/').split('?')[0]
+        : (req.url ?? '/').startsWith('/api/agent/terminal') ? redactTicketUrl(req.url) : (req.url ?? '/');
       console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${shown}`, err);
       sendError(res, 500, 'internal_error', 'Internal server error');
     }
@@ -1398,7 +1410,9 @@ export function mainLaptopGate(req: IncomingMessage, res: ServerResponse, networ
   if (handleCors(req, res)) return false;
   // CSRF defense: reject state-changing requests from a cross-site origin.
   if (isCrossSiteWrite(req)) {
-    sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+    // An owner card write with no owner proof reads the card's one line (K4).
+    if (isOwnerCardWrite(req)) sendError(res, 403, 'owner_only', CARD_OWNER_ONLY_MESSAGE);
+    else sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
     return false;
   }
   return true;

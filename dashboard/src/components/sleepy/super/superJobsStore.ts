@@ -86,6 +86,104 @@ export interface SuperQuestionView {
   /** A Super `ask`'s report cards on the stage, each with the click that brings it into view
    *  (`SuperQueueItem.read`); absent where no stage can be arranged. */
   readsOf?: (item: SuperQueueItem) => SurveyRead[];
+  /** The owner cards its children left (sahip-karti-yerinde K7): every `owner` item of this
+   *  record that carries a card handle and is open, plus one this window saw open and whose result
+   *  line is set (`delivery`), so the card shows its outcome in place. Drawn from the RECORD
+   *  (`item.card`), never from chat text. Member mirrors with a card are in `members`. */
+  cards?: readonly SuperQueueItem[];
+  /** A child's job name (the slot's heading "<child> needs you"). */
+  titleFor?: (claudeId: string) => string;
+  /** A child parked to save memory (its tab kept dormant): the "Paused" chip. */
+  pausedFor?: (claudeId: string) => boolean;
+}
+
+/** An owner item that stands for a card the slot draws (K7): a crew child's card wait. */
+export function isOwnerCardItem(q: Pick<SuperQueueItem, 'kind' | 'card'>): boolean {
+  return (q.kind === 'owner' || q.kind === 'member') && !!q.card;
+}
+
+/** Card items this window saw open: a closed one stays in the slot only while its result line
+ *  says where the result went (bounded; a reload starts clean). */
+const seenOpenCards = new Set<string>();
+const SEEN_CAP = 200;
+
+/** The card items the slot draws, oldest first (K7). */
+export function slotCardItems(queue: readonly SuperQueueItem[]): SuperQueueItem[] {
+  const out: SuperQueueItem[] = [];
+  for (const q of queue) {
+    if (q.kind !== 'owner' || !q.card) continue;
+    if (q.state !== 'done') {
+      seenOpenCards.add(q.id);
+      if (seenOpenCards.size > SEEN_CAP) seenOpenCards.delete(seenOpenCards.values().next().value as string);
+      out.push(q);
+    } else if (q.delivery && seenOpenCards.has(q.id)) {
+      out.push(q);
+    }
+  }
+  return out.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** What a card item's slot redraws on (its handle, state and result line). */
+export function slotCardKey(items: readonly SuperQueueItem[]): string {
+  return items.map((q) => [q.id, q.state, q.delivery ?? '', q.card?.cardRef ?? '', q.card?.deliverTo ?? '', q.sessionId].join('\u0003')).join('\u0001');
+}
+
+// ─── The bar's ▶ Run lands in the slot (K7) ───────────────────────────────────
+
+type SlotRun = { n: number; shown: string };
+const slotRuns = new Map<string, SlotRun>();
+const slotRunListeners = new Set<() => void>();
+const slotMounted = new Map<string, number>();
+let slotRunSeq = 0;
+
+/** The slot card of `itemId` is mounted (it returns the unmount). */
+export function mountOwnerSlot(itemId: string): () => void {
+  slotMounted.set(itemId, (slotMounted.get(itemId) ?? 0) + 1);
+  return () => {
+    const n = (slotMounted.get(itemId) ?? 1) - 1;
+    if (n <= 0) { slotMounted.delete(itemId); slotRuns.delete(itemId); } else slotMounted.set(itemId, n);
+  };
+}
+
+/**
+ * The bar's ▶ Run: start the run in the slot, with the command the bar DREW (`shown`). The slot's
+ * run card starts it only when that is exactly the command it draws, and mints the ticket for it.
+ * False when no slot is mounted for the item (the caller brings the Super chat up and says so).
+ */
+export function requestSlotRun(itemId: string, shown: string): boolean {
+  if (!slotMounted.has(itemId)) return false;
+  slotRuns.set(itemId, { n: ++slotRunSeq, shown });
+  for (const fn of [...slotRunListeners]) fn();
+  return true;
+}
+
+function subscribeSlotRuns(fn: () => void): () => void {
+  slotRunListeners.add(fn);
+  return () => { slotRunListeners.delete(fn); };
+}
+
+/** The newest ▶ Run the bar asked of this item's slot. */
+export function useSlotRunRequest(itemId: string): SlotRun | undefined {
+  const read = () => slotRuns.get(itemId);
+  return useSyncExternalStore(subscribeSlotRuns, read, read);
+}
+
+/** Bring an item's card in the Super chat's slot into view (the bar's verbs, Show, the agenda's
+ *  Waiting line). False when it is not drawn (the chat not on screen). */
+export function showOwnerSlot(itemId: string, root: ParentNode = document): boolean {
+  const card = [...root.querySelectorAll<HTMLElement>('[data-testid="super-owner-card"]')].find((el) => el.dataset.item === itemId);
+  if (!card || !card.isConnected) return false;
+  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  card.querySelector<HTMLElement>('input, button:not([disabled])')?.focus({ preventScroll: true });
+  return true;
+}
+
+/** Tests only. */
+export function _resetOwnerSlots(): void {
+  seenOpenCards.clear();
+  slotRuns.clear();
+  slotMounted.clear();
 }
 
 /** The phone's way to a child question it cannot hold (usePhoneSuperQuestions.ts). */

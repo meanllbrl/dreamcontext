@@ -37,7 +37,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } 
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
   BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
-  reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, type SuperEventFrame, type SuperInbox,
+  noteChildParking, reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -46,6 +46,11 @@ import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runRe
 import { buildSubmitMarkdown } from '../../dashboard/src/lib/checklistMarkdown.js';
 import { secretReceipt } from '../../src/lib/env-secrets.js';
 import { needsOwner, ownerQueueCount, queueHead, superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+
+// Every test starts with an EMPTY machine store under this file's own HOME (the receipts, the
+// closed-card files, the outbox, the parked tabs): nothing a test leaves on disk reaches the next,
+// so the file passes whole and in any order.
+beforeEach(() => { rmSync(join(process.env.HOME!, '.dreamcontext'), { recursive: true, force: true }); });
 
 const SUPER = 'sup-1';
 let dir: string;
@@ -392,13 +397,47 @@ describe('a child waiting on the owner is never done', { timeout: 60_000 }, () =
     expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done').map((q) => q.wait?.kind)).toEqual(['checklist']);
   });
 
-  it('a child that goes away closes its owner items', async () => {
+  // sahip-karti-yerinde K2: a CARD wait outlives the process. Only the owner, or the Super ending
+  // the job, closes it (it was closed by any exit before, and a parked child lost its card).
+  it('a child PARKED with a card open keeps its item open; the Super hears one `parked`, never `gone`', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    noteChildParking('c1');
+    hs[0].exited();
+    await advance(60_000);
+    expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(1);
+    expect(await ofKind('parked', 'c1')).toHaveLength(1);
+    expect(await ofKind('gone', 'c1')).toHaveLength(0);
+    expect((await state()).children.c1.row).toBe('waiting');
+    expect(delivered.map((d) => d.text).join('\n')).toMatch(/child=c1 event=parked wait=run/);
+    expect(delivered.map((d) => d.text).join('\n')).not.toMatch(/event=gone/);
+  });
+
+  it('a child that really exits (no park) says `gone`, and its card item stays open', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    hs[0].exited();
+    await advance(60_000);
+    expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(1);
+    expect(await ofKind('gone', 'c1')).toHaveLength(1);
+    expect((await state()).children.c1.row).toBe('waiting');
+    expect(delivered.map((d) => d.text).join('\n')).toMatch(/child=c1 event=gone/);
+  });
+
+  it('a child the Super ENDS closes its card item (the end is the one closer besides the owner)', async () => {
     const { hs } = await boot(['c1']);
     say(hs[0], fence(RUN));
     hs[0].observe({ type: 'result' });
     await drain();
     hs[0].exited();
     await advance(60_000);
+    await writeSuper(root, (s) => { s.children.c1.endedAt = Date.now(); });
+    await reconcileRows(root);
+    await drain();
     expect((await ofKind('owner', 'c1')).every((q) => q.state === 'done')).toBe(true);
   });
 

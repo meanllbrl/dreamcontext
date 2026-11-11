@@ -1,5 +1,7 @@
 import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
-import { useVaultId } from '../../../context/VaultContext';
+import { useCallback } from 'react';
+import { useApi, useVaultId } from '../../../context/VaultContext';
+import { useHostCard, type CardHost } from '../../../lib/cardRecords';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
@@ -189,16 +191,29 @@ function PendingViewPill() {
  * button is disabled rather than falling back to an invented vault, which would risk
  * writing into the wrong project's checklist (the exact defect this design fixed).
  */
-function ChecklistCard({ spec, conversationId }: { spec: ChecklistViewSpec; conversationId: string }) {
+export function ChecklistCard({ spec, conversationId, host }: {
+  spec: ChecklistViewSpec;
+  conversationId?: string;
+  /** An owner item's record (the Super-chat slot, K7): its submit is routed by record. */
+  host?: CardHost;
+}) {
   const desktop = isDesktop();
+  const api = useApi();
+  const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
   const { vault: activeVault } = useVaultId();
   const vault = desktop ? activeVault : null;
   const itemCount = spec.items.length;
+  const chatHost: CardHost | undefined = host ?? (conversationId ? { session: conversationId } : undefined);
+  const { record, sessionId } = useHostCard(chatHost, spec, fetchJson);
+  const posting = sessionId ?? conversationId ?? '';
 
+  // Every Open (a first open, a reopen, a focus of the open window) mints a fresh single-use nonce
+  // bound to this card's record (K4); the window's submit is relayed only with it. A checklist
+  // opened again on a closed record submits again, as at the base (K1).
   const handleOpen = () => {
     if (!vault) return;
-    writeEnvelope({ spec, vault, conversationId, createdAt: Date.now() });
-    void openChecklistWindow(spec.id, vault);
+    writeEnvelope({ spec, vault, conversationId: posting, createdAt: Date.now() });
+    void openChecklistWindow(spec.id, vault, { postingSession: posting, ...(record ? { cardRef: record.cardRef } : {}), spec });
   };
 
   const note = !desktop

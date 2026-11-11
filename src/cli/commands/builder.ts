@@ -249,6 +249,13 @@ export interface HeavyOptions {
 }
 
 /** A check that runs past this many minutes is killed, process group and all (plan C5, F8: one ran 504 min). */
+/**
+ * The way past a refused heavy step (sahip-karti-yerinde K8, D4): the limit stays; the owner's
+ * terminal has no hook, so one tap on his bar runs it once. The SAME line hook.ts Gate 1d ends
+ * with (`OWNER_RUN_CARD_LINE` there, pinned equal by test).
+ */
+export const HEAVY_OWNER_RUN_CARD_LINE = 'Still needed? Ask the owner with a run card: post a dream-view run card whose command is the bare command (put any cd inside the command, e.g. cd <folder> && <command>; no absolute cwd). His one tap runs it once in your working folder, and its result comes back to you.';
+
 export const HEAVY_MAX_RUN_MIN = 60;
 /** `builder heavy`'s exit when a whole-suite run needs a fresh build first: nothing ran. */
 export const HEAVY_BUILD_FIRST_EXIT = 5;
@@ -578,6 +585,7 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   if (over && kind && scope && becauseSpent(readBudget(budget), scope, target)) {
     deps.printErr(`builder heavy: REFUSED, ${over}, and this run already spent its one --because on ${target}. NOTHING ran.`);
     deps.printErr('  This stops here: use the proof you have, or put it to the owner.');
+    deps.printErr(`  ${HEAVY_OWNER_RUN_CARD_LINE}`);
     return HEAVY_OVER_BUDGET_EXIT;
   }
   const started = Date.now();

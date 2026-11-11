@@ -137,7 +137,15 @@ function inAppChat(): boolean {
   return (process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-');
 }
 
+/**
+ * Gate 1d's last sentence (sahip-karti-yerinde K8): a refused heavy step can still be the
+ * owner's one tap. The same text as builder.ts `HEAVY_OWNER_RUN_CARD_LINE` (pinned by test; not
+ * imported, so the hook stays light).
+ */
+export const OWNER_RUN_CARD_LINE = 'Still needed? Ask the owner with a run card: post a dream-view run card whose command is the bare command (put any cd inside the command, e.g. cd <folder> && <command>; no absolute cwd). His one tap runs it once in your working folder, and its result comes back to you.';
+
 // ─── The grant gate (uye-bildirim K3, G1, Claude) ──────────────────────────────────────────────
+
 
 export interface GrantGateDeps {
   sys?: ProcSys;
@@ -3198,6 +3206,7 @@ export function registerHookCommand(program: Command): void {
               kind === 'suite'
                 ? 'The full suite runs once per release cut, after its build; a fix reruns only the red files (dreamcontext builder test --failed), never the whole suite again.'
                 : 'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
+              OWNER_RUN_CARD_LINE,
             ].join(' '),
           },
         }));

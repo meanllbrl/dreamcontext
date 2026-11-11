@@ -19,12 +19,21 @@
  * fail-closed rule (`relayLine`: ECHO on, no secret-shaped prompt, no output after the edit it
  * answers). Anything else is refused with the phone link. A secret card becomes "Şifre gerekiyor"
  * with a URL button to the phone page card (bare tunnel origin, sign-in by passphrase), never a
- * field: Telegram never takes a value.
+ * field: Telegram never takes a value. A checklist or an MCP card (sahip-karti-yerinde K1) is one
+ * plain line, "Mac'te yapılır.": no phone link, no secret line.
+ *
+ * ONLY THE SUPER'S OWN cards are run from here (K4, D3): the Run callback refuses, on the
+ * server, a card whose session is not this binding's Super chat, or that a child's owner item
+ * stands for. A child's card gets Remind and Not needed instead (asks.ts). A run starts in the
+ * card's working folder (K5).
  */
 import { createHash } from 'node:crypto';
 import { buildAppLink } from '../../lib/app-link.js';
 import { getCard, newestCard, onCardsChange, openCards, type CardRecordEntry } from '../../lib/cards/records.js';
-import type { RunViewSpec, SecretViewSpec } from '../../lib/chat-view-spec.js';
+import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from '../../lib/chat-view-spec.js';
+import { OWNER_CARD_TELEGRAM_LINE } from '../../lib/super/types.js';
+import { ownerCardLookup } from '../owner-receipts.js';
+import { cardRootOf } from '../routes/run-terminal.js';
 import { escapeHtml, redactSecrets, wouldRedact } from '../../lib/telegram/format.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { lastLine, relayLine, runOfSession, SECRET_PROMPT_RE, startRun, type Run } from '../runs/registry.js';
@@ -53,13 +62,29 @@ export const RUN_LINES = {
   browser: "Mac'te tarayıcı açıldıysa giriş oradan yapılmalı.",
   secret: (title: string, file: string) => `🔑 Şifre gerekiyor: ${title} → ${file}`,
   secretHere: 'Şifreyi buraya yazma; kartın Şifreyi gir düğmesini kullan.',
+  checklist: (title: string) => `📋 ${title}`,
+  mcp: (names: string) => `🔌 Bağlanacak: ${names}`,
+  notHere: "Bu kart buradan çalıştırılamaz; Mac'te çalıştır.",
+  noFolder: "Kartın klasörü doğrulanamadı; Mac'ten çalıştır.",
 } as const;
 
 /** Characters a shown command may not hold (H3, I5): C0/C1, bidi and zero-width, and their kin. */
 // eslint-disable-next-line no-control-regex
 const UNSAFE_CHARS = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u200b-\u200d\ufeff\u2028\u2029\u3164\u00ad]/;
+/**
+ * THE rule for "what is shown is what runs" (sahip-karti-yerinde K4), on the server, for every
+ * surface: a command holding a character that can draw as something else (UNSAFE_CHARS) or a run
+ * of 8+ spaces is never run from a card. The card-ticket mint and every run start ask it
+ * (card-actions.ts, run-terminal.ts `runFor`); Telegram adds its own redaction rule below.
+ * Mirrored for drawing in dashboard/src/lib/unsafeChars.ts (drift test there).
+ */
+export function commandShowableAsIs(command: string): boolean {
+  return !UNSAFE_CHARS.test(command) && !/ {8,}/.test(command);
+}
+
+/** Telegram may offer Çalıştır: shown as is, and nothing in it the redactor would rewrite. */
 export function commandShowable(command: string): boolean {
-  return !UNSAFE_CHARS.test(command) && !/ {8,}/.test(command) && !wouldRedact(command);
+  return commandShowableAsIs(command) && !wouldRedact(command);
 }
 
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
@@ -144,6 +169,26 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     await sendPhoneLink(ab, rec, RUN_LINES.secret(spec.title, spec.file), 'Şifreyi gir');
   };
 
+  /** A checklist or an MCP card: one plain line, done on the Mac (no phone link, no value). */
+  const announceMacOnly = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
+    const head = rec.kind === 'checklist'
+      ? RUN_LINES.checklist((rec.spec as ChecklistViewSpec).title)
+      : RUN_LINES.mcp((rec.spec as McpViewSpec).servers.join(', '));
+    const line = rec.kind === 'checklist' ? OWNER_CARD_TELEGRAM_LINE.checklist : OWNER_CARD_TELEGRAM_LINE.mcp;
+    await hub.send(ab, `${escapeHtml(redactSecrets(head))}\n${escapeHtml(line)}`);
+  };
+
+  /** Each of the four kinds by name (sahip-karti-yerinde K1): a new kind is a compile error here. */
+  const announce = (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
+    switch (rec.kind) {
+      case 'run': return announceRun(ab, rec);
+      case 'secret': return announceSecret(ab, rec);
+      case 'checklist':
+      case 'mcp': return announceMacOnly(ab, rec);
+      default: { const never: never = rec.kind; void never; return Promise.resolve(); }
+    }
+  };
+
   const onChange = (sessionId: string): void => {
     const ab = hub.bindingOfSession(sessionId);
     if (!ab || ab.disabled || ab.target !== 'super') return;
@@ -152,7 +197,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       if (rec.rebuilt || rec.run || announced.has(rec.cardRef)) continue;
       announced.add(rec.cardRef);
       if (announced.size > 500) announced.delete(announced.values().next().value as string);
-      void (rec.kind === 'run' ? announceRun(ab, rec) : announceSecret(ab, rec)).catch(() => { /* the Mac card is still there */ });
+      void announce(ab, rec).catch(() => { /* the Mac card is still there */ });
     }
   };
 
@@ -210,6 +255,10 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       return RUN_LINES.stopped;
     }
     if (idx === 2) return RUN_LINES.cancelled;
+    // G1 (K4): Run only for the SUPER's OWN card, through this very binding; never a child's card
+    // (an owner item stands for it), whatever button record names it.
+    const own = hub.bindingOfSession(sessionId);
+    if (!own || own.key !== ab.key || ab.target !== 'super' || ownerCardLookup(sessionId, cardRef)) return RUN_LINES.notHere;
     const live = getCard(sessionId, cardRef);
     const newest = live ? newestCard(sessionId, 'run', live.id) : null;
     const spec = live?.spec as RunViewSpec | undefined;
@@ -218,7 +267,9 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       if (fresh && fresh.state === 'open' && fresh.cardRef !== cardRef) void announceRun(ab, fresh).catch(() => {});
       return RUN_LINES.changed;
     }
-    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1 });
+    const root = await cardRootOf(live);
+    if (!root) return RUN_LINES.noFolder;
+    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;
     void followRun(ab, live, run).catch(() => { /* the run goes on; its report still arrives */ });
     return RUN_LINES.started(idx === 1);

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { useCardRecord } from '../../../lib/cardRecords';
+import { OWNER_ONLY_LINE, mintCardTicket, ticketActionOf, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
+import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
 import { InlineTerminal, type CardTarget } from './InlineTerminal';
 import { buildRunReport, type RunOutcome } from './runReport';
@@ -43,15 +45,43 @@ import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, report, sessionId }: {
+export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded }: {
   spec: RunViewSpec;
   /** Where the exit report goes on a host without a chat (an agent thread's reply). */
   report?: (text: string) => void;
   /** The chat's session (pin) id: the card is the server's record, run and reported by it. */
   sessionId?: string;
+  /** An owner item's record (the Super-chat slot, K7): the card is found by its handle, never by
+   *  chat text. Wins over `sessionId`. */
+  host?: CardHost;
+  /** The folder it runs in (the card's working root, `GET /api/agent/cards/state`). */
+  folder?: { name: string; path: string } | null;
+  /** The bar's ▶ Run (K7): a new number starts the run here, when this card draws exactly the
+   *  command the bar drew (`shown`). */
+  startRequest?: { n: number; shown: string };
+  /** A terminal of this card ended (the slot reads its state again). */
+  onEnded?: () => void;
 }) {
-  if (sessionId) return <ChatRunCard spec={spec} sessionId={sessionId} />;
+  const chatHost: CardHost | undefined = host ?? (sessionId ? { session: sessionId } : undefined);
+  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} />;
   return <ThreadRunCard spec={spec} report={report} />;
+}
+
+/**
+ * The command as the card draws it: the WHOLE command, wrapped (K4 "what is shown is what runs").
+ * A command with a character the Telegram path refuses, or a run of 8 spaces, is drawn with those
+ * as visible escapes; the caller offers it no Run.
+ */
+function CommandText({ command }: { command: string }) {
+  const unsafe = commandUnsafe(command);
+  return (
+    <code
+      className="chat-runcard-cmd"
+      data-testid="run-card-command"
+      data-unsafe={unsafe ? 'true' : undefined}
+      style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+    >{unsafe ? escapeUnsafe(command) : command}</code>
+  );
 }
 
 function exitChip(code: number | null | undefined) {
@@ -88,11 +118,30 @@ interface Shown {
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
-function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string }) {
+function ChatRunCard({ spec, host, folder, startRequest, onEnded }: {
+  spec: RunViewSpec;
+  host: CardHost;
+  folder?: { name: string; path: string } | null;
+  startRequest?: { n: number; shown: string };
+  onEnded?: () => void;
+}) {
   const api = useApi();
+  const t = useOwnerCardT();
   const { vault } = useVaultId();
   const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
-  const { loaded, record } = useCardRecord(sessionId, spec, fetchJson);
+  const { loaded, record, sessionId: hostSid } = useHostCard(host, spec, fetchJson);
+  const sessionId = hostSid ?? '';
+  const unsafe = commandUnsafe(spec.command);
+  // Every Mac press carries a ticket minted for it, bound to the command drawn here (K4). A
+  // refusal (no owner key: a plain browser) keeps its one line on the card.
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const mintTicket = useCallback(async (target: CardTarget) => {
+    const r = await mintCardTicket(api, {
+      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command,
+    });
+    setRefusal(r.ok ? null : r.message || OWNER_ONLY_LINE);
+    return r;
+  }, [api, spec.command]);
   const phone = isMacPhoneSurface();
   const desktop = isDesktop();
   const [includeOutput, setIncludeOutput] = useState(true);
@@ -131,9 +180,11 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
     }
     setShown((cur) => (cur?.key === key ? { ...cur, ended: true, exited: r.exited } : cur));
     if (r.exited) setOutcome({ kind: 'exited', code: r.code, key });
+    onEnded?.();
   };
 
-  const canStart = (desktop || phone) && !!vault;
+  // A command that could show something other than what runs is never offered a Run (K4, K7).
+  const canStart = (desktop || phone) && !!vault && !unsafe;
   const view = runCardView({
     loaded,
     hasRecord: !!record,
@@ -150,7 +201,8 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
   });
 
   const start = () => {
-    if (!record) return;
+    if (!record || unsafe) return;
+    setRefusal(null);
     starts.current += 1;
     setOutcome(null);
     setShown({
@@ -162,25 +214,40 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
     });
   };
 
+  // The bar's ▶ Run lands here (K7): only for the exact command this card draws.
+  const startRef = useRef(start);
+  startRef.current = start;
+  const startableRef = useRef(view.startable);
+  startableRef.current = view.startable;
+  const lastRequest = useRef(startRequest?.n ?? 0);
+  useEffect(() => {
+    if (!startRequest || startRequest.n === lastRequest.current) return;
+    lastRequest.current = startRequest.n;
+    if (startRequest.shown === spec.command && startableRef.current) startRef.current();
+  }, [startRequest, spec.command]);
+
+  const where = folder?.name ? (spec.cwd ? `${folder.name} · ${spec.cwd}` : folder.name) : spec.cwd;
+
   return (
-    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')}>
+    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>
       <CardHeader
         glyph={view.phase === 'running' ? '▸' : '>_'}
         title={view.title}
-        aside={view.chip !== undefined ? exitChip(view.chip) : spec.cwd ? <span className="chat-runcard-cwd">{spec.cwd}</span> : undefined}
+        aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={folder?.path}>{where}</span> : undefined}
       />
 
       {spec.why && view.phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
       <div className="chat-runcard-cmdrow">
-        <code className="chat-runcard-cmd">{spec.command}</code>
+        <CommandText command={spec.command} />
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {view.runLabel && (
+        {view.runLabel && !unsafe && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"
+            data-testid="run-card-play"
             onClick={start}
             disabled={!view.startable}
           >
@@ -188,6 +255,8 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
           </button>
         )}
       </div>
+
+      {unsafe && <p className="chat-runcard-note" data-testid="run-card-unsafe">{t('ownerCard.unsafe')}</p>}
 
       {view.startable && (
         <label className="chat-runcard-share">
@@ -202,11 +271,14 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
           vault={vault}
           command={spec.command}
           card={shown.target}
+          mintTicket={shown.target.phone ? undefined : mintTicket}
           onExit={(r) => onEnd(shown.key, shown.user, r)}
         />
       )}
 
-      {view.note && <p className="chat-runcard-note">{view.note}</p>}
+      {refusal
+        ? <p className="chat-runcard-note" data-testid="run-card-refused">{refusal}</p>
+        : view.note && <p className="chat-runcard-note">{view.note}</p>}
     </div>
   );
 }
@@ -257,11 +329,11 @@ function ThreadRunCard({ spec, report }: { spec: RunViewSpec; report?: (text: st
       {spec.why && phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
       <div className="chat-runcard-cmdrow">
-        <code className="chat-runcard-cmd">{spec.command}</code>
+        <CommandText command={spec.command} />
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {phase !== 'running' && (
+        {phase !== 'running' && !commandUnsafe(spec.command) && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"

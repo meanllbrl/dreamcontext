@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApi } from '../../../context/VaultContext';
-import { useCardRecord } from '../../../lib/cardRecords';
+import { OWNER_ONLY_LINE, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { RequestError } from '../../../api/client';
+import { useOwnerCardT } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MaskedSecretInput } from '../../core/MaskedSecretInput';
 import { CardHeader } from './molecules';
@@ -43,17 +45,30 @@ interface SecretResponse {
 
 type Phase = 'idle' | 'saving' | 'saved' | 'failed';
 
-export function SecretCard({ spec, report, sessionId }: {
+export function SecretCard({ spec, report, sessionId: chatSid, host, folder, reentry = false, onSaved }: {
   spec: SecretViewSpec;
   /** Where the receipt goes: the chat's session, or an agent thread's reply. */
   report?: (text: string) => void;
   /** A chat's card names the server's record (plan H1, H9): the server writes exactly the file
    *  and keys the agent declared, and the hands-free phone may fill it only through it. */
   sessionId?: string;
+  /** An owner item's record (the Super-chat slot, K7): found by its handle. Wins over `sessionId`.
+   *  Its receipt is the SERVER's to deliver (K6): nothing is posted from here. */
+  host?: CardHost;
+  /** The folder its `.env` is written in (the card's working root, K5). */
+  folder?: { name: string; path: string } | null;
+  /** The record is closed but its result is owed and not checked (K1's one re-entry): the form
+   *  is offered once more, "you will type it again". */
+  reentry?: boolean;
+  /** Saved (the slot reads its state again). */
+  onSaved?: () => void;
 }) {
   const api = useApi();
+  const t = useOwnerCardT();
   const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
-  const { loaded, record } = useCardRecord(sessionId, spec, fetchJson);
+  const chatHost: CardHost | undefined = host ?? (chatSid ? { session: chatSid } : undefined);
+  const { loaded, record, sessionId } = useHostCard(chatHost, spec, fetchJson);
+  const recordHost = !!host && 'record' in host;
   const phone = isMacPhoneSurface();
   const [values, setValues] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>('idle');
@@ -70,7 +85,8 @@ export function SecretCard({ spec, report, sessionId }: {
     setPhase('saving');
     setError('');
     try {
-      const res = await api.post<SecretResponse>('/agent/secret', {
+      // Every path is the owner's own press (K4): the owner key rides with it.
+      const res = await api.ownerPost<SecretResponse>('/agent/secret', {
         ...(sessionId && record ? { sessionId, cardRef: record.cardRef } : {}),
         file: spec.file,
         title: spec.title,
@@ -85,12 +101,16 @@ export function SecretCard({ spec, report, sessionId }: {
       setValues({});
       setResult(res);
       setPhase('saved');
-      if (res.receipt) report?.(res.receipt);
+      // A record host's receipt is held and delivered by the server; a chat's goes as before.
+      if (res.receipt && !recordHost) report?.(res.receipt);
+      onSaved?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The secret could not be written.');
+      setError(err instanceof RequestError && err.status === 403
+        ? (err.message && !/^Request failed/.test(err.message) ? err.message : OWNER_ONLY_LINE)
+        : err instanceof Error ? err.message : 'The secret could not be written.');
       setPhase('failed');
     }
-  }, [api, filled, phase, record, report, sessionId, spec.app, spec.fields, spec.file, spec.title, values]);
+  }, [api, filled, phase, record, report, sessionId, spec.app, spec.fields, spec.file, spec.title, values, recordHost, onSaved]);
 
   if (phase === 'saved' && result) {
     return (
@@ -115,7 +135,7 @@ export function SecretCard({ spec, report, sessionId }: {
   // A chat's card: no record yet (loading), none at all (an old card), or closed. The phone can
   // fill ONLY a live record; the Mac keeps the old path for a card without one. A closed card says
   // "saved" ONLY when its own receipt closed it: one the agent replaced or withdrew wrote nothing.
-  const closed = !!sessionId && record?.state === 'closed';
+  const closed = !!sessionId && record?.state === 'closed' && !reentry;
   const unfillable = !!sessionId && (!loaded || (phone && !record));
   if (closed) {
     const saved = record?.closedBy === 'done';
@@ -136,8 +156,9 @@ export function SecretCard({ spec, report, sessionId }: {
 
   return (
     <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
-      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file">{spec.app ? `${spec.app} · ${spec.file}` : spec.file}</span>} />
+      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : folder?.name ? `${folder.name} · ${spec.file}` : spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
+      {reentry && <p className="chat-secretcard-note" data-testid="secret-card-reentry">{t('ownerCard.secretAgain')}</p>}
 
       <div className="chat-secretcard-fields">
         {spec.fields.map((f) => (

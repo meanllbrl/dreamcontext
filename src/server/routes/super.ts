@@ -6,9 +6,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
+import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
+import type { OwnerWakeOutcome } from '../../lib/super/types.js';
+import { isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { mintCrewTicket, noteDelegating, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
@@ -86,7 +89,7 @@ import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
-import { findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
+import { END_PARK_CONTEXT, findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox } from '../../lib/super/outbox.js';
@@ -928,6 +931,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     });
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
+    // The cards the old child left open moved to this one in that write (succession.ts): what the
+    // owner already did for them is held for this child now (sahip-karti-yerinde K2).
+    if (succeeds && !startError) {
+      const refs = after.queue.filter((q) => q.sessionId === sid && isCardItem(q) && q.card?.childId === succeeds && q.state !== 'done').map((q) => q.card!.cardRef);
+      if (refs.length) { try { moveCardReceipts(c.superId, succeeds, sid, refs); } catch { /* the store keeps them under the old child */ } }
+    }
     const predecessor = succeeds && !startError ? await retirePredecessor(c, succeeds) : null;
     // A job that looks like a ready AI Team member's field: a warning, never a block (owner,
     // 2026-10-29). Not for a pool job: it was judged when it was kept.
@@ -1019,15 +1028,24 @@ async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, un
 
 /** `super resume` for `child`, as the verb itself answers it: the refusal, or how it came back
  *  (with its card outcome, so a card that could not open is not lost on the way). */
-async function wakeChild(c: SuperCaller, child: string): Promise<
-  { ok: false; status: number; error: string; message: string } | { ok: true; notOpened?: Record<string, unknown> }> {
+/** THE wake core (`super resume`'s own handler: its window `resume` command, its transcript check
+ *  and its live-children cap), run in-process. Shared by `super send`'s wake and the owner-card
+ *  wake (sahip-karti-yerinde K6), which runs it as the server, never as a Super verb call. */
+async function resumeCore(c: SuperCaller, body: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
   let status = 0;
   let json: Record<string, unknown> = {};
   const sink = {
     writeHead: (s: number) => { status = s; return sink; },
+    setHeader: () => sink,
     end: (b?: string) => { try { json = JSON.parse(b ?? '{}') as Record<string, unknown>; } catch { json = {}; } },
   } as unknown as ServerResponse;
-  await SUPER_VERB_HANDLERS.resume(c, { child }, sink);
+  await SUPER_VERB_HANDLERS.resume(c, body, sink);
+  return { status, json };
+}
+
+async function wakeChild(c: SuperCaller, child: string): Promise<
+  { ok: false; status: number; error: string; message: string } | { ok: true; notOpened?: Record<string, unknown> }> {
+  const { status, json } = await resumeCore(c, { child });
   if (json.ok === true) {
     const r = (json.result ?? {}) as Record<string, unknown>;
     return r.card === 'not_opened' ? { ok: true, notOpened: { card: r.card, container: null, cardError: r.cardError } } : { ok: true };
@@ -1036,6 +1054,42 @@ async function wakeChild(c: SuperCaller, child: string): Promise<
   const why = typeof json.message === 'string' ? json.message : 'it could not be reopened';
   return { ok: false, status: status >= 400 ? status : 409, error, message: `that child is parked and could not be woken (${error}): ${why}` };
 }
+
+/**
+ * `wakeForOwnerCard` (sahip-karti-yerinde K6): reopen a parked or gone child for the result of
+ * the OWNER's proven action on its card, through the window of the Super that owns it (main's or
+ * a member's), with `super resume`'s own core: the same window command, transcript check and
+ * live-children cap (the owner's action never bypasses the cap: under memory pressure an extra
+ * process is exactly the cost). A server primitive: no Super verb, CLI or window command reaches
+ * it. Every `held:*` keeps the receipt; its clearing edge retries (inbox.ts `retryHeldOwnerCards`).
+ */
+export async function wakeChildForOwnerCard(t: OwnerReceiptTarget): Promise<OwnerWakeOutcome> {
+  const child = t.childId;
+  const key = keyOfRef(superOfChild(child)) ?? keyOfRef(superOfEnded(child));
+  // No record this server indexes holds it: nothing is decided, the receipt stays held.
+  if (!key || parseSuperKey(key).superId !== t.childRecordId) return 'held:no_window';
+  let state: SuperState;
+  try { state = await readSuperState(key, superSanitizeOpts()); } catch { return 'held:no_window'; }
+  const ch = state.children[child];
+  if (!ch || ch.endedAt !== undefined) return 'ended';
+  if (isLiveChat(child)) return 'live';
+  if (phoneHeld(child)) return 'held:phone';
+  const token = state.enabled && state.session ? superTokenOfSession(state.session) : null;
+  const who = token ? identityOf(token) : null;
+  if (!token || !who) return 'held:no_window';
+  const superId = parseSuperKey(key).superId;
+  // `force`: the owner's own chat may be woken for his own card result.
+  const { json } = await resumeCore({ token, who, superId, state }, { child, force: true });
+  if (json.ok === true) {
+    const r = (json.result ?? {}) as Record<string, unknown>;
+    return r.running === true ? 'live' : 'woken';
+  }
+  const error = typeof json.error === 'string' ? json.error : '';
+  if (error === 'held') return 'held:cap';
+  if (error === 'phone_held') return 'held:phone';
+  return 'held:no_window';
+}
+registerOwnerCardWaker(wakeChildForOwnerCard);
 
 /**
  * Write one agenda line into `s`; `forChild` links a Now line to its job (pad.ts). The same line
@@ -2090,7 +2144,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // child's `writeOwnerTurn`, and its hand-over note rides with it). Noted as the Super's own:
     // it answers no wait the child has on the owner (owner-wait.ts).
     noteSuperSend(child, text);
-    let r = await sendWindowCommand(c.token, 'send', { tab: child, text });
+    let r = await sendWindowCommand(c.token, 'send', { tab: child, text }, { noted: true });
     // The window still draws the tab as parked, or the resumed process is not up yet: it answers
     // "not running" until it is. Wake it (once) and ask again for a few seconds.
     for (let i = 0; !r.ok && WINDOW_NOT_RUNNING.test(r.error) && i < WAKE_TRIES; i++) {
@@ -2102,7 +2156,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       } else {
         await new Promise((done) => setTimeout(done, wakePollMs));
       }
-      r = await sendWindowCommand(c.token, 'send', { tab: child, text });
+      r = await sendWindowCommand(c.token, 'send', { tab: child, text }, { noted: true });
     }
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
@@ -2211,8 +2265,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     // An owner wait the Super closes (he did it another way) is answered: it never comes back.
-    if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
+    if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id, item.card ? { postingSession: item.card.postingSession } : {});
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
+    // A card's result still held leaves with it, its typed secret too (sahip-karti-yerinde K6):
+    // `super queue done` closes a card, it never acts on one.
+    if (item.card) await ownerCardItemsLeft(superKey(c.who.contextRoot, callerSuper(c)), [item]).catch(() => undefined);
     void pumpSuper(c.who.contextRoot, callerSuper(c));
     ok(res, { item: id, done: true });
   },
@@ -3175,7 +3232,7 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   }
   let noProcess = false;
   if (isLiveChat(sid)) {
-    const outcome = await parkChat(sid, 'super-end', { end: true, force }).catch((): ParkOutcome => 'refused');
+    const outcome = await parkChat(sid, 'super-end', { end: true, force }, END_PARK_CONTEXT).catch((): ParkOutcome => 'refused');
     if (outcome === 'background') {
       // The process's roster, else the window's: it also sees agents the CLI does not track.
       const n = findParkable(sid)?.backgroundTasks() ?? 0;
@@ -3209,7 +3266,7 @@ async function retirePredecessor(c: SuperCaller, sid: string): Promise<{ child: 
   // The owner's own chat, or one he is looking at, is never told to stop by the agent.
   if (!isLiveChat(sid) || r.reason === 'adopted' || r.reason === 'focused') return { child: sid, ended: false, reason: r.reason };
   noteSuperSend(sid, SUCCESSOR_STOP_TEXT);
-  const sent = await sendWindowCommand(c.token, 'send', { tab: sid, text: SUCCESSOR_STOP_TEXT }).catch(() => null);
+  const sent = await sendWindowCommand(c.token, 'send', { tab: sid, text: SUCCESSOR_STOP_TEXT }, { noted: true }).catch(() => null);
   const how = sent?.ok ? (sent.result as { delivered?: unknown } | undefined)?.delivered : undefined;
   return { child: sid, ended: false, reason: r.reason, told: typeof how === 'string' ? how : !!sent?.ok };
 }
@@ -3232,7 +3289,7 @@ export async function endSucceededChild(contextRoot: string, sid: string): Promi
   const s = await readSuperState(contextRoot, superSanitizeOpts());
   const ch = s.children[sid];
   if (!ch?.succeededBy || ch.endedAt !== undefined || ch.adopted) return false;
-  const outcome = await parkChat(sid, 'super-end', { end: true }).catch((): ParkOutcome => 'refused');
+  const outcome = await parkChat(sid, 'super-end', { end: true }, END_PARK_CONTEXT).catch((): ParkOutcome => 'refused');
   if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') return false;
   await recordEnded(contextRoot, sid);
   return true;
@@ -3263,7 +3320,7 @@ export async function retireChildren(contextRoot: string, sids: readonly string[
   for (const sid of sids) {
     if (!due(await readSuperState(contextRoot, superSanitizeOpts()), sid)) continue;
     if (isLiveChat(sid)) {
-      const outcome = await parkChat(sid, 'super-retire', { end: true }).catch((): ParkOutcome => 'refused');
+      const outcome = await parkChat(sid, 'super-retire', { end: true }, END_PARK_CONTEXT).catch((): ParkOutcome => 'refused');
       if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') continue;
       // Its tab is closed now: recorded like `super end`, never left half ended.
       if (await recordEnded(contextRoot, sid)) ended.push(sid);
@@ -3280,6 +3337,8 @@ export async function retireChildren(contextRoot: string, sids: readonly string[
 async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperState) => boolean): Promise<boolean> {
   const now = Date.now();
   let done = false;
+  /** The card items the end closes (sahip-karti-yerinde K2): their held results go to the Super. */
+  let endedCards: SuperQueueItem[] = [];
   await writeSuper(contextRoot, (s) => {
     const x = s.children[sid];
     if (!x || (guard && !guard(s))) return;
@@ -3292,11 +3351,21 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
       leaveGroups(s, cards);
       s.containers = s.containers.filter((k) => !cards.includes(k.id));
     }
+    // A card it still waited on the owner for closes with it (K2): the end names it, its slot
+    // says the child was ended and the Super has the result.
+    const open = s.queue.filter((q) => q.sessionId === sid && q.state !== 'done' && isCardItem(q));
+    endedCards = open.map((q) => ({ ...q }));
+    for (const q of open) q.delivery = 'ended';
     // Nothing of it is open any more (a forced end may have left a question or permission).
     for (const q of s.queue) if (q.sessionId === sid && q.state !== 'done') q.state = 'done';
     delete s.notes[sid];
-    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief });
+    const named = open.map((q) => `${q.wait!.kind} card "${q.wait!.id}"${q.ownerText ? `: ${q.ownerText}` : ''}`).join('; ');
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief, ...(named ? { ownerText: `It still waited on the owner for: ${named}`.slice(0, MAX_OWNER_TEXT) } : {}) });
   });
+  // What the owner already did for those cards (a result held, not yet taken): the Super has it,
+  // its kept form only; the receipts and their full forms leave with the item.
+  // `contextRoot` is the record's own key here (a root names main, a member's key its record).
+  if (endedCards.length) await ownerCardItemsLeft(contextRoot, endedCards).catch(() => undefined);
   return done;
 }
 

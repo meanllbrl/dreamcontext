@@ -6,7 +6,15 @@ import { tr } from '../../../lib/assignToAgent';
 import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
 import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { requestOpenAgents } from '../../../lib/openAgents';
+import { showOwnerSlot } from './superJobsStore';
 import './SuperAgenda.css';
+import type { SuperQueueItem } from '../../../lib/superTypes';
+
+/** A Waiting line whose item is a card a child left (K7): it opens that card in the Super chat's
+ *  slot, the same card the bar and the slot draw. */
+export function agendaOpensSlot(queue: readonly Pick<SuperQueueItem, 'id' | 'card' | 'state'>[], itemId: string | undefined | null): boolean {
+  return !!itemId && queue.some((q) => q.id === itemId && !!q.card && q.state !== 'done');
+}
 
 /**
  * The owner's agenda (owner 2026-10-22: "a card, not a column"; 19:15: "like a person's sticky
@@ -109,8 +117,12 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // A refused command or a stalled job of a child of this Super shows that child too.
   const showsChild = (r: AgendaRow) => !r.member && !r.routine
     && (r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || r.chip === 'refusal' || r.chip === 'stalled' || !!r.direct);
+  // A card a child left (sahip-karti-yerinde K7): its line opens the card in the Super chat's slot,
+  // the same card the bar and the slot draw; with no slot on screen, the child as before.
+  const cardItem = (r: AgendaRow) => agendaOpensSlot(state.queue, r.item);
   const press = (r: AgendaRow) => {
     if (!r.item) return;
+    if (cardItem(r) && showOwnerSlot(r.item)) return;
     // A routine waiting on him (K7): its approval row, where the change is in view; else its member.
     if (r.routine) {
       if (canOpenMember && !showApprovalRow(`routine:${r.routine}`)) requestOpenAgents({ slug: r.member || r.routine });
@@ -121,7 +133,7 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && (cardItem(r) || (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true));
 
   const rowOf = (r: AgendaRow) => {
     const body = (

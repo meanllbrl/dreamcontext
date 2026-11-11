@@ -3,3 +3,32 @@
    and the job list are gone: the agenda card (SuperAgenda.css) holds what waits on the owner. Tokens only. */
 .super-job-bar { gap: 8px; align-items: center; }
 .super-job-bar .super-queue-head { flex: 1 1 auto; }
+
+/* ── A child's card on the row (sahip-karti-yerinde K7): the card's own verb is the primary
+   button, then Not needed and an Open link. At phone width Not needed folds into the row's menu
+   and the verb stays. Tokens only. */
+.super-queue-open-link {
+  border: 0;
+  background: none;
+  padding: 0 var(--space-1);
+  font: inherit;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.super-queue-paused {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.super-queue-card-menu { display: none; position: relative; }
+@media (max-width: 480px) {
+  .super-queue-card-notneeded { display: none; }
+  .super-queue-card-menu { display: inline-flex; }
+}

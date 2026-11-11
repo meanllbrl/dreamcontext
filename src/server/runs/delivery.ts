@@ -16,6 +16,13 @@
  * a server that is killed mid-run, or exits while a delivery is in flight, still owes the agent
  * its report after the restart. An entry leaves the file only once delivered. Sends for one chat
  * run one at a time and re-check the file first, so two window mounts never post one report twice.
+ *
+ * A CREW CHILD's card (sahip-karti-yerinde K6: a child of main or of a member Super, the card an
+ * owner item stands for, `ownerCardLookup` non-null) never takes this file: its placeholder and
+ * its report are held in the server's receipt store (`owner-receipts.ts`, keyed by the item's
+ * `deliverTo` child, per-boot MAC), then handed to `deliverOwnerReceipt`. A first run, a Mac
+ * rerun and a phone-started run alike. Every other host (a plain chat, the Super's own card, a
+ * Telegram-started Super run) keeps the path above.
  */
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -25,6 +32,7 @@ import { buildInterruptedReport } from '../../lib/run-report.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import type { RunReport } from '../../lib/telegram/contract.js';
 import { runOfSession, type Run, type RunDelivery } from './registry.js';
+import { deliverOwnerReceipt, holdOwnerReceipt, ownerCardLookup } from '../owner-receipts.js';
 
 export interface TelegramRunSink {
   /** True when the hub took the report (a Telegram-started run of a bound Super). */
@@ -163,11 +171,36 @@ export function flushHeldReports(sessionId: string): Promise<number> {
   });
 }
 
+/** Tests: the last crew delivery started, so a test can await it. */
+let lastCrewDelivery: Promise<unknown> = Promise.resolve();
+export function _lastCrewDeliveryForTests(): Promise<unknown> { return lastCrewDelivery; }
+
 export const runDelivery: RunDelivery = {
   started(run: Run, record: CardRecordEntry) {
-    holdReport(run.sessionId, run.runId, run.cardRef, buildInterruptedReport((record.spec as { command: string }).command), true);
+    const text = buildInterruptedReport((record.spec as { command: string }).command);
+    const crew = ownerCardLookup(run.sessionId, run.cardRef);
+    if (crew) {
+      // K6: the run's own `pending` entry, held before `markCardStarted` (the registry calls this
+      // first). Never delivered while the run lives in this boot; its report replaces it by runId.
+      holdOwnerReceipt(crew.target, { id: run.runId, cardRef: run.cardRef, kind: 'run', text, pending: true });
+      return;
+    }
+    holdReport(run.sessionId, run.runId, run.cardRef, text, true);
+  },
+  hold(run: Run, _record: CardRecordEntry, report: RunReport) {
+    const crew = ownerCardLookup(run.sessionId, run.cardRef);
+    // Same id: the placeholder goes. Before the record closes (the registry calls this first).
+    if (crew) holdOwnerReceipt(crew.target, { id: run.runId, cardRef: run.cardRef, kind: 'run', text: report.text });
+    else holdReport(run.sessionId, run.runId, run.cardRef, report.text);
   },
   report(run: Run, _record: CardRecordEntry, report: RunReport) {
+    const crew = ownerCardLookup(run.sessionId, run.cardRef);
+    if (crew) {
+      // Held already (`hold`, before the record closed): delivered to the child that asked (its
+      // successor after a hand-off), whichever surface started the run.
+      lastCrewDelivery = deliverOwnerReceipt(crew.target).catch(() => 'held');
+      return;
+    }
     void deliverReport(run, report).catch(() => { /* held on disk; the next mount sends it */ });
   },
 };

@@ -87,6 +87,9 @@ export interface RunDelivery {
   /** The run started: hold a "cut off" report on disk now, so a server that dies before the
    *  exit still owes the agent one (sent when the chat's window mounts after the restart). */
   started?(run: Run, record: CardRecordEntry): void;
+  /** The run ended: HOLD its report, synchronously, BEFORE the record closes (sahip-karti-yerinde
+   *  K6: a result is held before anything that can lose it). */
+  hold?(run: Run, record: CardRecordEntry, report: RunReport): void;
   /** The run ended: deliver its report to the chat (H5). The record is already closed. Must put
    *  the report on disk before its first await: the process may exit right after. */
   report(run: Run, record: CardRecordEntry, report: RunReport): void;
@@ -120,6 +123,12 @@ export function configureRuns(next: Partial<Deps>): void {
 
 const runs = new Map<string, Run>(); // by sessionId: one run per chat
 
+/** The project root the registry was wired with for a vault (registered vaults only): where a
+ *  card's working folder is resolved from (K5). */
+export function runProjectRootOf(vault: string): string | null {
+  return deps.projectRootOf(vault);
+}
+
 /** The live run of a chat, if any. */
 export function runOfSession(sessionId: string): Run | null {
   return runs.get(sessionId) ?? null;
@@ -139,7 +148,7 @@ export function startRun(
   sessionId: string,
   cardRef: string,
   by: RunStarter,
-  opts: { withheld?: boolean; rerun?: boolean } = {},
+  opts: { withheld?: boolean; rerun?: boolean; root?: string } = {},
 ): Run | { refused: RunRefusal } {
   const rec = getCard(sessionId, cardRef);
   if (!rec) return { refused: 'no_record' };
@@ -149,7 +158,10 @@ export function startRun(
   const rerun = rec.state === 'closed';
   if (rerun && !(by === 'mac' && opts.rerun)) return { refused: 'closed' };
   if (!deps.spawner) return { refused: 'no_pty' };
-  const projectRoot = deps.projectRootOf(rec.vault);
+  // The card's working folder (sahip-karti-yerinde K5): the caller resolved it from the server's
+  // state (`cardWorkingRoot`, the child's worktree when it has one) BEFORE this call. Only a
+  // caller that never names one (a test of the registry alone) falls back to the project root.
+  const projectRoot = opts.root ?? deps.projectRootOf(rec.vault);
   if (!projectRoot) return { refused: 'no_record' };
   const spec = rec.spec as RunViewSpec;
   const cwd = spec.cwd ? deps.resolveCwd(projectRoot, spec.cwd) : projectRoot;
@@ -166,10 +178,12 @@ export function startRun(
   }
   const run = makeRun(rec, pty, by, { withheld: !!opts.withheld, rerun });
   runs.set(sessionId, run);
-  // On disk before the first byte of output: a crash from here on can never bring this card
-  // back as a fresh ▶, and the agent is still owed a report.
-  markCardStarted(sessionId, cardRef);
+  // The cut-off placeholder is held FIRST (K6: a result is held before anything that can lose
+  // it; a crew run's `pending` receipt entry, for a first run and every rerun alike), then the
+  // start is on disk before the first byte of output: a crash from here on can never bring this
+  // card back as a fresh ▶, and the agent is still owed a report.
   try { deps.delivery?.started?.(run, rec); } catch { /* delivery logs its own */ }
+  markCardStarted(sessionId, cardRef);
   setCardRun(sessionId, cardRef, { runId: run.runId, owner: by });
   return run;
 }
@@ -238,7 +252,9 @@ function makeRun(rec: CardRecordEntry, pty: RunPty, by: RunStarter, o: { withhel
     const report: RunReport = { exitCode: code, withheld: o.withheld, text: textReport, ...(o.withheld ? {} : { tail: finished }) };
     finalReport = { report, code };
     if (runs.get(rec.sessionId) === run) runs.delete(rec.sessionId);
-    // J1: the record closes itself first, whatever happens to the report afterwards.
+    // K6: the report is held in the same synchronous block, before the record closes.
+    try { deps.delivery?.hold?.(run, rec, report); } catch { /* delivery logs its own */ }
+    // J1: the record closes itself, whatever happens to the report afterwards.
     finishCardRun(rec.sessionId, rec.cardRef, code);
     for (const fn of [...exits]) { try { fn(report, code); } catch { /* its own */ } }
     try { deps.delivery?.report(run, rec, report); } catch { /* delivery logs its own */ }

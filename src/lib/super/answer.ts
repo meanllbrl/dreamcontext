@@ -16,7 +16,7 @@ import { crewHandle, dropOwnerWait, getChat, pendingRequest, type PendingQuestio
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
-  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, newQueueId, noteAllowedOnce, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
+  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
 import { eligible } from '../grants/eligible.js';
@@ -393,7 +393,8 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   let live = false;
   try { live = crewHandle(item.sessionId)?.sendServerTurn(text) === true; } catch { live = false; }
   if (live) return { ok: true, outcome: 'allowed' };
-  try { await addToOutbox(superKey(root, superId), item.sessionId, text); } catch { /* the grant stands; he can run it from the chat */ }
+  // Kept by the server (no window queue holds it): delivered at the chat's first idle in THIS run.
+  try { await addToOutbox(superKey(root, superId), item.sessionId, text, Date.now(), { server: true }); } catch { /* the grant stands; he can run it from the chat */ }
   try { await mark(true); } catch { /* the line is a courtesy; the outbox holds the turn */ }
   return { ok: true, outcome: 'allowed_waiting' };
 }
@@ -517,8 +518,10 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
       const kind = item.wait?.kind;
       const notNeeded = a.kind === 'dismiss' || (a.kind === 'refusal' && a.action === 'not_needed');
       if (notNeeded) {
-        if (item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
+        if (item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id, item.card ? { postingSession: item.card.postingSession } : {});
         await closeItem(root, superId, item.id);
+        // A card's result still held leaves with it, its full form too (sahip-karti-yerinde K6).
+        if (item.card) await ownerCardItemsLeft(superKey(root, superId), [item]).catch(() => undefined);
         return { ok: true, outcome: 'dismissed' };
       }
       if (kind !== 'refusal' || a.kind !== 'refusal') return fail('not_offered', MSG.notOffered);

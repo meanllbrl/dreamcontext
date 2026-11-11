@@ -80,9 +80,15 @@ async function updateOutbox(contextRoot: string, fn: (items: OutboxItem[]) => Ou
   try { return await run; } finally { if (locks.get(key) === run) locks.delete(key); }
 }
 
-/** Keep a message the window queued for `child` until it is seen to arrive. */
-export async function addToOutbox(contextRoot: string, child: string, text: string, now = Date.now()): Promise<OutboxItem> {
-  const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: OUTBOX_BOOT };
+/** Kept by the SERVER itself (an Allow for a chat that is not running, sahip-karti-yerinde build
+ *  note): no window queue holds it, so this run's pump sends it at the chat's first idle. */
+export const SERVER_KEPT_BOOT = 'server';
+
+/** Keep a message the window queued for `child` until it is seen to arrive. `server`: the server
+ *  kept it itself (no window holds it): this run's pump delivers it, never skips it as the
+ *  window's. */
+export async function addToOutbox(contextRoot: string, child: string, text: string, now = Date.now(), opts: { server?: boolean } = {}): Promise<OutboxItem> {
+  const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: opts.server ? SERVER_KEPT_BOOT : OUTBOX_BOOT };
   await updateOutbox(contextRoot, (items) => [...items, item]);
   return item;
 }
@@ -252,7 +258,7 @@ const defaultDeps: OutboxDeps = {
   send: async (token, child, text) => {
     // The Super's words, not the owner's: they answer no wait he owes (owner-wait.ts).
     noteSuperSend(child, text);
-    const r = await sendWindowCommand(token, 'send', { tab: child, text });
+    const r = await sendWindowCommand(token, 'send', { tab: child, text }, { noted: true });
     const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered : undefined;
     return typeof how === 'string' ? how : null;
   },

@@ -4209,6 +4209,30 @@ const translations: Record<string, Record<string, string>> = {
     'agents.permissions.widen': 'A freer level applies from its next session.',
     'super.card.asksYou': 'asks you',
     'super.card.needsYou': 'Needs you',
+    'ownerCard.needsYouTitle': '{name} needs you',
+    'ownerCard.paused': 'Paused',
+    'ownerCard.theJob': 'The job',
+    'ownerCard.openJob': 'Open job',
+    'ownerCard.gone': "This card is no longer in the job's transcript.",
+    'ownerCard.mcpLine': 'Connect: {names}',
+    'ownerCard.cutOff': 'The run was cut off by a restart.',
+    'ownerCard.kept': 'Kept from before a restart; not checked',
+    'ownerCard.runAgainNote': 'Running again executes the command again.',
+    'ownerCard.secretAgain': 'The earlier entry was not checked after a restart, so you will type it again.',
+    'ownerCard.unsafe': 'This command holds characters that could hide what really runs, so it cannot be run from here. Copy it and check it in your own terminal.',
+    'ownerCard.delivery.sent': 'Sent to {child}.',
+    'ownerCard.delivery.waking': '{child} was paused to save memory; waking it now.',
+    'ownerCard.delivery.held:cap': 'Held: {n} jobs are running; it gets this when one ends.',
+    'ownerCard.delivery.held:no_window': 'Held: the Super window is closed.',
+    'ownerCard.delivery.held:phone': 'Held: the phone has this job open.',
+    'ownerCard.delivery.ended': '{child} was ended; the Super has the result.',
+    'ownerCard.bar.run': 'Run',
+    'ownerCard.bar.runVerb': 'Run',
+    'ownerCard.bar.show': 'Show',
+    'ownerCard.bar.longCommand': 'A command to run that does not fit here',
+    'ownerCard.bar.enterSecret': 'Enter secret',
+    'ownerCard.bar.openChecklist': 'Open checklist',
+    'ownerCard.bar.more': 'More',
     'super.card.state.saved': 'saved',
     'super.card.state.starting': 'starting',
     'super.card.state.working': 'working',
@@ -7421,6 +7445,30 @@ const TR_PARTIAL: Record<string, string> = {
   'agents.permissions.widen': 'Daha serbest bir seviye bir sonraki oturumundan itibaren geçerli olur.',
   'super.card.asksYou': 'sana soruyor',
   'super.card.needsYou': 'Seni bekliyor',
+  'ownerCard.needsYouTitle': '{name} seni bekliyor',
+  'ownerCard.paused': 'Duraklatıldı',
+  'ownerCard.theJob': 'İş',
+  'ownerCard.openJob': 'İşi aç',
+  'ownerCard.gone': 'Bu kart artık işin konuşma kaydında yok.',
+  'ownerCard.mcpLine': 'Bağlan: {names}',
+  'ownerCard.cutOff': 'Çalışma, uygulama yeniden başlayınca yarıda kaldı.',
+  'ownerCard.kept': 'Yeniden başlatmadan önce kaydedildi; doğrulanmadı',
+  'ownerCard.runAgainNote': 'Yeniden çalıştırırsan komut bir kez daha çalışır.',
+  'ownerCard.secretAgain': 'Önceki giriş yeniden başlatmadan sonra doğrulanamadı; şifreyi bir kez daha yazacaksın.',
+  'ownerCard.unsafe': 'Bu komutta çalışanı gizleyebilecek karakterler var, bu yüzden buradan çalıştırılamaz. Kopyalayıp kendi terminalinde kontrol et.',
+  'ownerCard.delivery.sent': '{child} işine gönderildi.',
+  'ownerCard.delivery.waking': '{child} bellek için duraklatılmıştı; şimdi uyandırılıyor.',
+  'ownerCard.delivery.held:cap': 'Bekletiliyor: {n} iş çalışıyor; biri bitince bunu alacak.',
+  'ownerCard.delivery.held:no_window': 'Bekletiliyor: Super penceresi kapalı.',
+  'ownerCard.delivery.held:phone': 'Bekletiliyor: bu iş telefonda açık.',
+  'ownerCard.delivery.ended': "{child} sonlandırıldı; sonuç Super'de.",
+  'ownerCard.bar.run': 'Çalıştır',
+  'ownerCard.bar.runVerb': 'Çalıştır',
+  'ownerCard.bar.show': 'Göster',
+  'ownerCard.bar.longCommand': 'Buraya sığmayan bir komut çalıştırılacak',
+  'ownerCard.bar.enterSecret': 'Şifreyi gir',
+  'ownerCard.bar.openChecklist': 'Listeyi aç',
+  'ownerCard.bar.more': 'Diğer',
   'super.card.state.saved': 'kayıtlı',
   'super.card.state.starting': 'başlıyor',
   'super.card.state.working': 'çalışıyor',
@@ -7981,6 +8029,13 @@ export function ScopedLocale({ locale, children }: { locale: ScopedLocaleId; chi
     </I18nContext.Provider>
   );
 }
+
+/** A translator that also works outside a provider (a window that mounts none): English then. */
+export function useOwnerCardT(): (key: string) => string {
+  const ctx = useContext(I18nContext);
+  return ctx?.t ?? EN_T;
+}
+const EN_T = translatorFor('en');
 
 /** The same context, or null outside a provider: for hooks shared with windows that may not
  *  mount one (the inline media pass runs in viewer windows too). */

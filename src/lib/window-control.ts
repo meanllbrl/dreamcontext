@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { SuperId } from './super/types.js';
 import { HUB_VERBS, type HubResult, type HubVerb } from './telegram/contract.js';
+import { getChat, listChats } from './assistant/chat-registry.js';
+import { noteSuperSend, takeSuperSend } from './super/owner-wait.js';
 
 /**
  * Window control: how a chat's own agent drives the chat surface it is drawn in — open a
@@ -201,14 +203,31 @@ export function deliverHubResult(token: string, id: unknown, result: HubResult):
   return deliver('hub_command', token, id, result.ok ? { ok: true, result } : { ok: false, error: String(result.error ?? 'failed').slice(0, 300) });
 }
 
-/** Send one verb down the token's chat socket and wait for the window's answer. */
-export function sendWindowCommand(
+/**
+ * Send one verb down the token's chat socket and wait for the window's answer.
+ *
+ * A `send` is an AGENT's words into a tab, never the owner's (sahip-karti-yerinde K4, gap 7): it
+ * is noted like `super send` (owner-wait.ts `noteSuperSend`) whatever tab it goes into, so its
+ * frame answers no wait the child holds on the owner and closes no card. A send into a Super chat
+ * is noted by the route (routes/window-control.ts); `noted`: the caller noted it itself (the
+ * outbox, `super send`, a successor's stop). A send that never went in takes its note back.
+ */
+export async function sendWindowCommand(
   token: string,
   verb: string,
   args: Record<string, unknown>,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; noted?: boolean } = {},
 ): Promise<WindowResult> {
-  return sendCommand('window_command', token, verb, args, opts);
+  let noted: { sid: string; text: string } | null = null;
+  if (verb === 'send' && !opts.noted && typeof args.text === 'string' && args.text.trim()) {
+    const tab = typeof args.tab === 'string' && args.tab ? args.tab : channels.get(token)?.sessionId ?? '';
+    const target = tab ? getChat(tab) ?? listChats().find((c) => c.conversationId === tab) ?? null : null;
+    const sid = target?.sessionId ?? tab;
+    if (sid && target?.mode !== 'super') { noteSuperSend(sid, args.text); noted = { sid, text: args.text }; }
+  }
+  const r = await sendCommand('window_command', token, verb, args, opts);
+  if (!r.ok && noted && !(r.error === 'no_window' && (r as { sent?: boolean }).sent)) takeSuperSend(noted.sid, noted.text);
+  return r;
 }
 
 /** A Super Agent verb the WINDOW runs (`delegate`, `answer`), sent down the super chat's own

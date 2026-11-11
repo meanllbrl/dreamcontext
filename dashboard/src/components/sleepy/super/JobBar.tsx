@@ -9,7 +9,7 @@ import {
   directChildQuestion, optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
-  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, claimOwnerItem, releaseOwnerItem, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
 import { sizeWords } from '../chat/RefusalCard';
 import {
   claimOwnerAnswer, memberItemText, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
@@ -21,6 +21,10 @@ import { cssEsc } from './StageMotion';
 import { showApprovalRow, showMemberApproval } from './superApprovals';
 import './JobBar.css';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
+import { useApi, useVaultId } from '../../../context/VaultContext';
+import { cardNotNeeded, useCardState } from '../../../lib/cardRecords';
+import { barCanRun } from '../../../lib/unsafeChars';
+import { requestSlotRun, showOwnerSlot, useSuperQuestions } from './superJobsStore';
 
 /**
  * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
@@ -88,6 +92,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   // An `ask` is the super agent's own question: there is no child behind it.
   const child = head && head.kind !== 'ask' ? sessionFor(head.sessionId) : undefined;
   const [, force] = useReducer((n: number) => n + 1, 0);
+  // A parked child (its tab dormant here) shows Paused on its card row (K7).
+  const pausedFor = useSuperQuestions(state.session ?? null)?.pausedFor;
   // Follow the head's child only: its pending request is what the strip draws.
   useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
 
@@ -167,6 +173,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
+              : (head.kind === 'owner' || head.kind === 'member') && head.card
+                ? <CardHead item={head} paused={!!pausedFor?.(head.sessionId)} onOpen={() => (head.kind === 'member' ? requestOpenAgents({ slug: head.member ?? '' }) : onShowChild(head.sessionId))} />
               : head.kind === 'member'
                 ? <MemberHead item={head} record={record} showOptions={showOptions} />
               : head.kind === 'routine'
@@ -225,6 +233,122 @@ function OwnerHead({ text, onOpen }: { text: string; onOpen: () => void }) {
           {t('super.queue.openCard')}
         </button>
       </span>
+    </>
+  );
+}
+
+/**
+ * A child's CARD on the row (sahip-karti-yerinde K7, drawing A1-A5): the card's own verb is the
+ * primary button, drawn from the RECORD the item carries, never from chat text.
+ *  - run: ▶ Run with the WHOLE command and the folder it runs in; the press starts it in the Super
+ *    chat's slot with exactly the command drawn here (`shown`), where its terminal shows. A command
+ *    the row cannot draw whole, or one holding characters that could hide what runs, gets Show,
+ *    which brings the slot, never ▶ Run;
+ *  - secret: Enter secret, checklist: Open checklist (both bring the slot, the checklist window
+ *    opened from it); mcp: Open job (D6: connecting stays in the job's own chat).
+ * Then Not needed (folded into the row's menu at phone width) and an Open link to the job.
+ */
+function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: boolean; onOpen: () => void }) {
+  const { t } = useI18n();
+  const api = useApi();
+  const { vault } = useVaultId();
+  const handle = item.card;
+  const { state } = useCardState(vault ?? null, handle?.spec.type === 'run' ? handle : undefined, item.delivery ?? '');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
+  if (!handle) return null;
+  const spec = handle.spec;
+  const slot = () => showOwnerSlot(item.id);
+  const toSlot = () => { if (!slot()) onOpen(); };
+  const notNeeded = () => {
+    setMenu(false);
+    if (busy || !claimOwnerItem(item.id)) return;
+    setBusy(true);
+    setNote(null);
+    void cardNotNeeded(api, { session: handle.postingSession, card: handle.cardRef }).then((r) => {
+      setBusy(false);
+      if (r.ok) return;
+      releaseOwnerItem(item.id);
+      setNote(r.message || t('owner.answer.failed'));
+    });
+  };
+
+  let text: ReactNode;
+  let full: string;
+  let verb: ReactNode;
+  if (spec.type === 'run') {
+    const runnable = barCanRun(spec.command);
+    const folder = state?.folder?.name;
+    full = runnable ? `${t('ownerCard.bar.run')} ${spec.command}${folder ? ` · ${folder}` : ''}` : t('ownerCard.bar.longCommand');
+    text = runnable
+      ? <>{t('ownerCard.bar.run')} <code className="super-queue-input" data-testid="super-queue-card-command">{spec.command}</code>{folder && <span data-testid="super-queue-card-folder"> · {folder}</span>}</>
+      : <span data-testid="super-queue-card-long">{t('ownerCard.bar.longCommand')}</span>;
+    verb = runnable ? (
+      <button
+        type="button"
+        className="super-queue-btn super-queue-btn--allow"
+        data-testid="super-queue-card-run"
+        data-shown={spec.command}
+        disabled={busy}
+        onClick={() => {
+          // The slot's run card starts it, with a ticket minted for exactly this command.
+          const sent = requestSlotRun(item.id, spec.command);
+          slot();
+          if (!sent) onOpen();
+        }}
+      ><span aria-hidden>▶</span> {t('ownerCard.bar.runVerb')}</button>
+    ) : (
+      <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-show" onClick={toSlot}>{t('ownerCard.bar.show')}</button>
+    );
+  } else if (spec.type === 'secret') {
+    full = `${spec.title} · ${spec.file}`;
+    text = <>{visibleText(spec.title)} <code className="super-queue-input">{spec.file}</code></>;
+    verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-secret" onClick={toSlot}>{t('ownerCard.bar.enterSecret')}</button>;
+  } else if (spec.type === 'checklist') {
+    full = spec.title;
+    text = visibleText(spec.title);
+    verb = (
+      <button
+        type="button"
+        className="super-queue-btn super-queue-btn--allow"
+        data-testid="super-queue-card-checklist"
+        onClick={() => {
+          if (!slot()) { onOpen(); return; }
+          // The window is opened from the slot's own card, the window that receives its submit.
+          document.querySelector<HTMLButtonElement>(`[data-testid="super-owner-card"][data-item="${cssEsc(item.id)}"] .chat-checklistcard-open:not([disabled])`)?.click();
+        }}
+      >{t('ownerCard.bar.openChecklist')}</button>
+    );
+  } else {
+    const names = spec.servers.join(', ');
+    full = t('ownerCard.mcpLine').replace('{names}', names);
+    text = full;
+    verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-open-job" onClick={onOpen}>{t('ownerCard.openJob')}</button>;
+  }
+
+  return (
+    <>
+      {paused && <span className="super-queue-paused" data-testid="super-queue-paused">{t('ownerCard.paused')}</span>}
+      <QueueText full={full}>{text}</QueueText>
+      <span className="super-queue-actions" data-testid="super-queue-card" data-kind={spec.type}>
+        {verb}
+        <button type="button" className="super-queue-btn super-queue-card-notneeded" data-testid="super-queue-card-not-needed" disabled={busy} onClick={notNeeded}>
+          {t('owner.answer.notNeeded')}
+        </button>
+        <span className="super-queue-card-menu">
+          <button type="button" className="super-queue-btn" aria-haspopup="menu" aria-expanded={menu} aria-label={t('ownerCard.bar.more')} data-testid="super-queue-card-menu" onClick={() => setMenu((m) => !m)}>⋯</button>
+          {menu && (
+            <div className="super-size-menu super-head-menu" role="menu">
+              <button type="button" role="menuitem" className="super-head-menu-item" disabled={busy} onClick={notNeeded}>{t('owner.answer.notNeeded')}</button>
+            </div>
+          )}
+        </span>
+        {spec.type !== 'mcp' && (
+          <button type="button" className="super-queue-open-link" data-testid="super-queue-card-open" onClick={onOpen}>{t('ownerCard.openJob')}</button>
+        )}
+      </span>
+      {note && <span className="super-queue-text" data-testid="super-queue-note">{note}</span>}
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { containerIdFor } from './inbox.js';
+import { containerIdFor, moveCardItems } from './inbox.js';
 import type { SuperChild, SuperState } from './types.js';
 
 /**
@@ -37,6 +37,10 @@ export function succeedChild(s: SuperState, from: string, to: string, opts: { br
   old.succeededBy = to;
   // The job moved on: the pictures shown for the old child go to Others (tidy.ts).
   old.succeededAt = opts.now ?? Date.now();
+  // A card the old child left open on the owner moves with the work (sahip-karti-yerinde K2):
+  // its item is the successor's now and its result goes to it (`deliverTo`); the card's RECORD
+  // stays under the session that posted it, and the worktree (its folder) moved with it above.
+  moveCardItems(s, from, to);
 
   const card = s.containers.find((k) => k.kind === 'chat' && k.ref === from);
   if (!card) return null;

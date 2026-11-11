@@ -18,14 +18,27 @@
  *
  * A free terminal (`kind=shell`, `kind=agent`, `open-terminal`) never reaches the phone: its path
  * is not in the phone listener's WebSocket list and this handler spawns only a record's argv.
+ *
+ * Gate G1 (sahip-karti-yerinde K4): every Mac card-mode upgrade (start, attach, rerun) carries a
+ * single-use ticket minted by `POST /api/agent/card-ticket` (owner page only), SPENT here before
+ * anything starts, attaches or replays. A no-Origin loopback client (an agent's node `ws`) has
+ * no owner key, so it can mint none and gets no replay byte. K5: a run starts in the card's
+ * working folder (`cardWorkingRoot`, resolved here before `startRun`), never the bare project
+ * root. A crew child's card resolves its record through the owner item's card handle
+ * (`ensureCardsFor`), with no live chat needed.
  */
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { lstatSync, readFileSync } from 'node:fs';
-import { CARD_REF_RE, getCard, isRebuilt, isSessionUuid, listCards, rebuildCards, type CardRecordEntry } from '../../lib/cards/records.js';
+import { CARD_REF_RE, ensureCardsFor, getCard, isRebuilt, isSessionUuid, listCards, rebuildCards, type CardRecordEntry } from '../../lib/cards/records.js';
+import type { RunViewSpec } from '../../lib/chat-view-spec.js';
+import { consumeCardTicket, type CardTicketAction } from '../card-ticket.js';
+import { ownerCardLookup, type OwnerCardLookup } from '../owner-receipts.js';
+import { cardWorkingRoot } from '../session-worktree.js';
+import { commandShowableAsIs } from '../telegram/runs.js';
 import { PHONE_RUN_TERMINAL_PATH } from '../../lib/telegram/contract.js';
-import { attachRun, startRun, type Run } from '../runs/registry.js';
+import { attachRun, runProjectRootOf, startRun, type Run } from '../runs/registry.js';
 import { sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { isMacExposed, isMacOriginAllowed, isPhoneSocket } from '../phone-origin.js';
@@ -118,30 +131,105 @@ export function ensureCards(sessionId: string): void {
   } catch { /* unreadable transcript: no records */ }
 }
 
-/** Refusal as an HTTP status, or the run to serve. */
-function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry): Run | number {
+/**
+ * The record a card action names, `(posting session, cardRef)` (sahip-karti-yerinde K1): a crew
+ * child's owner card resolves through its item's card handle (`ensureCardsFor`: the handle's own
+ * transcript, no live chat, after a restart, a park, a succession or a `/clear`); any other card
+ * through the chat's own rebuild. `lookup` is the crew card's owner item, or null (today's path).
+ */
+export function resolveCardRecord(sessionId: string, cardRef: string): { rec: CardRecordEntry | null; lookup: OwnerCardLookup | null } {
+  const lookup = ownerCardLookup(sessionId, cardRef);
+  if (lookup) {
+    const rec = ensureCardsFor(lookup.handle, resolveVaultProjectRoot(lookup.handle.vault));
+    if (rec) return { rec, lookup };
+  }
+  ensureCards(sessionId);
+  return { rec: getCard(sessionId, cardRef), lookup };
+}
+
+type CardRootResolver = (rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>) => Promise<string | null>;
+
+/**
+ * The folder a card runs in and writes its secret under (K5, D5): `cardWorkingRoot` for the
+ * POSTING session, read from the server's state at action time, never from a request or a card.
+ * Null when it is refused (a symlink, a linked repo, another repository's checkout, a folder that
+ * is gone) or the project is unknown: the action does not happen.
+ */
+const realCardRoot: CardRootResolver = async (rec) => {
+  const projectRoot = runProjectRootOf(rec.vault);
+  if (!projectRoot) return null;
+  try { return await cardWorkingRoot(join(projectRoot, '_dream_context'), projectRoot, rec.sessionId); } catch { return null; }
+};
+let cardRootResolver: CardRootResolver = realCardRoot;
+export function cardRootOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>): Promise<string | null> {
+  return cardRootResolver(rec);
+}
+/** Tests: where cards run (null restores the real `cardWorkingRoot`). */
+export function setCardRootResolverForTests(fn: CardRootResolver | null): void { cardRootResolver = fn ?? realCardRoot; }
+
+/** What the surface may show of a card's folder (the bar, the slot): its path and its name. */
+export async function cardFolderOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>): Promise<{ path: string; name: string } | null> {
+  const root = await cardRootOf(rec);
+  return root ? { path: root, name: basename(root) } : null;
+}
+
+/** Refusal as an HTTP status, or the run to serve. The card's folder is resolved first (K5). */
+async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry): Promise<Run | number> {
   const live = attachRun(c.sessionId, c.cardRef);
   if (live) return live;
   if (!c.start) return 409;
   if (by === 'phone' && rec.state === 'closed') return 409;
-  const r = startRun(c.sessionId, c.cardRef, by, { withheld: c.withheld, rerun: by === 'mac' && c.rerun });
+  // What is shown is what runs (K4): no start, from any surface, of a command that can draw as
+  // something else. Attaching to a run already going is unaffected.
+  if (!commandShowableAsIs((rec.spec as RunViewSpec).command)) return 409;
+  const root = await cardRootOf(rec);
+  if (!root) return 400;
+  // Another start may have raced the await: attach to it rather than refuse.
+  const raced = attachRun(c.sessionId, c.cardRef);
+  if (raced) return raced;
+  const r = startRun(c.sessionId, c.cardRef, by, { withheld: c.withheld, rerun: by === 'mac' && c.rerun, root });
   if ('refused' in r) return r.refused === 'no_pty' ? 501 : r.refused === 'no_record' ? 404 : r.refused === 'bad_cwd' ? 400 : 409;
   return r;
 }
 
+/** Which ticket actions an upgrade of this card accepts now: attaching to the card's own live
+ *  run takes any of its tickets; otherwise a closed record takes a `rerun`, an open one a `start`. */
+export function ticketActionsFor(rec: CardRecordEntry, live: boolean): CardTicketAction | readonly CardTicketAction[] {
+  if (live) return ['attach', 'start', 'rerun'];
+  return rec.state === 'closed' ? 'rerun' : 'start';
+}
+
 /**
  * The Mac's chat-host mode of `/api/agent/terminal` (`attachAgentTerminal` delegates here when
- * the URL names a `card`, AFTER its desktop + loopback + strict-same-origin gate).
+ * the URL names a `card`, AFTER its desktop + loopback + strict-same-origin gate). Gate G1: the
+ * `ticket` is spent first, before anything starts, attaches or replays; no ticket, a reused or
+ * expired one, one for another card or action, or one whose drawn command is not the record's:
+ * 403, no byte of the run reaches the socket.
  */
 export function handleMacCardUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, url: URL): void {
   const c = readCardRequest(url);
   if (!c) { rejectUpgrade(socket, 400); return; }
-  ensureCards(c.sessionId);
-  const rec = getCard(c.sessionId, c.cardRef);
-  if (!rec || rec.kind !== 'run') { rejectUpgrade(socket, 404); return; }
-  const run = runFor(c, 'mac', rec);
-  if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
-  void upgradeTo(req, socket, head, (ws) => serveRunSocket(ws, run));
+  const ticket = url.searchParams.get('ticket');
+  const { rec } = resolveCardRecord(c.sessionId, c.cardRef);
+  if (!rec || rec.kind !== 'run') {
+    // Spent anyway: a ticket never outlives a refused upgrade.
+    consumeCardTicket(ticket, { project: '', postingSession: c.sessionId, cardRef: c.cardRef, action: 'start', command: '' });
+    rejectUpgrade(socket, 404);
+    return;
+  }
+  const t = consumeCardTicket(ticket, {
+    project: rec.vault,
+    postingSession: rec.sessionId,
+    cardRef: rec.cardRef,
+    action: ticketActionsFor(rec, !!attachRun(c.sessionId, c.cardRef)),
+    command: (rec.spec as RunViewSpec).command,
+  });
+  if (!t.ok) { rejectUpgrade(socket, 403); return; }
+  void (async () => {
+    const run = await runFor(c, 'mac', rec).catch(() => 500);
+    if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
+    void upgradeTo(req, socket, head, (ws) => serveRunSocket(ws, run));
+  })();
 }
 
 // ─── The phone ──────────────────────────────────────────────────────────────
@@ -194,22 +282,25 @@ export function handlePhoneRunUpgrade(req: IncomingMessage, socket: Duplex, head
   if (!auth || !idHash || !auth.store.isValidDeviceHash(idHash)) { rejectUpgrade(socket, 401); return; }
   const c = readCardRequest(url);
   if (!c) { rejectUpgrade(socket, 400); return; }
-  ensureCards(c.sessionId);
-  const rec = getCard(c.sessionId, c.cardRef);
+  const { rec } = resolveCardRecord(c.sessionId, c.cardRef);
   // The project is the RECORD's, and it must be one the phone was given (I5).
   if (!rec || rec.kind !== 'run' || !isMacExposed(rec.vault)) { rejectUpgrade(socket, 404); return; }
   if (rec.state === 'closed') { rejectUpgrade(socket, 409); return; }
   const wouldStart = !attachRun(c.sessionId, c.cardRef);
   if (wouldStart && c.start && !rateOk(idHash)) { rejectUpgrade(socket, 409); return; }
-  const run = runFor(c, 'phone', rec);
-  if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
-  armRevoke();
-  void upgradeTo(req, socket, head, (ws) => {
-    const entry = { idHash, ws, spawned: wouldStart ? run : null };
-    phoneSockets.add(entry);
-    serveRunSocket(ws, run);
-    ws.on('close', () => { phoneSockets.delete(entry); });
-  });
+  void (async () => {
+    // The phone's own scope (its device session is owner proof); the run now starts in the
+    // card's working folder (K5), and a crew card's result is held like any other (K6).
+    const run = await runFor(c, 'phone', rec).catch(() => 500);
+    if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
+    armRevoke();
+    void upgradeTo(req, socket, head, (ws) => {
+      const entry = { idHash, ws, spawned: wouldStart ? run : null };
+      phoneSockets.add(entry);
+      serveRunSocket(ws, run);
+      ws.on('close', () => { phoneSockets.delete(entry); });
+    });
+  })();
 }
 
 /** Attach the phone run-terminal handler to the phone listener's server. */
