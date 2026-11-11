@@ -14,13 +14,20 @@ import type { ChatSession } from '../chatSession';
  * Idle, it is a plain `send`: a normal user turn, which is what "the agent continues on its
  * own" means when nothing is running.
  */
-export function postToSession(session: ChatSession, text: string): void {
-  if (!text.trim()) return;
+export function postToSession(session: ChatSession, text: string): boolean {
+  if (!text.trim()) return false;
   if (session.busy) {
-    if (!session.steer(text)) session.enqueue(text, { steerWhenPossible: true });
-    return;
+    if (session.steer(text)) return true;
+    // A running turn that cannot take it now: the chat's own queue holds it and drains it at the
+    // first opening. Taken.
+    session.enqueue(text, { steerWhenPossible: true });
+    return true;
   }
-  session.send(text);
+  // THE ACK RULE (sahip-karti-yerinde K6): only a send the socket actually took counts. The
+  // session's `send` returns false when its socket is down; a caller that acks a held report
+  // (the `run_report` hub verb) must ack only on true, so the server keeps the report held and
+  // delivers it on the next mount instead of losing it.
+  return session.send(text);
 }
 
 /** What {@link deliverToChat} did with the text, reported back to the agent that sent it. */

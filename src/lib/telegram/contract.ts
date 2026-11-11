@@ -391,21 +391,26 @@ export const RENDER_MAX_SLICES = 4;
 export interface SuperHandoverArgs { adopt: [] }
 export type SuperHandoverResult = { ok: true; sessionId: string } | { ok: false; reason: 'tab_cap' | 'reversing' | 'super_off' | 'no_window' };
 
-/** `run_report` (H5): a child chat's run report, delivered through its own socket. */
+/** `run_report` (H5): a run report delivered through the chat's own socket. Only NON-crew hosts
+ *  (a plain chat, the Super's own card, a Telegram-started Super run) take it: a crew child's
+ *  result is held by the server and delivered as an `ownerReceipt` frame (sahip-karti-yerinde K6). */
 export interface RunReportArgs { sessionId: string; cardRef: string; report: RunReport }
 
 // ─── Cards and remote runs (H1, H4, H5, H8, I1, J1, K1) ─────────────────────
 
 export interface RunCardSpec { command: string; cwd?: string; why?: string; output?: boolean }
 export interface SecretCardSpec { file: string; fields: { key: string; label?: string; hint?: string }[] }
+export interface ChecklistCardSpec { title: string; items: { id: string; text: string }[] }
+export interface McpCardSpec { servers: string[]; why?: string }
 /** Per-chat card record in `chat-registry.ts`. `cardRef = sha256(sessionId, assistant message
- *  uuid, fence index, canonical spec JSON)`; every lookup is `(sessionId, cardRef)`. */
+ *  uuid, fence index, canonical spec JSON)`; every lookup is `(sessionId, cardRef)`. Four kinds
+ *  (sahip-karti-yerinde K1): every reader handles each one by name, never "not run = secret". */
 export type CardRecord = {
   sessionId: string;
   id: string;
   cardRef: string;
   state: 'open' | 'closed';
-} & ({ kind: 'run'; spec: RunCardSpec } | { kind: 'secret'; spec: SecretCardSpec });
+} & ({ kind: 'run'; spec: RunCardSpec } | { kind: 'secret'; spec: SecretCardSpec } | { kind: 'checklist'; spec: ChecklistCardSpec } | { kind: 'mcp'; spec: McpCardSpec });
 /** Per chat; CLOSED records are evicted first (K3). */
 export const CARD_RECORD_CAP = 16;
 /** `~/.dreamcontext/cards/<sessionId>.json` (0700 dir, 0600 file), newest 500 closures (J1). */
@@ -466,7 +471,9 @@ export interface ButtonRecord {
   messageId: number;
   /** sha256 of the exact text the hub sent. */
   textHash: string;
-  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm';
+  /** `owner-card`: a CHILD's owner card (sahip-karti-yerinde K7, D3): Remind and Not needed only,
+   *  never Run. */
+  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm' | 'owner-card';
   requestId?: string;
   sessionId?: string;
   cardRef?: string;
@@ -595,3 +602,14 @@ export function isTunnelHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, '');
   return TUNNEL_PROVIDER_DOMAINS.some((d) => h === d || h.endsWith(`.${d}`));
 }
+
+// ─── A child's owner card on Telegram (sahip-karti-yerinde K7, D3) ─────────────────────────────
+
+/** The two buttons a child's card gets on Telegram: never Run (the Mac's terminal runs it). */
+export const OWNER_CARD_REMIND_LABEL = "Mac'e dönünce hatırlat";
+export const OWNER_CARD_NOT_NEEDED_LABEL = 'Gerek yok';
+/** What a tap answers. */
+export const OWNER_CARD_REMIND_DONE = "✓ Mac'e dönünce hatırlatırım.";
+export const OWNER_CARD_NOT_NEEDED_DONE = '✓ Gerek yok dendi.';
+/** The one desktop notification at his next owner-at-Mac (titles joined in its body). */
+export const OWNER_CARD_REMIND_TITLE = 'Mac\'te seni bekleyen kartlar';

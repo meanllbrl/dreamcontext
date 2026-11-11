@@ -36,3 +36,20 @@ export function isOwnerWords(text: string): boolean {
   const t = text.trim();
   return !!t && !t.startsWith('/');
 }
+
+// ─── "Mac'e dönünce hatırlat" (sahip-karti-yerinde K7) ──────────────────────────────────────
+
+/** The owner-question banner path (index.ts sets the SAME function `setOwnerQuestionSinks` gets):
+ *  a routable macOS banner, held (history row only) while the open notch covers it. */
+export type OwnerCardRemindBanner = (title: string, body: string, link: string | null) => boolean | 'held';
+let remindBanner: OwnerCardRemindBanner | null = null;
+
+/** The server wires the banner (index.ts). Null unwires it (tests). */
+export function setOwnerCardRemindBanner(fn: OwnerCardRemindBanner | null): void { remindBanner = fn; }
+
+/** ONE desktop notification naming the cards he asked to be reminded of; a click opens the
+ *  Super's stage. False when no banner path is wired. */
+export function postOwnerCardRemind(title: string, body: string, link: string | null): boolean | 'held' {
+  if (!remindBanner) return false;
+  try { return remindBanner(title, body, link); } catch { return false; }
+}

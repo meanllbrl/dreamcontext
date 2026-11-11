@@ -33,6 +33,13 @@ export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp', 'refusal',
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 /** The kinds a card in the chat's own text can be (what `ownerCardsIn` and `answeredBy` know). */
 export type OwnerCardKind = Exclude<OwnerWaitKind, 'refusal' | 'stalled'>;
+/** The owner-only CARD kinds, in order (sahip-karti-yerinde K1): each one is a card record the
+ *  server holds (src/lib/cards/records.ts `CardKind` is the same list). MIRRORED in
+ *  dashboard/src/lib/superTypes.ts, pinned by owner-card-types.test.ts. */
+export const OWNER_CARD_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const satisfies readonly OwnerCardKind[];
+export function isOwnerCardKind(v: unknown): v is OwnerCardKind {
+  return typeof v === 'string' && (OWNER_CARD_KINDS as readonly string[]).includes(v);
+}
 
 export interface OwnerWait {
   kind: OwnerWaitKind;

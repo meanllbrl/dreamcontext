@@ -85,7 +85,8 @@ export function createTranscriptSession(
     dispose: () => { subscribers.clear(); },
     subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
     getModel: () => conv,
-    send: noop,
+    // A read-only transcript delivers nothing: `false`, as a chat with its socket down says.
+    send: () => false,
     steer: () => false,
     canSteer: () => false,
     enqueue: noop,

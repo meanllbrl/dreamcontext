@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { useCardRecord } from '../../../lib/cardRecords';
+import {
+  FOLDER_CHANGED, OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine as folderLineOf, phoneFolderOf, phoneFolderState, pressRun, refreshCards, settleFolderCheck, ticketActionOf,
+  useHostCard, useShownFolder, type CardActionResult, type CardHost, type FolderCheck,
+} from '../../../lib/cardRecords';
+import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
+import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
 import { InlineTerminal, type CardTarget } from './InlineTerminal';
 import { buildRunReport, type RunOutcome } from './runReport';
@@ -43,15 +48,47 @@ import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, report, sessionId }: {
+export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
   spec: RunViewSpec;
   /** Where the exit report goes on a host without a chat (an agent thread's reply). */
   report?: (text: string) => void;
   /** The chat's session (pin) id: the card is the server's record, run and reported by it. */
   sessionId?: string;
+  /** An owner item's record (the Super-chat slot, K7): the card is found by its handle, never by
+   *  chat text. Wins over `sessionId`. */
+  host?: CardHost;
+  /** The folder it runs in (the card's working root, `GET /api/agent/cards/state`). */
+  folder?: { name: string; path: string } | null;
+  /** The bar's ▶ Run (K7): a new number starts the run here, when this card draws exactly the
+   *  command the bar drew (`shown`). */
+  startRequest?: { n: number; shown: string };
+  /** A terminal of this card ended (the slot reads its state again). */
+  onEnded?: () => void;
+  /** The bar's request `n` was handled here (started, or told it did not): the slot forgets it. */
+  onStartRequest?: (n: number) => void;
+  /** The server said the folder changed: the slot reads the card's state again (never presses). */
+  onReread?: () => void;
 }) {
-  if (sessionId) return <ChatRunCard spec={spec} sessionId={sessionId} />;
+  const chatHost: CardHost | undefined = host ?? (sessionId ? { session: sessionId } : undefined);
+  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} onReread={onReread} />;
   return <ThreadRunCard spec={spec} report={report} />;
+}
+
+/**
+ * The command as the card draws it: the WHOLE command, wrapped (K4 "what is shown is what runs").
+ * A command with a character the Telegram path refuses, or a run of 8 spaces, is drawn with those
+ * as visible escapes; the caller offers it no Run.
+ */
+function CommandText({ command }: { command: string }) {
+  const unsafe = commandUnsafe(command);
+  return (
+    <code
+      className="chat-runcard-cmd"
+      data-testid="run-card-command"
+      data-unsafe={unsafe ? 'true' : undefined}
+      style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+    >{unsafe ? escapeUnsafe(command) : command}</code>
+  );
 }
 
 function exitChip(code: number | null | undefined) {
@@ -88,13 +125,66 @@ interface Shown {
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
-function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string }) {
+function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
+  spec: RunViewSpec;
+  host: CardHost;
+  folder?: { name: string; path: string } | null;
+  startRequest?: { n: number; shown: string };
+  onEnded?: () => void;
+  onStartRequest?: (n: number) => void;
+  onReread?: () => void;
+}) {
   const api = useApi();
+  const t = useOwnerCardT();
   const { vault } = useVaultId();
   const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
-  const { loaded, record } = useCardRecord(sessionId, spec, fetchJson);
+  const { loaded, record, sessionId: hostSid } = useHostCard(host, spec, fetchJson);
+  const sessionId = hostSid ?? '';
+  const unsafe = commandUnsafe(spec.command);
+  const recordHost = 'record' in host;
   const phone = isMacPhoneSurface();
+  // THE FOLDER THIS CARD DRAWS IS THE FOLDER ITS PRESS NAMES (end review r2, r3), on the Mac and on
+  // the phone alike: the slot hands it in; the card's own chat reads it (the Mac's card state, or
+  // the phone's own card read). No folder drawn, no press offered.
+  const phoneRead = useCallback((s: string, c: string) => refreshCards(s, fetchJson).then(() => phoneFolderOf(s, c)), [fetchJson]);
+  // The phone: its folder from its card read; a card whose folder was not read yet is being read
+  // (the store reads it once), never "not known".
+  const phoneFolder = phone ? phoneFolderState(sessionId, record?.cardRef) : null;
+  const given = folder !== undefined ? folder : phone ? phoneFolder!.folder : undefined;
+  const shownFolder = useShownFolder(vault, record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, given, onReread, phone ? phoneRead : undefined);
+  const drawnRoot = shownFolder.folder?.path ?? null;
+  const drawnRootRef = useRef(drawnRoot);
+  drawnRootRef.current = drawnRoot;
+  // A press refused because the folder moved: reading it again (always settles), then what it is
+  // now, or that it cannot be confirmed here. Cleared when the owner presses again.
+  const [check, setCheck] = useState<FolderCheck>(null);
+  const checkRef = useRef(check);
+  checkRef.current = check;
+  const rereadRef = useRef(shownFolder.reread);
+  rereadRef.current = shownFolder.reread;
+  const folderChanged = useCallback((from: string | null) => {
+    const named = from ?? '';
+    setCheck({ from: named, state: 'reading' });
+    void rereadRef.current().then((now) => setCheck(settleFolderCheck(named, now)));
+  }, []);
+  // Every Mac press carries a ticket minted for it, bound to the command AND the folder drawn here
+  // (K4, end review r2). A refusal (no owner key: a plain browser) keeps its one line on the card;
+  // a folder that changed shows its own line and reads the folder again, and is NEVER pressed again
+  // by the card itself.
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const mintTicket = useCallback(async (target: CardTarget): Promise<CardActionResult<string>> => {
+    // No folder drawn, no press: never a mint with an empty root.
+    const root = drawnRootRef.current;
+    if (!root) return { ok: false, error: 'no_folder', message: t('ownerCard.cannotConfirm') };
+    const r = await pressRun(api, {
+      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command, root,
+    }, { folderChanged: (named) => { setRefusal(null); folderChanged(named); } });
+    if (!r.ok && r.error === FOLDER_CHANGED) return r;
+    setRefusal(r.ok ? null : r.message || OWNER_ONLY_LINE);
+    return r;
+  }, [api, spec.command, folderChanged, t]);
   const desktop = isDesktop();
+  const pressable = canPressWith(drawnRoot, check);
   const [includeOutput, setIncludeOutput] = useState(true);
   const [copied, copy] = useCopy(spec.command);
   // The terminal in this card. It STAYS mounted after its process ends (read-only), so the last
@@ -114,15 +204,23 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
   // A connected terminal is only tagged with its run; one whose run already ended here, or whose
   // watch already dropped once, is kept (no reconnect loop); otherwise the new run is attached.
   useEffect(() => {
-    if (!liveRunId || !cardRef) return;
+    // Attaching on the Mac is a press too: it waits until the folder is drawn.
+    if (!liveRunId || !cardRef || !pressable) return;
     setShown((cur) => {
       if (cur && !cur.ended) return cur.runId ? cur : { ...cur, runId: liveRunId };
       if (cur && cur.runId === liveRunId && (cur.exited || !cur.user)) return cur;
-      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone }, user: false, ended: false, exited: false };
+      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone, ...(phone && drawnRootRef.current ? { root: drawnRootRef.current } : {}) }, user: false, ended: false, exited: false };
     });
-  }, [liveRunId, cardRef, sessionId, phone, shownEnded]);
+  }, [liveRunId, cardRef, sessionId, phone, shownEnded, pressable]);
 
-  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean }) => {
+  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean; reason?: string }) => {
+    // The upgrade refused: the folder bound at the press is not the folder now. Say so, draw the
+    // new one; nothing is pressed again.
+    if (r.reason === FOLDER_CHANGED && !r.opened) {
+      setShown((cur) => (cur?.key === key ? null : cur));
+      if (!checkRef.current) folderChanged(drawnRootRef.current);
+      return;
+    }
     if (user && !r.opened && !r.exited) {
       // Refused before it opened (busy, too many starts, no terminal): nothing ran.
       setShown((cur) => (cur?.key === key ? null : cur));
@@ -131,9 +229,11 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
     }
     setShown((cur) => (cur?.key === key ? { ...cur, ended: true, exited: r.exited } : cur));
     if (r.exited) setOutcome({ kind: 'exited', code: r.code, key });
+    onEnded?.();
   };
 
-  const canStart = (desktop || phone) && !!vault;
+  // A command that could show something other than what runs is never offered a Run (K4, K7).
+  const canStart = (desktop || phone) && !!vault && !unsafe;
   const view = runCardView({
     loaded,
     hasRecord: !!record,
@@ -150,37 +250,73 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
   });
 
   const start = () => {
-    if (!record) return;
+    if (!record || unsafe || !pressable) return;
+    setRefusal(null);
+    setCheck(null);
     starts.current += 1;
     setOutcome(null);
     setShown({
       key: `l${starts.current}`,
-      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone },
+      // The phone's press names the folder it drew in its URL; the Mac's in its ticket.
+      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone, ...(phone && drawnRoot ? { root: drawnRoot } : {}) },
       user: true,
       ended: false,
       exited: false,
     });
   };
 
+  // The bar's ▶ Run lands here (K7): only for the exact command this card draws. A request already
+  // waiting when this card mounts (the bar pressed while the card was still loading) is handled
+  // too, once the record is known: it starts when the card can start, and otherwise the card says
+  // it did not, never a silent drop. Either way it is handed back (`onStartRequest`), so the store
+  // forgets it and a remount never runs it twice.
+  const startRef = useRef(start);
+  startRef.current = start;
+  const handledRequest = useRef(0);
+  useEffect(() => {
+    if (!startRequest || startRequest.n === handledRequest.current || !loaded) return;
+    handledRequest.current = startRequest.n;
+    if (startRequest.shown === spec.command && view.startable && pressable) startRef.current();
+    // Said as the card stands: already running, its folder not known, the button it offers, or none.
+    else if (view.phase === 'running') setRefusal(t('ownerCard.barRunning'));
+    else if (!pressable) setRefusal(t('ownerCard.barNoFolder'));
+    else if (view.runLabel && view.startable) setRefusal(t('ownerCard.notStarted').replace('{label}', view.runLabel === 'Run again' ? t('ownerCard.runAgainLabel') : t('ownerCard.bar.runVerb')));
+    else setRefusal(t('ownerCard.barCannotRun'));
+    onStartRequest?.(startRequest.n);
+  }, [startRequest, spec.command, loaded, view.startable, view.phase, view.runLabel, pressable, t, onStartRequest]);
+
+  // The one folder text every surface draws (cardFolderText); with no root read, the spec's cwd.
+  const where = cardFolderText(shownFolder.folder, spec) ?? spec.cwd;
+  // The slot's run executes on this Mac whoever pressed it: never "in chat" there.
+  const title = recordHost && view.title === 'Ran in chat' ? t('ownerCard.ranOnMac')
+    : recordHost && view.title === 'Running in chat' ? t('ownerCard.runningOnMac')
+      : view.title;
+  // The folder line: changed (and what it is now, once read again), or not known on the Mac.
+  const folderLine = folderLineOf(t, {
+    check, spec, unknown: !drawnRoot && loaded && view.phase !== 'running' && !unsafe,
+    reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading,
+  });
+
   return (
-    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')}>
+    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>
       <CardHeader
         glyph={view.phase === 'running' ? '▸' : '>_'}
-        title={view.title}
-        aside={view.chip !== undefined ? exitChip(view.chip) : spec.cwd ? <span className="chat-runcard-cwd">{spec.cwd}</span> : undefined}
+        title={title}
+        aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={shownFolder.folder?.path}>{where}</span> : undefined}
       />
 
       {spec.why && view.phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
       <div className="chat-runcard-cmdrow">
-        <code className="chat-runcard-cmd">{spec.command}</code>
+        <CommandText command={spec.command} />
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {view.runLabel && (
+        {view.runLabel && !unsafe && pressable && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"
+            data-testid="run-card-play"
             onClick={start}
             disabled={!view.startable}
           >
@@ -189,7 +325,9 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
         )}
       </div>
 
-      {view.startable && (
+      {unsafe && <p className="chat-runcard-note" data-testid="run-card-unsafe">{t('ownerCard.unsafe')}</p>}
+
+      {view.startable && pressable && (
         <label className="chat-runcard-share">
           <input type="checkbox" checked={includeOutput} onChange={(e) => setIncludeOutput(e.target.checked)} />
           Send the output back to the agent when it finishes
@@ -202,11 +340,16 @@ function ChatRunCard({ spec, sessionId }: { spec: RunViewSpec; sessionId: string
           vault={vault}
           command={spec.command}
           card={shown.target}
+          mintTicket={shown.target.phone ? undefined : mintTicket}
           onExit={(r) => onEnd(shown.key, shown.user, r)}
         />
       )}
 
-      {view.note && <p className="chat-runcard-note">{view.note}</p>}
+      {refusal
+        ? <p className="chat-runcard-note" data-testid="run-card-refused">{refusal}</p>
+        : folderLine
+          ? <p className="chat-runcard-note" data-testid="run-card-folder-line">{folderLine}</p>
+          : view.note && <p className="chat-runcard-note">{view.note}</p>}
     </div>
   );
 }
@@ -257,11 +400,11 @@ function ThreadRunCard({ spec, report }: { spec: RunViewSpec; report?: (text: st
       {spec.why && phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
       <div className="chat-runcard-cmdrow">
-        <code className="chat-runcard-cmd">{spec.command}</code>
+        <CommandText command={spec.command} />
         <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {phase !== 'running' && (
+        {phase !== 'running' && !commandUnsafe(spec.command) && (
           <button
             type="button"
             className="chat-btn pill primary chat-runcard-play"

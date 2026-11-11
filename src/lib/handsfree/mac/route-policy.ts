@@ -413,6 +413,13 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/secret': filtered(`${CHAT}: a pending secret card's value, written only to the file and keys the card declared (record matched by session + cardRef; the record's project must be exposed)`),
   // The chat's run/secret card records (plan I1, J4): the record's project must be exposed, else 404.
   'GET /api/agent/cards': filtered(`${CHAT}: a chat's run and secret card records (what the agent wrote, never a path); side-effect free`),
+  // The owner's card actions where he is (sahip-karti-yerinde K4, Gate G1): each needs the shell's
+  // owner key on this Mac (`fromOwnerPage`), which the phone link never holds; the phone keeps its
+  // own run route (device session) and the secret route above.
+  'POST /api/agent/card-ticket': deny('laptop-only: a run card\'s single-use ticket needs the owner key of the app on this Mac'),
+  'POST /api/agent/cards/checklist-submit': deny('laptop-only: a checklist submit is relayed by the vault window on this Mac with the owner key'),
+  'POST /api/agent/cards/not-needed': deny('laptop-only: closing a child\'s card needs the owner key of the app on this Mac'),
+  'GET /api/agent/cards/state': deny('laptop-only: a card\'s folder and held results are read with the owner key of the app on this Mac'),
   // Telegram bindings (W2, plan A1, AA1, AB): never from a phone; the Rust-called id routes act on
   // the vault their id was minted in, never the request's.
   'GET /api/telegram': deny(SECRET),

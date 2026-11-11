@@ -1,9 +1,13 @@
-import { realpathSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 import { resolveAgentSession } from '../lib/agent-session-map.js';
-import { readSuperState, acceptableWorktree, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
+import { readSuperState, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
 import { isGovernedCheckout } from '../lib/session-cwd.js';
+import { gitCommonDir } from '../lib/session-facts.js';
+import { resolveLinkedRepos } from '../lib/linked-repos.js';
 import { resolveSessionDir } from './routes/agent-shelf.js';
 
 /**
@@ -32,6 +36,14 @@ export async function sessionWorktreeRoot(
 ): Promise<string | null> {
   if (!session) return null;
   const home = opts.home ?? homedir();
+  const candidates = await worktreeCandidates(contextRoot, projectRoot, session, home);
+  for (const cand of candidates) if (acceptedWorktree(cand, projectRoot, home)) return resolve(cand);
+  return null;
+}
+
+/** Every directory the session is RECORDED to work in (Super records, then its own checkout),
+ *  before any check. */
+async function worktreeCandidates(contextRoot: string, projectRoot: string, session: string, home: string): Promise<string[]> {
   const ids = [...new Set([session, resolveAgentSession(contextRoot, session) || session])];
 
   const candidates: string[] = [];
@@ -46,20 +58,156 @@ export async function sessionWorktreeRoot(
       }
     } catch { /* no readable record: the session's own checkout below may still answer */ }
   }
+  // The session's own checkout, unless it IS the project root. By REAL path: a transcript's cwd
+  // is realpath'd (`/private/var/…`) while the project root may be spelled through a symlink
+  // (`/var/…`), and the same folder must never read as a second candidate.
   const moved = resolveSessionDir(session, projectRoot, { home });
-  if (moved !== projectRoot) candidates.push(moved);
+  if (!samePath(moved, projectRoot)) candidates.push(moved);
+  return candidates;
+}
 
-  for (const cand of candidates) {
-    if (!acceptableWorktree(cand, { home }) || !isGovernedCheckout(cand, projectRoot, { home })) continue;
-    try {
-      if (!statSync(cand).isDirectory()) continue;
-      // The REAL path must still sit directly under the real worktree home: a symlinked
-      // `<name>` pointing elsewhere is not a worktree this feature created.
-      const real = realpathSync.native(cand);
-      const base = realpathSync.native(superWorktreeRoot(home));
-      if (!real.startsWith(base + sep) || real.slice(base.length + 1).includes(sep)) continue;
-      return resolve(cand);
-    } catch { /* removed or unreadable — not a root */ }
+/** Real path, or null when it is gone or unreadable. */
+function realOf(p: string): string | null {
+  try { return realpathSync.native(p); } catch { return null; }
+}
+
+/** The same folder, by REAL path (a spelling through a symlink is the same folder). */
+function samePath(a: string, b: string): boolean {
+  if (resolve(a) === resolve(b)) return true;
+  const ra = realOf(a);
+  return ra !== null && ra === realOf(b);
+}
+
+/** Is this REAL path directly under the REAL worktree home (`~/.claude-worktrees/<name>`)? Both
+ *  sides resolved: a home under a symlinked path (`/var` → `/private/var`) is still the home. */
+function underWorktreeHome(real: string, home: string): boolean {
+  const base = realOf(superWorktreeRoot(home));
+  return !!base && real.startsWith(base + sep) && !real.slice(base.length + 1).includes(sep);
+}
+
+/** The widening rules: registered (a candidate), an absolute normalised path, a governed checkout,
+ *  still a directory, and by its REAL path directly under the REAL worktree home (a symlinked
+ *  `<name>` pointing elsewhere is not a worktree this feature created). */
+function acceptedWorktree(cand: string, projectRoot: string, home: string): boolean {
+  if (!cand || cand.length > 1024 || cand.includes('\u0000') || resolve(cand) !== cand) return false;
+  if (!isGovernedCheckout(cand, projectRoot, { home })) return false;
+  try {
+    if (!statSync(cand).isDirectory()) return false;
+    const real = realpathSync.native(cand);
+    return underWorktreeHome(real, home);
+  } catch { return false; /* removed or unreadable — not a root */ }
+}
+
+// ─── The folder an owner card runs and writes in (sahip-karti-yerinde K5) ───────────────────
+
+/** Why a card's working folder was refused: the run does not start, the secret is not written.
+ *  `not_governed`: not a real worktree of any repository this project governs (its own or a
+ *  linked one), by that repository's own `git worktree list`. */
+export type CardRootRefusal = 'symlink' | 'missing' | 'not_governed' | 'git_failed';
+export class CardRootRefused extends Error {
+  readonly code: CardRootRefusal;
+  constructor(code: CardRootRefusal) {
+    super(`The card's working folder was refused (${code}).`);
+    this.code = code;
+    this.name = 'CardRootRefused';
   }
-  return null;
+}
+
+const run = promisify(execFile);
+
+/** A repository's git worktrees, by real path (`git worktree list --porcelain`). */
+export async function gitWorktreePaths(repoRoot: string): Promise<string[]> {
+  const { stdout } = await run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain'], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+  const out: string[] = [];
+  for (const line of String(stdout).split('\n')) {
+    if (!line.startsWith('worktree ')) continue;
+    const real = realOf(line.slice('worktree '.length));
+    if (real) out.push(real);
+  }
+  return out;
+}
+
+/** The real path of the checkout a folder belongs to (`git rev-parse --show-toplevel`, an
+ *  argument array, a timeout), or null when it is in no work tree. */
+async function checkoutTopLevel(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await run('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    const top = String(stdout).trim();
+    return top ? realOf(top) : null;
+  } catch { return null; }
+}
+
+/** The repositories this project governs, as a checkout to ask: the project itself, then each
+ *  linked repo present on this machine (session-cwd.ts `governedCommonDirs`' set, with paths). */
+function governedRepoRoots(projectRoot: string, home: string): string[] {
+  const roots = [projectRoot];
+  try {
+    for (const repo of resolveLinkedRepos(projectRoot, home)) if (repo.path) roots.push(repo.path);
+  } catch { /* a malformed config leaves the project's own repo governed */ }
+  return roots;
+}
+
+/**
+ * The folder an owner card of `postingSession` runs in and writes its secret under (K5, D5, and
+ * the decisions of 11 Nov): the session's working folder, read at action time from the SERVER's
+ * state (the Super records, the session's claimed or transcript checkout), never from a request
+ * or a card. Any chat's card, a Super child's or an ordinary chat's.
+ *
+ * THE FOLDER IS PROVEN BY THE GOVERNED REPOSITORY, not by where it lives on disk. Every identity
+ * decision compares REAL paths, so a project under a symlinked path (macOS `/var`, `/tmp`) is
+ * itself.
+ *
+ *  - No candidate, or one whose real path IS the project's: the project root (real).
+ *  - Otherwise the candidate must not be a symlink itself and must be a real directory; a folder
+ *    inside a checkout stands for that checkout's root (`--show-toplevel`). That root must share its
+ *    git common dir with a repository the project GOVERNS (its own or a linked repo), and THAT
+ *    repository's own `git worktree list` must name its real path. So a linked repo's main
+ *    checkout passes, and so does a worktree anywhere (`~/.claude-worktrees/<x>`,
+ *    `<repo>/.claude/worktrees/<x>`); an ungoverned repository's checkout, a folder in no work
+ *    tree, a symlink or a folder that is gone is REFUSED
+ *    ({@link CardRootRefused}): the card never silently runs somewhere else.
+ *
+ * `listWorktrees` is injectable for tests; the real one runs git with an argument array and a
+ * timeout, against the governed repository the candidate belongs to. (The file routes'
+ * {@link sessionWorktreeRoot} is a different widening and keeps its `~/.claude-worktrees` rule.)
+ */
+export async function cardWorkingRoot(
+  contextRoot: string,
+  projectRoot: string,
+  postingSession: string,
+  opts: { home?: string; listWorktrees?: (repoRoot: string) => Promise<string[]> } = {},
+): Promise<string> {
+  const home = opts.home ?? homedir();
+  const realProject = realOf(projectRoot);
+  if (!realProject) throw new CardRootRefused('missing');
+  const candidates = postingSession ? await worktreeCandidates(contextRoot, projectRoot, postingSession, home) : [];
+  if (!candidates.length) return realProject;
+  const cand = candidates[0];
+  let st: ReturnType<typeof lstatSync>;
+  try { st = lstatSync(cand); } catch { throw new CardRootRefused('missing'); }
+  if (st.isSymbolicLink()) throw new CardRootRefused('symlink');
+  if (!st.isDirectory()) throw new CardRootRefused('missing');
+  const realCand = realOf(cand);
+  if (!realCand) throw new CardRootRefused('missing');
+  // A claimed subfolder (`<repo>/packages/app`, `<project>/sub`) is its checkout: the card's folder
+  // is that checkout's ROOT (`git rev-parse --show-toplevel`), proven below like any other.
+  const real = await checkoutTopLevel(realCand);
+  if (!real) throw new CardRootRefused('not_governed');
+  if (real === realProject) return realProject;
+  // A project inside a larger repository (`<mono>/apps/x` holding the vault): a folder in the
+  // project resolves to `<mono>`, an ANCESTOR of the project. That is never the card's folder;
+  // a candidate inside the project is the project.
+  if (realProject.startsWith(real + sep) && (realCand === realProject || realCand.startsWith(realProject + sep))) return realProject;
+  // The governed repository this checkout belongs to: the one sharing its git common dir.
+  const common = gitCommonDir(real);
+  if (!common) throw new CardRootRefused('not_governed');
+  const repo = governedRepoRoots(realProject, home).find((r) => gitCommonDir(r) === common);
+  if (!repo) throw new CardRootRefused('not_governed');
+  let listed: string[];
+  try {
+    const raw = await (opts.listWorktrees ?? gitWorktreePaths)(repo);
+    listed = raw.map((p) => realOf(p) ?? resolve(p));
+  } catch { throw new CardRootRefused('git_failed'); }
+  if (!listed.includes(real)) throw new CardRootRefused('not_governed');
+  return real;
 }

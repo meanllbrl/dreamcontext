@@ -140,7 +140,12 @@ import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, 
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
+import { answerOwnerItem } from '../../lib/super/answer.js';
+import { registerOwnerCardLookup, registerOwnerItemCloser, registerOwnerReceiptDeliverer } from '../owner-receipts.js';
+import { isOwnerCardKind } from '../../lib/super/owner-wait.js';
+import type { OwnerReceiptMark } from '../../lib/assistant/chat-registry.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
@@ -1107,6 +1112,28 @@ export function phoneHolds(sessionId: string): boolean {
   return false;
 }
 setPhoneHoldsProbe(phoneHolds);
+
+/** How long a delivered card result may take to reach the registry (the switch gate can hold
+ *  a frame a moment); past it the delivery counts as failed and the receipt stays held. */
+const OWNER_RECEIPT_SEEN_MS = 30_000;
+
+// ── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1, K6) ──────────
+// The W1 registrations, made once when the server loads this module: the deliverer (a live crew
+// child gets its result as an `ownerReceipt` frame, a parked one is woken, an ended one's Super
+// has it), the lookup lane B asks before a card action, and the owner's Not needed (his answer
+// path, `answerOwnerItem`). The waker is registered by routes/super.ts (its resume core).
+registerOwnerReceiptDeliverer(deliverHeldOwnerReceipts);
+registerOwnerCardLookup((postingSession, cardRef) => {
+  const l = lookupOwnerCard(postingSession, cardRef);
+  return l ? { handle: l.handle, target: l.target, itemId: l.itemId, itemOpen: l.itemOpen, superSession: l.superSession } : null;
+});
+registerOwnerItemCloser(async (l, by) => {
+  if (by !== 'not_needed' || !l.itemOpen) return false;
+  const rec = ownerItemRecord(l.itemId);
+  if (!rec) return false;
+  const r = await answerOwnerItem(rec.root, { record: rec.record, item: l.itemId, via: 'bar', answer: { kind: 'dismiss' } });
+  return r.ok;
+});
 
 let deviceRevocationArmed = false;
 
@@ -2837,6 +2864,10 @@ export function startChatSession(
       interrupt: () => { if (alive) onWsMessage(JSON.stringify({ type: 'interrupt' })); },
     })
     : () => { /* not a Super */ };
+  /** Owner-proven card results on their way in (sahip-karti-yerinde K6), by text: the frame that
+   *  carries one is marked `ownerReceipt` for the registry; each entry dies on its frame or its
+   *  timeout (every store key needs a death). */
+  const ownerReceiptTurns = new Map<string, { mark: OwnerReceiptMark; resolve: (ok: boolean) => void }>();
   // How the server writes ITS OWN turn into any live crew process, window or not (the owner's
   // Allow once, K3): the injector's path, the turn noted as the server's so it is never read as
   // his words (it clears no other wait).
@@ -2850,9 +2881,30 @@ export function startChatSession(
         onWsMessage(frame);
         return true;
       },
+      // An owner-proven card result (sahip-karti-yerinde K6): the same path, its frame marked
+      // `ownerReceipt` for the registry (only the server sets that mark), resolved once the
+      // registry has seen it (the card's wait closed by its id). A window's ack is never this.
+      sendOwnerReceipt: (text, mark) => {
+        if (!alive || stdinEnding() || handedOff || !text.trim()) return Promise.resolve(false);
+        return new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => { if (ownerReceiptTurns.get(text)?.resolve === resolve) ownerReceiptTurns.delete(text); resolve(false); }, OWNER_RECEIPT_SEEN_MS);
+          timer.unref?.();
+          ownerReceiptTurns.set(text, { mark, resolve: (ok) => { clearTimeout(timer); resolve(ok); } });
+          crewSeat.noteServerTurn(text);
+          const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
+          mirrorFrames.add(frame);
+          onWsMessage(frame);
+        });
+      },
       sessionPath: () => crewSeat.sessionPath(),
     })
     : () => { /* not a crew process */ };
+  // Live edge (K6): what is held for this crew child (a card result, a cut-off notice) goes in
+  // now that its process runs; every turn end is an edge too (inbox.ts onChange).
+  if (crewSeat && registry) {
+    const t = setTimeout(() => { void ownerCardLiveEdge(chatRegistryId).catch(() => undefined); }, 0);
+    t.unref?.();
+  }
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -3041,6 +3093,13 @@ export function startChatSession(
     dropPhoneSocket('mac mode ended');
     return true;
   };
+  /** The phone let go of this chat: a card result held because it had the job open can wake it
+   *  now (sahip-karti-yerinde K6 `held:phone`, its clearing edge). */
+  const phoneLetGo = (): void => {
+    if (!registry) return;
+    const t = setTimeout(() => { void retryHeldOwnerCards('held:phone', { child: chatRegistryId }).catch(() => undefined); }, 0);
+    t.unref?.();
+  };
   /**
    * Let a phone socket go NOW: unbound from this child before the close is even sent, so a
    * client that never answers the close frame (a script, not a browser) cannot keep driving the
@@ -3053,6 +3112,7 @@ export function startChatSession(
     sock.off('message', onSocketFrame);
     try { sock.close(DEVICE_REVOKED_CLOSE, reason); } catch { /* gone */ }
     onSocketGone();
+    phoneLetGo();
     const t = setTimeout(() => { try { if (typeof sock.terminate === 'function') sock.terminate(); } catch { /* gone */ } }, 1000);
     t.unref?.();
   }
@@ -3163,12 +3223,20 @@ export function startChatSession(
   /** The window's last `focus` frame: the owner looked at or typed in this tab. */
   let focusedAt = 0;
   let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
+  /** The park asked of the window is an END (`super end`, retire): its exit is no park (K2). */
+  let parkEnding = false;
   const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'queued', 'focused'];
   const parkThis = (reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> => {
     if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
     if (parkAsk) return parkAsk.promise;
     // No socket (the window closed, the phone slept): nobody to ask, the process just ends.
-    if (detached || ws.readyState !== ws.OPEN) { unregisterPark(); drain(); return Promise.resolve('drained'); }
+    // The park is recorded BEFORE it drains (sahip-karti-yerinde K2): its exit reads `parked`,
+    // never `gone`, while a card waits on the owner. An end is no park.
+    if (detached || ws.readyState !== ws.OPEN) {
+      if (!opts.end && registry) noteChildParking(chatRegistryId);
+      unregisterPark(); drain(); return Promise.resolve('drained');
+    }
+    parkEnding = opts.end === true;
     const id = randomUUID();
     let settle!: (o: ParkOutcome) => void;
     const promise = new Promise<ParkOutcome>((res) => { settle = res; });
@@ -3184,6 +3252,8 @@ export function startChatSession(
   const onParkResult = (r: { id?: unknown; ok?: unknown; error?: unknown }): void => {
     if (!parkAsk || r.id !== parkAsk.id) return;
     if (r.ok === true) {
+      // Parked (not ended): recorded before the close that ends the process (K2).
+      if (!parkEnding && registry) noteChildParking(chatRegistryId);
       endOnSocketGone = true;
       unregisterPark();
       const t = setTimeout(() => { if (alive && !detached) drain(); }, 5_000);
@@ -3202,6 +3272,9 @@ export function startChatSession(
     exempt: () => (isSuper ? 'super' : ownerDevice?.store === 'mac' ? 'phone' : null),
     busy: () => turnsInFlight > 0,
     asking: () => outstandingAsks.size > 0 || (registry ? getChat(chatRegistryId)?.status === 'asking' : false),
+    // An owner CARD waits on the owner (sahip-karti-yerinde K3): the registry's open card waits,
+    // or the Super record's open card item (a resumed child before its wait is re-adopted).
+    ownerWait: () => !!registry && ((getChat(chatRegistryId)?.ownerWaits ?? []).some((w) => isOwnerCardKind(w.kind)) || childHasOpenCard(chatRegistryId)),
     backgroundTasks: () => backgroundTasks,
     idleSince: () => Math.max(spawnedAt, live.lastTurnEndedAt ?? 0),
     focusedAt: () => focusedAt,
@@ -3515,8 +3588,17 @@ export function startChatSession(
       || (!!bridgeTool && isAccountTool(bridgeTool) && text === toolSwitchFor(bridgeTool).limitContinueText);
     // A run report, an interrupt note or a hand-off the app posted is not his either (usage-readers).
     // A turn the server wrote through the crew handle (an Allow once) is the server's too.
+    // An owner-proven card result the server delivers (sahip-karti-yerinde K6): marked for the
+    // registry, which closes that card's wait by its id and nothing else.
+    const receipt = !tgSource ? ownerReceiptTurns.get(text) : undefined;
+    if (receipt) ownerReceiptTurns.delete(text);
     const serverTurn = !tgSource && !!crewSeat?.takeServerTurn(text);
-    registry?.userSent(text, tgSource ? { source: tgSource } : serverContinue || serverTurn || isServerTurnText(text) ? { server: true } : undefined);
+    registry?.userSent(text, tgSource ? { source: tgSource }
+      : receipt ? { server: true, ownerReceipt: receipt.mark }
+        // A turn the server wrote through the crew handle closes nothing (K4 attribution).
+        : serverTurn ? { server: true, closesNothing: true }
+          : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
+    receipt?.resolve(true);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -3772,6 +3854,9 @@ export function startChatSession(
     // Its binding goes before its crew handle: no enforcer may still name a pid that is gone.
     crewSeat?.exited();
     unregisterCrewHandle();
+    // A card result still on its way never went in: it stays held for the next live edge (K6).
+    for (const v of [...ownerReceiptTurns.values()]) v.resolve(false);
+    ownerReceiptTurns.clear();
     registry?.exited();
     unregisterInjector();
     unlistenCards();
@@ -3906,7 +3991,10 @@ export function startChatSession(
     stopPing();
     ws = next;
     // Per socket: a phone socket makes its device the owner, a desktop socket clears it.
+    const phoneHadIt = ownerDevice?.store === 'mac';
     ownerDevice = socketDevice.get(next) ?? null;
+    // The Mac took it back from the phone: the phone's hold is released (K6 `held:phone`).
+    if (phoneHadIt && ownerDevice?.store !== 'mac') phoneLetGo();
     detached = false;
     clearDetachTimers();
     bindSocket();
@@ -3989,6 +4077,8 @@ export function startChatSession(
     detached = true;
     detachedAt = Date.now();
     armDetachReap();
+    // A phone that held it went away (slept, closed): its hold is released (K6 `held:phone`).
+    if (socketDevice.get(ws)?.store === 'mac') phoneLetGo();
   }
 
   // ── claude stdout → ws (verbatim NDJSON relay) ─────────────────────────────────────

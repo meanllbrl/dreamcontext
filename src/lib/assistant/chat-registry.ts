@@ -36,7 +36,7 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, refusalWait, refusalWaitId, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalWait, refusalWaitId, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import {
@@ -196,7 +196,9 @@ export interface ChatHandle {
   observe(frame: Record<string, unknown>): void;
   /** `source` = who wrote the turn (I4, J1): a Telegram text clears no owner wait and is never
    *  "unheard" (a run or secret card is answered on the Mac or the phone, never by a chat text). */
-  userSent(text: string, opts?: { source?: InjectedSource; server?: true }): void;
+  /** `ownerReceipt`: the server delivered an owner-proven card result (closes that card by id
+   *  only). `closesNothing`: the server's own turn through the crew handle (answers no wait). */
+  userSent(text: string, opts?: { source?: InjectedSource; server?: true; ownerReceipt?: OwnerReceiptMark; closesNothing?: true }): void;
   /** `answers` (question → picked labels, AskUserQuestion's own `updatedInput.answers`) when the
    *  window answered a question: what the Telegram copy of that card says it was answered with. */
   answered(requestId?: string, answers?: unknown): void;
@@ -271,14 +273,70 @@ function emitOwner(e: ChatEntry): void {
   }
 }
 
-/** Replace the chat's owner waits; tell the owner listeners only when they changed. */
+/** Replace the chat's owner waits; tell the owner listeners only when they changed. Over the cap,
+ *  an open CARD wait already held is never the one evicted (sahip-karti-yerinde K2: it may have a
+ *  running action or an owed receipt): the newcomer beyond the cap is the one not tracked, and
+ *  the child is told the owner already has that many open cards. Other kinds keep the newest. */
 function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
   const cur = e.ownerWaits ?? [];
   const key = (ws: OwnerWait[]) => ws.map((w) => `${w.kind}:${w.id}:${w.line}`).join('\n');
   if (key(cur) === key(next)) return;
-  if (next.length) e.ownerWaits = next.slice(-MAX_OWNER_WAITS); else delete e.ownerWaits;
+  let kept = next;
+  if (next.length > MAX_OWNER_WAITS) {
+    const held = new Set(cur.filter((w) => isOwnerCardKind(w.kind)).map(waitKey));
+    const pinned = next.filter((w) => held.has(waitKey(w)));
+    const rest = next.filter((w) => !held.has(waitKey(w)));
+    const room = Math.max(0, MAX_OWNER_WAITS - pinned.length);
+    // New cards take the free seats in posting order (one past the cap is not tracked); other
+    // kinds (a refusal) keep the newest in what is left.
+    const others = rest.filter((w) => !isOwnerCardKind(w.kind));
+    const newCards = rest.filter((w) => isOwnerCardKind(w.kind));
+    const keepCards = newCards.slice(0, room);
+    const left = room - keepCards.length;
+    const fill = [...keepCards, ...(left > 0 ? others.slice(-left) : [])];
+    const dropped = newCards.filter((w) => !keepCards.includes(w));
+    kept = next.filter((w) => pinned.includes(w) || fill.includes(w));
+    for (const w of dropped) tellCardOverflow(e.sessionId, w);
+  }
+  if (kept.length) e.ownerWaits = kept.slice(-MAX_OWNER_WAITS); else delete e.ownerWaits;
+  pruneOrigins(e);
+  if (key(cur) === key(e.ownerWaits ?? [])) return;
   emitOwner(e);
 }
+
+/** What the child is told when its card is past the cap (K2): the owner already has that many. */
+export const CARD_OVERFLOW_TEXT = (w: Pick<OwnerWait, 'kind' | 'id'>): string =>
+  `[server] Your ${w.kind} card "${w.id}" is not tracked: the owner already has ${MAX_OWNER_WAITS} open cards from you. Wait until one of them is done, then post it again.`;
+
+/** Tell a crew child its card past the cap is not tracked (after the frame that posted it). */
+function tellCardOverflow(sessionId: string, w: OwnerWait): void {
+  const t = setTimeout(() => {
+    try { crewHandles.get(sessionId)?.sendServerTurn(CARD_OVERFLOW_TEXT(w)); } catch { /* a closed chat hears nothing */ }
+  }, 0);
+  t.unref?.();
+}
+
+// ─── Where an owner card came from (sahip-karti-yerinde K1) ───────────────────
+
+/** The frame a card wait was read from: what the inbox builds the item's card handle with. */
+export interface OwnerWaitOrigin { messageUuid: string; conversationId: string; text: string }
+/** By `<session>\n<kind>:<id>`; bounded per chat by the waits it holds (dropped with them). */
+const waitOrigins = new Map<string, OwnerWaitOrigin>();
+const originKey = (sid: string, w: { kind: string; id: string }): string => `${sid}\n${waitKey(w)}`;
+
+/** The frame the chat's open card wait `kind:id` was posted in, or null (an adopted wait, a
+ *  restart: the item already carries its handle). Server-internal. */
+export function ownerWaitOrigin(sessionId: string, kind: string, id: string): OwnerWaitOrigin | null {
+  return waitOrigins.get(originKey(sessionId, { kind, id })) ?? null;
+}
+function pruneOrigins(e: ChatEntry): void {
+  const live = new Set((e.ownerWaits ?? []).map((w) => originKey(e.sessionId, w)));
+  for (const k of [...waitOrigins.keys()]) if (k.startsWith(`${e.sessionId}\n`) && !live.has(k)) waitOrigins.delete(k);
+}
+
+/** A receipt the SERVER delivered for an owner-proven card action (K4, K6): it closes the wait
+ *  with this card id, and nothing else does on its behalf. */
+export interface OwnerReceiptMark { kind: OwnerCardKind; id: string }
 
 /**
  * A background roster entry that reads as a server or a watch left running (a dev server, a
@@ -397,12 +455,18 @@ export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: 
 
 /** The Super Agent closed an owner item (`super queue done`: he did it another way): the wait
  *  is answered, so it never comes back from the registry. */
-export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string): void {
+export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string, opts: { postingSession?: string } = {}): void {
+  // Its card records close with it, EVERY card kind (run, secret, checklist, mcp: H1,
+  // sahip-karti-yerinde K1): no button, phone, Telegram tap or slot acts on it after. Closed
+  // whether or not a live entry holds the wait (a parked, gone or restarted child's record too),
+  // and under the session that POSTED the card (a succeeded card's item names its successor).
+  if (isOwnerCardKind(kind)) {
+    closeCardsById(sessionId, kind, id);
+    if (opts.postingSession && opts.postingSession !== sessionId) closeCardsById(opts.postingSession, kind, id);
+  }
   const e = entries.get(sessionId);
   if (!e) return;
   const k = `${kind}:${id}`;
-  // Its run/secret records close with it (H1): no button, phone or Telegram tap runs it after.
-  if (kind === 'run' || kind === 'secret') closeCardsById(sessionId, kind, id);
   const held = (e.ownerWaits ?? []).filter((w) => waitKey(w) === k);
   if (held.length) { answerWaits(e, held); return; }
   if (!e.ownerAnswered?.includes(k)) e.ownerAnswered = [...(e.ownerAnswered ?? []), k].slice(-MAX_ANSWERED);
@@ -751,6 +815,8 @@ export function registerChat(init: {
             const keep = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
             // A card posted again is a new ask, even under an id he answered before.
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
+            // The frame each card came from (K1): the inbox makes the item's card handle from it.
+            if (uuid) for (const c of cards) waitOrigins.set(originKey(e.sessionId, c), { messageUuid: uuid, conversationId: e.conversationId ?? '', text });
             setOwnerWaits(e, [...keep, ...cards]);
           }
           // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
@@ -792,13 +858,28 @@ export function registerChat(init: {
       // A send the server noted for an agent (`super send`, an agent's `window send` into the
       // Super) is never his words: it answers no wait and ends no Telegram presence.
       const steered = !telegramSideSource(opts?.source) && takeSuperSend(e.sessionId, text);
-      emitUserSent(e.sessionId, text, opts?.source, opts?.server === true || steered);
-      // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
-      // Super Agent steering the child (a send the server noted for it) clears nothing. A
-      // Telegram text clears nothing either (H1, J1): only a receipt closes a run or secret card.
-      if (!telegramSideSource(opts?.source) && !steered) {
-        // The server's own turn (an Allow-once note, a usage continue) is never his words: the
-        // refusal it carries closes when its grant is used, and a stall when the server says so.
+      const receipt = opts?.ownerReceipt;
+      emitUserSent(e.sessionId, text, opts?.source, opts?.server === true || steered || !!receipt);
+      // A receipt the SERVER delivered for an owner-proven action (sahip-karti-yerinde K4, K6)
+      // closes its own card BY ID, nothing else; one whose wait is already closed (a rerun, a
+      // second checklist submit) closes nothing and is still delivered.
+      if (receipt) {
+        const hit = (e.ownerWaits ?? []).filter((w) => w.kind === receipt.kind && w.id === receipt.id);
+        if (hit.length) answerWaits(e, hit);
+        else if (!e.ownerAnswered?.includes(`${receipt.kind}:${receipt.id}`)) {
+          // Not held here yet (a woken child's wait still lives only in the record): answered.
+          e.ownerAnswered = [...(e.ownerAnswered ?? []), `${receipt.kind}:${receipt.id}`].slice(-MAX_ANSWERED);
+          emitOwner(e);
+        }
+      }
+      // HIS answer (his own words to the child, or a receipt the window wrote for his press)
+      // clears what it answers; the Super Agent steering the child (a send the server noted for
+      // it) clears nothing. A Telegram text clears nothing either (H1, J1). A turn the server wrote
+      // through the crew handle (an Allow-once note, a cut-off card notice) closes NOTHING, even
+      // when it LOOKS like a receipt (K4 attribution): a crew card closes by its id above.
+      else if (!telegramSideSource(opts?.source) && !steered && opts?.closesNothing !== true) {
+        // A server-looking turn the window wrote (a run report) closes only its card, never a
+        // refusal or a stall: those close when their grant is used or the server says so.
         if (e.ownerWaits?.length && opts?.server === true) answerWaits(e, answeredBy(text, e.ownerWaits).filter((w) => w.kind !== 'refusal' && w.kind !== 'stalled'));
         else if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
@@ -866,7 +947,10 @@ export function registerChat(init: {
         deathTimers.delete(init.sessionId);
         // Only THIS entry's death drops its refs: an old child exiting after its successor
         // registered under the same id never deletes the successor's (F5).
-        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); dropAllRefs(init.sessionId); }
+        if (entries.get(init.sessionId) === e) {
+          entries.delete(init.sessionId); unheard.delete(init.sessionId); dropAllRefs(init.sessionId);
+          for (const k of [...waitOrigins.keys()]) if (k.startsWith(`${init.sessionId}\n`)) waitOrigins.delete(k);
+        }
       }, GONE_TTL_MS);
       t.unref?.();
       deathTimers.set(init.sessionId, t);
@@ -939,6 +1023,7 @@ export function _resetChatRegistry(): void {
   listeners.clear();
   ownerListeners.clear();
   unheard.clear();
+  waitOrigins.clear();
   assistantListeners.clear();
   userSentListeners.clear();
   injectors.clear();
@@ -1192,6 +1277,10 @@ export function setChatPermissionMode(sessionId: string, mode: string): void {
 
 export interface CrewHandle {
   sendServerTurn(text: string): boolean;
+  /** Write an owner-proven card result into the process as a user frame on the `ownerReceipt`
+   *  channel (sahip-karti-yerinde K6): resolves true once the registry has seen that frame (the
+   *  wait closed by its card id), false when it could not go in. Only the server calls it. */
+  sendOwnerReceipt?(text: string, mark: OwnerReceiptMark): Promise<boolean>;
   /** The PATH the process really runs with (its login shell's, read once at spawn), or null while
    *  unknown: a grant resolves its interpreter with it, the way the session's hook will. */
   sessionPath?(): string | null;

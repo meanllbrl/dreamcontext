@@ -29,19 +29,81 @@
  * derived label is a guess, and a wrong guess now reaches a window full of unrelated live
  * projects rather than one empty one.
  */
-import { isDesktop } from './desktop';
+import { isDesktop, type ChecklistNonceBinding } from './desktop';
 import { resolveLiveWindowForVault } from './windowRegistry';
 import { checklistWindowLabel } from './checklistStore';
+import { buildSubmitMarkdown, type ChecklistSubmitState } from './checklistMarkdown';
 
 export const CHECKLIST_SUBMIT_EVENT = 'dream://checklist-submit';
 export const CHECKLIST_ACK_EVENT = 'dream://checklist-ack';
-export const CHECKLIST_ACK_TIMEOUT_MS = 2000;
+/** The vault window's relay now posts to the server before it acks (K4): a little more room. */
+export const CHECKLIST_ACK_TIMEOUT_MS = 6000;
 
+/**
+ * A checklist window's submit (sahip-karti-yerinde K4, K6): the STRUCTURED state (ticks, notes,
+ * files) and the typed `wants:'secret'` values, plus the single-use nonce the vault window minted
+ * when it opened this window (`#n=`). Never finished markdown: the server builds the receipt from
+ * the record's own spec, and a chat with no record gets markdown the VAULT window builds from the
+ * spec it drew.
+ */
 export interface ChecklistSubmitPayload {
   vault: string;
   conversationId: string;
   checklistId: string;
-  markdown: string;
+  nonce: string;
+  state: ChecklistSubmitState;
+  secrets: Record<string, string>;
+}
+
+function isSubmitPayload(p: unknown): p is ChecklistSubmitPayload {
+  if (!p || typeof p !== 'object') return false;
+  const o = p as Record<string, unknown>;
+  if ('markdown' in o) return false;
+  const st = o.state as Record<string, unknown> | undefined;
+  return typeof o.vault === 'string' && typeof o.checklistId === 'string' && typeof o.nonce === 'string'
+    && !!st && typeof st === 'object' && typeof st.checked === 'object' && typeof st.notes === 'object' && typeof st.files === 'object'
+    && !!o.secrets && typeof o.secrets === 'object';
+}
+
+/** What the vault window's relay may do, injected so the rules below are tested without Tauri. */
+export interface ChecklistRelayDeps {
+  /** desktop.ts `spendChecklistNonce`: synchronous, single use. */
+  spend: (vault: string, checklistId: string, nonce: unknown) => ChecklistNonceBinding | null;
+  /** `POST /api/agent/cards/checklist-submit` in the owner's name. `outcome: 'window'`: not a crew
+   *  card, this window posts the submit into the chat itself (today's path). */
+  submitRecord: (body: { session: string; card: string; state: ChecklistSubmitState; secrets: Record<string, string> }) => Promise<{ ok: boolean; outcome?: string; text?: string }>;
+  /** Post into a live chat of this window (postToSession); false when none took it. */
+  postToChat: (conversationId: string, markdown: string) => boolean;
+}
+
+/**
+ * THE RELAY (K4): a checklist submit goes on ONLY with the nonce this window minted for that
+ * checklist's open. The nonce is spent synchronously, before the first await, whether what follows
+ * succeeds or fails; an event with no nonce, a wrong one or a spent one (another frame, the viewer,
+ * a web card on another port, a stale window after a reload) sends NOTHING. A record goes to the
+ * gated route, routed by record, never by a live session; a chat card with no record posts the
+ * markdown built here from the spec the vault window drew. Resolves whether it was taken.
+ */
+export async function relayChecklistSubmit(p: unknown, deps: ChecklistRelayDeps): Promise<boolean> {
+  if (!p || typeof p !== 'object') return false;
+  const raw = p as Record<string, unknown>;
+  if (typeof raw.vault !== 'string' || typeof raw.checklistId !== 'string') return false;
+  // Spent FIRST, synchronously: nothing below may leave it usable.
+  const bind = deps.spend(raw.vault, raw.checklistId, raw.nonce);
+  if (!bind || !bind.spec || !isSubmitPayload(p)) return false;
+  // The markdown a chat gets: the server's own receipt when it built one, else the one built here.
+  let markdown = '';
+  if (bind.cardRef) {
+    try {
+      const r = await deps.submitRecord({ session: bind.postingSession, card: bind.cardRef, state: p.state, secrets: p.secrets });
+      if (!r.ok) return false;
+      if (r.outcome !== 'window') return true;
+      if (typeof r.text === 'string' && r.text.startsWith('Checklist:')) markdown = r.text;
+    } catch { return false; }
+  }
+  const to = bind.postingSession || p.conversationId;
+  if (!to) return false;
+  return deps.postToChat(to, markdown || buildSubmitMarkdown(bind.spec, p.state, p.secrets));
 }
 
 interface ChecklistAckPayload {
@@ -82,6 +144,7 @@ function eventApi(): Promise<typeof import('@tauri-apps/api/event')> {
  * costs the user one retry; a mis-delivered one hands another project a pasted API key.
  */
 export async function submitChecklist(p: ChecklistSubmitPayload): Promise<boolean> {
+  if (!p.nonce) return false;
   if (!isDesktop()) return false;
   let unlisten: (() => void) | null = null;
   try {
@@ -125,7 +188,7 @@ export async function submitChecklist(p: ChecklistSubmitPayload): Promise<boolea
  */
 export function listenForChecklistSubmits(
   vault: string,
-  handler: (p: ChecklistSubmitPayload) => boolean,
+  handler: (p: ChecklistSubmitPayload) => boolean | Promise<boolean>,
 ): () => void {
   if (!isDesktop()) return () => {};
   let unlisten: (() => void) | null = null;
@@ -136,11 +199,14 @@ export function listenForChecklistSubmits(
       const fn = await listen<ChecklistSubmitPayload>(CHECKLIST_SUBMIT_EVENT, (event) => {
         const payload = event.payload;
         if (!payload || payload.vault !== vault) return;
-        if (!handler(payload)) return;
-        void emitTo(checklistWindowLabel(payload.vault, payload.checklistId), CHECKLIST_ACK_EVENT, {
-          checklistId: payload.checklistId,
-          ok: true,
-        } satisfies ChecklistAckPayload).catch(() => { /* best-effort — a lost ack just surfaces as the sender's own timeout */ });
+        // The handler spends the nonce synchronously before it awaits anything (relayChecklistSubmit).
+        void Promise.resolve(handler(payload)).then((taken) => {
+          if (!taken) return;
+          void emitTo(checklistWindowLabel(payload.vault, payload.checklistId), CHECKLIST_ACK_EVENT, {
+            checklistId: payload.checklistId,
+            ok: true,
+          } satisfies ChecklistAckPayload).catch(() => { /* best-effort — a lost ack just surfaces as the sender's own timeout */ });
+        }, () => { /* refused: the sender's timeout draws its failure strip */ });
       });
       // The effect that registered us unmounted (or resubscribed) while the listen() IPC
       // round-trip was still in flight — unlisten immediately instead of leaking it into

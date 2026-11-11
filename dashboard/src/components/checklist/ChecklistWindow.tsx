@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { closeCurrentWindow, pinCurrentWindow, startTitleBarDrag } from '../../lib/desktop';
+import { CHECKLIST_NONCE_EVENT, checklistNonceFromHash, closeCurrentWindow, isDesktop, pinCurrentWindow, startTitleBarDrag } from '../../lib/desktop';
 import {
   readEnvelope, writeState, readState, clearChecklist, checklistEnvelopeKey,
   type ChecklistEnvelope,
@@ -114,6 +114,10 @@ export function ChecklistWindow({ id, vault }: Props) {
   const [phase, setPhase] = useState<SubmitPhase>('idle');
   const [failedMarkdown, setFailedMarkdown] = useState('');
   const [copied, setCopied] = useState(false);
+  // The single-use nonce the vault window minted for THIS open (K4), from the URL fragment, or
+  // handed over when the card was opened again onto this window. Spent by the vault window at the
+  // first submit it sees, so after a failed submit this window needs a fresh open.
+  const [nonce, setNonce] = useState<string | null>(() => checklistNonceFromHash(window.location.hash));
 
   const valid = !!(id && vault && envelope && envelope.vault === vault);
 
@@ -155,6 +159,26 @@ export function ChecklistWindow({ id, vault }: Props) {
     return () => window.removeEventListener('storage', onStorage);
   }, [id, vault]);
 
+  // A second Open of the card on this window revokes the old nonce and hands this window the new
+  // one, addressed to this window only.
+  useEffect(() => {
+    if (!isDesktop() || !id) return undefined;
+    let off: (() => void) | null = null;
+    let gone = false;
+    void (async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+        const fn = await getCurrentWebviewWindow().listen<{ checklistId?: string; nonce?: string }>(CHECKLIST_NONCE_EVENT, (e) => {
+          if (e.payload?.checklistId !== id || typeof e.payload.nonce !== 'string') return;
+          setNonce(e.payload.nonce);
+          setPhase((p) => (p === 'failed' ? 'idle' : p));
+        });
+        if (gone) fn(); else off = fn;
+      } catch { /* no shell: the submit says "Reopen from the card" */ }
+    })();
+    return () => { gone = true; off?.(); };
+  }, [id]);
+
   // The window opens pinned; this lifts it onto every Space too (see pinCurrentWindow).
   useEffect(() => { void pinCurrentWindow(true); }, []);
 
@@ -169,13 +193,19 @@ export function ChecklistWindow({ id, vault }: Props) {
     // `sent`/`closing` belong to a window that is already on its way out.
     if (!valid || !envelope || (phase !== 'idle' && phase !== 'failed')) return;
     setPhase('sending');
+    // Kept here for the failure strip's Copy only: what is SENT is the structured state (K4).
     const markdown = buildSubmitMarkdown(envelope.spec, state, secrets);
-    const ok = await submitChecklist({
+    const used = nonce;
+    // The vault window spends it at first sight, whatever happens next.
+    setNonce(null);
+    const ok = used ? await submitChecklist({
       vault: envelope.vault,
       conversationId: envelope.conversationId,
       checklistId: envelope.spec.id,
-      markdown,
-    });
+      nonce: used,
+      state: { checked: state.checked, notes: state.notes, files: state.files },
+      secrets,
+    }) : false;
     if (ok) {
       clearChecklist(envelope.vault, envelope.spec.id);
       // NOT `closeCurrentWindow()` here: the submit succeeded, and killing the webview in the
@@ -188,7 +218,7 @@ export function ChecklistWindow({ id, vault }: Props) {
     // Copy click away, and every tick/note/file/secret already typed stays right where it was.
     setFailedMarkdown(markdown);
     setPhase('failed');
-  }, [valid, envelope, state, secrets, phase]);
+  }, [valid, envelope, state, secrets, phase, nonce]);
 
   /** The ✕ takes the same road as a successful submit. The crash in #234 was not about
    *  submitting — it was about closing a window whose list had been scrolled, and the title
@@ -269,6 +299,7 @@ export function ChecklistWindow({ id, vault }: Props) {
             {phase === 'failed' && (
               <div className="checklist-fail-strip" role="alert">
                 <p>Couldn't reach the chat — that conversation may have been closed.</p>
+                <p data-testid="checklist-reopen">Reopen from the card to send it again.</p>
                 <button type="button" className="checklist-copy-btn" onClick={() => void copyMarkdown()}>
                   {copied ? 'Copied ✓' : 'Copy to clipboard'}
                 </button>
@@ -278,7 +309,7 @@ export function ChecklistWindow({ id, vault }: Props) {
               type="button"
               className="checklist-submit-btn"
               onClick={() => void handleSubmit()}
-              disabled={phase === 'sending'}
+              disabled={phase === 'sending' || (phase === 'failed' && !nonce)}
             >
               {phase === 'sending' ? 'Sending…' : envelope.spec.submitLabel || 'Submit'}
             </button>

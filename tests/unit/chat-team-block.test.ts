@@ -295,6 +295,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '`kept: owner_layout` in the answer = he chose that layout: leave it.',
       // 2026-11-02 (rev 28): a Bypass child's leftover permission is the Super's to decide.
       '- Permission requests never reach you: the owner answers them. Never try to.',
+      // rev 39 (2026-11-11, sahip-karti-yerinde): the event=owner bullet, rewritten in place (same 4 rows).
+      '- `event=owner`: a child stopped on something only HE can do (a sign-in or command to run',
+      '  himself, a key, a checklist). It is not done; it is first on his Waiting on you list. Tell him',
+      '  at once, even in an event turn: which job, what to do. Never do it for him; did he do it another',
+      '  way, `super queue done <item>`.',
       '  every one, the second and later too.',
       expect.stringContaining('<super-brief rev=16>'),
     ]);
@@ -385,12 +390,18 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // 2026-11-02 (rev 28): a Bypass child's leftover permission is the Super's to decide.
       '- `event=permission` (his Bypass child): decide it as its event line says. Any other',
       "  permission is the owner's alone: never try.",
+      // rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in this chat; the
+      // Super never sends him to the child, never presses or relays it, never resumes a parked child for it.
+      '- `event=owner`: a child stopped on a card only HE can do, on his bar and in this chat:',
+      '  never send him to the child, never press or relay it. Tell him',
+      '  at once, even in an event turn: which job, what to do. Did he do it another',
+      '  way, `super queue done <item>`. A parked child wakes when he acts: never resume it.',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
       // rev 38 (2026-11-09, super-rutin): a scheduled job's turn.
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
-      expect.stringContaining('<super-brief rev=38>'),
+      expect.stringContaining('<super-brief rev=39>'),
     ]);
-    expect(after.length).toBe(before.length + 54); // +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 54); // +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place, 4 rows for 4) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

@@ -9,7 +9,7 @@ import {
   directChildQuestion, optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
-  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, claimOwnerItem, releaseOwnerItem, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
 import { sizeWords } from '../chat/RefusalCard';
 import {
   claimOwnerAnswer, memberItemText, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
@@ -21,6 +21,10 @@ import { cssEsc } from './StageMotion';
 import { showApprovalRow, showMemberApproval } from './superApprovals';
 import './JobBar.css';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
+import { useApi, useVaultId } from '../../../context/VaultContext';
+import { cardFolderText, cardNotNeeded, useCardState } from '../../../lib/cardRecords';
+import { barCanRun } from '../../../lib/unsafeChars';
+import { publishQueueHeight, requestSlotRun, showOwnerSlot, useSuperQuestions } from './superJobsStore';
 
 /**
  * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
@@ -88,6 +92,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   // An `ask` is the super agent's own question: there is no child behind it.
   const child = head && head.kind !== 'ask' ? sessionFor(head.sessionId) : undefined;
   const [, force] = useReducer((n: number) => n + 1, 0);
+  // A parked child (its tab dormant here) shows Paused on its card row (K7).
+  const pausedFor = useSuperQuestions(state.session ?? null)?.pausedFor;
   // Follow the head's child only: its pending request is what the strip draws.
   useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
 
@@ -137,6 +143,27 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
+  // The bar's REAL height, measured (sahip-karti-yerinde K7): a card row wraps to draw its whole
+  // command, so the stage (planStage `queueHeight`) starts the centre, a sheet and the agenda below
+  // this bottom, at every width and for every row, never below a one-line constant. Includes the
+  // strip's own top padding; 0 when no row is drawn.
+  const barSession = state.session ?? '';
+  useLayoutEffect(() => {
+    const el = headRef.current;
+    if (!barSession) return undefined;
+    if (!el) { publishQueueHeight(barSession, 0); return undefined; }
+    const strip = el.parentElement;
+    const measure = () => {
+      const pad = strip ? el.getBoundingClientRect().top - strip.getBoundingClientRect().top : 0;
+      publishQueueHeight(barSession, el.getBoundingClientRect().height + Math.max(0, pad));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return () => publishQueueHeight(barSession, 0);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => { ro.disconnect(); publishQueueHeight(barSession, 0); };
+  }, [barSession, answerKey, head?.id]);
+
   // Empty: nothing is drawn (the agenda card holds what waits on the owner).
   if (!head) return null;
 
@@ -149,7 +176,9 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
       data-flow={rect ? undefined : 'row'}
       style={rect ? { left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height } : undefined}
     >
-      <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
+      <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}
+        // A child's card row WRAPS (JobBar.css): what its verb acts on is drawn whole, never cut.
+        data-card={(head.kind === 'owner' || head.kind === 'member') && head.card ? head.card.spec.type : undefined}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
           {head.kind === 'member' || head.kind === 'routine' ? null : head.own
             // The Super's own refused command (K1): its own name, no child to open.
@@ -167,6 +196,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
+              : (head.kind === 'owner' || head.kind === 'member') && head.card
+                ? <CardHead item={head} paused={!!pausedFor?.(head.sessionId)} onOpen={() => (head.kind === 'member' ? requestOpenAgents({ slug: head.member ?? '' }) : onShowChild(head.sessionId))} />
               : head.kind === 'member'
                 ? <MemberHead item={head} record={record} showOptions={showOptions} />
               : head.kind === 'routine'
@@ -225,6 +256,119 @@ function OwnerHead({ text, onOpen }: { text: string; onOpen: () => void }) {
           {t('super.queue.openCard')}
         </button>
       </span>
+    </>
+  );
+}
+
+/**
+ * A child's CARD on the row (sahip-karti-yerinde K7, drawing A1-A5): the card's own verb is the
+ * primary button, drawn from the RECORD the item carries, never from chat text.
+ *  - run: ▶ Run with the WHOLE command and the folder it runs in; the press starts it in the Super
+ *    chat's slot with exactly the command drawn here (`shown`), where its terminal shows. A command
+ *    the row cannot draw whole, or one holding characters that could hide what runs, gets Show,
+ *    which brings the slot, never ▶ Run;
+ *  - secret: Enter secret, checklist: Open checklist (both bring the slot, the checklist window
+ *    opened from it); mcp: Open job (D6: connecting stays in the job's own chat).
+ * Then Not needed and an Open link to the job. The row WRAPS (JobBar.css `[data-card]`): the
+ * title, the whole command and its folder are drawn on as many lines as they need, never cut, and
+ * at phone width it stacks (title line, command, buttons), as drawing A has it.
+ */
+function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: boolean; onOpen: () => void }) {
+  const { t } = useI18n();
+  const api = useApi();
+  const { vault } = useVaultId();
+  const handle = item.card;
+  const memberName = useAgent(item.kind === 'member' ? item.member || null : null).data?.agent.title || item.member || '';
+  const { state } = useCardState(vault ?? null, handle?.spec.type === 'run' ? handle : undefined, item.delivery ?? '');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  if (!handle) return null;
+  const spec = handle.spec;
+  const slot = () => showOwnerSlot(item.id);
+  const toSlot = () => { if (!slot()) onOpen(); };
+  const notNeeded = () => {
+    if (busy || !claimOwnerItem(item.id)) return;
+    setBusy(true);
+    setNote(null);
+    void cardNotNeeded(api, { session: handle.postingSession, card: handle.cardRef }).then((r) => {
+      setBusy(false);
+      if (r.ok) return;
+      releaseOwnerItem(item.id);
+      setNote(r.message || t('owner.answer.failed'));
+    });
+  };
+
+  // THE ROW'S TEXT IS NEVER CUT (K4 "what is shown is what runs"): it wraps whole, at every width,
+  // in `.super-queue-card-line` (JobBar.css), never the one-line ellipsis `QueueText` draws. ▶ Run
+  // is offered only for a command drawn here whole AND the folder it runs in (`cardFolderText`, the
+  // one text every surface draws, its cwd included); while that folder is loading or could not be
+  // read, or the command cannot be drawn whole and safely, the row offers Show, which opens the slot.
+  let line: ReactNode;
+  let verb: ReactNode;
+  if (spec.type === 'run') {
+    const drawable = barCanRun(spec.command);
+    const folder = cardFolderText(state?.folder, spec);
+    const runnable = drawable && !!folder;
+    line = drawable
+      ? <>
+          <code className="super-queue-input super-queue-card-command" data-testid="super-queue-card-command">{spec.command}</code>
+          {folder && <span className="super-queue-card-folder" data-testid="super-queue-card-folder" title={state?.folder?.path}>{folder}</span>}
+        </>
+      : <span data-testid="super-queue-card-long">{t('ownerCard.bar.longCommand')}</span>;
+    verb = runnable ? (
+      <button
+        type="button"
+        className="super-queue-btn super-queue-btn--allow"
+        data-testid="super-queue-card-run"
+        data-shown={spec.command}
+        disabled={busy}
+        onClick={() => {
+          // The slot's run card starts it, with a ticket minted for exactly this command.
+          const sent = requestSlotRun(item.id, spec.command);
+          slot();
+          if (!sent) onOpen();
+        }}
+      ><span aria-hidden>▶</span> {t('ownerCard.bar.runVerb')}</button>
+    ) : (
+      <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-show" onClick={toSlot}>{t('ownerCard.bar.show')}</button>
+    );
+  } else if (spec.type === 'secret') {
+    line = <>{visibleText(spec.title)} <code className="super-queue-input super-queue-card-command">{visibleText(spec.file)}</code></>;
+    verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-secret" onClick={toSlot}>{t('ownerCard.bar.enterSecret')}</button>;
+  } else if (spec.type === 'checklist') {
+    line = visibleText(spec.title);
+    verb = (
+      <button
+        type="button"
+        className="super-queue-btn super-queue-btn--allow"
+        data-testid="super-queue-card-checklist"
+        onClick={() => {
+          if (!slot()) { onOpen(); return; }
+          // The window is opened from the slot's own card, the window that receives its submit.
+          document.querySelector<HTMLButtonElement>(`[data-testid="super-owner-card"][data-item="${cssEsc(item.id)}"] .chat-checklistcard-open:not([disabled])`)?.click();
+        }}
+      >{t('ownerCard.bar.openChecklist')}</button>
+    );
+  } else {
+    line = t('ownerCard.mcpLine').replace('{names}', visibleText(spec.servers.join(', ')));
+    verb = <button type="button" className="super-queue-btn super-queue-btn--allow" data-testid="super-queue-card-open-job" onClick={onOpen}>{t('ownerCard.openJob')}</button>;
+  }
+
+  return (
+    <>
+      {item.kind === 'member' && <span className="super-queue-who" data-testid="super-queue-member">{memberName}</span>}
+      {paused && <span className="super-queue-paused" data-testid="super-queue-paused">{t('ownerCard.paused')}</span>}
+      <span className="super-queue-card-line" data-testid="super-queue-card-line">{line}</span>
+      <span className="super-queue-actions" data-testid="super-queue-card" data-kind={spec.type}>
+        {verb}
+        <button type="button" className="super-queue-btn" data-testid="super-queue-card-not-needed" disabled={busy} onClick={notNeeded}>
+          {t('owner.answer.notNeeded')}
+        </button>
+        {spec.type !== 'mcp' && (
+          <button type="button" className="super-queue-open-link" data-testid="super-queue-card-open" onClick={onOpen}>{t('ownerCard.openJob')}</button>
+        )}
+      </span>
+      {note && <span className="super-queue-card-line" data-testid="super-queue-note">{note}</span>}
     </>
   );
 }

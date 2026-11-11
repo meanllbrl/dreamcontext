@@ -77,10 +77,10 @@ export interface ComposerHost {
    * nothing: the draft, the attachment chips and the reply quote all stay exactly as the user
    * left them. Anything else is the surface taking the message away without delivering it.
    *
-   * Returning nothing means "delivered", which is what `ChatSession.send` (a `void` method)
-   * already says — so every existing host satisfies this unchanged.
+   * Returning nothing, or `true`, means "delivered". `ChatSession.send` returns `true` when its
+   * socket took the text and `false` when the socket is down (nothing left: the draft stays).
    */
-  send(text: string): void | false;
+  send(text: string): void | boolean;
   /**
    * The three BUSY-ONLY deliveries: steer into the running turn, hold for the next one, stop.
    * Every control that reaches them is drawn only while the `busy` prop is true, so a host

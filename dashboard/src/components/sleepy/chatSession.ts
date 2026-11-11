@@ -635,7 +635,7 @@ export interface ChatSession {
   mcpRefresh: () => void;
   /** Submit a user message: sends the `user` control frame and appends it to the
    *  transcript optimistically (the protocol never echoes the user's own text back). */
-  send: (text: string) => void;
+  send: (text: string) => boolean;
   /**
    * Hand a message to the turn ALREADY in flight — the composer's ⏎ while `busy`. The CLI
    * folds it in at its next tool boundary (measured on 2.1.220: same turn, one `result`), so
@@ -3008,7 +3008,9 @@ export function createChatSession(
         const rep = (cmd.args.report ?? null) as { text?: unknown } | null;
         const text = typeof rep?.text === 'string' ? rep.text : '';
         if (cmd.args.sessionId !== session.claudeId || !text.startsWith('[ran in chat]') || text.length > 20_000) result = { ok: false, error: 'bad_args' };
-        else { postToSession(session, text); result = { ok: true }; }
+        // Acked ONLY when the chat took it (sahip-karti-yerinde K6): a dead socket answers
+        // `offline`, so the server keeps the report held and delivers it on the next mount.
+        else result = postToSession(session, text) ? { ok: true } : { ok: false, error: 'offline' };
       } else if (cmd.verb === 'html_snapshot') {
         const invoke = isDesktopShell() ? (await import('@tauri-apps/api/core')).invoke as (c: string, a: Record<string, unknown>) => Promise<unknown> : null;
         result = await runHtmlSnapshot(cmd.args, invoke);

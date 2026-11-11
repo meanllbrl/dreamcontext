@@ -144,11 +144,24 @@ export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): b
  * client (curl, the CLI itself) sends none and is not a CSRF vector.
  * Used to block drive-by writes from a malicious page in the user's browser.
  */
+/**
+ * Owner-only card writes (sahip-karti-yerinde K4, G1): a secret's submit and every card action.
+ * A no-Origin request is NOT "a CLI, so no CSRF vector" here: it is exactly the shape an agent's
+ * own `curl` takes to act as the owner, so the no-Origin pass is closed for these paths. The
+ * routes ask `fromOwnerPage` themselves too; this is the listener-wide backstop.
+ */
+export const OWNER_CARD_WRITE_PATHS: readonly string[] = ['/api/agent/secret', '/api/agent/card-ticket', '/api/agent/cards/checklist-submit', '/api/agent/cards/not-needed'];
+export function isOwnerCardWrite(req: IncomingMessage): boolean {
+  let path = '';
+  try { path = new URL(req.url || '/', 'http://x').pathname; } catch { return false; }
+  return OWNER_CARD_WRITE_PATHS.includes(path);
+}
+
 export function isCrossSiteWrite(req: IncomingMessage): boolean {
   const method = (req.method || 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
   const origin = req.headers.origin;
-  if (!origin) return false;
+  if (!origin) return isOwnerCardWrite(req);
   // Port-strict on loopback (T3): a page on another loopback port (an approved dev server in
   // a web card, any localhost tab) is another origin. A loopback-spelled Origin passes only
   // when it IS the dialed host; then Host is loopback too, so a rebinding page (whose Origin

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createStyledTerm, currentTermTheme, currentZoom, BASE_FONT, openWhenFontsReady } from '../termCore';
 import { appendTail, finishTail } from './runReport';
-import { cardTerminalUrl, type CardTarget } from '../../../lib/cardRecords';
+import { FOLDER_CHANGED, OWNER_ONLY_LINE, cardTerminalUrl, type CardActionResult, type CardTarget } from '../../../lib/cardRecords';
 
 /**
  * A REAL PTY inside the transcript — one command, bounded height, and an exit code that
@@ -29,18 +29,21 @@ export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 export type { CardTarget };
 
 export function InlineTerminal({
-  vault, command, cwd, card, rows = 14, onExit, onStatus,
+  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus,
 }: {
   vault: string;
   command: string;
   cwd?: string;
   /** Chat host: the server record to start or attach to. No `cmd=` is ever sent then. */
   card?: CardTarget;
+  /** The Mac's card press (K4): mints the single-use ticket for `card` right before the socket
+   *  opens. Absent: no ticket is sent (the phone's path, an agent thread's own command). */
+  mintTicket?: (target: CardTarget) => Promise<CardActionResult<string>>;
   rows?: number;
   /** Fires ONCE, when the socket ends. `code` is null when it died without one. `exited`: the
    *  server's exit frame arrived (the process really ended). `opened`: the socket ever opened;
    *  a refused start (busy, no PTY, a closed card) never does. */
-  onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean }) => void;
+  onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean; reason?: string }) => void;
   onStatus?: (status: InlineTermStatus) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -50,7 +53,7 @@ export function InlineTerminal({
   // from a ref — a card's command never changes under it (a different command is a
   // different card with a different key), and if it ever could, silently re-running a
   // deploy would be the wrong answer to it.
-  const argsRef = useRef({ vault, command, cwd, rows, card });
+  const argsRef = useRef({ vault, command, cwd, rows, card, mintTicket });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
   onExitRef.current = onExit;
@@ -59,7 +62,7 @@ export function InlineTerminal({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const { vault: v, command: cmd, cwd: dir, rows: wantRows, card: target } = argsRef.current;
+    const { vault: v, command: cmd, cwd: dir, rows: wantRows, card: target, mintTicket } = argsRef.current;
 
     const { term, fit, fontFamily, primaryMono, stopThemeSync } = createStyledTerm({ scrollback: 2000 });
 
@@ -68,11 +71,13 @@ export function InlineTerminal({
     let disposed = false;
     let opened = false;
     let revealTimer: ReturnType<typeof setTimeout> | undefined;
-    const settle = (code: number | null, exited = false) => {
+    // `reason`: the server's close reason, when it refused the upgrade with one (`folder_changed`:
+    // the folder the owner saw is not the folder that would run, end review r2).
+    const settle = (code: number | null, exited = false, reason?: string) => {
       if (settled) return;
       settled = true;
       onStatusRef.current?.(code === null ? 'failed' : 'exited');
-      onExitRef.current({ code, tail: finishTail(tail), exited, opened });
+      onExitRef.current({ code, tail: finishTail(tail), exited, opened, ...(reason ? { reason } : {}) });
     };
     // Only a terminal the user opened with ▶ (or a thread card's own) scrolls into view and takes
     // the keyboard. One that mounts by itself to watch a run started on the phone or Telegram
@@ -82,45 +87,67 @@ export function InlineTerminal({
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams({ vault: v, kind: 'exec', cmd, theme: currentTermTheme(), bypass: '0' });
     if (dir) params.set('cwd', dir);
-    const ws = new WebSocket(target
-      ? `${proto}://${location.host}${cardTerminalUrl(target, currentTermTheme())}`
-      : `${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
-    // Binary frames are the server's control channel (`{type:'exit', code}`); output is
-    // always text. arraybuffer so the exit can be decoded synchronously in onmessage.
-    ws.binaryType = 'arraybuffer';
+    let ws: WebSocket | null = null;
 
     const sendResize = () => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       try { fit.fit(); } catch { return; }
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
 
-    ws.onopen = () => { opened = true; onStatusRef.current?.('running'); sendResize(); };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') {
-        tail = appendTail(tail, ev.data);
-        term.write(ev.data);
-        return;
-      }
-      try {
-        const msg = JSON.parse(new TextDecoder().decode(ev.data as ArrayBuffer)) as { type?: string; code?: number };
-        if (msg.type === 'exit') settle(typeof msg.code === 'number' ? msg.code : null, true);
-      } catch { /* an unrecognized control frame is not ours to interpret */ }
-    };
-    // A socket that closes with no exit frame is a process whose fate we do not know — the
-    // server went away, the upgrade was refused, node-pty is missing. That is `code: null`,
-    // and the card says so rather than inventing a zero for the agent to act on.
-    ws.onclose = () => settle(null);
-    ws.onerror = () => {
-      if (settled) return;
-      setError(target
-        ? 'Could not open this command\'s terminal. It may have finished, or it is no longer waiting.'
-        : 'Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
-      settle(null);
+    const connect = (ticket?: string) => {
+      if (disposed) return;
+      const sock = new WebSocket(target
+        ? `${proto}://${location.host}${cardTerminalUrl(target, currentTermTheme(), ticket)}`
+        : `${proto}://${location.host}/api/agent/terminal?${params.toString()}`);
+      ws = sock;
+      // Binary frames are the server's control channel (`{type:'exit', code}`); output is
+      // always text. arraybuffer so the exit can be decoded synchronously in onmessage.
+      sock.binaryType = 'arraybuffer';
+      sock.onopen = () => { opened = true; onStatusRef.current?.('running'); sendResize(); };
+      sock.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          tail = appendTail(tail, ev.data);
+          term.write(ev.data);
+          return;
+        }
+        try {
+          const msg = JSON.parse(new TextDecoder().decode(ev.data as ArrayBuffer)) as { type?: string; code?: number };
+          if (msg.type === 'exit') settle(typeof msg.code === 'number' ? msg.code : null, true);
+        } catch { /* an unrecognized control frame is not ours to interpret */ }
+      };
+      // A socket that closes with no exit frame is a process whose fate we do not know — the
+      // server went away, the upgrade was refused, node-pty is missing. That is `code: null`,
+      // and the card says so rather than inventing a zero for the agent to act on.
+      sock.onclose = (ev) => settle(null, false, typeof ev?.reason === 'string' && ev.reason ? ev.reason : undefined);
+      sock.onerror = () => {
+        if (settled) return;
+        setError(target
+          ? 'Could not open this command\'s terminal. It may have finished, or it is no longer waiting.'
+          : 'Could not reach the terminal bridge — the in-app terminal needs the desktop app.');
+        settle(null);
+      };
     };
 
+    // GATE G1 (K4): every card-mode upgrade on the Mac carries a single-use ticket minted for THIS
+    // press, right before the socket opens, bound to the command this card drew (`shown`). The
+    // phone's own path carries its device session instead. No ticket, no socket: the refusal
+    // reads the one line ("Open dreamcontext to run it"), never a silent no-op.
+    if (target && !target.phone && mintTicket) {
+      void mintTicket(target).then((r) => {
+        if (disposed || settled) return;
+        if (r.ok) { connect(r.value); return; }
+        // A folder that changed is the CARD's line to say (it reads the folder again); any other
+        // refusal is said here.
+        if (r.error !== FOLDER_CHANGED) setError(r.message || OWNER_ONLY_LINE);
+        settle(null, false, r.error);
+      });
+    } else {
+      connect();
+    }
+
     const dataSub = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
     });
 
     openWhenFontsReady(primaryMono, () => {
@@ -165,7 +192,7 @@ export function InlineTerminal({
       // Closing the socket kills the PTY server-side (`ws.on('close')` → `term.kill()`), so
       // unmounting a running card stops its process instead of orphaning it. Staying mounted
       // is what keeps it alive — which is why a RUNNING card is never collapsed for the user.
-      try { ws.close(); } catch { /* already closing */ }
+      try { ws?.close(); } catch { /* already closing */ }
       try { term.dispose(); } catch { /* mid-init */ }
     };
   }, []);

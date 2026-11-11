@@ -14,7 +14,7 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext, publishSuperQuestions, publishSuperStage } from './super/superJobsStore';
+import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openMemberMirrors, openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
@@ -86,8 +86,8 @@ import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities, useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
-import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
-import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
+import { pickFiles, pickFolders, confirmAction, spendChecklistNonce } from '../../lib/desktop';
+import { listenForChecklistSubmits, relayChecklistSubmit, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
@@ -192,7 +192,7 @@ import {
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
-  cardSelectionBlock, selectionQuote,
+  cardSelectionBlock, selectionQuote, plainJobName,
 } from './super/superHandover';
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
@@ -3475,20 +3475,31 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // here — `listenForChecklistSubmits` takes `vault` for exactly that belt-and-braces
   // comparison, so this handler only ever sees submits already confirmed to belong to this
   // window's vault.
-  const handleChecklistSubmit = useCallback((payload: ChecklistSubmitPayload): boolean => {
-    const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === payload.conversationId);
-    const session = entry ? sessions.current.get(entry.id) : undefined;
-    if (!session || session.kind !== 'chat') return false;
-    const chat = session as ChatSession;
-    // `postToSession`, not `sendText` — the owner's "Submit sends the filled-in list back
-    // as ONE message" means a real user turn, not a composer-draft append (`sendText` only
-    // appends to the draft). That helper is the composer's ⏎ chain (steer the running turn,
-    // queue only when it cannot land), shared with the transcript's secret and run cards.
-    // A checklist is filled in WHILE the agent works and is answering the thing it is doing
-    // right now — making it wait for the turn to end is the whole bug.
-    postToSession(chat, payload.markdown);
-    return true;
-  }, [sessionList]);
+  //
+  // THE RELAY (sahip-karti-yerinde K4): the submit goes on ONLY with the single-use nonce this
+  // window minted when it opened that checklist (`openChecklistWindow`), spent synchronously before
+  // anything awaits (`relayChecklistSubmit`). A card that has a record goes to the gated route in
+  // the owner's name, routed by RECORD (a parked or gone child included); the server builds the
+  // receipt from the structured state. A chat whose card is not a crew card (`outcome: 'window'`),
+  // or one with no record, gets the markdown built here from the spec this window drew.
+  const handleChecklistSubmit = useCallback((payload: ChecklistSubmitPayload): Promise<boolean> => relayChecklistSubmit(payload, {
+    spend: spendChecklistNonce,
+    submitRecord: async (body) => {
+      try {
+        const r = await scopedApi.ownerPost<{ ok?: boolean; outcome?: string; text?: string }>('/agent/cards/checklist-submit', body);
+        return { ok: r?.ok === true, ...(typeof r?.outcome === 'string' ? { outcome: r.outcome } : {}), ...(typeof r?.text === 'string' ? { text: r.text } : {}) };
+      } catch { return { ok: false }; }
+    },
+    postToChat: (conversationId, markdown) => {
+      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === conversationId);
+      const session = entry ? sessions.current.get(entry.id) : undefined;
+      if (!session || session.kind !== 'chat') return false;
+      // `postToSession`, not `sendText` — the owner's "Submit sends the filled-in list back
+      // as ONE message" means a real user turn, not a composer-draft append. That helper is the
+      // composer's ⏎ chain (steer the running turn, queue only when it cannot land).
+      return postToSession(session as ChatSession, markdown);
+    },
+  }), [sessionList, scopedApi]);
 
   useEffect(() => {
     if (!vault) return;
@@ -3997,7 +4008,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const openSuperQuestions = useMemo(() => openOwnerQuestions(superQueue ?? []), [superQueue]);
   // AI Team members waiting on the owner, as MAIN's record mirrors them: cards in main's chat only.
   const mainMemberMirrors = useMemo(() => openMemberMirrors(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
-  const memberMirrorKey = mainMemberMirrors.map((q) => [q.id, q.member ?? '', q.of ?? '', q.ownerText ?? ''].join('\u0003')).join('\u0001');
+  const memberMirrorKey = mainMemberMirrors.map((q) => [q.id, q.member ?? '', q.of ?? '', q.ownerText ?? '', q.card?.cardRef ?? '', q.delivery ?? ''].join('\u0003')).join('\u0001');
+  // The owner cards the children left, drawn in the Super chat's slot from the record (K7).
+  const superSlotCards = useMemo(() => slotCardItems(superQueue ?? []), [superQueue]);
+  const mainSlotCards = useMemo(() => slotCardItems(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
+  // Read through refs: the title helper is declared further down, and a dormant tab is the one
+  // true sign of a parked child here.
+  const slotTitleRef = useRef<(sid: string) => string>(() => '');
+  const slotTitleFor = useCallback((sid: string) => slotTitleRef.current(sid), []);
+  const slotPausedFor = useCallback((sid: string) => sessionListRef.current.some((m) => m.claudeId === sid && m.dormant && !!m.parked), []);
+  const slotPausedKey = [...superSlotCards, ...mainSlotCards, ...mainMemberMirrors].map((q) => (slotPausedFor(q.sessionId) ? '1' : '0')).join('');
   // Keyed on what a card draws, including whether a child's chat is live here (its options
   // come from it): the super chat's pane is memoised, so only a key change re-renders a card.
   // A Super `ask`'s report cards (`read`), named as the stage names them; a click brings one in
@@ -4030,10 +4050,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const isMain = activeSuperId === MAIN_SUPER;
     publishSuperQuestions(
       superQuestionSid,
-      { open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
-      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}`,
+      {
+        open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf,
+        cards: superSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+      },
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}\u0007${slotCardKey(superSlotCards)}\u0007${slotPausedKey}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey, superSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -4112,10 +4135,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     publishSuperQuestions(
       mainQuestionSid,
       // Its report cards open nothing here: main's stage is not the one up.
-      { open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [] },
-      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}`,
+      {
+        open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [],
+        cards: mainSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+      },
+      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}\u0007${slotCardKey(mainSlotCards)}\u0007${slotPausedKey}`,
     );
-  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey]);
+  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey, mainSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
   const mainPublishedRef = useRef<string | null>(null);
   mainPublishedRef.current = mainQuestionSid ?? mainPublishedRef.current;
   useEffect(() => () => {
@@ -4179,6 +4205,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const superNameFor = useCallback((claudeId: string): string => (
     sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? ''
   ), []);
+  // The slot's heading names the job as its tab does, its brief otherwise (K7).
+  slotTitleRef.current = (sid: string) => plainJobName(superNameFor(sid) || superTitleFor(sid));
   // The owner looked at finished jobs in the agenda: the server's answer is the new record; a
   // refusal rejects and the rows stay new (no optimistic flip).
   // ── First paint after a reload: the record, once. Afterwards only pushes. ──────────

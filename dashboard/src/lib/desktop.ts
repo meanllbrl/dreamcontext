@@ -683,17 +683,28 @@ export async function pinCurrentWindow(pinned: boolean): Promise<void> {
  * here is purely a storage-key / event-target selector, read back out of the
  * URL by `ChecklistWindow` to look up its `ChecklistEnvelope` (checklistStore.ts).
  */
-export async function openChecklistWindow(id: string, vault: string): Promise<void> {
+export async function openChecklistWindow(id: string, vault: string, bind?: ChecklistNonceBinding): Promise<void> {
+  // EVERY open mints a fresh single-use nonce (K4 checklist relay) and revokes the one before it,
+  // a focus of an already-open window included. It travels in the URL FRAGMENT (`#n=`), which
+  // never reaches the server or its logs; this window's submit relay forwards a checklist submit
+  // only when it carries it, and spends it before any await.
+  const nonce = mintChecklistNonce(vault, id, bind ?? { postingSession: '', spec: null });
+  const fragment = `#n=${encodeURIComponent(nonce)}`;
   if (isDesktop()) {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
     const label = checklistWindowLabel(vault, id);
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
+      // Hand the new nonce to THAT window only (targeted; the window listens on itself).
+      try {
+        const { emitTo } = await import('@tauri-apps/api/event');
+        await emitTo(label, CHECKLIST_NONCE_EVENT, { checklistId: id, nonce });
+      } catch { /* its old nonce is revoked either way: its submit then says "Reopen from the card" */ }
       await existing.setFocus();
       return;
     }
     const win = new WebviewWindow(label, {
-      url: `${window.location.origin}/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`,
+      url: `${window.location.origin}/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}${fragment}`,
       title: 'dreamcontext — checklist',
       width: 380,
       height: 560,
@@ -709,7 +720,66 @@ export async function openChecklistWindow(id: string, vault: string): Promise<vo
     await awaitWindowCreated(win, `checklist "${id}"`);
     return;
   }
-  window.open(`/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`, '_blank');
+  window.open(`/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}${fragment}`, '_blank');
+}
+
+// ─── The checklist relay's nonce (sahip-karti-yerinde K4) ────────────────────────────────────
+
+/** The event that hands an already-open checklist window its new nonce. */
+export const CHECKLIST_NONCE_EVENT = 'dream://checklist-nonce';
+
+/** What one checklist open is bound to: the record its submit is for (the posting session and,
+ *  when the server has it, the cardRef) and the spec the vault window drew. */
+export interface ChecklistNonceBinding {
+  postingSession: string;
+  cardRef?: string;
+  spec: import('./chatViewSpec').ChecklistViewSpec | null;
+}
+interface HeldNonce extends ChecklistNonceBinding { vault: string; checklistId: string; nonce: string }
+
+/** Live nonces of THIS vault window, in memory only (a reload loses them: "Reopen from the card"). */
+const checklistNonces = new Map<string, HeldNonce>();
+const nonceKey = (vault: string, id: string): string => `${vault}\u0000${id}`;
+
+function randomNonce(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+/** Mint the nonce for one open of checklist `id`, revoking the one before it. */
+export function mintChecklistNonce(vault: string, id: string, bind: ChecklistNonceBinding): string {
+  const nonce = randomNonce();
+  checklistNonces.set(nonceKey(vault, id), { ...bind, vault, checklistId: id, nonce });
+  return nonce;
+}
+
+/**
+ * Spend a submit's nonce, SYNCHRONOUSLY (call it before any await): it is gone from the first
+ * time it is seen, whether the submit then succeeds or fails, so no frame that also heard the
+ * event can use it again. Null for no nonce, a wrong one, a spent one or another checklist's.
+ */
+export function spendChecklistNonce(vault: string, id: string, nonce: unknown): ChecklistNonceBinding | null {
+  const key = nonceKey(vault, id);
+  const held = checklistNonces.get(key);
+  if (!held || typeof nonce !== 'string' || nonce.length !== held.nonce.length) return null;
+  let diff = 0;
+  for (let i = 0; i < nonce.length; i++) diff |= nonce.charCodeAt(i) ^ held.nonce.charCodeAt(i);
+  if (diff !== 0) return null;
+  checklistNonces.delete(key);
+  return { postingSession: held.postingSession, ...(held.cardRef ? { cardRef: held.cardRef } : {}), spec: held.spec };
+}
+
+/** The nonce a checklist window was opened with (its URL fragment `#n=`). */
+export function checklistNonceFromHash(hash: string): string | null {
+  const m = /(?:^#|&)n=([^&]+)/.exec(hash);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
+}
+
+/** Tests only. */
+export function _resetChecklistNonces(): void {
+  checklistNonces.clear();
 }
 
 /**

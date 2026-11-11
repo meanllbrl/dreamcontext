@@ -8,6 +8,7 @@ import {
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
+  OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -399,8 +400,18 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // Its mirror keeps the wait too (refusal fact included): without it the bar cannot tell a
     // refused command, which it answers in place, from a sign-in card, which only opens the
     // member. An older mirror without one stays (it is drawn as Open).
-    const wait = q.kind === 'owner' || (isMirror && mirrorOf === 'owner') ? cleanOwnerWait(q.wait) : undefined;
+    // A `parked` event (sahip-karti-yerinde K2) names the card its child still waits on.
+    const wait = q.kind === 'owner' || q.kind === 'parked' || (isMirror && mirrorOf === 'owner') ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
+    // A card wait's handle, its Remind mark and where its result is (K1, K6, K7): on the owner
+    // item and its member mirror only, re-validated (the spec is parsed again with the chat's rules).
+    const cardItem = q.kind === 'owner' || (isMirror && mirrorOf === 'owner');
+    const card = cardItem ? cleanOwnerCardHandle(q.card) : undefined;
+    const remindAt = cardItem && card ? finite(q.remindAt) : undefined;
+    const delivery = cardItem && card && oneOf(OWNER_DELIVERY_STATES, q.delivery) ? q.delivery : undefined;
+    // An `owner-result` event exists only for its fact (one per owner action).
+    const ownerResult = q.kind === 'owner-result' ? cleanOwnerResultFact(q.ownerResult) : undefined;
+    if (q.kind === 'owner-result' && !ownerResult) continue;
     // A permission's call, on the item and on its mirror (a surface shows it before any Allow).
     const call = q.kind === 'permission' || (isMirror && mirrorOf === 'permission') ? cleanItemCall(q.call) : undefined;
     const allowable = q.kind === 'permission' || (q.kind === 'owner' && wait?.kind === 'refusal')
@@ -487,6 +498,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(allowable && cleanGrantOffer(q.offer) ? { offer: cleanGrantOffer(q.offer)! } : {}),
       ...(allowable && oneOf(GRANT_SIZES, q.allowed) ? { allowed: q.allowed } : {}),
       ...(call ? { call } : {}),
+      ...(card ? { card } : {}),
+      ...(remindAt !== undefined && remindAt >= 0 ? { remindAt } : {}),
+      ...(delivery ? { delivery } : {}),
+      ...(ownerResult ? { ownerResult } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request

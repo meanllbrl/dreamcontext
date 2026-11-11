@@ -21,17 +21,30 @@
  *  - a child question → `answerChildQuestion` (the window's `super answer` verb);
  *  - a child permission → `answerChildPermission` (the window's `super allow`, `by: 'owner'`).
  * Each through a single-use, message-bound button record (hub.sendButtons).
+ *
+ * A CHILD's owner card (sahip-karti-yerinde K7, D3: an `owner` item, or its `member` mirror, that
+ * carries a card handle) is one message: the job, the card's command or title (escaped, secrets
+ * redacted), the kind's one sentence saying plainly it is a Mac step, and two buttons, "Mac'e
+ * dönünce hatırlat" (marks the item; his next words on the Mac raise ONE desktop notification
+ * naming the marked cards) and "Gerek yok" (closes the item). Never Run, never a field.
  */
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { buildAppLink } from '../../lib/app-link.js';
+import type { CardSpec } from '../../lib/cards/public.js';
+import { onOwnerAtMac, postOwnerCardRemind } from '../../lib/telegram/back-at-mac.js';
+import { closeOwnerItemForCard, dropOwnerReceipts, ownerCardLookup } from '../owner-receipts.js';
 import { join } from 'node:path';
 import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
-import { readSuperState } from '../../lib/super/store.js';
+import { readSuperState, updateSuperState } from '../../lib/super/store.js';
 import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
 import { memberTitle, itemCall } from '../../lib/super/inbox.js';
-import { askSpecFromLegacy, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
-import { buildQuestionPicks, type ButtonRecord } from '../../lib/telegram/contract.js';
+import { askSpecFromLegacy, OWNER_CARD_TELEGRAM_LINE, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
+import {
+  buildQuestionPicks, OWNER_CARD_NOT_NEEDED_DONE, OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_DONE, OWNER_CARD_REMIND_LABEL,
+  OWNER_CARD_REMIND_TITLE, type ButtonRecord,
+} from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type TelegramHub } from './hub.js';
@@ -186,13 +199,17 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   };
   hub.awayFlushers.add(flush);
   const prev = hub.extraButton;
-  hub.extraButton = async (ab, rec, idx) => (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
-    ? onQueueButton(hub, ab, rec, idx)
-    : prev ? prev(ab, rec, idx) : LINES.stale;
+  hub.extraButton = async (ab, rec, idx) => rec.kind === 'owner-card'
+    ? onOwnerCardButton(ab, rec, idx)
+    : (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
+      ? onQueueButton(hub, ab, rec, idx)
+      : prev ? prev(ab, rec, idx) : LINES.stale;
   // An agent's app request card (app-onay-karti C6): its own away rule and button kind.
   const offApps = wireTelegramAppRequests(hub);
+  // "Mac'e dönünce hatırlat" (K7): his next words on the Mac name every marked card, once.
+  const offRemind = onOwnerAtMac(() => { void remindMarkedCards(hub).catch(() => {}); });
   return () => {
-    offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
+    offRemind(); offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
     setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
     hub.extraButton = prev;
   };
@@ -268,6 +285,8 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     remember(item.id, { ...base, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: qs[i]?.question })) });
     return { ok: true };
   }
+  // A child's owner card (K7): a Mac step, said plainly, with Remind and Not needed.
+  if (item.kind === 'owner' && item.card) return sendOwnerCard(hub, ab, item, null);
   if (item.kind === 'member') return sendMemberItem(hub, ab, superSession, item);
   // A refused call (K2): the whole command and the sizes he may give it, or the Mac line.
   if (item.kind === 'owner' && item.wait?.kind === 'refusal' && item.wait.refusal) {
@@ -305,6 +324,7 @@ async function sendMemberItem(hub: TelegramHub, ab: ActiveBinding, superSession:
     remember(item.id, { ab, messages: [m] }, item);
     return { ok: true };
   }
+  if (item.of === 'owner' && item.card) return sendOwnerCard(hub, ab, item, who);
   if (item.of === 'owner') {
     // The member's item behind it holds the refused call (its mirror carries only the line).
     const t = ab.contextRoot ? await memberMirrorTarget(ab.contextRoot, item.id) : null;
@@ -485,6 +505,105 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   const text = superAnswerText(item, questions, { [question]: label });
   const ok = await hub.injectText(ab, hub.syntheticUpdateId(), text, s.session);
   return ok ? `✓ ${label}` : null;
+}
+
+// ─── A child's owner card (sahip-karti-yerinde K7, D3) ─────────────────────────────────────
+
+/** The card's own line as Telegram draws it: the command (hidden characters as visible escapes,
+ *  secrets redacted) or the title, escaped. */
+export function ownerCardLineHtml(spec: CardSpec): string {
+  switch (spec.type) {
+    case 'run': return `<pre>${escapeHtml(visibleCommand(spec.command))}</pre>`;
+    case 'secret': return escapeHtml(redactSecrets(`🔑 ${spec.title} → ${spec.file}`));
+    case 'checklist': return escapeHtml(redactSecrets(`📋 ${spec.title}`));
+    case 'mcp': return escapeHtml(redactSecrets(`🔌 ${spec.servers.join(', ')}`));
+    default: { const never: never = spec; void never; return ''; }
+  }
+}
+
+/** The card's name in the reminder (plain text, one line). */
+function ownerCardName(spec: CardSpec): string {
+  switch (spec.type) {
+    case 'run': return redactSecrets(spec.command).replace(/\s+/g, ' ').slice(0, 80);
+    case 'secret': case 'checklist': return redactSecrets(spec.title).slice(0, 80);
+    case 'mcp': return redactSecrets(spec.servers.join(', ')).slice(0, 80);
+    default: { const never: never = spec; void never; return ''; }
+  }
+}
+
+/** One message per child card: the job, the card's line, the kind's sentence, Remind and Not needed. */
+async function sendOwnerCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQueueItem, who: string | null): Promise<SendOutcome> {
+  const h = item.card;
+  if (!h) return { skipped: true };
+  let job = who ?? '';
+  if (!job && ab.contextRoot) {
+    const s = await readSuperState(ab.contextRoot).catch(() => null);
+    job = s?.children?.[h.childId]?.brief?.trim() ?? '';
+  }
+  const lead = `✋ ${escapeHtml(redactSecrets(job.slice(0, 80) || 'Bir iş'))} seni bekliyor`;
+  const html = [lead, ownerCardLineHtml(h.spec), escapeHtml(OWNER_CARD_TELEGRAM_LINE[h.spec.type])].join('\n');
+  const m = await buttons2(hub, ab, html, [[OWNER_CARD_REMIND_LABEL], [OWNER_CARD_NOT_NEEDED_LABEL]],
+    { kind: 'owner-card', sessionId: h.postingSession, cardRef: h.cardRef, singleUse: true }, { item: item.id });
+  remember(item.id, { ab, messages: [m] }, item);
+  return { ok: true };
+}
+
+/** The open item a child-card button names: still open, still that very card. */
+function openCardItem(queue: readonly SuperQueueItem[], itemId: string, rec: ButtonRecord): SuperQueueItem | undefined {
+  return queue.find((q) => q.id === itemId && q.state !== 'done' && !!q.card && q.card.cardRef === rec.cardRef && q.card.postingSession === rec.sessionId);
+}
+
+/** A tap on a child card's message (authorised and single use: the hub checked the binding, the
+ *  chat, the message and its text). Remind marks the item; Not needed closes it. Never runs. */
+async function onOwnerCardButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
+  const root = ab.contextRoot;
+  if (ab.target !== 'super' || ab.disabled || !root) return LINES.stale;
+  const itemId = String(rec.data?.item ?? '');
+  const s = await readSuperState(root).catch(() => null);
+  if (!s?.enabled || !openCardItem(s.queue, itemId, rec)) return LINES.stale;
+  if (idx === 0) {
+    const got = { marked: false };
+    await updateSuperState(root, (draft) => {
+      const q = openCardItem(draft.queue, itemId, rec);
+      if (q) { q.remindAt = Date.now(); got.marked = true; }
+    });
+    return got.marked ? OWNER_CARD_REMIND_DONE : LINES.stale;
+  }
+  if (idx === 1) {
+    const l = ownerCardLookup(rec.sessionId ?? '', rec.cardRef ?? '');
+    if (!l || !(await closeOwnerItemForCard(l, 'not_needed'))) return LINES.stale;
+    dropOwnerReceipts(l.target, { cardRef: l.handle.cardRef });
+    return OWNER_CARD_NOT_NEEDED_DONE;
+  }
+  return LINES.stale;
+}
+
+/**
+ * He is back at the Mac: ONE desktop notification naming every card he asked to be reminded of
+ * (every bound Super), through the owner-question banner path; the marks clear. Clicking it opens
+ * the Super's stage, where the slot draws the card.
+ */
+export async function remindMarkedCards(hub: TelegramHub): Promise<number> {
+  const names: string[] = [];
+  let link: string | null = null;
+  for (const ab of [...hub.active.values()]) {
+    if (ab.target !== 'super' || ab.disabled || !ab.contextRoot) continue;
+    const s = await readSuperState(ab.contextRoot).catch(() => null);
+    if (!s?.queue.some((q) => q.remindAt && q.card)) continue;
+    const got = { session: null as string | null };
+    await updateSuperState(ab.contextRoot, (draft) => {
+      got.session = draft.session ?? null;
+      for (const q of draft.queue) {
+        if (!q.remindAt) continue;
+        if (q.card && q.state !== 'done') names.push(`${ownerCardName(q.card.spec)}`);
+        delete q.remindAt;
+      }
+    });
+    if (!link && got.session) { try { link = buildAppLink({ kind: 'session', vault: ab.projectName, claudeId: got.session }); } catch { link = null; } }
+  }
+  if (!names.length) return 0;
+  postOwnerCardRemind(OWNER_CARD_REMIND_TITLE, names.join(' · ').slice(0, 300), link);
+  return names.length;
 }
 
 /** Test seam. */

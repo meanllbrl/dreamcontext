@@ -22,7 +22,7 @@ const soft: CapacityFacts = { ...quiet, swapUsedGb: 15.2, swapTotalGb: 19 };
 const today: CapacityFacts = { availMemGb: 2.5, diskFreeGb: 8, load1: 4, totalMemGb: 16, swapUsedGb: 18.4, swapTotalGb: 19, claudeSessions: 27 };
 
 const cand = (id: string, idleMin: number, over: Partial<ParkCandidate> = {}): ParkCandidate => ({
-  id, exempt: null, busy: false, asking: false, backgroundTasks: 0, idleSince: NOW - idleMin * MIN, focusedAt: 0, ...over,
+  id, exempt: null, busy: false, asking: false, ownerWait: false, backgroundTasks: 0, idleSince: NOW - idleMin * MIN, focusedAt: 0, ...over,
 });
 
 describe('parkPressure', () => {

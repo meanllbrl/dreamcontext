@@ -5,9 +5,11 @@
  * MIRRORED from `src/lib/super/types.ts`, which owns the record and its validation. Change one,
  * change the other; `tests/unit/super-types-mirror.test.ts` pins the lists and limits.
  *
- * Deliberately React-free with no imports, so root vitest can load it beside the server file
- * (the `chatModes.ts` trick).
+ * Deliberately React-free with no runtime imports, so root vitest can load it beside the server
+ * file (the `chatModes.ts` trick). The one type-only import below is erased at build.
  */
+
+import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from './chatViewSpec';
 
 export const SUPER_STATE_VERSION = 1 as const;
 
@@ -377,7 +379,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
  *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
  *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -449,7 +451,70 @@ export interface SuperQueueItem {
   /** Already allowed at this size, waiting for the call to run: draw that line, no Allow buttons
    *  (MIRROR of src/lib/super/types.ts `SuperQueueItem.allowed`). */
   allowed?: GrantSize;
+  /** A crew child's card wait: the record it stands for, drawn from the record, never from chat
+   *  text (MIRROR of src/lib/super/types.ts `SuperQueueItem.card`). */
+  card?: OwnerCardHandle;
+  /** Telegram's Remind mark (MIRROR of `SuperQueueItem.remindAt`). */
+  remindAt?: number;
+  /** The slot's one true result line (MIRROR of `SuperQueueItem.delivery`). */
+  delivery?: OwnerDeliveryState;
+  /** An `owner-result` item's fact (MIRROR of `SuperQueueItem.ownerResult`). */
+  ownerResult?: OwnerResultFact;
 }
+
+// ─── Owner cards done where the owner is (MIRROR of src/lib/super/types.ts, sahip-karti-yerinde
+// K1-K7; pinned by tests/unit/owner-card-types.test.ts). The only import here is type-only and
+// erased at build: the card spec is the chat's own (src/lib/chat-view-spec.ts). ─────────────
+
+/** The owner-only card kinds (MIRROR of src/lib/super/owner-wait.ts `OWNER_CARD_KINDS`). */
+export const OWNER_CARD_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
+export type OwnerCardKind = typeof OWNER_CARD_KINDS[number];
+
+export type OwnerCardSpec = RunViewSpec | SecretViewSpec | ChecklistViewSpec | McpViewSpec;
+
+/** The record an owner item stands for (MIRROR of `OwnerCardHandle`). */
+export interface OwnerCardHandle {
+  cardRef: string;
+  postingSession: string;
+  vault: string;
+  postingConversationId: string;
+  spec: OwnerCardSpec;
+  childRecordId: string;
+  childId: string;
+  deliverTo: string;
+}
+
+export const OWNER_WAKE_OUTCOMES = ['woken', 'live', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+export type OwnerWakeOutcome = typeof OWNER_WAKE_OUTCOMES[number];
+
+export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+export type OwnerDeliveryState = typeof OWNER_DELIVERY_STATES[number];
+
+export interface OwnerResultFact {
+  card: OwnerCardKind;
+  cardRef: string;
+  outcome: number | null | 'submitted';
+  text: string;
+}
+
+export const OWNER_RECEIPT_VIEW_STATES = ['held', 'running', 'kept', 'cut_off'] as const;
+export type OwnerReceiptViewState = typeof OWNER_RECEIPT_VIEW_STATES[number];
+/** A held receipt as the slot draws it (MIRROR of `OwnerReceiptView`): `kept` and `cut_off` are
+ *  read-only plain text, never markdown. */
+export interface OwnerReceiptView {
+  id: string;
+  cardRef: string;
+  kind: OwnerCardKind;
+  at: number;
+  state: OwnerReceiptViewState;
+  text: string;
+}
+
+export const CARD_TICKET_ACTIONS = ['start', 'attach', 'rerun'] as const;
+export type CardTicketAction = typeof CARD_TICKET_ACTIONS[number];
+export const CARD_TICKET_TTL_MS = 30_000;
+export interface CardTicketMintRequest { session: string; card: string; action: CardTicketAction; shown: string }
+export interface CardTicketMintResponse { ticket: string; expiresAt: number }
 
 /** A refused tool call (MIRROR of src/lib/super/types.ts `RefusalFact`): `whole` false = the
  *  input was cut, and no grant may be offered for it. */

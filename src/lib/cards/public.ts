@@ -3,10 +3,13 @@
  * and secret cards, and the canonical spec form a client matches a drawn card by. No Node
  * imports: the dashboard imports this file (src/lib/cards/records.ts holds the server side).
  */
-import type { RunViewSpec, SecretViewSpec } from '../chat-view-spec.js';
+import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from '../chat-view-spec.js';
 
-export type CardKind = 'run' | 'secret';
-export type CardSpec = RunViewSpec | SecretViewSpec;
+/** Every owner-only card is a record (sahip-karti-yerinde K1): a checklist and an MCP card open,
+ *  close and rebuild like a run and a secret. The same list as owner-wait.ts `OWNER_CARD_KINDS`. */
+export type CardKind = 'run' | 'secret' | 'checklist' | 'mcp';
+export const CARD_KINDS: readonly CardKind[] = ['run', 'secret', 'checklist', 'mcp'];
+export type CardSpec = RunViewSpec | SecretViewSpec | ChecklistViewSpec | McpViewSpec;
 
 /**
  * Why a record closed. Only `done` means the card's own end happened (the run exited, the secret
