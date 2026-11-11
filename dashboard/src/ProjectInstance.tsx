@@ -20,7 +20,6 @@ import { KnowledgePage } from './pages/KnowledgePage';
 import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { PacksPage } from './pages/PacksPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import { AppsPage } from './pages/AppsPage';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
@@ -437,7 +436,7 @@ function AppLinkBridge({
  *  re-renders (a rail fold, the palette), so the open page is left alone then. */
 /** Pages with a title and no toolbar of their own: the new shell gives them a title-only bar
  *  (W2-B). Pages with a toolbar row put the title in that row themselves. */
-const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'sleep', 'packs']);
+const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'sleep']);
 
 /** The new shell's page header around the router (W2-B): "← Chat" for a page a chat opened,
  *  and the title-only bar. Classic renders the page alone, exactly as before. */
@@ -516,8 +515,6 @@ const PageRouter = memo(function PageRouter({
       return <CouncilPage />;
     case 'settings':
       return <SettingsPage focus={focus} />;
-    case 'packs':
-      return <PacksPage />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
     case 'apps':

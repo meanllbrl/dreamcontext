@@ -18,11 +18,6 @@ import './UpdateBadge.css';
  *
  * Renders nothing when there is no nudge (header layout unchanged).
  */
-interface UpdateBadgeProps {
-  /** Navigate to the Packs page (where per-pack install/remove buttons live). */
-  onManagePacks?: () => void;
-}
-
 type UpgradePhase = 'idle' | 'running' | 'done' | 'error';
 
 interface UpgradeStatus {
@@ -33,12 +28,11 @@ interface UpgradeStatus {
 /** Upgrade-only: this polls while an upgrade job runs, never otherwise. */
 const POLL_MS = 1200;
 
-export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
+export function UpdateBadge() {
   const { t } = useI18n();
   const api = useApi();
   const { data } = useVersionCheck();
   const nudge = data?.nudge ?? null;
-  const newPacks = data?.newPacks ?? [];
   const cliOutdated = data?.cliOutdated ?? false;
   const currentCli = data?.currentCli ?? null;
   const latestCli = data?.latestCli ?? null;
@@ -145,10 +139,10 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Show whenever there's genuinely something to upgrade: a newer CLI, new packs,
+  // Show whenever there's genuinely something to upgrade: a newer CLI
   // or any prose nudge. `cliOutdated` matters most in the desktop app, where the
   // prose CLI line is suppressed but the app can still perform the upgrade.
-  const hasUpdate = cliOutdated || newPacks.length > 0 || !!nudge;
+  const hasUpdate = cliOutdated || !!nudge;
   if (!hasUpdate) return null;
 
   const versionLine =
@@ -225,19 +219,6 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
           {phase === 'error' && (
             <button className="update-badge-action" onClick={startUpgrade} disabled={busy}>
               {t('update.retry')}
-            </button>
-          )}
-
-          {/* New-packs shortcut stays available when we're not mid-upgrade. */}
-          {phase === 'idle' && newPacks.length > 0 && onManagePacks && (
-            <button
-              className="update-badge-action update-badge-action--secondary"
-              onClick={() => {
-                onManagePacks();
-                setExpanded(false);
-              }}
-            >
-              {t('update.managePacks')}
             </button>
           )}
         </div>

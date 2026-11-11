@@ -26,7 +26,7 @@ function markdown(dir: string): string[] {
   return out;
 }
 
-const SHIPPED = [...markdown('skill'), ...markdown('skill-packs'), ...markdown('agents')];
+const SHIPPED = [...markdown('skill'), ...markdown('skill-goal-skill'), ...markdown('skill-multi-review'), ...markdown('skill-council'), ...markdown('agents')];
 
 describe('shipped text: the full suite once per cut, a red reruns only its files', () => {
   it('no shipped instruction asks for npm test after a build or a fix, or gives a red full suite a second run', () => {
@@ -52,11 +52,11 @@ describe('shipped text: the full suite once per cut, a red reruns only its files
   });
 
   it('goal-skill, goal-validator and the references say the new rule', () => {
-    const goal = read('skill-packs/goal-skill/SKILL.md');
+    const goal = read('skill-goal-skill/SKILL.md');
     expect(goal).toMatch(/The full suite is the release cut's, not a goal's/);
     expect(goal).toMatch(/the full suite only at a release cut/);
     expect(goal).toMatch(/builder test --related`\) plus tsc and a build/);
-    const validator = read('skill-packs/agents/goal-validator.md');
+    const validator = read('agents/goal-validator.md');
     expect(validator).toMatch(/Never start a second full suite/);
     expect(validator).toMatch(/dreamcontext builder test --failed/);
     expect(read('skill/references/super-orchestration.md')).toMatch(/"related tests \+ tsc": the full suite runs once per release cut/);

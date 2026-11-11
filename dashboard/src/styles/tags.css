@@ -1,4 +1,4 @@
-/* Tag chips (.task-tag), used across pages: Knowledge, Packs, Sleep, Brain search and the task
+/* Tag chips (.task-tag), used across pages: Knowledge, Sleep, Brain search and the task
    detail. Always loaded (imported from App.tsx), so a page never depends on the Tasks bundle
    for its tag colours. Moved here from the deleted TaskCard.css (2026-10-22). */
 

@@ -110,7 +110,6 @@ export default defineConfig({
   onSuccess: async () => {
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });
-    cpSync('skill-packs', 'dist/skill-packs', { recursive: true });
     // The draw skill's builder is code `whiteboard draw --spec` runs (spec-draw.ts kitDir): the
     // copy beside the bundle is the one it loads, never a folder further up. Generated example
     // boards are left out.

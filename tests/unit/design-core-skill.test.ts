@@ -6,7 +6,7 @@ import matter from 'gray-matter';
 import { installCoreForPlatform } from '../../src/cli/commands/install-skill.js';
 import { emptyManifest, writeManifest, type Manifest } from '../../src/lib/manifest.js';
 import { TOOL_SKILL_SOURCES } from '../../src/lib/tool-skills.js';
-import { guardedFileIsUnchanged, guardedFileSha as designFileSha, installDesignSkill, isGuardedSkillPath } from '../../src/lib/core-guarded-skill.js';
+import { guardedFileIsUnchanged, guardedFileSha as designFileSha, installDesignSkill, isGuardedSkillPath, GUARDED_SKILLS } from '../../src/lib/core-guarded-skill.js';
 
 /**
  * `design` became a core skill on 2026-11-04 (it was an optional pack): every skill and brief that
@@ -34,15 +34,9 @@ describe('design skill: shipped as core', () => {
     expect(tauri.bundle.resources['../../skill-design']).toBe('skill-design');
   });
 
-  it('is absent from the optional pack catalog and named `design`', () => {
-    const catalog = JSON.parse(readFileSync(join(ROOT, 'skill-packs', 'catalog.json'), 'utf-8')) as {
-      packs: { name: string; crossPackDeps?: string[] }[];
-      standalone: { name: string }[];
-    };
-    expect([...catalog.packs, ...catalog.standalone].map((p) => p.name)).not.toContain('design');
-    // engineering no longer "recommends" installing design: it is always there. Other packs still
-    // point at design sub-files (design/onboarding-design...), which are always installed too.
-    expect(catalog.packs.find((p) => p.name === 'engineering')?.crossPackDeps ?? []).toEqual([]);
+  it('is a guarded core skill named `design`, and there is no pack catalog any more', () => {
+    expect(existsSync(join(ROOT, 'skill-packs'))).toBe(false);
+    expect(GUARDED_SKILLS.find((g) => g.name === 'design')?.source).toBe('skill-design');
     expect(matter(readFileSync(join(SOURCE, 'SKILL.md'), 'utf-8')).data.name).toBe('design');
   });
 
@@ -219,8 +213,10 @@ describe('design skill: core install and the edit guard', () => {
     expect(notes.join('\n')).toContain('Kept .claude/skills/design/product-ui.md');
   });
 
-  it('isGuardedSkillPath matches only the design and draw skill folders', () => {
+  it('isGuardedSkillPath matches only the guarded skill folders', () => {
     expect(isGuardedSkillPath('.claude/skills/design/SKILL.md')).toBe(true);
+    for (const n of ['council', 'multi-review', 'goal-skill', 'video-watching']) expect(isGuardedSkillPath(`.claude/skills/${n}/SKILL.md`), n).toBe(true);
+    expect(isGuardedSkillPath('.claude/skills/growth/SKILL.md')).toBe(false);
     expect(isGuardedSkillPath('.claude/skills/draw/scripts/lib/style.js')).toBe(true);
     expect(isGuardedSkillPath('.claude/skills/design-extra/SKILL.md')).toBe(false);
     expect(isGuardedSkillPath('.claude/skills/drawer/SKILL.md')).toBe(false);

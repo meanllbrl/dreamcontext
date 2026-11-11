@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
+import { GUARDED_SKILLS } from '../../src/lib/core-guarded-skill.js';
 
 /**
  * Which skill each shipped agent PRELOADS (`skills:` frontmatter), and whether its
@@ -23,7 +24,7 @@ import matter from 'gray-matter';
  */
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
-const AGENT_DIRS = ['agents', join('skill-packs', 'agents')];
+const AGENT_DIRS = ['agents'];
 
 const FULL_SKILL = 'dreamcontext';
 const AGENT_CORE = 'dreamcontext-agent-core';
@@ -38,10 +39,9 @@ const AGENT_CORE_AGENTS = new Set([
   // core agents
   'dreamcontext-explore', 'initializer-ingestor', 'curator-worker',
   'sleep-migration', 'sleep-learn', 'sleep-tasks', 'sleep-product', 'sleep-state',
-  // skill-pack agents
-  'council-persona', 'council-synthesizer', 'discover-brand',
+  // council, goal-skill and multi-review agents (optional packs until 2026-11-11)
+  'council-persona', 'council-synthesizer',
   'goal-implementer', 'goal-plan-reviewer', 'goal-planner', 'goal-validator',
-  'marketing-creative', 'marketing-monitor', 'marketing-strategy',
   'review-cloud-functions', 'review-edge-cases', 'review-frontend', 'review-router',
   'review-security', 'reviewer',
 ]);
@@ -92,11 +92,11 @@ function shippedSkills(): Map<string, string> {
     const { data } = matter(readFileSync(abs, 'utf-8'));
     if (typeof data.name === 'string') map.set(data.name, rel);
   }
-  // A pack installs to `.claude/skills/<pack-dir>/`, so its folder name IS the skill
-  // name an agent preloads, whatever its SKILL.md frontmatter says.
-  for (const pack of readdirSync(join(ROOT, 'skill-packs'))) {
-    const rel = join('skill-packs', pack, 'SKILL.md');
-    if (existsSync(join(ROOT, rel))) map.set(pack, rel);
+  // A guarded core skill installs to `.claude/skills/<installed-name>/`, so that folder name IS
+  // the skill name an agent preloads, whatever its SKILL.md frontmatter says.
+  for (const spec of GUARDED_SKILLS) {
+    const rel = join(spec.source, 'SKILL.md');
+    if (existsSync(join(ROOT, rel))) map.set(spec.name, rel);
   }
   return map;
 }
@@ -112,7 +112,7 @@ const AGENTS = loadAgents();
 
 describe('shipped agents preload the right dreamcontext skill', () => {
   it('found the agent directories (sanity)', () => {
-    expect(AGENTS.length).toBeGreaterThanOrEqual(30);
+    expect(AGENTS.length).toBeGreaterThanOrEqual(24);
   });
 
   it('no agent preloads both the full skill and agent-core', () => {

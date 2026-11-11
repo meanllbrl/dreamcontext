@@ -106,38 +106,6 @@ const CATEGORIES: MenuCategory[] = [
         ],
       },
       {
-        emoji: '\u{1F4E6}',
-        name: 'Install skill packs',
-        description: 'Browse and install optional skill packs',
-        argv: ['install-skill', '--packs'],
-        args: [
-          {
-            name: 'Platforms',
-            type: 'multiselect',
-            choices: PLATFORM_CHOICES,
-            flag: '--platforms',
-            optional: true,
-            defaultValue: 'claude',
-          },
-        ],
-      },
-      {
-        emoji: '\u{1F4CB}',
-        name: 'List skill packs',
-        description: 'Show all available skill packs',
-        argv: ['install-skill', '--list'],
-        args: [
-          {
-            name: 'Platforms',
-            type: 'multiselect',
-            choices: PLATFORM_CHOICES,
-            flag: '--platforms',
-            optional: true,
-            defaultValue: 'claude',
-          },
-        ],
-      },
-      {
         emoji: '\u{1F4D6}',
         name: 'Install root instructions',
         description: 'Install the managed CLAUDE.md block',

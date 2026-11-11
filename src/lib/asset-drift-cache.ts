@@ -4,11 +4,11 @@
  * The SessionStart "stale project assets" nag (see setup-drift.ts) fires on a
  * cheap version comparison (`setupVersion < cliVersion`). But a CLI version bump
  * does NOT necessarily change any asset THIS project actually uses — the release
- * may only have touched packs the project never installed. Nagging then is a
+ * may only have touched files the project does not carry. Nagging then is a
  * false positive: `dreamcontext update` would be a content no-op for the user.
  *
  * Deciding that requires a content comparison of the project's used assets
- * (core + installed packs) against what the current CLI would install — which is
+ * (everything the core install writes) against what the current CLI would install — which is
  * async + writes installer logs to stdout, so it can't run inside the sync,
  * stdout-sensitive SessionStart snapshot. Instead a detached process recomputes
  * it on the ≤once/24h hook tick and persists the verdict here; the snapshot reads

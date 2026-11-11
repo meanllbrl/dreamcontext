@@ -267,7 +267,7 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
   it('the dashboard loads: the SPA, an asset, and every page area answers 2xx; a task write lands', async () => {
     expect((await request(phonePort, 'GET', '/?vault=' + PROJECT, { cookie, accept: 'text/html' })).status).toBe(200);
     expect((await request(phonePort, 'GET', '/assets/app.js', { cookie })).status).toBe(200);
-    for (const p of ['/api/lab', '/api/whiteboards', '/api/tasks', '/api/knowledge', '/api/roadmap', '/api/objectives', '/api/automations', '/api/sleep', '/api/core', '/api/council', '/api/theses', '/api/taxonomy', '/api/packs', '/api/releases']) {
+    for (const p of ['/api/lab', '/api/whiteboards', '/api/tasks', '/api/knowledge', '/api/roadmap', '/api/objectives', '/api/automations', '/api/sleep', '/api/core', '/api/council', '/api/theses', '/api/taxonomy', '/api/releases']) {
       const r = await request(phonePort, 'GET', p, H());
       expect(r.status, `${p} ${r.body.slice(0, 80)}`).toBeLessThan(300);
     }

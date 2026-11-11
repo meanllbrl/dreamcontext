@@ -68,7 +68,7 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
           {/* Draws nothing unless something big stops the app (lib/setupStatus.ts). */}
           {!phone && phoneAllows('GET', '/api/onboarding/readiness') && <SetupStatusChip />}
           {!phone && phoneAllows('GET', '/api/sleep') && <SleepDebtTracker onOpen={() => onNavigate('sleep')} />}
-          {phoneAllows('GET', '/api/launcher/upgrade/status') && <UpdateBadge onManagePacks={() => onNavigate('packs')} />}
+          {phoneAllows('GET', '/api/launcher/upgrade/status') && <UpdateBadge />}
         </>,
         slots.right,
       )}

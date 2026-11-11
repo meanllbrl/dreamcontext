@@ -66,7 +66,6 @@ describe('isCacheFresh', () => {
     const cache: VersionCache = {
       checkedAt: Date.now() - 60 * 60 * 1000, // 1h ago
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: 24,
     };
     expect(isCacheFresh(cache)).toBe(true);
@@ -76,7 +75,6 @@ describe('isCacheFresh', () => {
     const cache: VersionCache = {
       checkedAt: Date.now() - 25 * 60 * 60 * 1000, // 25h ago
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: 24,
     };
     expect(isCacheFresh(cache)).toBe(false);
@@ -90,7 +88,6 @@ describe('isCacheFresh', () => {
     const cache = {
       checkedAt: 'not-a-number' as unknown as number,
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: 24,
     };
     expect(isCacheFresh(cache)).toBe(false);
@@ -100,7 +97,6 @@ describe('isCacheFresh', () => {
     const cache: VersionCache = {
       checkedAt: NaN,
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: 24,
     };
     expect(isCacheFresh(cache)).toBe(false);
@@ -110,7 +106,6 @@ describe('isCacheFresh', () => {
     const freshCache = {
       checkedAt: Date.now() - 60 * 60 * 1000, // 1h ago
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: undefined as unknown as number,
     };
     expect(isCacheFresh(freshCache)).toBe(true);
@@ -118,7 +113,6 @@ describe('isCacheFresh', () => {
     const staleCache = {
       checkedAt: Date.now() - 25 * 60 * 60 * 1000, // 25h ago
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: undefined as unknown as number,
     };
     expect(isCacheFresh(staleCache)).toBe(false);
@@ -129,7 +123,6 @@ describe('isCacheFresh', () => {
     const cache: VersionCache = {
       checkedAt: base - 60 * 60 * 1000, // 1h before base
       latestCli: '0.5.0',
-      availablePacks: [],
       ttlHours: 24,
     };
     expect(isCacheFresh(cache, base)).toBe(true);
@@ -143,19 +136,18 @@ describe("version-check unit", () => {
   const cache06: VersionCache = {
     checkedAt: Date.now(),
     latestCli: '0.6.0',
-    availablePacks: [],
     ttlHours: 24,
   };
 
   it("buildNudge behavior unchanged by drift feature", () => {
     // outdated CLI -> Update Available
-    const outdated = buildNudge('0.5.0', cache06, [], []);
+    const outdated = buildNudge('0.5.0', cache06);
     expect(outdated).not.toBeNull();
     expect(outdated).toContain('## Update Available');
 
     // current -> null
     const current06: VersionCache = { ...cache06, latestCli: '0.5.0' };
-    const current = buildNudge('0.5.0', current06, [], []);
+    const current = buildNudge('0.5.0', current06);
     expect(current).toBeNull();
   });
 });
@@ -166,79 +158,47 @@ describe('buildNudge', () => {
   const freshCache: VersionCache = {
     checkedAt: Date.now(),
     latestCli: '0.6.0',
-    availablePacks: [],
     ttlHours: 24,
   };
 
   it('returns null when cache is null', () => {
-    expect(buildNudge('0.5.0', null, [], [])).toBeNull();
+    expect(buildNudge('0.5.0', null)).toBeNull();
   });
 
   it('returns null when latestCli is null (offline)', () => {
     const offlineCache: VersionCache = { ...freshCache, latestCli: null };
-    expect(buildNudge('0.5.0', offlineCache, [], [])).toBeNull();
+    expect(buildNudge('0.5.0', offlineCache)).toBeNull();
   });
 
-  it('returns null when CLI is up-to-date AND no new packs', () => {
+  it('returns null when CLI is up-to-date', () => {
     const upToDate: VersionCache = { ...freshCache, latestCli: '0.5.0' };
-    expect(buildNudge('0.5.0', upToDate, [], [])).toBeNull();
+    expect(buildNudge('0.5.0', upToDate)).toBeNull();
   });
 
   it('returns null when CLI is ahead (no regression nudge)', () => {
     const older: VersionCache = { ...freshCache, latestCli: '0.4.0' };
-    expect(buildNudge('0.5.0', older, [], [])).toBeNull();
+    expect(buildNudge('0.5.0', older)).toBeNull();
   });
 
   it('contains both installed and latest version when behind', () => {
-    const result = buildNudge('0.5.0', freshCache, [], []);
+    const result = buildNudge('0.5.0', freshCache);
     expect(result).not.toBeNull();
     expect(result).toContain('0.5.0');
     expect(result).toContain('0.6.0');
   });
 
   it('contains dreamcontext upgrade instruction when behind', () => {
-    const result = buildNudge('0.5.0', freshCache, [], []);
+    const result = buildNudge('0.5.0', freshCache);
     expect(result).not.toBeNull();
     expect(result).toContain('dreamcontext upgrade');
   });
 
   it('contains ## Update Available heading when behind', () => {
-    const result = buildNudge('0.5.0', freshCache, [], []);
+    const result = buildNudge('0.5.0', freshCache);
     expect(result).not.toBeNull();
     expect(result).toContain('## Update Available');
   });
 
-  it('names new packs when new packs exist (up-to-date CLI)', () => {
-    const upToDateWithNewPack: VersionCache = { ...freshCache, latestCli: '0.5.0' };
-    const result = buildNudge('0.5.0', upToDateWithNewPack, ['existing-pack'], ['existing-pack', 'new-awesome-pack']);
-    expect(result).not.toBeNull();
-    expect(result).toContain('new-awesome-pack');
-  });
-
-  it('contains both CLI and packs lines when both apply', () => {
-    const behindWithNewPacks: VersionCache = {
-      ...freshCache,
-      latestCli: '0.6.0',
-    };
-    const result = buildNudge(
-      '0.5.0',
-      behindWithNewPacks,
-      ['existing-pack'],
-      ['existing-pack', 'brand-new-pack'],
-    );
-    expect(result).not.toBeNull();
-    // CLI upgrade line
-    expect(result).toContain('0.5.0');
-    expect(result).toContain('0.6.0');
-    expect(result).toContain('dreamcontext upgrade');
-    // New pack line
-    expect(result).toContain('brand-new-pack');
-  });
-
-  it('returns null when installed has all catalog packs and CLI is current', () => {
-    const exact: VersionCache = { ...freshCache, latestCli: '0.5.0' };
-    expect(buildNudge('0.5.0', exact, ['pack-a', 'pack-b'], ['pack-a', 'pack-b'])).toBeNull();
-  });
 });
 
 // ─── refreshVersionCache ─────────────────────────────────────────────────────
@@ -281,15 +241,11 @@ describe('refreshVersionCache', () => {
     expect(cache?.latestCli).toBeNull();
   });
 
-  it('stores catalogPackNames in availablePacks', () => {
-    const runner = (_args: string[]) => '1.0.0';
-    refreshVersionCache(tmpDir, {
-      runner,
-      catalogPackNames: ['pack-a', 'pack-b'],
-    });
-
-    const cache = readVersionCache(tmpDir);
-    expect(cache?.availablePacks).toEqual(['pack-a', 'pack-b']);
+  it('reads an old cache that still carries availablePacks, and drops the field', () => {
+    writeFileSync(join(tmpDir, '_dream_context', 'state', '.version-check.json'), JSON.stringify({ checkedAt: 1, latestCli: '1.0.0', availablePacks: ['pack-a'], ttlHours: 24 }));
+    const cache = readVersionCache(tmpDir) as Record<string, unknown> | null;
+    expect(cache?.latestCli).toBe('1.0.0');
+    expect(cache && 'availablePacks' in cache).toBe(false);
   });
 
   it('writes valid checkedAt timestamp', () => {
@@ -317,24 +273,16 @@ describe('buildNudge with suppressCliNudge', () => {
   const cache06: VersionCache = {
     checkedAt: Date.now(),
     latestCli: '0.6.0',
-    availablePacks: [],
     ttlHours: 24,
   };
 
   it('returns null when only the CLI is outdated and the CLI nudge is suppressed', () => {
-    const result = buildNudge('0.5.0', cache06, [], [], { suppressCliNudge: true });
+    const result = buildNudge('0.5.0', cache06, { suppressCliNudge: true });
     expect(result).toBeNull();
   });
 
-  it('still emits the new-packs line when CLI nudge is suppressed', () => {
-    const result = buildNudge('0.5.0', cache06, ['have'], ['have', 'new-pack'], { suppressCliNudge: true });
-    expect(result).not.toBeNull();
-    expect(result).toContain('new-pack');
-    expect(result).not.toContain('dreamcontext upgrade');
-  });
-
   it('emits the CLI line normally when not suppressed', () => {
-    const result = buildNudge('0.5.0', cache06, [], [], { suppressCliNudge: false });
+    const result = buildNudge('0.5.0', cache06, { suppressCliNudge: false });
     expect(result).toContain('dreamcontext upgrade');
   });
 });
@@ -398,7 +346,6 @@ describe('shouldAutoUpgrade', () => {
   const cache = (latestCli: string | null): VersionCache => ({
     checkedAt: 0,
     latestCli,
-    availablePacks: [],
     ttlHours: 24,
   });
 
@@ -450,7 +397,6 @@ describe('maybeAutoUpgrade', () => {
   const cache = (latestCli: string | null): VersionCache => ({
     checkedAt: 0,
     latestCli,
-    availablePacks: [],
     ttlHours: 24,
   });
 
@@ -589,7 +535,7 @@ describe('auto-upgrade and the desktop self-update', () => {
   });
   afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
-  const cache: VersionCache = { checkedAt: 0, latestCli: '0.6.0', availablePacks: [], ttlHours: 24 };
+  const cache: VersionCache = { checkedAt: 0, latestCli: '0.6.0', ttlHours: 24 };
 
   it('the Settings switch turns the prompt hook\'s auto-upgrade off too', () => {
     expect(autoUpgradeEnabled({}, home)).toBe(true);

@@ -63,7 +63,7 @@ const isFile = (p: string): boolean => {
 /** The role's file: the project's, the owner's, then ours. Null when there is none by that name. */
 export function findAgentFile(name: string, cwd: string, home: string = homedir()): string | null {
   if (!SAFE_SKILL_NAME.test(name)) return null;
-  const dirs = [join(cwd, '.claude', 'agents'), join(home, '.claude', 'agents'), findPackageDir('agents'), findPackageDir('skill-packs/agents')];
+  const dirs = [join(cwd, '.claude', 'agents'), join(home, '.claude', 'agents'), findPackageDir('agents')];
   for (const d of dirs) {
     if (!d) continue;
     const p = join(d, `${name}.md`);

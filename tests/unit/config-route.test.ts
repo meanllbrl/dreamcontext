@@ -105,23 +105,6 @@ describe('PATCH /api/config', () => {
     expect(config.platforms).toEqual(['claude']);
   });
 
-  it('200: valid packs update', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: ['engineering'] }), res, {}, contextRoot);
-    expect(status()).toBe(200);
-    const config = (body() as Record<string, unknown>).config as SetupConfig;
-    expect(config.packs).toEqual(['engineering']);
-  });
-
-  it('200: empty packs array is valid (clears packs)', async () => {
-    writeSetupConfig(tmpDir, { platforms: ['claude'], packs: ['engineering'], multiProduct: false, setupVersion: '1.0.0', disableNativeMemory: true });
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: [] }), res, {}, contextRoot);
-    expect(status()).toBe(200);
-    const config = (body() as Record<string, unknown>).config as SetupConfig;
-    expect(config.packs).toEqual([]);
-  });
-
   it('400 invalid_platforms: unknown platform id', async () => {
     const { res, status, body } = makeRes();
     await handleConfigUpdate(makePatchReq({ platforms: ['mars'] }), res, {}, contextRoot);
@@ -136,39 +119,13 @@ describe('PATCH /api/config', () => {
     expect((body() as Record<string, unknown>).error).toBe('invalid_platforms');
   });
 
-  it('400 invalid_packs: array containing null', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: [null] }), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as Record<string, unknown>).error).toBe('invalid_packs');
-  });
-
-  it('400 invalid_packs: array containing object', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: [{}] }), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as Record<string, unknown>).error).toBe('invalid_packs');
-  });
-
-  it('400 invalid_packs: array containing number', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: [123] }), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as Record<string, unknown>).error).toBe('invalid_packs');
-  });
-
-  it('400 invalid_packs: array containing empty string', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: [''] }), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as Record<string, unknown>).error).toBe('invalid_packs');
-  });
-
-  it('400 invalid_packs: packs is not an array', async () => {
-    const { res, status, body } = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: 'notarray' }), res, {}, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as Record<string, unknown>).error).toBe('invalid_packs');
+  it('400 no_changes: packs is no longer a setting (skill packs are gone), whatever its shape', async () => {
+    for (const packs of [['engineering'], [], [null], 'notarray']) {
+      const { res, status, body } = makeRes();
+      await handleConfigUpdate(makePatchReq({ packs }), res, {}, contextRoot);
+      expect(status()).toBe(400);
+      expect((body() as Record<string, unknown>).error).toBe('no_changes');
+    }
   });
 
   it('400 invalid_body: non-JSON body', async () => {
@@ -215,13 +172,13 @@ describe('PATCH /api/config', () => {
 
   it('persists the update to disk and subsequent GET returns it', async () => {
     const patchRes = makeRes();
-    await handleConfigUpdate(makePatchReq({ packs: ['engineering'] }), patchRes.res, {}, contextRoot);
+    await handleConfigUpdate(makePatchReq({ platforms: ['claude'] }), patchRes.res, {}, contextRoot);
     expect(patchRes.status()).toBe(200);
 
     const getRes = makeRes();
     await handleConfigGet(makeGetReq(), getRes.res, {}, contextRoot);
     const config = (getRes.body() as Record<string, unknown>).config as SetupConfig;
-    expect(config.packs).toEqual(['engineering']);
+    expect(config.platforms).toEqual(['claude']);
   });
 });
 

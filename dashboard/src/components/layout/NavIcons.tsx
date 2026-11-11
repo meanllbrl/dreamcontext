@@ -149,17 +149,6 @@ function SleepIcon() {
   );
 }
 
-/** Packs — stacked layers. */
-function PacksIcon() {
-  return (
-    <Svg>
-      <path d="M12 3 21.5 8 12 13 2.5 8z" />
-      <path d="M2.5 12 12 17l9.5-5" />
-      <path d="M2.5 16 12 21l9.5-5" />
-    </Svg>
-  );
-}
-
 /** Settings — sliders. */
 function SettingsIcon() {
   return (
@@ -263,7 +252,6 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   brain: BrainIcon,
   sleep: SleepIcon,
   stats: StatsIcon,
-  packs: PacksIcon,
   settings: SettingsIcon,
 };
 

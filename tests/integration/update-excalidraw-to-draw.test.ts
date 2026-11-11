@@ -147,9 +147,10 @@ describe.skipIf(!existsSync(CLI))('update moves the excalidraw pack to draw (int
     }
   }, 240_000);
 
-  it('install-skill --packs excalidraw says it is the core draw skill', () => {
+  it('install-skill --packs excalidraw says packs are gone and draw is built in', () => {
     const out = run(['install-skill', '--packs', 'excalidraw'], proj, home);
-    expect(out).toContain('is now the core');
+    expect(out).toContain('Skill packs no longer exist');
+    expect(out).toContain('draw');
     expect(out).not.toContain('not found');
   }, 60_000);
 

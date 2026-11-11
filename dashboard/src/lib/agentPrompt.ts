@@ -174,6 +174,5 @@ export function trainKickoffPrompt(slug: string, automationTitle: string): strin
 export function initializerKickoffPrompt(): string {
   return "Use the initializer skill to set up this project's brain from what is already here: the code and any " +
     'documents in this folder. If the folder is empty, ask me what the project is about first. Ask only ' +
-    'what you cannot find out yourself, then recommend the skill packs that fit and install the ones I pick. ' +
-    'No placeholders.';
+    'what you cannot find out yourself. No placeholders.';
 }

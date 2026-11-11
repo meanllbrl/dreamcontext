@@ -23,7 +23,7 @@ import {
   readInstalledSpecialistDefaults,
   DEFAULT_MAX_NEW_TASKS_PER_CYCLE,
 } from '../../lib/sleep-settings.js';
-import { applySleepSpecialistOverrides } from '../../lib/install-packs.js';
+import { applySleepSpecialistOverrides } from '../../lib/install-agents.js';
 import { resolveTombstone, readTombstones } from '../../lib/task-tombstones.js';
 import {
   currentAutoSleepFingerprint,

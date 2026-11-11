@@ -2,7 +2,7 @@
  * Claude's sub-agent roles, where Antigravity reads them: a plugin of ours in each account profile,
  * `<profile>/config/plugins/dreamcontext/{plugin.json, agents/<role>.md}` (the agent's own plugin
  * layout, read from its bundled docs, agent 1.4.1). The agent lists a plugin's agents as sub-agents
- * it calls with `invoke_subagent`. Sources: the roles we ship (the skill packs' and the core's) and
+ * it calls with `invoke_subagent`. Sources: the roles we ship (agents/) and
  * the owner's `~/.claude/agents` (the later wins). A project's own `.claude/agents` is not here: the profile is shared by every
  * project, so a project role is made in the chat with `define_subagent` from its file (toolNote).
  *
@@ -98,7 +98,7 @@ export function syncAntigravityRoles(accountId: string, o: RolesOptions = {}): R
     const core = packageDir('skill-agent-core');
     const agentCore = core && existsSync(join(core, 'SKILL.md')) && skillName(join(core, 'SKILL.md')) === 'dreamcontext-agent-core' ? join(core, 'SKILL.md') : null;
     const byName = new Map<string, string>();
-    for (const src of [packageDir('skill-packs/agents'), packageDir('agents'), join(home, '.claude', 'agents')]) {
+    for (const src of [packageDir('agents'), join(home, '.claude', 'agents')]) {
       if (!src || !isRealDir(src)) continue;
       for (const file of readdirSync(src).sort()) {
         const p = join(src, file);

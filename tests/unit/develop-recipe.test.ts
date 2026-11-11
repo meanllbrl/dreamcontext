@@ -464,7 +464,7 @@ describe('no tick without evidence, in both recipes', () => {
 /**
  * 2026-10-24 (owner, model-efor report): a judge with no effort named inherited the lead's, so a
  * medium lead had medium reviewers. Every judge dispatch names its own: Opus high, the router
- * Sonnet low, and the agent definitions pin the same (skill-packs/agents frontmatter).
+ * Sonnet low, and the agent definitions pin the same (agents/ frontmatter).
  */
 describe('every judge names its model and effort, in both recipes', () => {
   for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
@@ -481,7 +481,7 @@ describe('every judge names its model and effort, in both recipes', () => {
   it('the agent definitions pin the same efforts', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const fm = (agent: string) => readFileSync(join(__dirname, '../../skill-packs/agents', `${agent}.md`), 'utf-8').split('\n---')[0];
+    const fm = (agent: string) => readFileSync(join(__dirname, '../../agents', `${agent}.md`), 'utf-8').split('\n---')[0];
     for (const judge of ['reviewer', 'review-security', 'review-edge-cases', 'review-frontend', 'review-cloud-functions', 'goal-plan-reviewer', 'goal-validator']) {
       expect(fm(judge), judge).toMatch(/^model: opus\neffort: high$/m);
     }

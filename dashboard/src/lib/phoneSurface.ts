@@ -246,8 +246,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'DELETE /api/connections/:vault',
   'POST /api/peer/send',
   'POST /api/federation/sync',
-  'POST /api/packs/:name/install',
-  'DELETE /api/packs/:name',
   'GET /api/lab/credentials',
   'POST /api/lab/credentials',
   'POST /api/agents/sync/confirm',

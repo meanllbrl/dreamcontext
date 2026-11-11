@@ -87,7 +87,7 @@ Bu bolum kirmiziysa manual teste gecme. Once fix.
 
 - [ ] **1.4 Package dry-run**  
   Komut: `npm pack --dry-run`  
-  Beklenen icerik: `dist/` (index.js + dashboard/ + agents/), `skill/` (`skill/references/` dahil), `skill-packs/`, `skill-initializer/`, `skill-curator/`, `skill-deep-research/`, `agents/`, `install.sh`, `README.md`, `LICENSE`, `NOTICE`.  
+  Beklenen icerik: `dist/` (index.js + dashboard/ + agents/), `skill/` (`skill/references/` dahil), `skill-initializer/`, `skill-council/`, `skill-multi-review/`, `skill-goal-skill/`, `skill-video-watching/`, `skill-design/`, `skill-draw/`, `skill-curator/`, `skill-deep-research/`, `agents/`, `install.sh`, `README.md`, `LICENSE`, `NOTICE`.  
   Beklenen HARIC: `_dream_context/` **girmiyor**, `desktop/src-tauri/target/` gibi build artifact'lari **girmiyor**, `overrides/` ve `tests/` girmiyor. **`DEEP-DIVE.md` de pakete GIRMEZ** — kasitli: `files` array'inde yok, README icindeki relative link npm tarafindan repo URL'ine cozulur, o yuzden tarball'a koymaya gerek yok (mevcut davranis).  
   Not: `package.json` `files` alani source-of-truth — yeni `dreamcontext-deep-research` ve curator/initializer skill dizinlerinin pakete girdigini dogrula.
 
@@ -651,7 +651,7 @@ Bu tablo "ne yaptik?" sorusunun test haritasi. Detayli ham diff icin Appendix A'
 | **Orphaned dashboard-server fix (WT)** | `src/server/lifecycle.ts` · `src/server/index.ts` · `agent-terminal.ts` · `desktop/src-tauri/src/lib.rs` · `tests/unit/lifecycle.test.ts` | Parent-death watchdog (signal-0 poll, DESKTOP-gated, ESRCH-fire); trackChild/reaper; idempotent shutdown; `reap_server` SIGTERM->SIGKILL process group; PARENT_PID pass | 14 |
 | **First CI workflow (WT)** | `.github/workflows/ci.yml` · `desktop-release.yml` (pins) | Her push-to-main + PR'da `npm test -- run`; q030 regression boslugunu kapatir | 1, 15 |
 | **Recall q030 fix (WT)** | `src/lib/recall.ts` (`CAPTURE_RANK_PENALTY` 0.5->0.4) | Turkce-vocab capture flood'u q030'da knowledge/positioning'i bastiriyordu | 1, 10 |
-| **Excalidraw overflow-proof render (WT)** | `skill-packs/excalidraw/` · `scripts/diagrams/excalidraw/` | Per-glyph width, wrapToWidth, fitText auto-shrink, connector elbow/via, dangling-embed pre-flight guard | 1, 7 |
+| **Excalidraw overflow-proof render (WT)** | `skill-draw/` · `scripts/diagrams/excalidraw/` | Per-glyph width, wrapToWidth, fitText auto-shrink, connector elbow/via, dangling-embed pre-flight guard | 1, 7 |
 | **Knowledge board-folder grouping + asset resolution (WT)** | `dashboard/.../KnowledgePage.tsx` · `src/server/routes/knowledge.ts` · `tests/unit/excalidraw-knowledge.test.ts` | Tek-sahip wrapper klasoru collapse; assets/ ile co-located klasor grouped; `[[img.png]]` board + assets/ altinda cozulur | 7 |
 | **Installer hook reconcile (WT)** | `src/cli/commands/install-skill.ts` · `tests/integration/cli-commands.test.ts` | `ensureClaudeHooks` bayat hook timeout'unu guncel spec'e reconcile eder (5s->120s) | 2 |
 
@@ -678,7 +678,7 @@ git diff -- src/lib/image-sniff.ts src/lib/task-backend/github-assets.ts src/lib
 git diff -- src/server/lifecycle.ts src/server/index.ts src/server/routes/agent-terminal.ts desktop/src-tauri/src/lib.rs
 git diff -- src/lib/recall.ts
 git diff -- dashboard/src/pages/KnowledgePage.tsx src/server/routes/knowledge.ts
-git diff -- skill-packs/excalidraw scripts/diagrams/excalidraw
+git diff -- skill-draw scripts/diagrams/excalidraw
 git diff -- src/cli/commands/install-skill.ts
 cat .github/workflows/ci.yml
 

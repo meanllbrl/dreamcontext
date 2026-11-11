@@ -181,7 +181,7 @@ describe('scaffoldProject — existing folder', () => {
   });
 });
 
-// ─── platforms + skill packs (wizard enrichment) ──────────────────────────────
+// ─── platforms (wizard enrichment) ──────────────────────────────
 
 describe('scaffoldProject — platforms', () => {
   it('defaults to --platforms claude when none are given', async () => {
@@ -203,37 +203,15 @@ describe('scaffoldProject — platforms', () => {
   });
 });
 
-describe('scaffoldProject — skill packs', () => {
-  it('runs install-skill with chosen packs AFTER setup', async () => {
+describe('scaffoldProject — skill packs are gone', () => {
+  it('an old client that still sends packs never runs install-skill', async () => {
     const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
     const { runner, calls } = recordingRunner();
     await scaffoldProject(
-      { mode: 'new', name: 'p', parentDir: parent, platforms: ['claude'], packs: ['growth'] },
+      { mode: 'new', name: 'p', parentDir: parent, platforms: ['claude'], packs: ['growth'] } as Parameters<typeof scaffoldProject>[0],
       runner,
       home,
     );
-    const order = calls.map((c) => c[0]);
-    expect(order).toEqual(['init', 'setup', 'install-skill']);
-    const install = calls.find((c) => c[0] === 'install-skill')!;
-    expect(install).toContain('growth');
-    expect(install[install.indexOf('--platforms') + 1]).toBe('claude');
-  });
-
-  it('drops unknown packs and skips install-skill when none remain', async () => {
-    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
-    const { runner, calls } = recordingRunner();
-    await scaffoldProject(
-      { mode: 'new', name: 'p', parentDir: parent, packs: ['definitely-not-a-pack'] },
-      runner,
-      home,
-    );
-    expect(calls.some((c) => c[0] === 'install-skill')).toBe(false);
-  });
-
-  it('does not run install-skill when no packs are chosen', async () => {
-    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
-    const { runner, calls } = recordingRunner();
-    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent }, runner, home);
     expect(calls.some((c) => c[0] === 'install-skill')).toBe(false);
   });
 });
@@ -349,7 +327,7 @@ describe('scaffoldProject — gitInit', () => {
 // ─── GET /api/launcher/catalog ────────────────────────────────────────────────
 
 describe('handleLauncherCatalog', () => {
-  it('returns platforms (claude recommended) + available packs', async () => {
+  it('returns platforms (claude recommended) and no packs (skill packs are gone)', async () => {
     const { handleLauncherCatalog } = await import('../../src/server/routes/launcher.js');
     let status = 0;
     let body: any = null;
@@ -364,9 +342,7 @@ describe('handleLauncherCatalog', () => {
     expect(ids).toContain('claude');
     const claude = body.platforms.find((p: any) => p.id === 'claude');
     expect(claude.recommended).toBe(true);
-    expect(Array.isArray(body.packs)).toBe(true);
-    // growth pack ships in the repo catalog
-    expect(body.packs.map((p: any) => p.name)).toContain('growth');
+    expect(body.packs).toBeUndefined();
   });
 });
 

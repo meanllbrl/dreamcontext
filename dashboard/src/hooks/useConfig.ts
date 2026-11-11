@@ -65,7 +65,8 @@ export interface SleepConfigPatch {
 
 export interface SetupConfig {
   platforms: PlatformId[];
-  packs: string[];
+  /** @deprecated Skill packs are gone (2026-11-11); kept only because old configs carry it. */
+  packs?: string[];
   multiProduct: false | string[];
   setupVersion: string;
   disableNativeMemory: boolean;
@@ -88,7 +89,6 @@ interface ConfigUpdateResponse {
 /** Allowed PATCH fields — deliberately restricted to prevent allow-list bypass. */
 export interface ConfigPatch {
   platforms?: PlatformId[];
-  packs?: string[];
   disableNativeMemory?: boolean;
   taskBackend?: 'local' | 'clickup' | 'github';
   cloudTaskManagement?: boolean;

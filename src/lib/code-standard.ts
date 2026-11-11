@@ -7,7 +7,7 @@
  * worked without the rules. Owner, 2026-11-04: "ajanlar yutsun onu", so the pack is
  * retired and its rules live in the agents.
  *
- * One copy per block, here. The agent files under `skill-packs/agents/` carry a verbatim
+ * One copy per block, here. The agent files under `agents/` carry a verbatim
  * copy (a sub-agent file cannot import TypeScript), and `tests/unit/code-standard.test.ts`
  * holds every copy equal. The goal-skill planner and builders run as `claude -p` sessions
  * that never read an agent file, so their briefs (planner-brief.ts, builder-brief.ts)

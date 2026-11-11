@@ -257,10 +257,7 @@ describe('super-orchestration guide: every command, flag, skill and agent exists
       if (m) skillNames.add(m[1].trim());
     };
     for (const d of readdirSync(ROOT).filter((x) => /^skill(-[a-z-]+)?$/.test(x))) readName(join(ROOT, d, 'SKILL.md'));
-    for (const d of readdirSync(join(ROOT, 'skill-packs'), { withFileTypes: true })) {
-      if (d.isDirectory()) readName(join(ROOT, 'skill-packs', d.name, 'SKILL.md'));
-    }
-    for (const dir of ['agents', 'skill-packs/agents']) {
+    for (const dir of ['agents']) {
       for (const f of readdirSync(join(ROOT, dir)).filter((x) => x.endsWith('.md'))) readName(join(ROOT, dir, f));
     }
     const slash = [...new Set(spans.filter((s) => /^\/[a-z-]+$/.test(s)).map((s) => s.slice(1)))];
@@ -325,7 +322,7 @@ describe('heat and the heavy lock (the heat task, AC5)', () => {
     expect(FLAT).not.toContain('heavy checks share 2 machine-wide slots');
   });
   it('the Develop recipe and goal-skill route verify scripts through the heavy lock', async () => {
-    const goal = readFileSync(join(__dirname, '../../skill-packs/goal-skill/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+    const goal = readFileSync(join(__dirname, '../../skill-goal-skill/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
     expect(goal).toContain('`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`, never beside tests');
     const src = readFileSync(join(__dirname, '../../src/lib/develop-recipe.ts'), 'utf8');
     expect(src).toContain('Every browser run goes through \\`builder heavy\\`');

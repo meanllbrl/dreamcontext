@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SUPPORTED_PLATFORMS, type PlatformId } from './platforms.js';
 // Type-only import — zero runtime, keeps catalog.ts → manifest.ts one-directional
 // (manifest.ts must NOT import catalog.ts to avoid a circular dependency).
 import type { KnownArtifacts } from './manifest.js';
+import { GUARDED_SKILLS } from './core-guarded-skill.js';
 
 // ─── __dirname shim (ESM) ─────────────────────────────────────────────────────
 
@@ -19,89 +20,10 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
  */
 export const AGENT_CORE_SKILL = 'dreamcontext-agent-core' as const;
 
-// ─── Catalog Types ────────────────────────────────────────────────────────────
-
-export interface CatalogSubSkill {
-  name: string;
-  file: string;
-  description: string;
-  hasReferences?: boolean;
-}
-
-/**
- * A runtime helper file a pack ships into the consumer project's platform dir
- * (e.g. `.claude/goal-skill-viewer.cjs`). `file` is relative to the pack's
- * source dir inside skill-packs/; `dest` is relative to the platform dir
- * (`.claude/`) and must resolve strictly inside it.
- */
-export interface CatalogAsset {
-  file: string;
-  dest: string;
-}
-
-/**
- * Settings a pack registers in the consumer's `.claude/settings.json`.
- * Only keys modeled here are ever written — arbitrary settings injection is
- * deliberately impossible.
- */
-export interface CatalogSettings {
-  statusLine?: {
-    type: 'command';
-    command: string;
-    padding?: number;
-  };
-}
-
-export interface CatalogPack {
-  name: string;
-  description: string;
-  tags: string[];
-  alwaysApply: boolean;
-  base: string;
-  subSkills: CatalogSubSkill[];
-  relatedAgents?: string[];
-  crossPackDeps?: string[];
-  assets?: CatalogAsset[];
-  settings?: CatalogSettings;
-}
-
-export interface CatalogStandalone {
-  name: string;
-  file: string;
-  description: string;
-  tags: string[];
-  alwaysApply: boolean;
-  /**
-   * When true, install copies the skill's ENTIRE source directory (scripts,
-   * examples, references, vendored libs, a scoping package.json, …) — not just
-   * SKILL.md. Use for code-bearing skills whose runnable assets must ship
-   * alongside the prompt (e.g. excalidraw's board generator scripts).
-   */
-  bundleDir?: boolean;
-  assets?: CatalogAsset[];
-  settings?: CatalogSettings;
-}
-
-export interface CatalogAgent {
-  name: string;
-  file: string;
-  pack: string;
-  description: string;
-  tags: string[];
-  model: string;
-}
-
-export interface Catalog {
-  version: string;
-  packs: CatalogPack[];
-  standalone: CatalogStandalone[];
-  agents: CatalogAgent[];
-}
-
 // ─── Platform / Installation Helpers ─────────────────────────────────────────
 
 /**
- * Root directory where skill packs are installed for a given platform.
+ * Root directory where skills are installed for a given platform.
  * claude  → <projectRoot>/.claude/skills
  *
  * 'claude' is currently the only supported platform. When another platform is
@@ -126,40 +48,13 @@ export function detectInstalledPlatforms(projectRoot: string): PlatformId[] {
   );
 }
 
-/**
- * Root directory where pack runtime assets (helper scripts, statusline
- * renderers, …) are installed for a given platform.
- * claude → <projectRoot>/.claude
- */
-export function platformAssetRoot(projectRoot: string, _platform: PlatformId): string {
-  return join(projectRoot, '.claude');
-}
-
-/**
- * Returns true when the named pack's SKILL.md exists for the given platform.
- */
-export function isPackInstalledForPlatform(
-  projectRoot: string,
-  platform: PlatformId,
-  name: string,
-): boolean {
-  return existsSync(join(platformSkillRoot(projectRoot, platform), name, 'SKILL.md'));
-}
-
-/**
- * Returns true when the named pack is installed for ANY supported platform.
- */
-export function isSkillInstalled(projectRoot: string, name: string): boolean {
-  return SUPPORTED_PLATFORMS.some((p) => isPackInstalledForPlatform(projectRoot, p, name));
-}
-
 // ─── File Resolution ──────────────────────────────────────────────────────────
 
 /**
  * Find a package subdirectory by probing 3 candidate depths.
  * Works whether running from dist/lib/ (depth 3) or dist/ (depth 2) or src/lib/.
  *
- * The last candidate is `<dist>/<subdir>` itself: `tsup` copies `agents/` and `skill-packs/`
+ * The last candidate is `<dist>/<subdir>` itself: `tsup` copies `agents/` and `skill-draw/`
  * there. It only matters for a partial layout where the package root's copy is absent (the
  * desktop app's resources folder once shipped `dist/` without `agents/`), and it can never
  * shadow the root copy because it is probed after it.
@@ -181,49 +76,27 @@ export function findPackageDir(subdir: string, base: string = __dirname): string
   return null;
 }
 
-// ─── Catalog Loading ──────────────────────────────────────────────────────────
-
-/**
- * Load the skill-packs catalog.json.
- * Returns { catalog, packsDir } or null if not found / unreadable.
- * Never throws.
- */
-export function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
-  const packsDir = findPackageDir('skill-packs');
-  if (!packsDir) return null;
-
-  const catalogPath = join(packsDir, 'catalog.json');
-  if (!existsSync(catalogPath)) return null;
-
-  try {
-    const catalog = JSON.parse(readFileSync(catalogPath, 'utf-8')) as Catalog;
-    return { catalog, packsDir };
-  } catch {
-    return null;
-  }
-}
-
 // ─── Known Artifact Names (bootstrap allowlist) ──────────────────────────────
 
 /**
  * Build the allowlist of dreamcontext-shipped artifact names for the legacy
  * bootstrap scan (see `bootstrapManifestFromScan` in manifest.ts).
  *
- * agentNames = repo-root core agent base-names (from `agents/*.md`)
- *              ∪ catalog pack-agent names.
- * skillDirs  = 'dreamcontext' (core skill) ∪ every pack name ∪ every standalone name.
+ * agentNames = repo-root agent base-names (from `agents/*.md`).
+ * skillDirs  = 'dreamcontext' (core skill) ∪ every guarded core skill (design, draw, council,
+ *              multi-review, goal-skill, video-watching: a pre-manifest copy must be adopted as ours).
  *
- * Degrades gracefully: if the catalog or agents dir is unreadable, returns
- * whatever it could resolve (never throws). A smaller allowlist only means
- * fewer files are adopted — it can never cause a custom file to be deleted.
+ * The skills dreamcontext stopped shipping (2026-11-11) are deliberately NOT here: with no manifest
+ * nothing proves a copy is ours, so it is never adopted and never offered for deletion.
+ *
+ * Degrades gracefully: if the agents dir is unreadable, returns whatever it could
+ * resolve (never throws). A smaller allowlist only means fewer files are adopted —
+ * it can never cause a custom file to be deleted.
  */
 export function knownArtifactNames(): KnownArtifacts {
   const agentNames = new Set<string>();
-  // `design` (2026-11-04) and `draw` (2026-11-08) are guarded core skills: a pre-manifest
-  // project's copy must still be adopted as ours.
-  const skillDirs = new Set<string>(['dreamcontext', 'design', 'draw']);
+  const skillDirs = new Set<string>(['dreamcontext', ...GUARDED_SKILLS.map((g) => g.name)]);
 
-  // Core agents shipped from repo-root agents/ (e.g. dreamcontext-explore.md).
   const agentsDir = findPackageDir('agents');
   if (agentsDir) {
     try {
@@ -233,13 +106,6 @@ export function knownArtifactNames(): KnownArtifacts {
     } catch {
       // unreadable agents dir — skip, allowlist is best-effort
     }
-  }
-
-  const loaded = loadCatalog();
-  if (loaded) {
-    for (const a of loaded.catalog.agents) agentNames.add(a.name);
-    for (const p of loaded.catalog.packs) skillDirs.add(p.name);
-    for (const s of loaded.catalog.standalone) skillDirs.add(s.name);
   }
 
   return { agentNames, skillDirs };

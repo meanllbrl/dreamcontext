@@ -9,7 +9,6 @@ import { npmInstallCommand, pathWithNode, resolveNpmTarget, type NpmTarget } fro
 export interface VersionCache {
   checkedAt: number;       // Unix ms timestamp
   latestCli: string | null;
-  availablePacks: string[];
   ttlHours: number;
 }
 
@@ -18,7 +17,6 @@ export type NpmRunner = (args: string[]) => string;
 
 export interface RefreshOpts {
   runner?: NpmRunner;
-  catalogPackNames?: string[];
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -57,9 +55,6 @@ export function readVersionCache(root: string): VersionCache | null {
     return {
       checkedAt: parsed.checkedAt,
       latestCli: typeof parsed.latestCli === 'string' ? parsed.latestCli : null,
-      availablePacks: Array.isArray(parsed.availablePacks)
-        ? parsed.availablePacks.filter((p): p is string => typeof p === 'string')
-        : [],
       ttlHours: typeof parsed.ttlHours === 'number' ? parsed.ttlHours : DEFAULT_TTL_HOURS,
     };
   } catch {
@@ -139,19 +134,19 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
  *
  * Returns null when:
  *   - latestCli is null (offline / unknown)
- *   - installed CLI is current and no new packs exist
+ *   - installed CLI is current (or the CLI line is suppressed)
+ *
+ * Skill packs are gone (2026-11-11: every skill ships with the core), so there is no
+ * "new pack available" line any more.
  *
  * @param installedCli  Currently installed CLI version string
  * @param cache         The cached version info (may be null → returns null)
- * @param installedPacks Pack names already installed in the project
- * @param catalogPackNames All pack names available in the catalog
  */
 export interface NudgeOpts {
   /**
    * When true, suppress the manual "run dreamcontext upgrade" CLI line because
    * background auto-upgrade (on by default; see shouldSuppressCliNudge) is
-   * handling it. The new-skill-packs line is still emitted — auto-upgrade only
-   * reinstalls the CLI, not skill packs.
+   * handling it.
    */
   suppressCliNudge?: boolean;
 }
@@ -159,29 +154,17 @@ export interface NudgeOpts {
 export function buildNudge(
   installedCli: string,
   cache: VersionCache | null,
-  installedPacks: string[],
-  catalogPackNames: string[],
   opts: NudgeOpts = {},
 ): string | null {
   if (!cache || cache.latestCli === null) return null;
 
   const cliOutdated = compareVersions(installedCli, cache.latestCli) < 0;
-  const showCliNudge = cliOutdated && !opts.suppressCliNudge;
-  const newPacks = catalogPackNames.filter((p) => !installedPacks.includes(p));
-  const hasNewPacks = newPacks.length > 0;
+  if (!cliOutdated || opts.suppressCliNudge) return null;
 
-  if (!showCliNudge && !hasNewPacks) return null;
-
-  const lines: string[] = ['## Update Available\n'];
-
-  if (showCliNudge) {
-    lines.push(`- **New version available: v${installedCli} → v${cache.latestCli}.** A new release can add, update, or remove hooks, prompts, sub-agents, and skills. Run \`dreamcontext upgrade\` to get it, then \`dreamcontext update\` to apply those changes to this project.`);
-  }
-  if (hasNewPacks) {
-    lines.push(`- New skill pack${newPacks.length > 1 ? 's' : ''} available: ${newPacks.join(', ')} — run \`dreamcontext install-skill --packs\``);
-  }
-
-  return lines.join('\n');
+  return [
+    '## Update Available\n',
+    `- **New version available: v${installedCli} → v${cache.latestCli}.** A new release can add, update, or remove hooks, prompts, sub-agents, and skills. Run \`dreamcontext upgrade\` to get it, then \`dreamcontext update\` to apply those changes to this project.`,
+  ].join('\n');
 }
 
 // ─── Network refresh (ONLY networked function) ────────────────────────────────
@@ -191,7 +174,6 @@ export function buildNudge(
  * This is the ONLY function that touches the network.
  * - Calls `npm view dreamcontext version` with a 5s timeout.
  * - On ANY failure, writes latestCli: null (offline sentinel) and never throws.
- * - availablePacks are injected by the caller (no catalog import in this lib).
  */
 export function refreshVersionCache(root: string, opts?: RefreshOpts): void {
   const runner: NpmRunner = opts?.runner ?? ((args: string[]) =>
@@ -203,8 +185,6 @@ export function refreshVersionCache(root: string, opts?: RefreshOpts): void {
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as unknown as string
   );
-
-  const catalogPackNames = opts?.catalogPackNames ?? [];
 
   let latestCli: string | null = null;
 
@@ -223,7 +203,6 @@ export function refreshVersionCache(root: string, opts?: RefreshOpts): void {
   const cache: VersionCache = {
     checkedAt: Date.now(),
     latestCli,
-    availablePacks: catalogPackNames,
     ttlHours: DEFAULT_TTL_HOURS,
   };
 

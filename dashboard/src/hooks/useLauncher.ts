@@ -100,8 +100,6 @@ export interface ScaffoldPayload {
   projectPath?: string;
   /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
-  /** Optional skill-pack names to install after setup. */
-  packs?: string[];
   /** Run `git init` once set up (or record it to run when Git finishes installing). */
   gitInit?: boolean;
 }

@@ -1,5 +1,5 @@
-import { Command } from 'commander';
-import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs';
+import { Command, Option } from 'commander';
+import { existsSync, lstatSync, rmSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
@@ -7,12 +7,9 @@ import { error, info, warn, miniBox } from '../../lib/format.js';
 import { SUPPORTED_PLATFORMS, type PlatformId } from '../../lib/platforms.js';
 import {
   installCoreForPlatform,
-  directPackInstall,
-  loadCatalog,
-  platformSkillRoot,
   getOrCreateManifest,
 } from './install-skill.js';
-import { knownArtifactNames, detectInstalledPlatforms } from '../../lib/catalog.js';
+import { knownArtifactNames, detectInstalledPlatforms, findPackageDir, platformSkillRoot } from '../../lib/catalog.js';
 import {
   readManifest,
   writeManifest,
@@ -27,7 +24,7 @@ import {
 import { guardedFileIsUnchanged, isGuardedSkillPath, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { adoptLocalPending } from '../../lib/automations/adopt-local.js';
-import { pruneRetiredPacks, retireExcalidraw } from '../../lib/retired-packs.js';
+import { pruneRetiredPacks, pruneStoppedSkills, retireExcalidraw } from '../../lib/retired-packs.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshStaleDispatcher, type RefreshDispatcherResult } from '../../lib/automations/launchd.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
@@ -37,12 +34,11 @@ import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from 
 export interface UpdateSummaryInput {
   platforms: PlatformId[];
   installedCount: number;
-  packs: string[];
   removed: string[];
   setupVersion: string | null;
   /**
    * What happened to the managed CLAUDE.md block. Omitted (or null) when the
-   * refresh did not run at all, e.g. `--packs-only`.
+   * refresh did not run at all.
    */
   rootInstructions?: ManagedBlockRefreshAction | null;
 }
@@ -59,15 +55,10 @@ const ROOT_INSTRUCTIONS_SUMMARY: Record<ManagedBlockRefreshAction, string> = {
  * Exported for use by tests and relay agents.
  */
 export function buildUpdateSummary(input: UpdateSummaryInput): string {
-  const { platforms, installedCount, packs, removed, setupVersion } = input;
+  const { platforms, installedCount, removed, setupVersion } = input;
   const lines: string[] = ['## Update Summary\n'];
   lines.push(`Platforms: ${platforms.length > 0 ? platforms.join(', ') : 'none'}`);
   lines.push(`Core files refreshed: ${installedCount}`);
-  if (packs.length > 0) {
-    lines.push(`Packs refreshed: ${packs.join(', ')}`);
-  } else {
-    lines.push('Packs refreshed: none');
-  }
   if (removed.length > 0) {
     lines.push(`Pruned files: ${removed.join(', ')}`);
   } else {
@@ -80,27 +71,6 @@ export function buildUpdateSummary(input: UpdateSummaryInput): string {
     lines.push(`Setup version: ${setupVersion}`);
   }
   return lines.join('\n');
-}
-
-function detectInstalledPacks(projectRoot: string, platforms: PlatformId[]): string[] {
-  const loaded = loadCatalog();
-  if (!loaded) return [];
-  const knownNames = new Set<string>([
-    ...loaded.catalog.packs.map((p) => p.name),
-    ...loaded.catalog.standalone.map((s) => s.name),
-  ]);
-
-  const found = new Set<string>();
-  for (const platform of platforms) {
-    const root = platformSkillRoot(projectRoot, platform);
-    if (!existsSync(root)) continue;
-    for (const name of readdirSync(root)) {
-      if (name === 'dreamcontext') continue;
-      if (!knownNames.has(name)) continue;
-      if (existsSync(join(root, name, 'SKILL.md'))) found.add(name);
-    }
-  }
-  return [...found].sort();
 }
 
 /**
@@ -247,13 +217,19 @@ function reportDispatcherRefresh(r: RefreshDispatcherResult): void {
 export function registerUpdateCommand(program: Command): void {
   program
     .command('update')
-    .description('Refresh installed dreamcontext files (core skill, agents, hooks, packs, and the managed CLAUDE.md block when one exists) to the latest shipped version')
-    .option('--packs-only', 'Only refresh installed packs, skip core skill/agents/hooks')
-    .option('--core-only', 'Only refresh core skill/agents/hooks, skip packs')
+    .description('Refresh installed dreamcontext files (skills, agents, hooks, and the managed CLAUDE.md block when one exists) to the latest shipped version')
+    // Skill packs are gone (2026-11-11): every skill dreamcontext ships is core. Both flags stay
+    // accepted so an older script or app that passes them gets an answer, not "unknown option".
+    .addOption(new Option('--core-only', 'Same as a plain update: there are no packs any more').hideHelp())
+    .addOption(new Option('--packs-only', 'Refreshes nothing: there are no packs any more').hideHelp())
     .option('-y, --yes', 'Skip confirmation prompts when deleting stale files')
     .action(async (opts: { packsOnly?: boolean; coreOnly?: boolean; yes?: boolean }) => {
       try {
         const projectRoot = process.cwd();
+        if (opts.packsOnly && !opts.coreOnly) {
+          info('Skill packs no longer exist: every skill dreamcontext ships is installed with the core. Nothing to refresh; run `dreamcontext update`.');
+          return;
+        }
         const platforms = detectInstalledPlatforms(projectRoot);
 
         if (platforms.length === 0) {
@@ -264,15 +240,6 @@ export function registerUpdateCommand(program: Command): void {
           // launcher's "Update all", a user's propagate loop — recorded a
           // refresh that never happened. A no-op reported as success is how
           // automation learns to ignore real failures.
-          process.exitCode = 1;
-          return;
-        }
-
-        // No catalog means no packs are detected, and the prune below would then read every
-        // installed pack as retired and delete it. A package mid-replacement or a partial one
-        // is a refusal, never a refresh.
-        if (!opts.coreOnly && !loadCatalog()) {
-          error('The pack catalog could not be read, so nothing was changed. Try again, or reinstall dreamcontext.');
           process.exitCode = 1;
           return;
         }
@@ -296,41 +263,14 @@ export function registerUpdateCommand(program: Command): void {
         newManifest.version = dreamcontextVersion();
         for (const p of platforms) recordPlatform(newManifest, p);
 
-        // Preserve untouched partition when running with --core-only / --packs-only.
-        // Without this, the diff would flag every file in the skipped partition as
-        // "removed" and offer to delete them.
-        if (opts.coreOnly && !opts.packsOnly) {
-          for (const [path, entry] of Object.entries(oldManifest.files)) {
-            if (
-              entry.kind === 'pack-skill' ||
-              entry.kind === 'pack-agent' ||
-              entry.kind === 'pack-asset'
-            ) {
-              newManifest.files[path] = entry;
-            }
-          }
-          // Packs are fully owned by the pack partition.
-          for (const [name, info] of Object.entries(oldManifest.packs)) {
-            newManifest.packs[name] = info;
-          }
-        } else if (opts.packsOnly && !opts.coreOnly) {
-          for (const [path, entry] of Object.entries(oldManifest.files)) {
-            // The design skill was a pack before it became core: an older manifest lists it as
-            // 'pack-skill', and a packs-only run neither reinstalls it nor may offer it for deletion.
-            if (entry.kind === 'core' || entry.kind === 'agent' || entry.kind === 'hook' || isGuardedSkillPath(path)) {
-              newManifest.files[path] = entry;
-            }
-          }
-        }
-
         const installed: string[] = [];
         const notes: string[] = [];
 
         let rootInstructions: ManagedBlockRefreshAction | null = null;
         // This run's draw install per skill root: the excalidraw retirement below needs proof that
-        // draw is on disk now (a packs-only run has none, so it retires nothing).
+        // draw is on disk now.
         const drawInstalls = new Map<string, GuardedInstallResult>();
-        if (!opts.packsOnly) {
+        {
           for (const platform of platforms) {
             const result = await installCoreForPlatform(platform, projectRoot, newManifest);
             installed.push(...result.installed);
@@ -361,18 +301,10 @@ export function registerUpdateCommand(program: Command): void {
           console.log();
         }
 
-        const packs = opts.coreOnly ? [] : detectInstalledPacks(projectRoot, platforms);
-        if (packs.length > 0) {
-          info(`Refreshing ${packs.length} installed pack(s): ${chalk.dim(packs.join(', '))}`);
-          directPackInstall(packs, projectRoot, platforms, newManifest);
-        } else if (!opts.coreOnly) {
-          info(chalk.dim('No installed packs detected.'));
-        }
-
         // Retired packs first: they decide per file by content (ours goes, an edited file
         // stays untracked), and take their entries out of both manifests so the generic
         // prune below never offers a file the user edited.
-        const retired = pruneRetiredPacks(projectRoot, oldManifest, newManifest, loadCatalog()?.packsDir ?? null);
+        const retired = pruneRetiredPacks(projectRoot, oldManifest, newManifest, findPackageDir('agents'));
         for (const note of retired.notes) info(note);
         // The excalidraw pack became the core draw skill. It decides every file under its folder
         // by content, or (draw not proven on disk this run) carries every record forward
@@ -382,6 +314,14 @@ export function registerUpdateCommand(program: Command): void {
           const excalidraw = retireExcalidraw(projectRoot, skillRootRel, drawInstalls.get(skillRootRel) ?? null, oldManifest, newManifest);
           for (const note of excalidraw.notes) info(note);
           retired.removed.push(...excalidraw.removed);
+        }
+        // The skills dreamcontext stopped shipping (2026-11-11): a copy goes only when the manifest
+        // on disk proves dreamcontext installed it AND it is unchanged; anything else stays, untracked.
+        // Every platform shares one skill root today: decide each root once.
+        for (const skillRootRel of new Set(platforms.map((p) => relative(projectRoot, platformSkillRoot(projectRoot, p)).split(sep).join('/')))) {
+          const stopped = pruneStoppedSkills(projectRoot, skillRootRel, oldManifest, newManifest);
+          for (const note of stopped.notes) info(note);
+          retired.removed.push(...stopped.removed);
         }
 
         // Diff vs. old to prune stale files BEFORE persisting the new manifest.
@@ -408,14 +348,11 @@ export function registerUpdateCommand(program: Command): void {
 
         writeManifest(projectRoot, newManifest);
 
-        // Bump setupVersion only when core was refreshed (not packs-only).
-        // packs-only does NOT refresh skill/agents/hooks, so drift must remain.
-        //
         // Migrations run BEFORE setupVersion is persisted, and a partial failure
         // pins it so the next `update` retries — the shared contract in
         // migrate-and-stamp.ts, which install-skill and setup follow too.
         let newSetupVersion: string | null = null;
-        if (!opts.packsOnly) {
+        {
           newSetupVersion = migrateThenStampSetupVersion(projectRoot).stamped;
           // Once per project: members and routines this Mac made that waited under the old rule are
           // approved; anything that came by git keeps its one card (adopt-local.ts).
@@ -426,11 +363,9 @@ export function registerUpdateCommand(program: Command): void {
           }
         }
 
-        // Print relay-able summary always (covers packs-only too).
         const summary = buildUpdateSummary({
           platforms,
           installedCount: installed.length,
-          packs,
           removed: [...retired.removed, ...pruneResult.removed],
           setupVersion: newSetupVersion,
           rootInstructions,
@@ -438,10 +373,10 @@ export function registerUpdateCommand(program: Command): void {
         console.log();
         console.log(miniBox(summary.split('\n'), { color: 'green' }));
         console.log();
-        if (!opts.packsOnly) await ensureCodex();
+        await ensureCodex();
         // The scheduler is machine-wide and its plist only changes on a re-bootstrap: an older
         // release's plist keeps every routine under macOS background throttling until refreshed.
-        if (!opts.packsOnly) reportDispatcherRefresh(await refreshStaleDispatcher());
+        reportDispatcherRefresh(await refreshStaleDispatcher());
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();

@@ -40,7 +40,7 @@ future if that ever becomes necessary.
 - **Keep the docs in lockstep.** Any change to dreamcontext's behavior or capabilities must also
   update, in the same PR: (1) the `dreamcontext` skill + its `references/` (`skill/SKILL.md`,
   `skill/references/*.md`) so the agent that loads them knows the new reality; (2) the related
-  agents / skills / skill packs (`agents/*.md`, `skill-*/`, `skill-packs/**`); and (3) `README.md`
+  agents / skills (`agents/*.md`, `skill-*/`); and (3) `README.md`
   and the [deep-dive wiki](https://github.com/meanllbrl/dreamcontext/wiki). A feature without its docs is incomplete.
 
 ## Shipping a migration

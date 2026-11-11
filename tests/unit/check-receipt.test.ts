@@ -366,7 +366,7 @@ describe('check receipts', () => {
     // A build reads no test and no Markdown it neither copies nor bundles (suite-record.ts SUITE_DIST_ALLOW).
     expect(harmlessFor('build', 'skills/x.md', yes)).toBe(true);
     expect(harmlessFor('build', 'tests/unit/a.test.ts', yes)).toBe(true);
-    expect(harmlessFor('build', 'skill-packs/goal-skill/SKILL.md', yes)).toBe(false);
+    expect(harmlessFor('build', 'skill-goal-skill/SKILL.md', yes)).toBe(true); // ships from the package root, never copied into dist
     expect(harmlessFor('build', 'agents/reviewer.md', yes)).toBe(false);
     expect(harmlessFor('build', 'src/a.ts', yes)).toBe(false);
     expect(harmlessFor('build', 'dashboard/src/App.tsx', yes)).toBe(false);

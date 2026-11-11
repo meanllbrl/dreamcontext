@@ -7,7 +7,7 @@ import { PLAN_REVIEW_RULES, PLAN_REVISION_RECIPE, PLAN_STOP_CARD } from '../../s
  * dispatched without a packet answers in the same format the ledger parses. One text, two
  * homes: this drift test holds them equal (pattern mirror-with-drift-test).
  */
-const REVIEWER = readFileSync('skill-packs/agents/goal-plan-reviewer.md', 'utf-8');
+const REVIEWER = readFileSync('agents/goal-plan-reviewer.md', 'utf-8');
 
 describe('plan review rules', () => {
   it('the reviewer agent carries PLAN_REVIEW_RULES verbatim under its marker', () => {

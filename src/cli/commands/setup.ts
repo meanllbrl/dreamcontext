@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import chalk from 'chalk';
@@ -16,8 +16,6 @@ import {
 } from '../../lib/platforms.js';
 import {
   installCoreForPlatform,
-  directPackInstall,
-  loadCatalog,
   getOrCreateManifest,
   SETUP_INTERNAL_ENV,
 } from './install-skill.js';
@@ -51,11 +49,6 @@ function parsePlatformsOption(raw?: string): PlatformId[] {
   return ensurePlatformSelection(parsed.platforms);
 }
 
-function parsePacksOption(raw?: string): string[] {
-  if (!raw) return [];
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
-}
-
 function parseMultiProductOption(raw?: string): string[] | false {
   if (!raw) return false;
   const tokens = raw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -65,7 +58,6 @@ function parseMultiProductOption(raw?: string): string[] | false {
 
 export interface InstallIntegrationOptions {
   platforms: PlatformId[];
-  packs?: string[];
   multiProduct?: string[] | false;
   /** Default: true (dreamcontext owns memory). Persisted before install so the per-platform installer reads it. */
   disableNativeMemory?: boolean;
@@ -79,7 +71,7 @@ export interface InstallIntegrationResult {
 
 /**
  * Install the platform integration into an EXISTING `_dream_context/` project:
- * skills, agents, hooks, optional packs, and root instruction files — all
+ * skills, agents, hooks, and root instruction files — all
  * threaded through a single manifest. This is the part of `setup` that turns a
  * bare context directory into a working agent integration (`.claude/` etc.).
  *
@@ -91,7 +83,6 @@ export async function installPlatformIntegration(
   opts: InstallIntegrationOptions,
 ): Promise<InstallIntegrationResult> {
   const { platforms } = opts;
-  const packs = opts.packs ?? [];
   const disableNativeMemory = opts.disableNativeMemory ?? true;
 
   writeProjectPlatformDefaults(projectRoot, platforms);
@@ -113,12 +104,6 @@ export async function installPlatformIntegration(
     notes.push(...result.notes);
   }
 
-  // Install packs.
-  if (packs.length > 0) {
-    info(`Installing ${packs.length} pack(s): ${chalk.dim(packs.join(', '))}`);
-    directPackInstall(packs, projectRoot, platforms, manifest);
-  }
-
   // Install root instructions (CLAUDE.md).
   info('Installing root instruction file(s)...');
   for (const platform of platforms) {
@@ -138,7 +123,6 @@ export async function installPlatformIntegration(
   writeManifest(projectRoot, manifest);
   migrateThenStampSetupVersion(projectRoot, {
     platforms,
-    packs,
     multiProduct: opts.multiProduct ?? false,
   });
 
@@ -286,31 +270,8 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       platforms = ensurePlatformSelection(picked);
     }
 
-    // ─── 2. Resolve packs ─────────────────────────────────────────────────
-    let packs: string[] = parsePacksOption(opts.packs);
-    if (packs.length === 0 && !useDefaults && process.stdin.isTTY) {
-      const loaded = loadCatalog();
-      if (loaded) {
-        const choices = [
-          ...loaded.catalog.packs.map((p) => ({
-            value: p.name,
-            name: `${chalk.bold(p.name)} ${chalk.dim('— ' + p.description)}`,
-          })),
-          ...loaded.catalog.standalone.map((s) => ({
-            value: s.name,
-            name: `${chalk.bold(s.name)} ${chalk.dim('— ' + s.description)}`,
-          })),
-        ];
-        if (choices.length > 0) {
-          packs = await checkbox<string>({
-            message: 'Select optional skill packs (space to toggle, enter to skip)',
-            choices,
-            pageSize: Math.min(12, choices.length),
-            required: false,
-          });
-        }
-      }
-    }
+    // ─── 2. Packs are gone (2026-11-11): every skill ships with the core ───
+    if (opts.packs) info(chalk.dim('--packs is ignored: skill packs no longer exist, every skill dreamcontext ships is installed.'));
 
     // ─── 3. Resolve multi-product ─────────────────────────────────────────
     const explicitMP = parseMultiProductOption(opts.multiProduct);
@@ -344,12 +305,11 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       info(chalk.dim('_dream_context/ already exists — skipping init.'));
     }
 
-    // ─── 5. Install platform integration (skills, agents, hooks, packs, instructions)
+    // ─── 5. Install platform integration (skills, agents, hooks, instructions)
     // Default: disable Claude's native auto-memory so dreamcontext owns memory.
     const disableNativeMemory = !opts.keepNativeMemory;
     const { notes, fileCount } = await installPlatformIntegration(projectRoot, {
       platforms,
-      packs,
       multiProduct,
       disableNativeMemory,
     });
@@ -374,7 +334,6 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
         ? [`  Person:    ${chalk.white(`${activePerson.name} (person:${activePerson.slug})`)}`]
         : []),
       `  Platforms: ${chalk.white(platforms.join(', '))}`,
-      `  Packs:     ${chalk.white(packs.length > 0 ? packs.join(', ') : '(none)')}`,
       `  Products:  ${chalk.white(multiProduct === false ? 'single (default)' : multiProduct.join(', '))}`,
       `  Native mem: ${chalk.white(disableNativeMemory ? 'disabled (dreamcontext owns memory)' : 'kept enabled')}`,
       `  Files:     ${chalk.white(fileCount.toString())} tracked`,
@@ -407,10 +366,11 @@ export function registerSetupCommand(program: Command): void {
   program
     .command('setup')
     .description('One-shot setup: init + install-skill + install-instructions')
-    .option('--defaults', 'Skip prompts; use claude platform, no packs, single-product')
+    .option('--defaults', 'Skip prompts; use claude platform, single-product')
     .option('-y, --yes', 'Accept all confirmation prompts')
     .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
-    .option('--packs <list>', 'Comma-separated pack names to install')
+    // Skill packs are gone (2026-11-11); still parsed so an older script gets a note, not an error.
+    .addOption(new Option('--packs <list>').hideHelp())
     .option('--multi-product <list>', 'Comma-separated product names for multi-product setup')
     .option('--keep-native-memory', "Keep Claude Code's native auto-memory (default: disabled so dreamcontext owns memory)")
     .option('--install-app', 'Also install the macOS desktop app (non-interactive)')

@@ -1,9 +1,9 @@
 /**
  * Locate + load the bundled marketing council personas.
  *
- * Personas live as data files at `skill-packs/meta-marketing/council-personas/*.md`
+ * Personas live as data files at `assets/marketing-council-personas/*.md`
  * (per architect MUST-CHANGE 6: NOT a `--preset` flag on the council command).
- * They are shipped via tsup `cpSync('skill-packs', 'dist/skill-packs', ...)`.
+ * They ship in the package's `assets/` (package.json `files`, the desktop app's resources).
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ export interface MarketingPersona {
 }
 
 const VALID_MODELS = new Set(['opus', 'sonnet', 'haiku']);
-const PERSONA_SUBPATH = join('skill-packs', 'meta-marketing', 'council-personas');
+const PERSONA_SUBPATH = join('assets', 'marketing-council-personas');
 
 /**
  * Locate the bundled personas dir by walking up from this module's own location.
@@ -31,11 +31,11 @@ const PERSONA_SUBPATH = join('skill-packs', 'meta-marketing', 'council-personas'
  */
 export function findPersonasDir(): string | null {
   const candidates = [
-    // dev:   src/lib/marketing/council-personas.ts → ../../../skill-packs/...
+    // dev:   src/lib/marketing/council-personas.ts → ../../../assets/...
     join(__dirname_local, '..', '..', '..', PERSONA_SUBPATH),
-    // built: dist/index.js → ./skill-packs/...
+    // built (unused: tsup does not copy assets/ into dist): ./assets/...
     join(__dirname_local, PERSONA_SUBPATH),
-    // tsup-bundled (deeper nesting if ever): ../skill-packs/...
+    // built: dist/index.js → ../assets/... (the package root; the desktop app's resources)
     join(__dirname_local, '..', PERSONA_SUBPATH),
     join(__dirname_local, '..', '..', PERSONA_SUBPATH),
   ];

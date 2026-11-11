@@ -2,7 +2,7 @@
  * Every capability Claude has must carry a Codex and an Antigravity row (owner, 2 Nov: "everything
  * Claude has goes to Codex and Antigravity"; pattern every-capability-lands-on-every-tool). The
  * inventory is read from the code, never from a hand list: the hooks we install, our skills and
- * skill packs, our sub-agent roles, the dream-view types the chat draws, the chat modes, the
+ * our sub-agent roles, the dream-view types the chat draws, the chat modes, the
  * control requests the server sends a session, and the unattended surfaces. A change that adds
  * one of those without its two rows in docs/tool-parity.json (`capabilities`) is red here.
  *
@@ -31,10 +31,8 @@ export function claudeCapabilities(): string[] {
     const name = h.name.replace(/ \d+$/, '');
     ids.add(`hook:${name}${h.matcher && /ToolUse$/.test(h.event) ? `:${h.matcher}` : ''}`);
   }
-  for (const d of readdirSync(ROOT)) if (/^skill(?:-|$)/.test(d) && d !== 'skill-packs' && existsSync(join(ROOT, d, 'SKILL.md'))) ids.add(`skill:${d}`);
-  const catalog = JSON.parse(read('skill-packs/catalog.json')) as { packs: { name: string }[]; standalone: { name: string }[] };
-  for (const p of [...catalog.packs, ...catalog.standalone]) ids.add(`skill-pack:${p.name}`);
-  for (const dir of ['agents', 'skill-packs/agents']) for (const f of readdirSync(join(ROOT, dir))) if (f.endsWith('.md')) ids.add(`agent:${f.slice(0, -3)}`);
+  for (const d of readdirSync(ROOT)) if (/^skill(?:-|$)/.test(d) && existsSync(join(ROOT, d, 'SKILL.md'))) ids.add(`skill:${d}`);
+  for (const dir of ['agents']) for (const f of readdirSync(join(ROOT, dir))) if (f.endsWith('.md')) ids.add(`agent:${f.slice(0, -3)}`);
   const views = read('src/lib/chat-view-spec.ts').match(/export const VIEW_TYPES = \[([^\]]+)\]/);
   for (const t of views![1].matchAll(/'([a-z-]+)'/g)) ids.add(`dream-view:${t[1]}`);
   for (const m of CHAT_MODES) ids.add(`mode:${m}`);
@@ -55,7 +53,7 @@ describe('every Claude capability has a Codex and an Antigravity row', () => {
 
   it('reads a real inventory from the code', () => {
     // Floors, so a broken reader cannot pass by finding nothing.
-    for (const kind of ['hook', 'skill', 'skill-pack', 'agent', 'dream-view', 'mode', 'control', 'headless']) {
+    for (const kind of ['hook', 'skill', 'agent', 'dream-view', 'mode', 'control', 'headless']) {
       expect([kind, have.filter((id) => id.startsWith(`${kind}:`)).length > 0]).toEqual([kind, true]);
     }
     expect(have).toContain('control:interrupt');

@@ -45,12 +45,8 @@ describe('draw skill: shipped as core', () => {
     expect(readFileSync(join(ROOT, 'tsup.config.ts'), 'utf-8')).toContain("cpSync('skill-draw', 'dist/skill-draw'");
   });
 
-  it('is absent from the optional pack catalog, named `draw`, and in the copy every tool gets', () => {
-    const catalog = JSON.parse(readFileSync(join(ROOT, 'skill-packs', 'catalog.json'), 'utf-8')) as {
-      packs: { name: string }[];
-      standalone: { name: string }[];
-    };
-    expect([...catalog.packs, ...catalog.standalone].map((p) => p.name)).not.toContain('excalidraw');
+  it('is a guarded core skill named `draw`, and in the copy every tool gets', () => {
+    expect(existsSync(join(ROOT, 'skill-packs'))).toBe(false);
     expect(matter(readFileSync(join(SOURCE, 'SKILL.md'), 'utf-8')).data.name).toBe('draw');
     expect(TOOL_SKILL_SOURCES).toContain('skill-draw');
   });

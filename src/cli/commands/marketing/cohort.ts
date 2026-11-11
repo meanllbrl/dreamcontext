@@ -81,7 +81,7 @@ export function registerMarketingCohort(parent: Command): void {
       success(`Cohort ${chalk.cyan(id)} created (status=planning)`);
       console.log(`  hypothesis: ${chalk.dim(JSON.stringify(cohort.hypothesis))}`);
       console.log();
-      info('Next: dispatch the marketing-strategy agent to plan campaign topology.');
+      info('Next: plan the campaign topology (`dreamcontext marketing campaign --help`).');
     });
 
   cmd

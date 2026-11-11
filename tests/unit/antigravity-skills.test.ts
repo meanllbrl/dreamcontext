@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
 import { syncAntigravitySkills } from '../../src/lib/antigravity-skills.js';
+import { TOOL_SKILL_SOURCES } from '../../src/lib/tool-skills.js';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const repo = (sub: string): string | null => join(ROOT, sub);
@@ -70,7 +71,7 @@ describe('syncAntigravitySkills', () => {
       mkdirSync(join(pkg, sub), { recursive: true });
       writeFileSync(join(pkg, sub, 'SKILL.md'), `---\nname: ${sub === 'skill' ? 'dreamcontext' : sub.replace('skill-', '')}\n---\n${body}`);
     };
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design', 'skill-draw']) make(s, 'v1');
+    for (const s of TOOL_SKILL_SOURCES) make(s, 'v1');
     const packageDir = (sub: string): string => join(pkg, sub);
     syncAntigravitySkills('primary', { home, packageDir });
     mkdirSync(join(skills(), 'agent-made'));
@@ -88,7 +89,7 @@ describe('syncAntigravitySkills', () => {
 
   it('never follows a symlink out of the package, and reports instead of throwing', () => {
     const pkg = join(home, 'pkg');
-    for (const s of ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps', 'skill-design', 'skill-draw']) {
+    for (const s of TOOL_SKILL_SOURCES) {
       mkdirSync(join(pkg, s), { recursive: true });
       writeFileSync(join(pkg, s, 'SKILL.md'), `---\nname: ${s.replace('skill-', 'x-')}\n---\n`);
     }

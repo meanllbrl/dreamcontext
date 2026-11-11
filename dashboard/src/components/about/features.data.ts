@@ -224,8 +224,8 @@ const GOAL_SKILL_FLOW: FlowSpec = {
 };
 
 const SKILLS_FLOW: FlowSpec = pairFlow(
-  'Skill packs: curated domain packs install a base skill plus on-demand sub-skills into the agent.',
-  { title: 'skill pack', sub: 'design · growth · goal-skill', variant: 'hook' },
+  'Built-in skills: every install and update brings the same set, so a flow that calls one always finds it.',
+  { title: 'built-in skills', sub: 'design · council · goal-skill', variant: 'hook' },
   { title: 'agent gains', sub: 'base + sub-skills', variant: 'rem' },
 );
 
@@ -303,10 +303,10 @@ export const FEATURES: FeatureItem[] = [
     flow: TASKS_FLOW,
   },
   {
-    id: 'skill-packs',
-    title: 'Skill packs',
-    tagline: 'Curated, installable skills by domain — one command.',
-    body: 'Extend an agent with domain packs — growth, brand-voice, council and more — each a base skill plus on-demand sub-skills. Install interactively or name a pack directly; prerequisites resolve automatically.',
+    id: 'built-in-skills',
+    title: 'Built-in skills',
+    tagline: 'The skills its own flows call, installed with every update.',
+    body: 'Every project gets the same skills: design, draw, council debates, multi-agent code review, goal-driven builds and video watching. Nothing to pick or install; an edited copy is kept on update.',
     defaultOpen: true,
     tag: 'Skills',
     flow: SKILLS_FLOW,
@@ -415,8 +415,8 @@ export const FEATURES: FeatureItem[] = [
   {
     id: 'control-panel',
     title: 'Control panel',
-    tagline: 'Configure platforms, packs and vaults in the browser.',
-    body: 'The dashboard control panel closes the loop on configuration — edit platforms and skill packs, see which packs are actually installed on disk, manage vaults, and get notified in-app when a newer version ships.',
+    tagline: 'Configure platforms and vaults in the browser.',
+    body: 'The dashboard control panel closes the loop on configuration — edit platforms, manage vaults, and get notified in-app when a newer version ships.',
     defaultOpen: false,
     tag: 'Setup',
     glyph: '⚙',
@@ -465,14 +465,5 @@ export const FEATURES: FeatureItem[] = [
     defaultOpen: false,
     tag: 'Setup',
     glyph: '✓',
-  },
-  {
-    id: 'marketing-pack',
-    title: 'Marketing pack',
-    tagline: 'Brand-voice and growth skills for going to market.',
-    body: 'A bundled set of go-to-market skills — brand voice, growth, performance marketing — so the same agent that builds a feature can help position and launch it, on-brand.',
-    defaultOpen: false,
-    tag: 'Skills',
-    glyph: '✦',
   },
 ];

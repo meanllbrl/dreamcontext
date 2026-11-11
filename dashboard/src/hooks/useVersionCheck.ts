@@ -6,7 +6,6 @@ import { useApi } from '../context/VaultContext';
 export interface VersionCache {
   checkedAt: number;
   latestCli: string | null;
-  availablePacks: string[];
   ttlHours: number;
 }
 
@@ -14,8 +13,6 @@ export interface VersionCheck {
   cache: VersionCache | null;
   fresh: boolean;
   nudge: string | null;
-  /** Catalog packs not installed on disk — actionable via the Packs page. */
-  newPacks?: string[];
   /** Currently installed CLI version (for the "vX → vY" badge message). */
   currentCli?: string;
   /** Latest published CLI version, or null when unknown/stale. */

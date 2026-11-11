@@ -108,7 +108,7 @@ Honor `UIAccessibility.isReduceMotionEnabled` / `AccessibilityFeatures.reduceMot
 
 ## V. Widget Design (Home Screen, Lock Screen, Watch)
 
-**Principle**: Widgets are the highest-ROI retention feature in mobile. They provide ~150 daily passive impressions (every phone unlock). They are triggers in the BJ Fogg model (see `growth`).
+**Principle**: Widgets are the highest-ROI retention feature in mobile. They provide ~150 daily passive impressions (every phone unlock). They are triggers in the BJ Fogg model.
 
 ### Widget Hierarchy
 
@@ -128,7 +128,7 @@ Honor `UIAccessibility.isReduceMotionEnabled` / `AccessibilityFeatures.reduceMot
 
 ### Retention Impact
 
-Widgets are one of the strongest retention levers on mobile. Cross-reference: `growth` for retention engineering context.
+Widgets are one of the strongest retention levers on mobile.
 
 ---
 
@@ -175,7 +175,7 @@ Equivalent to YouTube title/thumbnail: no point optimizing retention if nobody d
 
 ## VIII. Recording-Ready Design
 
-**Principle**: The app should look premium when screen-recorded. Screen recordings are the primary social proof and distribution channel for mobile apps (see `growth`).
+**Principle**: The app should look premium when screen-recorded. Screen recordings are the primary social proof and distribution channel for mobile apps.
 
 ### Rules
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FAN_OUT_RECIPE, GOAL_LIVE_RECIPES } from '../../src/lib/develop-recipe.js';
@@ -27,12 +27,12 @@ import { PLANNER_BRIEF, PLAN_SHAPE_RULES, USER_FACING_PLAN_RULES } from '../../s
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf-8');
-const SKILL = read('skill-packs', 'goal-skill', 'SKILL.md');
-const IMPL = read('skill-packs', 'agents', 'goal-implementer.md');
-const PLANNER = read('skill-packs', 'agents', 'goal-planner.md');
-const PLAN_REVIEWER = read('skill-packs', 'agents', 'goal-plan-reviewer.md');
-const ROUTER = read('skill-packs', 'agents', 'review-router.md');
-const MULTI_REVIEW = read('skill-packs', 'multi-review', 'SKILL.md');
+const SKILL = read('skill-goal-skill', 'SKILL.md');
+const IMPL = read('agents', 'goal-implementer.md');
+const PLANNER = read('agents', 'goal-planner.md');
+const PLAN_REVIEWER = read('agents', 'goal-plan-reviewer.md');
+const ROUTER = read('agents', 'review-router.md');
+const MULTI_REVIEW = read('skill-multi-review', 'SKILL.md');
 
 /**
  * A section of a markdown file, from its heading to the next heading of the same level. A
@@ -259,7 +259,7 @@ describe('goal-skill: load-aware waves, orphans reaped, a bounded wait for quiet
   it('a command method is run once by the orchestrator; the validator drives manual and browser checks', () => {
     expect(phase6).toMatch(/\*\*A command\*\* \(a test suite, a build, a script\): run it yourself, ONCE/);
     expect(phase6).toMatch(/The command's\s+real output IS the evidence/);
-    expect(phase6).toMatch(/\*\*Manual, or Browser \(jev-verify\)\*\*: dispatch \*\*one\*\* `goal-validator` \(opus, clean\s+context\)/);
+    expect(phase6).toMatch(/\*\*Manual, or a browser check\*\*: dispatch \*\*one\*\* `goal-validator` \(opus, clean\s+context\)/);
     expect(phase6).toMatch(/screenshots and a video of the\s+flow/);
   });
 });
@@ -526,11 +526,9 @@ describe('Phase 5: the review the diff picks', () => {
     expect(ROUTER).toContain('"domains": ["frontend", "backend"]');
   });
 
-  it('the goal-skill pack installs the agents its Phase 5 may dispatch', () => {
-    const catalog = JSON.parse(read('skill-packs', 'catalog.json')) as { packs: { name: string; relatedAgents?: string[] }[] };
-    const pack = catalog.packs.find((p) => p.name === 'goal-skill')!;
+  it('every agent its Phase 5 may dispatch ships as a core agent', () => {
     for (const a of ['reviewer', 'review-router', 'review-security', 'review-cloud-functions', 'review-frontend', 'review-edge-cases']) {
-      expect(pack.relatedAgents).toContain(a);
+      expect(existsSync(join(ROOT, 'agents', `${a}.md`)), a).toBe(true);
     }
   });
 

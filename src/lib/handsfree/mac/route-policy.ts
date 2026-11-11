@@ -477,10 +477,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/federation/inbox': filtered('read: the request project\'s own federation inbox; side-effect free'),
   'POST /api/federation/sync': deny(OTHER_PROJECTS),
 
-  // Packs and preferences
-  'GET /api/packs': allow(READ),
-  'POST /api/packs/:name/install': deny(INSTALL),
-  'DELETE /api/packs/:name': deny(INSTALL),
+  // Preferences
   'GET /api/brain-settings': allow(READ),
   'PUT /api/brain-settings': allow(PROJECT_WRITE),
   'GET /api/roadmap-prefs': allow(READ),

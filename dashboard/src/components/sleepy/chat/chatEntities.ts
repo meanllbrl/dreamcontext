@@ -57,8 +57,9 @@ export function toolGlyph(name: string): string {
  * dreamcontext mark instead of the generic ✦, so the app is visibly recognising itself at
  * work rather than reporting a nameless third-party call.
  *
- * Deliberately NOT extended to `skill-packs` (brand-voice, council, business-idea-…):
- * those are a library dreamcontext DISTRIBUTES, not skills that ARE dreamcontext, and
+ * Deliberately NOT extended to the general-purpose skills it ships (design, draw, council,
+ * multi-review, goal-skill, video-watching): those are a library dreamcontext DISTRIBUTES,
+ * not skills that ARE dreamcontext, and
  * branding them would make the mark mean "shipped in the tarball" instead of "this is us".
  * Names are the `name:` frontmatter each SKILL.md declares — the string the CLI invokes.
  */

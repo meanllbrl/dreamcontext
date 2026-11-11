@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { readSetupConfig, updateSetupConfig, type ClickUpConfig, type GitHubConfig, type SleepConfig } from '../../lib/setup-config.js';
 import { applySleepConfigPatch } from '../../lib/sleep-settings.js';
-import { applySleepSpecialistOverrides } from '../../lib/install-packs.js';
+import { applySleepSpecialistOverrides } from '../../lib/install-agents.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { parsePlatformList, PLATFORM_CATALOG } from '../../lib/platforms.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
@@ -23,9 +23,9 @@ export async function handleConfigGet(
 }
 
 /**
- * PATCH /api/config — Update platforms and/or packs via a strict allow-list.
+ * PATCH /api/config — Update the project's settings via a strict allow-list.
  *
- * Security: the body is NEVER spread. Only 'platforms' and 'packs' are picked
+ * Security: the body is NEVER spread. Each allowed field is picked
  * explicitly so prototype-pollution and unexpected field injection are impossible.
  */
 export async function handleConfigUpdate(
@@ -43,7 +43,6 @@ export async function handleConfigUpdate(
   // Build a FRESH patch from the explicit allow-list — never spread body.
   const patch: {
     platforms?: ReturnType<typeof parsePlatformList>['platforms'];
-    packs?: string[];
     disableNativeMemory?: boolean;
     taskBackend?: 'local' | 'clickup' | 'github';
     cloudTaskManagement?: boolean;
@@ -66,17 +65,6 @@ export async function handleConfigUpdate(
       return;
     }
     patch.platforms = validPlatforms;
-  }
-
-  if (body.packs !== undefined) {
-    if (
-      !Array.isArray(body.packs) ||
-      !body.packs.every((el) => typeof el === 'string' && el.length > 0)
-    ) {
-      sendError(res, 400, 'invalid_packs', 'Packs must be a non-empty array of non-empty strings.');
-      return;
-    }
-    patch.packs = body.packs as string[];
   }
 
   if (body.disableNativeMemory !== undefined) {
@@ -185,7 +173,6 @@ export async function handleConfigUpdate(
 
   if (
     patch.platforms === undefined &&
-    patch.packs === undefined &&
     patch.disableNativeMemory === undefined &&
     patch.taskBackend === undefined &&
     patch.cloudTaskManagement === undefined &&
@@ -193,7 +180,7 @@ export async function handleConfigUpdate(
     patch.github === undefined &&
     patch.sleep === undefined
   ) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github, sleep.');
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github, sleep.');
     return;
   }
 

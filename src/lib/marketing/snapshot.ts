@@ -19,7 +19,7 @@ export interface MarketingSnapshotOpts {
 
 export function buildMarketingSnapshot(opts: MarketingSnapshotOpts = {}): string | null {
   // Skip silently when marketing isn't set up — keeps the snapshot clean
-  // for projects that don't use the meta-marketing skill.
+  // for projects that don't use the marketing surface.
   const root = marketingRootIfExists();
   if (!root || !existsSync(root)) return null;
 

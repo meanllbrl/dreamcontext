@@ -242,7 +242,6 @@ The sidebar is grouped into **Workspace** (Tasks, Roadmap, Hypotheses, Insights,
 - **Tasks board (the only task view since 2026-10-22)** — subtasks fold into the parent card (`n/m` chip + inline list with "+ Add subtask"; `parent_task` is writable from the dashboard, two levels max, local-only); the toolbar is Search · **Versions & Sprints** (the `version` field's label) · Feature · Filter (incl. sort) | Properties · Sync · New Task. The detail drawer shows the body as sections beside a Properties column, one **Give to agent** button (AI Team agent or a new Claude chat), and a **Media** section: attachments live in `state/assets/<slug>/` (LOCAL, never synced; drag-drop, ⌘V, Browse; 100 MB cap; served only as image/audio/video/PDF).
 - **Core editor** — split-pane markdown editing + live preview for soul/user/memory/etc.
 - **Knowledge manager** — search, pin/unpin; **Feature PRD viewer**; **SQL ER diagram** preview for data-structures.
-- **Packs** (Control) — browse and install/refresh skill packs from the UI.
 - **Version manager** — plan and release versions.
 - **Settings — cloud tasks** — enter the ClickUp/GitHub API token from the UI (written to gitignored `state/.secrets.json`, masked, never echoed), Test Connection, and **preview-then-provision** custom fields (a dry run lists what would be created vs. already exists); plus a **Task Format & Custom Fields** editor for `overrides/task.md` (raw template + structured field schema).
 - **Sleep Cycle** (sleep tracker) — debt gauge, session-history timeline, and a list of every manual change made through the dashboard (recorded to `.sleep.json` so the agent consolidates your edits during sleep).
@@ -731,7 +730,7 @@ Teammates just `git clone` the project and run the same two steps (token + `brai
 
 ## Council (multi-persona debates)
 
-Structured debates for load-bearing decisions (architecture, migrations, hiring, brand critiques). N personas × N rounds, each persona its own sub-agent with a scoped prompt, model, and aspects; a synthesizer writes the verdict. Also available as the `council` skill pack + `/council` skill.
+Structured debates for load-bearing decisions (architecture, migrations, hiring, brand critiques). N personas × N rounds, each persona its own sub-agent with a scoped prompt, model, and aspects; a synthesizer writes the verdict. Also available as the built-in `/council` skill.
 
 ```bash
 dreamcontext council create "Should we migrate Postgres → Firestore?" --rounds 2
@@ -753,7 +752,7 @@ State lives in `_dream_context/council/<id>/` (`debate.md`, `round-log.md`, `fin
 
 ## Marketing (`mk`)
 
-The Meta marketing skill surface (cohorts, campaigns, competitor ingest, learnings), paired with the `meta-marketing` + `growth` skill packs.
+The Meta marketing CLI surface (cohorts, campaigns, competitor ingest, learnings).
 
 ```bash
 dreamcontext marketing   # alias: dreamcontext mk
