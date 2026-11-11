@@ -53,11 +53,11 @@ describe('vendored T3 provider layer', () => {
     expect(extra).toEqual([]);
   });
 
-  it('every T3 source file keeps the MIT notice, and at most 3 in-file patches exist, each with a reason', () => {
+  it('every T3 source file keeps the MIT notice, and at most 4 in-file patches exist, each with a reason', () => {
     for (const rel of Object.keys(manifest.files).filter((f) => f.endsWith('.ts'))) {
       expect(readFileSync(join(VENDOR, rel), 'utf-8').startsWith('/*! @license MIT'), rel).toBe(true);
     }
-    expect(manifest.patches.length).toBeLessThanOrEqual(3);
+    expect(manifest.patches.length).toBeLessThanOrEqual(4);
     for (const p of manifest.patches) expect(p.reason.length).toBeGreaterThan(10);
     expect(readFileSync(join(VENDOR, 'LICENSE'), 'utf-8')).toContain('T3 Tools Inc.');
   });

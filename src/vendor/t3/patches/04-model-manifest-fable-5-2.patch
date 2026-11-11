@@ -1,0 +1,25 @@
+# reason: dreamcontext names the current Fable as 5.2 (the CLI already runs claude-fable-5-2); the manifest keeps the 5.1 spellings as aliases so saved settings still resolve. A data change, not a behaviour change of T3's code.
+--- a/apps/server/src/provider/model-manifest.json
++++ b/apps/server/src/provider/model-manifest.json
+@@ -118,7 +118,7 @@
+       "gpt-daybreak-blue-latest",
+       "gpt-daybreak-red-latest"
+     ],
+-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
++    "claudeAgent": ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
+   },
+   "providers": {
+@@ -696,9 +696,9 @@
+           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
+         },
+         {
+-          "slug": "claude-fable-5-1",
+-          "name": "Claude Fable 5.1",
+-          "aliases": ["fable", "fable-5.1", "claude-fable-5.1"],
++          "slug": "claude-fable-5-2",
++          "name": "Claude Fable 5.2",
++          "aliases": ["fable", "fable-5.2", "claude-fable-5.2", "claude-fable-5-1", "fable-5.1", "claude-fable-5.1"],
+           "status": "current",
+           "profile": "fable-5",
+           "adapter": {

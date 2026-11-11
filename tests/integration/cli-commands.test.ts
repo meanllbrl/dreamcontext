@@ -959,12 +959,12 @@ parent_task: null
       expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(5);
     });
 
-    it('installs three PreToolUse entries: Agent, write-tools and heavy-step gates', () => {
+    it('installs four PreToolUse entries: Agent, write-tools, heavy-step and MCP-call gates', () => {
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
 
       expect(settings.hooks.PreToolUse).toBeDefined();
-      expect(settings.hooks.PreToolUse).toHaveLength(3);
+      expect(settings.hooks.PreToolUse).toHaveLength(4);
 
       const agentEntry = settings.hooks.PreToolUse.find((g: any) => g.matcher === 'Agent');
       expect(agentEntry).toBeDefined();
@@ -979,7 +979,7 @@ parent_task: null
       run('install-skill', tmpDir);
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
-      expect(settings.hooks.PreToolUse).toHaveLength(3);
+      expect(settings.hooks.PreToolUse).toHaveLength(4);
     });
   });
 

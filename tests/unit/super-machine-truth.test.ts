@@ -171,6 +171,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // +300 (2026-11-09, 0.41.12 cut: the owner's ask card for app requests and the one-task rule; measured 27,169).
     // +420 (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585).
     // +250 (2026-11-10, 0.41.14 cut: mcp-giris's mcpSignIn lines; measured 27,823).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(27_850);
+    // +750 (2026-11-11, 0.41.15 cut: owner cards, app tools for an app's own agent and shared app data lines; measured 28,479).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(28_600);
   });
 });

@@ -219,7 +219,8 @@
   height: 5px;
   border-radius: var(--radius-full);
   background: var(--color-accent);
-  animation: bsf-dot 1.2s var(--ease-out) infinite;
+  animation: var(--dc-motion-ambient-name, bsf-dot) 1.2s var(--ease-out) infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .bsf-working-dots i:nth-child(2) { animation-delay: 0.15s; }

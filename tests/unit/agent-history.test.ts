@@ -256,6 +256,9 @@ describe('AC2 costs', () => {
 // ─── AC3: unread equals the roster badge ────────────────────────────────────────────
 
 describe('AC3 unread', () => {
+  // The feed reads a 14-day window from "now": pin the clock so the fixture dates never age out (a time bomb since 2026-11-09).
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-28T12:00:00.000Z')); });
+  afterEach(() => { vi.useRealTimers(); });
   it('unreadCount = the roster badge; each run session agrees with the feed (sched, call-mode, shared, ok, failed post-less)', () => {
     makeAgent();
     routine('daily-sum', 'Herodot daily');

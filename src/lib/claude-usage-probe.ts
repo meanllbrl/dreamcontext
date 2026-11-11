@@ -95,7 +95,7 @@ const PROBE_STDOUT_CAP = 256 * 1024;
 
 export interface ProbeDeps {
   /** Injectable for tests: resolves once the child has exited. */
-  runProbe?: (configDir: string, timeoutMs: number, stopWhen?: () => boolean) => Promise<ProbeRun>;
+  runProbe?: (configDir: string, timeoutMs: number, stopWhen?: () => boolean, home?: string) => Promise<ProbeRun>;
   /** This probe's total budget (default {@link USAGE_PROBE_TIMEOUT_MS}). */
   timeoutMs?: number;
   /**
@@ -164,21 +164,21 @@ function reportText(stdout: string | undefined): string {
 }
 
 /** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report. */
-async function defaultRunProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean): Promise<ProbeRun> {
-  return spawnUsageProbe(configDir, timeoutMs, stopWhen);
+async function defaultRunProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean, home?: string): Promise<ProbeRun> {
+  return spawnUsageProbe(configDir, timeoutMs, stopWhen, home);
 }
 
 /** How often a running probe looks at the cache file to see whether its answer has landed. */
 const STOP_POLL_MS = 250;
 
-function spawnUsageProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean): Promise<ProbeRun> {
+function spawnUsageProbe(configDir: string, timeoutMs: number, stopWhen?: () => boolean, home?: string): Promise<ProbeRun> {
   return new Promise((resolveOut) => {
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
     const env = {
       ...process.env,
       PATH: claudeAwarePath(),
-      ...accountEnvFor(configDir),
+      ...accountEnvFor(configDir, home),
     } as NodeJS.ProcessEnv;
 
     let child: ReturnType<typeof spawn>;
@@ -328,7 +328,7 @@ export async function probeAccountUsage(
     return now.fetchedAtMs !== null && (before.fetchedAtMs === null || now.fetchedAtMs > before.fetchedAtMs);
   };
 
-  const run = await runProbe(dir, budget, landed);
+  const run = await runProbe(dir, budget, landed, home);
   if (run.timedOut) return { status: 'unknown', reason: 'The usage probe timed out.' };
   if (run.error) return { status: 'unknown', reason: run.error.slice(0, 400) };
 

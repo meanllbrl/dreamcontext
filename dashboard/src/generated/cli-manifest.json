@@ -244,9 +244,12 @@
     },
     {
       "path": "apps data deletes",
-      "desc": "The deletes of shared files that wait to go to the team; --approve --confirm lets them go after the owner said yes",
+      "desc": "The deletes of shared files that wait for the owner; --approve <N> --confirm sends exactly the N the list showed, after the owner said yes",
       "args": [
         "<slug>"
+      ],
+      "valueFlags": [
+        "--approve"
       ]
     },
     {

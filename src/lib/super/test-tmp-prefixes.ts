@@ -301,6 +301,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-feed-home-',
   'dc-fence-',
   'dc-filelock-',
+  'dc-fit-',
   'dc-fix-',
   'dc-focus-',
   'dc-folder-',

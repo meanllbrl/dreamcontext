@@ -92,7 +92,7 @@
     "apps/server/src/provider/codexLaunchArgs.ts": "f9e9bdb036790f42c3ae44f9ed69e8cc57924b47240b2aa43c4002de8f83337b",
     "apps/server/src/provider/codexModelCatalog.ts": "d409dad6cc33eb4eb23b98258a25180f1180d8f594bcbbb3c7cc7e39f4aec9a9",
     "apps/server/src/provider/codexUsageLimits.ts": "80d0e9842e149187a0a8acfb4ae07e4ef778aefe2922086b6d2dee4657fd2a25",
-    "apps/server/src/provider/model-manifest.json": "d9c052c18d2a96f79f5d3c197716c1f32ad2d969c314bfcc3df0dd8f69bc30f0",
+    "apps/server/src/provider/model-manifest.json": "4cc37d95b24cedb5244d08cf805448e116b3c7b330a8195d2a0ed24cc9d5ff2a",
     "apps/server/src/provider/providerCompatibility.ts": "d6088fb2b9569104b91858c180f81ef23ad49468ec1191eb8727362e8e68e801",
     "apps/server/src/provider/providerStatusCache.ts": "742ed38288776e0dc41cd2c0aaa1332fcfcdf39b1fd4b2578280cc4e97a8513c",
     "apps/server/src/provider/resetCreditCoordinator.ts": "90563209e5217461be44d66478849f721ac4b427b1a719dd077addf06a735379",
@@ -405,6 +405,13 @@
       "reason": "T3 runs one instance per server and clears the whole runtime temp at create; each dreamcontext pane is its own process on one account's profile, so a second pane deleted the first pane's unpacked runtime. Only run folders a week old go.",
       "touches": [
         "apps/server/src/provider/acp/AntigravitySessionFiles.ts"
+      ]
+    },
+    {
+      "file": "04-model-manifest-fable-5-2.patch",
+      "reason": "dreamcontext names the current Fable as 5.2 (the CLI already runs claude-fable-5-2); the manifest keeps the 5.1 spellings as aliases so saved settings still resolve. A data change, not a behaviour change of T3's code.",
+      "touches": [
+        "apps/server/src/provider/model-manifest.json"
       ]
     }
   ],
