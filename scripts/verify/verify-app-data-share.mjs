@@ -28,6 +28,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scratchDir } from './lib/measure.mjs';
+import { request } from './lib/http.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = scratchDir(`dc-verify-app-data-share-${process.pid}`);
@@ -161,19 +162,18 @@ async function startServer(m) {
 
 /** The owner's approval, as the Apps page sends it: same origin, the shell's owner key. */
 async function approve(m, paths) {
-  const r = await fetch(`${m.base}/api/apps/${SLUG}/data-share`, {
+  // Every call after the CLI's spawnSync goes on its own connection (lib/http.mjs).
+  const r = await request(`${m.base}/api/apps/${SLUG}/data-share`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: m.base, 'sec-fetch-site': 'same-origin', 'x-dreamcontext-owner-key': m.ownerKey, 'x-dreamcontext-vault': VAULT },
-    body: JSON.stringify({ approve: paths }),
+    body: { approve: paths },
   });
-  const body = await r.text();
-  console.log(`    POST data-share ${JSON.stringify(paths)} → ${r.status} ${body.slice(0, 240)}`);
+  console.log(`    POST data-share ${JSON.stringify(paths)} → ${r.status} ${r.text.slice(0, 240)}`);
   return r.status;
 }
 
 async function appsList(m) {
-  const r = await fetch(`${m.base}/api/apps`, { headers: { 'x-dreamcontext-vault': VAULT } });
-  return r.json().catch(() => ({}));
+  return (await request(`${m.base}/api/apps`, { headers: { 'x-dreamcontext-vault': VAULT } })).body;
 }
 
 /** The app's own backend, the way an agent reads it (`apps call`, which starts it under a lease). */
@@ -217,7 +217,7 @@ async function main() {
     must('A sync before approval', cli(A, 'brain', 'sync'));
     check('nothing of the app reaches the remote before the owner approves', !remoteTree().some((p) => p.includes(`/apps/${SLUG}/`)));
     check('owner approval answers 200', (await approve(A, ['favorites/'])) === 200);
-    const agentTry = await fetch(`${A.base}/api/apps/${SLUG}/data-share`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': VAULT }, body: JSON.stringify({ approve: ['cache/'] }) });
+    const agentTry = await request(`${A.base}/api/apps/${SLUG}/data-share`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': VAULT }, body: { approve: ['cache/'] } });
     check('an agent or script cannot approve (no owner key)', agentTry.status === 403, `→ ${agentTry.status}`);
     must('A sync', cli(A, 'brain', 'sync'));
     const t1 = remoteTree();

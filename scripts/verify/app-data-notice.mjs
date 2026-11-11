@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openApp } from './lib/app.mjs';
+import { request } from './lib/http.mjs';
 
 const app = await openApp({ suite: 'app-data-notice' });
 const REPO = join(new URL('.', import.meta.url).pathname, '..', '..');
@@ -37,10 +38,11 @@ const git = (cwd, ...args) => {
 /** One request; a transport failure is a finding with its cause, never the end of the run. */
 async function req(path, init = {}) {
   try {
-    const r = await fetch(`${app.base}${path}`, { ...init, headers: { 'x-dreamcontext-vault': 'proj', ...(init.headers ?? {}) } });
-    return { status: r.status, body: await r.json().catch(() => ({})) };
+    // Its own connection: the CLI's spawnSync above can leave a pooled `fetch` socket dead (lib/http.mjs).
+    const r = await request(`${app.base}${path}`, { ...init, headers: { 'x-dreamcontext-vault': 'proj', ...(init.headers ?? {}) } });
+    return { status: r.status, body: r.body };
   } catch (e) {
-    app.findings.push(`${init.method ?? 'GET'} ${path}: ${e.message} (${e.cause?.code ?? ''} ${e.cause?.message ?? ''})`);
+    app.findings.push(`${init.method ?? 'GET'} ${path}: ${e.message} (${e.code ?? ''})`);
     return { status: 0, body: {} };
   }
 }
