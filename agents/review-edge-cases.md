@@ -1,25 +1,7 @@
 ---
 name: review-edge-cases
 description: >
-  Edge-case and production-risk specialist in the multi-reviewer team. The
-  paranoid one. Enumerates failure modes the other specialists don't own —
-  empty/null/undefined inputs, off-by-one, concurrency, partial successes,
-  retries, network failures, clock skew, timezone bugs, locale assumptions,
-  state machine gaps, error swallowing, idempotency gaps at boundaries.
-  Always included in tier ≥ Lite reviews because failure modes don't fit
-  cleanly into one domain.
-
-  <example>
-  Context: Router dispatched specialists in parallel. edge-cases was scoped
-  to the full diff (its default), not just one slice.
-  user: (router included edge-cases for tier=lite)
-  assistant: "Dispatching review-edge-cases to enumerate failure modes across the diff..."
-  <commentary>
-  Edge-cases walks the diff asking "what's the worst case?" for each branch
-  point. Empty arrays, null DB rows, race conditions, retry storms, partial
-  writes — patterns no single domain specialist owns end-to-end.
-  </commentary>
-  </example>
+  Multi-review specialist for failure modes across the whole diff (empty inputs, off-by-one, races, partial writes, retries, time zones); in every Lite or Full review.
 model: opus
 effort: high
 color: yellow

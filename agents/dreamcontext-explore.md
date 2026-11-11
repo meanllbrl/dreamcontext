@@ -1,9 +1,7 @@
 ---
 name: dreamcontext-explore
 description: >
-  Fast, context-accelerated codebase explorer. Replaces the default Explore agent
-  in projects with _dream_context/. Uses curated project knowledge to narrow searches,
-  form hypotheses, and find answers in fewer tool calls than blind exploration.
+  Use instead of Explore in projects with _dream_context/: a fast read-only explorer that narrows its search with the curated project knowledge.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 disallowedTools: Write, Edit, Agent, NotebookEdit, ExitPlanMode
 model: haiku

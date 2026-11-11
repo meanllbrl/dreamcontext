@@ -1,21 +1,7 @@
 ---
 name: goal-planner
 description: >
-  Planning specialist for the goal-skill orchestration. Produces a rigorous,
-  file-by-file implementation plan for a goal by reading the codebase and
-  dreamcontext context. Does NOT write code or the task document — it plans.
-  Dispatched once at Phase 1 of a goal-skill run.
-
-  <example>
-  Context: The orchestrator is running goal-skill on "add rate limiting to the public API".
-  user: (orchestrator dispatches goal-planner with the confirmed goal + relevant skills)
-  assistant: "Reading the API routes and the code standard, then producing a file-by-file plan..."
-  <commentary>
-  The planner greps the codebase to ground every step, names exact files and functions,
-  states assumptions and open questions, and proposes testable acceptance criteria — it
-  never says "update the relevant files".
-  </commentary>
-  </example>
+  Goal-skill planner: reads the code and the brain and writes a file-by-file plan with a dependency map and testable criteria; never writes code.
 model: opus
 tools:
   - Read
@@ -103,7 +89,7 @@ prior turns; do not re-explore what you already read.** Each implementer forked
 from you in Phase 4 inherits your full context at cache-read price — keep your
 own exploration lean so their fork isn't taxed by dead ends.
 
-The orchestrator spawns you with ONE identity, `--model opus --effort high`, at every
+The orchestrator spawns you with ONE identity, `--model opus --effort medium`, at every
 tier, and every implementer is forked from you with the same one: a fork that changes
 model or effort re-reads your whole context at full price (an Opus planner forked as
 Sonnet was 54 of 55 measured cache misses). Think hard: the dependency map must be

@@ -3,7 +3,7 @@
  * nothing-lost.mjs: prove every rule and fact removed from an instruction file
  * still exists in a file the reader can reach.
  *
- *   node eval/instructions-slim/nothing-lost.mjs --target skill|sleep-agents [--strict] [--root <dir>]
+ *   node eval/instructions-slim/nothing-lost.mjs --target skill|sleep-agents|agents [--strict] [--root <dir>]
  *
  * Units are sentences (25+ normalized chars) taken from the headings, list
  * items, table cells, paragraphs and code lines of the BASELINE file. Each unit
@@ -59,7 +59,31 @@ function targetGroups(target, root) {
       homes: [`agents/${name}.md`, ...SLEEP_SHARED_HOMES],
     }));
   }
-  throw new UsageError('--target must be `skill` or `sleep-agents`');
+  if (target === 'agents') {
+    // Non-sleep agents and the agent-core skill (audit 2026-11-12, IN-1/IN-7/IN-13): a unit
+    // dropped from an agent may live in the skill that dispatches it or in the packet's rules.
+    const skillOf = (name) => {
+      if (name.startsWith('council-')) return ['skill-council/SKILL.md'];
+      if (name.startsWith('curator-')) return ['skill-curator/SKILL.md'];
+      if (name.startsWith('initializer-')) return ['skill-initializer/SKILL.md'];
+      if (name.startsWith('review-')) return ['skill-multi-review/SKILL.md'];
+      if (name.startsWith('goal-')) return ['skill-goal-skill/SKILL.md'];
+      return [];
+    };
+    const packet = { reviewer: ['src/lib/code-review-rules.ts'], 'goal-plan-reviewer': ['src/lib/plan-review-rules.ts'] };
+    const agentsDir = join(root, 'agents');
+    const names = existsSync(agentsDir)
+      ? readdirSync(agentsDir).filter((f) => f.endsWith('.md') && !f.startsWith('sleep-')).sort().map((f) => f.slice(0, -3))
+      : [];
+    return [
+      ...names.map((name) => ({
+        baseline: `agent-${name}.md`,
+        homes: [`agents/${name}.md`, ...skillOf(name), ...(packet[name] ?? [])],
+      })),
+      { baseline: 'agent-core-SKILL.md', homes: ['skill-agent-core/SKILL.md', 'src/lib/agent-guidance.ts'] },
+    ];
+  }
+  throw new UsageError('--target must be `skill`, `sleep-agents` or `agents`');
 }
 
 function parseArgs(argv) {
@@ -74,8 +98,8 @@ function parseArgs(argv) {
       opts.root = resolve(value);
     } else throw new UsageError(`Unknown argument: ${arg}`);
   }
-  if (opts.target !== 'skill' && opts.target !== 'sleep-agents') {
-    throw new UsageError('--target must be `skill` or `sleep-agents`');
+  if (!['skill', 'sleep-agents', 'agents'].includes(opts.target)) {
+    throw new UsageError('--target must be `skill`, `sleep-agents` or `agents`');
   }
   return opts;
 }

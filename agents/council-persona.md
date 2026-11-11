@@ -1,22 +1,7 @@
 ---
 name: council-persona
 description: >
-  A persona debater in a council debate. Loads its own persona + peer cross-context
-  via CLI, thinks through the debate question from its assigned perspective (can do
-  optional web research), submits a structured verdict with an honest conviction
-  score, and writes a structured round report. Runs as a CLI session resumed across
-  rounds, or as a parallel Agent-tool dispatch in fallback mode.
-
-  <example>
-  Context: Main agent is running round 1 of a council debate with 4 personas.
-  user: "Run council round 1"
-  assistant: "Spawning 4 persona sessions in parallel..."
-  <commentary>
-  Each persona gets its own isolated context. They load their persona + peer
-  summaries via CLI, submit a verdict, debate from their assigned perspective, and
-  write a report, all without bloating the main agent's context.
-  </commentary>
-  </example>
+  One persona in a council debate: argues the question from its assigned view, submits a verdict with an honest conviction score and writes its round report.
 model: sonnet
 color: magenta
 tools:

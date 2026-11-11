@@ -1,23 +1,7 @@
 ---
 name: initializer-scout
 description: >
-  Intake/inventory specialist for the initializer skill. Scans the codebase AND the
-  user-provided source material (docs folders, exports, wikis, ADRs, notes), then returns
-  a structured INGESTION MANIFEST that maps every source artifact to a target dreamcontext
-  type (knowledge / feature / task / data-structure / person / taxonomy / bookmark) with a
-  proposed folder hierarchy. Read-only — it inventories and categorizes; it does NOT write
-  the corpus. Dispatched at Phase 2 (fan out one per large source root).
-
-  <example>
-  Context: The orchestrator is initializing a brain and the user pointed at ./docs and a Notion export.
-  user: (dispatched with the codebase root + source paths + the Phase 0 answers)
-  assistant: "Scanning the codebase and ./docs, categorizing each artifact, proposing a knowledge hierarchy..."
-  <commentary>
-  The scout reads what exists, dedups against anything already in _dream_context/, and returns a
-  source→target manifest with a ranked candidate-feature list and a proposed knowledge folder tree —
-  it never says "ingest the docs" without naming each mapping.
-  </commentary>
-  </example>
+  Read-only initializer scout: inventories the codebase and the user's docs and returns an ingestion manifest mapping every source to a brain type and folder.
 model: sonnet
 tools:
   - Read

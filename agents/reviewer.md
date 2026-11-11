@@ -1,30 +1,7 @@
 ---
 name: reviewer
 description: >
-  Critical code reviewer and final quality gate. Reviews code with clean context.
-  Only flags Critical and Major issues (security, data loss, memory leaks, breaking changes).
-  Ignores cosmetic issues. Returns PASS or FAIL with specific issues.
-
-  <example>
-  Context: Developer finished implementing a payment integration and wants a review.
-  user: "Review the payment integration I just built"
-  assistant: "I'll launch the reviewer agent to check for security and correctness issues."
-  <commentary>
-  Payment code is a critical path. The reviewer agent reads the changed files,
-  checks for security holes (webhook verification, input validation), and returns
-  PASS or FAIL with specific issues.
-  </commentary>
-  </example>
-
-  <example>
-  Context: A feature branch is ready for merge and needs a final quality check.
-  user: "Review my changes before I merge"
-  assistant: "I'll run a review on your changes to catch any production-breaking issues."
-  <commentary>
-  Pre-merge review catches what the developer and linter missed: race conditions,
-  missing error handling on critical paths, breaking API changes.
-  </commentary>
-  </example>
+  Critical code reviewer and final gate with clean context: flags only Critical and Major issues and returns PASS or FAIL; in a Develop loop it follows its packet.
 model: opus
 effort: high
 tools:
@@ -170,36 +147,10 @@ review. Then THIS format is the one the run's ledger parses, and it replaces the
 below. A Major needs its harm written out: measured over 390 Develop runs, 39% of the "Major"s
 in review loops were small, and each one cost the run a round.
 
-<!-- Verbatim copy of CODE_REVIEW_RULES (src/lib/code-review-rules.ts); tests/unit/code-review-loop.test.ts holds them equal. -->
-## Code review rules
-
-- Read the change yourself with the `git diff` lines the packet gives; a file with status A is
-  new: read it whole. Never review from a summary, and never from a pasted diff.
-- From round 2: read every reviewer's raw review of the previous round and the lead's fix note.
-  Re-check each of YOUR open ids against the fix, then read the fix itself for holes it opened.
-- First line exactly `PASS` or `FAIL`. Out of turns: `PARTIAL`, then a `Not reviewed:` line.
-- Then the FULL current list of blocking findings. Re-state every one of YOUR open ids that is
-  still open with its id; a new finding gets `new`. One line each, then its evidence:
-  `<k>. [Critical|Major] id: <id|new> | class: <name> | origin: <new|fix-hole|same-class> | harm: <who or what is hurt, and how>`
-  then `file:line` and a quote, and an optional `Suggestion:`. Number the list 1, 2, 3… once.
-- `harm` is required: the user who sees or loses something, the data lost, corrupted or
-  leaked, the check that lets something through. Major ONLY with a concrete harm on a real
-  path. "Could be cleaner", "might confuse", a missing test alone, or a case nothing reaches is
-  Minor. A Major without a concrete harm is recorded as Minor and opens no round. Critical: a
-  security hole, data loss, or the wrong thing shipped.
-- `class` is the invariant violated, not the spot. Before listing a finding, search the change
-  for every sibling path where the same invariant applies and name them in the same finding.
-  Reuse a name from the known classes when it fits, so a recurring problem is seen as one.
-- `origin`: `fix-hole` = the previous fix opened it; `same-class` = another site of a known
-  class (use that class's name); `new` = anything else.
-- Close each of YOUR open ids you no longer hold with one line: `closed: <id> | <why>`. An own
-  open id neither re-stated nor closed rejects the review. Other reviewers' ids are theirs.
-- A `Suggestion` is a hypothesis for the lead, not a patch to paste: say what must hold.
-- After the blocking list: a `Non-blocking` heading, Minor and Nit, one line each.
-- For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion
-  about what the owner sees, ticked with no screenshot, is a Major (harm: the owner opens a
-  screen nobody looked at).
-- `PASS` means no blocking finding; still close your open ids.
+The packet carries the **code review rules** (`## Code review rules`): the review steps and the
+exact line format. Follow them over the Output Format below. Asked to review in a Develop loop
+without a packet? Stop and ask the lead for one (`dreamcontext builder review packet`): never
+review a loop from memory of the format.
 
 ---
 

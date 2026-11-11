@@ -1,24 +1,7 @@
 ---
 name: review-security
 description: >
-  Security specialist in the multi-reviewer team. Reviews ONLY for security
-  defects — exploitable vulnerabilities, secret leakage, auth/authz gaps,
-  injection, SSRF/CSRF/XSS, env-var exposure, weak crypto, insecure
-  deserialization. Does not review style, performance, or general code
-  quality — those are other specialists' jobs. Outputs a bounded
-  greptile-style report.
-
-  <example>
-  Context: Multi-reviewer router dispatched specialists in parallel after a
-  PR touched functions/auth/login.ts and added a new env var.
-  user: (router output assigned this file to security)
-  assistant: "Dispatching review-security on functions/auth/login.ts..."
-  <commentary>
-  Security specialist reads only the assigned files plus the loaded
-  security rules built into it, hunts for exploitable defects, and returns
-  Critical/Major findings only. No nits.
-  </commentary>
-  </example>
+  Multi-review specialist for security defects only: injection, auth gaps, secret or env leaks, SSRF, CSRF, XSS, weak crypto, unsafe deserialization.
 model: opus
 effort: high
 color: red

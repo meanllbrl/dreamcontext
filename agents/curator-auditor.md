@@ -1,24 +1,7 @@
 ---
 name: curator-auditor
 description: >
-  Read-only audit specialist for the curator skill. Scans ONE domain of an existing
-  dreamcontext brain (knowledge / single-source-of-truth / features / tasks / versions / objectives)
-  against the conventions that are CURRENT AT RUN TIME — read from the live `dreamcontext`
-  skill, `taxonomy vocab`, and the soul — and returns a structured REORG FINDINGS list:
-  every drifted artifact mapped to `source → action → target` (MOVE / MERGE / SPLIT /
-  RENAME / RE-TYPE / RETIRE / RETAG / STATUS-BUMP / COMPRESS). It inventories and proposes;
-  it does NOT mutate the corpus. Dispatched at Phase 1 (fan out one per domain).
-
-  <example>
-  Context: The curator orchestrator is refactoring a brain that has grown additively for months.
-  user: (dispatched with domain "knowledge" + the live conventions)
-  assistant: "Reading taxonomy vocab + the skill's folder conventions, then auditing every knowledge file for bloat, tag drift, duplicate topics, and flat files that belong in a subfolder..."
-  <commentary>
-  The auditor reads the CURRENT conventions at run time (never hardcoded), compares the live
-  corpus against them, and returns a concrete source→action→target plan — it never says
-  "clean up knowledge" without naming each file and the exact action.
-  </commentary>
-  </example>
+  Read-only curator auditor: checks ONE brain domain against the live conventions and returns a source -> action -> target reorg list, never editing.
 model: sonnet
 tools:
   - Read
@@ -58,7 +41,7 @@ whatever shape accreted. So derive the target shape from the live system, never 
   THIS session; `dreamcontext people show` prints it, `dreamcontext people list` names the
   rest. **Person constitutions are never an audit target** — they are not knowledge, are not
   recall-indexed, and are outside every curator domain. You read them for conventions only.
-- `dreamcontext knowledge index`, `dreamcontext features list`, `dreamcontext tasks list --all`,
+- `dreamcontext knowledge index` (feature PRDs included, under `knowledge/features/`), `dreamcontext tasks list --all`,
   `dreamcontext core releases list` — the current inventory.
 
 If a convention is ambiguous, state the ambiguity in your findings — don't silently pick one.

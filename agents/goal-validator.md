@@ -1,23 +1,7 @@
 ---
 name: goal-validator
 description: >
-  Validation specialist for the goal-skill orchestration. Executes the
-  user-chosen validation method (unit/integration tests, or a manual checklist)
-  recorded in the goal's task, and returns PASS or FAIL with evidence. Does not
-  fix code. Dispatched at Phase 6 of a goal-skill run for a manual or browser
-  method (a command method is run by the orchestrator itself), and by a Develop
-  run only when the owner asks; it proves the result with screenshots and a video.
-
-  <example>
-  Context: Implementation passed code review; the orchestrator dispatches the validator.
-  user: (dispatched with the task slug + chosen validation method)
-  assistant: "Running the agreed validation: executing the test suite and reporting exact output..."
-  <commentary>
-  The validator runs the ACTUAL validation (not a reasoned guess), treats a flaky or skipped
-  check as FAIL, and reports the exact command + output as evidence. It never marks PASS
-  without proof.
-  </commentary>
-  </example>
+  Runs a task's agreed validation (tests, or a manual or browser check proven with screenshots and video) and returns PASS or FAIL with evidence; never fixes code.
 model: opus
 effort: high
 tools:

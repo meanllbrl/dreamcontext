@@ -119,8 +119,8 @@ describe('goal-skill: every builder runs without background tasks, with its writ
     expect(SKILL).toMatch(/\*\*One identity for the whole lineage, always\.\*\*/);
     // A fork does not "keep the planner's settings" by itself: effort comes from the flag.
     for (const doc of [SKILL, IMPL, PLANNER]) expect(doc).not.toMatch(/keeps? the planner's settings/);
-    expect(IMPL).toMatch(/`--model opus --effort high`, passed on every fork and resume/);
-    expect(PLANNER).toMatch(/ONE identity, `--model opus --effort high`/);
+    expect(IMPL).toMatch(/`--model opus --effort medium`, passed on every fork and resume/);
+    expect(PLANNER).toMatch(/ONE identity, `--model opus --effort medium`/);
   });
 
   it('rule 3b: an implementer resume (next wave, every FAIL route) carries the write flags and a message file', () => {

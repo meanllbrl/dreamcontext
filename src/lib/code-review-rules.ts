@@ -10,10 +10,9 @@
  * the same class in other words. These texts carry the answer to each:
  *
  *   CODE_REVIEW_RULES     what every code reviewer is told, every round, by
- *                         `dreamcontext builder review packet`. Mirrored verbatim into
- *                         agents/reviewer.md (tests/unit/code-review-loop.test.ts
- *                         holds them equal), so a reviewer dispatched without a packet still
- *                         writes the format the ledger parses.
+ *                         `dreamcontext builder review packet`. The packet is their only
+ *                         home: agents/reviewer.md points at it and asks for one when a loop
+ *                         review arrives without it (tests/unit/code-review-loop.test.ts).
  *   CODE_REVISION_RECIPE  what the lead is told before a fix: fix the class, every sibling
  *                         path, in one place; a reviewer's code is a hypothesis.
  *   CODE_STOP_CARD        the stop card's three options, in the owner's language.
