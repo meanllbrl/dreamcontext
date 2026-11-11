@@ -102,8 +102,11 @@ async function openWhiteboard(page) {
   await sleep(600);
   if (await page.locator('.announcements-modal-scrim').count()) { await page.keyboard.press('Escape'); await sleep(300); }
   await page.locator('.sidebar-item', { hasText: /Whiteboard(?!s)/ }).first().click();
-  await page.locator('.wbt-tab').first().waitFor({ timeout: 15000 });
+  await page.locator('.wbp-canvas').first().waitFor({ timeout: 15000 });
 }
+
+/** The open board's name, read off the Boards list (the tabs row is gone, 2026-11-11). */
+const currentName = (page) => page.locator('.wbx-row[data-current="true"] .wbx-name').first().innerText().catch(() => '');
 
 const rowNames = (page, scope = '.wbx-scroll') => page.locator(`${scope} .wbx-row:not(.wbx-row--group) .wbx-name`).allInnerTexts();
 const groupRow = (page, name) => page.locator('.wbx-group', { has: page.locator('.wbx-row--group .wbx-name', { hasText: new RegExp(`^${name}$`) }) });
@@ -130,7 +133,11 @@ async function main() {
     const all = ['ACQUISITION', 'REVENUE', 'CRM', 'Onboarding', 'AI Team screens', 'Test', 'Control Panel'];
     ok('E1 the explorer is open at 1440 px', await page.locator('.wbx').isVisible());
     ok('E1 it lists every board, tab or not', all.every((n) => names.includes(n)), JSON.stringify(names));
-    ok('E1 only one tab is open, so the list is not the tabs', (await page.locator('.wbt-tab').count()) === 1);
+    ok('E1 no tabs row: the list is the only way between boards', (await page.locator('.wbp-bar, .wbt-tab, .wbt-strip').count()) === 0);
+    ok('E1 the canvas starts under the shell bar (no row above it)', await page.evaluate(() => {
+      const c = document.querySelector('.wbp-canvas')?.getBoundingClientRect(); const m = document.querySelector('.wbp-shell-main')?.getBoundingClientRect();
+      return !!c && !!m && Math.abs(c.top - m.top) <= 1;
+    }));
     ok('E1 the open board is highlighted', (await page.locator('.wbx-row[data-current="true"] .wbx-name').first().innerText()) === 'Control Panel');
     ok('E1 the CLI-grouped boards sit in their group', (await groupRow(page, 'Tilki metrics').locator('.wbx-kids .wbx-name').allInnerTexts()).join(',') === 'ACQUISITION,REVENUE');
     ok('E1 an ungrouped board sits under Ungrouped', (await page.locator('.wbx-ungrouped .wbx-name').allInnerTexts()).includes('CRM'));
@@ -177,7 +184,7 @@ async function main() {
     ok('E2 Pin puts a board under Pinned', await waitFor(async () => (await page.locator('.wbx-sec', { hasText: 'Pinned' }).first().locator('.wbx-name').allInnerTexts()).includes('REVENUE')));
     // open a board from the explorer: it opens and gets a tab
     await boardRow(page, 'Onboarding', '.wbx-ungrouped').locator('.wbx-row-open').click();
-    ok('E2 clicking a row opens that board and gives it a tab', await waitFor(async () => (await page.locator('.wbt-tab[aria-selected="true"] .wbt-tab-name').innerText()) === 'Onboarding'));
+    ok('E2 clicking a row opens that board', await waitFor(async () => (await currentName(page)) === 'Onboarding'));
     // collapse Tilki metrics
     await groupRow(page, 'Tilki metrics').locator('.wbx-row--group .wbx-row-open').click();
     ok('E2 a group click collapses it', await groupRow(page, 'Tilki metrics').locator('.wbx-kids').count() === 0);
@@ -189,7 +196,7 @@ async function main() {
     await search.fill('acqu');
     ok('E3 search opens a collapsed group with a hit', (await rowNames(page)).join(',') === 'ACQUISITION');
     await search.press('Enter');
-    ok('E3 Enter opens the first hit', await waitFor(async () => (await page.locator('.wbt-tab[aria-selected="true"] .wbt-tab-name').innerText()) === 'ACQUISITION'));
+    ok('E3 Enter opens the first hit', await waitFor(async () => (await currentName(page)) === 'ACQUISITION'));
     ok('E3 the search text survives the board switch (the explorer is not remounted)', (await search.inputValue()) === 'acqu');
     await search.press('Escape');
     ok('E3 Esc clears the search', (await search.inputValue()) === '');
@@ -211,7 +218,7 @@ async function main() {
 
     // E5 — hide/show keeps the canvas
     await boardRow(page, 'Test', '.wbx-ungrouped').locator('.wbx-row-open').click();
-    await waitFor(async () => (await page.locator('.wbt-tab[aria-selected="true"] .wbt-tab-name').innerText()) === 'Test');
+    await waitFor(async () => (await currentName(page)) === 'Test');
     await page.locator('.excalidraw canvas.interactive').waitFor({ timeout: 10000 });
     await sleep(800);
     const box = await page.locator('.wbp-canvas').boundingBox();
@@ -226,8 +233,9 @@ async function main() {
     await page.evaluate(() => { document.querySelector('.excalidraw canvas.interactive').__pgzMark = 1; });
     await page.locator('.wbx-head .wbx-icon[aria-label="Hide the board list"]').click();
     ok('E5 Hide takes the explorer away', await page.locator('.wbx').count() === 0);
-    ok('E5 …and focus lands on the bar\'s toggle', await waitFor(() => page.evaluate(() => document.activeElement?.classList.contains('wbp-explorer-toggle'))));
-    ok('E5 …and a toggle sits at the bar\'s left end', await page.locator('.wbp-bar > .wbp-explorer-toggle').count() === 1);
+    ok('E5 …and focus lands on the canvas toggle', await waitFor(() => page.evaluate(() => document.activeElement?.classList.contains('wbp-explorer-toggle'))));
+    ok('E5 …and a toggle sits at the canvas top-left with the board name', await page.locator('.wbp-float-left > .wbp-explorer-toggle').count() === 1
+      && (await page.locator('.wbp-float-left .wbp-float-name').innerText()) === 'Test');
     await sleep(400);
     await page.screenshot({ path: join(SHOTS, 'masaustu-gizli.png') });
     await page.locator('.wbp-explorer-toggle').click();
@@ -287,7 +295,7 @@ async function main() {
     await phone.evaluate(() => document.querySelector('[data-testid="phone-menu"]').click());
     await sleep(400);
     await phone.evaluate(() => document.querySelector('.sidebar-item[title^="Whiteboard"]').click());
-    await phone.locator('.wbp-bar').waitFor({ timeout: 15000 });
+    await phone.locator('.wbp-explorer-toggle').first().waitFor({ timeout: 15000 });
     ok('E6 the drawer starts closed even with a saved open: true', await phone.locator('.wbx').count() === 0);
     await phone.locator('.wbp-explorer-toggle').tap();
     await phone.locator('.wbx[data-phone]').waitFor({ timeout: 4000 });
@@ -298,6 +306,58 @@ async function main() {
     ok('E6 …and closes the drawer', await waitFor(async () => (await phone.locator('.wbx').count()) === 0));
     ok('E6 the phone did not write `open`', savedExplorer().open === true, JSON.stringify(savedExplorer().open));
     await phoneCtx.close();
+
+    // E8 — right-click menus, delete, Recently deleted + Restore (moved here from the retired whiteboard-tabs.mjs)
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.wbx').waitFor({ timeout: 8000 }).catch(async () => { await page.locator('.wbp-explorer-toggle').first().click(); await page.locator('.wbx').waitFor({ timeout: 4000 }); });
+    if ((await groupRow(page, 'Sales').locator('.wbx-kids').count()) === 0) await groupRow(page, 'Sales').locator('.wbx-row--group .wbx-row-open').click();
+    const crm = boardRow(page, 'CRM');
+    const cb = await crm.boundingBox();
+    await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2, { button: 'right' });
+    const menu = page.locator('.wbx-menu[data-at-point]');
+    await menu.waitFor({ timeout: 3000 });
+    const mb = await menu.boundingBox();
+    ok('E8 right-click on a board row opens its menu at the pointer', !!mb && Math.abs(mb.y - (cb.y + cb.height / 2)) <= 24 && mb.x >= cb.x, JSON.stringify({ mb, cb }));
+    ok('E8 …with the board items (Open, Rename F2, Delete)', /Open/.test(await menu.innerText()) && /Rename/.test(await menu.innerText()) && /Delete/.test(await menu.innerText()), await menu.innerText());
+    ok('E8 …inside the window', !!mb && mb.x + mb.width <= 1440 && mb.y + mb.height <= 900);
+    await page.screenshot({ path: join(SHOTS, 'sag-tik-tahta.png') });
+    const gb = await groupRow(page, 'Sales').locator('.wbx-row--group').boundingBox();
+    await page.mouse.click(gb.x + gb.width / 2, gb.y + gb.height / 2, { button: 'right' });
+    ok('E8 a right-click on a group row replaces it with the group menu', await waitFor(async () => (await page.locator('.wbx-menu').count()) === 1 && /Rename group/.test(await page.locator('.wbx-menu').innerText())));
+    await page.screenshot({ path: join(SHOTS, 'sag-tik-grup.png') });
+    await page.keyboard.press('Escape');
+    ok('E8 Escape closes it', await waitFor(async () => (await page.locator('.wbx-menu').count()) === 0));
+    await crm.locator('.wbx-row-open').focus();
+    await page.keyboard.press('Shift+F10');
+    ok('E8 Shift+F10 on a focused row opens its menu', await waitFor(async () => /Open/.test(await page.locator('.wbx-menu').innerText().catch(() => ''))));
+    await page.keyboard.press('Escape');
+    await page.locator('.wbx-search-input').click({ button: 'right' });
+    ok('E8 the search input keeps the native menu (no list menu)', (await page.locator('.wbx-menu').count()) === 0);
+    await page.keyboard.press('Escape');
+    // Delete through the right-click menu, answered in-app.
+    let dialogs = 0;
+    page.on('dialog', (d) => { dialogs += 1; void d.dismiss(); });
+    await boardRow(page, 'AI Team screens').click({ button: 'right' });
+    await page.locator('.wbx-menu .wbx-menu-item--danger', { hasText: 'Delete' }).click();
+    ok('E8 Delete asks in the menu, not with a browser dialog', await page.locator('.wbx-confirm').count() === 1 && dialogs === 0);
+    await page.locator('.wbx-confirm .wbx-menu-item--danger').click();
+    ok('E8 …and the board leaves the list', await waitFor(async () => !(await rowNames(page)).includes('AI Team screens')));
+    const trashToggle = page.locator('.wbx-trash-toggle');
+    ok('E8 "Recently deleted" sits at the list foot and counts it', await waitFor(async () => (await trashToggle.count()) === 1 && (await page.locator('.wbx-trash-count').innerText()) === '1'));
+    await trashToggle.click();
+    await page.locator('.wbx-trash-row', { hasText: 'AI Team screens' }).locator('.wbx-trash-restore').click();
+    ok('E8 Restore brings it back and opens it', await waitFor(async () => (await currentName(page)) === 'AI Team screens'));
+    ok('E8 …and the trash is empty again', await waitFor(async () => (await trashToggle.count()) === 0));
+
+    // E9 — the open board deleted elsewhere: the page moves to the most recent other board and says so.
+    await boardRow(page, 'CRM').locator('.wbx-row-open').click();
+    await waitFor(async () => (await currentName(page)) === 'CRM');
+    await boardRow(page, 'Onboarding').locator('.wbx-row-open').click();
+    await waitFor(async () => (await currentName(page)) === 'Onboarding');
+    await sleep(800);
+    rmSync(join(PROJ, '_dream_context', 'whiteboards', 'onboarding'), { recursive: true, force: true });
+    ok('E9 a board deleted outside the app moves the page to the last other board', await waitFor(async () => (await currentName(page)) === 'CRM', 20000), await currentName(page));
+    ok('E9 …with the gone note on it', await waitFor(async () => /was deleted/.test(await page.locator('.wbp-banner--quiet').innerText().catch(() => ''))));
 
     // E7
     ok('E7 no console error and no page error', consoleErrors.length === 0, consoleErrors.join(' | '));
