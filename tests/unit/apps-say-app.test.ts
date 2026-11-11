@@ -194,6 +194,12 @@ describe('the app prompt block', () => {
     expect(buildAskBlock('hi', m, nonce, 'app', app)).toContain('Sent by the app\'s backend');
   });
 
+  it('the go-ahead line names this app\'s own tools as the exception the gate allows (gece-apps C6)', () => {
+    const out = buildAskBlock('hi', m, newTurnNonce(), 'app', app);
+    expect(out).toContain('say so in your post and stop (this app\'s own tools are the exception, see below).');
+    expect(out).toContain('or the app itself called you (its own tools only)');
+  });
+
   it('a scheduled app job gets the same facts, fenced', () => {
     const n = newTurnNonce();
     const out = buildAppContextBlock(app, n);
