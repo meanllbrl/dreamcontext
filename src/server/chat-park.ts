@@ -43,7 +43,21 @@ export type ParkExempt = 'assistant' | 'super' | 'phone';
 /** What a park attempt did. Only `parked` and `drained` freed a process. */
 export type ParkOutcome =
   | 'parked' | 'drained' | 'already'
-  | 'busy' | 'asking' | 'background' | 'queued' | 'focused' | 'exempt' | 'refused' | 'no_answer';
+  | 'busy' | 'asking' | 'background' | 'queued' | 'focused' | 'exempt' | 'refused' | 'no_answer'
+  | 'owner';
+
+/**
+ * Who is parking, as the keep policy needs it (sahip-karti-yerinde K3). An open owner card keeps
+ * its process EXCEPT under hard memory pressure (D1: the wait and its receipt are durable, so the
+ * park is lossless) or when the Super ends the child (`super end`, succession, retire pass
+ * `end: true`; the end event names the card). The done-child backstop passes `'none'`, the
+ * pressure sweep its level.
+ */
+export interface ParkContext { pressure: 'none' | 'soft' | 'hard'; end?: boolean }
+/** What `super end`, succession and retire pass (lane A's callers in routes/super.ts). */
+export const END_PARK_CONTEXT: ParkContext = Object.freeze({ pressure: 'none', end: true }) as ParkContext;
+/** What the done-child backstop and any other un-forced caller passes. */
+export const NO_PRESSURE_CONTEXT: ParkContext = Object.freeze({ pressure: 'none' }) as ParkContext;
 
 export interface Parkable {
   /** The tab's pinned conversation id (the roster id Resume uses). */
@@ -57,6 +71,9 @@ export interface Parkable {
   busy: () => boolean;
   /** A question or permission card waits for the owner. */
   asking: () => boolean;
+  /** An owner CARD (run, secret, checklist, mcp) waits on the owner (the registry's open card
+   *  waits, K3). Absent = none (a terminal, a plain chat). */
+  ownerWait?: () => boolean;
   /** Background shells and agents the CLI reports running (chat only; a terminal reports 0
    *  and is checked through its process tree and transcripts instead). */
   backgroundTasks: () => number;
@@ -142,6 +159,8 @@ export interface ParkCandidate {
   exempt: ParkExempt | null;
   busy: boolean;
   asking: boolean;
+  /** An open owner card waits on the owner (K3). */
+  ownerWait: boolean;
   backgroundTasks: number;
   idleSince: number;
   focusedAt: number;
@@ -152,12 +171,17 @@ export function minIdleFor(level: ParkPressure['level']): number {
   return level === 'hard' ? HARD_IDLE_MS : SOFT_IDLE_MS;
 }
 
-/** Why the policy keeps one candidate, or null when it may be parked now. */
-export function keepReason(c: ParkCandidate, minIdleMs: number, now: number, focusGraceMs = FOCUS_GRACE_MS): ParkOutcome | null {
+/** Why the policy keeps one candidate, or null when it may be parked now. An open owner card
+ *  keeps it (`owner`) unless the pressure is hard or the Super ends it (K3). */
+export function keepReason(
+  c: ParkCandidate, minIdleMs: number, now: number, focusGraceMs = FOCUS_GRACE_MS,
+  ctx: ParkContext = NO_PRESSURE_CONTEXT,
+): ParkOutcome | null {
   if (c.exempt) return 'exempt';
   if (c.busy) return 'busy';
   if (c.asking) return 'asking';
   if (c.backgroundTasks > 0) return 'background';
+  if (c.ownerWait && ctx.pressure !== 'hard' && !ctx.end) return 'owner';
   if (c.focusedAt > 0 && now - c.focusedAt < focusGraceMs) return 'focused';
   if (now - c.idleSince < minIdleMs) return 'busy';
   return null;
@@ -174,7 +198,8 @@ export function pickChatsToPark(
 ): string[] {
   if (pressure.level === 'none') return [];
   const minIdle = opts.minIdleMs ?? minIdleFor(pressure.level);
-  const eligible = cands.filter((c) => keepReason(c, minIdle, now, opts.focusGraceMs) === null).sort((a, b) => a.idleSince - b.idleSince);
+  const ctx: ParkContext = { pressure: pressure.level };
+  const eligible = cands.filter((c) => keepReason(c, minIdle, now, opts.focusGraceMs, ctx) === null).sort((a, b) => a.idleSince - b.idleSince);
   const budget = Math.max(1, Math.ceil(pressure.deficitGb / PARK_FREES_GB));
   return eligible.slice(0, budget).map((c) => c.id);
 }
@@ -401,14 +426,15 @@ export function findParkable(id: string): Parkable | null {
  * sub-agent transcripts) live in the sweep: a future caller that parks a TERMINAL by id (super
  * end only targets chats) must run them too.
  */
-export async function parkChat(id: string, reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> {
+export async function parkChat(id: string, reason: string, opts: ParkOptions = {}, ctx: ParkContext = NO_PRESSURE_CONTEXT): Promise<ParkOutcome> {
   const p = parkables.get(id);
   if (!p) return 'already';
   if (opts.force) {
     if (p.exempt()) return 'exempt';
     return noteParked(id, await p.park(reason, opts), opts);
   }
-  const keep = keepReason(candidateOf(p), 0, Date.now());
+  // `opts.end` (the window closes the tab) is always an end for the keep policy too.
+  const keep = keepReason(candidateOf(p), 0, Date.now(), FOCUS_GRACE_MS, opts.end ? { ...ctx, end: true } : ctx);
   if (keep && keep !== 'focused') return keep;
   return noteParked(id, await p.park(reason, opts), opts);
 }
@@ -424,6 +450,7 @@ function candidateOf(p: Parkable): ParkCandidate {
     exempt: p.exempt(),
     busy: p.busy(),
     asking: p.asking(),
+    ownerWait: !!p.ownerWait?.(),
     backgroundTasks: p.backgroundTasks(),
     idleSince: p.idleSince(),
     focusedAt: p.focusedAt(),
@@ -437,11 +464,11 @@ async function parkDoneChildren(now: number, activity: SweepDeps['activity']): P
   const out: string[] = [];
   for (const p of [...parkables.values()]) {
     if (p.kind !== 'chat' || !isDelegatedSuperChild(p.id)) continue;
-    if (keepReason(candidateOf(p), DONE_CHILD_IDLE_MS, now, parkFocusGraceMs())) continue;
+    if (keepReason(candidateOf(p), DONE_CHILD_IDLE_MS, now, parkFocusGraceMs(), NO_PRESSURE_CONTEXT)) continue;
     // The same last guard as the pressure path: a transcript (or a sub-agent's) written inside
     // the idle window means something still works, whatever the background count says.
     if (now - activity(p).at < DONE_CHILD_IDLE_MS) continue;
-    const outcome = await parkChat(p.id, 'super-done').catch((): ParkOutcome => 'refused');
+    const outcome = await parkChat(p.id, 'super-done', {}, NO_PRESSURE_CONTEXT).catch((): ParkOutcome => 'refused');
     if (outcome === 'parked' || outcome === 'drained') out.push(p.id);
   }
   return out;
@@ -490,7 +517,7 @@ export async function sweepOnce(deps: SweepDeps = sweepDeps ?? defaultSweepDeps(
     const reason = pressure.level === 'hard' ? 'machine-hard' : 'machine';
     const parked: string[] = [];
     for (const id of order) {
-      const outcome = await parkChat(id, reason).catch((): ParkOutcome => 'refused');
+      const outcome = await parkChat(id, reason, {}, { pressure: pressure.level }).catch((): ParkOutcome => 'refused');
       if (outcome === 'parked' || outcome === 'drained') parked.push(id);
     }
     if (parked.length) deps.notice(parked.length, pressure);

@@ -1,6 +1,6 @@
 /**
- * Card records (plan H1, I1, J1, K1, K3): the server's own copy of every `run` and `secret`
- * card a chat drew, keyed by an unforgeable `cardRef`.
+ * Card records (plan H1, I1, J1, K1, K3; sahip-karti-yerinde K1): the server's own copy of every
+ * owner-only card (`run`, `secret`, `checklist`, `mcp`) a chat drew, keyed by an unforgeable `cardRef`.
  *
  * WHY THE SERVER KEEPS THEM. A run card can now be started from three places (the Mac card, the
  * hands-free phone page, a Telegram button) and a secret card can be filled on the phone. None of
@@ -34,6 +34,8 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseViewBlock } from '../chat-view-spec.js';
+import { findTranscriptBySessionId } from '../transcript-locate.js';
+import type { OwnerCardHandle } from '../super/types.js';
 import { answeredBy, type OwnerWait } from '../super/owner-wait.js';
 import { parseTelegramPrefix, CARD_RECORD_CAP, CLOSED_CARDS_CAP } from '../telegram/contract.js';
 import { canonicalJson, type CardCloseReason, type CardKind, type CardRunInfo, type CardSpec, type PublicCard } from './public.js';
@@ -75,7 +77,7 @@ export function cardRefOf(sessionId: string, messageUuid: string, fenceIndex: nu
   return createHash('sha256').update(JSON.stringify([sessionId, messageUuid, fenceIndex, canonicalJson(spec)])).digest('hex').slice(0, 32);
 }
 
-/** The run and secret cards in one assistant text, with their fence index (every dream-view
+/** The owner-only cards (run, secret, checklist, mcp) in one assistant text, with their fence index (every dream-view
  *  fence counts, a skipped one included, so the index is the fence's position). */
 export function cardsInText(text: string): Array<{ index: number; spec: CardSpec }> {
   const out: Array<{ index: number; spec: CardSpec }> = [];
@@ -84,7 +86,7 @@ export function cardsInText(text: string): Array<{ index: number; spec: CardSpec
   for (const m of text.matchAll(FENCE)) {
     const index = i++;
     const { view } = parseViewBlock(m[1]);
-    if (view && (view.type === 'run' || view.type === 'secret')) out.push({ index, spec: view });
+    if (view && (view.type === 'run' || view.type === 'secret' || view.type === 'checklist' || view.type === 'mcp')) out.push({ index, spec: view });
   }
   return out;
 }
@@ -194,6 +196,11 @@ function ensureMarker(sessionId: string, since: string): void {
 const bySession = new Map<string, CardRecordEntry[]>();
 /** Sessions whose transcript was read back in this process (once each). */
 const rebuiltSessions = new Set<string>();
+/** (session, transcript id) pairs read back by {@link ensureCardsFor} (K1): a session whose
+ *  stream moved to a new transcript (`/clear`) still gets its OLD transcript's cards back, and a
+ *  live `ensureCards` on the new transcript never masks the old one. */
+const rebuiltTranscripts = new Set<string>();
+const pairKey = (sessionId: string, transcriptId: string): string => `${sessionId.toLowerCase()}\n${transcriptId}`;
 const listeners = new Set<(sessionId: string) => void>();
 let seq = 0;
 
@@ -346,9 +353,17 @@ function rowText(row: Record<string, unknown>): string {
  * supersede by id. A run started from a card the file says `started` and never `done` comes
  * back closed as `interrupted`.
  */
-export function rebuildCards(sessionId: string, vault: string, jsonl: string): void {
-  if (!isSessionUuid(sessionId) || rebuiltSessions.has(sessionId)) return;
-  rebuiltSessions.add(sessionId);
+export function rebuildCards(sessionId: string, vault: string, jsonl: string, transcriptId?: string): void {
+  if (!isSessionUuid(sessionId)) return;
+  if (transcriptId) {
+    // One transcript of the session (ensureCardsFor): keyed by the pair, merged like any rebuild.
+    const key = pairKey(sessionId, transcriptId);
+    if (rebuiltTranscripts.has(key)) return;
+    rebuiltTranscripts.add(key);
+  } else {
+    if (rebuiltSessions.has(sessionId)) return;
+    rebuiltSessions.add(sessionId);
+  }
   const closedFile = readClosedFile(sessionId);
   const rows = jsonl.split('\n').slice(-REBUILD_ROWS);
   const found: Array<{ uuid: string; index: number; spec: CardSpec; legacy: boolean; at: number }> = [];
@@ -372,9 +387,7 @@ export function rebuildCards(sessionId: string, vault: string, jsonl: string): v
   // The legacy rule, as the live registry applies it: each owner line answers from the SET of
   // legacy cards still open before it (with two run cards open, only the one whose command ran).
   const legacyClosed = new Set<(typeof found)[number]>();
-  const waitOf = (f: (typeof found)[number]): OwnerWait => (f.spec.type === 'run'
-    ? { kind: 'run', id: f.spec.id, line: f.spec.command, key: f.spec.command }
-    : { kind: 'secret', id: f.spec.id, line: f.spec.title, key: f.spec.title });
+  const waitOf = (f: (typeof found)[number]): OwnerWait => legacyWaitOf(f.spec);
   for (const l of ownerLines) {
     const open = found.filter((f) => f.legacy && f.at < l.at && !legacyClosed.has(f));
     const waits = open.map(waitOf);
@@ -409,10 +422,91 @@ export function rebuildCards(sessionId: string, vault: string, jsonl: string): v
   if (list.length) emit(sessionId);
 }
 
+/** The wait the legacy owner-line rule closes for one card (the owner-wait.ts receipt keys). */
+function legacyWaitOf(spec: CardSpec): OwnerWait {
+  switch (spec.type) {
+    case 'run': return { kind: 'run', id: spec.id, line: spec.command, key: spec.command };
+    case 'secret': return { kind: 'secret', id: spec.id, line: spec.title, key: spec.title };
+    case 'checklist': return { kind: 'checklist', id: spec.id, line: spec.title, key: spec.title };
+    case 'mcp': { const names = spec.servers.join(', '); return { kind: 'mcp', id: spec.id, line: names, key: names }; }
+  }
+}
+
+// ─── A record found from an owner item's card handle, no live chat needed (K1) ─────────
+
+/** Has this exact transcript of the session been read back in this process? */
+export function isRebuiltFrom(sessionId: string, transcriptId: string): boolean {
+  return rebuiltTranscripts.has(pairKey(sessionId, transcriptId));
+}
+
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The record an owner item's card handle names, rebuilt when needed from the handle's OWN
+ * transcript (`postingConversationId`, located with `findTranscriptBySessionId`, never the live
+ * transcript of a registry entry): it works after a server restart, for a parked, gone or
+ * succeeded child, and after a `/clear` rotation moved the stream to a new transcript. Every
+ * card action resolves its record through here (start, attach, rerun, secret, checklist, Not
+ * needed).
+ *
+ * `projectRoot` is the handle's vault resolved by the caller (`resolveVaultProjectRoot`); null
+ * (an unknown vault) rebuilds nothing. The record never moves to another session: the lookup is
+ * always (postingSession, cardRef). Null when the card is not in that transcript any more (past
+ * the 4000-row rebuild window, or the newest 16).
+ */
+export function ensureCardsFor(
+  handle: Pick<OwnerCardHandle, 'cardRef' | 'postingSession' | 'vault' | 'postingConversationId'>,
+  projectRoot: string | null,
+  opts: { home?: string } = {},
+): CardRecordEntry | null {
+  const sid = handle.postingSession;
+  if (!isSessionUuid(sid) || !CARD_REF_RE.test(handle.cardRef)) return null;
+  const hit = getCard(sid, handle.cardRef);
+  if (hit) return hit;
+  if (!projectRoot) return null;
+  const tid = handle.postingConversationId || sid;
+  if (!isRebuiltFrom(sid, tid)) {
+    const path = findTranscriptBySessionId([tid], opts.home ?? cardsHome ?? homedir());
+    if (!path) return null;
+    try {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || !st.isFile() || st.size > MAX_TRANSCRIPT_BYTES) return null;
+      rebuildCards(sid, handle.vault, readFileSync(path, 'utf-8'), tid);
+    } catch { return null; }
+  }
+  return getCard(sid, handle.cardRef);
+}
+
+/**
+ * The card handle for one owner wait a crew child's assistant frame yielded (K1): the fence of
+ * that kind and id in the frame's text, its validated spec (the chat's own parse) and its
+ * cardRef. Null when the frame holds no such card. `deliverTo` starts as the posting child.
+ */
+export function cardHandleOf(a: {
+  postingSession: string; vault: string; postingConversationId: string; messageUuid: string; text: string;
+  kind: CardKind; id: string; childRecordId: string; childId: string;
+}): OwnerCardHandle | null {
+  if (!isSessionUuid(a.postingSession) || !a.messageUuid) return null;
+  let hit: { index: number; spec: CardSpec } | null = null;
+  for (const c of cardsInText(a.text)) if (c.spec.type === a.kind && c.spec.id === a.id) hit = c;
+  if (!hit) return null;
+  return {
+    cardRef: cardRefOf(a.postingSession, a.messageUuid, hit.index, hit.spec),
+    postingSession: a.postingSession,
+    vault: a.vault,
+    postingConversationId: a.postingConversationId || a.postingSession,
+    spec: hit.spec,
+    childRecordId: a.childRecordId,
+    childId: a.childId,
+    deliverTo: a.childId,
+  };
+}
+
 /** Tests only. */
 export function _resetCardsForTests(): void {
   bySession.clear();
   rebuiltSessions.clear();
+  rebuiltTranscripts.clear();
   listeners.clear();
   seq = 0;
 }

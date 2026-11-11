@@ -8,7 +8,9 @@
  * one, change the other; `tests/unit/super-types-mirror.test.ts` pins the pair.
  */
 
-import type { OwnerWaitKind } from './owner-wait.js';
+import type { OwnerCardKind, OwnerWaitKind } from './owner-wait.js';
+import type { CardSpec } from '../cards/public.js';
+import { parseViewBlock } from '../chat-view-spec.js';
 import type { OwnerLanguage } from './owner-language.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
@@ -673,7 +675,7 @@ queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it s
 is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
 `shown` once it has rung (a coalesced fact never rings twice).
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -787,7 +789,171 @@ export interface SuperQueueItem {
    *  Allow buttons, so a second tap cannot write a second grant. Only on what can be allowed (a
    *  permission, a refusal, or their `member` mirror, where the server copies it). */
   allowed?: GrantSize;
+  /** An `owner` item of a crew child whose wait is a CARD (sahip-karti-yerinde K1): the record
+   *  it stands for, so every surface draws the card from the record and every card action
+   *  resolves it with no live chat (`ensureCardsFor`). Copied onto the item's `member` mirror.
+   *  Server-written only; the spec inside is the child's (untrusted, drawn as data). */
+  card?: OwnerCardHandle;
+  /** Telegram's "Mac'e dönünce hatırlat" (K7): when the owner asked to be reminded. The next
+   *  owner-at-Mac raises one notification naming the marked cards, then the mark clears. */
+  remindAt?: number;
+  /** Where the result of the owner's last action on this card is (K6/K7): the slot's one true
+   *  line. Server-written. */
+  delivery?: OwnerDeliveryState;
+  /** An `owner-result` item (K6): one per owner action on a child's card. Its `sessionId` is the
+   *  child's. A `parked` item names the open card in `wait`. */
+  ownerResult?: OwnerResultFact;
 }
+
+// ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1-K7; MIRRORED in
+// dashboard/src/lib/superTypes.ts, pinned by tests/unit/owner-card-types.test.ts) ──────────────
+
+/**
+ * The card handle an owner item carries (K1). The RECORD stays under the posting session for
+ * ever (cardRef = sha256(posting session, message uuid, fence index, spec)); the handle says how
+ * to find it again with no live chat: the posting session, its vault, and the transcript the
+ * card is in (`postingConversationId`, which a `/clear` rotation does not move). `childRecordId`
+ * is the Super record that owns the child ('main' or `m:<member>`), `childId` the child that
+ * posted it, `deliverTo` the child its result goes to (the posting child, then its successor).
+ */
+export interface OwnerCardHandle {
+  cardRef: string;
+  postingSession: string;
+  vault: string;
+  postingConversationId: string;
+  /** The card's validated spec (src/lib/chat-view-spec.ts `parseViewBlock`, the chat's own parse
+   *  and caps). Untrusted: it came from the child's assistant frame. */
+  spec: CardSpec;
+  childRecordId: string;
+  childId: string;
+  deliverTo: string;
+}
+
+/** A Super record id a receipt names: main's, or a member Super's (`m:<slug>`). */
+export const OWNER_RECEIPT_RECORD_RE = /^(?:main|m:[a-z0-9][a-z0-9-]{0,79})$/;
+/** A child id a receipt names (a session id or a roster id; never a dot, slash or colon). */
+export const OWNER_RECEIPT_CHILD_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/** What a wake of a not-live child did (K6 `wakeForOwnerCard`). `held:*` keeps the receipt held
+ *  and is retried on the edge that clears it. */
+export const OWNER_WAKE_OUTCOMES = ['woken', 'live', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+export type OwnerWakeOutcome = typeof OWNER_WAKE_OUTCOMES[number];
+
+/** What `deliverOwnerReceipt` did: `delivered` (written into the live child), `nothing` (no
+ *  verified entry to send), `held` (no deliverer could act; kept), or the wake's outcome. */
+export type OwnerDeliverOutcome = 'delivered' | 'nothing' | 'held' | OwnerWakeOutcome;
+
+/** The slot's one true line for a card's result (K7): sent, waking a paused child, held (and
+ *  why), or the child was ended and the Super has it. */
+export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+export type OwnerDeliveryState = typeof OWNER_DELIVERY_STATES[number];
+
+/** An `owner-result` event's fact (K6): one per owner action. `text` is the receipt's KEPT form
+ *  (no typed secret), then `redactSecrets`; absent tail when the owner withheld the output.
+ *  `outcome` is the run's exit code (null: ended without one) or `submitted`. */
+export interface OwnerResultFact {
+  card: OwnerCardKind;
+  cardRef: string;
+  outcome: number | null | 'submitted';
+  text: string;
+}
+
+/** One held receipt on disk (K6), `~/.dreamcontext/cards/receipts/<record>__<child>.json`. One
+ *  entry per ACTION: `id` is the runId for a run, a fresh submit id for a secret or a checklist.
+ *  `text` is the KEPT form. `pending`: a run's cut-off placeholder, held at its start. `mac`:
+ *  HMAC-SHA256 under this boot's in-memory key; an entry that does not verify proves nothing. */
+export interface OwnerReceiptEntry {
+  id: string;
+  cardRef: string;
+  kind: OwnerCardKind;
+  text: string;
+  at: number;
+  pending?: true;
+  mac: string;
+}
+
+/**
+ * A held receipt as a surface may draw it (K6/K7), never with its MAC:
+ *  - `held`: proven in this boot, waiting for its child;
+ *  - `running`: a run's placeholder while the run lives in this boot;
+ *  - `kept`: does not verify (from before a restart, or written by hand): drawn read-only as
+ *    plain text, "Kept from before a restart; not checked", with its time;
+ *  - `cut_off`: an unverified run placeholder: "The run was cut off by a restart" only.
+ */
+export const OWNER_RECEIPT_VIEW_STATES = ['held', 'running', 'kept', 'cut_off'] as const;
+export type OwnerReceiptViewState = typeof OWNER_RECEIPT_VIEW_STATES[number];
+export interface OwnerReceiptView {
+  id: string;
+  cardRef: string;
+  kind: OwnerCardKind;
+  at: number;
+  state: OwnerReceiptViewState;
+  text: string;
+}
+
+/** The card actions a desktop ws ticket can carry (K4): every card-mode upgrade of
+ *  `/api/agent/terminal`. */
+export const CARD_TICKET_ACTIONS = ['start', 'attach', 'rerun'] as const;
+export type CardTicketAction = typeof CARD_TICKET_ACTIONS[number];
+/** How long a ticket lives, single use. */
+export const CARD_TICKET_TTL_MS = 30_000;
+/** `POST /api/agent/card-ticket` (owner page only): `shown` is the command the surface DREW. */
+export interface CardTicketMintRequest { session: string; card: string; action: CardTicketAction; shown: string }
+export interface CardTicketMintResponse { ticket: string; expiresAt: number }
+/** Why a ticket was refused (never told apart to a caller beyond a 403; kept for logs and tests). */
+export const CARD_TICKET_REFUSALS = ['missing', 'unknown', 'spent', 'expired', 'wrong_project', 'wrong_card', 'wrong_action', 'shown_mismatch'] as const;
+export type CardTicketRefusal = typeof CARD_TICKET_REFUSALS[number];
+
+/** The kind sentence Telegram sends with a child's card (K7, D3): it says plainly it is a Mac
+ *  step, with Remind and Not needed, never Run. */
+export const OWNER_CARD_TELEGRAM_LINE: Record<OwnerCardKind, string> = {
+  run: "Bu komut Mac'te terminalde çalışır; telefondan çalıştırılamaz.",
+  secret: "Şifre Telegram'a yazılmaz; Mac'te girilir.",
+  checklist: "Mac'te yapılır.",
+  mcp: "Mac'te yapılır.",
+};
+
+/**
+ * Re-validate a stored card handle (the record store's sanitizer calls this for `card` on an
+ * `owner` item and its `member` mirror): every id of its fixed shape, and the spec parsed again
+ * with the chat's own rules (`parseViewBlock`), so a hand-edited record cannot widen a card.
+ * Undefined when anything is off.
+ */
+export function cleanOwnerCardHandle(v: unknown): OwnerCardHandle | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const str = (x: unknown, re: RegExp): string | null => (typeof x === 'string' && re.test(x) ? x : null);
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const cardRef = str(o.cardRef, /^[0-9a-f]{32}$/);
+  const postingSession = str(o.postingSession, UUID);
+  const vault = typeof o.vault === 'string' && o.vault.length > 0 && o.vault.length <= 200 && !/[\r\n]/.test(o.vault) ? o.vault : null;
+  const postingConversationId = str(o.postingConversationId, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+  const childRecordId = str(o.childRecordId, OWNER_RECEIPT_RECORD_RE);
+  const childId = str(o.childId, OWNER_RECEIPT_CHILD_RE);
+  const deliverTo = str(o.deliverTo, OWNER_RECEIPT_CHILD_RE);
+  if (!cardRef || !postingSession || !vault || !postingConversationId || !childRecordId || !childId || !deliverTo) return undefined;
+  let spec: CardSpec | null = null;
+  try {
+    const { view } = parseViewBlock(JSON.stringify(o.spec));
+    if (view && (view.type === 'run' || view.type === 'secret' || view.type === 'checklist' || view.type === 'mcp')) spec = view;
+  } catch { spec = null; }
+  if (!spec) return undefined;
+  return { cardRef, postingSession, vault, postingConversationId, spec, childRecordId, childId, deliverTo };
+}
+
+/** Re-validate a stored `owner-result` fact (the store's sanitizer). */
+export function cleanOwnerResultFact(v: unknown): OwnerResultFact | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const card = o.card;
+  if (card !== 'run' && card !== 'secret' && card !== 'checklist' && card !== 'mcp') return undefined;
+  if (typeof o.cardRef !== 'string' || !/^[0-9a-f]{32}$/.test(o.cardRef)) return undefined;
+  const outcome = o.outcome === 'submitted' || o.outcome === null || (typeof o.outcome === 'number' && Number.isInteger(o.outcome)) ? (o.outcome as number | null | 'submitted') : undefined;
+  if (outcome === undefined || typeof o.text !== 'string') return undefined;
+  return { card, cardRef: o.cardRef, outcome, text: o.text.slice(0, MAX_OWNER_RESULT_TEXT) };
+}
+/** The most of a receipt's kept form an `owner-result` fact keeps (a run report is ~6 KB). */
+export const MAX_OWNER_RESULT_TEXT = 8000;
 
 /** A refused tool call the owner may allow (K2), as the registry read it from the stream. The
  *  input is the CANONICAL input (grants `canonicalInput`), cut to PERMISSION_FULL_CAP: `whole`

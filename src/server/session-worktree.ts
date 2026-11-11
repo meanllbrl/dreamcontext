@@ -1,6 +1,8 @@
-import { realpathSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 import { resolveAgentSession } from '../lib/agent-session-map.js';
 import { readSuperState, acceptableWorktree, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
 import { isGovernedCheckout } from '../lib/session-cwd.js';
@@ -32,6 +34,14 @@ export async function sessionWorktreeRoot(
 ): Promise<string | null> {
   if (!session) return null;
   const home = opts.home ?? homedir();
+  const candidates = await worktreeCandidates(contextRoot, projectRoot, session, home);
+  for (const cand of candidates) if (acceptedWorktree(cand, projectRoot, home)) return resolve(cand);
+  return null;
+}
+
+/** Every directory the session is RECORDED to work in (Super records, then its own checkout),
+ *  before any check. */
+async function worktreeCandidates(contextRoot: string, projectRoot: string, session: string, home: string): Promise<string[]> {
   const ids = [...new Set([session, resolveAgentSession(contextRoot, session) || session])];
 
   const candidates: string[] = [];
@@ -48,18 +58,90 @@ export async function sessionWorktreeRoot(
   }
   const moved = resolveSessionDir(session, projectRoot, { home });
   if (moved !== projectRoot) candidates.push(moved);
+  return candidates;
+}
 
-  for (const cand of candidates) {
-    if (!acceptableWorktree(cand, { home }) || !isGovernedCheckout(cand, projectRoot, { home })) continue;
-    try {
-      if (!statSync(cand).isDirectory()) continue;
-      // The REAL path must still sit directly under the real worktree home: a symlinked
-      // `<name>` pointing elsewhere is not a worktree this feature created.
-      const real = realpathSync.native(cand);
-      const base = realpathSync.native(superWorktreeRoot(home));
-      if (!real.startsWith(base + sep) || real.slice(base.length + 1).includes(sep)) continue;
-      return resolve(cand);
-    } catch { /* removed or unreadable — not a root */ }
+/** The widening rules: registered, directly under `~/.claude-worktrees`, a governed checkout,
+ *  still there, and by its REAL path not a symlink out. */
+function acceptedWorktree(cand: string, projectRoot: string, home: string): boolean {
+  if (!acceptableWorktree(cand, { home }) || !isGovernedCheckout(cand, projectRoot, { home })) return false;
+  try {
+    if (!statSync(cand).isDirectory()) return false;
+    // The REAL path must still sit directly under the real worktree home: a symlinked
+    // `<name>` pointing elsewhere is not a worktree this feature created.
+    const real = realpathSync.native(cand);
+    const base = realpathSync.native(superWorktreeRoot(home));
+    return real.startsWith(base + sep) && !real.slice(base.length + 1).includes(sep);
+  } catch { return false; /* removed or unreadable — not a root */ }
+}
+
+// ─── The folder an owner card runs and writes in (sahip-karti-yerinde K5) ───────────────────
+
+/** Why a card's working folder was refused: the run does not start, the secret is not written. */
+export type CardRootRefusal = 'symlink' | 'missing' | 'not_same_repo' | 'git_failed' | 'not_accepted';
+export class CardRootRefused extends Error {
+  readonly code: CardRootRefusal;
+  constructor(code: CardRootRefusal) {
+    super(`The card's working folder was refused (${code}).`);
+    this.code = code;
+    this.name = 'CardRootRefused';
   }
-  return null;
+}
+
+const run = promisify(execFile);
+
+/** The project's git worktrees, by real path (`git worktree list --porcelain`). */
+export async function gitWorktreePaths(projectRoot: string): Promise<string[]> {
+  const { stdout } = await run('git', ['-C', projectRoot, 'worktree', 'list', '--porcelain'], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+  const out: string[] = [];
+  for (const line of String(stdout).split('\n')) {
+    if (!line.startsWith('worktree ')) continue;
+    try { out.push(realpathSync.native(line.slice('worktree '.length))); } catch { /* listed but gone */ }
+  }
+  return out;
+}
+
+/**
+ * The folder an owner card of `postingSession` runs in and writes its secret under (K5, D5):
+ * the child's working folder, read at action time from the SERVER's state (the Super records
+ * and the session's own checkout directive), never from a request or a card.
+ *
+ *  - No recorded worktree: the project root (realpath-resolved).
+ *  - A recorded one: it must pass {@link sessionWorktreeRoot}'s rules AND be narrowed: its real
+ *    path, not a symlink itself, and one of the project's own `git worktree list` entries (the
+ *    same repository). A linked repo, another governed checkout, a symlink or a folder that is
+ *    gone is REFUSED ({@link CardRootRefused}): the card never silently runs somewhere else.
+ *
+ * `listWorktrees` is injectable for tests; the real one runs git with an argument array and a
+ * timeout.
+ */
+export async function cardWorkingRoot(
+  contextRoot: string,
+  projectRoot: string,
+  postingSession: string,
+  opts: { home?: string; listWorktrees?: (projectRoot: string) => Promise<string[]> } = {},
+): Promise<string> {
+  const home = opts.home ?? homedir();
+  let realProject: string;
+  try { realProject = realpathSync.native(projectRoot); } catch { throw new CardRootRefused('missing'); }
+  const candidates = postingSession ? await worktreeCandidates(contextRoot, projectRoot, postingSession, home) : [];
+  if (!candidates.length) return realProject;
+  const cand = candidates[0];
+  try {
+    if (lstatSync(cand).isSymbolicLink()) throw new CardRootRefused('symlink');
+  } catch (e) {
+    if (e instanceof CardRootRefused) throw e;
+    throw new CardRootRefused('missing');
+  }
+  if (!acceptedWorktree(cand, projectRoot, home)) throw new CardRootRefused('not_accepted');
+  let real: string;
+  try { real = realpathSync.native(cand); } catch { throw new CardRootRefused('missing'); }
+  if (real === realProject) return realProject;
+  let listed: string[];
+  try {
+    const raw = await (opts.listWorktrees ?? gitWorktreePaths)(realProject);
+    listed = raw.map((p) => { try { return realpathSync.native(p); } catch { return resolve(p); } });
+  } catch { throw new CardRootRefused('git_failed'); }
+  if (!listed.includes(real)) throw new CardRootRefused('not_same_repo');
+  return real;
 }
