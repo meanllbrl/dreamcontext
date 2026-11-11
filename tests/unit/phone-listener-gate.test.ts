@@ -705,6 +705,15 @@ describe('phone listener: run cards and secret cards (plan G4, H8, H9, K1)', () 
     cards.noteAssistantCards(OSID, OTHER, 'm1', runCard('gh', 'gh auth status'));
   });
 
+  /** The folder the phone is SHOWN for a card (GET /api/agent/cards `folders`, end review r3): every
+   *  phone press carries it as `root`, exactly like the Mac. */
+  async function shownRoot(sid: string, ref: string, c = cookie): Promise<string> {
+    const r = await request(phonePort, 'GET', `/api/agent/cards?session=${sid}`, { cookie: c, accept: 'application/json' });
+    const f = (JSON.parse(r.body) as { folders?: Record<string, { path: string } | null> }).folders?.[ref];
+    if (!f) throw new Error(`no folder shown for ${ref}`);
+    return f.path;
+  }
+
   it('a free terminal from the phone is refused; only a pending card of the exposed project runs', async () => {
     const h = { cookie, origin: ORIGIN };
     expect(await upgrade(phonePort, `/api/agent/terminal?vault=${PROJECT}&kind=shell`, h)).toBe(403);
@@ -722,10 +731,12 @@ describe('phone listener: run cards and secret cards (plan G4, H8, H9, K1)', () 
     expect(ptys).toHaveLength(0);
     // Attach-only with nothing running: 409.
     expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}`, h)).toBe(409);
-    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, h)).toBe(101);
+    // A start carries the folder the phone was shown.
+    const root = encodeURIComponent(await shownRoot(SID, refOf(SID, 'gh')));
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1&root=${root}`, h)).toBe(101);
     expect(ptys).toHaveLength(1);
     // A second phone attach (or a Telegram-started run) is the SAME process.
-    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, h)).toBe(101);
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1&root=${root}`, h)).toBe(101);
     expect(ptys).toHaveLength(1);
     ptys[0].end(0);
     // Closed for the phone for good (K1).
@@ -743,7 +754,8 @@ describe('phone listener: run cards and secret cards (plan G4, H8, H9, K1)', () 
     const id = macAuth.store.createDevice('iPad · Safari');
     const c2 = `${DEVICE_COOKIE}=${id}`;
     const { WebSocket } = await import('ws');
-    const ws = new WebSocket(`ws://127.0.0.1:${phonePort}/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, { headers: { cookie: c2, origin: ORIGIN } });
+    const root = encodeURIComponent(await shownRoot(SID, refOf(SID, 'gh'), c2));
+    const ws = new WebSocket(`ws://127.0.0.1:${phonePort}/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1&root=${root}`, { headers: { cookie: c2, origin: ORIGIN } });
     await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
     const closed = new Promise<number>((res) => ws.once('close', (code) => res(code)));
     const t0 = Date.now();
@@ -769,14 +781,31 @@ describe('phone listener: run cards and secret cards (plan G4, H8, H9, K1)', () 
     expect((await post({ file: '.env', entries: [{ key: 'STRIPE_KEY', value: 'x' }] })).status).toBe(403);
     // A key the card did not declare.
     expect((await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'OTHER', value: 'x' }] })).status).toBe(400);
-    // The body's file is ignored: the record's .env.local is written.
-    const ok = await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), file: '.env', entries: [{ key: 'STRIPE_KEY', value: 'sk_test_fixture' }] });
+    // The body's file is ignored: the record's .env.local is written (in the folder the phone was shown).
+    const root = await shownRoot(SID, refOf(SID, 'stripe'));
+    const ok = await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), root, file: '.env', entries: [{ key: 'STRIPE_KEY', value: 'sk_test_fixture' }] });
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body).file).toBe('.env.local');
     expect(ok.body).not.toContain('sk_test_fixture');
     expect(readFileSync(join(dir, PROJECT, '.env.local'), 'utf-8')).toContain('STRIPE_KEY=');
     // The receipt closed the record: a second submit is refused.
-    expect((await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'STRIPE_KEY', value: 'y' }] })).status).toBe(409);
+    const again = await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), root, entries: [{ key: 'STRIPE_KEY', value: 'y' }] });
+    expect(again.status).toBe(409);
+    expect(JSON.parse(again.body).error).toBe('card_closed');
+  });
+
+  it('a phone press is refused for its own reason first: undeclared keys 400 and a device not signed in 401, before any folder check', async () => {
+    const H = { cookie, origin: ORIGIN, 'x-dreamcontext-vault': PROJECT };
+    const post = (b: unknown, h: Record<string, string> = H) => request(phonePort, 'POST', `/api/agent/secret?vault=${PROJECT}`, h, JSON.stringify(b));
+    // No root AND an undeclared key: the shape speaks (400), not the folder.
+    expect((await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'OTHER', value: 'x' }] })).status).toBe(400);
+    // A well-formed press without root: the folder speaks (409 folder_changed, the folder named).
+    const noRoot = await post({ sessionId: SID, cardRef: refOf(SID, 'stripe'), entries: [{ key: 'STRIPE_KEY', value: 'x' }] });
+    expect(noRoot.status).toBe(409);
+    expect(JSON.parse(noRoot.body)).toMatchObject({ error: 'folder_changed', folder: { path: await shownRoot(SID, refOf(SID, 'stripe')) } });
+    // A device that is not signed in: refused before anything reads the card or its folder.
+    expect(await upgrade(phonePort, `/api/agent/run-terminal?session=${SID}&card=${refOf(SID, 'gh')}&start=1`, { origin: ORIGIN })).toBe(401);
+    expect(ptys).toHaveLength(0);
   });
 });
 

@@ -29,7 +29,9 @@ import {
 import { cardHandleOf } from '../../src/lib/cards/records.js';
 import { handleCardNotNeeded, handleCardState, handleCardTicket, handleChecklistSubmit, CARD_OWNER_ONLY_MESSAGE } from '../../src/server/routes/card-actions.js';
 import { handleAgentSecret } from '../../src/server/routes/agent-secret.js';
-import { cardRootOf, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { cardRootOf, handleAgentCards, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { markPhoneSocket, setMacExposedVaults, setMacPublicOrigin } from '../../src/server/phone-origin.js';
+import { DEVICE_COOKIE, setMacHandsfreeAuthForTests } from '../../src/server/handsfree-auth.js';
 import { enterSessionCheckout, resetSessionCheckouts } from '../../src/lib/session-cwd.js';
 import { isCrossSiteWrite } from '../../src/server/middleware.js';
 import { _resetCardTicketsForTests, consumeCardTicket } from '../../src/server/card-ticket.js';
@@ -373,6 +375,71 @@ describe('K5: a card runs and writes in the card\'s working folder (the REAL res
     expect(await runIn()).toBe(project);
     const s = await call(handleCardState, 'GET', `/api/agent/cards/state?session=${SID}&card=${refOf('login')}`, undefined, GET());
     expect(s.body.folder).toEqual({ path: project, name: basename(project) });
+  });
+});
+
+// ─── The phone is an owner surface too (end review r3) ──────────────────────
+
+describe('the phone is shown the card\'s folder and presses with it', () => {
+  const PHONE_ORIGIN = 'https://abc.trycloudflare.com';
+  let wt: string;
+  /** A request that came through the phone listener, signed in (device cookie). */
+  function phoneReq(method: string, url: string, body: unknown): IncomingMessage {
+    const socket = { remoteAddress: '127.0.0.1', setTimeout() {} };
+    markPhoneSocket(socket);
+    return Object.assign(Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]), {
+      method, url, headers: { host: 'abc.trycloudflare.com', origin: PHONE_ORIGIN, cookie: `${DEVICE_COOKIE}=device-1`, 'content-type': 'application/json' },
+      socket, setTimeout() {},
+    }) as unknown as IncomingMessage;
+  }
+  async function phoneCall(h: (q: IncomingMessage, r: ServerResponse, p: Record<string, string>, root: string) => Promise<void>, method: string, url: string, body?: unknown) {
+    const r = makeRes();
+    await h(phoneReq(method, url, body), r.res, {}, contextRoot);
+    return { status: r.status(), body: r.body() };
+  }
+  beforeEach(() => {
+    wt = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-gate-phone-wt-')));
+    execFileSync('git', ['init', '-q', wt]);
+    setCardRootResolverForTests(async () => wt);
+    setMacExposedVaults([vault]);
+    setMacPublicOrigin(PHONE_ORIGIN);
+    setMacHandsfreeAuthForTests({ store: { isValidDeviceHash: () => true } } as unknown as Parameters<typeof setMacHandsfreeAuthForTests>[0]);
+  });
+  afterEach(() => {
+    setMacExposedVaults([]);
+    setMacPublicOrigin(null);
+    setMacHandsfreeAuthForTests(null);
+    rmSync(wt, { recursive: true, force: true });
+  });
+
+  it('GET /api/agent/cards on the phone carries each run and secret card\'s folder', async () => {
+    const r = await phoneCall(handleAgentCards, 'GET', `/api/agent/cards?session=${SID}`);
+    expect(r.status).toBe(200);
+    const folders = r.body.folders as Record<string, unknown>;
+    expect(folders[refOf('login')]).toEqual({ path: wt, name: basename(wt) });
+    expect(folders[refOf('key')]).toEqual({ path: wt, name: basename(wt) });
+    expect(folders[refOf('store')]).toBeUndefined();
+  });
+
+  it('a phone secret on a worktree card with the shown root writes in the worktree', async () => {
+    const r = await phoneCall(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: wt, entries: [{ key: 'STRIPE_KEY', value: 'from-phone' }] });
+    expect(r.status).toBe(200);
+    expect(readFileSync(join(wt, '.env'), 'utf-8')).toContain('STRIPE_KEY=');
+    expect(existsSync(join(project, '.env'))).toBe(false);
+  });
+
+  it('a phone secret without root is 409 folder_changed with the folder in the body; never pinned to the project root', async () => {
+    const r = await phoneCall(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), entries: [{ key: 'STRIPE_KEY', value: 'v' }] });
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ error: 'folder_changed', folder: { path: wt, name: basename(wt) } });
+    expect(existsSync(join(wt, '.env')) || existsSync(join(project, '.env'))).toBe(false);
+  });
+
+  it('a phone secret pressed with a folder the checkout has since left is refused', async () => {
+    const r = await phoneCall(handleAgentSecret, 'POST', '/api/agent/secret', { sessionId: SID, cardRef: refOf('key'), root: project, entries: [{ key: 'STRIPE_KEY', value: 'v' }] });
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ error: 'folder_changed', folder: { path: wt } });
+    expect(existsSync(join(project, '.env'))).toBe(false);
   });
 });
 

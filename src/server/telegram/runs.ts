@@ -68,6 +68,7 @@ export const RUN_LINES = {
   notHere: "Bu kart buradan çalıştırılamaz; Mac'te çalıştır.",
   noFolder: "Kartın klasörü doğrulanamadı; Mac'ten çalıştır.",
   folderChanged: "Kartın klasörü değişti; hiçbir şey çalışmadı. Mac'te karta yeniden bakıp oradan bas.",
+  oldButton: "Bu düğme eski bir sürümden; hiçbir şey çalışmadı. Kartı Mac'te çalıştır.",
 } as const;
 
 /** Characters a shown command may not hold (H3, I5): C0/C1, bidi and zero-width, and their kin. */
@@ -158,9 +159,16 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     // ` · <cwd>` when the card has one. A root that cannot be proven gets no Run here.
     const root = await cardRootOf(rec);
     if (!root) {
-      if (!noFolderNoted.has(rec.cardRef)) { noFolderNoted.add(rec.cardRef); await hub.notice(ab, 'info', RUN_LINES.noFolder, true); }
+      if (!noFolderNoted.has(rec.cardRef)) {
+        noFolderNoted.add(rec.cardRef);
+        // Same cap as `announced`: the mark set never grows past it.
+        if (noFolderNoted.size > 500) noFolderNoted.delete(noFolderNoted.values().next().value as string);
+        await hub.notice(ab, 'info', RUN_LINES.noFolder, true);
+      }
       return false;
     }
+    // Its folder was read: a later failure to read it speaks again.
+    noFolderNoted.delete(rec.cardRef);
     const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
     const parts = [
       `<b>${escapeHtml(RUN_LINES.ask)}</b>`,
@@ -291,7 +299,9 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       return RUN_LINES.changed;
     }
     // The folder this message drew is the folder now, or nothing runs (end review r2).
-    const press = await pressRoot(live, typeof rec.data?.root === 'string' ? rec.data.root : null);
+    // A button from before this release drew no folder: say so plainly, never "folder changed".
+    if (typeof rec.data?.root !== 'string' || !rec.data.root) return RUN_LINES.oldButton;
+    const press = await pressRoot(live, rec.data.root);
     if (!press.ok) return press.why === 'no_folder' ? RUN_LINES.noFolder : RUN_LINES.folderChanged;
     const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root: press.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;

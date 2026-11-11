@@ -194,6 +194,10 @@ export async function cardWorkingRoot(
   const real = await checkoutTopLevel(realCand);
   if (!real) throw new CardRootRefused('not_governed');
   if (real === realProject) return realProject;
+  // A project inside a larger repository (`<mono>/apps/x` holding the vault): a folder in the
+  // project resolves to `<mono>`, an ANCESTOR of the project. That is never the card's folder;
+  // a candidate inside the project is the project.
+  if (realProject.startsWith(real + sep) && (realCand === realProject || realCand.startsWith(realProject + sep))) return realProject;
   // The governed repository this checkout belongs to: the one sharing its git common dir.
   const common = gitCommonDir(real);
   if (!common) throw new CardRootRefused('not_governed');

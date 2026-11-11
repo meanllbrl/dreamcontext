@@ -1,6 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
-import { OWNER_ONLY_LINE, cardFolderText, folderLine, isFolderChanged, secretSaveBody, useHostCard, useShownFolder, type CardHost } from '../../../lib/cardRecords';
+import {
+  OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine, isFolderChanged, phoneFolderOf, refreshCards, secretSaveBody, settleFolderCheck,
+  useHostCard, useShownFolder, type CardHost, type FolderCheck,
+} from '../../../lib/cardRecords';
 import { RequestError } from '../../../api/client';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -77,12 +80,17 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   // (`root`), and the server refuses when the folder it resolves now is another. A card naming an
   // app keeps the app's root (the app is what it draws); the phone draws no folder. With a record,
   // on the Mac, no folder drawn means no Save.
-  const shownFolder = useShownFolder(vault ?? null, sessionId && record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, folder, onReread);
+  // The phone too (end review r3): it is shown the card's folder through its own card read and
+  // saves with it; it is never pinned to the project root behind the owner's back.
+  const phoneRead = useCallback((sid: string, c: string) => refreshCards(sid, fetchJson).then(() => phoneFolderOf(sid, c)), [fetchJson]);
+  const given = folder !== undefined ? folder : phone ? phoneFolderOf(sessionId, record?.cardRef) : undefined;
+  const shownFolder = useShownFolder(vault ?? null, sessionId && record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, given, onReread, phone ? phoneRead : undefined);
   const drawnRoot = shownFolder.folder?.path ?? null;
-  const needsFolder = !!sessionId && !!record && !phone && !spec.app;
-  const noFolder = needsFolder && !drawnRoot;
-  // A save refused because the folder moved: the path it named, until the owner saves again.
-  const [changedFrom, setChangedFrom] = useState<string | null>(null);
+  const needsFolder = !!sessionId && !!record && !spec.app;
+  // A save refused because the folder moved: reading it again (always settles), then what it is
+  // now, or that it cannot be confirmed here. Cleared when the owner saves again.
+  const [check, setCheck] = useState<FolderCheck>(null);
+  const noFolder = needsFolder && !canPressWith(drawnRoot, check);
   const [values, setValues] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState('');
@@ -97,7 +105,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
     if (!filled || phase === 'saving' || phase === 'saved' || noFolder) return;
     setPhase('saving');
     setError('');
-    setChangedFrom(null);
+    setCheck(null);
     const root = drawnRoot;
     try {
       // Every path is the owner's own press (K4): the owner key rides with it, and the folder the
@@ -120,9 +128,10 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
       // The folder moved since the owner looked: say so, draw the new one, save nothing again.
       // What he typed stays in the fields.
       if (isFolderChanged(err)) {
-        setChangedFrom(root ?? '');
-        shownFolder.reread();
+        const named = root ?? '';
+        setCheck({ from: named, state: 'reading' });
         setPhase('failed');
+        void shownFolder.reread().then((now) => setCheck(settleFolderCheck(named, now)));
         return;
       }
       setError(err instanceof RequestError && err.status === 403
@@ -202,8 +211,8 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
 
       {error && <p className="chat-secretcard-error">{error}</p>}
       {(() => {
-        const line = folderLine(t, { changedFrom, folder: shownFolder.folder, spec, unknown: noFolder && loaded });
-        return line && <p className={changedFrom !== null ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
+        const line = folderLine(t, { check, spec, unknown: needsFolder && !drawnRoot && loaded });
+        return line && <p className={check ? 'chat-secretcard-error' : 'chat-secretcard-note'} data-testid="secret-card-folder-line">{line}</p>;
       })()}
       {sessionId && loaded && phone && !record && (
         <p className="chat-secretcard-note">This card is older than the chat's newest cards; fill it on the Mac.</p>

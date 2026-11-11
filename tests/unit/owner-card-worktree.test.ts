@@ -187,6 +187,19 @@ describe('cardWorkingRoot', () => {
     expect(enterSessionCheckout(S2, inProject, projectRoot, { home, claim: true })).toBe(true);
     expect(await cardWorkingRoot(contextRoot, projectRoot, S2, { home })).toBe(realpathSync(projectRoot));
   });
+  it('a project inside a larger repository: a chat in <project>/src is the project, never the enclosing repository', async () => {
+    const mono = join(scratch, 'mono');
+    const proj = join(mono, 'apps', 'x');
+    mkdirSync(join(proj, '_dream_context'), { recursive: true });
+    mkdirSync(join(proj, 'src'));
+    writeFileSync(join(proj, 'src', 'a.ts'), 'x');
+    execFileSync('git', ['init', '-q', mono]);
+    git(mono, 'add', '.');
+    git(mono, 'commit', '-qm', 'i');
+    const S = '88888888-9999-4333-8444-555555555555';
+    expect(enterSessionCheckout(S, join(proj, 'src'), proj, { home, claim: true })).toBe(true);
+    expect(await cardWorkingRoot(join(proj, '_dream_context'), proj, S, { home })).toBe(realpathSync(proj));
+  });
   it('a subfolder of an UNGOVERNED repository recorded as a worktree is refused (its toplevel is not governed)', async () => {
     const foreign = join(scratch, 'foreign3');
     mkdirSync(foreign);

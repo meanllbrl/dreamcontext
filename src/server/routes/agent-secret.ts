@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { CARD_REF_RE, closeCard, isSessionUuid, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { SecretViewSpec } from '../../lib/chat-view-spec.js';
 import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
-import { folderRefusalBody, pressRoot, projectRootShown, resolveCardRecord } from './run-terminal.js';
+import { folderRefusalBody, pressRoot, resolveCardRecord } from './run-terminal.js';
 import { resolveVaultProjectRoot } from './agent-spawn-shared.js';
 import { cardOwnerProof, sendCardOwnerOnly } from './card-actions.js';
 import { deliverOwnerReceipt, holdOwnerReceipt, newSubmitId, owedUnverified, type OwnerCardLookup, type OwnerDeliverOutcome } from '../owner-receipts.js';
@@ -105,16 +105,6 @@ export async function handleAgentSecret(
       sendError(res, 409, 'card_project', 'This secret card belongs to another project.');
       return;
     }
-    if (!(rec.spec as SecretViewSpec).app) {
-      // The folder the owner SAW (`root`) is the folder written to, or nothing is written (end
-      // review r2). The phone page draws no folder: it stands for the project root.
-      const shown = typeof body.root === 'string' ? body.root : phone ? projectRootShown(rec) : null;
-      const press = await pressRoot(rec, shown);
-      // One refusal shape for every press (409 `folder_changed`, `folder` null when it cannot be
-      // proven at all): nothing is written.
-      if (!press.ok) { sendJson(res, 409, folderRefusalBody(press)); return; }
-      writeRoot = press.root;
-    }
     crew = lookup;
     const spec = rec.spec as SecretViewSpec;
     const declared = new Set(spec.fields.map((f) => f.key));
@@ -123,6 +113,18 @@ export async function handleAgentSecret(
     if (!keys.length || keys.some((k) => typeof k !== 'string' || !declared.has(k)) || new Set(keys).size !== keys.length) {
       sendError(res, 400, 'undeclared_key', 'Only the keys this card asked for can be written.');
       return;
+    }
+    // The body's shape is refused for its own reason first (undeclared keys: 400); only a
+    // well-formed press is then checked against the folder the owner saw.
+    if (!(rec.spec as SecretViewSpec).app) {
+      // The folder the owner SAW (`root`) is the folder written to, or nothing is written (end
+      // review r2). The phone too: it is shown the folder (GET /api/agent/cards `folders`) and
+      // sends it; no root is refused like any press (end review r3).
+      const press = await pressRoot(rec, typeof body.root === 'string' ? body.root : null);
+      // One refusal shape for every press (409 `folder_changed`, `folder` null when it cannot be
+      // proven at all): nothing is written.
+      if (!press.ok) { sendJson(res, 409, folderRefusalBody(press)); return; }
+      writeRoot = press.root;
     }
     // The record's file, title and app; whatever the body said about them is ignored.
     body.file = spec.file;

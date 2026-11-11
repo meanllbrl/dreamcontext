@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { FOLDER_CHANGED, OWNER_ONLY_LINE, cardFolderText, folderLine as folderLineOf, pressRun, ticketActionOf, useHostCard, useShownFolder, type CardHost } from '../../../lib/cardRecords';
+import {
+  FOLDER_CHANGED, OWNER_ONLY_LINE, canPressWith, cardFolderText, folderLine as folderLineOf, phoneFolderOf, pressRun, refreshCards, settleFolderCheck, ticketActionOf,
+  useHostCard, useShownFolder, type CardActionResult, type CardHost, type FolderCheck,
+} from '../../../lib/cardRecords';
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
@@ -139,35 +142,46 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   const sessionId = hostSid ?? '';
   const unsafe = commandUnsafe(spec.command);
   const recordHost = 'record' in host;
-  // THE FOLDER THIS CARD DRAWS IS THE FOLDER ITS PRESS NAMES (end review r2): the slot hands it
-  // in; the card's own chat reads it here. No folder drawn, no press offered on the Mac.
-  const shownFolder = useShownFolder(vault, record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, folder, onReread);
+  const phone = isMacPhoneSurface();
+  // THE FOLDER THIS CARD DRAWS IS THE FOLDER ITS PRESS NAMES (end review r2, r3), on the Mac and on
+  // the phone alike: the slot hands it in; the card's own chat reads it (the Mac's card state, or
+  // the phone's own card read). No folder drawn, no press offered.
+  const phoneRead = useCallback((s: string, c: string) => refreshCards(s, fetchJson).then(() => phoneFolderOf(s, c)), [fetchJson]);
+  const given = folder !== undefined ? folder : phone ? phoneFolderOf(sessionId, record?.cardRef) : undefined;
+  const shownFolder = useShownFolder(vault, record ? { postingSession: sessionId, cardRef: record.cardRef } : undefined, given, onReread, phone ? phoneRead : undefined);
   const drawnRoot = shownFolder.folder?.path ?? null;
   const drawnRootRef = useRef(drawnRoot);
   drawnRootRef.current = drawnRoot;
-  // A press refused because the folder moved: the path it named, until the owner presses again.
-  const [changedFrom, setChangedFrom] = useState<string | null>(null);
+  // A press refused because the folder moved: reading it again (always settles), then what it is
+  // now, or that it cannot be confirmed here. Cleared when the owner presses again.
+  const [check, setCheck] = useState<FolderCheck>(null);
+  const checkRef = useRef(check);
+  checkRef.current = check;
+  const rereadRef = useRef(shownFolder.reread);
+  rereadRef.current = shownFolder.reread;
   const folderChanged = useCallback((from: string | null) => {
-    setChangedFrom(from ?? '');
-    shownFolder.reread();
-  }, [shownFolder]);
+    const named = from ?? '';
+    setCheck({ from: named, state: 'reading' });
+    void rereadRef.current().then((now) => setCheck(settleFolderCheck(named, now)));
+  }, []);
   // Every Mac press carries a ticket minted for it, bound to the command AND the folder drawn here
   // (K4, end review r2). A refusal (no owner key: a plain browser) keeps its one line on the card;
   // a folder that changed shows its own line and reads the folder again, and is NEVER pressed again
   // by the card itself.
   const [refusal, setRefusal] = useState<string | null>(null);
-  const mintTicket = useCallback(async (target: CardTarget) => {
+  const mintTicket = useCallback(async (target: CardTarget): Promise<CardActionResult<string>> => {
+    // No folder drawn, no press: never a mint with an empty root.
+    const root = drawnRootRef.current;
+    if (!root) return { ok: false, error: 'no_folder', message: t('ownerCard.cannotConfirm') };
     const r = await pressRun(api, {
-      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command, root: drawnRootRef.current ?? '',
-    }, { folderChanged: (root) => { setRefusal(null); folderChanged(root); } });
+      session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command, root,
+    }, { folderChanged: (named) => { setRefusal(null); folderChanged(named); } });
     if (!r.ok && r.error === FOLDER_CHANGED) return r;
     setRefusal(r.ok ? null : r.message || OWNER_ONLY_LINE);
     return r;
-  }, [api, spec.command, folderChanged]);
-  const phone = isMacPhoneSurface();
+  }, [api, spec.command, folderChanged, t]);
   const desktop = isDesktop();
-  // The phone's own path draws no folder (the server runs it only in the project root).
-  const pressable = phone || !!drawnRoot;
+  const pressable = canPressWith(drawnRoot, check);
   const [includeOutput, setIncludeOutput] = useState(true);
   const [copied, copy] = useCopy(spec.command);
   // The terminal in this card. It STAYS mounted after its process ends (read-only), so the last
@@ -192,7 +206,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
     setShown((cur) => {
       if (cur && !cur.ended) return cur.runId ? cur : { ...cur, runId: liveRunId };
       if (cur && cur.runId === liveRunId && (cur.exited || !cur.user)) return cur;
-      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone }, user: false, ended: false, exited: false };
+      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone, ...(phone && drawnRootRef.current ? { root: drawnRootRef.current } : {}) }, user: false, ended: false, exited: false };
     });
   }, [liveRunId, cardRef, sessionId, phone, shownEnded, pressable]);
 
@@ -201,7 +215,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
     // new one; nothing is pressed again.
     if (r.reason === FOLDER_CHANGED && !r.opened) {
       setShown((cur) => (cur?.key === key ? null : cur));
-      if (!changedFrom) folderChanged(drawnRootRef.current);
+      if (!checkRef.current) folderChanged(drawnRootRef.current);
       return;
     }
     if (user && !r.opened && !r.exited) {
@@ -235,12 +249,13 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   const start = () => {
     if (!record || unsafe || !pressable) return;
     setRefusal(null);
-    setChangedFrom(null);
+    setCheck(null);
     starts.current += 1;
     setOutcome(null);
     setShown({
       key: `l${starts.current}`,
-      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone },
+      // The phone's press names the folder it drew in its URL; the Mac's in its ticket.
+      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone, ...(phone && drawnRoot ? { root: drawnRoot } : {}) },
       user: true,
       ended: false,
       exited: false,
@@ -275,7 +290,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
       : view.title;
   // The folder line: changed (and what it is now, once read again), or not known on the Mac.
   const folderLine = folderLineOf(t, {
-    changedFrom, folder: shownFolder.folder, spec, unknown: !pressable && loaded && view.phase !== 'running' && !unsafe,
+    check, spec, unknown: !drawnRoot && loaded && view.phase !== 'running' && !unsafe,
   });
 
   return (

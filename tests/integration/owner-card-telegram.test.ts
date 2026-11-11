@@ -217,6 +217,26 @@ describe('the folder the message drew is the folder that runs (end review r2)', 
   });
 });
 
+describe('a Run button from before the folder was kept', () => {
+  it('answers that the button is from an older version and runs nothing (never "folder changed")', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'eski?'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
+    noteAssistantCards(SID, vault, 'm4', fence({ type: 'run', id: 'old', command: 'gh auth status' }));
+    await vi.waitFor(() => expect(msgWith('Çalıştır, çıktıyı')).toBeTruthy());
+    const ref = listCards(SID).find((c) => c.id === 'old')!.cardRef;
+    const ab = hub.superBindingOfVault(vault)!;
+    await hub.sendButtons(ab, '<pre>gh auth status</pre>\neski', [['Çalıştır'], ['Çalıştır, çıktıyı ajana verme'], ['İptal']],
+      { kind: 'run', sessionId: SID, cardRef: ref, singleUse: true },
+      { cmdHash: createHash('sha256').update('gh auth status').digest('hex'), cardId: 'old' });
+    const old = [...tg.sent()].reverse().find((c) => String(c.params.text).includes('eski'))!;
+    tap(old, 0);
+    const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
+    await vi.waitFor(() => expect(said(RUN_LINES.oldButton)).toBe(true));
+    expect(said(RUN_LINES.folderChanged)).toBe(false);
+    expect(ptys).toBe(0);
+  });
+});
+
 describe('the W1 class finding: every card kind by name', () => {
   it('a checklist card in a Telegram-bound Super chat is a plain Mac line: no secret line, no phone link', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'kurulum?'));

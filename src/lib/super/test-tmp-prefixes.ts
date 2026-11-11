@@ -752,6 +752,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'owner-card-deliver-',
   'owner-card-deliver-home-',
   'owner-card-gate-home-',
+  'owner-card-gate-phone-wt-',
   'owner-card-gate-proj-',
   'owner-card-gate-repo-',
   'owner-card-gate-store-',

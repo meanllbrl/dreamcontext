@@ -201,13 +201,6 @@ export function folderRefusalBody(r: Extract<PressRootResult, { ok: false }>): {
   };
 }
 
-/** The folder a surface that draws NO folder stands for (the phone page): the project root, so
- *  such a press runs only when the card's folder is the project root. */
-export function projectRootShown(rec: Pick<CardRecordEntry, 'vault'>): string | null {
-  const p = runProjectRootOf(rec.vault);
-  return p ? realOrSame(p) : null;
-}
-
 /** What the surface may show of a card's folder (the bar, the slot): its path and its name. */
 export async function cardFolderOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>): Promise<{ path: string; name: string } | null> {
   const root = await cardRootOf(rec);
@@ -347,10 +340,9 @@ export function handlePhoneRunUpgrade(req: IncomingMessage, socket: Duplex, head
   void (async () => {
     // The phone's own scope (its device session is owner proof); the run now starts in the
     // card's working folder (K5), and a crew card's result is held like any other (K6).
-    // The phone page sends the folder it drew (`root`); a page that draws none stands for the
-    // project root, so it starts a run only when the card's folder is the project root.
-    const shown = url.searchParams.get('root') ?? projectRootShown(rec);
-    const got = await runFor(c, 'phone', rec, shown).catch(() => 500);
+    // The phone is an owner surface like the Mac (end review r3): it is SHOWN the card's folder
+    // (`folders` in GET /api/agent/cards) and presses with it (`root`). No root, no start.
+    const got = await runFor(c, 'phone', rec, url.searchParams.get('root')).catch(() => 500);
     if (got === 'folder_changed') { void upgradeTo(req, socket, head, closeFolderChanged); return; }
     if (typeof got === 'number') { rejectUpgrade(socket, got); return; }
     armRevoke();
@@ -393,7 +385,19 @@ export async function handleAgentCards(req: IncomingMessage, res: ServerResponse
   const first = listCards(sessionId)[0];
   const vault = getChat(sessionId)?.vault ?? (first ? getCard(sessionId, first.cardRef)?.vault : null) ?? null;
   if (phone && (!vault || !isMacExposed(vault))) { sendError(res, 404, 'not_found', 'No such chat.'); return; }
-  sendJson(res, 200, { session: sessionId, cards: listCards(sessionId) });
+  const cards = listCards(sessionId);
+  if (!phone) { sendJson(res, 200, { session: sessionId, cards }); return; }
+  // The phone (passphrase-proven, end review r3) is SHOWN each run and secret card's folder, as
+  // the Mac is through GET /api/agent/cards/state (which stays Mac-only): `folders[cardRef]` is
+  // `{ path, name }`, or null when it cannot be proven (or the secret belongs to an app). The phone
+  // presses with that `path` as `root`; `pressRoot` checks it like any press.
+  const folders: Record<string, { path: string; name: string } | null> = {};
+  await Promise.all(cards.map(async (c) => {
+    const rec = getCard(sessionId, c.cardRef);
+    if (!rec || (rec.kind !== 'run' && rec.kind !== 'secret')) return;
+    folders[c.cardRef] = rec.kind === 'secret' && (rec.spec as { app?: string }).app ? null : await cardFolderOf(rec).catch(() => null);
+  }));
+  sendJson(res, 200, { session: sessionId, cards, folders });
 }
 
 /** Wire the registry to the real machine (server start). */

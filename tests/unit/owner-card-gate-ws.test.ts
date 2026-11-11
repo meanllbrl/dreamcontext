@@ -17,7 +17,10 @@ import { _resetCardsForTests, listCards, noteAssistantCards, setCardsHomeForTest
 import { _resetCardTicketsForTests, mintCardTicket } from '../../src/server/card-ticket.js';
 import { _resetRunsForTests, configureRuns, startRun, type RunPty } from '../../src/server/runs/registry.js';
 import { _lastCrewDeliveryForTests, runDelivery, setHeldHomeForTests } from '../../src/server/runs/delivery.js';
-import { FOLDER_CHANGED_CLOSE, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { FOLDER_CHANGED_CLOSE, _resetPhoneRunsForTests, attachPhoneRunTerminal, setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
+import { markPhoneSocket, setMacExposedVaults, setMacPublicOrigin } from '../../src/server/phone-origin.js';
+import { DEVICE_COOKIE, setMacHandsfreeAuthForTests } from '../../src/server/handsfree-auth.js';
+import { PHONE_RUN_TERMINAL_PATH } from '../../src/lib/telegram/contract.js';
 import { handleCardTicket } from '../../src/server/routes/card-actions.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import {
@@ -237,5 +240,67 @@ describe('a ticket carries the press', () => {
     ptys[1].pty.end(0);
     await _lastCrewDeliveryForTests();
     expect(got).toHaveLength(2);
+  });
+});
+
+// ─── The phone presses with the folder it was shown (end review r3) ──────────
+
+describe('a phone press runs in the folder the phone was shown', () => {
+  const PHONE_ORIGIN = 'https://abc.trycloudflare.com';
+  let phone: http.Server; let phonePort = 0; let wt = '';
+  const phoneUrl = (q: Record<string, string>) => `ws://127.0.0.1:${phonePort}${PHONE_RUN_TERMINAL_PATH}?${new URLSearchParams(q).toString()}`;
+  function phoneConnect(u: string): ReturnType<typeof connect> {
+    return new Promise((resolve) => {
+      const ws = new WebSocket(u, { origin: PHONE_ORIGIN, headers: { cookie: `${DEVICE_COOKIE}=device-1` } });
+      let bytes = ''; let opened = false; let status: number | null = null; let closeCode: number | null = null; let closeReason = '';
+      const done = () => resolve({ opened, status, bytes, closeCode, closeReason });
+      ws.on('unexpected-response', (_q, res) => { status = res.statusCode ?? null; res.resume(); done(); });
+      ws.on('open', () => { opened = true; setTimeout(() => { ws.close(); setTimeout(done, 20); }, 80); });
+      ws.on('close', (code: number, reason: Buffer) => { if (closeCode === null) { closeCode = code; closeReason = reason.toString('utf-8'); } });
+      ws.on('message', (m: Buffer) => { bytes += m.toString('utf-8'); });
+      ws.on('error', () => done());
+    });
+  }
+  beforeAll(async () => {
+    phone = http.createServer((_q, r) => { r.writeHead(404); r.end(); });
+    phone.on('connection', (sock) => markPhoneSocket(sock));
+    attachPhoneRunTerminal(phone);
+    await new Promise<void>((r) => phone.listen(0, '127.0.0.1', () => r()));
+    phonePort = (phone.address() as net.AddressInfo).port;
+  });
+  afterAll(async () => { await new Promise<void>((r) => phone.close(() => r())); });
+  beforeEach(() => {
+    wt = realpathSync(mkdtempSync(join(dir, 'phone-wt-')));
+    setCardRootResolverForTests(async () => wt);
+    setMacExposedVaults([vault]);
+    setMacPublicOrigin(PHONE_ORIGIN);
+    setMacHandsfreeAuthForTests({ store: { isValidDeviceHash: () => true } } as unknown as Parameters<typeof setMacHandsfreeAuthForTests>[0]);
+    _resetPhoneRunsForTests();
+  });
+  afterEach(() => {
+    setMacExposedVaults([]);
+    setMacPublicOrigin(null);
+    setMacHandsfreeAuthForTests(null);
+    rmSync(wt, { recursive: true, force: true });
+  });
+
+  it('with the shown root, a worktree card\'s run starts in the worktree', async () => {
+    const r = await phoneConnect(phoneUrl({ session: SID, card: refOf('a'), start: '1', root: wt }));
+    expect(r.opened).toBe(true);
+    expect(ptys).toHaveLength(1);
+    expect(ptys[0].cwd).toBe(wt);
+  });
+
+  it('without root: closed with folder_changed, nothing spawned (never pinned to the project root)', async () => {
+    const r = await phoneConnect(phoneUrl({ session: SID, card: refOf('a'), start: '1' }));
+    expect(r.closeCode).toBe(FOLDER_CHANGED_CLOSE);
+    expect(r.closeReason).toBe('folder_changed');
+    expect(ptys).toHaveLength(0);
+  });
+
+  it('a folder the checkout has since left: closed with folder_changed, nothing spawned', async () => {
+    const r = await phoneConnect(phoneUrl({ session: SID, card: refOf('a'), start: '1', root: project }));
+    expect(r.closeCode).toBe(FOLDER_CHANGED_CLOSE);
+    expect(ptys).toHaveLength(0);
   });
 });
