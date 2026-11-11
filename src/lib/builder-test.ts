@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /**
@@ -168,4 +170,62 @@ export function ownerOf(file: string, lanes: { lane: string; owns: string[] }[])
     if (l.owns.some((o) => file === o || file.startsWith(`${o}/`))) return l.lane;
   }
   return null;
+}
+
+// ─── the related set is sized before it runs (audit OR-1) ───────────────────
+
+/**
+ * Past this many test FILES, `--related` was a central file's whole import graph, not "the tests
+ * it touched" (163 files import `src/lib/super/types.ts`). About 1,500 tests, the old after-the-fact
+ * warning's line. The count follows relative imports only, so it is a floor, never a proof.
+ */
+export const RELATED_FILE_CEILING = 200;
+
+/** The refusal: why, which file did it, and the two ways out. */
+export function wideRelatedMessage(pkg: string, total: number, hubs: { file: string; tests: number }[]): string {
+  const label = pkg === '.' ? 'the root package' : pkg;
+  const named = hubs.length > 0
+    ? hubs.map((h) => `${h.file} (${h.tests > RELATED_FILE_CEILING ? `over ${RELATED_FILE_CEILING}` : h.tests} test files)`).join(', ')
+    : 'one of the files you gave';
+  return [
+    `--related would run about ${total > RELATED_FILE_CEILING ? `more than ${RELATED_FILE_CEILING}` : total} test files in ${label}, nearly the whole suite. Nothing was run.`,
+    `  The file pulling them in: ${named}.`,
+    '  Leave it out of --related and name its own tests with --also <test files>; the full suite runs once at the cut.',
+    '  If you really want the wide run, repeat the command with --wide-related.',
+  ].join('\n');
+}
+
+// ─── an incremental type-check (audit OR-10) ────────────────────────────────
+
+/**
+ * Where one package's incremental build-info lives: under the worktree's own git dir (never
+ * tracked, never shared with another worktree), named by the package and a hash of its tsconfig,
+ * so a changed config starts from a clean file instead of a stale one.
+ */
+export function tscBuildInfoFile(gitDir: string, pkgRel: string, tsconfigText: string): string {
+  const h = createHash('sha256').update(pkgRel).update('\0').update(tsconfigText).digest('hex').slice(0, 16);
+  return join(gitDir, 'dc-tsc', `${h}.tsbuildinfo`);
+}
+
+/**
+ * `tsc --noEmit -p <tsconfig>` becomes incremental with a per-worktree build-info file. Used only
+ * at spawn time: the receipt keeps the plain argv, so it stays valid across worktrees. Anything
+ * else, or any trouble finding the git dir, runs exactly as given.
+ */
+export function incrementalTscArgv(argv: string[], cwd: string): string[] {
+  if (argv[0] !== 'tsc' || !argv.includes('--noEmit') || argv.some((a) => a === '--incremental' || a.startsWith('--tsBuildInfoFile') || a === '-b' || a === '--build')) return argv;
+  const p = argv.indexOf('-p');
+  const project = p >= 0 ? argv[p + 1] : undefined;
+  if (!project) return argv;
+  try {
+    const text = readFileSync(resolve(cwd, project), 'utf-8');
+    const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (!gitDir) return argv;
+    const file = tscBuildInfoFile(gitDir, `${relative(top, cwd).split('\\').join('/') || '.'}:${project}`, text);
+    mkdirSync(dirname(file), { recursive: true });
+    return [...argv, '--incremental', '--tsBuildInfoFile', file];
+  } catch {
+    return argv;
+  }
 }

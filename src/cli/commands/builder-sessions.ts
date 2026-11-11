@@ -52,6 +52,8 @@ import {
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
 import {
+  RELATED_FILE_CEILING,
+  incrementalTscArgv,
   ownerOf,
   parseTestReport,
   parseTscErrors,
@@ -59,6 +61,7 @@ import {
   readTestState,
   statePath,
   testArgv,
+  wideRelatedMessage,
   writeTestState,
   type Failure,
   type TestPlan,
@@ -199,7 +202,7 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string, opts
   try {
     exit = await new Promise<number | null>((done) => {
       // heavySpawnPlan: on Windows npx is npx.cmd, which only starts through cmd.exe.
-      const plan = heavySpawnPlan(['npx', ...argv])!;
+      const plan = heavySpawnPlan(['npx', ...incrementalTscArgv(argv, cwd)])!;
       const child = spawn(plan.file, plan.args, { cwd, stdio: ['ignore', fd, fd], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
       for (const sig of ['SIGTERM', 'SIGINT'] as const) {
         const onSig = () => { killedBy = sig; child.kill(sig); };
@@ -613,12 +616,26 @@ export async function builderResume(
 
 // ─── wave-end checks ─────────────────────────────────────────────────────────
 
-export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[]; fresh?: boolean }
+export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[]; fresh?: boolean; wideRelated?: boolean }
 
 const MAX_PRINTED_FAILURES = 25;
 
 /** Past this, `related` was a central file's whole import graph, not "the tests it touched". */
 const RELATED_TEST_CEILING = 1500;
+
+/** Size each package's related set before anything runs; over the ceiling, refuse and name the hub. */
+function refuseWideRelated(root: string, plan: TestPlan): void {
+  for (const t of plan.tests) {
+    if (t.related.length === 0) continue;
+    const cwd = join(root, t.pkg);
+    const total = countRelatedTests(cwd, t.related, RELATED_FILE_CEILING);
+    if (total === null || total <= RELATED_FILE_CEILING) continue;
+    const hubs = t.related
+      .map((file) => ({ file: t.pkg === '.' ? file : `${t.pkg}/${file}`, tests: countRelatedTests(cwd, [file], RELATED_FILE_CEILING + 1) ?? 0 }))
+      .filter((h) => h.tests > RELATED_FILE_CEILING);
+    throw new BuilderInputError(wideRelatedMessage(t.pkg, total, hubs));
+  }
+}
 
 /**
  * The lead's wave-end check: type-check + related tests once, through the heavy lock. Exit 0
@@ -666,6 +683,7 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
       }
     }
   }
+  if (!opts.wideRelated) refuseWideRelated(root, plan);
   if (plan.tsc.length === 0 && plan.tests.length === 0) {
     deps.print(opts.failed ? `nothing failed in wave ${wave} last time` : 'no package or test runner found for these files');
     return 0;
@@ -970,6 +988,7 @@ export function registerBuilderSessionCommands(cmd: Command, deps: SessionDeps =
     .option('--failed', 'Re-run only what failed last time (plus --related when given); with no task, the red files of this worktree\'s full-suite record plus the tests related to what changed since')
     .option('--also <tests...>', 'Test files related cannot see (they read files by path)')
     .option('--fresh', 'Run every check even when a green receipt for the same code exists (the run is recorded)')
+    .option('--wide-related', 'Run --related even when it pulls in nearly the whole suite (a central file); the default refuses and names the file')
     .description(`Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), ${HEAVY_LOCK_BUSY_EXIT} a check did not run. With --failed and no task: 0 green (the record closes, kept), 1 still red, ${RECORD_INCOMPLETE_EXIT} incomplete or no record, ${RECORD_BUILD_FIRST_EXIT} build first`)
     .action((slug: string | undefined, opts: TestOptions) => run(deps, () => builderTest(deps, slug, opts)));
 
