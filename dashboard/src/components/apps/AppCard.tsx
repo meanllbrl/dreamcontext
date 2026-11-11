@@ -278,7 +278,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         {app.tools && app.tools.audit === 'drift' && (
           <p className="app-card__note app-card__note--warn"><span aria-hidden="true">⚠ </span>{t('apps.tools.drift')}{app.tools.missing.length > 0 && `: ${app.tools.missing.join(', ')}`}</p>
         )}
-        {app.tools && app.tools.audit === 'unaudited' && <p className="app-card__muted">{t('apps.tools.unaudited')}</p>}
+        {app.tools && app.tools.count > 0 && app.tools.change > 0 && (
+          <p className="app-card__muted">{t(app.tools.change === 1 ? 'apps.tools.change.one' : 'apps.tools.change').replace('{n}', String(app.tools.change))}</p>
+        )}
+        {app.tools && app.tools.audit === 'unaudited' &&<p className="app-card__muted">{t('apps.tools.unaudited')}</p>}
         {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
         {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
         {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}
