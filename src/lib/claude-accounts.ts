@@ -10,6 +10,9 @@ import {
   type SwitchStrategy,
   type SwitchWeights,
 } from './claude-account-switch.js';
+// A cycle by design (the sandbox imports the confinement checks from here): both sides only
+// call each other at run time, never while the modules load.
+import { ensureSandbox } from './claude-account-sandbox.js';
 
 /**
  * The multi-account REGISTER — which Claude accounts this machine knows, and for each one
@@ -556,7 +559,12 @@ export function accountEnvFor(
   configDir: string,
   home: string = homedir(),
 ): Record<string, string | undefined> {
-  return isRealHomeConfigDir(configDir, home)
-    ? { CLAUDE_CONFIG_DIR: undefined }
-    : { CLAUDE_CONFIG_DIR: configDir };
+  if (isRealHomeConfigDir(configDir, home)) return { CLAUDE_CONFIG_DIR: undefined };
+  // The sandbox's shared links must exist BEFORE any `claude` runs with this env: the CLI
+  // creates a REAL `projects/` and `plugins/` in an empty config dir, which strands the
+  // account in its own transcript store (2026-11-11: a sign-in run through onboarding locked
+  // a second account this way). Done HERE so no spawn site can forget it; one `lstat` per
+  // shared path once the links are in place. Throws a named SandboxError if it cannot.
+  ensureSandbox(configDir, home);
+  return { CLAUDE_CONFIG_DIR: configDir };
 }

@@ -8,13 +8,13 @@
  *   2. NO MCP CONFIGURATION IS EVER COPIED, at either level. Measured on a real machine, 6 of
  *      27 trusted project entries carry their own non-empty `mcpServers`, so "the trust map
  *      holds no credentials" was a false statement about a secret. Seeding is a whitelist.
- *   3. A REAL FILE where a shared symlink belongs FAILS LOUDLY — neither skipped (which would
- *      strand the account in its own transcript store) nor overwritten (which would destroy
- *      whatever accumulated there).
+ *   3. A REAL FILE where a shared symlink belongs is HEALED, never a lock (2026-11-11, a second
+ *      account locked on a friend's Mac): merged into the real store, nothing overwritten, a
+ *      clash kept in a dated backup, symlinks inside never followed.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync,
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync,
   rmSync, statSync, symlinkSync, writeFileSync, chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +25,7 @@ import {
   SandboxError,
   buildSeedConfig,
   ensureSandbox,
+  sandboxBackupDir,
   sandboxHasIdentity,
 } from '../../src/lib/claude-account-sandbox.js';
 import { sandboxDirFor } from '../../src/lib/claude-accounts.js';
@@ -84,6 +85,7 @@ function writeRealHome(): void {
 
 beforeEach(() => {
   rmSync(SANDBOX, { recursive: true, force: true });
+  rmSync(join(HOME, '.dreamcontext', 'claude-account-backups'), { recursive: true, force: true });
   rmSync(REAL_CLAUDE, { recursive: true, force: true });
   rmSync(join(HOME, '.claude.json'), { force: true });
   writeRealHome();
@@ -242,16 +244,80 @@ describe('reconciliation — the four states a shared path can be in', () => {
     expect(readlinkSync(join(SANDBOX, 'projects'))).toBe(join(REAL_CLAUDE, 'projects'));
   });
 
-  it('REAL FILE: fails LOUDLY, names the path, and changes nothing', () => {
+  it('REAL DIR: merged into the real store, nothing overwritten, a clash kept in a dated backup, then linked', () => {
+    // What a `claude` run in a sandbox without links leaves behind (2026-11-11 repro): real
+    // `projects/` and `plugins/` the CLI made itself.
+    mkdirSync(join(REAL_CLAUDE, 'projects', 'p1'), { recursive: true });
+    writeFileSync(join(REAL_CLAUDE, 'projects', 'p1', 'same.jsonl'), 'real', 'utf-8');
+    mkdirSync(join(SANDBOX, 'projects', 'p1'), { recursive: true });
+    mkdirSync(join(SANDBOX, 'projects', 'p2'), { recursive: true });
+    writeFileSync(join(SANDBOX, 'projects', 'p1', 'same.jsonl'), 'sandbox', 'utf-8');
+    writeFileSync(join(SANDBOX, 'projects', 'p1', 'new.jsonl'), 'only here', 'utf-8');
+    writeFileSync(join(SANDBOX, 'projects', 'p2', 'x.jsonl'), 'x', 'utf-8');
+    mkdirSync(join(SANDBOX, 'plugins', 'cache'), { recursive: true });
+
+    ensureSandbox(SANDBOX, HOME);
+
+    for (const entry of ['projects', 'plugins']) {
+      expect(lstatSync(join(SANDBOX, entry)).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(join(SANDBOX, entry))).toBe(join(REAL_CLAUDE, entry));
+    }
+    expect(readFileSync(join(REAL_CLAUDE, 'projects', 'p1', 'same.jsonl'), 'utf-8')).toBe('real');
+    expect(readFileSync(join(REAL_CLAUDE, 'projects', 'p1', 'new.jsonl'), 'utf-8')).toBe('only here');
+    expect(readFileSync(join(REAL_CLAUDE, 'projects', 'p2', 'x.jsonl'), 'utf-8')).toBe('x');
+    expect(existsSync(join(REAL_CLAUDE, 'plugins', 'cache'))).toBe(true);
+    // The backup lives OUTSIDE the sandbox: removing the account deletes the sandbox whole.
+    const backup = sandboxBackupDir(SANDBOX, HOME);
+    expect(backup.startsWith(SANDBOX)).toBe(false);
+    expect(readFileSync(join(backup, 'projects', 'p1', 'same.jsonl'), 'utf-8')).toBe('sandbox');
+    // Nothing is left at a staging name.
+    expect(readdirSync(SANDBOX).filter((n) => n.startsWith('.healing-'))).toEqual([]);
+  });
+
+  it('REAL FILE: the real one is kept, the sandbox one is backed up; moved in when the real one is missing', () => {
+    mkdirSync(REAL_CLAUDE, { recursive: true });
+    mkdirSync(SANDBOX, { recursive: true });
+    writeFileSync(join(REAL_CLAUDE, 'settings.json'), '{"real":true}', 'utf-8');
+    writeFileSync(join(SANDBOX, 'settings.json'), '{"sandbox":true}', 'utf-8');
+    rmSync(join(REAL_CLAUDE, 'history.jsonl'), { force: true });
+    writeFileSync(join(SANDBOX, 'history.jsonl'), 'h1', 'utf-8');
+
+    ensureSandbox(SANDBOX, HOME);
+
+    expect(readFileSync(join(SANDBOX, 'settings.json'), 'utf-8')).toBe('{"real":true}');
+    expect(lstatSync(join(SANDBOX, 'settings.json')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(sandboxBackupDir(SANDBOX, HOME), 'settings.json'), 'utf-8')).toBe('{"sandbox":true}');
+    expect(readFileSync(join(REAL_CLAUDE, 'history.jsonl'), 'utf-8')).toBe('h1');
+    expect(lstatSync(join(SANDBOX, 'history.jsonl')).isSymbolicLink()).toBe(true);
+  });
+
+  it('a symlink INSIDE the stray dir is never followed: it is parked as a link, its target untouched', () => {
+    const outside = join(HOME, 'outside');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'secret'), 's', 'utf-8');
     mkdirSync(join(SANDBOX, 'projects'), { recursive: true });
-    writeFileSync(join(SANDBOX, 'projects', 'stranded.jsonl'), 'accumulated while the link was broken', 'utf-8');
+    symlinkSync(outside, join(SANDBOX, 'projects', 'evil'));
+
+    ensureSandbox(SANDBOX, HOME);
+
+    expect(existsSync(join(REAL_CLAUDE, 'projects', 'evil'))).toBe(false);
+    expect(lstatSync(join(sandboxBackupDir(SANDBOX, HOME), 'projects', 'evil')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(outside, 'secret'), 'utf-8')).toBe('s');
+  });
+
+  it('refuses in plain words, deleting nothing, when the real store resolves outside ~/.claude', () => {
+    const elsewhere = join(HOME, 'elsewhere-projects');
+    mkdirSync(elsewhere, { recursive: true });
+    rmSync(join(REAL_CLAUDE, 'projects'), { recursive: true, force: true });
+    mkdirSync(REAL_CLAUDE, { recursive: true });
+    symlinkSync(elsewhere, join(REAL_CLAUDE, 'projects'));
+    mkdirSync(join(SANDBOX, 'projects'), { recursive: true });
+    writeFileSync(join(SANDBOX, 'projects', 'stranded.jsonl'), 'kept', 'utf-8');
 
     expect(() => ensureSandbox(SANDBOX, HOME)).toThrow(SandboxError);
-    expect(() => ensureSandbox(SANDBOX, HOME)).toThrow(/projects/);
-
-    // Neither skipped nor overwritten: what was there is still there.
-    expect(readFileSync(join(SANDBOX, 'projects', 'stranded.jsonl'), 'utf-8'))
-      .toBe('accumulated while the link was broken');
+    expect(() => ensureSandbox(SANDBOX, HOME)).toThrow(/move that folder to your Desktop/);
+    expect(readFileSync(join(SANDBOX, 'projects', 'stranded.jsonl'), 'utf-8')).toBe('kept');
+    expect(readdirSync(elsewhere)).toHaveLength(0);
   });
 });
 

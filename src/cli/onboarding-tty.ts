@@ -126,11 +126,16 @@ function defaultInteractiveEnv(home: string): NodeJS.ProcessEnv {
     PATH: codexAwarePath(withDirs(claudeAwarePath(process.env.PATH ?? ''), [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'])),
   };
   let account: Record<string, string | undefined> = {};
+  let dir: string | null = null;
   try {
-    account = accountEnvFor(resolveConfigDir(null, home), home);
+    dir = resolveConfigDir(null, home);
   } catch {
-    account = {};
+    dir = null;
   }
+  // Once the account new sessions use is a sandbox, ANY failure to prepare it stops here,
+  // said out loud: falling back to the inherited env would sign in, or start a session on,
+  // the machine's OWN account without a word.
+  if (dir !== null) account = accountEnvFor(dir, home);
   for (const [k, v] of Object.entries(account)) {
     if (v === undefined) delete env[k];
     else env[k] = v;
@@ -288,9 +293,22 @@ async function runForeground(id: FixId, report: ReadinessReport, deps: TtyDeps):
   markFixActive(id);
   try {
     deps.print(`    ${chalk.dim(`${FIX_COPY[id].working}...`)}`);
+    // The env names the Claude account new sessions use; preparing it can refuse (its folder
+    // could not be tidied up). That fails THIS step with the reason, never the whole setup,
+    // and never falls back to the machine's own account.
+    const envOrFail = (): NodeJS.ProcessEnv | null => {
+      try {
+        return deps.interactiveEnv();
+      } catch (err) {
+        deps.print(`    ${chalk.red('✗')} ${(err as Error).message}`);
+        return null;
+      }
+    };
     if (id === 'claude-signin' || id === 'gh-signin' || id === 'codex-signin') {
       const argv = CLI_INTERACTIVE[id] ?? [];
-      const code = await deps.runInteractive(id === 'codex-signin' ? [codexCommand(), ...argv.slice(1)] : argv, { env: deps.interactiveEnv() });
+      const env = envOrFail();
+      if (!env) return false;
+      const code = await deps.runInteractive(id === 'codex-signin' ? [codexCommand(), ...argv.slice(1)] : argv, { env });
       return code === 0;
     }
     if (id === 'github-signin') {
@@ -299,7 +317,9 @@ async function runForeground(id: FixId, report: ReadinessReport, deps: TtyDeps):
       // or runs its own device flow, printing the code.
       const gh = report.checks.find((c) => c.id === 'gh');
       if (gh?.fix?.id === 'gh-signin') {
-        await deps.runInteractive(CLI_INTERACTIVE['github-signin'] ?? [], { env: deps.interactiveEnv() });
+        const env = envOrFail();
+        if (!env) return false;
+        await deps.runInteractive(CLI_INTERACTIVE['github-signin'] ?? [], { env });
       }
     }
     const outcome = await deps.runFix(id, sink, ac.signal);
