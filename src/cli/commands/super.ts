@@ -12,6 +12,7 @@ import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
 import { handoffKey, writeHandoffRecord, type HandoffRecord } from '../../lib/context-watch.js';
 import { superHandoffContext } from '../../lib/super/handoff-task.js';
+import { briefState } from '../../lib/super/state-brief.js';
 import { buildAskBody, collectOption, showBody, type AskCliOpts } from '../../lib/super/ask-cli.js';
 import { SUPER_HANDOFF_REL, renderSuperHandoffEntry, superHandoffTask, writeSuperHandoff } from '../../lib/super/handoff-file.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
@@ -114,6 +115,14 @@ function print(r: CallResult): void {
   if (result && result.started === false) process.stderr.write(`CHILD DID NOT START: ${String(result.startError)}\n`);
 }
 
+/** `state --brief`: the same reply cut to the children and the open queue (lib/super/state-brief.ts);
+ *  a refusal or an unreachable app passes through unchanged. */
+function briefCallResult(r: CallResult): CallResult {
+  if (r.status >= 400 || r.status === 0 || r.body.ok === false) return r;
+  const result = (r.body.result ?? r.body) as Record<string, unknown>;
+  return { ...r, body: { ...r.body, result: briefState(result) } };
+}
+
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 
 /** The running server's version, asked of the server; null when it cannot say. */
@@ -170,7 +179,10 @@ export function registerSuperCommand(program: Command): void {
 
   s.command('state')
     .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
-    .action(() => run('state', {}));
+    .option('--brief', 'Only the children and the open queue (plus pool, live team jobs, warnings): what a fresh session needs before it acts')
+    .action((opts: { brief?: boolean }) => (opts.brief
+      ? callSuper('state', {}).then((r) => print(briefCallResult(r)))
+      : run('state', {})));
 
   const job = (c: Command): Command => c
     .option('--brief <line>', 'The one-line reminder its row and card show')
