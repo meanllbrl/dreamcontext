@@ -22,8 +22,20 @@ type RequestSource = (contextRoot: string, member: string, requestId: string) =>
 export function setRequestSource(fn: RequestSource | null): void { (setRequestSource as unknown as { fn: RequestSource | null }).fn = fn; }
 function requestSourceOf(): RequestSource | null { return (setRequestSource as unknown as { fn?: RequestSource | null }).fn ?? null; }
 
+/** Whether the member's own record holds an open wait: a question of its own (to main or to the
+ *  owner), or an item only the owner settles (a permission, a card, a refused call, a stall).
+ *  Registered by the inbox beside {@link setRequestSource}, from the same cache. */
+type MemberWaitSource = (contextRoot: string, member: string) => boolean;
+export function setMemberWaitSource(fn: MemberWaitSource | null): void { (setMemberWaitSource as unknown as { fn: MemberWaitSource | null }).fn = fn; }
+function memberWaits(contextRoot: string, member: string): boolean {
+  const fn = (setMemberWaitSource as unknown as { fn?: MemberWaitSource | null }).fn;
+  try { return fn ? fn(contextRoot, member) : false; } catch { return false; }
+}
+
 /** A request job's status and line, from the member's record: queued until its turn carries it,
- *  running while it is delivered or accepted, done at `team done`. */
+ *  asking while the member waits on someone (2026-11-11, kitup Turing: the card spun "working"
+ *  while the member sat idle on the owner's yes), running while it is delivered or accepted
+ *  otherwise, done at `team done`. */
 export function requestJobStatus(contextRoot: string, job: SuperTeamJob): { status: TeamJobStatus; lastLine: string } {
   const source = requestSourceOf();
   const item = job.request && source ? source(contextRoot, job.member, job.request) : null;
@@ -33,6 +45,7 @@ export function requestJobStatus(contextRoot: string, job: SuperTeamJob): { stat
   // The member was turned off: the job waits, undelivered (main was told once).
   if (!superEntry(contextRoot, superIdOfMember(job.member)).enabled) return { status: 'failed', lastLine: 'The member is turned off: this job waits until the owner turns it on.' };
   if (item.state === 'pending') return { status: 'queued', lastLine: job.brief };
+  if (memberWaits(contextRoot, job.member)) return { status: 'asking', lastLine: job.brief };
   return { status: 'running', lastLine: job.brief };
 }
 
@@ -223,11 +236,14 @@ export function teamLiveRows(contextRoot: string, s: Pick<SuperState, 'team' | '
     if (hit) { out[j.id] = hit; continue; }
     try {
       const own = teamJobStatus(contextRoot, j, liveSource ? liveSource(contextRoot, j) : null);
-      const status = next ? teamJobStatus(contextRoot, next, liveSource ? liveSource(contextRoot, next) : null).status : own.status;
+      // The card is the member's ONE conversation: its status AND its line are the current job's
+      // (2026-11-11, kitup Turing: the card read the 6 Nov root's line under the 11 Nov job).
+      const cur = next ? teamJobStatus(contextRoot, next, liveSource ? liveSource(contextRoot, next) : null) : own;
+      const status = cur.status;
       // A member's one card after a rotation: the conversation before this one.
       const prevRoot = j.followUpOf ? undefined : s.team.filter((x) => x.member === j.member && !x.followUpOf && x.startedAt < j.startedAt)[0];
       const prevSession = prevRoot ? jobSession(contextRoot, prevRoot).sessionId : undefined;
-      const row: TeamLiveRow = { status, lastLine: own.lastLine, ...jobSession(contextRoot, j), ...(prevSession ? { prevSessionId: prevSession } : {}) };
+      const row: TeamLiveRow = { status, lastLine: cur.lastLine || own.lastLine, ...jobSession(contextRoot, j), ...(prevSession ? { prevSessionId: prevSession } : {}) };
       out[j.id] = row;
       // A reply is final only once its outcome is recorded (its zero-post mirror lands just after it
       // settles); a job whose ending is still owed to the super is never final (an answer resumes it),

@@ -18,7 +18,7 @@ import { SCHEDULE_LINE, fireClock, quotedJob, scheduleJob } from './schedule-job
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
-import { armTeamJobWatches, awaitedTeamItem, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
+import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
@@ -792,6 +792,14 @@ function announceAgain(key: string): void {
 // Main's team cards read a request from the member record this module last saw (plan-r10 1).
 setRequestSource((root, member, requestId) =>
   lastStates.get(superKey(root, superIdOfMember(member)))?.queue.find((q) => q.id === requestId && q.kind === 'request') ?? null);
+// ...and whether that member waits on someone now: the same open waits `notStalledReason` reads
+// (an open `ask` of its own; a permission, card, refused call or stall still open), so a waiting
+// member's card reads "asks you", never a working spinner. A routine's need is not this work's.
+setMemberWaitSource((root, member) => {
+  const s = lastStates.get(superKey(root, superIdOfMember(member)));
+  if (!s || !s.enabled || !s.session) return false;
+  return s.queue.some((q) => q.state !== 'done' && (q.kind === 'ask' || q.kind === 'owner' || q.kind === 'permission'));
+});
 
 // ─── What piles up while the owner has a question open (the held ledger) ────────────
 

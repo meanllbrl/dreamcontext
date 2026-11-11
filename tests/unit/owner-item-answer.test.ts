@@ -36,6 +36,7 @@ import {
 } from '../../src/lib/super/inbox.js';
 import { ALLOWED_WAITING_TEXT, ALLOW_ONCE_SENTENCE, _resetOwnerAnswers, allowTurnText, answerOwnerItem, shownKeyOf } from '../../src/lib/super/answer.js';
 import { readOutbox } from '../../src/lib/super/outbox.js';
+import { teamJobStatus, teamLiveRows } from '../../src/lib/super/team.js';
 import { consumeOnce, listGrants } from '../../src/lib/grants/store.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { handleSuperOwnerAnswer, handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
@@ -419,5 +420,46 @@ describe('POST /api/super/owner-answer (G4)', () => {
     expect(r.status).toBe(409);
     expect(r.json).toMatchObject({ ok: false, error: 'changed' });
     expect(listGrants()).toEqual([]);
+  });
+});
+
+describe("main's card for a member that waits on the owner (2026-11-11, kitup Turing)", () => {
+  it('reads asking while the refusal stands, never a working spinner; running again once it is settled', async () => {
+    const session = await rotaSession();
+    // The member took the job (its turn ended with it in hand): before anything waits, it works.
+    await writeSuper(root, 'm:rota', (s) => { for (const q of s.queue) if (q.kind === 'request') { q.state = 'delivered'; q.acceptedAt = Date.now(); } });
+    await _superInboxDrained();
+    const job = (await main()).team.find((j) => j.member === 'rota' && j.request);
+    expect(job).toBeTruthy();
+    expect(teamJobStatus(root, job!, null).status).toBe('running');
+    // Its next turn is refused by the classifier (a real purchase): an owner item on its record.
+    refuse(crew(session), 'node scripts/buy.mjs');
+    await _superInboxDrained();
+    const item = (await rota()).queue.find((q) => q.own && q.kind === 'owner' && q.wait?.kind === 'refusal');
+    expect(item).toBeTruthy();
+    expect(teamJobStatus(root, job!, null).status).toBe('asking');
+    // He says it is not needed: the wait closes, the card works again.
+    const mirror = (await main()).queue.find((q) => q.kind === 'member' && q.answers === item!.id);
+    expect(await answerOwnerItem(root, { record: 'main', item: mirror!.id, via: 'bar', answer: { kind: 'refusal', action: 'not_needed' } }))
+      .toMatchObject({ ok: true });
+    await _superInboxDrained();
+    expect(teamJobStatus(root, job!, null).status).toBe('running');
+  });
+});
+
+describe("a member's one card reads its current job, never its first one (2026-11-11, kitup Turing)", () => {
+  it('after a follow-up, the card line is the follow-up\'s, not the done root\'s', async () => {
+    await rotaSession();
+    // The first job ends with a result; the Super asks the member again on the same card.
+    await writeSuper(root, 'm:rota', (s) => { for (const q of s.queue) if (q.kind === 'request') { q.state = 'done'; q.result = 'Old report filed.'; } });
+    const again = await verb(tokenFor(MAIN), 'team-ask', { member: 'rota', text: 'Now the Q4 report.', brief: 'q4 report' });
+    expect(again.status, JSON.stringify(again.json)).toBe(200);
+    await _superInboxDrained();
+    const s = await main();
+    const rootJob = s.team.find((j) => j.member === 'rota' && !j.followUpOf);
+    expect(s.team.find((j) => j.followUpOf === rootJob?.id)).toBeTruthy();
+    const row = teamLiveRows(root, s)?.[rootJob!.id];
+    expect(row?.lastLine).toBe('q4 report');
+    expect(row?.status).toBe('queued');
   });
 });

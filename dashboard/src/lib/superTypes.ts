@@ -600,7 +600,7 @@ export interface SuperTeamJob {
  *  one (its brief, model, whether it waits its turn) and the run before a rotation. */
 export interface TeamChain {
   jobs: number;
-  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt'>;
+  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt' | 'request'>;
   /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
   previous?: { id: string; runId: string; sessionId?: string };
 }
@@ -620,6 +620,7 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
     jobs: Math.max(1, mine.length),
     newest: {
       id: newest.id, brief: newest.brief, queued: newest.queued, startedAt: newest.startedAt,
+      ...(newest.request ? { request: newest.request } : {}),
       ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
     },
     ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
