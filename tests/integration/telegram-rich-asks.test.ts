@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
@@ -61,7 +62,7 @@ beforeEach(async () => {
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
   // Away (a hands-free run on): Super questions go out only then (owner 2026-11-09).
   hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => true } });
-  unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, { settleMs: 5 })];
+  unwire = [wireTelegramAsks(hub), wireTelegramW5(hub, { settleMs: 5, shoot: async () => null })];
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: vault, contextRoot: root });
   await drained();
@@ -181,17 +182,64 @@ describe('the Super\'s own rich ask', () => {
     expect(parseTelegramPrefix(sent[0]).body).toMatch(/^\[super answer\] item=ask-2 unclear\nThe user did not understand this question/);
   });
 
-  it('during a Telegram turn the option previews arrive as pictures just before the buttons', async () => {
+  it('during a Telegram turn each option preview arrives as its own photo, "A · label", in option order, just before the buttons', async () => {
     const { sent } = await superChat();
     tg.push(TOKEN, textUpdate(OWNER, 'sor bakalım'));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     const item = { id: 'ask-3', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ask: { questions: [{ question: 'Hangisi?', options: [{ label: 'A', preview: '<div class="dc-card">A</div>' }, { label: 'B', preview: '<div class="dc-card">B</div>' }] }] } };
     await writeState({ queue: [item] });
     announceOwnerHead(() => vault, await readSuperState(root), item as never);
-    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendMediaGroup')).toBe(true));
-    const albumAt = tg.calls.findIndex((c) => c.method === 'sendMediaGroup');
+    await vi.waitFor(() => expect(tg.calls.some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))).toBe(true));
+    // Never an album: a drawing in a collage tile is cropped and nameless (owner 2026-11-11).
+    expect(tg.calls.some((c) => c.method === 'sendMediaGroup')).toBe(false);
+    const photos = tg.calls.filter((c) => c.method === 'sendPhoto');
+    expect(photos.map((c) => c.params.caption)).toEqual(['A · A', 'B · B']);
+    const lastPhotoAt = tg.calls.lastIndexOf(photos.at(-1)!);
     const askAt = tg.calls.findIndex((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'));
-    expect(albumAt).toBeLessThan(askAt);
+    expect(lastPhotoAt).toBeLessThan(askAt);
+    const q = String(tg.calls[askAt].params.text);
+    expect(q).toContain('• <b>A · A</b> (çizim A)');
+    expect(q).toContain('• <b>B · B</b> (çizim B)');
+  });
+
+  it('the owner\'s case: stage pictures the question shows go as their own album first, never with the drawings, each drawing alone under its own letter', async () => {
+    const { sent } = await superChat();
+    tg.push(TOKEN, textUpdate(OWNER, 'sor bakalım'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    // A git project (the outbound classifier reads git's ignore rules), its pictures tracked-able.
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    writeFileSync(join(project, 'cubuk.png'), PNG);
+    writeFileSync(join(project, 'telefon.png'), PNG);
+    const containers = [
+      { id: 'c1', kind: 'image', ref: 'cubuk.png', title: 'Çubukta kart', place: 'stage', createdAt: 1 },
+      { id: 'c2', kind: 'image', ref: 'telefon.png', title: 'Telefon: bekleyen satırı', place: 'stage', createdAt: 1 },
+    ];
+    const item = { id: 'ask-4', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ask: { questions: [{ question: 'Sade hâline mi geçsin?', options: [
+      { label: 'Sade hâline geçsin', description: 'Tek başlık', preview: '<div class="dc-card">Sade</div>' },
+      { label: 'Şu anki gibi kalsın', preview: '<div class="dc-card">Şimdiki</div>' },
+    ] }] } };
+    await writeState({ queue: [item], containers, askShows: [{ item: 'ask-4', cards: ['c1', 'c2'], opened: [], via: 'recent' }] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    await vi.waitFor(() => expect(tg.calls.some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))).toBe(true));
+    const albums = tg.calls.filter((c) => c.method === 'sendMediaGroup');
+    expect(albums).toHaveLength(1);
+    const albumCaps = JSON.stringify(albums[0].params.media);
+    expect(albumCaps).toContain('1 · Çubukta kart');
+    expect(albumCaps).toContain('2 · Telefon: bekleyen satırı');
+    expect(albumCaps).not.toContain('Sade');
+    const photos = tg.calls.filter((c) => c.method === 'sendPhoto');
+    expect(photos.map((c) => c.params.caption)).toEqual(['A · Sade hâline geçsin', 'B · Şu anki gibi kalsın']);
+    const albumAt = tg.calls.indexOf(albums[0]);
+    const firstPhotoAt = tg.calls.indexOf(photos[0]);
+    const askAt = tg.calls.findIndex((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'));
+    expect(albumAt).toBeLessThan(firstPhotoAt);
+    expect(tg.calls.indexOf(photos[1])).toBeLessThan(askAt);
+    const q = String(tg.calls[askAt].params.text);
+    expect(q).toContain('• <b>A · Sade hâline geçsin</b> (çizim A): Tek başlık');
+    expect(q).toContain('• <b>B · Şu anki gibi kalsın</b> (çizim B)');
+    expect(q).not.toContain('yukarıda');
+    // No headless Chromium here: the Mac window draws them, at the chat's width (it cannot tell a cut).
+    expect(frames.filter((f) => f.verb === 'html_snapshot').map((f) => (f.args as { width: number }).width)).toEqual([720, 720]);
   });
 });
 
@@ -224,10 +272,10 @@ describe('the Super chat\'s own AskUserQuestion (P3 through the window)', () => 
       { question: 'Hangi kart?', options: [{ label: 'Bu taslak', preview: '<div class="dc-card">Kart</div>' }, { label: 'Değişsin' }] },
       { question: 'Ne zaman?', options: [{ label: 'Bugün' }, { label: 'Yarın' }] },
     ] } } });
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))).toBe(true));
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>'))).toBe(true));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))!;
-    expect(text).toContain('• <b>Bu taslak</b>: Çizimi yukarıda.');
+    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>'))!;
+    expect(text).toContain('• <b>A · Bu taslak</b> (çizim A)');
     expect(text).not.toContain("Çizimi Mac'te");
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
     expect(log).toMatch(/req-d pictures 1\/1(?! NOT)/);

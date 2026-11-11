@@ -84,6 +84,30 @@ export function sealedFramePage(srcdoc: string, opts: { background: string; widt
   ].join('');
 }
 
+/**
+ * A question option's drawing that never loses content off its right edge, whatever draws it
+ * (headless Chromium or the Mac window's sealed renderer; review 2026-11-11): after the kit's
+ * layout, every box that clips content wider than itself (its own `overflow:auto|hidden`, the
+ * author's or the kit's) stops clipping on BOTH axes (one axis alone turns back into auto), the
+ * innermost first and again until nothing changes (a parent only sees what its children let
+ * out), and when the page is then wider than the frame it is zoomed down to fit.
+ * `window.__dcFit` does it; a measuring page sets `__dcNoFit` and calls it itself, after it read
+ * whether the page overflowed at its width.
+ */
+const FIT_SCRIPT = '<script>(function(){window.__dcFit=function(){'
+  + 'for(var pass=0;pass<8;pass++){var ch=0,a=document.querySelectorAll("body *");'
+  + 'for(var i=a.length-1;i>=0;i--){var e=a[i];if(!e.clientWidth||e.scrollWidth<=e.clientWidth+1)continue;'
+  + 'var c=getComputedStyle(e);if(c.overflowX==="visible"&&c.overflowY==="visible"&&c.textOverflow!=="ellipsis")continue;'
+  + 'e.style.setProperty("overflow","visible","important");e.style.setProperty("text-overflow","clip","important");ch=1;}'
+  + 'if(!ch)break;}'
+  + 'var d=document.documentElement;d.style.zoom="";var w=Math.max(d.scrollWidth,document.body?document.body.scrollWidth:0);'
+  + 'if(w>window.innerWidth+1)d.style.zoom=String(window.innerWidth/w);};'
+  + 'window.addEventListener("load",function(){setTimeout(function(){if(!window.__dcNoFit)window.__dcFit();},300);});})();</script>';
+
+export function fitDrawing(html: string): string {
+  return `${html}${FIT_SCRIPT}`;
+}
+
 export type PagePlan = { ok: true; page: string; width: number } | { ok: false; reason: 'secret' | 'empty' };
 
 /** A dream-html block (or an option preview's markup, W2) as the chat pane draws it, light. */

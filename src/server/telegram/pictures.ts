@@ -158,7 +158,9 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
   }
   if (!fit.length) return { sent: [], unsent, listed: false };
   if (!names) {
-    const ok = fit.length === 1 ? !!(await sendMedia(ab, fit[0])) : await sendAlbum(ab, fit);
+    // Slices of one card: each tile says which part it is ("Kart · 2/3"), never one shared line.
+    const part = (m: MediaItem): string => { const t = pictureName(m.title); return t ? caption(`${t} · ${fit.indexOf(m) + 1}/${fit.length}`) : ''; };
+    const ok = fit.length === 1 ? !!(await sendMedia(ab, fit[0])) : await sendAlbum(ab, fit, part);
     return ok ? { sent: fit, unsent, listed: false } : { sent: [], unsent: [...fit, ...unsent], listed: false };
   }
   if (fit.length === 1) {
@@ -192,6 +194,22 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
     }
   }
   return { sent: fit.filter((m) => sent.has(m)), unsent: [...fit.filter((m) => !sent.has(m)), ...unsent], listed };
+}
+
+/** Taller than 1:3: Telegram shrinks a photo to 2560 px on its long side, so the text of a
+ *  drawing this tall goes thin; a document keeps every pixel (one tap opens it whole). */
+export const WHOLE_PHOTO_MAX_RATIO = 3;
+
+/**
+ * ONE picture as its own message, seen whole on a phone (a question option's drawing): a photo
+ * keeps its real shape in the chat (never an album tile's square crop), with its own caption; a
+ * picture taller than 1:3 or beyond Telegram's photo dimensions goes as a document instead.
+ */
+export async function sendWhole(ab: ActiveBinding, item: MediaItem, captionHtml: string): Promise<boolean> {
+  const s = item.kind === 'photo' ? imageSize(item.file.data) : null;
+  const tall = !!s && s.h / s.w > WHOLE_PHOTO_MAX_RATIO;
+  const asSent = item.kind === 'photo' && (tall || overPhotoDimensions(item)) ? { ...item, kind: 'document' as const } : item;
+  return !!(await sendMedia(ab, asSent, captionHtml));
 }
 
 const METHOD: Record<MediaKind, string> = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' };

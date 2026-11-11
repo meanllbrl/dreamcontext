@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { imageSize, isTall, numberedCaption, pictureListMessages, sendPictures, type MediaItem } from '../../src/server/telegram/pictures.js';
+import { imageSize, isTall, numberedCaption, pictureListMessages, sendPictures, sendWhole, type MediaItem } from '../../src/server/telegram/pictures.js';
 import type { ActiveBinding } from '../../src/server/telegram/hub.js';
 
 /** A real PNG header (signature + IHDR) of the given size. */
@@ -120,11 +120,11 @@ describe('a named group of pictures (stage, a question\'s drawings)', () => {
     expect(calls[0].params.caption).toBe('Tek kart');
   });
 
-  it('slices of one card (no names) still go as a plain album with no captions', async () => {
+  it('slices of one card (no names): one album, each tile says which part it is, no list', async () => {
     const { ab, calls } = fakeBinding();
     await sendPictures(ab, [photo('kart'), photo('kart')]);
     expect(calls.map((c) => c.method)).toEqual(['sendMediaGroup']);
-    expect((calls[0].params.media as { caption?: string }[]).every((m) => m.caption === undefined)).toBe(true);
+    expect((calls[0].params.media as { caption?: string }[]).map((m) => m.caption)).toEqual(['kart · 1/2', 'kart · 2/2']);
   });
 });
 
@@ -154,5 +154,26 @@ describe('the shared picture text', () => {
     expect(imageSize(jpeg)).toEqual({ w: 1170, h: 2500 });
     const fake = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(80, 7)]);
     expect(imageSize(fake)).toBeNull();
+  });
+});
+
+describe('one picture seen whole (a question option\'s drawing)', () => {
+  it('goes as its own photo with its caption, never an album tile', async () => {
+    const { ab, calls } = fakeBinding();
+    expect(await sendWhole(ab, photo('Sade', 1440, 2200), 'A · Sade')).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['sendPhoto']);
+    expect(calls[0].params.caption).toBe('A · Sade');
+  });
+
+  it('taller than 1:3 goes as a document, so its text keeps every pixel', async () => {
+    const { ab, calls } = fakeBinding();
+    expect(await sendWhole(ab, photo('Uzun', 1440, 4800), 'B · Uzun')).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['sendDocument']);
+    expect(calls[0].params.caption).toBe('B · Uzun');
+  });
+
+  it('a refused send says so', async () => {
+    const { ab } = fakeBinding(['sendPhoto']);
+    expect(await sendWhole(ab, photo('Sade'), 'A · Sade')).toBe(false);
   });
 });
