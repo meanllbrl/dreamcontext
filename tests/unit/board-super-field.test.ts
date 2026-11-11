@@ -228,6 +228,17 @@ describe('where the field sits (review r1/r2: one rule decides the painted box)'
     expect(css).toMatch(/\.wb-work-outline \{[^}]*z-index: var\(--wbp-overlay-z, 2\);/);
   });
 
+  it('Excalidraw\'s top-row first cell keeps to its menu button at every width, so it never lies over the Boards toggle (review r3)', () => {
+    const page = read('dashboard/src/pages/WhiteboardsPage.css');
+    expect(page).toMatch(/\.wbp-canvas \.excalidraw \.App-menu_top > \*:first-child \{\s*justify-self: flex-start;/);
+  });
+
+  it('in Excalidraw\'s phone layout the page overlays move under its toolbar and left of its tools column', () => {
+    const page = read('dashboard/src/pages/WhiteboardsPage.css');
+    expect(page).toMatch(/\.wbp-canvas:has\(\.excalidraw--mobile\) \.wbp-float-left \{\s*top: calc\(var\(--space-4\) \+ var\(--space-12\)\);/);
+    expect(page).toMatch(/\.wbp-canvas:has\(\.excalidraw--mobile\) \.wbp-float-right \{[^}]*right: calc\(var\(--space-4\) \+ var\(--space-12\)\);/);
+  });
+
   it('Excalidraw\'s scroll-back button is lifted above the field', () => {
     expect(src).toMatch(/--bsf-clear/);
     expect(css).toMatch(/\.wbp-canvas \.excalidraw \.scroll-back-to-content \{\s*bottom: var\(--bsf-clear/);

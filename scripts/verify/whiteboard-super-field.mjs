@@ -378,6 +378,50 @@ async function main() {
     await shotPair('5-sag-tik-tahta');
     await page.keyboard.press('Escape');
 
+    console.log('── page overlays take their own clicks (review r3)');
+    {
+      // The page's clickable overlays on the canvas get the pointer at their own centre: no
+      // Excalidraw box that takes clicks (a stretched top-row cell, a panel) lies over them.
+      const hitsSelf = (loc) => loc.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const at = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return !!at && (at === el || el.contains(at));
+      });
+      const hideList = page.locator('.wbx-head button[aria-label="Hide the board list"], .wbx-head button[aria-label="Board listesini gizle"]').first();
+      const showList = page.locator('.wbp-float-left .wbp-explorer-toggle');
+      await hideList.click();
+      ok('the Boards list hides; its toggle sits on the canvas', await until(page, async () => (await showList.count()) === 1, 4000));
+      const s1 = await sceneOf(page);
+      const u1 = s1.elements.filter((e) => !e.containerId)[0];
+      for (const [w, h] of [[1600, 900], [1440, 900], [1366, 768], [1024, 768]]) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.waitForTimeout(600);
+        for (const selected of [false, true]) {
+          if (selected) {
+            const c1 = await centreOf(u1.id);
+            await page.mouse.click(c1.x, c1.y);
+            await until(page, async () => (await sceneOf(page)).selected.length >= 1, 3000);
+          } else {
+            const e1 = await emptySpot();
+            await page.mouse.click(e1.x, e1.y);
+          }
+          const tag = `${w}${selected ? ' with a selection' : ''}`;
+          ok(`${tag}: the Boards toggle takes its own click`, await hitsSelf(showList));
+          ok(`${tag}: the field's words, send and mark take their own clicks`, (await field.count()) === 1 && await hitsSelf(input) && await hitsSelf(field.locator('.bsf-send')) && await hitsSelf(field.locator('[data-testid="board-super-mark"]')));
+          const aside = page.locator('[data-testid="wbp-controls-aside"] .wbp-agent-toggle');
+          const inRow = page.locator('.wbp-canvas .excalidraw .wbp-agent-toggle');
+          const agents = (await aside.count()) ? aside : inRow;
+          ok(`${tag}: Agents takes its own click`, await hitsSelf(agents));
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.waitForTimeout(400);
+      await page.keyboard.press('Escape');
+      await showList.click();
+      ok('the toggle brings the Boards list back', await until(page, async () => (await page.locator('.wbx').count()) === 1, 4000));
+    }
+
     console.log('── phone 390');
     for (const scheme of ['light', 'dark']) {
       const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: scheme });
@@ -394,6 +438,28 @@ async function main() {
       await phone.waitForTimeout(2500);
       ok(`390 ${scheme}: the board page is open`, await phone.locator('.wbp-editor').count() === 1);
       ok(`390 ${scheme}: no tabs row on the phone either`, await phone.locator('.wbp-bar, .wbt-tab').count() === 0);
+      // Excalidraw's phone layout (top toolbar, right-hand tools column): the page's overlays
+      // stay clear of it and take their own taps (review r3).
+      await phone.locator('.excalidraw--mobile').waitFor({ timeout: 8000 }).catch(() => {});
+      // Its centre and the middle of each edge (4 px in: clear of the rounded corners, which hit
+      // testing leaves out) all reach it, and it sits whole inside the screen.
+      const tapsSelf = (loc) => loc.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return 'not drawn';
+        if (r.left < 0 || r.right > window.innerWidth) return `cut at the screen edge ${JSON.stringify(r)}`;
+        const mx = r.x + r.width / 2;
+        const my = r.y + r.height / 2;
+        for (const [x, y] of [[mx, my], [r.left + 4, my], [r.right - 4, my], [mx, r.top + 4], [mx, r.bottom - 4]]) {
+          const a = document.elementFromPoint(x, y);
+          if (!a || !(a === el || el.contains(a))) return `at ${Math.round(x)},${Math.round(y)}: ${a ? `${a.tagName}.${a.className}` : 'nothing'}`;
+        }
+        return 'ok';
+      });
+      const pToggle = phone.locator('.wbp-float-left .wbp-explorer-toggle');
+      if (await pToggle.count()) { const v = await tapsSelf(pToggle); ok(`390 ${scheme}: the Boards toggle is whole and takes its own tap`, v === 'ok', v); }
+      const pAgents = phone.locator('.wbp-canvas .wbp-agent-toggle').first();
+      const va = (await pAgents.count()) === 1 ? await tapsSelf(pAgents) : 'missing';
+      ok(`390 ${scheme}: Agents is whole and takes its own tap`, va === 'ok', va);
       await phone.screenshot({ path: join(SHOTS, `telefon-390-${scheme}.png`) });
       await phoneCtx.close();
     }

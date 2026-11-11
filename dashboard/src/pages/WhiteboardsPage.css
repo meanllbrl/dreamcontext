@@ -46,6 +46,13 @@
 
 .wbp-float-left > * { pointer-events: auto; }
 
+/* Excalidraw's top row is a grid whose cells take clicks; below 1536 px its first cell stretches
+   across the whole first column, an invisible box over the toggle and name above (review r3).
+   Kept as wide as its menu button at every width, as Excalidraw itself does from 1536 px. */
+.wbp-canvas .excalidraw .App-menu_top > *:first-child {
+  justify-self: flex-start;
+}
+
 /* The save state and the Agents toggle, when Excalidraw's top-right row has no room for them:
    their own group in the canvas's top-right corner, under that row. */
 .wbp-float-right {
@@ -60,6 +67,19 @@
 }
 
 .wbp-float-right > * { pointer-events: auto; }
+
+/* Excalidraw's phone layout: its toolbar fills the top row and a tools column (Library, lock,
+   hand) hangs on the right edge under it. The page's overlays move under the toolbar, the
+   toggle and name on the left, the save state and Agents left of that column, a row lower. */
+.wbp-canvas:has(.excalidraw--mobile) .wbp-float-left {
+  top: calc(var(--space-4) + var(--space-12));
+  left: var(--space-4);
+}
+
+.wbp-canvas:has(.excalidraw--mobile) .wbp-float-right {
+  top: calc(var(--space-4) + 2 * var(--space-12));
+  right: calc(var(--space-4) + var(--space-12));
+}
 
 .wbp-float-name {
   min-width: 0;
