@@ -88,7 +88,6 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { desktopAppPresent, maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { appUpdateNotice } from '../../lib/app-windows.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
-import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
@@ -3362,7 +3361,7 @@ export function registerHookCommand(program: Command): void {
 
       // Marketing nudge: only fires when there are unconfirmed Performance
       // Monitor recommendations from >24h ago. Must NOT fire on every prompt
-      // (per task contract). Wrapped in try/catch so the marketing skill-pack
+      // (per task contract). Wrapped in try/catch so the marketing surface
       // never breaks the core hook.
       try {
         const stale = listStaleRecs(24);
@@ -3388,14 +3387,7 @@ export function registerHookCommand(program: Command): void {
           const projectRoot = dirname(root);
           let vcache = readVersionCache(projectRoot);
           if (!isCacheFresh(vcache)) {
-            const loaded = loadCatalog();
-            const packNames: string[] = loaded
-              ? [
-                  ...loaded.catalog.packs.map((p) => p.name),
-                  ...loaded.catalog.standalone.map((s) => s.name),
-                ]
-              : [];
-            refreshVersionCache(projectRoot, { catalogPackNames: packNames });
+            refreshVersionCache(projectRoot);
             vcache = readVersionCache(projectRoot);
             // Piggyback on the ≤once/24h refresh tick: if the desktop app is
             // installed, trigger a best-effort background app update (rare —

@@ -1,6 +1,6 @@
 import { SESSION_START_PART_HOOK } from '../../lib/hook-delivery.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { relPosix } from '../../lib/paths.js';
@@ -24,14 +24,14 @@ import {
   readManifest,
   writeManifest,
   recordFile,
-  recordPack,
   recordPlatform,
   emptyManifest,
   dreamcontextVersion,
+  PRE_MANIFEST_VERSION,
   type Manifest,
   type ManagedFileKind,
 } from '../../lib/manifest.js';
-import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { syncPeerAgents } from '../../lib/peer-agent-gen.js';
@@ -147,48 +147,6 @@ export const HOOK_SPECS: readonly HookSpec[] = [
 
 // ─── Catalog Types ──────────────────────────────────────────────────────────
 
-interface CatalogSubSkill {
-  name: string;
-  file: string;
-  description: string;
-  hasReferences?: boolean;
-}
-
-interface CatalogPack {
-  name: string;
-  description: string;
-  tags: string[];
-  alwaysApply: boolean;
-  base: string;
-  subSkills: CatalogSubSkill[];
-  relatedAgents?: string[];
-  crossPackDeps?: string[];
-}
-
-interface CatalogStandalone {
-  name: string;
-  file: string;
-  description: string;
-  tags: string[];
-  alwaysApply: boolean;
-}
-
-interface CatalogAgent {
-  name: string;
-  file: string;
-  pack: string;
-  description: string;
-  tags: string[];
-  model: string;
-}
-
-interface Catalog {
-  version: string;
-  packs: CatalogPack[];
-  standalone: CatalogStandalone[];
-  agents: CatalogAgent[];
-}
-
 // ─── Platform Helpers ───────────────────────────────────────────────────────
 
 function platformLabel(_platform: PlatformId): string {
@@ -197,30 +155,6 @@ function platformLabel(_platform: PlatformId): string {
 
 function platformPrefixed(platform: PlatformId, relPath: string): string {
   return `${chalk.dim(`[${platform}]`)} ${relPath}`;
-}
-
-/**
- * Prefix an installed rel-path with its platform tag for the CLI summary. The
- * lib returns plain (uncolored, unprefixed) rel paths; 'claude' is currently the
- * only supported platform.
- */
-function labelInstalledPath(relPath: string): string {
-  return platformPrefixed('claude', relPath);
-}
-
-/**
- * Drop cross-pack-dep warnings whose recommended dep is ALSO being installed in
- * the same batch. The lib emits one warning per uninstalled dep ("<pack>
- * recommends: <dep …>"); when the user selected the dep in the same command the
- * warning is noise. Matches the dep token after "recommends: ".
- */
-function filterBatchDepWarnings(warnings: string[], selectedNames: Set<string>): string[] {
-  return warnings.filter((w) => {
-    const idx = w.indexOf('recommends: ');
-    if (idx === -1) return true;
-    const depToken = w.slice(idx + 'recommends: '.length).split(/[\s/(]/)[0];
-    return !selectedNames.has(depToken);
-  });
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -483,29 +417,13 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
 /** The `claudeMdExcludes` entry that keeps app data's CLAUDE.md files out of every session. */
 export const APP_DATA_CLAUDE_MD_EXCLUDE = '**/_dream_context/apps/**';
 
-// ─── Catalog (re-exported from lib/catalog) ──────────────────────────────────
-
-export {
-  loadCatalog,
-  findPackageDir,
-  platformSkillRoot,
-  isPackInstalledForPlatform,
-  type Catalog,
-  type CatalogPack,
-  type CatalogStandalone,
-  type CatalogSubSkill,
-  type CatalogAgent,
-} from '../../lib/catalog.js';
-import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform, AGENT_CORE_SKILL } from '../../lib/catalog.js';
+import { findPackageDir, platformSkillRoot, AGENT_CORE_SKILL } from '../../lib/catalog.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
-import { DESIGN_SKILL, DESIGN_SKILL_SOURCE, DRAW_SKILL, DRAW_SKILL_SOURCE, installDesignSkill, installDrawSkill, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
-import { EXCALIDRAW_PACK, retireExcalidraw } from '../../lib/retired-packs.js';
-import {
-  installPack,
-  installAgentForPlatform,
-  UnknownPackError,
-} from '../../lib/install-packs.js';
+import { DRAW_SKILL, GUARDED_SKILLS, guardedFileSha, installGuardedSpec, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
+import { ADOPTED_AGENT_SHAS } from '../../lib/core-guarded-skill/adopted-agents.js';
+import { retireExcalidraw } from '../../lib/retired-packs.js';
+import { installAgentForPlatform } from '../../lib/install-agents.js';
 
 // ─── File Resolution ────────────────────────────────────────────────────────
 import { fileURLToPath } from 'node:url';
@@ -540,332 +458,6 @@ function recordIfManifest(
 ): void {
   if (!manifest) return;
   recordFile(manifest, relPath, dreamcontextVersion(), kind, opts);
-}
-
-// ─── Interactive Pack Browser ───────────────────────────────────────────────
-
-async function interactivePackInstall(
-  projectRoot: string,
-  platforms: PlatformId[],
-  manifest?: Manifest,
-): Promise<void> {
-  const loaded = loadCatalog();
-  if (!loaded) {
-    error('skill-packs not found. Try reinstalling dreamcontext.');
-    return;
-  }
-
-  const { catalog, packsDir } = loaded;
-
-  // Check what's already installed for selected platforms
-  const isInstalled = (name: string) =>
-    platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, name));
-
-  // Build choices: packs + standalone
-  const packChoices = catalog.packs.map((p) => {
-    const installed = isInstalled(p.name);
-    const badge = p.alwaysApply ? chalk.cyan(' [always active]') : '';
-    const status = installed ? chalk.green(' (installed)') : '';
-    const subCount = p.subSkills.length;
-    const agentCount = p.relatedAgents?.length ?? 0;
-    const meta = chalk.dim(` ${subCount} skills${agentCount > 0 ? `, ${agentCount} agents` : ''}`);
-
-    return {
-      name: `${chalk.bold(p.name.padEnd(18))}${meta}${badge}${status}\n${' '.repeat(20)}${chalk.dim(p.description)}`,
-      value: `pack:${p.name}`,
-      checked: false,
-    };
-  });
-
-  const standaloneChoices = catalog.standalone.map((s) => {
-    const installed = isInstalled(s.name);
-    const status = installed ? chalk.green(' (installed)') : '';
-
-    return {
-      name: `${chalk.bold(s.name.padEnd(18))}${chalk.dim('standalone')}${status}\n${' '.repeat(20)}${chalk.dim(s.description)}`,
-      value: `standalone:${s.name}`,
-      checked: false,
-    };
-  });
-
-  console.log(header('Optional Skill Packs'));
-  console.log(chalk.dim(`Platforms: ${platforms.join(', ')}`));
-  console.log();
-
-  const selected = await checkbox({
-    message: 'Select packs to install (space to toggle, enter to confirm)',
-    choices: [
-      ...packChoices,
-      ...standaloneChoices,
-    ],
-    pageSize: 12,
-  });
-
-  if (selected.length === 0) {
-    info('No packs selected.');
-    return;
-  }
-
-  const localManifest = manifest ?? getOrCreateManifest(projectRoot);
-  const allInstalled: string[] = [];
-  const warnings: string[] = [];
-  const selectedNames = new Set(selected.map((sel) => sel.split(':')[1]));
-
-  for (const sel of selected) {
-    const [type, name] = sel.split(':');
-    console.log();
-    info(type === 'pack' ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
-    const result = installPack(name, projectRoot, platforms, localManifest);
-    allInstalled.push(...result.installed.map(labelInstalledPath));
-    warnings.push(...result.warnings);
-  }
-
-  writeManifest(projectRoot, localManifest);
-  printInstallSummary(allInstalled, filterBatchDepWarnings(warnings, selectedNames));
-}
-
-// ─── Direct Pack Install ────────────────────────────────────────────────────
-
-export function directPackInstall(
-  packNames: string[],
-  projectRoot: string,
-  platforms: PlatformId[],
-  manifest?: Manifest,
-): void {
-  const loaded = loadCatalog();
-  if (!loaded) {
-    error('skill-packs not found. Try reinstalling dreamcontext.');
-    return;
-  }
-
-  const localManifest = manifest ?? getOrCreateManifest(projectRoot);
-  for (const platform of platforms) recordPlatform(localManifest, platform);
-
-  const { catalog } = loaded;
-  const allInstalled: string[] = [];
-  const warnings: string[] = [];
-  const selectedNames = new Set(packNames);
-
-  for (const name of packNames) {
-    if (name === DESIGN_SKILL) {
-      info(`${chalk.bold(DESIGN_SKILL)} is a core skill now: setup and \`dreamcontext update\` install it on every project.`);
-      continue;
-    }
-    if (name === EXCALIDRAW_PACK) {
-      info(`${chalk.bold(EXCALIDRAW_PACK)} is now the core ${chalk.bold(DRAW_SKILL)} skill: setup and \`dreamcontext update\` install it on every project.`);
-      continue;
-    }
-    const isPackName = catalog.packs.some((p) => p.name === name);
-    try {
-      info(isPackName ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
-      const result = installPack(name, projectRoot, platforms, localManifest);
-      allInstalled.push(...result.installed.map(labelInstalledPath));
-      warnings.push(...result.warnings);
-    } catch (e: unknown) {
-      if (e instanceof UnknownPackError) {
-        const available = [
-          ...catalog.packs.map((p) => p.name),
-          ...catalog.standalone.map((s) => s.name),
-        ];
-        error(`Pack "${name}" not found.`, `Available: ${available.join(', ')}`);
-        continue;
-      }
-      throw e;
-    }
-  }
-
-  // Only persist if we own the manifest (caller didn't pass one in).
-  if (!manifest) writeManifest(projectRoot, localManifest);
-
-  if (allInstalled.length > 0) {
-    printInstallSummary(allInstalled, filterBatchDepWarnings(warnings, selectedNames));
-  }
-}
-
-// ─── Individual Skill Install ───────────────────────────────────────────────
-
-function installSingleSkill(skillName: string, projectRoot: string, platforms: PlatformId[]): void {
-  if (skillName === EXCALIDRAW_PACK || skillName === DRAW_SKILL || skillName === DESIGN_SKILL) {
-    const core = skillName === DESIGN_SKILL ? DESIGN_SKILL : DRAW_SKILL;
-    info(`${chalk.bold(skillName === EXCALIDRAW_PACK ? `${EXCALIDRAW_PACK} is now the core ${DRAW_SKILL} skill` : `${core} is a core skill now`)}: setup and \`dreamcontext update\` install it on every project.`);
-    return;
-  }
-  const loaded = loadCatalog();
-  if (!loaded) {
-    error('skill-packs not found. Try reinstalling dreamcontext.');
-    return;
-  }
-
-  const { catalog, packsDir } = loaded;
-  const manifest = getOrCreateManifest(projectRoot);
-  for (const platform of platforms) recordPlatform(manifest, platform);
-
-  // Search packs for the sub-skill
-  for (const pack of catalog.packs) {
-    const sub = pack.subSkills.find((s) => s.name === skillName);
-    if (!sub) continue;
-
-    const packSourceDir = join(packsDir, pack.name);
-    const subSrc = join(packSourceDir, sub.file);
-
-    if (!existsSync(subSrc)) {
-      error(`Skill file not found: ${sub.file}`);
-      return;
-    }
-
-    const installed: string[] = [];
-
-    for (const platform of platforms) {
-      const skillRoot = platformSkillRoot(projectRoot, platform);
-      const skillDestDir = join(skillRoot, pack.name);
-      const subDest = join(skillDestDir, sub.file);
-      mkdirSync(dirname(subDest), { recursive: true });
-      writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
-
-      const skillRootRel = relPosix(projectRoot, skillRoot);
-      const subRel = `${skillRootRel}/${pack.name}/${sub.file}`;
-      recordFile(manifest, subRel, dreamcontextVersion(), 'pack-skill');
-      let label = platformPrefixed(platform, subRel);
-
-      if (sub.hasReferences) {
-        const refSrcDir = join(dirname(subSrc), 'references');
-        if (existsSync(refSrcDir)) {
-          const refDestDir = join(dirname(subDest), 'references');
-          cpSync(refSrcDir, refDestDir, { recursive: true });
-          const refFiles = readdirSync(refSrcDir).filter((f) => f.endsWith('.md'));
-          for (const rf of refFiles) {
-            const refRel = `${skillRootRel}/${pack.name}/${dirname(sub.file) === '.' ? '' : dirname(sub.file) + '/'}references/${rf}`;
-            recordFile(manifest, refRel, dreamcontextVersion(), 'pack-skill');
-          }
-          label += chalk.dim(` (+ ${refFiles.length} references)`);
-        }
-      }
-
-      installed.push(label);
-    }
-
-    writeManifest(projectRoot, manifest);
-
-    console.log();
-    console.log(miniBox([
-      chalk.green.bold(`Skill "${skillName}" installed from ${pack.name} pack`),
-      '',
-      ...installed.map((f) => `  ${chalk.green('✓')} ${chalk.magentaBright(f)}`),
-    ], { color: 'green' }));
-
-    // Warn if base pack not installed
-    const baseMissing = platforms.filter((p) => !isPackInstalledForPlatform(projectRoot, p, pack.name));
-    if (baseMissing.length > 0) {
-      console.log();
-      warn(
-        `Base ${chalk.bold(pack.name)} pack not installed for ${baseMissing.join(', ')}. `
-        + `Run: dreamcontext install-skill --packs ${pack.name} --platforms ${baseMissing.join(',')}`,
-      );
-    }
-    console.log();
-    return;
-  }
-
-  // Check standalone
-  const standalone = catalog.standalone.find((s) => s.name === skillName);
-  if (standalone) {
-    const result = installPack(standalone.name, projectRoot, platforms, manifest);
-    const files = result.installed.map(labelInstalledPath);
-    writeManifest(projectRoot, manifest);
-    console.log();
-    console.log(miniBox([
-      chalk.green.bold(`Skill "${skillName}" installed`),
-      '',
-      ...files.map((f) => `  ${chalk.green('✓')} ${chalk.magentaBright(f)}`),
-    ], { color: 'green' }));
-    console.log();
-    return;
-  }
-
-  // Not found
-  error(`Skill "${skillName}" not found.`);
-  console.log(chalk.dim('\n  Available skills:'));
-  for (const pack of catalog.packs) {
-    for (const sub of pack.subSkills) {
-      console.log(`    ${chalk.magentaBright('•')} ${sub.name} ${chalk.dim(`(${pack.name})`)}`);
-    }
-  }
-  for (const s of catalog.standalone) {
-    console.log(`    ${chalk.magentaBright('•')} ${s.name} ${chalk.dim('(standalone)')}`);
-  }
-  console.log();
-}
-
-// ─── List Available Packs ───────────────────────────────────────────────────
-
-function listAvailablePacks(projectRoot: string, platforms: PlatformId[]): void {
-  const loaded = loadCatalog();
-  if (!loaded) {
-    error('skill-packs not found. Try reinstalling dreamcontext.');
-    return;
-  }
-
-  const { catalog } = loaded;
-
-  const isInstalled = (name: string) =>
-    platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, name));
-
-  console.log(header('Available Skill Packs'));
-  console.log(chalk.dim(`Platforms: ${platforms.join(', ')}`));
-
-  for (const pack of catalog.packs) {
-    const installed = isInstalled(pack.name);
-    const badge = pack.alwaysApply ? chalk.cyan(' [always active]') : '';
-    const status = installed ? chalk.green(' [installed]') : '';
-
-    console.log();
-    console.log(`  ${chalk.magentaBright.bold(pack.name)}${badge}${status}`);
-    console.log(`  ${chalk.dim(pack.base)}`);
-
-    for (const sub of pack.subSkills) {
-      const subInstalled = platforms.every((platform) =>
-        existsSync(join(platformSkillRoot(projectRoot, platform), pack.name, sub.file)),
-      );
-      const subStatus = subInstalled ? chalk.green(' ✓') : '';
-      console.log(`    ${chalk.dim('•')} ${sub.name}${subStatus} ${chalk.dim('- ' + sub.description)}`);
-    }
-
-    if (pack.relatedAgents?.length) {
-      console.log(`    ${chalk.dim('agents:')} ${pack.relatedAgents.join(', ')}`);
-    }
-  }
-
-  if (catalog.standalone.length > 0) {
-    console.log();
-    console.log(`  ${chalk.dim('─── Standalone ───')}`);
-    for (const s of catalog.standalone) {
-      const installed = isInstalled(s.name);
-      const status = installed ? chalk.green(' [installed]') : '';
-      console.log();
-      console.log(`  ${chalk.magentaBright.bold(s.name)}${status}`);
-      console.log(`  ${chalk.dim(s.description)}`);
-    }
-  }
-
-  console.log();
-  info(`Install packs: ${chalk.dim('dreamcontext install-skill --packs')}`);
-  info(`Install one:   ${chalk.dim('dreamcontext install-skill --skill <name>')}`);
-  console.log();
-}
-
-// ─── Summary Output ─────────────────────────────────────────────────────────
-
-function printInstallSummary(installed: string[], warnings: string[]): void {
-  console.log();
-  console.log(miniBox([
-    chalk.green.bold(`✓ ${installed.length} files installed`),
-    '',
-    ...installed.map((f) => `  ${chalk.green('✓')} ${chalk.magentaBright(f)}`),
-    ...(warnings.length > 0
-      ? ['', ...warnings.map((w) => `  ${chalk.yellow('⚠')} ${w}`)]
-      : []),
-  ], { color: 'green' }));
-  console.log();
 }
 
 /**
@@ -929,6 +521,45 @@ export function pruneRetiredCoreAgents(projectRoot: string, manifest?: Manifest)
   return notes;
 }
 
+/**
+ * An agent that shipped in an optional pack until 2026-11-11 and ships from `agents/` since
+ * (reviewer, review-*, goal-*, council-*) now lands in every project, including ones that never
+ * installed the pack and may hold their own file by that name. Written over only when it is ours:
+ * the manifest on disk records it (`agent`, or `pack-agent` from the pack), or its bytes are a
+ * version we shipped (a project with no manifest: a fresh clone, a second Mac). Anything else is
+ * someone's own agent: left as it is, untracked, with one note. Returns that note, or null to write.
+ */
+export function adoptedAgentRefusal(projectRoot: string, file: string, recorded: Manifest | null): string | null {
+  const shipped = ADOPTED_AGENT_SHAS[file];
+  if (!shipped) return null;
+  const rel = `.claude/agents/${file}`;
+  const abs = join(projectRoot, rel);
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    return null; // not there: install it
+  }
+  if (st.isSymbolicLink() || !st.isFile()) return `Left ${rel} alone: it is a symlink, never written through.`;
+  const entry = recorded?.files[rel];
+  if (entry && entry.version !== PRE_MANIFEST_VERSION && entry.kind === 'pack-agent' && entry.baselineSha) {
+    // A pack copy the user edited stays theirs, as the pack refresh always kept it.
+    try {
+      if (isCustomizedAgent(readFileSync(abs, 'utf-8'), entry.baselineSha)) return `Kept your edited ${rel}; dreamcontext's copy is not written over it.`;
+    } catch {
+      return `Left ${rel} alone: it could not be read.`;
+    }
+    return null;
+  }
+  if (entry && entry.version !== PRE_MANIFEST_VERSION && (entry.kind === 'agent' || entry.kind === 'pack-agent')) return null;
+  try {
+    if (shipped.includes(guardedFileSha(readFileSync(abs)))) return null;
+  } catch {
+    return `Left ${rel} alone: it could not be read.`;
+  }
+  return `Left ${rel} alone: dreamcontext did not write it, and it now ships an agent by that name. Rename yours to get dreamcontext's.`;
+}
+
 export async function installCoreForPlatform(
   platform: PlatformId,
   projectRoot: string,
@@ -945,7 +576,7 @@ export async function installCoreForPlatform(
   // The foundational core skills below are each "non-fatal if absent", but `update` treats whatever
   // this install did not record as retired and prunes it. A package missing one of these folders
   // would therefore delete the project's copy, so a partial package fails here instead.
-  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', DESIGN_SKILL_SOURCE, DRAW_SKILL_SOURCE]
+  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', ...GUARDED_SKILLS.map((g) => g.source)]
     .filter((dir) => !findPackageFile(dir, 'SKILL.md'));
   if (missingCore.length > 0) {
     throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
@@ -1073,17 +704,16 @@ export async function installCoreForPlatform(
     }
   }
 
-  // The guarded core skills: `design` (universal UI rules, an optional pack until 2026-11-04) and
-  // `draw` (Excalidraw files and whiteboards, the excalidraw pack until 2026-11-08). Unlike the
+  // The guarded core skills: `design` (universal UI rules, an optional pack until 2026-11-04),
+  // `draw` (Excalidraw files and whiteboards, the excalidraw pack until 2026-11-08), and `council`,
+  // `multi-review`, `goal-skill`, `video-watching` (optional packs until 2026-11-11). Unlike the
   // copies above they honour edits: a file changed since we wrote it is kept and reported, never
-  // overwritten (see core-guarded-skill.ts). Shipped from `skill-design/` and `skill-draw/`.
-  for (const [name, sourceDirName, install] of [
-    [DESIGN_SKILL, DESIGN_SKILL_SOURCE, installDesignSkill],
-    [DRAW_SKILL, DRAW_SKILL_SOURCE, installDrawSkill],
-  ] as const) {
-    const skillMd = findPackageFile(sourceDirName, 'SKILL.md');
+  // overwritten (see core-guarded-skill.ts). Shipped from `skill-<name>/`.
+  for (const spec of GUARDED_SKILLS) {
+    const { name } = spec;
+    const skillMd = findPackageFile(spec.source, 'SKILL.md');
     if (!skillMd) continue;
-    const res = install(dirname(skillMd), projectRoot, skillRootRel, readManifest(projectRoot));
+    const res = installGuardedSpec(spec, dirname(skillMd), projectRoot, skillRootRel, readManifest(projectRoot));
     if (name === DRAW_SKILL) drawInstall = { skillRootRel, result: res };
     for (const w of res.written) recordIfManifest(manifest, w.rel, 'core', { baselineSha: w.baselineSha });
     for (const k of res.kept) {
@@ -1176,8 +806,17 @@ export async function installCoreForPlatform(
   // reads "in the old manifest, not in this install" as "retired" and DELETES the project's
   // core agents (reproduced with the desktop app's resources layout, which shipped no `agents/`).
   const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
+  const recordedAgents = readManifest(projectRoot);
   for (const file of agentFiles) {
     const source = join(agentsSourceDir, file);
+    const refusal = adoptedAgentRefusal(projectRoot, file, recordedAgents);
+    if (refusal) {
+      notes.push(chalk.dim(refusal));
+      // A file we recorded stays tracked as it was, so no later prune reads it as ours to remove.
+      const kept = recordedAgents?.files[`.claude/agents/${file}`];
+      if (manifest && kept) manifest.files[`.claude/agents/${file}`] = kept;
+      continue;
+    }
     const agent = installAgentForPlatform(platform, projectRoot, source);
     recordIfManifest(manifest, agent.relPath, 'agent', { baselineSha: agent.baselineSha });
     installed.push(platformPrefixed(platform, agent.relPath));
@@ -1273,43 +912,25 @@ export function printDeprecationHint(commandName: string): void {
 export function registerInstallSkillCommand(program: Command): void {
   program
     .command('install-skill')
-    .description('Install dreamcontext skill, agents, and optional packs for selected platforms')
+    .description('Install the dreamcontext skills, agents and hooks for selected platforms')
     .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
-    .option('--packs [names...]', 'Install optional skill packs (interactive if no names given)')
-    .option('--skill <name>', 'Install a specific sub-skill by name')
-    .option('--list', 'List all available skill packs')
+    // Skill packs are gone (2026-11-11): every skill dreamcontext ships is installed with the core.
+    // The old flags still parse, so a script that passes them hears why instead of "unknown option".
+    .addOption(new Option('--packs [names...]').hideHelp())
+    .addOption(new Option('--skill <name>').hideHelp())
+    .addOption(new Option('--list').hideHelp())
     .action(async (opts: { platforms?: string; packs?: boolean | string[]; skill?: string; list?: boolean }) => {
       try {
         const projectRoot = process.cwd();
+        if (opts.packs !== undefined || opts.skill || opts.list) {
+          error(
+            'Skill packs no longer exist: every skill dreamcontext ships (council, multi-review, goal-skill, video-watching, design, draw, …) is installed with the core.',
+            'Run `dreamcontext install-skill` (or `dreamcontext update` in an installed project).',
+          );
+          process.exitCode = 1;
+          return;
+        }
         const platforms = await resolvePlatforms(projectRoot, opts.platforms);
-
-        // --list: show available packs
-        if (opts.list) {
-          listAvailablePacks(projectRoot, platforms);
-          return;
-        }
-
-        // --skill: install a single sub-skill
-        if (opts.skill) {
-          installSingleSkill(opts.skill, projectRoot, platforms);
-          printDeprecationHint('install-skill');
-          return;
-        }
-
-        // --packs: install optional skill packs
-        if (opts.packs !== undefined) {
-          const manifest = getOrCreateManifest(projectRoot);
-          for (const p of platforms) recordPlatform(manifest, p);
-          if (Array.isArray(opts.packs)) {
-            directPackInstall(opts.packs, projectRoot, platforms, manifest);
-            writeManifest(projectRoot, manifest);
-            updateSetupConfig(projectRoot, { platforms, packs: Array.from(new Set([...(opts.packs ?? [])])) });
-          } else {
-            await interactivePackInstall(projectRoot, platforms, manifest);
-          }
-          printDeprecationHint('install-skill');
-          return;
-        }
 
         // Default: install core dreamcontext skill + agents + hooks for selected platforms
         const manifest = getOrCreateManifest(projectRoot);
@@ -1343,14 +964,6 @@ export function registerInstallSkillCommand(program: Command): void {
         ], { color: 'green' }));
         console.log();
         info(`Platforms active for this install: ${chalk.dim(platforms.join(', '))}`);
-
-        // Hint about optional packs
-        const loaded = loadCatalog();
-        if (loaded) {
-          const packCount = loaded.catalog.packs.length + loaded.catalog.standalone.length;
-          console.log();
-          info(`${packCount} optional skill packs available. Run: ${chalk.dim('dreamcontext install-skill --packs')}`);
-        }
 
         printDeprecationHint('install-skill');
       } catch (err: any) {

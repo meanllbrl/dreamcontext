@@ -121,5 +121,4 @@ export const CLI_COPY = {
 export const INITIALIZER_KICKOFF_PROMPT =
   "Use the initializer skill to set up this project's brain from what is already here: the code and any " +
   'documents in this folder. If the folder is empty, ask me what the project is about first. Ask only ' +
-  'what you cannot find out yourself, then recommend the skill packs that fit and install the ones I pick. ' +
-  'No placeholders.';
+  'what you cannot find out yourself. No placeholders.';

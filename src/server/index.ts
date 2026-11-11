@@ -282,8 +282,6 @@ import { handleContextHandoffDefaultGet } from './routes/agent-handoff-default.j
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
-import { handlePacksGet } from './routes/packs.js';
-import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
 import { handleRecallGet, handleRecallPromptPost, handleRecallHaikuGet } from './routes/recall.js';
@@ -907,11 +905,6 @@ export function buildRouter(): Router {
   // Federation inbox (read-only) + sync PREVIEW (dry-run by construction, P3.8).
   router.get('/api/federation/inbox', handleFederationInboxGet);
   router.post('/api/federation/sync', handleFederationSyncPost);
-
-  // Packs
-  router.get('/api/packs', handlePacksGet);
-  router.post('/api/packs/:name/install', handlePackInstall);
-  router.delete('/api/packs/:name', handlePackUninstall);
 
   // Brain (graph) UI settings — persisted per-project so they survive the
   // desktop app's per-launch loopback port change (which wipes localStorage).

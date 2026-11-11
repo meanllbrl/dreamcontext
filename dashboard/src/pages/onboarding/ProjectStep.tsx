@@ -46,7 +46,7 @@ interface PickedFolder {
 /**
  * The Project step: three cards, then ONE details screen with name and location only. No quiz
  * and no skill-pack picker: the initializer chat "Start with Claude" opens asks what it cannot
- * detect and recommends the packs that fit. A GitHub description and a detected stack still
+ * detect. A GitHub description and a detected stack still
  * ride along silently, so the scaffold's `init` starts from them.
  */
 export function ProjectStep({ report, onBusyChange, title, subtitle, onCreated, onOpenExisting }: Props) {

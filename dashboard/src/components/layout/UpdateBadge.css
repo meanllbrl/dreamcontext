@@ -105,7 +105,7 @@
   overflow-y: auto;
 }
 
-/* Actionable CTA — opens the Packs page, where install/remove buttons live. */
+/* Actionable CTA — starts the upgrade. */
 .update-badge-action {
   display: block;
   width: calc(100% - var(--space-4) * 2);
@@ -134,19 +134,6 @@
   cursor: default;
   filter: none;
   transform: none;
-}
-
-/* Secondary action (e.g. "Manage packs →") — quieter than the primary CTA. */
-.update-badge-action--secondary {
-  margin-top: 0;
-  background: transparent;
-  color: var(--color-accent);
-  border: 1px solid var(--color-border);
-}
-
-.update-badge-action--secondary:hover {
-  background: var(--color-bg-tertiary);
-  filter: none;
 }
 
 /* Faster pulse while an upgrade is actively running. */

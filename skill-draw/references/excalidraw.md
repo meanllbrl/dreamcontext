@@ -524,7 +524,7 @@ Each build prints `overlaps=N buriedText=N longLines=N wallOfText=N` — a clean
 
 **Then LOOK at the board.** A clean audit is necessary, not sufficient: it cannot see a mis-scaled
 axis, a sentence torn across a gap, or a layout that is simply ugly. Render it to a PNG and read
-the PNG. The renderer ships with dreamcontext (the CLI this skill pack comes with); it draws
+the PNG. The renderer ships with dreamcontext (the CLI this skill comes with); it draws
 in-process, with no browser and no network:
 ```bash
 dreamcontext whiteboard render --file <board.excalidraw.md> --out /tmp/out.png                # whole board

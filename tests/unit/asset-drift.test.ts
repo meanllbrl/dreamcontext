@@ -1,6 +1,6 @@
 /**
  * Tests for computeUsedAssetsChanged (src/cli/commands/asset-drift.ts) against a
- * real temp project + the repo's real skill-packs catalog. Verifies the content
+ * real temp project + the repo's real core skills. Verifies the content
  * check that scopes the SessionStart drift nag:
  *   - disk matches what the CLI would install  → false (no nag-worthy change)
  *   - an installed asset was modified on disk   → true
@@ -13,8 +13,7 @@ import { mkdirSync, rmSync, appendFileSync, realpathSync, existsSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { computeUsedAssetsChanged } from '../../src/cli/commands/asset-drift.js';
-import { installCoreForPlatform, directPackInstall } from '../../src/cli/commands/install-skill.js';
-import { emptyManifest } from '../../src/lib/manifest.js';
+import { installCoreForPlatform } from '../../src/cli/commands/install-skill.js';
 import type { SetupConfig } from '../../src/lib/setup-config.js';
 
 function makeTmpDir(): string {
@@ -23,8 +22,8 @@ function makeTmpDir(): string {
   return realpathSync(raw);
 }
 
-// computeUsedAssetsChanged only reads platforms + packs.
-const CONFIG = { platforms: ['claude'], packs: ['growth'] } as unknown as SetupConfig;
+// computeUsedAssetsChanged only reads platforms.
+const CONFIG = { platforms: ['claude'] } as unknown as SetupConfig;
 
 let projectRoot: string;
 
@@ -35,7 +34,6 @@ beforeEach(async () => {
   projectRoot = makeTmpDir();
   // Install exactly the canonical asset set this project "uses".
   await installCoreForPlatform('claude', projectRoot);
-  directPackInstall(['growth'], projectRoot, ['claude'], emptyManifest());
 });
 
 afterEach(() => {
@@ -49,22 +47,23 @@ describe('computeUsedAssetsChanged', () => {
   });
 
   it('is true when an installed asset was modified on disk', async () => {
-    const skill = join(projectRoot, '.claude', 'skills', 'growth', 'SKILL.md');
+    const skill = join(projectRoot, '.claude', 'skills', 'council', 'SKILL.md');
     expect(existsSync(skill)).toBe(true);
     appendFileSync(skill, '\n<!-- local drift -->\n', 'utf-8');
     await expect(computeUsedAssetsChanged(projectRoot, CONFIG)).resolves.toBe(true);
   });
 
   it('is true when an installed asset is missing on disk', async () => {
-    const skill = join(projectRoot, '.claude', 'skills', 'growth', 'SKILL.md');
+    const skill = join(projectRoot, '.claude', 'skills', 'council', 'SKILL.md');
     rmSync(skill, { force: true });
     await expect(computeUsedAssetsChanged(projectRoot, CONFIG)).resolves.toBe(true);
   });
 
   it('ignores an unused/extra skill the project has but does not install', async () => {
-    // An extra pack on disk that is NOT in config.packs must not flip the verdict —
-    // that is the whole point: unused additional skills never trigger the nag.
-    directPackInstall(['growth'], projectRoot, ['claude'], emptyManifest());
+    // An extra skill on disk that dreamcontext does not ship must not flip the verdict:
+    // that is the whole point, unused additional skills never trigger the nag.
+    mkdirSync(join(projectRoot, '.claude', 'skills', 'growth'), { recursive: true });
+    appendFileSync(join(projectRoot, '.claude', 'skills', 'growth', 'SKILL.md'), '# growth\n', 'utf-8');
     await expect(computeUsedAssetsChanged(projectRoot, CONFIG)).resolves.toBe(false);
   });
 });

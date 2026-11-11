@@ -1,6 +1,6 @@
 /**
  * Tests for the video-watching engine's frame indexer
- * (skill-packs/video-watching/scripts/build_frame_index.py).
+ * (skill-video-watching/scripts/build_frame_index.py).
  *
  * Context: issue #15 — the engine was under-sampling UI/onboarding recordings. The
  * fix moved frame selection into one time-based ffmpeg pass and made build_frame_index
@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 
 const SCRIPT = resolve(
   __dirname,
-  '../../skill-packs/video-watching/scripts/build_frame_index.py',
+  '../../skill-video-watching/scripts/build_frame_index.py',
 );
 
 interface FrameRow {

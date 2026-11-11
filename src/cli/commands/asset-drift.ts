@@ -2,13 +2,12 @@
  * Used-asset drift computation.
  *
  * Answers ONE question: would `dreamcontext update` add or modify a file that
- * THIS project actually uses (its core skill/agents for the installed platforms,
- * plus its installed packs)? If not, the SessionStart "stale assets" nag is a
+ * THIS project actually uses (its core skills and agents for the installed platforms)? If not, the SessionStart "stale assets" nag is a
  * false positive and should stay silent even though the CLI version bumped.
  *
  * Method: install the current CLI's canonical assets for the project's exact
- * platform+pack set into a throwaway temp dir using the REAL installers (zero
- * duplication of the intricate pack→disk mapping), then byte-compare each
+ * platform set into a throwaway temp dir using the REAL installers (zero
+ * duplication of the install mapping), then byte-compare each
  * produced file against the project's on-disk copy. Hooks (`settings.json`) are
  * excluded — they're additively merged, never byte-identical.
  *
@@ -25,10 +24,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import type { SetupConfig } from '../../lib/setup-config.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
-import { dreamcontextVersion, emptyManifest } from '../../lib/manifest.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
 import { resolveDriftState } from '../../lib/setup-drift.js';
 import { writeAssetDriftCache } from '../../lib/asset-drift-cache.js';
-import { installCoreForPlatform, directPackInstall } from './install-skill.js';
+import { installCoreForPlatform } from './install-skill.js';
 
 /** Collect every file under `dir` as a path relative to `base`. */
 function walkFiles(dir: string, base: string, out: string[]): void {
@@ -41,7 +40,7 @@ function walkFiles(dir: string, base: string, out: string[]): void {
 
 /**
  * True iff updating this project would add or change a file it uses. Throws on
- * failure (catalog missing, install error) — the caller decides the fail
+ * failure (package missing, install error) — the caller decides the fail
  * direction (callers fail open: show the nag when this can't be proven clean).
  */
 export async function computeUsedAssetsChanged(
@@ -52,11 +51,6 @@ export async function computeUsedAssetsChanged(
   try {
     for (const platform of config.platforms) {
       await installCoreForPlatform(platform, tmp);
-    }
-    if (config.packs.length > 0) {
-      // Pass a throwaway manifest so the installer never persists
-      // `_dream_context/state/.install-manifest.json` into the temp tree.
-      directPackInstall(config.packs, tmp, config.platforms, emptyManifest());
     }
 
     const produced: string[] = [];

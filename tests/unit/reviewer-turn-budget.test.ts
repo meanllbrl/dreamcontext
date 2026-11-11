@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEVELOP_RECIPE, FAN_OUT_RECIPE } from '../../src/lib/develop-recipe.js';
 
-const AGENTS = path.resolve(__dirname, '../../skill-packs/agents');
+const AGENTS = path.resolve(__dirname, '../../agents');
 const read = (f: string) => fs.readFileSync(path.join(AGENTS, `${f}.md`), 'utf8');
 const hasMaxTurns = (f: string) => /^maxTurns:/m.test(read(f));
 
@@ -41,7 +41,7 @@ describe('reviewers have no turn limit', () => {
   });
 
   it('the shared rubric defines PARTIAL as a re-run, not a PASS', () => {
-    const shared = fs.readFileSync(path.resolve(__dirname, '../../skill-packs/multi-review/REVIEWER_SHARED.md'), 'utf8');
+    const shared = fs.readFileSync(path.resolve(__dirname, '../../skill-multi-review/REVIEWER_SHARED.md'), 'utf8');
     expect(shared).toContain('PASS | CONCERNS | FAIL | PARTIAL');
     expect(shared).toMatch(/PARTIAL` is never read as `PASS`/);
   });

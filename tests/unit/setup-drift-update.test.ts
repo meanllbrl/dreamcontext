@@ -21,7 +21,6 @@ describe("setup-drift-update unit", () => {
     const summary = buildUpdateSummary({
       platforms: ['claude'],
       installedCount: 5,
-      packs: ['engineering', 'firebase'],
       removed: ['old-hook.md', 'stale-agent.md'],
       setupVersion: '0.7.1',
     });
@@ -29,18 +28,15 @@ describe("setup-drift-update unit", () => {
     expect(summary).toContain('## Update Summary');
     expect(summary).toContain('claude');
     expect(summary).toContain('5');
-    expect(summary).toContain('engineering');
-    expect(summary).toContain('firebase');
     expect(summary).toContain('old-hook.md');
     expect(summary).toContain('stale-agent.md');
     expect(summary).toContain('0.7.1');
   });
 
-  it("buildUpdateSummary handles empty packs and no removed files", () => {
+  it("buildUpdateSummary handles no removed files", () => {
     const summary = buildUpdateSummary({
       platforms: ['claude'],
       installedCount: 3,
-      packs: [],
       removed: [],
       setupVersion: '0.7.1',
     });
@@ -56,7 +52,6 @@ describe("setup-drift-update unit", () => {
     const summary = buildUpdateSummary({
       platforms: ['claude'],
       installedCount: 2,
-      packs: [],
       removed: [],
       setupVersion: null,
     });
@@ -138,7 +133,7 @@ describe("setup-drift-update integration", () => {
 
     run('update --packs-only --yes', tmp);
 
-    // setupVersion must remain '0.0.1' — packs-only does not refresh core
+    // setupVersion must remain '0.0.1': packs-only (a no-op since packs are gone) refreshes nothing
     const afterConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
     expect(afterConfig.setupVersion).toBe('0.0.1');
   });

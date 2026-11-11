@@ -331,14 +331,14 @@ export function judgeSuiteRun(i: JudgeInput): Judgement {
 
 /**
  * Paths whose change cannot make the build stale, deny by default: tests, the root brain, and
- * Markdown, except where the build copies or bundles it into dist (agents, skill packs, skill-draw,
+ * Markdown, except where the build copies or bundles it into dist (agents, skill-draw,
  * hooks, src, dashboard: tsup.config.ts). check-receipt's harmlessFor reads it for build receipts
  * (one list, no copy).
  */
 export const SUITE_DIST_ALLOW: readonly RegExp[] = [
   /^tests\//,
   /^_(?:dream|agent)_context\//,
-  /^(?!(?:agents|skill-packs|skill-draw|hooks|src|dashboard)\/).*\.md$/i,
+  /^(?!(?:agents|skill-draw|hooks|src|dashboard)\/).*\.md$/i,
 ];
 
 export const distAllowed = (path: string): boolean => SUITE_DIST_ALLOW.some((re) => re.test(path));

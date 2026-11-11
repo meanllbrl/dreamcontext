@@ -28,7 +28,6 @@
     ],
     "resources": {
       "../../dist": "dist",
-      "../../skill-packs": "skill-packs",
       "../../skill": "skill",
       "../../agents": "agents",
       "../../assets": "assets",
@@ -41,6 +40,10 @@
       "../../skill-apps": "skill-apps",
       "../../skill-design": "skill-design",
       "../../skill-draw": "skill-draw",
+      "../../skill-council": "skill-council",
+      "../../skill-multi-review": "skill-multi-review",
+      "../../skill-goal-skill": "skill-goal-skill",
+      "../../skill-video-watching": "skill-video-watching",
       "sleepy": "sleepy"
     },
     "macOS": {

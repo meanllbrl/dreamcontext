@@ -1513,116 +1513,26 @@ parent_task: null
     });
   });
 
-  describe('install-skill --packs', () => {
-    it('installs a specific pack by name', () => {
-      const output = run('install-skill --packs growth', tmpDir);
-      expect(output).toContain('growth');
-      expect(output).toContain('files installed');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'performance-marketing.md'))).toBe(true);
-    });
+  describe('install-skill: skill packs are gone', () => {
+    for (const flags of ['--packs growth', '--packs', '--skill performance-marketing', '--list']) {
+      it(`answers the retired ${flags} flag with where the skills went, installing nothing`, () => {
+        const output = run(`install-skill ${flags}`, tmpDir);
+        expect(output).toContain('Skill packs no longer exist');
+        expect(output).not.toContain('unknown option');
+        expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth'))).toBe(false);
+      });
+    }
 
-    it('installs related agents alongside pack', () => {
-      run('install-skill --packs goal-skill', tmpDir);
+    it('installs the built-in council, multi-review, goal-skill and video-watching skills with the core', () => {
+      run('install-skill --platforms claude', tmpDir);
+      for (const name of ['council', 'multi-review', 'goal-skill', 'video-watching']) {
+        expect(existsSync(join(tmpDir, '.claude', 'skills', name, 'SKILL.md'))).toBe(true);
+      }
       expect(existsSync(join(tmpDir, '.claude', 'agents', 'reviewer.md'))).toBe(true);
       expect(existsSync(join(tmpDir, '.claude', 'agents', 'goal-implementer.md'))).toBe(true);
-    });
-
-    it('the retired engineering pack is not offered', () => {
-      const output = run('install-skill --packs engineering', tmpDir);
-      expect(output).toContain('not found');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering'))).toBe(false);
-    });
-
-    it('installs brand-voice pack with discover-brand agent', () => {
-      const output = run('install-skill --packs brand-voice', tmpDir);
-      expect(output).toContain('brand-voice');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'brand-voice', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'brand-voice', 'discover-brand.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'agents', 'discover-brand.md'))).toBe(true);
-      // Generic agents removed — only discover-brand is a real sub-agent
-      expect(existsSync(join(tmpDir, '.claude', 'agents', 'quality-assurance.md'))).toBe(false);
-      expect(existsSync(join(tmpDir, '.claude', 'agents', 'document-analysis.md'))).toBe(false);
-    });
-
-    it('installs multiple packs at once', () => {
-      const output = run('install-skill --packs council growth', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'council', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
-      expect(output).toContain('files installed');
-    });
-
-    it('installs a standalone skill pack', () => {
-      run('install-skill --packs system-prompts', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'system-prompts', 'SKILL.md'))).toBe(true);
-    });
-
-    it('answers a request for the old design pack with where it went', () => {
-      const output = run('install-skill --packs design', tmpDir);
-      expect(output).toContain('core skill now');
-      expect(output).not.toContain('not found');
-    });
-
-    it('warns about cross-pack dependencies', () => {
-      const output = run('install-skill --packs goal-skill', tmpDir);
-      expect(output).toContain('recommends');
-      expect(output).toContain('multi-review');
-    });
-
-    it('suppresses cross-pack warning when dep is also selected', () => {
-      const output = run('install-skill --packs goal-skill multi-review', tmpDir);
-      expect(output).not.toContain('recommends');
-    });
-
-    it('errors on unknown pack name', () => {
-      const output = run('install-skill --packs nonexistent', tmpDir);
-      expect(output).toContain('not found');
-      expect(output).toContain('Available');
-    });
-  });
-
-  describe('install-skill --skill', () => {
-    it('installs a single sub-skill', () => {
-      const output = run('install-skill --skill performance-marketing', tmpDir);
-      expect(output).toContain('performance-marketing');
-      expect(output).toContain('growth');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'performance-marketing.md'))).toBe(true);
-    });
-
-    it('warns when base pack is not installed', () => {
-      const output = run('install-skill --skill performance-marketing', tmpDir);
-      expect(output).toContain('Base');
-      expect(output).toContain('growth');
-      expect(output).toContain('not installed');
-    });
-
-    it('does not warn when base pack is already installed', () => {
-      run('install-skill --packs growth', tmpDir);
-      const output = run('install-skill --skill performance-marketing', tmpDir);
-      expect(output).not.toContain('not installed');
-    });
-
-    it('errors on unknown skill name', () => {
-      const output = run('install-skill --skill nonexistent-skill', tmpDir);
-      expect(output).toContain('not found');
-      expect(output).toContain('Available skills');
-    });
-  });
-
-  describe('install-skill --list', () => {
-    it('shows all available packs and skills', () => {
-      const output = run('install-skill --list', tmpDir);
-      expect(output).toContain('multi-review');
-      expect(output).toContain('growth');
-      expect(output).toContain('brand-voice');
-      expect(output).toContain('system-prompts');
-      expect(output).toContain('performance-marketing');
-    });
-
-    it('shows installed status for installed packs', () => {
-      run('install-skill --packs growth', tmpDir);
-      const output = run('install-skill --list', tmpDir);
-      expect(output).toContain('installed');
+      for (const name of ['growth', 'brand-voice', 'system-prompts', 'meta-marketing']) {
+        expect(existsSync(join(tmpDir, '.claude', 'skills', name))).toBe(false);
+      }
     });
   });
 });

@@ -17,8 +17,8 @@ const flat = (s: string): string => s.replace(/\s+/g, ' ');
 
 describe('a wave is a level of the dependency graph', () => {
   it.each([
-    ['skill-packs/goal-skill/SKILL.md', read('skill-packs/goal-skill/SKILL.md')],
-    ['skill-packs/agents/goal-planner.md', read('skill-packs/agents/goal-planner.md')],
+    ['skill-goal-skill/SKILL.md', read('skill-goal-skill/SKILL.md')],
+    ['agents/goal-planner.md', read('agents/goal-planner.md')],
     ['planner brief', PLANNER_BRIEF],
     ['develop recipe', DEVELOP_RECIPE],
   ])('%s: a wave names what it waits for, and contract names count against the wave that pins them', (_name, text) => {
@@ -29,13 +29,13 @@ describe('a wave is a level of the dependency graph', () => {
   });
 
   it('the planner and goal-skill run one level at once, then merge', () => {
-    expect(flat(read('skill-packs/goal-skill/SKILL.md'))).toContain('Waves of one level run at the same time in separate sessions, and one merge-and-test step follows each level.');
-    expect(flat(read('skill-packs/agents/goal-planner.md'))).toContain('built at the same time in separate sessions, then one merge-and-test step');
+    expect(flat(read('skill-goal-skill/SKILL.md'))).toContain('Waves of one level run at the same time in separate sessions, and one merge-and-test step follows each level.');
+    expect(flat(read('agents/goal-planner.md'))).toContain('built at the same time in separate sessions, then one merge-and-test step');
   });
 
   it('a chain the dependencies do not force is a Major map finding', () => {
-    expect(flat(read('skill-packs/goal-skill/SKILL.md'))).toContain('A chain the dependencies do not force is a Major `map` finding');
-    const reviewer = flat(read('skill-packs/agents/goal-plan-reviewer.md'));
+    expect(flat(read('skill-goal-skill/SKILL.md'))).toContain('A chain the dependencies do not force is a Major `map` finding');
+    const reviewer = flat(read('agents/goal-plan-reviewer.md'));
     expect(reviewer).toContain('And is every chain forced?');
     expect(reviewer).toContain('is a Major `kind: map` finding');
     expect(reviewer).toContain('The pragmatist lists the same as a proposal');

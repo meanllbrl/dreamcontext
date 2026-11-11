@@ -300,7 +300,7 @@ describe('safety and the plan loop', () => {
   });
 
   it('CODE_REVIEW_RULES is mirrored verbatim in the reviewer agent', () => {
-    const agent = readFileSync(join(__dirname, '..', '..', 'skill-packs', 'agents', 'reviewer.md'), 'utf-8');
+    const agent = readFileSync(join(__dirname, '..', '..', 'agents', 'reviewer.md'), 'utf-8');
     expect(agent).toContain(CODE_REVIEW_RULES);
   });
 });

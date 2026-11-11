@@ -1,7 +1,7 @@
 /**
  * mk council "<topic>" — wrapper that creates a `dreamcontext council` debate
  * pre-populated with the 4 marketing personas bundled at
- * `skill-packs/meta-marketing/council-personas/*.md`.
+ * `assets/marketing-council-personas/*.md`.
  *
  * Per architect MUST-CHANGE 6: personas live as DATA FILES; this is NOT a
  * `--preset` flag on the upstream `dreamcontext council` command.
@@ -100,7 +100,7 @@ export function registerMarketingCouncil(parent: Command): void {
       // 1. Locate + load personas.
       const personasDir = findPersonasDir();
       if (!personasDir) {
-        error('Marketing council personas not found.', 'Try reinstalling dreamcontext (skill-packs missing from dist).');
+        error('Marketing council personas not found.', 'Try reinstalling dreamcontext (assets/marketing-council-personas missing from the package).');
         process.exit(1);
       }
       let all: MarketingPersona[];

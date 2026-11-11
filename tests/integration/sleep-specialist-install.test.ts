@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installAgentForPlatform, applySleepSpecialistOverrides } from '../../src/lib/install-packs.js';
+import { installAgentForPlatform, applySleepSpecialistOverrides } from '../../src/lib/install-agents.js';
 import { emptyManifest, recordFile, writeManifest, readManifest } from '../../src/lib/manifest.js';
 import { updateSetupConfig } from '../../src/lib/setup-config.js';
 import { agentBaselineSha, readSpecialistFrontmatter } from '../../src/lib/sleep-specialist-frontmatter.js';

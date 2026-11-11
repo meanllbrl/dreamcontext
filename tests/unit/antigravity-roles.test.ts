@@ -56,10 +56,10 @@ describe('syncAntigravityRoles', () => {
     const r = syncAntigravityRoles('primary', { home, packageDir: repo });
     expect(r.ok).toBe(true);
     const names = r.ok ? r.names : [];
-    // The core roles and the skill packs' (goal, review, council) are all there.
+    // The core roles, goal, review and council included, are all there.
     for (const n of ['sleep-state', 'curator-worker', 'initializer-scout', 'dreamcontext-explore', 'goal-planner', 'goal-implementer', 'review-router', 'council-persona', 'reviewer']) expect(names).toContain(n);
     expect(names).not.toContain('self');
-    const shipped = [...readdirSync(join(ROOT, 'agents')), ...readdirSync(join(ROOT, 'skill-packs', 'agents'))].filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
+    const shipped = readdirSync(join(ROOT, 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
     expect(new Set(names)).toEqual(new Set(shipped));
     expect(readFileSync(join(agentsDir(), 'reviewer.md'), 'utf-8')).toContain('The owner reviewer.');
     const manifest = JSON.parse(readFileSync(join(agentsDir(), '..', 'plugin.json'), 'utf-8')) as Record<string, unknown>;

@@ -11,7 +11,7 @@
  *
  *   CODE_REVIEW_RULES     what every code reviewer is told, every round, by
  *                         `dreamcontext builder review packet`. Mirrored verbatim into
- *                         skill-packs/agents/reviewer.md (tests/unit/code-review-loop.test.ts
+ *                         agents/reviewer.md (tests/unit/code-review-loop.test.ts
  *                         holds them equal), so a reviewer dispatched without a packet still
  *                         writes the format the ledger parses.
  *   CODE_REVISION_RECIPE  what the lead is told before a fix: fix the class, every sibling

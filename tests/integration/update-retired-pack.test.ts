@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
  */
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
-const PACKAGE_REVIEWER = join(__dirname, '..', '..', 'skill-packs', 'agents', 'reviewer.md');
+const PACKAGE_REVIEWER = join(__dirname, '..', '..', 'agents', 'reviewer.md');
 const MANIFEST = '_dream_context/state/.install-manifest.json';
 
 function run(args: string[], cwd: string, home: string): string {

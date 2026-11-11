@@ -8,6 +8,11 @@ const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
 export interface SetupConfig {
   platforms: PlatformId[];
+  /**
+   * @deprecated Skill packs are gone (2026-11-11): every skill dreamcontext ships is core.
+   * Nothing reads this any more; it is preserved verbatim so a rewrite never drops what an
+   * older release recorded.
+   */
   packs: string[];
   multiProduct: false | string[];
   /**
@@ -656,7 +661,7 @@ export function writeSetupConfig(projectRoot: string, config: SetupConfig): void
 
 /**
  * Merge new values into existing config (or create new). Returns final config.
- * `undefined` fields are left untouched. To clear packs pass [].
+ * `undefined` fields are left untouched.
  */
 export function updateSetupConfig(
   projectRoot: string,

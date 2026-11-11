@@ -1,11 +1,22 @@
 import { createHash } from 'node:crypto';
 import { existsSync, linkSync, lstatSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { installAgentForPlatform } from './install-packs.js';
+import { installAgentForPlatform } from './install-agents.js';
 import { agentBaselineSha, isCustomizedAgent } from './sleep-specialist-frontmatter.js';
 import { dreamcontextVersion, recordFile, PRE_MANIFEST_VERSION, type Manifest } from './manifest.js';
 import { guardedFileSha, linkedFolderOnPath, type GuardedInstallResult, type ShippedShas } from './core-guarded-skill.js';
 import { EXCALIDRAW_SHIPPED_SHAS } from './retired-packs/excalidraw.js';
+import {
+  BRAND_VOICE_SHIPPED_SHAS,
+  BUSINESS_IDEA_DISCOVERY_SHIPPED_SHAS,
+  BUSINESS_IDEA_VALIDATION_SHIPPED_SHAS,
+  GOAL_SKILL_OLD_ASSET_SHAS,
+  GROWTH_SHIPPED_SHAS,
+  JEV_VERIFY_SHIPPED_SHAS,
+  META_MARKETING_SHIPPED_SHAS,
+  STOPPED_AGENT_SHAS,
+  SYSTEM_PROMPTS_SHIPPED_SHAS,
+} from './retired-packs/stopped.js';
 
 /**
  * Skill packs dreamcontext once shipped and has retired.
@@ -146,14 +157,14 @@ const toPosix = (p: string): string => p.split(sep).join('/');
  *  - its pack record leaves both;
  *  - a kept agent is re-recorded in the NEW manifest.
  *
- * `packsDir` is the package's `skill-packs/` (null when the catalog could not be found:
- * agents are then left exactly as they are).
+ * `agentsDir` is the package's `agents/` (null when it could not be found: agents are then
+ * left exactly as they are).
  */
 export function pruneRetiredPacks(
   projectRoot: string,
   oldManifest: Manifest,
   newManifest: Manifest,
-  packsDir: string | null,
+  agentsDir: string | null,
   packs: readonly RetiredPack[] = RETIRED_PACKS,
 ): RetiredPackResult {
   const result: RetiredPackResult = { removed: [], kept: [], notes: [] };
@@ -248,7 +259,7 @@ export function pruneRetiredPacks(
     delete newManifest.packs[pack.name];
 
     for (const [agent, shippedShas] of Object.entries(pack.keepAgents)) {
-      keepAgent(projectRoot, pack.name, agent, shippedShas, hadPack, retiringNow, oldManifest, newManifest, packsDir, result);
+      keepAgent(projectRoot, pack.name, agent, shippedShas, hadPack, retiringNow, oldManifest, newManifest, agentsDir, result);
     }
   }
   return result;
@@ -273,7 +284,7 @@ function keepAgent(
   retiringNow: boolean,
   oldManifest: Manifest,
   newManifest: Manifest,
-  packsDir: string | null,
+  agentsDir: string | null,
   result: RetiredPackResult,
 ): void {
   const rel = `.claude/agents/${name}.md`;
@@ -297,7 +308,7 @@ function keepAgent(
   const edited = recorded?.kind === 'pack-agent' && !legacy
     ? isCustomizedAgent(installed, recorded.baselineSha)
     : !shippedShas.includes(agentBaselineSha(installed));
-  const source = packsDir ? join(packsDir, 'agents', `${name}.md`) : null;
+  const source = agentsDir ? join(agentsDir, `${name}.md`) : null;
   if (edited || !source || !existsSync(source)) {
     if (recorded) newManifest.files[rel] = recorded; // the user's edit, or no package copy: leave it, keep it tracked
     if (edited && retiringNow && new RegExp(`^\\s*-\\s*${packName}\\s*$`, 'm').test(installed)) {
@@ -612,4 +623,177 @@ function keepAsPreDraw(abs: string, link: (existing: string, newPath: string) =>
     }
   }
   return null;
+}
+
+// ─── Skills dreamcontext stopped shipping (2026-11-11) ──────────────────────────────────────
+
+/**
+ * Owner, 2026-11-11: "gerekli olanlar gömülsün, olmayanlar silinsin". The Packs page went; these
+ * skills, their agents and goal-skill's old top-level helpers are no longer in the package.
+ *
+ * Stricter than {@link pruneRetiredPacks}: a copy on a user's machine is deleted only when BOTH
+ *  1. the install manifest ON DISK says dreamcontext put it there (an entry of the expected kind
+ *     with a real version, never a pre-manifest guess the legacy bootstrap made), AND
+ *  2. it is unchanged: its bytes are a version we shipped at that path (an agent: still equal to
+ *     the baseline recorded at install).
+ * Anything else stays where it is, leaves the manifest (so the generic stale prune can never offer
+ * it), and is named once, on the run that stops tracking it. A project with no manifest (a fresh
+ * clone, a second Mac) proves nothing, so nothing there is touched or named. A symlink, or a
+ * symlinked folder on the way, is never followed.
+ */
+export interface StoppedSkill {
+  name: string;
+  shipped: ShippedShas;
+}
+
+export const STOPPED_ON = '2026-11-11' as const;
+
+export const STOPPED_SKILLS: readonly StoppedSkill[] = [
+  { name: 'growth', shipped: GROWTH_SHIPPED_SHAS },
+  { name: 'brand-voice', shipped: BRAND_VOICE_SHIPPED_SHAS },
+  { name: 'business-idea-discovery', shipped: BUSINESS_IDEA_DISCOVERY_SHIPPED_SHAS },
+  { name: 'business-idea-validation', shipped: BUSINESS_IDEA_VALIDATION_SHIPPED_SHAS },
+  { name: 'meta-marketing', shipped: META_MARKETING_SHIPPED_SHAS },
+  { name: 'system-prompts', shipped: SYSTEM_PROMPTS_SHIPPED_SHAS },
+  { name: 'jev-verify', shipped: JEV_VERIFY_SHIPPED_SHAS },
+];
+
+/** One candidate file: where it is, which manifest kind proves it is ours, which hashes prove it unchanged. */
+interface StoppedFile {
+  rel: string;
+  kind: 'pack-skill' | 'pack-agent' | 'pack-asset';
+  shipped: readonly string[];
+}
+
+/**
+ * Apply the stopped-skill rule during `update`, BEFORE the generic stale prune. `oldManifest` is the
+ * manifest read from disk (or the legacy bootstrap's guess), `newManifest` the one being built.
+ */
+export function pruneStoppedSkills(
+  projectRoot: string,
+  skillRootRel: string,
+  oldManifest: Manifest,
+  newManifest: Manifest,
+  skills: readonly StoppedSkill[] = STOPPED_SKILLS,
+  agents: ShippedShas = STOPPED_AGENT_SHAS,
+  assets: ShippedShas = GOAL_SKILL_OLD_ASSET_SHAS,
+): RetiredPackResult {
+  const result: RetiredPackResult = { removed: [], kept: [], notes: [] };
+  const rootSegs = skillRootRel.split('/').filter(Boolean);
+  const linkedRoot = linkedFolderOnPath(projectRoot, rootSegs);
+  const linkedAgents = linkedFolderOnPath(projectRoot, ['.claude', 'agents']);
+  const linkedClaude = linkedFolderOnPath(projectRoot, ['.claude']);
+
+  /** Decide one file. Returns 'removed' | 'kept' | 'stuck' | null (not on disk). */
+  const decide = (f: StoppedFile, linked: boolean): 'removed' | 'kept' | 'stuck' | null => {
+    const segs = f.rel.split('/');
+    // The one guard for every group: a rel that climbs (`..`), or any folder between the project
+    // and the file that is a symlink (or not a folder), is never followed: the file is kept.
+    const onLink = linked || segs.some((s) => s === '..' || s === '.' || s === '') || linkedFolderOnPath(projectRoot, segs.slice(0, -1));
+    const abs = join(projectRoot, ...segs);
+    let st;
+    try {
+      st = lstatSync(abs);
+    } catch {
+      return null;
+    }
+    const entry = oldManifest.files[f.rel];
+    const recorded = Boolean(entry) && entry.kind === f.kind && entry.version !== PRE_MANIFEST_VERSION;
+    if (onLink || !st.isFile() || !recorded) return 'kept';
+    const bytes = readIfThere(abs);
+    if (bytes === null) return null;
+    const unchanged = f.kind === 'pack-agent' && entry.baselineSha
+      ? !isCustomizedAgent(bytes.toString('utf-8'), entry.baselineSha)
+      : f.shipped.includes(guardedFileSha(bytes));
+    if (!unchanged) return 'kept';
+    try {
+      rmSync(abs, { force: true });
+      return 'removed';
+    } catch (e: unknown) {
+      result.notes.push(`Could not remove ${f.rel}: ${e instanceof Error ? e.message : String(e)}`);
+      return 'stuck';
+    }
+  };
+
+  /** Run a group (one skill folder, the agents, the helpers) and say once what stayed. */
+  const group = (label: string, files: StoppedFile[], linked: boolean, packRecord?: string): void => {
+    const hadRecords = files.some((f) => oldManifest.files[f.rel]) || (packRecord ? Boolean(oldManifest.packs[packRecord]) : false);
+    const kept: string[] = [];
+    let removedAny = false;
+    for (const f of files) {
+      const verdict = decide(f, linked);
+      if (verdict === 'removed') {
+        result.removed.push(f.rel);
+        removedAny = true;
+      } else if (verdict === 'kept') {
+        kept.push(f.rel);
+      } else if (verdict === 'stuck') {
+        kept.push(f.rel);
+        // Still tracked, so the next update tries again.
+        recordFile(newManifest, f.rel, oldManifest.files[f.rel]?.version ?? dreamcontextVersion(), f.kind);
+      }
+    }
+    for (const f of files) {
+      if (newManifest.files[f.rel]?.kind === f.kind && result.notes.some((n) => n.startsWith(`Could not remove ${f.rel}:`))) continue;
+      delete oldManifest.files[f.rel];
+      if (newManifest.files[f.rel]?.kind === f.kind) delete newManifest.files[f.rel];
+    }
+    if (packRecord) {
+      delete oldManifest.packs[packRecord];
+      delete newManifest.packs[packRecord];
+    }
+    result.kept.push(...kept);
+    if (removedAny) result.notes.push(`Removed ${label}: dreamcontext stopped shipping it on ${STOPPED_ON}, and this copy was exactly what it installed.`);
+    if (kept.length > 0 && hadRecords) {
+      result.notes.push(
+        `Kept ${kept.length} file(s) of ${label} (${kept.slice(0, 3).join(', ')}${kept.length > 3 ? ', …' : ''}): dreamcontext stopped shipping it on ${STOPPED_ON}, `
+        + 'and these are edited, linked, or not provably its own. They are yours now and no longer updated or tracked; delete them when you no longer need them.',
+      );
+    }
+  };
+
+  for (const skill of skills) {
+    const folderRel = `${skillRootRel}/${skill.name}`;
+    const folder = join(projectRoot, ...rootSegs, skill.name);
+    const linked = linkedRoot || linkedFolderOnPath(projectRoot, [...rootSegs, skill.name]);
+    const onDisk: string[] = [];
+    const links: string[] = [];
+    if (!linked) {
+      try {
+        if (lstatSync(folder).isDirectory()) walkFiles(folder, onDisk, links);
+      } catch {
+        // not installed
+      }
+    }
+    const rels = new Set<string>([
+      ...onDisk.map((abs) => `${folderRel}/${toPosix(relative(folder, abs))}`),
+      ...links.map((abs) => `${folderRel}/${toPosix(relative(folder, abs))}`),
+      ...Object.keys(oldManifest.files).filter((rel) => rel.startsWith(`${folderRel}/`)),
+    ]);
+    const linkSet = new Set(links.map((abs) => `${folderRel}/${toPosix(relative(folder, abs))}`));
+    const files: StoppedFile[] = [...rels].sort().map((rel) => ({
+      rel,
+      kind: 'pack-skill',
+      // A file under a symlinked sub-folder is never ours to delete: walkFiles never entered it.
+      shipped: linkSet.has(rel) ? [] : (skill.shipped[rel.slice(folderRel.length + 1)] ?? []),
+    }));
+    group(`the ${skill.name} skill`, files, linked, skill.name);
+    if (!linked) {
+      try {
+        removeEmptyDirs(folder);
+      } catch {
+        // gone, or will not go: harmless
+      }
+    }
+  }
+
+  group('the agents of the stopped skills', Object.keys(agents).sort().map((file) => ({
+    rel: `.claude/agents/${file}`, kind: 'pack-agent' as const, shipped: agents[file],
+  })), linkedClaude || linkedAgents);
+
+  group("goal-skill's old helpers in .claude/ (they now live in .claude/skills/goal-skill/assets/)", Object.keys(assets).sort().map((file) => ({
+    rel: `.claude/${file}`, kind: 'pack-asset' as const, shipped: assets[file],
+  })), linkedClaude);
+
+  return result;
 }

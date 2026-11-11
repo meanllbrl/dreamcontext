@@ -73,7 +73,7 @@ describe('the dashboard mirror of the tunable roster', () => {
  * an agent to fire it would resurrect a dispatch the code no longer supports.
  */
 describe('the shipped docs state the same roster', () => {
-  const SHIPPED_DOC_ROOTS = ['skill', 'agents', 'skill-packs', 'src/templates'];
+  const SHIPPED_DOC_ROOTS = ['skill', 'agents', 'skill-council', 'skill-multi-review', 'skill-goal-skill', 'skill-video-watching', 'src/templates'];
 
   function markdownFiles(rel: string): string[] {
     const abs = join(repoRoot, rel);

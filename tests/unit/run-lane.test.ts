@@ -66,7 +66,7 @@ describe('pickLane', () => {
     ['.npmrc', 'security'],
     ['.claude/agents/reviewer.md', 'permissions'],
     ['skill/SKILL.md', 'permissions'],
-    ['skill-packs/agents/reviewer.md', 'permissions'],
+    ['agents/reviewer.md', 'permissions'],
     ['agents/reviewer.md', 'permissions'],
     ['CLAUDE.md', 'permissions'],
     ['src/lib/run-lane.ts', 'permissions'],

@@ -536,7 +536,7 @@ dreamcontext council synthesize && dreamcontext council complete
 dreamcontext council promote --to knowledge/migration-decision            # Verdict → knowledge
 ```
 
-Each debate stores its full state under `_dream_context/council/<id>/` (debate, round log, final report, per-persona folders with reports and research). The dashboard's **Council Hall** renders it all as a searchable grid and detail view. Ships as the `council` skill pack with the `council-persona` / `council-synthesizer` sub-agents; `council list / show / report / research` subcommands cover inspection.
+Each debate stores its full state under `_dream_context/council/<id>/` (debate, round log, final report, per-persona folders with reports and research). The dashboard's **Council Hall** renders it all as a searchable grid and detail view. Ships as the built-in `council` skill with the `council-persona` / `council-synthesizer` sub-agents; `council list / show / report / research` subcommands cover inspection.
 
 ## Memory Recall
 
@@ -681,9 +681,7 @@ dreamcontext theses list                                   # board: draft → op
 
 ## Skills
 
-The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
-
-More skills install with the core (no pack needed) and run only when the moment calls for them:
+The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. Every other skill dreamcontext ships installs with it, in every project, and runs only when the moment calls for it, so it costs nothing the rest of the time. There is nothing to pick: an installed copy you edited is kept on `update`, never overwritten.
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
@@ -692,35 +690,12 @@ More skills install with the core (no pack needed) and run only when the moment 
 - **`design`** — universal UI rules for any screen an agent builds: hierarchy, every state designed, measured contrast, a 4px grid, a screen that tells the truth. Sub-files for app screens (`product-ui`), frontend code, web, mobile and onboarding. It gives principles, never a look, and `/apps` builds on it. An installed copy you edited is kept on `update`, never overwritten.
 - **`draw`** — every drawing that is kept: Obsidian Excalidraw files (~45 deterministic builders: charts, wireframes, real-proportion device mockups, flows, with a render audit) and dreamcontext whiteboards (the same builders plus live widgets). A short router sends a plain file to the builders and a whiteboard to the kit; the prompt hook names it on any drawing request. Projects that had the old `excalidraw` pack keep their edits, and pipelines that require the old script path keep working.
 
-```bash
-dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs growth council    # Install specific packs directly
-dreamcontext install-skill --skill video-watching    # Install a single sub-skill or standalone skill
-dreamcontext install-skill --list                     # See everything available
-```
+- **`council`** — a structured multi-persona debate for a hard decision: N personas over N rounds, each its own sub-agent, then a clean synthesizer writes the decision report (`council-persona`, `council-synthesizer` agents).
+- **`multi-review`** — multi-agent code review: a router classifies the diff and dispatches niche specialists (`review-router` + security / cloud-functions / frontend / edge-cases agents).
+- **`goal-skill`** — sub-agent-orchestrated execution: plan, review, implement, validate (`goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator`, `reviewer` agents).
+- **`video-watching`** — turns a video into a time-mapped transcript with the on-screen visuals described inline, then reasons about it.
 
-**Skill packs** (a base skill + on-demand sub-skills or sub-agents):
-
-| Pack | What it covers | Inside |
-|------|---------------|--------|
-| **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
-| **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
-| **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
-| **multi-review** | Multi-agent code review (router + niche specialists) | `review-router` + security / cloud-functions / frontend / edge-cases agents |
-| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator`, `reviewer` agents |
-
-**Standalone skills** (install individually with `--skill <name>`):
-
-| Skill | What it covers |
-|-------|----------------|
-| **business-idea-discovery** | Market selection, trend validation, competitor intel, pain-point mining, MVP scoping |
-| **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
-| **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
-| **system-prompts** | Prompt engineering, cognitive architecture, agent design |
-| **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline, then reason about it |
-| **jev-verify** | Browser validation judged in plain language: Playwright drives the page, TypeSafe Jev (System One model via OpenRouter) answers acceptance criteria against the page's text in ~0.5 s for a fraction of a cent; `assert` / `walk` / `judge`. Needs `OPENROUTER_JEV_KEY` |
-
-_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); cross-pack dependencies warn at install time.
+Until 2026-11-11 some of these were optional packs, and dreamcontext also shipped growth, brand-voice, business-idea-discovery, business-idea-validation, meta-marketing, system-prompts and jev-verify. Those no longer ship. On `update`, an installed copy of one is removed only when the install manifest records that dreamcontext put it there and it is unchanged; an edited or unrecorded copy stays yours, untracked, named once.
 
 ## Staying Up to Date
 
@@ -894,7 +869,7 @@ dreamcontext snapshot [--tokens]         # The compiled context snapshot (+ esti
 dreamcontext doctor                      # Validate structure
 dreamcontext doctor --machine [--json]   # Check this machine's tools and sign-ins
 dreamcontext setup [--platforms claude --defaults]       # One-shot project setup
-dreamcontext install-skill [--platforms claude] [--packs …] [--skill <name>] [--list]
+dreamcontext install-skill [--platforms claude]
 dreamcontext install-instructions --platforms claude     # Managed root instruction blocks only
 dreamcontext upgrade [--check] / update  # CLI upgrade / refresh installed project files
 dreamcontext notify <title> [body] [--session <id> | --session-stdin | --automation <slug>] [--file <path>] [--vault <name>] [--link <url>]

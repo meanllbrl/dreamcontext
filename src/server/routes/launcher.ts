@@ -39,7 +39,7 @@ import {
   ensurePlatformSelection,
   type PlatformId,
 } from '../../lib/platforms.js';
-import { loadCatalog, detectInstalledPlatforms } from '../../lib/catalog.js';
+import { detectInstalledPlatforms } from '../../lib/catalog.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
 import { resolveAuthors } from '../../lib/people-resolve.js';
 import { today } from '../../lib/id.js';
@@ -221,8 +221,6 @@ export interface ScaffoldAnswers {
   projectPath?: string;
   /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
-  /** Optional skill-pack names to install after setup (e.g. ['design']). */
-  packs?: string[];
   /** Run `git init` in the project once it is set up (now, or when Git finishes installing). */
   gitInit?: boolean;
 }
@@ -379,11 +377,6 @@ export async function scaffoldProject(
   const platforms: PlatformId[] = ensurePlatformSelection(normalizePlatforms(a.platforms ?? []));
   const platformArg = platforms.join(',');
 
-  // Validate requested packs against the catalog (drop anything unknown so we
-  // never pass garbage to install-skill).
-  const knownPackNames = new Set((loadCatalog()?.catalog.packs ?? []).map((p) => p.name));
-  const packs = (a.packs ?? []).map((p) => String(p).trim()).filter((p) => knownPackNames.has(p));
-
   // Resolve the target directory per mode.
   let target: string;
   if (a.mode === 'new') {
@@ -441,15 +434,6 @@ export async function scaffoldProject(
   // platforms the user chose — idempotent and non-destructive.
   await runner(['setup', '--defaults', '--platforms', platformArg], target);
 
-  // Install any chosen optional skill packs onto the selected platforms. Runs
-  // after setup (which lays down the base skill the packs extend). Best-effort
-  // for the project as a whole — a pack-install failure shouldn't orphan an
-  // otherwise-created vault, so it surfaces as a thrown ScaffoldError only when
-  // it genuinely fails the child process.
-  if (packs.length > 0) {
-    await runner(['install-skill', '--packs', ...packs, '--platforms', platformArg], target);
-  }
-
   const git = applyGitInit(target, a.gitInit === true, gitDeps, home ?? homedir());
 
   // addVault validates the path + _dream_context child and rejects dupes.
@@ -486,9 +470,6 @@ export async function handleLauncherScaffold(
     projectPath: typeof body.projectPath === 'string' ? body.projectPath : undefined,
     platforms: Array.isArray(body.platforms)
       ? body.platforms.filter((p: unknown): p is string => typeof p === 'string')
-      : undefined,
-    packs: Array.isArray(body.packs)
-      ? body.packs.filter((p: unknown): p is string => typeof p === 'string')
       : undefined,
     gitInit: body.gitInit === true,
   };
@@ -558,10 +539,9 @@ export async function handleLauncherDetect(
 
 /**
  * GET /api/launcher/catalog — the choices the onboarding wizard offers: target
- * platforms (Claude, with the default ones flagged `recommended`) and
- * the available optional skill packs (name + description + tags). Read-only and
- * vault-agnostic (works in launcher mode). Never 500s: an unreadable pack
- * catalog yields an empty `packs` list, not an error.
+ * platforms (Claude, with the default ones flagged `recommended`). Read-only and
+ * vault-agnostic (works in launcher mode). Skill packs are gone (2026-11-11): every
+ * skill ships with the core, so there is nothing else to choose.
  */
 export async function handleLauncherCatalog(
   _req: IncomingMessage,
@@ -576,12 +556,7 @@ export async function handleLauncherCatalog(
     description: p.description,
     recommended: recommended.has(p.id),
   }));
-  const packs = (loadCatalog()?.catalog.packs ?? []).map((p) => ({
-    name: p.name,
-    description: p.description,
-    tags: p.tags,
-  }));
-  sendJson(res, 200, { platforms, packs });
+  sendJson(res, 200, { platforms });
 }
 
 // ─── Clone from GitHub (launcher onboarding) ────────────────────────────────────

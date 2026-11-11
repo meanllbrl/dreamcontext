@@ -81,7 +81,7 @@ describe('prepareCodexKit', () => {
   });
 
   it('every shipped agent becomes a valid role', () => {
-    for (const dir of ['agents', 'skill-packs/agents']) {
+    for (const dir of ['agents']) {
       for (const f of readdirSync(join(ROOT, dir)).filter((n) => n.endsWith('.md'))) {
         const r = roleToml(readFileSync(join(ROOT, dir, f), 'utf-8'));
         expect(r, f).not.toBeNull();

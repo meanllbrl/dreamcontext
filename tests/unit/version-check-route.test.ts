@@ -44,13 +44,6 @@ function writeConfigFile(tmpDir: string, packs: string[]): void {
   );
 }
 
-/** Simulate a pack installed on disk (its SKILL.md exists for the claude platform). */
-function installSkillOnDisk(tmpDir: string, name: string): void {
-  const dir = join(tmpDir, '.claude', 'skills', name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf-8');
-}
-
 // contextRoot = <tmpDir>/_dream_context. tmpDir is also the HOME every call passes (test
 // isolation): the route reads the hands-free trip state from it, never from the developer's
 // real ~/.dreamcontext/handsfree (an away trip there refuses upgrades and broke these tests).
@@ -92,7 +85,6 @@ describe('GET /api/version-check', () => {
     const cache: VersionCache = {
       checkedAt: Date.now() - 60 * 60 * 1000, // 1h ago — within TTL
       latestCli: '99.99.99', // far ahead so nudge is guaranteed
-      availablePacks: [],
       ttlHours: 24,
     };
     writeCacheFile(tmpDir, cache);
@@ -113,7 +105,6 @@ describe('GET /api/version-check', () => {
     const cache: VersionCache = {
       checkedAt: Date.now() - 60 * 60 * 1000,
       latestCli: '0.0.1', // installed should always be >= this
-      availablePacks: [],
       ttlHours: 24,
     };
     writeCacheFile(tmpDir, cache);
@@ -132,7 +123,6 @@ describe('GET /api/version-check', () => {
     const cache: VersionCache = {
       checkedAt: Date.now() - 25 * 60 * 60 * 1000, // 25h ago — past TTL
       latestCli: '99.99.99',
-      availablePacks: [],
       ttlHours: 24,
     };
     writeCacheFile(tmpDir, cache);
@@ -165,67 +155,21 @@ describe('GET /api/version-check', () => {
     expect(payload.nudge).toBeNull();
   });
 
-  it('does NOT surface a DECLINED catalog pack as newPacks (regression: permanent false "Update available")', async () => {
-    // Catalog offers two optional packs; the project opted into only one and has
-    // it installed on disk. The declined pack must never show as "new" — else the
-    // header badge nags "Update available" forever on a fully up-to-date vault.
-    const cache: VersionCache = {
+  it('an old cache and config that still name packs never surface a pack (packs are gone)', async () => {
+    writeCacheFile(tmpDir, {
       checkedAt: Date.now() - 60 * 60 * 1000,
-      latestCli: '0.0.1', // installed >= this → no CLI nudge, isolates pack logic
+      latestCli: '0.0.1', // installed >= this → no CLI nudge
       availablePacks: ['engineering', 'meta-marketing'],
       ttlHours: 24,
-    };
-    writeCacheFile(tmpDir, cache);
-    writeConfigFile(tmpDir, ['engineering']); // opted into engineering, DECLINED meta-marketing
-    installSkillOnDisk(tmpDir, 'engineering'); // and it's installed on disk
+    } as VersionCache);
+    writeConfigFile(tmpDir, ['engineering']);
 
     const { res, status, body } = makeRes();
     await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
-    const payload = body() as { newPacks: string[]; nudge: string | null };
-    expect(payload.newPacks).toEqual([]); // meta-marketing (declined) excluded
-    expect(payload.nudge).toBeNull(); // no "new packs" prose either
-  });
-
-  it('DOES surface an opted-in pack that is missing on disk as newPacks (genuine update gap)', async () => {
-    // engineering is opted into but NOT installed on disk → a real `dreamcontext
-    // update` gap that should still nudge. meta-marketing (declined) stays hidden.
-    const cache: VersionCache = {
-      checkedAt: Date.now() - 60 * 60 * 1000,
-      latestCli: '0.0.1',
-      availablePacks: ['engineering', 'meta-marketing'],
-      ttlHours: 24,
-    };
-    writeCacheFile(tmpDir, cache);
-    writeConfigFile(tmpDir, ['engineering']); // opted in but NOT installed on disk
-
-    const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
-    expect(status()).toBe(200);
-
-    const payload = body() as { newPacks: string[]; nudge: string | null };
-    expect(payload.newPacks).toEqual(['engineering']);
-    expect(payload.nudge).toContain('engineering');
-    expect(payload.nudge).not.toContain('meta-marketing');
-  });
-
-  it('surfaces no pack nudge when the project has no config (no opted-in universe)', async () => {
-    const cache: VersionCache = {
-      checkedAt: Date.now() - 60 * 60 * 1000,
-      latestCli: '0.0.1',
-      availablePacks: ['engineering', 'meta-marketing'],
-      ttlHours: 24,
-    };
-    writeCacheFile(tmpDir, cache);
-    // no .config.json written
-
-    const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
-    expect(status()).toBe(200);
-
-    const payload = body() as { newPacks: string[]; nudge: string | null };
-    expect(payload.newPacks).toEqual([]);
+    const payload = body() as Record<string, unknown>;
+    expect('newPacks' in payload).toBe(false);
     expect(payload.nudge).toBeNull();
   });
 
@@ -236,7 +180,6 @@ describe('GET /api/version-check', () => {
       const cache: VersionCache = {
         checkedAt: Date.now() - 60 * 60 * 1000,
         latestCli: '99.99.99', // far ahead → would normally nudge
-        availablePacks: [],
         ttlHours: 24,
       };
       writeCacheFile(tmpDir, cache);

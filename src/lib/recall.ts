@@ -987,7 +987,7 @@ function loadWhiteboardDocs(contextRoot: string): CorpusDoc[] {
 }
 
 /**
- * Load top-level skill packs as corpus docs for related-skill recall.
+ * Load the top-level installed skills as corpus docs for related-skill recall.
  *
  * Only scans `<pack>/SKILL.md` (the `*\/SKILL.md` glob does NOT recurse into
  * nested sub-skill dirs). Skills with `alwaysApply: true` are excluded — they're

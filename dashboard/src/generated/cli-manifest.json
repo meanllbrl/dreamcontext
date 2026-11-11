@@ -2181,7 +2181,7 @@
     },
     {
       "path": "install-skill",
-      "desc": "Install dreamcontext skill, agents, and optional packs for selected platforms",
+      "desc": "Install the dreamcontext skills, agents and hooks for selected platforms",
       "args": [],
       "valueFlags": [
         "--platforms",
@@ -5019,7 +5019,7 @@
     },
     {
       "path": "update",
-      "desc": "Refresh installed dreamcontext files (core skill, agents, hooks, packs, and the managed CLAUDE.md block when one exists) to the latest shipped version",
+      "desc": "Refresh installed dreamcontext files (skills, agents, hooks, and the managed CLAUDE.md block when one exists) to the latest shipped version",
       "args": []
     },
     {

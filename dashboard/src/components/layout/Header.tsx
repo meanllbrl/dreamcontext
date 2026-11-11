@@ -9,7 +9,7 @@ import type { Page } from './Sidebar';
 import './Header.css';
 
 interface HeaderProps {
-  /** Switch the active page (used by the update badge to open Packs). */
+  /** Switch the active page (the sleep tracker opens Sleep). */
   onNavigate?: (page: Page, id?: string) => void;
   /** Whether the rail is collapsed (drives the toggle icon state). */
   sidebarCollapsed: boolean;
@@ -83,7 +83,7 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
       {slots.right && createPortal(
         <>
           <SleepDebtTracker onOpen={onNavigate ? () => onNavigate('sleep') : undefined} />
-          <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
+          <UpdateBadge />
         </>,
         slots.right,
       )}

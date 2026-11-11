@@ -4,7 +4,7 @@
  *   1. the WRITER, `src/lib/goal-live.ts` (the `dreamcontext goal-live` CLI's reducer);
  *   2. the READER, `dashboard/src/lib/goalLive.ts` (the quest map's types + normalizer),
  *      which cannot import from `src/` (separate bundle) and so MIRRORS the writer;
- *   3. the ORCHESTRATOR'S INSTRUCTIONS, `skill-packs/goal-skill/SKILL.md`, which is what an
+ *   3. the ORCHESTRATOR'S INSTRUCTIONS, `skill-goal-skill/SKILL.md`, which is what an
  *      agent actually follows at 2 a.m. in someone else's project.
  *
  * A drift between any two reads as a working feature: the CLI writes a field the panel
@@ -32,8 +32,8 @@ const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf-8');
 
 const WRITER = read('src', 'lib', 'goal-live.ts');
 const READER = read('dashboard', 'src', 'lib', 'goalLive.ts');
-const SKILL = read('skill-packs', 'goal-skill', 'SKILL.md');
-const DEMO = read('skill-packs', 'goal-skill', 'assets', 'goal-skill-demo.cjs');
+const SKILL = read('skill-goal-skill', 'SKILL.md');
+const DEMO = read('skill-goal-skill', 'assets', 'goal-skill-demo.cjs');
 
 /** The live-state section of the skill: from its heading to the next `## `. */
 const LIVE_SECTION = (() => {

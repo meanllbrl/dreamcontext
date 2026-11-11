@@ -280,8 +280,8 @@ slug you just created:
  * Only the CONTRACT lives here. The procedure (snapshot, checks, review, close, reopen) is
  * `dreamcontext goal-live recipe develop` (src/lib/develop-recipe.ts): it would not fit a
  * briefing that rides every turn, and printing it from the CLI keeps it in step with this
- * install. The goal-skill pack's own orchestrator still reviews once, at its Phase 5
- * (skill-packs/goal-skill/SKILL.md); these reversals are Develop mode's alone.
+ * install. The goal-skill skill's own orchestrator still reviews once, at its Phase 5
+ * (skill-goal-skill/SKILL.md); these reversals are Develop mode's alone.
  *
  * Like Plan, the dispatch depends on `SUBAGENT_DISPATCH_AUTHORIZATION` (cli/commands/hook.ts)
  * naming this mode — without it the injected Opus 5 line collapses the review inline, which

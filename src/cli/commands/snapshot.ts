@@ -31,7 +31,6 @@ import {
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { loadStatuses, loadTaskOverride, renderOverrideBriefing, hasCustomStatuses } from '../../lib/overrides.js';
 import { DEFAULT_STATUSES, isActive, isTerminal, statusKeys, statusKind, type StatusDef } from '../../lib/task-status.js';
-import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
@@ -732,24 +731,13 @@ function getVersionNudge(root: string): string {
     if (!cache || !isCacheFresh(cache)) return '';
 
     const installedCli = dreamcontextVersion();
-    // Scope the pack universe to what THIS project opted into (config.packs) ∩ the
-    // catalog. A pack the user DECLINED (in the catalog but never chosen for this
-    // vault) must NEVER surface as "new" — otherwise every session in a vault that
-    // skipped an optional pack prints a permanent, un-actionable "New skill packs
-    // available" line. A pack is "new" only when opted-in but missing on disk (a
-    // genuine `dreamcontext update` gap). Installed = filesystem truth (SKILL.md on
-    // disk); isSkillInstalled only stats a path, it does not load/parse the catalog.
-    const optedInPacks = readSetupConfig(projectRoot)?.packs ?? [];
-    const relevantPacks = cache.availablePacks.filter((name) => optedInPacks.includes(name));
-    const installedPacks = relevantPacks.filter((name) => isSkillInstalled(projectRoot, name));
-
     // Auto-upgrade is on by default. Suppress the redundant "run dreamcontext
     // upgrade" line only while a background upgrade for this exact version is
     // freshly in flight; if it failed (still behind after the window) the nudge
-    // returns so the user can act. New-packs line is unaffected.
+    // returns so the user can act.
     const marker = readAutoUpgradeMarker(projectRoot);
     const suppressCliNudge = shouldSuppressCliNudge(cache.latestCli, marker, process.env);
-    const nudge = buildNudge(installedCli, cache, installedPacks, relevantPacks, { suppressCliNudge });
+    const nudge = buildNudge(installedCli, cache, { suppressCliNudge });
     return nudge ?? '';
   } catch {
     return '';
@@ -2241,7 +2229,7 @@ export function measureSnapshot(
     ]);
   }
 
-  // 11. Marketing snapshot (skill-pack scoped — only present when bootstrapped)
+  // 11. Marketing snapshot (only present when the marketing surface is bootstrapped)
   try {
     const marketing = buildMarketingSnapshot();
     if (marketing) {

@@ -6,7 +6,7 @@
      above it. inset: 0 swallowed the chrome — in the desktop shell the overlay's
      own header then collided with the traffic lights / window tab strip. */
   top: var(--header-height);
-  /* Above every page-level layer (PacksPage modal uses 1000). */
+  /* Above every page-level layer (page modals use up to 1000). */
   z-index: 1100;
   display: flex;
   flex-direction: column;

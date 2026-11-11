@@ -14,9 +14,9 @@ import { pruneRetiredPacks, RETIRED_PACKS, type RetiredPack } from '../../src/li
 import { emptyManifest, recordFile, type Manifest } from '../../src/lib/manifest.js';
 import { agentBaselineSha } from '../../src/lib/sleep-specialist-frontmatter.js';
 
-const PACKS_DIR = join(__dirname, '..', '..', 'skill-packs');
+const AGENTS_DIR = join(__dirname, '..', '..', 'agents');
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
-const PACKAGE_REVIEWER = readFileSync(join(PACKS_DIR, 'agents', 'reviewer.md'), 'utf-8');
+const PACKAGE_REVIEWER = readFileSync(join(AGENTS_DIR, 'reviewer.md'), 'utf-8');
 const OLD_REVIEWER = '---\nname: reviewer\nskills:\n  - oldpack\n---\nold shipped body\n';
 
 const SHIPPED = { 'SKILL.md': '# base v1\n', 'sub/ref.md': '# ref\n' };
@@ -56,7 +56,7 @@ describe('pruneRetiredPacks', () => {
   it('removes an unmodified copy (any shipped version), its folder, and every manifest trace', () => {
     put('.claude/skills/oldpack/SKILL.md', '# base v0\n');
     put('.claude/skills/oldpack/sub/ref.md', SHIPPED['sub/ref.md']);
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(r.removed.sort()).toEqual(['.claude/skills/oldpack/SKILL.md', '.claude/skills/oldpack/sub/ref.md']);
     expect(r.kept).toEqual([]);
     expect(existsSync(join(root, '.claude/skills/oldpack'))).toBe(false);
@@ -69,7 +69,7 @@ describe('pruneRetiredPacks', () => {
     put('.claude/skills/oldpack/SKILL.md', '# base v1\nmy own rule\n');
     put('.claude/skills/oldpack/sub/ref.md', SHIPPED['sub/ref.md']);
     put('.claude/skills/oldpack/mine.md', '# mine\n', false);
-    const first = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const first = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(first.removed).toEqual(['.claude/skills/oldpack/sub/ref.md']);
     expect(first.kept.sort()).toEqual(['.claude/skills/oldpack/SKILL.md', '.claude/skills/oldpack/mine.md']);
     expect(readFileSync(join(root, '.claude/skills/oldpack/SKILL.md'), 'utf-8')).toContain('my own rule');
@@ -77,7 +77,7 @@ describe('pruneRetiredPacks', () => {
     expect(first.notes.join('\n')).toMatch(/Kept 2 file\(s\) in \.claude\/skills\/oldpack\/ that differ from what dreamcontext shipped: the oldpack pack is retired/);
 
     // The next update: nothing tracked any more, so no second note and nothing deleted.
-    const second = pruneRetiredPacks(root, oldM, emptyManifest(), PACKS_DIR, [FAKE]);
+    const second = pruneRetiredPacks(root, oldM, emptyManifest(), AGENTS_DIR, [FAKE]);
     expect(second.removed).toEqual([]);
     expect(second.notes).toEqual([]);
     expect(existsSync(join(root, '.claude/skills/oldpack/SKILL.md'))).toBe(true);
@@ -89,7 +89,7 @@ describe('pruneRetiredPacks', () => {
     writeFileSync(join(elsewhere, 'SKILL.md'), SHIPPED['SKILL.md']);
     mkdirSync(join(root, '.claude/skills'), { recursive: true });
     symlinkSync(elsewhere, join(root, '.claude/skills/oldpack'), 'dir');
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(r.removed).toEqual([]);
     expect(existsSync(join(elsewhere, 'SKILL.md'))).toBe(true);
     expect(r.notes.join('\n')).toMatch(/symlink/);
@@ -98,16 +98,16 @@ describe('pruneRetiredPacks', () => {
   it('keeps and refreshes the reviewer when the retired pack was its only installer', () => {
     put('.claude/agents/reviewer.md', '---\nname: reviewer\n---\nold body\n');
     oldM.files['.claude/agents/reviewer.md'].baselineSha = agentBaselineSha('---\nname: reviewer\n---\nold body\n');
-    pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     const now = readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8');
-    expect(now).toBe(readFileSync(join(PACKS_DIR, 'agents', 'reviewer.md'), 'utf-8'));
+    expect(now).toBe(readFileSync(join(AGENTS_DIR, 'reviewer.md'), 'utf-8'));
     expect(newM.files['.claude/agents/reviewer.md']).toMatchObject({ kind: 'pack-agent', baselineSha: agentBaselineSha(now) });
   });
 
   it('leaves an edited reviewer as it is, still tracked', () => {
     put('.claude/agents/reviewer.md', '---\nname: reviewer\n---\nmy edits\n');
     oldM.files['.claude/agents/reviewer.md'].baselineSha = agentBaselineSha('---\nname: reviewer\n---\noriginal\n');
-    pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8')).toContain('my edits');
     expect(newM.files['.claude/agents/reviewer.md']).toEqual(oldM.files['.claude/agents/reviewer.md']);
   });
@@ -115,7 +115,7 @@ describe('pruneRetiredPacks', () => {
   it('does not touch the reviewer another pack installed this run', () => {
     put('.claude/agents/reviewer.md', 'current\n');
     recordFile(newM, '.claude/agents/reviewer.md', '0.40.6', 'pack-agent', { baselineSha: 'x' });
-    pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8')).toBe('current\n');
     expect(newM.files['.claude/agents/reviewer.md'].baselineSha).toBe('x');
   });
@@ -126,7 +126,7 @@ describe('pruneRetiredPacks', () => {
     put('.claude/skills/oldpack/sub/ref.md', '# my edit\n', false);
     put('.claude/agents/reviewer.md', OLD_REVIEWER, false);
     oldM.files['.claude/agents/reviewer.md'] = { version: 'pre-manifest', kind: 'agent' }; // what the bootstrap records
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(r.removed).toEqual(['.claude/skills/oldpack/SKILL.md']);
     expect(r.notes.join('\n')).toMatch(/Kept 1 file\(s\)/);
     expect(readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8')).toBe(PACKAGE_REVIEWER);
@@ -139,7 +139,7 @@ describe('pruneRetiredPacks', () => {
     const mine = OLD_REVIEWER.replace('old shipped body', 'my own body');
     put('.claude/agents/reviewer.md', mine, false);
     oldM.files['.claude/agents/reviewer.md'] = { version: 'pre-manifest', kind: 'agent' };
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8')).toBe(mine);
     expect(newM.files['.claude/agents/reviewer.md']).toEqual({ version: 'pre-manifest', kind: 'agent' });
     expect(r.notes.join('\n')).toMatch(/still lists the retired oldpack skill/);
@@ -149,17 +149,17 @@ describe('pruneRetiredPacks', () => {
     delete oldM.packs.oldpack;
     oldM.version = 'pre-manifest';
     put('.claude/skills/oldpack/SKILL.md', '# edited\n', false);
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(r.notes.join('\n')).toMatch(/Kept 1 file\(s\)/);
     const again = emptyManifest(); // the manifest written after the first run is no longer pre-manifest
-    expect(pruneRetiredPacks(root, again, emptyManifest(), PACKS_DIR, [FAKE]).notes).toEqual([]);
+    expect(pruneRetiredPacks(root, again, emptyManifest(), AGENTS_DIR, [FAKE]).notes).toEqual([]);
   });
 
   it('a legacy reviewer in a project that never had the pack is not touched', () => {
     delete oldM.packs.oldpack;
     put('.claude/agents/reviewer.md', OLD_REVIEWER, false);
     oldM.files['.claude/agents/reviewer.md'] = { version: 'pre-manifest', kind: 'agent' };
-    pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(readFileSync(join(root, '.claude/agents/reviewer.md'), 'utf-8')).toBe(OLD_REVIEWER);
     expect(newM.files['.claude/agents/reviewer.md']).toBeUndefined();
   });
@@ -170,7 +170,7 @@ describe('pruneRetiredPacks', () => {
     mkdirSync(join(root, '.claude/agents'), { recursive: true });
     symlinkSync(target, join(root, '.claude/agents/reviewer.md'));
     recordFile(oldM, '.claude/agents/reviewer.md', '0.40.0', 'pack-agent');
-    pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(lstatSync(join(root, '.claude/agents/reviewer.md')).isSymbolicLink()).toBe(true);
     expect(newM.files['.claude/agents/reviewer.md']).toEqual(oldM.files['.claude/agents/reviewer.md']);
   });
@@ -182,7 +182,7 @@ describe('pruneRetiredPacks', () => {
     const sub = join(root, '.claude/skills/oldpack/sub');
     chmodSync(sub, 0o555);
     try {
-      const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+      const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
       expect(r.removed).toEqual(['.claude/skills/oldpack/SKILL.md']);
       expect(r.kept).toEqual(['.claude/skills/oldpack/sub/ref.md']);
       expect(r.notes.join('\n')).toMatch(/Could not remove \.claude\/skills\/oldpack\/sub\/ref\.md/);
@@ -199,7 +199,7 @@ describe('pruneRetiredPacks', () => {
     mkdirSync(join(root, '.claude'), { recursive: true });
     symlinkSync(target, join(root, '.claude', 'skills'));
     recordFile(oldM, '.claude/skills/oldpack/SKILL.md', '0.40.0', 'pack-skill');
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(existsSync(join(target, 'oldpack', 'SKILL.md'))).toBe(true);
     expect(r.removed).toEqual([]);
     expect(r.notes.join('\n')).toContain('symlink');
@@ -211,12 +211,12 @@ describe('pruneRetiredPacks', () => {
     // A dangling link is listed by the walk; a regular file removed between walk and read is
     // covered by the same ENOENT tolerance (readIfThere). Here: the folder goes mid-run.
     rmSync(join(root, '.claude/skills/oldpack/sub'), { recursive: true });
-    expect(() => pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE])).not.toThrow();
+    expect(() => pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE])).not.toThrow();
   });
 
   it('is a no-op on a project that never had the pack', () => {
     delete oldM.packs.oldpack;
-    const r = pruneRetiredPacks(root, oldM, newM, PACKS_DIR, [FAKE]);
+    const r = pruneRetiredPacks(root, oldM, newM, AGENTS_DIR, [FAKE]);
     expect(r).toEqual({ removed: [], kept: [], notes: [] });
   });
 });
@@ -229,6 +229,6 @@ describe('the engineering entry', () => {
     for (const hashes of Object.values(eng!.shipped)) for (const h of hashes) expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(Object.keys(eng!.keepAgents)).toEqual(['reviewer']);
     for (const h of eng!.keepAgents.reviewer) expect(h).toMatch(/^[0-9a-f]{64}$/);
-    expect(existsSync(join(PACKS_DIR, 'agents', 'reviewer.md'))).toBe(true);
+    expect(existsSync(join(AGENTS_DIR, 'reviewer.md'))).toBe(true);
   });
 });

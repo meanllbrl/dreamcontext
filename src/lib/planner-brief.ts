@@ -11,7 +11,7 @@
  * so the agent file's mandate never reached it at all.
  *
  * So the rule lives HERE, once: USER_FACING_PLAN_RULES is printed inside PLANNER_BRIEF, copied
- * verbatim into skill-packs/agents/goal-planner.md (an agent file cannot import it; the drift
+ * verbatim into agents/goal-planner.md (an agent file cannot import it; the drift
  * test in tests/unit/goal-builder-discipline.test.ts holds them equal), and condensed into Plan
  * mode's briefing. It costs nothing at run time: it changes what the plan asks for.
  */

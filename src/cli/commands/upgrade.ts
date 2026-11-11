@@ -197,7 +197,6 @@ function defaultLiveLatest(): string | null {
       writeVersionCache(root, {
         checkedAt: Date.now(),
         latestCli: latest,
-        availablePacks: existing?.availablePacks ?? [],
         ttlHours: existing?.ttlHours ?? 24,
       });
     } catch {

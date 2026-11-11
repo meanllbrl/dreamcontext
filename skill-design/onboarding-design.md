@@ -16,7 +16,7 @@ This file contains **onboarding-specific** design and conversion standards only.
 
 **Authority**: These standards are definitive for onboarding flow design, paywall priming, questionnaire UX, and first-run experiences across mobile and web.
 **Scope**: Onboarding flow architecture, progressive commitment, questionnaire design, animated onboarding, paywall priming screens, rating/permission prompts, web SaaS onboarding patterns.
-**Does NOT cover**: Pricing math, LTV formulas, paid ads strategy → `growth` / `growth`'s lean-analytics-metrics. General mobile design → `design-mobile`. General web design → `design-web`.
+**Does NOT cover**: Pricing math, LTV formulas, paid ads strategy. General mobile design → `design-mobile`. General web design → `design-web`.
 </role>
 
 ---
@@ -152,7 +152,6 @@ Never jump from questionnaire directly to a payment screen. Build trust incremen
 - **One CTA per screen**. No secondary links, no competing actions on paywall screens.
 - **Clean, minimal visual design**. Paywall screens should feel premium and trustworthy, not like a popup ad.
 - **Hard paywall after priming**: User has been psychologically prepared. The paywall feels like a natural conclusion, not a wall.
-- Cross-reference: `growth` for pricing strategy (yearly plan gating, LTV optimization, A/B testing paywalls).
 
 ### What NOT to Do
 
@@ -208,7 +207,6 @@ The progressive commitment principle applies to web products too, but the mechan
 - Web rarely uses hard paywalls during onboarding (unlike mobile)
 - Instead: freemium → usage limits → upgrade prompt at the moment of need
 - The "aha moment" strategy: Let user hit the value ceiling naturally, then offer upgrade
-- Cross-reference: `growth`'s lean-analytics-metrics for activation/conversion funnel instrumentation
 
 ---
 
@@ -225,7 +223,7 @@ The progressive commitment principle applies to web products too, but the mechan
 - [ ] **Copy**: Conversational, personalized ("your plan"), not corporate?
 - [ ] **One question per screen**: No stacked questions? Auto-advance on single-select?
 - [ ] **Reduced motion**: Animated onboarding respects `prefers-reduced-motion`?
-- [ ] **Per-screen analytics**: Every onboarding screen tracked as an event (drop-off, time-on-screen)? Cross-ref `growth`'s lean-analytics-metrics for instrumentation.
+- [ ] **Per-screen analytics**: Every onboarding screen tracked as an event (drop-off, time-on-screen)?
 - [ ] **Social proof inside flow**: At least one social proof element (user count, testimonial) mid-onboarding?
 - [ ] **No dark patterns**: No fake urgency, guilt-trip declines, or hidden costs?
 

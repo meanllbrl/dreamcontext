@@ -16,7 +16,7 @@ import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats' | 'apps';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats' | 'apps';
 
 interface SidebarProps {
   activePage: Page;
@@ -66,7 +66,7 @@ export interface NavGroup { labelKey: string; hue: string; items: (NavItem | Nav
 //   Workspace    — daily surfaces you actively drive (ask/recall, tasks, debate)
 //   Memory       — the brain's stored content you curate
 //   Brain        — the brain's shape & health (graph + consolidation)
-//   System       — config / packs / about (was "Control Panel"; the default board took the name)
+//   System       — config / about (was "Control Panel"; the default board took the name)
 // Naming: "Sleepy" stays the ask/recall surface; the consolidation page is
 // "Sleep Cycle" (not "Sleep State") to avoid colliding with "Sleepy"; the graph
 // is "Map" (not "Brain") to avoid Brain-in-Brain.
@@ -123,7 +123,6 @@ export const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.system',
     hue: '--nav-hue-control',
     items: [
-      { page: 'packs', labelKey: 'nav.packs' },
       { page: 'settings', labelKey: 'nav.settings' },
       // 'announcements' is pinned to the footer (below), not this rail — it's an
       // announcement of dreamcontext itself, not a per-project surface.

@@ -60,8 +60,8 @@ describe('a role', () => {
     const claude = composeAskPrompt({ tool: 'claude', prompt: 'check it', agent: 'cart-auditor', cwd: dir }, dir);
     expect('prompt' in claude && claude.prompt).toContain('the Agent tool');
     expect(composeAskPrompt({ tool: 'codex', prompt: 'x', agent: 'nobody', cwd: dir }, dir)).toEqual({ error: expect.stringContaining('No agent named "nobody"') });
-    // Ours are found too: the reviewer ships in the skill packs.
-    expect(findAgentFile('reviewer', dir, dir)).toMatch(/skill-packs[/\\]agents[/\\]reviewer\.md$/);
+    // Ours are found too: the reviewer ships in agents/.
+    expect(findAgentFile('reviewer', dir, dir)).toMatch(/agents[/\\]reviewer\.md$/);
   });
 });
 

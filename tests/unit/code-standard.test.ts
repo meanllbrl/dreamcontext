@@ -20,9 +20,9 @@ import { roleToml } from '../../src/lib/codex-skills.js';
 import { antigravityRoleMd } from '../../src/lib/antigravity-roles.js';
 
 const ROOT = join(__dirname, '..', '..');
-const PACK_AGENTS = join(ROOT, 'skill-packs', 'agents');
+const AGENTS = join(ROOT, 'agents');
 const read = (p: string): string => readFileSync(p, 'utf-8');
-const agent = (name: string): string => read(join(PACK_AGENTS, `${name}.md`));
+const agent = (name: string): string => read(join(AGENTS, `${name}.md`));
 
 const BLOCKS = { CODE_STANDARD, PLAN_STANDARD, DOMAIN_RULES } as const;
 type Block = keyof typeof BLOCKS;
@@ -35,13 +35,11 @@ const CARRIERS: Record<string, Block[]> = {
   'goal-plan-reviewer': ['CODE_STANDARD', 'PLAN_STANDARD'],
 };
 
-/** Every agent-shaped file the package ships: core agents, pack agents, council personas. */
+/** Every agent-shaped file the package ships: the agents and the marketing council personas. */
 function shippedAgentFiles(): string[] {
   const out: string[] = [];
-  for (const dir of [join(ROOT, 'agents'), PACK_AGENTS]) {
-    for (const f of readdirSync(dir)) if (f.endsWith('.md')) out.push(join(dir, f));
-  }
-  const personas = join(ROOT, 'skill-packs', 'meta-marketing', 'council-personas');
+  for (const f of readdirSync(AGENTS)) if (f.endsWith('.md')) out.push(join(AGENTS, f));
+  const personas = join(ROOT, 'assets', 'marketing-council-personas');
   if (existsSync(personas)) for (const f of readdirSync(personas)) if (f.endsWith('.md')) out.push(join(personas, f));
   return out;
 }
@@ -57,9 +55,9 @@ describe('the code standard reaches every agent that builds or judges code', () 
   }
 
   it('no agent carries a marker for a block it is not listed for (a stale copy cannot hide)', () => {
-    for (const f of readdirSync(PACK_AGENTS).filter((x) => x.endsWith('.md'))) {
+    for (const f of readdirSync(AGENTS).filter((x) => x.endsWith('.md'))) {
       const name = f.replace(/\.md$/, '');
-      const markers = [...read(join(PACK_AGENTS, f)).matchAll(/Verbatim copy of (CODE_STANDARD|PLAN_STANDARD|DOMAIN_RULES) /g)].map((m) => m[1]);
+      const markers = [...read(join(AGENTS, f)).matchAll(/Verbatim copy of (CODE_STANDARD|PLAN_STANDARD|DOMAIN_RULES) /g)].map((m) => m[1]);
       expect(markers.sort(), name).toEqual([...(CARRIERS[name] ?? [])].sort());
     }
   });
@@ -107,14 +105,9 @@ describe('the engineering pack is gone', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the catalog no longer offers it, and no pack or agent points at it', () => {
-    const catalog = JSON.parse(read(join(ROOT, 'skill-packs', 'catalog.json')));
-    expect(catalog.packs.map((p: { name: string }) => p.name)).not.toContain('engineering');
-    expect(catalog.agents.filter((a: { pack: string }) => a.pack === 'engineering')).toEqual([]);
-    expect(catalog.agents.find((a: { name: string }) => a.name === 'reviewer')?.pack).toBe('goal-skill');
-    for (const e of [...catalog.packs, ...catalog.standalone]) {
-      for (const dep of e.crossPackDeps ?? []) expect(dep, e.name).not.toMatch(/^engineering\b/);
-    }
-    expect(existsSync(join(ROOT, 'skill-packs', 'engineering'))).toBe(false);
+  it('nothing ships it any more: no pack folder, and the reviewer is a core agent', () => {
+    expect(existsSync(join(ROOT, 'skill-packs'))).toBe(false);
+    expect(existsSync(join(ROOT, 'skill-engineering'))).toBe(false);
+    expect(existsSync(join(ROOT, 'agents', 'reviewer.md'))).toBe(true);
   });
 });

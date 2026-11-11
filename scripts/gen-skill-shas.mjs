@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Print a shipped-hash table for a guarded core skill or a retired pack (not shipped; a tool).
 //
-//   node scripts/gen-skill-shas.mjs <path-in-repo> [--history <old path>]... [--map <from>=<to>]... [--name <CONST>]
+//   node scripts/gen-skill-shas.mjs <path-in-repo> [--history <old path>]... [--map <from>=<to>]... [--only <rel>]... [--name <CONST>]
 //
 // Walks `git log` for every path given, hashes each file at each commit that touched it, adds the
 // working tree's current files under <path-in-repo>, and prints a TS table keyed by the file's path
 // relative to its skill folder. Hashes use the guarded-skill rule (src/lib/core-guarded-skill.ts):
 // a text file is read with CRLF as LF, a binary (any NUL byte) raw. `--map reference/=references/`
-// renames a relative path prefix from the old layout. Generated example boards
+// renames a relative path prefix from the old layout; `--only <rel>` keeps just those paths. Generated example boards
 // (`examples/*.excalidraw.md`) and `node_modules` are never part of a skill.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -22,11 +22,13 @@ if (!main || main.startsWith('--')) {
 }
 const history = [];
 const maps = [];
+const only = [];
 let name = 'SHIPPED_SHAS';
 for (let i = 1; i < args.length; i++) {
   if (args[i] === '--history') history.push(args[++i]);
   else if (args[i] === '--map') { const [from, to] = args[++i].split('='); maps.push([from, to ?? '']); }
   else if (args[i] === '--name') name = args[++i];
+  else if (args[i] === '--only') only.push(args[++i]);
 }
 
 export function skillFileSha(buf) {
@@ -34,7 +36,7 @@ export function skillFileSha(buf) {
   return createHash('sha256').update(buf.toString('utf-8').split('\r\n').join('\n'), 'utf-8').digest('hex');
 }
 
-const skipped = (rel) => rel.split('/').includes('node_modules') || /^examples\/[^/]*\.excalidraw\.md$/.test(rel) || rel.endsWith('.DS_Store');
+const skipped = (rel) => (only.length > 0 && !only.includes(rel)) || rel.split('/').includes('node_modules') || /^examples\/[^/]*\.excalidraw\.md$/.test(rel) || rel.endsWith('.DS_Store');
 const mapRel = (rel) => {
   for (const [from, to] of maps) if (rel.startsWith(from)) return to + rel.slice(from.length);
   return rel;
