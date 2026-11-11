@@ -311,6 +311,11 @@ describe('install, update, my own copy, uninstall', () => {
     expect(localEdits(home, inst)).toBeNull();
     writeFileSync(join(inst.root, 'public', 'mine.js'), 'x');
     expect(localEdits(home, inst)?.files).toEqual(['public/mine.js']);
+    // A copy installed before the rule existed gets it on the next look (Undo's status reads the file).
+    const ex = join(sourceRepo(home, inst.installId!), 'info', 'exclude');
+    writeFileSync(ex, readFileSync(ex, 'utf-8').replace('.DS_Store\n', ''));
+    localEdits(home, inst);
+    expect(readFileSync(ex, 'utf-8').split('\n')).toContain('.DS_Store');
   });
 
   it('an update is forward only, bound to the shown sha, keeps settings and data, and undoes', async () => {

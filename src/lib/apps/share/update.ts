@@ -38,6 +38,13 @@ const LOCAL_ID = { GIT_AUTHOR_NAME: 'you', GIT_AUTHOR_EMAIL: 'you@localhost', GI
 function gitOf(home: string, rec: AppRecord) {
   if (!rec.installId) throw new InstallError('not_installed', 'not an installed app');
   const dir = sourceRepo(home, rec.installId);
+  // Copies installed before .DS_Store was excluded: add it, so Finder never makes a copy "changed"
+  // (status, apply's `add -A` and Undo's check all read this file).
+  try {
+    const ex = join(dir, 'info', 'exclude');
+    const text = existsSync(ex) ? readFileSync(ex, 'utf-8') : '';
+    if (existsSync(join(dir, 'info')) && !text.split('\n').includes('.DS_Store')) writeFileSync(ex, `.DS_Store\n${text}`);
+  } catch { /* the localEdits filter still holds */ }
   return {
     dir,
     g: (args: string[], extra?: { env?: NodeJS.ProcessEnv; allowFile?: boolean; input?: string }) => installedGit(dir, args, { workTree: rec.root, ...extra }),
