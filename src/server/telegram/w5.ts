@@ -67,6 +67,8 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
   const prevIntercept = hub.interceptText;
   hub.interceptText = async (ab, msg) => (await rich.takeNote(ab, msg)) || (prevIntercept ? prevIntercept(ab, msg) : false);
   const prevRich = hub.richQuestion;
+  const prevDrawn = hub.richDrawn;
+  hub.richDrawn = (id) => rich.drawnOf(id) ?? (prevDrawn ? prevDrawn(id) : undefined);
   hub.richQuestion = async (ab, sid, q) => (!q.isPermission && !!await rich.send(ab, { kind: 'pending', sessionId: sid, requestId: q.requestId }, richQuestionsOf(q.questions), { title: q.title, sessionId: sid }))
     || (prevRich ? prevRich(ab, sid, q) : false);
 
@@ -85,6 +87,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
     hub.answerExtras = prevExtras;
     hub.interceptText = prevIntercept;
     hub.richQuestion = prevRich;
+    hub.richDrawn = prevDrawn;
     hub.extraButton = prevButton;
   };
 }

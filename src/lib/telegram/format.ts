@@ -7,7 +7,9 @@
  * - `splitReplySections` / `stripReplyMarks`: the Super's line-start `<!-- re:<ref> -->`
  *   sections (outside fences), so the hub sends exactly the sections answering a Telegram ref.
  * - `markdownToTelegramHtml`: paragraphs, lists, headings (and a short `Başlık:` line opening a
- *   list, drawn bold), quotes, code, links (https/http only),
+ *   list, or an all-bold line, drawn bold with room above), quotes, code, links (https/http only),
+ *   sub-items with their own marker and a no-break-space indent, a blank line after a group that
+ *   had sub-items, and a long text folded into one expandable quote after its opening (`foldLong`),
  *   `==mark==` (the Mac highlighter, all three pens); dream fences become one
  *   "Mac'te: <başlık>" line (`dream-view` pin/title/checkout dropped, M5).
  * - `splitTelegramHtml`: ≤4096 per message, cut on a code-point boundary outside any tag or
@@ -167,6 +169,10 @@ export interface FormatOptions {
    *  insight / agent-thread / automation views) are left out of the text with `'hub'`; with
    *  `'mac'` (the default, e.g. routine forwards) every dream fence is one "Mac'te" line. */
   blocks?: 'mac' | 'hub';
+  /** A long text keeps its first paragraphs open and the rest in an expandable quote. Only a
+   *  routine's or an AI Team member's result folds; what the Super writes him never does (owner
+   *  2026-11-11). Off by default. */
+  fold?: boolean;
 }
 
 /** The fences the hub sends as their own message in `'hub'` mode (M5). */
@@ -207,6 +213,28 @@ function inline(raw: string): string {
 
 const LIST_LINE = /^\s*(?:[-*+]|\d{1,3}[.)])\s+\S/;
 
+type LineKind = 'head' | 'top' | 'sub' | 'text' | 'blank';
+
+/** Telegram drops leading ASCII spaces; a no-break space survives, so a sub-item's indent shows. */
+export const SUB_INDENT = '\u00a0\u00a0\u00a0\u00a0';
+/** One marker per list level: a sub-item never looks like its parent. */
+export const SUB_MARKER = ['•', '◦', '▪'] as const;
+
+/** A list line's level, at most 2: how many deeper indents than the run's own it sits under, so
+ *  two, four or a tab per level all read the same. `levels` is the run's indent stack. */
+function listDepth(indent: string, levels: number[]): number {
+  const width = indent.replace(/\t/g, '    ').length;
+  while (levels.length && levels[levels.length - 1] > width) levels.pop();
+  if (!levels.length || levels[levels.length - 1] < width) levels.push(width);
+  return Math.min(2, levels.length - 1);
+}
+
+/** A line that is all bold (`**İadeler: …**`): a section head, kept on its own line with room above. */
+function isBoldHead(line: string): boolean {
+  const t = line.trim();
+  return /^\*\*[^*\n]+\*\*$/.test(t) && Array.from(t).length <= 124;
+}
+
 /**
  * A short line of its own that ends with ':' and opens a list ("Senden beklenenler:") is a
  * section head: drawn bold like a `#` heading. Only at a paragraph start (first line or after a
@@ -234,6 +262,25 @@ export function telegramHtmlToPlain(html: string): string {
 export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): string {
   const lines = stripReplyMarks(md).split('\n');
   const out: string[] = [];
+  // Readability on a phone (owner 2026-11-10, "okuması çok güç"): a sub-item gets its own marker
+  // and a visible indent, a group that had sub-items is followed by a blank line, and a heading
+  // never sticks to the line above it.
+  let last: LineKind = 'blank';
+  const levels: number[] = [];
+  const push = (html: string, kind: LineKind): void => {
+    if (kind === 'head') levels.length = 0;
+    const gap = out.length > 0 && last !== 'blank' && (
+      (kind === 'head' && last !== 'head')
+      || (last === 'sub' && kind !== 'sub' && kind !== 'blank')
+    );
+    if (gap) out.push('');
+    out.push(html);
+    last = kind;
+  };
+  const list = (indent: string, marker: string, body: string): void => {
+    const depth = listDepth(indent, levels);
+    push(depth === 0 ? `${marker} ${inline(body)}` : `${SUB_INDENT.repeat(depth)}${marker === '•' ? SUB_MARKER[depth] : marker} ${inline(body)}`, depth === 0 ? 'top' : 'sub');
+  };
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -248,32 +295,73 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
       const text = body.join('\n');
       if (DREAM_FENCES.has(lang)) {
         if (opts.blocks === 'hub' && hubDrawsFence(lang, text)) continue;
-        if (!isSilentView(lang, text)) out.push(`<i>Mac'te: ${escapeHtml(oneLine(fenceTitle(lang, text)))}</i>`);
+        if (!isSilentView(lang, text)) push(`<i>Mac'te: ${escapeHtml(oneLine(fenceTitle(lang, text)))}</i>`, 'text');
       } else if (opts.codeFences === 'mac') {
-        out.push(`<i>Mac'te: ${escapeHtml(lang ? `${lang} kodu` : 'kod')}</i>`);
+        push(`<i>Mac'te: ${escapeHtml(lang ? `${lang} kodu` : 'kod')}</i>`, 'text');
       } else {
-        out.push(lang ? `<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>` : `<pre>${escapeHtml(text)}</pre>`);
+        push(lang ? `<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>` : `<pre>${escapeHtml(text)}</pre>`, 'text');
       }
       continue;
     }
     const heading = /^\s{0,3}#{1,6}\s+(.*)$/.exec(line);
-    if (heading) { out.push(`<b>${inline(heading[1].replace(/\s*#+\s*$/, ''))}</b>`); i++; continue; }
+    if (heading) { push(`<b>${inline(heading[1].replace(/\s*#+\s*$/, ''))}</b>`, 'head'); i++; continue; }
     if (/^\s*>/.test(line)) {
       const quote: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(inline(lines[i++].replace(/^\s*>\s?/, '')));
-      out.push(`<blockquote>${quote.join('\n')}</blockquote>`);
+      push(`<blockquote>${quote.join('\n')}</blockquote>`, 'text');
       continue;
     }
-    const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
-    if (bullet) { out.push(`${'  '.repeat(Math.min(3, Math.floor(bullet[1].length / 2)))}• ${inline(bullet[2])}`); i++; continue; }
-    const numbered = /^(\s*)(\d{1,3})[.)]\s+(.*)$/.exec(line);
-    if (numbered) { out.push(`${'  '.repeat(Math.min(3, Math.floor(numbered[1].length / 2)))}${numbered[2]}. ${inline(numbered[3])}`); i++; continue; }
-    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push('──────'); i++; continue; }
-    if (isSectionHead(lines, i)) { out.push(`<b>${inline(line.trim())}</b>`); i++; continue; }
-    out.push(inline(line));
+    const bullet = /^([ \t]*)[-*+•]\s+(.*)$/.exec(line);
+    if (bullet) { list(bullet[1], '•', bullet[2]); i++; continue; }
+    const numbered = /^([ \t]*)(\d{1,3})[.)]\s+(.*)$/.exec(line);
+    if (numbered) { list(numbered[1], `${numbered[2]}.`, numbered[3]); i++; continue; }
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { push('──────', 'text'); i++; continue; }
+    if (isSectionHead(lines, i) || isBoldHead(line)) { push(`<b>${inline(line.trim().replace(/^\*\*(.*)\*\*$/, '$1'))}</b>`, 'head'); i++; continue; }
+    // An indented line under a list item is its continuation: the run's levels stay; a line at the
+    // margin ends the list.
+    if (line.trim() && !/^[ \t]/.test(line)) levels.length = 0;
+    push(inline(line), line.trim() ? 'text' : 'blank');
     i++;
   }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const html = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return opts.fold === true ? foldLong(html) : html;
+}
+
+/** Visible characters past which a text folds (about one phone screen, 24 lines at 360pt). */
+export const FOLD_AT = 900;
+/** What stays open above the fold: whole paragraphs up to about this many visible characters. */
+export const FOLD_HEAD = 450;
+
+/**
+ * A long text on a phone (owner 2026-11-10, "Telegramda daha okunabilir olmalı"): its first
+ * paragraphs stay open and the rest goes into one expandable quote he opens with a tap (Bot API
+ * 7.4 `<blockquote expandable>`). Never folds code or a quote (Telegram does not nest them), and
+ * never leaves less than a paragraph behind the fold.
+ */
+export function foldLong(html: string): string {
+  const visible = (h: string): number => telegramHtmlToPlain(h).length;
+  if (visible(html) <= FOLD_AT) return html;
+  // A blank line also sits INSIDE a code block or a quote: the fold may only fall between
+  // top-level blocks, where no <pre>/<blockquote> is open (else Telegram refuses the nesting and
+  // the reply goes out as plain text, the wall this exists to prevent).
+  const blocks = html.split('\n\n');
+  if (blocks.length < 2) return html;
+  const opens = (b: string): number => (b.match(/<(?:pre|blockquote)\b/gi)?.length ?? 0) - (b.match(/<\/(?:pre|blockquote)>/gi)?.length ?? 0);
+  let depth = 0;
+  let seen = 0;
+  let cut = 0;
+  for (let k = 0; k < blocks.length - 1; k++) {
+    depth += opens(blocks[k]);
+    seen += visible(blocks[k]);
+    if (depth !== 0) continue;
+    if (cut > 0 && seen > FOLD_HEAD) break;
+    cut = k + 1;
+  }
+  if (cut === 0) return html;
+  const rest = blocks.slice(cut).join('\n\n');
+  // Code or a quote behind the fold stays open (Telegram nests neither in a quote).
+  if (/<\/?(?:pre|blockquote)\b/i.test(rest) || visible(rest) < 200) return html;
+  return `${blocks.slice(0, cut).join('\n\n')}\n\n<blockquote expandable>${rest}</blockquote>`;
 }
 
 /** The whole pipeline for one outbound text: redact, format, split. */

@@ -4,7 +4,7 @@
  * AskUserQuestion answered through `answer_pending` with the P3 union.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
@@ -210,5 +210,27 @@ describe('the Super chat\'s own AskUserQuestion (P3 through the window)', () => 
     tap(q.result!.message_id, plain(q), 'Gönder');
     await vi.waitFor(() => expect(frames.some((f) => f.verb === 'answer_pending')).toBe(true));
     expect(frames.find((f) => f.verb === 'answer_pending')!.args).toEqual({ kind: 'question', requestId: 'req-q', picked: { 'Hangi diller?': 'TR, EN' } });
+  });
+
+  it('its question fails after the picture went: the text fallback says the drawing is above, and the log says why it is text', async () => {
+    const { h, sent } = await superChat();
+    tg.push(TOKEN, textUpdate(OWNER, 'başla'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await drained();
+    // The album goes; the first question message is refused, so the rich
+    // send throws and the hub falls back to text.
+    tg.failOnce.set('sendMessage', 403);
+    h.observe({ type: 'control_request', request_id: 'req-d', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [
+      { question: 'Hangi kart?', options: [{ label: 'Bu taslak', preview: '<div class="dc-card">Kart</div>' }, { label: 'Değişsin' }] },
+      { question: 'Ne zaman?', options: [{ label: 'Bugün' }, { label: 'Yarın' }] },
+    ] } } });
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))).toBe(true));
+    expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
+    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>:'))!;
+    expect(text).toContain('• <b>Bu taslak</b>: Çizimi yukarıda.');
+    expect(text).not.toContain("Çizimi Mac'te");
+    const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
+    expect(log).toMatch(/req-d pictures 1\/1(?! NOT)/);
+    expect(log).toMatch(/req-d question sent as text: the picture card did not go whole/);
   });
 });

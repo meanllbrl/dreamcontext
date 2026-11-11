@@ -22,6 +22,12 @@ export function replyAboutBlock(refText: string, from: 'super' | 'owner', quoteT
   return `[Reply to message ref=${ref ?? msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(flat(quoteText, MAX_REPLY_QUOTE))}`;
 }
 
+/** `[About agenda line item=<id> section=<section>]`, no second line (a question's words are not
+ *  his); '' for a bad id. A Telegram reply to a question card's own message (owner 2026-11-11). */
+export function agendaItemBlock(item: string, section: 'waiting' | 'now'): string {
+  return ABOUT_ID.test(item) ? `[About agenda line item=${item} section=${section}]` : '';
+}
+
 /** `[About agenda line note=<id> section=<section>]` + `line: "<its words>"`; '' for a bad id. */
 export function agendaNoteBlock(note: string, section: string, text: string): string {
   if (!ABOUT_ID.test(note)) return '';

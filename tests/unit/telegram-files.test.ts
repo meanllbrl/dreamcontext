@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyOutbound, gitIgnoredOrUnproven, readOutbound, refusalLine } from '../../src/lib/telegram/files.js';
+import { REFUSAL_WHY, classifyOutbound, gitIgnoredOrUnproven, ignoredButSendable, readOutbound, refusalLine } from '../../src/lib/telegram/files.js';
 
 let base: string;
 let project: string;
@@ -115,6 +115,34 @@ describe('outbound classifier', () => {
     expect(classifyOutbound(put(project, '_dream_context/tmp/super/r.html'), opts()).ok).toBe(true);
   });
 
+  // Owner 2026-11-11 (kitup): five screenshots from an app's data folder went as "(Mac'te)".
+  it('a picture in a git-ignored working folder goes (app data, task assets, a child worktree); nothing else there does', () => {
+    for (const rel of ['_dream_context/apps/atlas/shots/liven.png', '_dream_context/state/assets/t/ekran.jpg', '.claude/worktrees/w1/out/clip.mp4', '_dream_context/apps/atlas/rapor.pdf']) {
+      ignoredRels.add(rel);
+      expect(classifyOutbound(put(project, rel), opts()).ok, rel).toBe(true);
+    }
+    for (const rel of ['_dream_context/apps/atlas/data.json', '_dream_context/apps/atlas/notes.md', '_dream_context/inbox/client.png', 'build/shot.png', '_dream_context/state/.super-agent.json']) {
+      ignoredRels.add(rel);
+      expect(classifyOutbound(put(project, rel), opts()), rel).toEqual({ ok: false, reason: 'gitignored' });
+    }
+    // Every other rule still comes first there: a secret, a symlink, a folder link out.
+    expect(classifyOutbound(put(project, '_dream_context/apps/atlas/.env.png'), opts()).ok).toBe(false);
+    put(outside, 'leak.png');
+    symlinkSync(join(outside, 'leak.png'), join(project, '_dream_context/apps/atlas/link.png'));
+    expect(classifyOutbound(join(project, '_dream_context/apps/atlas/link.png'), opts())).toEqual({ ok: false, reason: 'symlink' });
+    mkdirSync(join(project, '_dream_context/state/assets'), { recursive: true });
+    symlinkSync(outside, join(project, '_dream_context/state/assets/out'));
+    expect(classifyOutbound(join(project, '_dream_context/state/assets/out/leak.png'), opts())).toEqual({ ok: false, reason: 'outside_root' });
+  });
+
+  it('the media rule reads the real path: a lookalike name never opens a folder', () => {
+    expect(ignoredButSendable('_dream_context/apps/a/x.png')).toBe(true);
+    expect(ignoredButSendable('_dream_context/tmp/anything.txt')).toBe(true);
+    expect(ignoredButSendable('x/_dream_context/apps/a/x.png')).toBe(false);
+    expect(ignoredButSendable('_dream_context/appsx/a.png')).toBe(false);
+    expect(ignoredButSendable('_dream_context/apps/a/x.png.txt')).toBe(false);
+  });
+
   it('refuses a file over the upload cap', () => {
     expect(classifyOutbound(put(project, 'docs/big.bin', 'x'.repeat(100)), { ...opts(), maxBytes: 10 })).toEqual({ ok: false, reason: 'too_large' });
   });
@@ -128,6 +156,10 @@ describe('outbound classifier', () => {
   });
 
   it('the refusal line names only the base name', () => {
-    expect(refusalLine('.env', 'secret_class')).toBe("Mac'te: .env (gizli dosya)");
+    expect(refusalLine('.env', 'secret_class')).toBe("Mac'te: .env (gizli dosya sayılıyor, gönderilmez)");
+    // Every reason says why in his words, and a fixable one what to do.
+    // The reason alone: what to ask is the caller's (a Super's card names it, a routine never does).
+    expect(refusalLine('a.png', 'gitignored')).toBe("Mac'te: a.png (yalnız bu Mac'te tutulan bir klasörde)");
+    for (const w of Object.values(REFUSAL_WHY)) expect(w.length).toBeGreaterThan(8);
   });
 });

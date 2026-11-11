@@ -216,3 +216,99 @@ describe('emphasis (owner, 2026-11-09: bold heads and key words reach the phone)
     expect(parts[1].startsWith('<b>')).toBe(true); // the open bold is reopened
   });
 });
+
+// The owner's screenshot (10 Nov, kitup): "okuması çok güç". A nested list arrived as one wall.
+const UPSELL_MD = [
+  '**İadeler: Liven parayı geri veriyor, Headway reddetti.**',
+  '- **Liven:** 6,93 $\'ın tamamını iade etti, 5-7 iş günü içinde karta yatacak.',
+  '- **Headway:** İade politikalarına dayanıp reddetti.',
+  '',
+  'Net masrafımız 13,41 $ oldu.',
+  '',
+  '**Upsell\'lerde ne satıyorlar:**',
+  '- **Headway:** Ödemeden hemen sonra iki teklif geliyor:',
+  '  - 50 çok satan kitabın infografik özetleri: ilk ay 19,99 $',
+  '  - Kendini tanıma çalışma kitabı: tek seferlik 9,99 $',
+  '- **Liven:** Üç teklif var:',
+  '  - Yapay zekâ arkadaşı "Livie": 49,99 $',
+  '  - 29,99 $\'lık ömür boyu erişim',
+  'Yani ikisi de yapay zekâ ve çalışma kitabı satıyor.',
+].join('\n');
+
+describe('readable on a phone (owner 2026-11-10)', () => {
+  const NB = '    ';
+
+  it('a sub-item gets its own marker and an indent Telegram keeps; a top item keeps the bullet', () => {
+    const html = markdownToTelegramHtml(UPSELL_MD, { fold: false });
+    expect(html).toContain(`\n${NB}◦ 50 çok satan kitabın infografik özetleri: ilk ay 19,99 $`);
+    expect(html).toContain('\n• <b>Liven:</b> Üç teklif var:');
+    // No sub-item is drawn with leading ASCII spaces (Telegram trims them) or the parent's bullet.
+    expect(html).not.toMatch(/\n +•/);
+  });
+
+  it('a group with sub-items is followed by a blank line, and a bold head never sticks to the line above', () => {
+    const html = markdownToTelegramHtml(UPSELL_MD, { fold: false });
+    expect(html).toContain(`${NB}◦ Kendini tanıma çalışma kitabı: tek seferlik 9,99 $\n\n• <b>Liven:</b>`);
+    expect(html).toContain(`${NB}◦ 29,99 $'lık ömür boyu erişim\n\nYani ikisi de`);
+    expect(html.startsWith('<b>İadeler: Liven parayı geri veriyor, Headway reddetti.</b>\n• <b>Liven:</b>')).toBe(true);
+    expect(markdownToTelegramHtml('Giriş satırı\n## Sonuç\nTamam', { fold: false })).toBe('Giriş satırı\n\n<b>Sonuç</b>\nTamam');
+  });
+
+  it('a third level gets its own marker and a deeper indent', () => {
+    expect(markdownToTelegramHtml('- a\n  - b\n    - c', { fold: false })).toBe(`• a\n${NB}◦ b\n${NB}${NB}▪ c`);
+  });
+
+  it('a long routine or member result keeps its opening paragraphs open and folds the rest into one expandable quote', () => {
+    const para = (n: number) => `Paragraf ${n}: ${'Çalışma kitabı ve ömür boyu erişim satıyorlar. '.repeat(5)}`;
+    const md = [1, 2, 3, 4, 5, 6].map(para).join('\n\n');
+    const html = markdownToTelegramHtml(md, { fold: true });
+    expect(html.startsWith('Paragraf 1:')).toBe(true);
+    expect(html).toContain('\n\n<blockquote expandable>Paragraf ');
+    expect(html.endsWith('</blockquote>')).toBe(true);
+    // Every word is still there, in order.
+    expect(html.replace(/<\/?blockquote[^>]*>/g, '')).toBe(markdownToTelegramHtml(md, { fold: false }));
+  });
+
+  it('never folds a short answer, code, or a quote', () => {
+    expect(markdownToTelegramHtml('Kısa cevap.\n\nİkinci satır.', { fold: true })).not.toContain('<blockquote');
+    const withCode = `${'Uzun satır burada. '.repeat(40)}\n\n${'İkinci paragraf. '.repeat(40)}\n\n\`\`\`\nnpm test\n\`\`\``;
+    expect(markdownToTelegramHtml(withCode, { fold: true })).not.toContain('expandable');
+  });
+
+  it('what the Super writes him never folds, whatever its length (owner 2026-11-11): folding is opt-in', () => {
+    const md = Array.from({ length: 8 }, (_, i) => `Paragraf ${i}: ${'Upsell ekranlarında çalışma kitabı satıyorlar. '.repeat(6)}`).join('\n\n');
+    expect(markdownToTelegramHtml(md)).not.toContain('<blockquote');
+    for (const part of toTelegramMessages(md)) expect(part).not.toContain('expandable');
+  });
+
+  it('never folds inside a code block or a quote that has a blank line in it (Telegram would refuse the nesting)', () => {
+    const para = 'Bu paragraf katlamanın hemen ardından gelir ve uzundur. '.repeat(8);
+    const code = `\`\`\`ts\nfunction a() { return ${'1 + '.repeat(50)}1; }\n\nfunction b() { return ${'2 + '.repeat(80)}2; }\n\`\`\``;
+    for (const md of [`Şöyle değiştirdim:\n\n${code}\n\n${para}\n\n${para}`, `Alıntı:\n\n> ${'bir '.repeat(60)}\n>\n> ${'iki '.repeat(80)}\n\n${para}\n\n${para}`]) {
+      const html = markdownToTelegramHtml(md, { fold: true });
+      const at = html.indexOf('<blockquote expandable>');
+      if (at >= 0) {
+        const before = html.slice(0, at);
+        expect((before.match(/<pre>|<blockquote>/g) ?? []).length).toBe((before.match(/<\/pre>|<\/blockquote>/g) ?? []).length);
+        expect(html.slice(at)).not.toMatch(/<\/?pre\b|<blockquote>/);
+      }
+    }
+  });
+
+  it('a continuation line under a list item keeps the next sub-item at its level', () => {
+    expect(markdownToTelegramHtml('- ana madde\n  devam satırı\n  - alt madde', { fold: false })).toBe(`• ana madde\n  devam satırı\n${NB}◦ alt madde`);
+  });
+
+  it('a list nested with four spaces per level reads one level deep', () => {
+    expect(markdownToTelegramHtml('- a\n    - b\n        - c\n- d', { fold: false })).toBe(`• a\n${NB}◦ b\n${NB}${NB}▪ c\n\n• d`);
+  });
+
+  it('a folded answer over 4096 splits with the expandable quote reopened, Turkish intact', () => {
+    const md = Array.from({ length: 20 }, (_, i) => `Bölüm ${i}: ${TR.repeat(6)}`).join('\n\n');
+    const parts = toTelegramMessages(md, { fold: true });
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts.slice(1)) expect(p.startsWith('<blockquote expandable>')).toBe(true);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(4096);
+    expect(parts.join('')).toContain('İğdır');
+  });
+});

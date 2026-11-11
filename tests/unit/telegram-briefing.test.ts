@@ -17,3 +17,13 @@ describe('Telegram briefing line', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('Bold (`**…**`) the few words his eye must land on');
   });
 });
+
+describe('the Telegram line keeps one question in one place (owner 2026-11-10)', () => {
+  it('tells the Super the card is the question: no repeat, no waiting line, a new card when not answered', async () => {
+    const { SUPER_TELEGRAM_LINE: line } = await import('../../src/server/chat-modes.js');
+    expect(line).toContain('that card IS the question');
+    expect(line).toContain('never repeat its question or options');
+    expect(line).toContain('ask again with a new `super ask` card, never in prose');
+    expect(line).toContain('lists at most one level deep');
+  });
+});

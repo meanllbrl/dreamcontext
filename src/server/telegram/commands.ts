@@ -86,7 +86,7 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     const replyTo = Number(obj(msg.reply_to_message)?.message_id);
     const r = Number.isSafeInteger(replyTo) ? hub.replyOf(ab, replyTo) : null;
     if (r) parts.push(replyAboutBlock(r.quote, r.from, r.quote, r.ref));
-    return parts.join('\n');
+    return parts.join('\n\n');
   };
 
   const prevButton = hub.extraButton;

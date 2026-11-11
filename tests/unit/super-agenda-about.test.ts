@@ -183,7 +183,8 @@ describe('the composer and the server use it', () => {
   });
 
   it('the server parses the header and hands it to the digest and the owner-spoke bookkeeping', () => {
-    expect(chat).toMatch(/const abouts = isSuper \? aboutHeads\(text\)\.map\(\(\{ kind, id \}\) => \(\{ kind, id \}\)\) : \[\];/);
+    // A tapped option's `[super answer] item=<ask>` counts as written about that card (owner 2026-11-11).
+    expect(chat).toMatch(/const abouts = isSuper \? ownerAbouts\(text, aboutHeads\(text\)\) : \[\];/);
     expect(chat).toMatch(/superAnswerDigest\(chatRegistryId, Date\.now\(\), abouts\)/);
     expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], abouts, midTurn\)/);
     // `midTurn` is read before his own turn is counted, or every message would look mid-turn

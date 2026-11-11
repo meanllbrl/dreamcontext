@@ -2401,8 +2401,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // overrides): the owner, or main Super for a request it gave. One open ask per audience.
     const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
     const toMain = isMainWork(audience);
-    if (c.state.queue.some((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain)) {
-      refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : 'you already have a question open with the owner; wait for his answer');
+    const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
+    if (openAsk) {
+      // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
+      // close it once he has moved on, so a card he left open never blocks the next question.
+      refuse(res, 409, 'ask_open', toMain ? 'you already have a question open with the Super Agent; wait for its answer' : `you already have a question open with the owner (${openAsk.id}): wait for his answer, or if he answered it in other words or said to drop it, close it with \`dreamcontext super queue done ${openAsk.id}\` and ask again`);
       return;
     }
     // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
@@ -2455,7 +2458,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (item) item.read = read;
       }
     });
-    if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
+    if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner: wait for his answer, or if he said to drop it, close it with `dreamcontext super queue done <ask id>` (`super state`) and ask again'); return; }
     // The record's queue was full: the store dropped it (its cards are put back on the next write).
     if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
     const show = finishAskShow(c, state, id, prep, shown);

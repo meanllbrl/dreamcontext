@@ -45,11 +45,13 @@ import {
   buildQuestionPicks, OWNER_CARD_NOT_NEEDED_DONE, OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_DONE, OWNER_CARD_REMIND_LABEL,
   OWNER_CARD_REMIND_TITLE, type ButtonRecord,
 } from '../../lib/telegram/contract.js';
-import { formatAskCardMessages, formatAskQuestionHtml, type AskCardQuestion } from '../../lib/telegram/ask-format.js';
+import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
+import { agendaItemBlock } from '../../lib/telegram/headers.js';
 import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
+import { appendAskLog } from './ask-log.js';
 
 /** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
 let rich: RichAsks | null = null;
@@ -61,7 +63,7 @@ type Obj = Record<string, unknown>;
 const sentItems = new Set<string>();
 
 /** What an item's Telegram copy is: its messages, so an answer elsewhere can close them. */
-interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; messages: { messageId: number; html: string; question?: string }[]; turn?: true }
+interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: { messageId: number; html: string; question?: string }[]; turn?: true }
 
 /** A member's item or a refused call goes one at a time (K5): the next after his answer. */
 function oneAtATime(item: SuperQueueItem): boolean {
@@ -74,6 +76,23 @@ function turnOpen(projectName: string, id: string): boolean {
 }
 const copies = new Map<string, Copy>();
 const COPIES_CAP = 200;
+/** The kind of each item being sent, so its copy knows whether a reply to it answers it. */
+const kindOf = new Map<string, SuperQueueItem['kind']>();
+
+/**
+ * The open question a Telegram reply answers: a reply to a message of a question card's copy
+ * (the Super's own ask, or a child's question) on this bot. Its header (`[About agenda line
+ * item=<id> section=waiting]`) is what closes it, exactly like the Mac's "write about this" on
+ * its row (owner 2026-11-11: only a tap or an answer written about the card closes it).
+ */
+export function cardReplyItem(ab: Pick<ActiveBinding, 'key'>, replyToMessageId: number): string | null {
+  if (!Number.isSafeInteger(replyToMessageId) || replyToMessageId <= 0) return null;
+  for (const [id, c] of copies) {
+    if (c.ab.key !== ab.key || (c.kind !== 'ask' && c.kind !== 'question')) continue;
+    if (c.messages.some((m) => m.messageId === replyToMessageId)) return id;
+  }
+  return null;
+}
 
 type SendOutcome = { ok: true } | { ok: false; why: string; retryAfterS?: number } | { skipped: true };
 
@@ -89,14 +108,16 @@ function simpleCard(spec: SuperAskSpec | null | undefined): { question: string; 
 /** One line per send to `~/.dreamcontext/logs/telegram-asks.log` (the server's stdout is
  *  /dev/null in the app: without this a lost question leaves no trace). Rotated at 512 KB. */
 function logSend(hub: TelegramHub, item: SuperQueueItem, outcome: SendOutcome): void {
-  try {
-    const dir = join(hub.home, '.dreamcontext', 'logs');
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = join(dir, 'telegram-asks.log');
-    try { if (statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`); } catch { /* none yet */ }
-    const what = 'skipped' in outcome ? 'skipped (answered before it went)' : outcome.ok ? 'sent' : `FAILED ${outcome.why}`;
-    appendFileSync(file, `${new Date().toISOString()} ${item.id} ${item.kind} ${what}\n`, { mode: 0o600 });
-  } catch { /* the log never breaks a send */ }
+  const what = 'skipped' in outcome ? 'skipped (answered before it went)' : outcome.ok ? 'sent' : `FAILED ${outcome.why}`;
+  appendAskLog(hub.home, `${item.id} ${item.kind} ${what}`);
+}
+
+/** Questions sent as text with no picture: each option's drawing says it is on the Mac, and the
+ *  log says the pictures did not go (never a silent loss). */
+function macDrawn<Q extends AskCardQuestion>(hub: TelegramHub, id: string, qs: readonly Q[]): Q[] {
+  const wanted = qs.reduce((n, q) => n + ((q.options ?? []) as readonly DrawnOption[]).filter((o) => o.preview?.trim()).length, 0);
+  if (wanted) appendAskLog(hub.home, `${id} pictures 0/${wanted} NOT ALL SENT (sent as text: this card has no picture path)`);
+  return qs.map((q, i) => (q.options ? withDrawingNotes({ ...q, options: q.options }, i, new Set<string>()) : q));
 }
 
 function failure(err: unknown): string {
@@ -143,21 +164,30 @@ async function stillOpen(ab: ActiveBinding, item: SuperQueueItem): Promise<boole
 
 function remember(itemId: string, copy: Copy, item?: SuperQueueItem): void {
   copies.delete(itemId);
+  copy.kind ??= kindOf.get(itemId);
   copies.set(itemId, item && oneAtATime(item) ? { ...copy, turn: true } : copy);
   while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
 }
 
-/** Answered elsewhere: each message of its copy says so, with the pick when known, buttons gone. */
+/** The line a closed copy ends with: "✓ Cevaplandı" only with the pick it was answered with.
+ *  A close that carries no answer (the record closed it: a message of his taken as the answer,
+ *  a new session, a hand-over) says only that the card closed, never that he answered it
+ *  (owner 2026-11-10: a card stamped "Cevaplandı" while the Super still waited on him). */
+export function closedCopyLine(pick: string | null): string {
+  return pick ? `<b>✓ Cevaplandı: ${escapeHtml(redactSecrets(pick).slice(0, 300))}</b>` : '<i>Bu kart kapandı.</i>';
+}
+
+/** Closed elsewhere: each message of its copy says how, buttons gone. */
 async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<string, string> | null): Promise<void> {
   const c = copies.get(itemId);
   if (!c) return;
   copies.delete(itemId);
   if (c.askId) rich?.close(c.askId);
-  const all = answers ? Object.values(answers).join(' · ') : '';
+  const all = answers ? Object.values(answers).join('\n') : '';
   for (const m of c.messages) {
     if (!m.messageId) continue;
     const pick = answers && m.question ? answers[m.question] ?? '' : c.messages.length === 1 ? all : '';
-    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n<b>✓ Cevaplandı${pick ? `: ${escapeHtml(redactSecrets(pick).slice(0, 300))}` : ''}</b>`);
+    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${closedCopyLine(pick || null)}`);
   }
 }
 
@@ -204,6 +234,15 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
     : (rec.kind === 'question' && rec.data?.queue === true) || (rec.kind === 'permission' && rec.data?.queue === true)
       ? onQueueButton(hub, ab, rec, idx)
       : prev ? prev(ab, rec, idx) : LINES.stale;
+  // A reply to a question card's message is written about that question: its header goes first.
+  const prevPrefix = hub.turnPrefix;
+  hub.turnPrefix = (ab, msg) => {
+    const pre = prevPrefix ? prevPrefix(ab, msg) : '';
+    const reply = msg.reply_to_message as Obj | undefined;
+    const item = ab.target === 'super' ? cardReplyItem(ab, Number(reply?.message_id)) : null;
+    const head = item ? agendaItemBlock(item, 'waiting') : '';
+    return [head, pre].filter(Boolean).join('\n\n');
+  };
   // An agent's app request card (app-onay-karti C6): its own away rule and button kind.
   const offApps = wireTelegramAppRequests(hub);
   // "Mac'e dönünce hatırlat" (K7): his next words on the Mac name every marked card, once.
@@ -212,6 +251,7 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
     offRemind(); offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
     setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
     hub.extraButton = prev;
+    hub.turnPrefix = prevPrefix;
   };
 }
 
@@ -238,11 +278,13 @@ async function plain(hub: TelegramHub, ab: ActiveBinding, htmls: string[]): Prom
  */
 async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: string, item: SuperQueueItem): Promise<SendOutcome> {
   if (!(await stillOpen(ab, item))) return { skipped: true };
+  kindOf.set(item.id, item.kind);
+  if (kindOf.size > COPIES_CAP) kindOf.delete(kindOf.keys().next().value as string);
   if (item.kind === 'ask') {
     const spec = item.ask ?? askSpecFromLegacy(item.ownerText ?? '', item.options ?? []);
     const card = simpleCard(spec);
     if (card) {
-      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: spec.title }), card.labels,
+      const m = await buttons(hub, ab, formatAskQuestionHtml(macDrawn(hub, item.id, [card.card])[0], { title: spec.title }), card.labels,
         { kind: 'question', requestId: item.id, sessionId: superSession, singleUse: true },
         { queue: true, item: item.id, itemKind: 'ask', session: superSession, question: card.question, labels: card.labels, questions: spec.questions });
       remember(item.id, { ab, messages: [{ ...m, question: card.question }] });
@@ -254,7 +296,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       return { ok: true };
     }
     const htmls = spec.questions.length
-      ? formatAskCardMessages(spec.questions, { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })
+      ? formatAskCardMessages(macDrawn(hub, item.id, spec.questions), { title: spec.title, footer: escapeHtml(LINES.waitingOnMac) })
       : [escapeHtml(`❓ ${redactSecrets(item.ownerText ?? 'Bir sorum var')}\n${LINES.waitingOnMac}`)];
     remember(item.id, { ab, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: spec.questions[i]?.question })) });
     return { ok: true };
@@ -270,7 +312,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
     const base = { ab, sessionId: item.sessionId, requestId: item.requestId };
     const card = simpleCard({ questions: qs as SuperAskSpec['questions'] });
     if (card) {
-      const m = await buttons(hub, ab, formatAskQuestionHtml(card.card, { title: pq?.title, lead }), card.labels,
+      const m = await buttons(hub, ab, formatAskQuestionHtml(macDrawn(hub, item.id, [card.card])[0], { title: pq?.title, lead }), card.labels,
         { kind: 'question', requestId: item.requestId, sessionId: item.sessionId, singleUse: true },
         { queue: true, item: item.id, itemKind: 'question', question: card.question, labels: card.labels, questions: qs });
       remember(item.id, { ...base, messages: [{ ...m, question: card.question }] });
@@ -281,7 +323,7 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
       remember(item.id, { ...base, askId: r.askId, messages: r.messages.map((m, i) => ({ ...m, question: qs[i]?.question })) });
       return { ok: true };
     }
-    const htmls = formatAskCardMessages(qs, { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
+    const htmls = formatAskCardMessages(macDrawn(hub, item.id, qs), { title: pq?.title, lead, footer: escapeHtml(LINES.waitingOnMac) });
     remember(item.id, { ...base, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: qs[i]?.question })) });
     return { ok: true };
   }
@@ -607,4 +649,4 @@ export async function remindMarkedCards(hub: TelegramHub): Promise<number> {
 }
 
 /** Test seam. */
-export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); }
+export function _resetTelegramAsks(): void { sentItems.clear(); copies.clear(); kindOf.clear(); }

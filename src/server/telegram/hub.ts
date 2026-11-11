@@ -56,13 +56,16 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, noticeHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
-import { formatAskCardMessages, formatAskQuestionHtml } from '../../lib/telegram/ask-format.js';
+import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
+import { appendAskLog } from './ask-log.js';
 import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 
 type Obj = Record<string, unknown>;
+/** A question sent without pictures: every drawing it carries is on the Mac. */
+const NOTHING_DRAWN: ReadonlySet<string> = new Set();
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
 
 /** The pairing target the manager uses on the wire (W3 route proposal): never a member slug. */
@@ -622,8 +625,9 @@ export class TelegramHub implements TelegramHubApi {
   /** Markdown → one or more Telegram messages. */
   /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
    *  answer paths call `answerExtras`); every other caller (members, notices) keeps "Mac'te" lines. */
-  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac'): Promise<void> {
-    for (const html of toTelegramMessages(redactSecrets(md), { blocks })) {
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac', fold = ab.target !== 'super'): Promise<void> {
+    // A member's result folds when long; the Super's words and any question never do (owner 2026-11-11).
+    for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold })) {
       const sent = await this.send(ab, html);
       if (reply && Number.isSafeInteger(sent?.message_id)) this.noteReply(ab, sent.message_id, { ref: reply.ref, quote: reply.quote ?? md, from: 'super' });
     }
@@ -769,6 +773,8 @@ export class TelegramHub implements TelegramHubApi {
   interceptText: ((ab: ActiveBinding, msg: Obj) => Promise<boolean>) | null = null;
   /** A prompt richer than one single-select question (multi-select, several questions, M3). */
   richQuestion: ((ab: ActiveBinding, sessionId: string, q: PendingQuestion) => Promise<boolean>) | null = null;
+  /** W5: the drawings a rich send already put on Telegram (by request id), for a text fallback. */
+  richDrawn: ((id: string) => ReadonlySet<string> | undefined) | null = null;
   /** "Bu projede Super kapalı" with a Super'i aç button (N5). */
   superOff: ((ab: ActiveBinding) => Promise<void>) | null = null;
   /** The owner just turned away (`flushAway`): the Super-side senders (asks.ts) send what is still
@@ -1282,7 +1288,7 @@ export class TelegramHub implements TelegramHubApi {
       // An Allow only for a command the message shows whole and as it is (G2): else Reddet and the Mac.
       const command = q.fullText ?? q.text;
       const whole = shownWhole(command);
-      const body = `${prefix}🔐 İzin istiyor: <b>${escapeHtml(q.toolName)}</b>\n<pre>${escapeHtml(visibleCommand(command))}</pre>${whole ? '' : `\n${escapeHtml(NOT_SHOWN_WHOLE_LINE)}`}`;
+      const body = `${prefix}${permissionHtml(q.toolName, visibleCommand(command))}${whole ? '' : `\n${escapeHtml(NOT_SHOWN_WHOLE_LINE)}`}`;
       await this.sendButtons(ab, body, whole ? [['İzin ver (bir kez)', 'Reddet']] : [['Reddet']], { kind: 'permission', requestId: q.requestId, sessionId, singleUse: true }, { choices: whole ? ['once', 'deny'] : ['deny'] });
       return;
     }
@@ -1291,12 +1297,18 @@ export class TelegramHub implements TelegramHubApi {
     const previews = !!this.richQuestion && qs.some((x) => x.options.some((o) => typeof o.preview === 'string' && o.preview.trim()));
     if (qs.length === 1 && !qs[0].multiSelect && qs[0].options.length > 0 && qs[0].options.length <= 8 && !previews) {
       const labels = qs[0].options.map((o) => o.label);
-      await this.sendButtons(ab, formatAskQuestionHtml(qs[0], { title: q.title, prefix }), labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
+      await this.sendButtons(ab, formatAskQuestionHtml(withDrawingNotes(qs[0], 0, NOTHING_DRAWN), { title: q.title, prefix }), labels.map((l) => [l.slice(0, 60)]), { kind: 'question', requestId: q.requestId, sessionId, singleUse: true }, { question: qs[0].question, labels });
       return;
     }
     if (this.richQuestion && await this.richQuestion(ab, sessionId, q).catch(() => false)) return;
     if (qs.length) {
-      for (const html of formatAskCardMessages(qs, { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
+      // Text after a rich send that failed part way (its drawings may be on Telegram already) or
+      // that never ran: each drawing says where it truly is, and the log says why it is text.
+      const drawn = this.richDrawn?.(q.requestId);
+      const wanted = qs.reduce((n, x) => n + x.options.filter((o) => o.preview?.trim()).length, 0);
+      if (drawn) appendAskLog(this.home, `${q.requestId} question sent as text: the picture card did not go whole`);
+      else if (wanted) appendAskLog(this.home, `${q.requestId} pictures 0/${wanted} NOT ALL SENT (sent as text: this card has no picture path)`);
+      for (const html of formatAskCardMessages(qs.map((x, i) => withDrawingNotes(x, i, drawn ?? NOTHING_DRAWN)), { title: q.title, prefix, footer: escapeHtml(LINES.waitingOnMac) })) await this.send(ab, html).catch(() => {});
       return;
     }
     await this.reply(ab, `${prefix ? `${prefix} ` : ''}❓ ${redactSecrets(q.text).slice(0, 300)}\n${LINES.waitingOnMac}`);
