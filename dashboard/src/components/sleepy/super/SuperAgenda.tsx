@@ -6,7 +6,7 @@ import { tr } from '../../../lib/assignToAgent';
 import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
 import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { requestOpenAgents } from '../../../lib/openAgents';
-import { showOwnerSlot } from './superJobsStore';
+import { ownerSlotMounted, showOwnerSlot } from './superJobsStore';
 import './SuperAgenda.css';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 
@@ -133,7 +133,10 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (cardItem(r) || (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true));
+  // A card line is clickable only when something can act on it: its slot is drawn, or the child or
+  // member it falls back to can be opened. Never a row that looks clickable and does nothing.
+  const fallbackActs = (r: AgendaRow) => (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && ((cardItem(r) && ownerSlotMounted(r.item)) || fallbackActs(r));
 
   const rowOf = (r: AgendaRow) => {
     const body = (

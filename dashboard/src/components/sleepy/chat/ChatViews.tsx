@@ -1,6 +1,7 @@
 import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
 import { useCallback } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
+import { useOwnerCardT } from '../../../context/I18nContext';
 import { useHostCard, type CardHost } from '../../../lib/cardRecords';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
@@ -198,6 +199,7 @@ export function ChecklistCard({ spec, conversationId, host }: {
   host?: CardHost;
 }) {
   const desktop = isDesktop();
+  const t = useOwnerCardT();
   const api = useApi();
   const fetchJson = useCallback((path: string) => api.get<unknown>(path), [api]);
   const { vault: activeVault } = useVaultId();
@@ -217,9 +219,9 @@ export function ChecklistCard({ spec, conversationId, host }: {
   };
 
   const note = !desktop
-    ? 'This checklist needs the desktop app.'
+    ? t('ownerCard.checklist.needsDesktop')
     : !vault
-      ? 'No project is open — open one to use this checklist.'
+      ? t('ownerCard.checklist.noProject')
       : null;
 
   return (
@@ -228,7 +230,7 @@ export function ChecklistCard({ spec, conversationId, host }: {
         <span className="chat-checklistcard-glyph" aria-hidden>☑</span>
         <div className="chat-checklistcard-titlewrap">
           <span className="chat-checklistcard-title">{spec.title}</span>
-          <span className="chat-checklistcard-count">{itemCount} item{itemCount === 1 ? '' : 's'}</span>
+          <span className="chat-checklistcard-count">{itemCount === 1 ? t('ownerCard.checklist.item') : t('ownerCard.checklist.items').replace('{n}', String(itemCount))}</span>
         </div>
       </div>
       <button
@@ -237,7 +239,7 @@ export function ChecklistCard({ spec, conversationId, host }: {
         onClick={handleOpen}
         disabled={!vault}
       >
-        Open pinned checklist <span aria-hidden>⇱</span>
+        {t('ownerCard.checklist.open')} <span aria-hidden>⇱</span>
       </button>
       {note && <p className="chat-checklistcard-note">{note}</p>}
     </div>

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useApi } from '../../../context/VaultContext';
-import { OWNER_ONLY_LINE, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { OWNER_ONLY_LINE, cardFolderText, useHostCard, type CardHost } from '../../../lib/cardRecords';
 import { RequestError } from '../../../api/client';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -156,7 +156,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
 
   return (
     <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
-      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : folder?.name ? `${folder.name} · ${spec.file}` : spec.file}</span>} />
+      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : cardFolderText(folder, spec) ? `${cardFolderText(folder, spec)} · ${spec.file}` : spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
       {reentry && <p className="chat-secretcard-note" data-testid="secret-card-reentry">{t('ownerCard.secretAgain')}</p>}
 

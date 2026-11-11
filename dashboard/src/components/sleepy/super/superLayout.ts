@@ -371,6 +371,11 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
+  /** The bar's MEASURED height (JobBar publishes it, superJobsStore `useQueueHeight`). A card row
+   *  wraps to show its whole command (sahip-karti-yerinde K7), so the top band is never assumed
+   *  one line tall: everything under it (the centre, a sheet, the agenda) starts below the bar's
+   *  actual bottom. Absent or smaller than the band: the band. */
+  queueHeight?: number;
   /** The owner's drops this window session, the last dropped last: when two of his cards would
    *  overlap, the one he dropped later keeps its place (window state, never the record). */
   recent?: readonly string[];
@@ -880,11 +885,13 @@ interface Frame { width: number; height: number; content: Rect; free: Rect; othe
 
 /** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
  *  without it the content runs down to the bottom margin. */
-function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN, phone?: { queue: boolean; terminals: boolean }): Frame {
+function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN, phone?: { queue: boolean; terminals: boolean }, topBand: number = STAGE.BAND): Frame {
   const { MARGIN, BAND } = STAGE;
-  if (phone) return phoneFrame(frameOf(width, height, true, centreMin), phone);
+  if (phone) return phoneFrame(frameOf(width, height, true, centreMin, undefined, topBand), phone, topBand);
   const below = bottomBand ? MARGIN + BAND : MARGIN;
-  const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - (MARGIN + BAND) - below) };
+  // The top band is the bar's real height (never less than BAND): nothing is planned under it.
+  const top = MARGIN + Math.max(BAND, topBand);
+  const content: Rect = { x: MARGIN, y: top, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - top - below) };
   const bandTop = MARGIN / 2;
   const bandBottom = height - MARGIN / 2 - BAND;
   return {
@@ -898,9 +905,9 @@ function frameOf(width: number, height: number, bottomBand = true, centreMin: nu
 /** The phone's frame: the content runs to all four edges. Only what is showing takes height: the
  *  queue pill above the chat, the terminals' dock below it. The Others rect stays bottom-right,
  *  it is where a card flies to and what the panel opens above. */
-function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals: boolean }): Frame {
+function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals: boolean }, topBand: number = STAGE.BAND): Frame {
   const bandTop = STAGE.PHONE_BAND_INSET;
-  const top = queue ? bandTop + STAGE.BAND + bandTop : 0;
+  const top = queue ? bandTop + Math.max(STAGE.BAND, topBand) + bandTop : 0;
   const below = terminals ? STAGE.MARGIN + STAGE.BAND : 0;
   const content: Rect = { x: 0, y: top, width: f.width, height: Math.max(0, f.height - top - below) };
   return { ...f, content, free: content, bandTop, phone: true };
@@ -1176,7 +1183,7 @@ function planWith(
   // its exits live there.
   const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
   const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
-    phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined);
+    phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined, opts.queueUp ? opts.queueHeight ?? STAGE.BAND : STAGE.BAND);
   const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a

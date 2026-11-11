@@ -128,6 +128,32 @@ export function slotCardKey(items: readonly SuperQueueItem[]): string {
   return items.map((q) => [q.id, q.state, q.delivery ?? '', q.card?.cardRef ?? '', q.card?.deliverTo ?? '', q.sessionId].join('\u0003')).join('\u0001');
 }
 
+// ─── The bar's measured height (K7: a card row wraps) ────────────────────────────
+
+const queueHeights = new Map<string, number>();
+const queueHeightListeners = new Set<() => void>();
+
+/** The bar (JobBar) says how tall it is NOW, for its Super session; 0 when it draws nothing. The
+ *  stage plans everything under the top band below this, never below a one-line constant. Only a
+ *  real change notifies. */
+export function publishQueueHeight(session: string, height: number): void {
+  const h = Math.max(0, Math.ceil(height));
+  if ((queueHeights.get(session) ?? 0) === h) return;
+  if (h) queueHeights.set(session, h); else queueHeights.delete(session);
+  for (const fn of [...queueHeightListeners]) fn();
+}
+
+function subscribeQueueHeight(fn: () => void): () => void {
+  queueHeightListeners.add(fn);
+  return () => { queueHeightListeners.delete(fn); };
+}
+
+/** The bar's measured height for a Super session (0 = none drawn, or not measured yet). */
+export function useQueueHeight(session: string | null | undefined): number {
+  const read = () => (session ? queueHeights.get(session) ?? 0 : 0);
+  return useSyncExternalStore(subscribeQueueHeight, read, read);
+}
+
 // ─── The bar's ▶ Run lands in the slot (K7) ───────────────────────────────────
 
 type SlotRun = { n: number; shown: string };
@@ -157,6 +183,19 @@ export function requestSlotRun(itemId: string, shown: string): boolean {
   return true;
 }
 
+/** The slot's run card handled request `n` (started it, or said it did not): it is forgotten, so a
+ *  remount of the card never runs it again. A newer request is kept. */
+export function takeSlotRun(itemId: string, n: number): void {
+  if (slotRuns.get(itemId)?.n !== n) return;
+  slotRuns.delete(itemId);
+  for (const fn of [...slotRunListeners]) fn();
+}
+
+/** Whether a slot card for `itemId` is mounted now (the agenda's line can act on it). */
+export function ownerSlotMounted(itemId: string): boolean {
+  return slotMounted.has(itemId);
+}
+
 function subscribeSlotRuns(fn: () => void): () => void {
   slotRunListeners.add(fn);
   return () => { slotRunListeners.delete(fn); };
@@ -181,6 +220,7 @@ export function showOwnerSlot(itemId: string, root: ParentNode = document): bool
 
 /** Tests only. */
 export function _resetOwnerSlots(): void {
+  queueHeights.clear();
   seenOpenCards.clear();
   slotRuns.clear();
   slotMounted.clear();

@@ -20,6 +20,8 @@ import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/ser
 const { TEMPLATES } = vi.hoisted(() => ({
   TEMPLATES: {
     'ownerCard.needsYouTitle': '{name} needs you',
+    'ownerCard.doneTitle': '{name}: done',
+    'ownerCard.endedTitle': '{name}: ended',
     'ownerCard.delivery.sent': 'Sent to {child}.',
     'ownerCard.delivery.waking': '{child} was paused to save memory; waking it now.',
     'ownerCard.delivery.held:cap': 'Held: {n} jobs are running; it gets this when one ends.',
@@ -183,6 +185,19 @@ describe('the Super-chat slot draws the card from the record (B1-B4)', () => {
     expect(has(html, 'super-owner-not-needed')).toBe(false);
   });
 
+  it('the header tells the truth: needs you while open, done once it has a result, ended for an ended child', () => {
+    expect(slot(item(RUN))).toContain('Invoice export needs you');
+    const sent = slot(item(RUN, { state: 'done', delivery: 'sent' }));
+    expect(sent).toContain('Invoice export: done');
+    expect(sent).not.toContain('needs you');
+    // Acted on, result held for a paused or full crew: the owner's part is done, not "needs you".
+    expect(slot(item(RUN, { delivery: 'held:cap' }))).toContain('Invoice export: done');
+    expect(slot(item(RUN, { state: 'done' }))).toContain('Invoice export: done');
+    const ended = slot(item(RUN, { state: 'done', delivery: 'ended' }));
+    expect(ended).toContain('Invoice export: ended');
+    expect(ended).not.toContain('needs you');
+  });
+
   it('Paused on a parked child', () => {
     expect(has(slot(item(RUN), STATE(), true), 'super-owner-paused')).toBe(true);
   });
@@ -246,11 +261,43 @@ describe('the bar row: the card verb is the primary button (A1-A5)', () => {
   });
 
   it('a member mirror carrying a card gets the same row', () => {
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
     const html = bar(item(RUN, { kind: 'member', member: 'turing', of: 'owner' } as Partial<SuperQueueItem>));
     expect(has(html, 'super-queue-card-run')).toBe(true);
+    expect(has(html, 'super-queue-member')).toBe(true);
+  });
+
+  it('a card with a cwd shows "<root name> · <cwd>" on the bar, the same text as the slot card', async () => {
+    const { cardFolderText } = await import('../../dashboard/src/lib/cardRecords.js');
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
+    const spec = { ...RUN, cwd: 'web' };
+    const html = bar(item(spec));
+    expect(has(html, 'super-queue-card-run')).toBe(true);
+    expect(html).toContain('acme-shop-look · web');
+    expect(cardFolderText({ name: 'acme-shop-look' }, spec as never)).toBe('acme-shop-look · web');
+    expect(cardFolderText({ name: 'acme-shop-look' }, RUN as never)).toBe('acme-shop-look');
+    expect(cardFolderText(null, spec as never)).toBeNull();
+    // The slot's real run card draws exactly that text.
+    const card = renderToStaticMarkup(createElement(RunCard, { spec: spec as never, host: { record: handleOf(spec) }, folder: { name: 'acme-shop-look', path: '/w/acme-shop-look' } }));
+    expect(card).toContain('acme-shop-look · web');
+  });
+
+  it('no folder yet (loading, or its read failed): the command is drawn, the row offers Show, never Run', () => {
+    const html = bar(item(RUN));
+    expect(html).toContain(CMD);
+    expect(has(html, 'super-queue-card-show')).toBe(true);
+    expect(has(html, 'super-queue-card-run')).toBe(false);
+  });
+
+  it('the row says Run once: the verb, no "Run" label before the command', () => {
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
+    const html = bar(item(RUN));
+    expect(html).not.toContain('ownerCard.bar.run<');
+    expect(html).not.toMatch(/ownerCard\.bar\.run(?!Verb)/);
   });
 
   it('Paused for a parked child; the row stays', () => {
+    _seedCardStateForTests(CHILD, REF, STATE() as never);
     publishSuperQuestions('S', { open: [], superSession: undefined, sessionFor: () => undefined, pausedFor: () => true } as never, 'p');
     const html = bar(item(RUN));
     expect(has(html, 'super-queue-paused')).toBe(true);

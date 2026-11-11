@@ -229,6 +229,19 @@ function cleanState(r: unknown): CardStateView | null {
   return { folder, views, cutOff: o.cutOff === true, gone: o.gone === true };
 }
 
+/**
+ * THE folder text of a card action (K5, K7), one helper for every surface that offers one (the
+ * slot's run and secret cards, the bar row; the Telegram message draws the same shape): the card's
+ * working root by name, then ` · <cwd>` when the spec runs in a sub-folder of it. What the owner
+ * reads is where it runs. Null while the root is not known (loading, or its read failed): a
+ * surface then offers no Run that would run somewhere unseen.
+ */
+export function cardFolderText(folder: { name: string } | null | undefined, spec: { cwd?: string } | RecordSpec): string | null {
+  if (!folder?.name) return null;
+  const cwd = 'cwd' in spec && typeof spec.cwd === 'string' ? spec.cwd.trim() : '';
+  return cwd ? `${folder.name} · ${cwd}` : folder.name;
+}
+
 /** Read a card's state with the owner key (the route asks for owner proof). Null on refusal. */
 export async function fetchCardState(vault: string | null, session: string, card: string): Promise<CardStateView | null> {
   const headers: Record<string, string> = {};

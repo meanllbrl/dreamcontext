@@ -177,6 +177,19 @@ describe('a child\'s owner card on Telegram', () => {
   });
 });
 
+describe('the Super\'s own run card names the folder the Mac draws', () => {
+  it('Klasör is the card root\'s name, then · <cwd> when the card has one ', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'giriş?'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
+    noteAssistantCards(SID, vault, 'm7', fence({ type: 'run', id: 'own', command: 'gh auth status', cwd: 'apps/web' }));
+    noteAssistantCards(SID, vault, 'm8', fence({ type: 'run', id: 'bare', command: 'gh auth login' }));
+    await vi.waitFor(() => expect(tg.texts().filter((t) => t.includes('Klasör:'))).toHaveLength(2));
+    const texts = tg.texts().filter((t) => t.includes('Klasör:'));
+    expect(texts.some((t) => t.includes(`Klasör: <code>${basename(project)} · apps/web</code>`))).toBe(true);
+    expect(texts.some((t) => t.includes(`Klasör: <code>${basename(project)}</code>`))).toBe(true);
+  });
+});
+
 describe('the W1 class finding: every card kind by name', () => {
   it('a checklist card in a Telegram-bound Super chat is a plain Mac line: no secret line, no phone link', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'kurulum?'));

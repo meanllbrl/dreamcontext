@@ -21,9 +21,22 @@
  *   Refused  a curl-shape `POST /api/agent/card-ticket` (no Origin, no key), a node `ws` start
  *            with no Origin, no key and no ticket, and a no-Origin attach to the owner's LIVE run:
  *            403 each, not one replay byte.
- *   Observed the slot, the bar row (CardHead) and the agenda line at 1440 and 390 px, light theme,
- *            into --out (slot-1440.png, bar-390.png, ...); console errors and failed requests per
- *            page into <out>/console.json. Any console error fails the walk.
+ *   Observed the slot (open card, kept, result), the bar row (CardHead, run and secret) and the
+ *            agenda line at 1440 and 390 px, in light AND dark, into --out as
+ *            <name>-<width>-<theme>.png. Every shot is of a CLEAN state, proven by the walk: the
+ *            Agenda and any popover are closed first (the agenda shot opens its list instead),
+ *            the element's top is scrolled just under the top chrome (titlebar, the Super bar
+ *            above the column, any fixed header), and its centre and four corners (inset inside
+ *            its rounded corners, at least 8 px, on its part between the top chrome and the bottom
+ *            chrome: the chat composer, the unread pill) must hit the element, a descendant or an
+ *            ancestor (document.elementFromPoint), else the step FAILS and no picture is saved.
+ *            An element taller than that band is shot in its upper part, then scrolled so its
+ *            bottom sits above the bottom chrome and shot again (`-bottom.png`). One fact step per theme measures, at 390 with the
+ *            Agenda open as the owner has it, whether it overlaps the bar's card row: a grid every
+ *            8 px over the overlap, the bar-row controls under it, the rects in result.json
+ *            `facts`, and agenda-over-bar-390-<theme>.png. Console
+ *            errors and failed requests per page go to <out>/console.json; any console error
+ *            fails the walk.
  *
  * Scratch only (patterns of verify-owner-reach.mjs and super-owner-wait.mjs): a fake HOME,
  * another port, a scripted stand-in `claude` (no tokens), the owner key handed to the server the
@@ -45,6 +58,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { applyTheme } from './lib/super-scratch.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -96,6 +110,98 @@ export function writeHandEntry(home, target, entry) {
 /** The ids of the entries a receipts file holds now ([] when it is gone). */
 export function receiptIds(home, target) {
   try { return (JSON.parse(readFileSync(receiptFileOf(home, target.childRecordId, target.childId), 'utf-8')).entries ?? []).map((e) => e.id); } catch { return []; }
+}
+
+/**
+ * The band of the screen the element can be seen in: below the lowest top chrome (the titlebar,
+ * the Super bar when it sits above the column, any fixed/sticky header) and above the highest
+ * bottom chrome (the chat composer, the floating unread pill), counting only chrome that shares
+ * columns with `rect`. `tops` and `bottoms` are those chrome rects.
+ */
+export function chromeBand(rect, viewport, tops = [], bottoms = []) {
+  const sharesX = (c) => c && c.width > 0 && c.height > 0 && Math.min(c.x + c.width, rect.x + rect.width) - Math.max(c.x, rect.x) > 0;
+  const top = Math.max(0, ...tops.filter(sharesX).map((c) => c.y + c.height));
+  const bottom = Math.min(viewport.height, ...bottoms.filter(sharesX).map((c) => c.y));
+  return { top, bottom };
+}
+
+/**
+ * What a clipping scroll container hides, as chrome rects (K7 observed): the element's nearest
+ * clipping ancestors cut it to `clip`, so whatever is painted above `clip`'s top in its columns
+ * (the chat's own head sitting over the scrolled list) is TOP chrome, and whatever is below its
+ * bottom (the composer) is BOTTOM chrome. Null clip: nothing.
+ */
+export function clipChrome(clip, viewport) {
+  const tops = [];
+  const bottoms = [];
+  if (!clip || clip.width <= 0) return { tops, bottoms };
+  if (clip.y > 0) tops.push({ x: clip.x, y: 0, width: clip.width, height: clip.y });
+  const end = clip.y + clip.height;
+  if (end < viewport.height) bottoms.push({ x: clip.x, y: end, width: clip.width, height: viewport.height - end });
+  return { tops, bottoms };
+}
+
+/**
+ * The part of `rect` a viewer can see: inside the viewport and inside the band between the top
+ * chrome's bottom edge (`top`) and the bottom chrome's top edge (`bottom`). Null when none of it is.
+ */
+export function visiblePart(rect, viewport, top = 0, bottom = viewport.height) {
+  const x0 = Math.max(rect.x, 0);
+  const y0 = Math.max(rect.y, top, 0);
+  const x1 = Math.min(rect.x + rect.width, viewport.width);
+  const y1 = Math.min(rect.y + rect.height, viewport.height, bottom);
+  if (x1 - x0 < 1 || y1 - y0 < 1) return null;
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/** How far in a probe point sits: inside the element's rounded corner (its largest computed
+ *  radius + 2 px), never less than 8 px. A point in the corner's cut-off would hit the parent. */
+export function probeInset(radii = []) {
+  const r = Math.max(0, ...radii.filter((v) => Number.isFinite(v)));
+  return Math.max(8, r + 2);
+}
+
+/**
+ * The points a "nothing covers it" check probes (K7 observed): the centre and the four corners of
+ * the element's VISIBLE part (see {@link visiblePart}: between the top and bottom chrome), each
+ * `inset` px in (never past the middle). Empty when no part of it is in that band.
+ */
+export function probePoints(rect, viewport, inset = 8, top = 0, bottom = viewport.height) {
+  const v = visiblePart(rect, viewport, top, bottom);
+  if (!v) return [];
+  const x0 = v.x; const y0 = v.y; const x1 = v.x + v.width; const y1 = v.y + v.height;
+  const dx = Math.min(inset, v.width / 2);
+  const dy = Math.min(inset, v.height / 2);
+  return [
+    { at: 'centre', x: (x0 + x1) / 2, y: (y0 + y1) / 2 },
+    { at: 'top-left', x: x0 + dx, y: y0 + dy },
+    { at: 'top-right', x: x1 - dx, y: y0 + dy },
+    { at: 'bottom-left', x: x0 + dx, y: y1 - dy },
+    { at: 'bottom-right', x: x1 - dx, y: y1 - dy },
+  ];
+}
+
+/** A grid of points every `step` px over `rect` (cell centres), at least one: what the overlap
+ *  fact samples, so a cover a few probe points would miss is still counted. */
+export function gridPoints(rect, step = 8) {
+  if (!rect || rect.width <= 0 || rect.height <= 0) return [];
+  const out = [];
+  const nx = Math.max(1, Math.floor(rect.width / step));
+  const ny = Math.max(1, Math.floor(rect.height / step));
+  const sx = rect.width / nx; const sy = rect.height / ny;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) out.push({ x: rect.x + sx * (i + 0.5), y: rect.y + sy * (j + 0.5) });
+  return out;
+}
+
+/** Where two rects overlap (x, y, width, height, area), or null when they do not. */
+export function overlapOf(a, b) {
+  if (!a || !b) return null;
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const width = Math.min(a.x + a.width, b.x + b.width) - x;
+  const height = Math.min(a.y + a.height, b.y + b.height) - y;
+  if (width <= 0 || height <= 0) return null;
+  return { x, y, width, height, area: Math.round(width * height) };
 }
 
 // ─── The walk ───────────────────────────────────────────────────────────────────────────
@@ -219,6 +325,10 @@ process.stdin.on('end', () => chain.then(() => process.exit(0)));
 }
 
 const results = [];
+/** Measured facts the walk records, not judges (result.json `facts`). */
+const facts = [];
+const WIDTHS = [{ w: 1440, h: 900 }, { w: 390, h: 844 }];
+const THEMES = ['light', 'dark'];
 function step(label, cond, detail) {
   results.push({ label, pass: !!cond, ...(cond ? {} : { detail: detail === undefined ? undefined : String(detail).slice(0, 900) }) });
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${!cond && detail !== undefined ? `\n      ${String(detail).slice(0, 900)}` : ''}`);
@@ -322,28 +432,249 @@ async function clean(page) {
   }).catch(() => {});
 }
 
-/** One shot per width: the element's own crop when it is on screen, else the whole page.
- *  `prepare` runs after each resize (a list a width change folded is opened again). */
-async function shotAt(page, out, name, locate, shots, prepare) {
-  for (const { w, h } of [{ w: 1440, h: 900 }, { w: 390, h: 844 }]) {
-    await page.setViewportSize({ width: w, height: h });
-    await page.waitForTimeout(900);
-    if (prepare) await prepare(page).catch(() => {});
-    await clean(page);
-    await page.mouse.move(2, 2);
-    const file = join(out, `${name}-${w}.png`);
-    const el = locate ? locate(page).first() : null;
-    let cropped = false;
-    if (el && await el.count() && await el.isVisible().catch(() => false)) {
-      await el.scrollIntoViewIfNeeded().catch(() => {});
-      cropped = await el.screenshot({ path: file }).then(() => true).catch(() => false);
+/**
+ * In the page: which probe points do NOT hit the element. A hit on the element, a descendant, or
+ * one of its ANCESTORS (a parent showing through a rounded corner or padding) is no cover; only
+ * something else painted there is.
+ */
+function hitTestIn(node, points) {
+  const name = (el) => {
+    if (!el) return 'nothing';
+    const id = el.closest('[data-testid]')?.getAttribute('data-testid');
+    return `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}` : ''}${id ? ` in [data-testid=${id}]` : ''}`;
+  };
+  return points.map((p) => {
+    const hit = document.elementFromPoint(p.x, p.y);
+    const ours = !!hit && (hit === node || node.contains(hit) || hit.contains(node));
+    return ours ? null : { ...p, by: name(hit) };
+  }).filter(Boolean);
+}
+
+/**
+ * The chrome around the element, measured in the page from what is ACTUALLY painted there, NOW
+ * (call it again after every scroll):
+ *  - TOP: any fixed or sticky element, at any depth (the titlebar, the Super bar, the Super
+ *    chat's own head inside its column), in the upper part of the screen; plus the named ones
+ *    (`ns-titlebar`, `super-job-bar`, a header);
+ *  - BOTTOM: any fixed or sticky element in the lower part (the composer, the unread pill), plus
+ *    `.chat-cmp` and `super-unread-bar`;
+ *  - and what the element's own clipping scroll containers hide (`clipChrome`): a head that sits
+ *    above the scrolled list is chrome even when it is not sticky.
+ * Never the element itself, a descendant or an ancestor. Then the band ({@link chromeBand}).
+ */
+async function bandOf(page, el) {
+  const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
+  const got = await el.evaluate((n) => {
+    const vh = innerHeight;
+    const box = (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+    const related = (e) => e === n || n.contains(e) || e.contains(n);
+    const shown = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0; };
+    const tops = new Set(document.querySelectorAll('[data-testid="ns-titlebar"], [data-testid="super-job-bar"], header, [role="banner"]'));
+    const bottoms = new Set(document.querySelectorAll('.chat-cmp, [data-testid="super-unread-bar"]'));
+    for (const e of document.querySelectorAll('body *')) {
+      const pos = getComputedStyle(e).position;
+      if (pos !== 'fixed' && pos !== 'sticky') continue;
+      const r = e.getBoundingClientRect();
+      if (r.height <= 0 || r.height > vh / 3) continue;
+      if (r.top < vh * 0.5 && r.bottom <= vh * 0.6) tops.add(e);
+      else if (r.top >= vh * 0.4) bottoms.add(e);
     }
-    if (!cropped) await page.screenshot({ path: file });
-    shots.push({ file, cropped });
-    if (locate && !cropped) note(`${name}@${w}: its element was not on screen; whole page shot`);
+    const pick = (set) => [...set].filter((e) => !related(e) && shown(e)).map(box);
+    // The element's clipping ancestors: what they cut off is not on screen, whatever is painted there.
+    let clip = { x0: 0, y0: 0, x1: innerWidth, y1: vh };
+    for (let a = n.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (!/(auto|scroll|hidden|clip)/.test(`${cs.overflowX} ${cs.overflowY}`)) continue;
+      const r = a.getBoundingClientRect();
+      const x0 = r.left + a.clientLeft; const y0 = r.top + a.clientTop;
+      clip = { x0: Math.max(clip.x0, x0), y0: Math.max(clip.y0, y0), x1: Math.min(clip.x1, x0 + a.clientWidth), y1: Math.min(clip.y1, y0 + a.clientHeight) };
+    }
+    const c = clip.x1 > clip.x0 && clip.y1 > clip.y0 ? { x: clip.x0, y: clip.y0, width: clip.x1 - clip.x0, height: clip.y1 - clip.y0 } : null;
+    return { tops: pick(tops).filter((r) => r.y < vh * 0.5), bottoms: pick(bottoms).filter((r) => r.y + r.height > vh * 0.4), clip: c };
+  }).catch(() => ({ tops: [], bottoms: [], clip: null }));
+  const rect = await el.evaluate((n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }).catch(() => null);
+  if (!rect) return { top: 0, bottom: viewport.height };
+  const fromClip = clipChrome(got.clip, viewport);
+  // Chrome in the upper half counts only by its bottom edge above the element's middle, and in
+  // the lower half by its top edge below it: a sticky thing in the element's own middle is a
+  // COVER for the probes to find, never a band edge.
+  const mid = rect.y + rect.height / 2;
+  const tops = [...got.tops.filter((r) => r.y + r.height <= Math.max(mid, viewport.height * 0.3)), ...fromClip.tops];
+  const bottoms = [...got.bottoms.filter((r) => r.y >= Math.min(mid, viewport.height * 0.7)), ...fromClip.bottoms];
+  return { ...chromeBand(rect, viewport, tops, bottoms), clip: got.clip };
+}
+
+/** The element's rect and its corner radii (computed). */
+async function rectOf(el) {
+  return el.evaluate((n) => {
+    const r = n.getBoundingClientRect();
+    const cs = getComputedStyle(n);
+    const radii = [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomLeftRadius, cs.borderBottomRightRadius].map((v) => parseFloat(v) || 0);
+    return { rect: { x: r.x, y: r.y, width: r.width, height: r.height }, radii };
+  }).catch(() => null);
+}
+
+/** Is the element's visible part (inside the chrome band) uncovered? Its centre and corners,
+ *  inset inside its rounded corners, must hit the element (or a descendant or ancestor). */
+async function uncovered(page, el, band) {
+  const got = await rectOf(el);
+  if (!got) return { ok: false, why: 'gone', rect: null };
+  const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
+  const part = visiblePart(got.rect, viewport, band.top, band.bottom);
+  const points = probePoints(got.rect, viewport, probeInset(got.radii), band.top, band.bottom);
+  if (!part || !points.length) return { ok: false, why: 'not on screen between the top and bottom chrome', rect: got.rect, band };
+  const misses = await el.evaluate(hitTestIn, points).catch((e) => [{ at: 'all', by: String(e) }]);
+  return { ok: misses.length === 0, rect: got.rect, part, band, whole: part.height >= got.rect.height - 1 && part.width >= got.rect.width - 1, misses };
+}
+
+/** Scroll the element so its top (`'start'`) sits just under the top chrome, or its bottom
+ *  (`'end'`) just above the bottom chrome; its own scroll container moves. */
+async function scrollTo(page, el, where, band) {
+  await el.evaluate((n, [w, t, b]) => {
+    n.scrollIntoView({ block: w, inline: 'nearest' });
+    const r = n.getBoundingClientRect();
+    const by = w === 'start' ? r.top - (t + 4) : r.bottom - (b - 4);
+    if (w === 'start' ? by >= 0 : by <= 0) return;
+    let p = n.parentElement;
+    while (p && !(p.scrollHeight > p.clientHeight && /(auto|scroll)/.test(getComputedStyle(p).overflowY))) p = p.parentElement;
+    (p ?? document.scrollingElement)?.scrollBy?.(0, by);
+  }, [where, band.top, band.bottom]).catch(() => {});
+  await page.waitForTimeout(300);
+}
+
+/** Probe, then save the VISIBLE part (a page clip: never the chrome around it). */
+async function probeAndShoot(page, el, band, tag, file, shots, meta) {
+  const probe = await uncovered(page, el, band);
+  const which = probe.part ? `${probe.whole ? 'whole element' : `on-screen part y ${Math.round(probe.part.y - (probe.rect?.y ?? 0))}–${Math.round(probe.part.y + probe.part.height - (probe.rect?.y ?? 0))} of ${Math.round(probe.rect?.height ?? 0)} px`}` : 'nothing';
+  if (!step(`${tag}: in view and uncovered (${which})`, probe.ok, JSON.stringify(probe))) return null;
+  const saved = await page.screenshot({ path: file, clip: probe.part }).then(() => true).catch(() => false);
+  if (step(`${tag}: saved`, saved)) shots.push({ file, ...meta, rect: probe.rect, part: probe.part, band, whole: probe.whole });
+  return probe;
+}
+
+/**
+ * Shoot one element at each width and theme, as `<name>-<width>-<theme>.png`, only from a CLEAN
+ * state: `prepare` first (default: close the Agenda and popovers), the element's top scrolled just
+ * under the top chrome, then the hit-test inside the band between the top and bottom chrome. A
+ * missing or covered element FAILS its step and saves no picture. An element taller than the band
+ * is shot in its upper part, then scrolled so its bottom sits just above the bottom chrome,
+ * checked and shot again (`<name>-<width>-<theme>-bottom.png`: a slot's result line is there).
+ */
+async function shotAt(page, out, name, locate, shots, prepare = closeOverlays) {
+  for (const { w, h } of WIDTHS) {
+    for (const theme of THEMES) {
+      const tag = `observed ${name} @${w} ${theme}`;
+      await page.setViewportSize({ width: w, height: h });
+      await applyTheme(page, theme);
+      await page.waitForTimeout(700);
+      await prepare(page).catch(() => {});
+      await clean(page);
+      await page.mouse.move(2, 2);
+      const el = locate(page).first();
+      if (!(await el.count()) || !(await el.isVisible().catch(() => false))) { step(`${tag}: the element is on screen`, false, 'not found or hidden'); continue; }
+      // The band is measured for THIS shot, after its scroll: what paints over the element moves
+      // with it (a sticky chat head, a list scrolled under its container's edge).
+      await scrollTo(page, el, 'start', await bandOf(page, el));
+      const band = await bandOf(page, el);
+      const probe = await probeAndShoot(page, el, band, tag, join(out, `${name}-${w}-${theme}.png`), shots, { width: w, theme });
+      if (probe && !probe.whole) {
+        await scrollTo(page, el, 'end', await bandOf(page, el));
+        const low = await bandOf(page, el);
+        await probeAndShoot(page, el, low, `${tag} (its lower part)`, join(out, `${name}-${w}-${theme}-bottom.png`), shots, { width: w, theme, bottom: true });
+      }
+    }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(500);
+  await applyTheme(page, 'light');
+  await page.waitForTimeout(400);
+}
+
+/** Close what can paint over the stage: a popover or menu (Escape), and an open Agenda, which is
+ *  minimised to its corner pill (its own yellow light). */
+async function closeOverlays(page) {
+  await page.keyboard.press('Escape').catch(() => {});
+  const full = page.locator('[data-testid="super-agenda"][data-variant="full"]:visible');
+  if (await full.count()) {
+    const min = page.locator('[data-testid="super-agenda-minimize"]:visible').first();
+    if (await min.count()) {
+      await min.click().catch(() => {});
+      await until(async () => (await full.count()) === 0, 4000);
+    }
+  }
+  await page.waitForTimeout(300);
+}
+
+/**
+ * The owner's view at 390 with the Agenda OPEN: does it overlap the bar's card row? Recorded as a
+ * FACT per theme, never judged: the rects, their overlap, a grid every 8 px over the overlap and
+ * how many of its points the Agenda paints, the bar-row controls (data-testid) under it, and a
+ * screenshot of that state (`agenda-over-bar-390-<theme>.png`).
+ */
+async function measureAgendaOverBar(page, out, shots) {
+  for (const theme of THEMES) {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await applyTheme(page, theme);
+    await page.waitForTimeout(700);
+    const open = await openAgendaList(page);
+    await page.waitForTimeout(400);
+    await clean(page);
+    await page.mouse.move(2, 2);
+    const m = await page.evaluate(() => {
+      const vis = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+      const agenda = [...document.querySelectorAll('[data-testid="super-agenda"]')].find(vis) ?? null;
+      const frame = agenda?.closest('[data-testid="super-container"]') ?? agenda;
+      const bar = [...document.querySelectorAll('[data-testid="super-job-bar"]')].find(vis) ?? null;
+      const card = bar?.querySelector('[data-testid="super-queue-card"]') ?? null;
+      const row = card?.closest('[data-testid="super-queue-head"]') ?? card?.parentElement ?? bar;
+      return { agendaVariant: agenda?.getAttribute('data-variant') ?? null, agendaRect: box(frame), barRowRect: box(row), barRect: box(bar) };
+    });
+    const overlap = overlapOf(m.agendaRect, m.barRowRect);
+    const grid = gridPoints(overlap, 8);
+    const sampled = await page.evaluate(([points, ov]) => {
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const agenda = [...document.querySelectorAll('[data-testid="super-agenda"]')].find(vis);
+      const frame = agenda?.closest('[data-testid="super-container"]') ?? agenda;
+      const bar = [...document.querySelectorAll('[data-testid="super-job-bar"]')].find(vis);
+      const card = bar?.querySelector('[data-testid="super-queue-card"]');
+      const row = card?.closest('[data-testid="super-queue-head"]') ?? card?.parentElement ?? bar;
+      const onAgenda = frame ? points.filter((p) => frame.contains(document.elementFromPoint(p.x, p.y))).length : 0;
+      const controls = [];
+      if (row && ov) {
+        for (const c of row.querySelectorAll('[data-testid], button')) {
+          const r = c.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          const ix = Math.min(r.right, ov.x + ov.width) - Math.max(r.left, ov.x);
+          const iy = Math.min(r.bottom, ov.y + ov.height) - Math.max(r.top, ov.y);
+          if (ix <= 0 || iy <= 0) continue;
+          const cx = r.left + r.width / 2; const cy = r.top + r.height / 2;
+          const hit = document.elementFromPoint(cx, cy);
+          controls.push({
+            testid: c.getAttribute('data-testid') ?? `button:${(c.textContent ?? '').trim().slice(0, 30)}`,
+            rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+            centreHiddenByAgenda: !!frame && !!hit && frame.contains(hit),
+          });
+        }
+      }
+      return { onAgenda, controls };
+    }, [grid, overlap]);
+    const file = join(out, `agenda-over-bar-390-${theme}.png`);
+    const saved = await page.screenshot({ path: file }).then(() => true).catch(() => false);
+    if (saved) shots.push({ file, width: 390, theme, fact: true });
+    const fact = {
+      what: 'agenda-open-over-bar-card-row', width: 390, theme, agendaOpen: open, ...m, overlap,
+      grid: { step: 8, points: grid.length, onAgenda: sampled.onAgenda }, controlsUnder: sampled.controls, screenshot: saved ? file : null,
+    };
+    facts.push(fact);
+    const hidden = sampled.controls.filter((c) => c.centreHiddenByAgenda).map((c) => c.testid);
+    step(`fact (recorded, not judged) @390 ${theme}: with the Agenda open it ${overlap
+      ? `OVERLAPS the bar's card row by ${overlap.width.toFixed(0)}x${overlap.height.toFixed(0)} px; the Agenda paints ${sampled.onAgenda} of ${grid.length} grid points there; controls under it: ${sampled.controls.map((c) => c.testid).join(', ') || 'none'}${hidden.length ? `; hidden at their centre: ${hidden.join(', ')}` : ''}`
+      : 'does not overlap the bar\'s card row'}${open ? '' : ' (the Agenda list could not be opened)'}`, true);
+  }
+  await closeOverlays(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await applyTheme(page, 'light');
+  await page.waitForTimeout(400);
 }
 
 async function handOver(page, base) {
@@ -396,6 +727,12 @@ const drawnText = async (loc) => (await loc.innerText().catch(() => '')).replace
 async function openAgendaList(page) {
   const listed = async () => (await agendaWaiting(page).count()) > 0;
   if (await listed()) return true;
+  // Minimised (by the walk's own clean-up, or the owner): its corner pill brings it back.
+  const pill = page.locator('[data-testid="super-agenda-pill-btn"]:visible').first();
+  if (await pill.count()) {
+    await pill.click().catch(() => {});
+    if (await until(listed, 6000)) return true;
+  }
   const count = page.locator('[data-testid="super-agenda-tile-waiting"]:visible').first();
   if (await count.count()) {
     await count.click().catch(() => {});
@@ -523,6 +860,7 @@ async function caseRun(page, base, out, shots) {
   step('the agenda\'s Waiting list opens and has the card\'s line', await until(() => openAgendaList(page), 20000, 500),
     await page.locator('[data-testid="super-agenda"]:visible').first().innerText().catch(() => '(no agenda on screen)'));
   await shotAt(page, out, 'agenda', (p) => p.locator('[data-testid="super-agenda-section-waiting"]:visible'), shots, openAgendaList);
+  await measureAgendaOverBar(page, out, shots);
   if (await openAgendaList(page)) {
     const rows = agendaWaiting(page);
     const named = rows.filter({ hasText: 'Kargo kurulumu' });
@@ -538,6 +876,7 @@ async function caseRun(page, base, out, shots) {
   }
 
   console.log('\n── he presses ▶ Run in the slot');
+  await closeOverlays(page);
   const play = slotCard(page, 'run').locator('[data-testid="run-card-play"]').first();
   await play.scrollIntoViewIfNeeded().catch(() => {});
   await play.click();
@@ -550,19 +889,18 @@ async function caseRun(page, base, out, shots) {
     return r && !r.run && r.exit === 0;
   }, 30000, 300), JSON.stringify(await cardRecord(base, handle.postingSession, handle.cardRef)));
   const seen = new Set();
-  const resultLine = slotCard(page, 'run').locator('[data-testid="super-owner-result"]');
-  await until(async () => {
+  await until(() => {
     const d = cardItem('run')?.delivery;
     if (d) seen.add(d);
-    if (!seen.has('shot') && await resultLine.count()) {
-      seen.add('shot');
-      await clean(page);
-      await slotCard(page, 'run').first().screenshot({ path: join(out, 'slot-result-1440.png') }).then(() => shots.push({ file: join(out, 'slot-result-1440.png'), cropped: true })).catch(() => {});
-      note(`result line shot: "${(await resultLine.first().innerText().catch(() => '')).trim()}"`);
-    }
     return cardItem('run')?.state === 'done';
   }, 60000, 150);
-  note(`delivery states seen on the item: ${[...seen].filter((s) => s !== 'shot').join(' → ') || 'none'}`);
+  note(`delivery states seen on the item: ${[...seen].join(' → ') || 'none'}`);
+  // The slot keeps a card this window saw open once its result line is set: it shows the outcome
+  // in place, so the result is shot from that settled state, at both widths and themes.
+  const resultLine = slotCard(page, 'run').locator('[data-testid="super-owner-result"]');
+  step('the slot shows the result in place: "Sent to …"', await until(async () => /Sent to/.test(await resultLine.first().innerText().catch(() => '')), 15000),
+    await slotCard(page, 'run').innerText().catch(() => '(no slot)'));
+  await shotAt(page, out, 'slot-result', (p) => slotCard(p, 'run'), shots);
   step('the parked child is woken (a resumed process of the same session)', reports().some((r) => r.kind === 'spawn' && r.sid === sid && r.resumed),
     JSON.stringify(reports().filter((r) => r.sid === sid && (r.kind === 'spawn' || r.kind === 'exit'))));
   step('its next turn is the receipt: [ran in chat] and the command', await until(() => reports().some((r) => r.kind === 'receipt' && r.which === 'run' && r.sid === sid && r.text.includes(`$ ${RUN_CMD}`)), 30000),
@@ -655,9 +993,8 @@ async function main(out) {
     browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: 'light' });
     await context.addInitScript(() => {
-      try {
-        if (!localStorage.getItem('dreamcontext-theme')) localStorage.setItem('dreamcontext-theme', 'light');
-      } catch { /* no storage */ }
+      // No stored theme: the app follows the emulated scheme, so a shot can switch light and dark.
+      try { localStorage.removeItem('dreamcontext-theme'); } catch { /* no storage */ }
       // The run card's ▶ is desktop-only (isDesktop: the Tauri marker); its PTY is the server's.
       Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
     });
@@ -682,7 +1019,7 @@ async function main(out) {
     try { writeFileSync(join(out, 'console.json'), `${JSON.stringify(pages, null, 2)}\n`); } catch { /* out unwritable */ }
     try { writeFileSync(join(out, 'reports.ndjson'), readFileSync(REPORTS, 'utf-8').replaceAll(SECRET_VALUE, '[typed value]')); } catch { /* none */ }
     try { writeFileSync(join(out, 'record.json'), readFileSync(MAIN_RECORD, 'utf-8')); } catch { /* none */ }
-    try { writeFileSync(join(out, 'result.json'), `${JSON.stringify({ at: new Date().toISOString(), results, shots }, null, 2)}\n`); } catch { /* out unwritable */ }
+    try { writeFileSync(join(out, 'result.json'), `${JSON.stringify({ at: new Date().toISOString(), results, facts, shots }, null, 2)}\n`); } catch { /* out unwritable */ }
   }
 }
 

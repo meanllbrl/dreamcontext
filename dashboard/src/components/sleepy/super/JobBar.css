@@ -40,6 +40,11 @@
 }
 .super-queue-head[data-card] .super-queue-actions { flex-wrap: wrap; }
 .super-queue-open-link {
+  /* A 24px-tall target (WCAG 2.5.8) with the same text look: the extra height is padding-free
+     flex centring, so the row's line does not change. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   border: 0;
   background: none;
   padding: 0 var(--space-1);

@@ -8,7 +8,7 @@ import type { SecretCard as SecretCardT } from '../chat/SecretCard';
 import type { ChecklistCard as ChecklistCardT } from '../chat/ChatViews';
 import { CardHeader } from '../chat/molecules';
 import '../chat/AgentThreadCard.css';
-import { mountOwnerSlot, openJobRow, useSlotRunRequest } from './superJobsStore';
+import { mountOwnerSlot, openJobRow, takeSlotRun, useSlotRunRequest } from './superJobsStore';
 import { MAIN_RECORD, claimOwnerItem, releaseOwnerItem, visibleText } from './ownerAnswer';
 
 /**
@@ -27,6 +27,17 @@ export function deliveryLine(item: Pick<SuperQueueItem, 'delivery' | 'card'>, ch
   if (!item.delivery) return null;
   const n = String(heldCapOf(item.card?.childRecordId ?? MAIN_RECORD));
   return t(`ownerCard.delivery.${item.delivery}`).replace('{child}', child).replace('{n}', n);
+}
+
+/**
+ * What the slot's header says, from the item (the screen tells the truth): "<child> needs you"
+ * only while the card waits on the owner; once his action has a result (`delivery`) or the item
+ * closed, "<child>: done"; a child the Super ended, "<child>: ended".
+ */
+export function slotTitleKey(item: Pick<SuperQueueItem, 'state' | 'delivery'>): string {
+  if (item.delivery === 'ended') return 'ownerCard.endedTitle';
+  if (item.delivery || item.state === 'done') return 'ownerCard.doneTitle';
+  return 'ownerCard.needsYouTitle';
 }
 
 /** The time a kept entry was written, as the owner reads it. */
@@ -105,7 +116,7 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
   if (state?.gone) {
     body = <p className="chat-agentthread-note" data-testid="super-owner-gone">{t('ownerCard.gone')}</p>;
   } else if (spec.type === 'run') {
-    body = <RunCard spec={spec} host={host} folder={state?.folder} startRequest={runRequest} onEnded={reload} />;
+    body = <RunCard spec={spec} host={host} folder={state?.folder} startRequest={runRequest} onEnded={reload} onStartRequest={(n) => takeSlotRun(item.id, n)} />;
   } else if (spec.type === 'secret') {
     body = <SecretCard spec={spec} host={host} folder={state?.folder} reentry={open && kept.some((k) => k.kind === 'secret')} onSaved={reload} />;
   } else if (spec.type === 'checklist') {
@@ -128,7 +139,7 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
     >
       <CardHeader
         glyph={spec.type === 'run' ? '>_' : spec.type === 'secret' ? '🔑' : spec.type === 'checklist' ? '☑' : '⇄'}
-        title={t('ownerCard.needsYouTitle').replace('{name}', child)}
+        title={t(slotTitleKey(item)).replace('{name}', child)}
         aside={paused ? <span className="chat-runcard-exit is-unknown" data-testid="super-owner-paused">{t('ownerCard.paused')}</span> : undefined}
       />
       {cutOff && spec.type === 'run' && (

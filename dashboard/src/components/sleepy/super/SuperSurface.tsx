@@ -14,7 +14,7 @@ import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls,
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
-import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
+import { onOpenJobRow, publishSuperEventContext, useQueueHeight } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
@@ -399,9 +399,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
+  // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
+  // row is taller than one line), so no card or agenda is ever drawn over it.
+  const queueHeight = useQueueHeight(state.session);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -705,7 +708,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }
   /** Whether a size can be drawn for this card now: the plan the window draws (its options), asked with that size. */
   const canFit = (id: string, next: ContainerSize, pin?: boolean) => fitsNow(items, view, size, id, next,
-    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
+    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 

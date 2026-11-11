@@ -22,9 +22,9 @@ import { showApprovalRow, showMemberApproval } from './superApprovals';
 import './JobBar.css';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
 import { useApi, useVaultId } from '../../../context/VaultContext';
-import { cardNotNeeded, useCardState } from '../../../lib/cardRecords';
+import { cardFolderText, cardNotNeeded, useCardState } from '../../../lib/cardRecords';
 import { barCanRun } from '../../../lib/unsafeChars';
-import { requestSlotRun, showOwnerSlot, useSuperQuestions } from './superJobsStore';
+import { publishQueueHeight, requestSlotRun, showOwnerSlot, useSuperQuestions } from './superJobsStore';
 
 /**
  * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
@@ -142,6 +142,27 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
     ro.observe(el);
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
+
+  // The bar's REAL height, measured (sahip-karti-yerinde K7): a card row wraps to draw its whole
+  // command, so the stage (planStage `queueHeight`) starts the centre, a sheet and the agenda below
+  // this bottom, at every width and for every row, never below a one-line constant. Includes the
+  // strip's own top padding; 0 when no row is drawn.
+  const barSession = state.session ?? '';
+  useLayoutEffect(() => {
+    const el = headRef.current;
+    if (!barSession) return undefined;
+    if (!el) { publishQueueHeight(barSession, 0); return undefined; }
+    const strip = el.parentElement;
+    const measure = () => {
+      const pad = strip ? el.getBoundingClientRect().top - strip.getBoundingClientRect().top : 0;
+      publishQueueHeight(barSession, el.getBoundingClientRect().height + Math.max(0, pad));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return () => publishQueueHeight(barSession, 0);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => { ro.disconnect(); publishQueueHeight(barSession, 0); };
+  }, [barSession, answerKey, head?.id]);
 
   // Empty: nothing is drawn (the agenda card holds what waits on the owner).
   if (!head) return null;
@@ -279,15 +300,18 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
 
   // THE ROW'S TEXT IS NEVER CUT (K4 "what is shown is what runs"): it wraps whole, at every width,
   // in `.super-queue-card-line` (JobBar.css), never the one-line ellipsis `QueueText` draws. ▶ Run
-  // is offered only for a command drawn here whole; anything else gets Show, which opens the slot.
+  // is offered only for a command drawn here whole AND the folder it runs in (`cardFolderText`, the
+  // one text every surface draws, its cwd included); while that folder is loading or could not be
+  // read, or the command cannot be drawn whole and safely, the row offers Show, which opens the slot.
   let line: ReactNode;
   let verb: ReactNode;
   if (spec.type === 'run') {
-    const runnable = barCanRun(spec.command);
-    const folder = state?.folder?.name;
-    line = runnable
+    const drawable = barCanRun(spec.command);
+    const folder = cardFolderText(state?.folder, spec);
+    const runnable = drawable && !!folder;
+    line = drawable
       ? <>
-          {t('ownerCard.bar.run')} <code className="super-queue-input super-queue-card-command" data-testid="super-queue-card-command">{spec.command}</code>
+          <code className="super-queue-input super-queue-card-command" data-testid="super-queue-card-command">{spec.command}</code>
           {folder && <span className="super-queue-card-folder" data-testid="super-queue-card-folder" title={state?.folder?.path}>{folder}</span>}
         </>
       : <span data-testid="super-queue-card-long">{t('ownerCard.bar.longCommand')}</span>;

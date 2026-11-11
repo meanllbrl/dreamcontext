@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { OWNER_ONLY_LINE, mintCardTicket, ticketActionOf, useHostCard, type CardHost } from '../../../lib/cardRecords';
+import { OWNER_ONLY_LINE, cardFolderText, mintCardTicket, ticketActionOf, useHostCard, type CardHost } from '../../../lib/cardRecords';
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
@@ -45,7 +45,7 @@ import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded }: {
+export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded, onStartRequest }: {
   spec: RunViewSpec;
   /** Where the exit report goes on a host without a chat (an agent thread's reply). */
   report?: (text: string) => void;
@@ -61,9 +61,11 @@ export function RunCard({ spec, report, sessionId, host, folder, startRequest, o
   startRequest?: { n: number; shown: string };
   /** A terminal of this card ended (the slot reads its state again). */
   onEnded?: () => void;
+  /** The bar's request `n` was handled here (started, or told it did not): the slot forgets it. */
+  onStartRequest?: (n: number) => void;
 }) {
   const chatHost: CardHost | undefined = host ?? (sessionId ? { session: sessionId } : undefined);
-  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} />;
+  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} />;
   return <ThreadRunCard spec={spec} report={report} />;
 }
 
@@ -118,12 +120,13 @@ interface Shown {
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
-function ChatRunCard({ spec, host, folder, startRequest, onEnded }: {
+function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest }: {
   spec: RunViewSpec;
   host: CardHost;
   folder?: { name: string; path: string } | null;
   startRequest?: { n: number; shown: string };
   onEnded?: () => void;
+  onStartRequest?: (n: number) => void;
 }) {
   const api = useApi();
   const t = useOwnerCardT();
@@ -214,19 +217,24 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded }: {
     });
   };
 
-  // The bar's ▶ Run lands here (K7): only for the exact command this card draws.
+  // The bar's ▶ Run lands here (K7): only for the exact command this card draws. A request already
+  // waiting when this card mounts (the bar pressed while the card was still loading) is handled
+  // too, once the record is known: it starts when the card can start, and otherwise the card says
+  // it did not, never a silent drop. Either way it is handed back (`onStartRequest`), so the store
+  // forgets it and a remount never runs it twice.
   const startRef = useRef(start);
   startRef.current = start;
-  const startableRef = useRef(view.startable);
-  startableRef.current = view.startable;
-  const lastRequest = useRef(startRequest?.n ?? 0);
+  const handledRequest = useRef(0);
   useEffect(() => {
-    if (!startRequest || startRequest.n === lastRequest.current) return;
-    lastRequest.current = startRequest.n;
-    if (startRequest.shown === spec.command && startableRef.current) startRef.current();
-  }, [startRequest, spec.command]);
+    if (!startRequest || startRequest.n === handledRequest.current || !loaded) return;
+    handledRequest.current = startRequest.n;
+    if (startRequest.shown === spec.command && view.startable) startRef.current();
+    else setRefusal(t('ownerCard.notStarted'));
+    onStartRequest?.(startRequest.n);
+  }, [startRequest, spec.command, loaded, view.startable, t, onStartRequest]);
 
-  const where = folder?.name ? (spec.cwd ? `${folder.name} · ${spec.cwd}` : folder.name) : spec.cwd;
+  // The one folder text every surface draws (cardFolderText); a chat with no root read draws its cwd.
+  const where = cardFolderText(folder, spec) ?? spec.cwd;
 
   return (
     <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>

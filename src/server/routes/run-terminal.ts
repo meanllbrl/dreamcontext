@@ -152,8 +152,10 @@ type CardRootResolver = (rec: Pick<CardRecordEntry, 'sessionId' | 'vault'>) => P
 /**
  * The folder a card runs in and writes its secret under (K5, D5): `cardWorkingRoot` for the
  * POSTING session, read from the server's state at action time, never from a request or a card.
- * Null when it is refused (a symlink, a linked repo, another repository's checkout, a folder that
- * is gone) or the project is unknown: the action does not happen.
+ * It is proven by the governed repository (the project's or a linked repo's own `git worktree
+ * list` names it), wherever it lives on disk. Null when it is refused (a symlink, a folder that is
+ * not a worktree root, an ungoverned repository's checkout, a folder that is gone) or the project
+ * is unknown: the action does not happen.
  */
 const realCardRoot: CardRootResolver = async (rec) => {
   const projectRoot = runProjectRootOf(rec.vault);
@@ -173,10 +175,11 @@ export async function cardFolderOf(rec: Pick<CardRecordEntry, 'sessionId' | 'vau
   return root ? { path: root, name: basename(root) } : null;
 }
 
-/** Refusal as an HTTP status, or the run to serve. The card's folder is resolved first (K5). */
-async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry): Promise<Run | number> {
+/** Refusal as an HTTP status, or the run to serve and whether THIS request started it (an attach,
+ *  the raced one included, never counts as started). The card's folder is resolved first (K5). */
+async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry): Promise<{ run: Run; started: boolean } | number> {
   const live = attachRun(c.sessionId, c.cardRef);
-  if (live) return live;
+  if (live) return { run: live, started: false };
   if (!c.start) return 409;
   if (by === 'phone' && rec.state === 'closed') return 409;
   // What is shown is what runs (K4): no start, from any surface, of a command that can draw as
@@ -186,10 +189,11 @@ async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry)
   if (!root) return 400;
   // Another start may have raced the await: attach to it rather than refuse.
   const raced = attachRun(c.sessionId, c.cardRef);
-  if (raced) return raced;
+  if (raced) return { run: raced, started: false };
   const r = startRun(c.sessionId, c.cardRef, by, { withheld: c.withheld, rerun: by === 'mac' && c.rerun, root });
   if ('refused' in r) return r.refused === 'no_pty' ? 501 : r.refused === 'no_record' ? 404 : r.refused === 'bad_cwd' ? 400 : 409;
-  return r;
+  // No await since the raced check: a run returned here is the one this request spawned.
+  return { run: r, started: r.startedBy === by };
 }
 
 /** Which ticket actions an upgrade of this card accepts now: attaching to the card's own live
@@ -226,9 +230,9 @@ export function handleMacCardUpgrade(req: IncomingMessage, socket: Duplex, head:
   });
   if (!t.ok) { rejectUpgrade(socket, 403); return; }
   void (async () => {
-    const run = await runFor(c, 'mac', rec).catch(() => 500);
-    if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
-    void upgradeTo(req, socket, head, (ws) => serveRunSocket(ws, run));
+    const got = await runFor(c, 'mac', rec).catch(() => 500);
+    if (typeof got === 'number') { rejectUpgrade(socket, got); return; }
+    void upgradeTo(req, socket, head, (ws) => serveRunSocket(ws, got.run));
   })();
 }
 
@@ -291,13 +295,15 @@ export function handlePhoneRunUpgrade(req: IncomingMessage, socket: Duplex, head
   void (async () => {
     // The phone's own scope (its device session is owner proof); the run now starts in the
     // card's working folder (K5), and a crew card's result is held like any other (K6).
-    const run = await runFor(c, 'phone', rec).catch(() => 500);
-    if (typeof run === 'number') { rejectUpgrade(socket, run); return; }
+    const got = await runFor(c, 'phone', rec).catch(() => 500);
+    if (typeof got === 'number') { rejectUpgrade(socket, got); return; }
     armRevoke();
     void upgradeTo(req, socket, head, (ws) => {
-      const entry = { idHash, ws, spawned: wouldStart ? run : null };
+      // Only a run THIS phone request spawned is the device's to kill on a revoke: one the Mac
+      // started during the folder await is attached, never recorded as phone-spawned.
+      const entry = { idHash, ws, spawned: got.started ? got.run : null };
       phoneSockets.add(entry);
-      serveRunSocket(ws, run);
+      serveRunSocket(ws, got.run);
       ws.on('close', () => { phoneSockets.delete(entry); });
     });
   })();

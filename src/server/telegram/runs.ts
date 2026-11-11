@@ -28,6 +28,7 @@
  * card's working folder (K5).
  */
 import { createHash } from 'node:crypto';
+import { basename } from 'node:path';
 import { buildAppLink } from '../../lib/app-link.js';
 import { getCard, newestCard, onCardsChange, openCards, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from '../../lib/chat-view-spec.js';
@@ -147,10 +148,15 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
 
   const announceRun = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
     const spec = rec.spec as RunViewSpec;
+    // The folder it runs in, as the Mac draws it (the slot, the bar): the card root's name, then
+    // ` · <cwd>` when the card has one. A root that cannot be proven gets no Run here.
+    const root = await cardRootOf(rec);
+    if (!root) { await hub.notice(ab, 'info', RUN_LINES.noFolder, true); return; }
+    const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
     const parts = [
       `<b>${escapeHtml(RUN_LINES.ask)}</b>`,
       `<pre>${escapeHtml(spec.command)}</pre>`,
-      ...(spec.cwd ? [`Klasör: <code>${escapeHtml(spec.cwd)}</code>`] : []),
+      `Klasör: <code>${escapeHtml(folder)}</code>`,
       escapeHtml(RUN_LINES.shell),
       ...(spec.why ? [`Ajanın notu: ${escapeHtml(redactSecrets(spec.why))}`] : []),
     ];

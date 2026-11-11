@@ -308,6 +308,33 @@ describe('the owner\'s card result reaches the child that asked (K6)', { timeout
     expect(await ofKind('owner-result', C1)).toHaveLength(2);
   });
 
+  it('two held cards, one write fails: only the delivered card says `sent`; the other stays held with its line', async () => {
+    const { hs } = await boot([C1]);
+    const OTHER = { type: 'run', id: 'firebase-login', command: 'firebase login', why: 'your Firebase sign-in' };
+    say(hs[0], `Two things only you can do.\n\n${fence(RUN)}\n${fence(OTHER)}`);
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const items = (await ofKind('owner', C1)).filter((q) => q.card);
+    const a = items.find((q) => q.wait?.id === 'gcloud-login') as SuperQueueItem;
+    const b = items.find((q) => q.wait?.id === 'firebase-login') as SuperQueueItem;
+    const c = crew(C1, hs[0]);
+    holdOwnerReceipt(T1, { id: 'run-a', cardRef: a.card!.cardRef, kind: 'run', text: report(0) });
+    holdOwnerReceipt(T1, { id: 'run-b', cardRef: b.card!.cardRef, kind: 'run', text: buildRunReport('firebase login', { code: 0, tail: 'ok', seconds: 2 }, { includeOutput: true }) });
+    c.ctl.failNext = 1;
+    expect(await deliver()).toBe('delivered');
+    expect(c.got.map((g) => g.mark.id)).toEqual(['firebase-login']);
+    const after = await state();
+    expect(after.queue.find((q) => q.id === b.id)).toMatchObject({ state: 'done', delivery: 'sent' });
+    const stillA = after.queue.find((q) => q.id === a.id);
+    expect(stillA?.state).not.toBe('done');
+    expect(stillA?.delivery).toBeUndefined();
+    expect(readOwnerReceipts(T1).map((e) => e.id)).toEqual(['run-a']);
+    // The next edge sends it, and only then does its line say sent.
+    expect(await deliver()).toBe('delivered');
+    expect((await state()).queue.find((q) => q.id === a.id)).toMatchObject({ state: 'done', delivery: 'sent' });
+    expect(readOwnerReceipts(T1)).toEqual([]);
+  });
+
   it('a run cut off by a restart: ONE server notice per boot from the card\'s command; a forged placeholder says nothing', async () => {
     const { hs } = await boot([C1]);
     const item = await postCard(hs[0]);

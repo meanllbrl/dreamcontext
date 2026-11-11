@@ -2323,19 +2323,22 @@ async function deliverNow(t: OwnerReceiptTarget): Promise<OwnerDeliverOutcome> {
   const h = crewHandle(t.childId);
   if (e && e.status !== 'gone' && h?.sendOwnerReceipt) {
     let sent = 0;
+    // A card is "Sent to <child>" only when EVERY entry of it in this pass went in: one whose
+    // write failed is still held, and its slot keeps the line it had until a later edge sends it.
+    const failedRefs = new Set<string>();
     for (const { entry, text } of list) {
       const item = itemOfCard(rec.s, entry.cardRef);
       const id = item?.wait?.id ?? item?.card?.spec.id ?? '';
       let ok = false;
       try { ok = await h.sendOwnerReceipt(text, { kind: entry.kind, id }); } catch { ok = false; }
-      if (!ok) continue;
+      if (!ok) { failedRefs.add(entry.cardRef); continue; }
       // The Super hears it once the child has it (one per action: told is remembered).
       await tellOwnerResult(rec.key, t, entry, t.childId);
       markOwnerReceiptDelivered(t, { id: entry.id, text: entry.text });
       sent += 1;
     }
     if (!sent) return 'held';
-    await setDelivery(rec.key, refs, 'sent');
+    await setDelivery(rec.key, refs.filter((r) => !failedRefs.has(r)), 'sent');
     return 'delivered';
   }
   const woke = await wakeForOwnerCard(t);

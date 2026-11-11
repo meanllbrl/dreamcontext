@@ -103,7 +103,7 @@ function acceptedWorktree(cand: string, projectRoot: string, home: string): bool
 /** Why a card's working folder was refused: the run does not start, the secret is not written.
  *  `not_governed`: not a real worktree of any repository this project governs (its own or a
  *  linked one), by that repository's own `git worktree list`. */
-export type CardRootRefusal = 'symlink' | 'missing' | 'not_governed' | 'git_failed' | 'not_accepted';
+export type CardRootRefusal = 'symlink' | 'missing' | 'not_governed' | 'git_failed';
 export class CardRootRefused extends Error {
   readonly code: CardRootRefusal;
   constructor(code: CardRootRefusal) {
@@ -139,22 +139,26 @@ function governedRepoRoots(projectRoot: string, home: string): string[] {
 
 /**
  * The folder an owner card of `postingSession` runs in and writes its secret under (K5, D5, and
- * the Super's decision for the owner of 11 Nov): the child's working folder, read at action time
- * from the SERVER's state (the Super records and the session's own checkout directive), never
- * from a request or a card.
+ * the decisions of 11 Nov): the session's working folder, read at action time from the SERVER's
+ * state (the Super records, the session's claimed or transcript checkout), never from a request
+ * or a card. Any chat's card, a Super child's or an ordinary chat's.
  *
- * Every identity and containment decision compares REAL paths (the project, the candidate, the
- * worktree home), so a project or a home under a symlinked path (macOS `/var`, `/tmp`) is itself.
+ * THE FOLDER IS PROVEN BY THE GOVERNED REPOSITORY, not by where it lives on disk. Every identity
+ * decision compares REAL paths, so a project under a symlinked path (macOS `/var`, `/tmp`) is
+ * itself.
  *
- *  - No recorded candidate, or one whose real path IS the project's: the project root (real).
- *  - A recorded one must not be a symlink itself, must still be there, must sit directly under
- *    the real `~/.claude-worktrees`, and must be a real worktree of a repository the project
- *    GOVERNS (its own or a linked repo): the governed repository whose git common dir equals the
- *    candidate's names it in its own `git worktree list`. Anything else is REFUSED
+ *  - No candidate, or one whose real path IS the project's: the project root (real).
+ *  - Otherwise the candidate must not be a symlink itself, must be a real directory, must share its
+ *    git common dir with a repository the project GOVERNS (its own or a linked repo), and THAT
+ *    repository's own `git worktree list` must name its real path. So a linked repo's main
+ *    checkout passes, and so does a worktree anywhere (`~/.claude-worktrees/<x>`,
+ *    `<repo>/.claude/worktrees/<x>`); a folder inside a repository that is not a worktree root,
+ *    an ungoverned repository's checkout, a symlink or a folder that is gone is REFUSED
  *    ({@link CardRootRefused}): the card never silently runs somewhere else.
  *
  * `listWorktrees` is injectable for tests; the real one runs git with an argument array and a
- * timeout, against the governed repository the candidate belongs to.
+ * timeout, against the governed repository the candidate belongs to. (The file routes'
+ * {@link sessionWorktreeRoot} is a different widening and keeps its `~/.claude-worktrees` rule.)
  */
 export async function cardWorkingRoot(
   contextRoot: string,
@@ -175,7 +179,6 @@ export async function cardWorkingRoot(
   const real = realOf(cand);
   if (!real) throw new CardRootRefused('missing');
   if (real === realProject) return realProject;
-  if (!underWorktreeHome(real, home)) throw new CardRootRefused('not_accepted');
   // The governed repository this checkout belongs to: the one sharing its git common dir.
   const common = gitCommonDir(real);
   if (!common) throw new CardRootRefused('not_governed');
