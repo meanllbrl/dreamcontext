@@ -379,6 +379,8 @@ export interface PlanOptions {
   /** The owner's drops this window session, the last dropped last: when two of his cards would
    *  overlap, the one he dropped later keeps its place (window state, never the record). */
   recent?: readonly string[];
+  /** Internal: this pass already gave his unseated sized cards their spots back (one retry). */
+  reclaimed?: boolean;
   /** The narrow line for this screen; absent = {@link NARROW_STAGE_PX}. */
   narrowPx?: number;
   /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
@@ -1060,7 +1062,8 @@ export function planStage(
     const free = planStage(containers, view, stage, still);
     const v = VARIANT.get(free);
     const seats = SEATS.get(free);
-    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, dragging }, v.band, seats?.demoted, seats?.compact, seats?.agendaHead);
+    // The order that seated his cards in that plan too (a reclaimed sized card ranks there).
+    if (v) return planWith(containers, view, stage, { ...still, ...v.opts, ...(seats?.recent ? { recent: seats.recent } : {}), dragging }, v.band, seats?.demoted, seats?.compact, seats?.agendaHead);
   }
   // A card the owner placed and sized is drawn at his size wherever it fits (owner 2026-10-29,
   // "alan var mı?": a 2x2 he grew into an empty column was drawn smaller, so refused, for a column
@@ -1157,7 +1160,7 @@ function planStageOnce(
 }
 
 /** The sized cards a float plan drew in Others or at 1x1 after its first pass (planWith). */
-const SEATS = new WeakMap<StagePlan, { demoted: ReadonlySet<string>; compact: ReadonlySet<string>; agendaHead: boolean }>();
+const SEATS = new WeakMap<StagePlan, { demoted: ReadonlySet<string>; compact: ReadonlySet<string>; agendaHead: boolean; recent?: readonly string[] }>();
 /** Which of planStage's candidates a plan is (its internal options and its bottom band), so a
  *  running drag is held inside the plan the stage drew before the pickup. */
 const VARIANT = new WeakMap<StagePlan, { band: boolean; opts: Pick<PlanOptions, 'agendaCap' | 'ownerAside'> }>();
@@ -1645,9 +1648,23 @@ function planWith(
   const unseated = floating.filter((c) => cards[c.id]?.where === 'others' && !sol.overflow.has(c.id) && SIZE_UNITS[drawnOf(c.id)].w > 1);
   // While a card is held, which cards fit was decided before the pickup (planStage passes those sets).
   if (unseated.length && !drag) {
+    // A sized card of his that lost its spot to a card he has NOT dropped this session takes it
+    // back first (owner 2026-11-11, "window'a git gel yaptığında"): the record order alone gave
+    // the later tile the spot, so a fresh mount (a chat window or another project, then back)
+    // drew his 2x2 agenda as the 1x1 counts. Ranked under every drop of this session, so his
+    // latest drop still keeps its place; the small tile moves to a free spot instead.
+    // Kept only when it costs nothing: no card more in Others or the pill, none off the stage or
+    // over another than the plan without it.
     const kept = unseated.filter(keeps).map((c) => c.id);
     const out = unseated.filter((c) => !keeps(c)).map((c) => c.id);
-    return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
+    const without = planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
+    const reclaim = unseated.filter((c) => !!c.pos && !recent.includes(c.id)).map((c) => c.id);
+    if (!reclaim.length || opts.reclaimed) return without;
+    const again = planWith(containers, view, stage, { ...opts, reclaimed: true, recent: [...reclaim, ...recent] }, bottomBand, demoted, compact);
+    const a = stageCost(again);
+    const b = stageCost(without);
+    const whole = reclaim.every((id) => again.cards[id]?.where === 'float' && again.cards[id].size === drawnOf(id));
+    return whole && a.others <= b.others && a.unsound <= b.unsound ? again : without;
   }
   // Live jobs the stage has no room for wait in the "more" pill beside Others (owner 2026-11-06:
   // the chat never narrows for them, and a running job is never lost in the stack): in the bottom
@@ -1712,7 +1729,7 @@ function planWith(
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
     ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
   const plan = finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
-  SEATS.set(plan, { demoted, compact, agendaHead: plan.agendaInHead });
+  SEATS.set(plan, { demoted, compact, agendaHead: plan.agendaInHead, recent: opts.recent });
   if (more && more.rect.x < f.othersRect.x && more.rect.y === plan.dock.y) {
     plan.dock = { ...plan.dock, width: Math.max(0, Math.min(plan.dock.width, more.rect.x - STAGE.GAP - plan.dock.x)) };
   }
