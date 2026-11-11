@@ -104,12 +104,14 @@ describe('the selection chip', () => {
     'whiteboard.field.selOne': 'Seçili: {name}',
     'whiteboard.field.selMany': 'Seçili: {n} öğe',
     'whiteboard.field.kind.rectangle': 'Dikdörtgen',
+    'whiteboard.palette.insight': 'Insight…',
   } as Record<string, string>)[k] ?? k;
 
   it('one unit: its title, else its kind; several: a count', () => {
     expect(selectionChipText(sel({ n: 1, ids: ['a'], one: { id: 'a', kind: 'rectangle', title: '1 · Sahne' } }), t)).toBe('Seçili: 1 · Sahne');
     expect(selectionChipText(sel({ n: 1, ids: ['a'], one: { id: 'a', kind: 'rectangle', title: '' } }), t)).toBe('Seçili: Dikdörtgen');
     expect(selectionChipText(sel({ n: 1, ids: ['a'], one: { id: 'a', kind: 'mystery', title: '' } }), t)).toBe('Seçili: mystery');
+    expect(selectionChipText(sel({ n: 1, ids: ['a'], one: { id: 'a', kind: 'insight', title: '' } }), t)).toBe('Seçili: Insight');
     expect(selectionChipText(sel({ n: 7 }), t)).toBe('Seçili: 7 öğe');
   });
 

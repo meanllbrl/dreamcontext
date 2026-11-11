@@ -74,15 +74,22 @@ export async function settleSave(
   }
 }
 
+/** A kind in the reader's words: a shape's own key, else the widget's palette label, else the raw kind. */
+function kindName(kind: string, t: (key: string) => string): string {
+  const shape = `whiteboard.field.kind.${kind}`;
+  if (t(shape) !== shape) return t(shape);
+  const widget = `whiteboard.palette.${kind}`;
+  if (t(widget) !== widget) return t(widget).replace(/…$/, '');
+  return kind;
+}
+
 /** The selection chip's words: one unit by its title (else its kind), several by count. */
 export function selectionChipText(
   sel: SelectionRef,
   t: (key: string) => string,
 ): string {
   if (sel.n === 1 && sel.one) {
-    const kindKey = `whiteboard.field.kind.${sel.one.kind}`;
-    const kind = t(kindKey);
-    const name = sel.one.title || (kind === kindKey ? sel.one.kind : kind);
+    const name = sel.one.title || kindName(sel.one.kind, t);
     return t('whiteboard.field.selOne').replace('{name}', () => name);
   }
   return t('whiteboard.field.selMany').replace('{n}', String(sel.n));

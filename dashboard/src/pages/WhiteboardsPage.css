@@ -58,6 +58,8 @@
 
 /* The save state and the agents toggle in the canvas's top-right row, beside "+ Add". */
 .wbp-canvas .wbp-status {
+  /* Excalidraw's top-right row is a flex row that would shrink it to "S…". */
+  flex: none;
   max-width: 200px;
   padding: 0 var(--space-1);
 }

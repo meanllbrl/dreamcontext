@@ -5,8 +5,8 @@
   /* The Super dock window's width + its inset (SuperDock.css `--super-dock-width`, `--space-5`):
      with the window open the field moves left of it. */
   --bsf-dock-reserve: calc(420px + 2 * var(--space-5));
-  /* Excalidraw's bottom-left zoom + undo group. */
-  --bsf-left-reserve: 220px;
+  /* Excalidraw's bottom-left zoom + undo group (≈ 252 px from the canvas edge) and a gap. */
+  --bsf-left-reserve: 272px;
   position: absolute;
   z-index: 4;
   left: 50%;
@@ -27,6 +27,19 @@
   left: var(--bsf-left-reserve);
   transform: none;
   width: min(640px, calc(100% - var(--bsf-left-reserve) - var(--bsf-dock-reserve)));
+}
+
+/* A narrow canvas: the field rises above the zoom/undo row (36 px at the bottom inset) and may
+   use the full width; with the dock window open it starts at the left edge and the window covers
+   at most its right end. */
+.bsf-wrap[data-narrow] {
+  bottom: calc(var(--space-5) + 36px + var(--space-3));
+  width: min(640px, calc(100% - 2 * var(--space-5)));
+}
+
+.bsf-wrap[data-narrow][data-dock-open] {
+  left: var(--space-5);
+  width: max(320px, min(640px, calc(100% - var(--space-5) - var(--bsf-dock-reserve))));
 }
 
 .bsf {
@@ -160,6 +173,13 @@
 }
 
 .bsf-input::placeholder { color: var(--color-text-tertiary); }
+
+/* The field's own border marks focus (`.bsf:focus-within`): no second ring inside it. */
+.bsf .bsf-input:focus,
+.bsf .bsf-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 
 .bsf-send {
   flex: none;
