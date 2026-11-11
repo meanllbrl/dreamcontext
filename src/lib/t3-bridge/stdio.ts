@@ -156,6 +156,34 @@ export function owedWordsRoute(tool: string, busy: boolean): 'hold' | 'send' {
   return isInstanceTool(tool) && busy ? 'hold' : 'send';
 }
 
+/** A top-level assistant frame's text blocks, joined. */
+function assistantText(frame: WireFrame): string {
+  const content = (frame.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return '';
+  return content.map((b) => (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' ? String((b as { text?: unknown }).text ?? '') : '')).join('').trim();
+}
+
+/**
+ * The words a failed turn shows in the pane. The pane draws a turn's text, never its `result`, and
+ * Claude Code says its own failures as text ("You've hit your session limit…"); a bridge tool's
+ * failure lived only in the `result`, so a Codex refusal ended the turn in silence and the owner
+ * read the one limit on screen, Claude's, as the reason (2026-11-11). Every failed turn is
+ * therefore said first, as a `<synthetic>` line naming its tool. A Stop says nothing (the owner
+ * did it), nor does a failure the turn already put in words, nor a sub-agent's.
+ */
+export function failureNotice(frame: WireFrame, label: string, shownText: string): WireFrame | null {
+  if (frame.type !== 'result' || frame.is_error !== true || frame.parent_tool_use_id || frame.terminal_reason === 'aborted') return null;
+  const said = typeof frame.result === 'string' ? frame.result.trim() : '';
+  if (!said || said === 'Interrupted' || (shownText && shownText.includes(said))) return null;
+  const text = said.toLowerCase().includes(label.toLowerCase()) ? said : `${label}: ${said}`;
+  return {
+    type: 'assistant',
+    message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text }] },
+    parent_tool_use_id: null,
+    session_id: frame.session_id ?? '',
+  };
+}
+
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
   const home = deps.home ?? homedir();
   // Codex by absolute path, with a PATH its launcher's `env node` resolves on: what the readiness
@@ -179,9 +207,15 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     // `<synthetic>`: a local reply, not a turn starting; the pane stays idle.
     if (title) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: titleBlock(title) }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
   };
+  /** The last words the pane was shown in this turn: a failure already said there is not repeated. */
+  let shownText = '';
   const emit = (frame: WireFrame): void => {
+    const notice = failureNotice(frame, toolLabel(args.tool), shownText);
+    if (notice) emit(notice);
     trace('out', frame);
     deps.write(JSON.stringify(frame) + '\n');
+    if (frame.type === 'assistant' && !frame.parent_tool_use_id) shownText = assistantText(frame) || shownText;
+    if (frame.type === 'result' && !frame.parent_tool_use_id) shownText = '';
     // After the frame, on a later tick: the session clears its run only once this `result` is out.
     if (titler.observe(frame)) setImmediate(() => { nameTab().catch((err) => { trace('err', { type: String(err).slice(0, 200) }); }); });
   };

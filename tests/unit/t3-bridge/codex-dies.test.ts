@@ -39,6 +39,11 @@ describe('codex dies mid-turn', () => {
     input.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'please DIE now' }] } }) + '\n');
     const code = await done;
     expect(code).toBe(1);
-    expect(out.find((f) => f.type === 'result')).toMatchObject({ is_error: true });
+    const end2 = out.findIndex((f) => f.type === 'result');
+    expect(out[end2]).toMatchObject({ is_error: true });
+    // The pane draws text, never a result: the failure is said first, naming Codex (2026-11-11).
+    const said = out.slice(0, end2).reverse().find((f) => f.type === 'assistant');
+    expect(said).toMatchObject({ message: { model: '<synthetic>' } });
+    expect(JSON.stringify(said)).toMatch(/Codex/);
   }, 40_000);
 });

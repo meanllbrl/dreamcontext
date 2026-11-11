@@ -1795,7 +1795,10 @@ export function createChatSession(
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
           const echoed = kind !== 'text' ? ev.text
             : superView ? splitReplyMark(ev.text).body : mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
-          if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
+          // A late echo belongs to the same turn: once the owner has written since, the same words
+          // are a new reply (a tool refusing twice says it twice), never a duplicate.
+          const ownerSince = !!last && conv.items.slice(conv.items.lastIndexOf(last) + 1).some((it) => it.kind === 'user');
+          if (last && !ownerSince && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
           // The full echo of a block the turn's end cut short: it replaces that block in place,
           // never a second copy. Only the cut block itself (written, and nothing of his after
           // it), so a later turn's echo never lands on an old one. Not spoken: its turn is over.
