@@ -27,10 +27,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull } from 'node:os';
-import { extname, join } from 'node:path';
+import { delimiter, extname, join } from 'node:path';
 import { appsHome, appRootFor, getApp, installedAppsDir, listApps, registerInstalledApp, unregisterApp, type AppRecord } from '../registry.js';
 import { cleanText, parseManifest, type ConfigField } from '../manifest.js';
 import { appConfigPath, newConfigId, setAppConfig } from '../app-config.js';
+import { pathWithNode } from '../../npm-target.js';
+import { loginShellPath } from '../../tool-finder.js';
 import { appLogoDir, appLogoPath } from '../app-logo.js';
 import { appDataDir } from '../data-dir.js';
 import { allowAppDir } from '../allow-dir.js';
@@ -182,7 +184,7 @@ async function readableRepo(home: string, fullName: string, host?: AppHost): Pro
       if (repo) return { host: h, repo };
     } catch (e) { if (!(e instanceof HostError) || e.code === 'rate_limited') throw e; }
   }
-  throw new InstallError('not_found', `${fullName} was not found, or you have no access to it. A private app needs its owner's invitation first.`);
+  throw new InstallError('not_found', `${fullName} was not found, or you have no access to it. A private app needs its owner's invitation first; if you have one, sign in again in Settings → GitHub.`);
 }
 
 export async function previewInstall(opts: { home: string; projectRoot: string; ref: string; host?: AppHost }): Promise<InstallPreview> {
@@ -290,13 +292,22 @@ function rekeyRefusal(r: unknown): string | null {
 }
 
 // Never the installer's edits: keys, data, dependencies, logs and build output.
-const EXCLUDE = '.env\n.env.*\ndata/\nnode_modules/\n*.log\ndist/\nbuild/\n.next/\ntmp/\n.cache/\n';
+const EXCLUDE = '.DS_Store\n.env\n.env.*\ndata/\nnode_modules/\n*.log\ndist/\nbuild/\n.next/\ntmp/\n.cache/\n';
+
+/** The PATH npm is looked up on: node's own folder first, then the server's, then the login shell's
+ *  (a Dock-launched server has only /usr/bin:/bin:...; measured from the app's environment). */
+export function npmPath(env: NodeJS.ProcessEnv = process.env, login: string | null = loginShellPath(env)): string {
+  const base = pathWithNode(env).split(delimiter);
+  const seen = new Set(base);
+  const extra = (login ?? '').split(delimiter).filter((p) => p && !seen.has(p));
+  return [...base, ...extra].join(delimiter);
+}
 
 /** `npm ci` without scripts, without the user's npmrc; never blocks the server. */
 export function runNpmCi(root: string): Promise<void> {
   const win = process.platform === 'win32';
   return new Promise((resolve, reject) => {
-    execFile(win ? 'npm.cmd' : 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--userconfig', devNull], { cwd: root, timeout: 600_000, shell: win, maxBuffer: 16 * 1024 * 1024 }, (err, _out, stderr) => {
+    execFile(win ? 'npm.cmd' : 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--userconfig', devNull], { cwd: root, env: { ...process.env, PATH: npmPath() }, timeout: 600_000, shell: win, maxBuffer: 16 * 1024 * 1024 }, (err, _out, stderr) => {
       if (err) reject(new InstallError('npm_failed', `npm ci failed: ${String(stderr).trim().split('\n').slice(-2).join(' ') || err.message}`));
       else resolve();
     });
@@ -343,6 +354,13 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const slug = freeSlug(opts.home, opts.projectRoot, m.slug, teamTracked);
   const installId = randomBytes(16).toString('hex');
   const configId = newConfigId();
+  // The settings are checked and written before anything moves: a bad value fails here with the
+  // preview still in place and no app registered.
+  const values = Object.fromEntries(Object.entries(opts.config ?? {}).filter(([k]) => m.config.some((f) => f.key === k && f.type !== 'secret')));
+  const dropConfig = () => { try { rmSync(appConfigPath(opts.home, configId), { force: true }); } catch { /* never written */ } };
+  if (Object.keys(values).length) {
+    try { setAppConfig(opts.home, configId, m.config, values); } catch (e) { dropConfig(); throw e; }
+  }
   // The team folder's per-machine state (pull record, conflict store, tombstones) is keyed by its
   // team hash until an app owns it: it moves to the installed app's hash BEFORE anything else, and
   // an open pull of that folder refuses the install (nothing moved yet).
@@ -350,7 +368,7 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
   const ownKey = appHash(opts.projectRoot, slug, installId);
   if (teamKey) {
     const why = rekeyRefusal(rekeyAppState(opts.home, teamKey, ownKey));
-    if (why) throw new InstallError('team_pull_open', `The team's data for "${slug}" is being pulled right now (${why}). Install again once the sync is done.`);
+    if (why) { dropConfig(); throw new InstallError('team_pull_open', `The team's data for "${slug}" is being pulled right now (${why}). Install again once the sync is done.`); }
   }
   const src = sourceRepo(opts.home, installId);
   mkdirSync(sourcesDir(opts.home), { recursive: true, mode: 0o700 });
@@ -373,18 +391,20 @@ export async function installApp(opts: InstallOptions): Promise<{ rec: AppRecord
     try { installedGit(src, ['config', 'core.bare', 'true']); renameSync(src, incoming); } catch { rmSync(src, { recursive: true, force: true }); }
     // No app owns the folder after all: its state goes back to the team key.
     if (teamKey) { try { rekeyAppState(opts.home, ownKey, teamKey); } catch { /* left under the unused key */ } }
+    dropConfig();
     throw e;
   }
   rmSync(join(dir, `${opts.previewId}.json`), { force: true });
 
-  const rec = registerInstalledApp(opts.home, {
+  let rec: AppRecord;
+  try {
+    rec = registerInstalledApp(opts.home, {
     slug, vault: opts.vault, projectRoot: opts.projectRoot, root, name: m.name, installId, configId,
     approvedManifestSha: manifestSha(manifestText),
     source: { host: meta.host, fullName: meta.fullName, repoId: meta.repoId, ownerId: meta.ownerId, owner: meta.owner, public: meta.public, mode: 'following', autoUpdate: false, upstreamSha: opts.sha },
     provenance: { fullName: meta.fullName, license: licenseKind(files.find((f) => f.path === 'LICENSE')?.data.toString('utf-8') ?? null) },
-  });
-  const values = Object.fromEntries(Object.entries(opts.config ?? {}).filter(([k]) => m.config.some((f) => f.key === k && f.type !== 'secret')));
-  if (Object.keys(values).length) setAppConfig(opts.home, configId, m.config, values);
+    });
+  } catch (e) { dropConfig(); throw e; }
   try { allowAppDir(opts.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
   // Installed onto the team's folder: the data stays as it is; only team files on a path this
   // manifest does not share move to the conflict store (the K5 rule, data-exchange.ts).

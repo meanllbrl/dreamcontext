@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { appsHome, getApp, updateAppShare, type AppRecord } from '../registry.js';
 import { cleanText, parseManifest } from '../manifest.js';
 import { resolveAppHost, type AppHost } from './host.js';
@@ -49,7 +49,7 @@ export function localEdits(home: string, rec: AppRecord): Edits | null {
   if (!rec.source) return null;
   const { g } = gitOf(home, rec);
   const files = new Set<string>();
-  for (const line of g(['status', '--porcelain', '-z', '--untracked-files=all']).split('\0')) if (line.length > 3) files.add(line.slice(3));
+  for (const line of g(['status', '--porcelain', '-z', '--untracked-files=all']).split('\0')) if (line.length > 3 && basename(line.slice(3)) !== '.DS_Store') files.add(line.slice(3));
   for (const f of g(['diff', '--name-only', '-z', rec.source.upstreamSha, 'HEAD']).split('\0')) if (f) files.add(f);
   const commits = Number(g(['rev-list', '--count', `${rec.source.upstreamSha}..HEAD`]).trim()) || 0;
   return files.size || commits ? { files: [...files].sort(), commits } : null;

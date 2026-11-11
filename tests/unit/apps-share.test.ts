@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { addVault } from '../../src/lib/vaults.js';
 import { appHash } from '../../src/lib/apps/bundle.js';
 import { getApp, readRegistry, registerApp, registryPath, type AppRecord } from '../../src/lib/apps/registry.js';
@@ -12,11 +12,11 @@ import { LocalHost } from '../../src/lib/apps/share/host.js';
 import { runGate, findingId } from '../../src/lib/apps/share/gate.js';
 import { buildPublishTree, publishApp, PublishError, resetUnpublishedCache, unpublishedCached, unpublishedChanges } from '../../src/lib/apps/share/publish.js';
 import { appLogoDir, appLogoPath, setAppLogo } from '../../src/lib/apps/app-logo.js';
-import { installApp, listTrash, previewInstall, restoreFromTrash, uninstallApp, sourceRepo } from '../../src/lib/apps/share/install.js';
+import { installApp, npmPath, listTrash, previewInstall, restoreFromTrash, uninstallApp, sourceRepo } from '../../src/lib/apps/share/install.js';
 import { readConsent } from '../../src/lib/apps/data-consent.js';
 import { removePullRecord, writePullRecord } from '../../src/lib/apps/data-conflicts.js';
 import { teamHash } from '../../src/lib/apps/data-stage.js';
-import { applyUpdate, autoUpdateOne, checkUpdate, detachApp, setAutoUpdate, undoUpdate } from '../../src/lib/apps/share/update.js';
+import { applyUpdate, autoUpdateOne, checkUpdate, detachApp, localEdits, setAutoUpdate, undoUpdate } from '../../src/lib/apps/share/update.js';
 import { listShared, clearSharedCache } from '../../src/lib/apps/share/shared.js';
 import { updateAppShare } from '../../src/lib/apps/registry.js';
 
@@ -278,6 +278,39 @@ describe('install, update, my own copy, uninstall', () => {
     const again = await installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: pv.sha, npm: false });
     expect(again.rec.slug).toBe('tahmin-2');
     expect(again.renamed).toBe(true);
+  });
+
+  it('a bad settings value fails before anything is installed, and the corrected value installs (A3)', async () => {
+    await publishFirst(pubRec());
+    const kur = host('kurucu');
+    await kur.acceptInvitation((await kur.listInvitations())[0].id);
+    const pv = await previewInstall({ home, projectRoot: instProject, ref: 'yayinci/tahmin-app', host: kur });
+    const before = readRegistry(home).length;
+    await expect(installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: pv.sha, config: { insight: 'Günlük yük' }, npm: false }))
+      .rejects.toMatchObject({ code: 'bad_value', message: expect.stringContaining('Which insight takes its short name') });
+    expect(readRegistry(home).length).toBe(before);
+    // The preview is still there: a second try is not told "this preview is gone".
+    const { rec } = await installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: pv.sha, config: { insight: 'gunluk-yuk' }, npm: false });
+    expect(readAppConfig(home, rec.configId)).toEqual({ insight: 'gunluk-yuk' });
+  });
+
+  it("npm is looked up on node's folder, the server PATH and the login PATH (A1)", () => {
+    const sep = process.platform === 'win32' ? ';' : ':';
+    const p = npmPath({ PATH: ['/usr/bin', '/bin'].join(sep) } as NodeJS.ProcessEnv, ['/opt/homebrew/bin', '/usr/bin', '/Users/x/.nvm/bin'].join(sep)).split(sep);
+    expect(p[0]).toBe(dirname(process.execPath));
+    expect(p).toEqual(expect.arrayContaining(['/usr/bin', '/bin', '/opt/homebrew/bin', '/Users/x/.nvm/bin']));
+    expect(p.filter((x) => x === '/usr/bin')).toHaveLength(1);
+    expect(npmPath({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, null)).toContain('/usr/bin');
+  });
+
+  it('a .DS_Store in the installed folder is not an edit (A5)', async () => {
+    const { inst } = await installed();
+    expect(localEdits(home, inst)).toBeNull();
+    writeFileSync(join(inst.root, '.DS_Store'), 'x');
+    writeFileSync(join(inst.root, 'public', '.DS_Store'), 'x');
+    expect(localEdits(home, inst)).toBeNull();
+    writeFileSync(join(inst.root, 'public', 'mine.js'), 'x');
+    expect(localEdits(home, inst)?.files).toEqual(['public/mine.js']);
   });
 
   it('an update is forward only, bound to the shown sha, keeps settings and data, and undoes', async () => {
