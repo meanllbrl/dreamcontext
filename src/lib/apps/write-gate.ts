@@ -25,6 +25,8 @@
  * 5. Protected folders are also known by file identity (dev:ino), so a second name of the disk
  *    (macOS `/System/Volumes/Data/...`, `/.vol`) is refused even where `realpath` keeps it.
  * 4. Inside the own data folder no symlink is accepted, on any path.
+ * 6. While a team pull lands this app's data (app-veri-ortak K5), the own folder is protected
+ *    like another app's: no read, search or write reaches it until the pull is done.
  *
  * It answers `{}` or `deny`, never `allow`: a pass leaves the verdict to the permission rules.
  */
@@ -32,7 +34,7 @@
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, win32 } from 'node:path';
-import type { BashGateContext, BashGateDecision } from './bash-gate.js';
+import { gatePullHeld, PAUSED_FOR_SYNC_REASON, type BashGateContext, type BashGateDecision } from './bash-gate.js';
 import { APPS_DATA_FOLDER, checkAppDataChain, foldName, isInstructionName, WRITE_REFUSED_NAMES } from './data-dir.js';
 
 export const WRITE_TOOLS: readonly string[] = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
@@ -124,6 +126,8 @@ interface Scope {
   /** File identities (dev:ino) of the protected folders and of the own folder: a second spelling still has them. */
   protectedIds: Set<string>;
   ownId: string | null;
+  /** A team pull holds the own folder: it counts as protected, and every refusal says why. */
+  held: boolean;
 }
 
 function idOf(p: string): string | null {
@@ -141,8 +145,15 @@ function makeScope(ctx: BashGateContext): Scope {
   }
   const appsRoots = projectRoots.flatMap((r) => { const a = join(r, CONTEXT_FOLDER, APPS_DATA_FOLDER); return [a, realNear(a)]; });
   const protectedIds = new Set([...homeApps, ...appsRoots].map(idOf).filter((id): id is string => id !== null));
+  const held = gatePullHeld(ctx);
+  if (held) {
+    // The own folder is closed while a team pull lands: by identity, so a search that walks into
+    // it is refused, and with no own folder on record, so a read or write of it is refused.
+    for (const p of [ctx.dataDir, ownReal]) { const id = p ? idOf(p) : null; if (id) protectedIds.add(id); }
+    return { slug: ctx.slug, projectRoots, ownDir: null, ownReal: null, homeApps: [...new Set(homeApps)], appsRoots: [...new Set(appsRoots)], protectedIds, ownId: null, held };
+  }
   const ownId = ownReal ? idOf(ownReal) : null;
-  return { slug: ctx.slug, projectRoots, ownDir, ownReal, homeApps: [...new Set(homeApps)], appsRoots: [...new Set(appsRoots)], protectedIds, ownId };
+  return { slug: ctx.slug, projectRoots, ownDir, ownReal, homeApps: [...new Set(homeApps)], appsRoots: [...new Set(appsRoots)], protectedIds, ownId, held };
 }
 
 type Area = 'own' | 'other' | 'free';
@@ -193,6 +204,7 @@ function identityArea(real: string, s: Scope): Area {
  * with no link anywhere on the way: its real path must be exactly `realOwn + the same tail`.
  */
 function ownPathProblem(lex: string, real: string, s: Scope, exactPrefix: boolean): string | null {
+  if (s.held) return PAUSED_FOR_SYNC_REASON;
   if (!s.ownDir || !s.ownReal) return 'this app\'s data folder is missing, or a step of it is a symlink';
   if (exactPrefix ? lex !== s.ownDir && !lex.startsWith(s.ownDir + P.sep) : !foldedAtOrInside(s.ownDir, lex)) {
     return `use this app's data folder as given, ${s.ownDir}`;
@@ -213,6 +225,7 @@ function ownPathProblem(lex: string, real: string, s: Scope, exactPrefix: boolea
 function judgeSearchRoot(root: string, s: Scope, given: string): BashGateDecision {
   const real = realNear(root);
   const areas = [areaOf(root, s), areaOf(real, s), identityArea(real, s)];
+  if (s.held && areas.includes('own')) return deny(`Not searched: ${PAUSED_FOR_SYNC_REASON}`);
   if (areas.includes('other')) return deny(`Not searched: ${given} is another app's data (or every app's).`);
   if (areas.includes('own')) {
     const problem = ownPathProblem(root, real, s, false);
@@ -307,6 +320,7 @@ function decideWrite(raw: unknown, ctx: BashGateContext, s: Scope): BashGateDeci
   if (problem) return deny(`Not written: ${problem}. Give an absolute path inside this app's data folder, ${ctx.dataDir}.`);
   const lex = clean(raw as string);
   if (!ctx.projectRoot) return deny('Not written: this chat has no data folder on record.');
+  if (s.held) return deny(`Not written: ${PAUSED_FOR_SYNC_REASON}`);
   if (!s.ownDir || !s.ownReal) return deny('Not written: this app\'s data folder is missing, or a step of it is a symlink.');
   if (!lex.startsWith(s.ownDir + P.sep)) return deny(`Not written: this assistant writes only inside its app's data folder, ${s.ownDir}.`);
   const real = realNear(lex);
@@ -332,6 +346,7 @@ function decideRead(raw: unknown, s: Scope): BashGateDecision {
   const lex = clean(raw as string);
   const real = realNear(lex);
   const areas = [areaOf(lex, s), areaOf(real, s), identityArea(real, s)];
+  if (s.held && areas.includes('own')) return deny(`Not read: ${PAUSED_FOR_SYNC_REASON}`);
   if (areas.includes('other')) return deny('Not read: another app\'s data folder is not this assistant\'s to read.');
   if (areas.includes('own')) {
     const own = ownPathProblem(lex, real, s, false);

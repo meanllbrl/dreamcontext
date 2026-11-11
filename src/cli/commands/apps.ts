@@ -2,7 +2,7 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { Command } from 'commander';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { findPackageDir } from '../../lib/catalog.js';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -22,11 +22,17 @@ import { notifierIconPath, NOTIFY_SOUND_FAILED } from '../../lib/automations/not
 import { notifyFromApp } from '../../lib/apps/app-notify.js';
 import { acquireScheduleRunLock, appendRun, readScheduleState } from '../../lib/apps/schedule.js';
 import { sdkSource } from '../../server/apps/gateway-w3.js';
-import { appDataDir, ensureAppDataDir } from '../../lib/apps/data-dir.js';
+import { appDataDir, checkAppDataChain, ensureAppDataDir } from '../../lib/apps/data-dir.js';
 import { backupAppData, listBackups, restoreAppData } from '../../lib/apps/data-backup.js';
 import { appendFinding, doneThrough, listFindings } from '../../lib/apps/learn-queue.js';
 import { allowAppDir } from '../../lib/apps/allow-dir.js';
 import { registerAppsShareCommands } from './apps-share.js';
+import { appDataStatus, listDataFiles, sharedMember, trackedAppFiles } from '../../lib/apps/others.js';
+import { declMatches, isDbName, pathNameRefusal, type DataDecl, type HeldReason } from '../../lib/apps/data-share.js';
+import { appPullHeld, listConflicts, resolveConflict } from '../../lib/apps/data-conflicts.js';
+import { approveDeletes, PER_SYNC_DELETE_CAP, waitingDeletes } from '../../lib/apps/data-deletes.js';
+import { callClaim } from '../../lib/apps/call-claim.js';
+import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/super/store.js';
 
 /** The first line every copy of the SDK carries: a file without it is the app's own, left alone. */
 export const SDK_HEADER = '// dreamcontext App SDK';
@@ -153,6 +159,146 @@ function starterPage(name: string): string {
 `;
 }
 
+// ─── team data (app-veri-ortak r6, K2, K7, K10) ─────────────────────────────────────
+
+/** A sink that writes raw HTML: shared data drawn through it would run as markup (K2). */
+const HTML_SINK_RE = /\.innerHTML\s*\+?=(?!=)|dangerouslySetInnerHTML|\bv-html\b/;
+const SINK_EXT = /\.(m?js|cjs|jsx|ts|tsx|vue|svelte|html?)$/i;
+
+/**
+ * `data_html_sink` (K2): an app that declares `shared` data and writes raw HTML (`innerHTML =`,
+ * `dangerouslySetInnerHTML`, `v-html`) in `public/ src/ lib/ server.*`. `textContent` is silent.
+ * The SDK copy (`lib/dc.mjs`) is not the app's code and is skipped.
+ */
+export function dataHtmlSinks(root: string, decl: DataDecl | null, max = 400): Array<{ file: string; line: number; sink: string }> {
+  if (!decl || !decl.shared.length) return [];
+  const out: Array<{ file: string; line: number; sink: string }> = [];
+  const files: string[] = [];
+  const walk = (rel: string, depth: number): void => {
+    if (files.length >= max || depth > 8) return;
+    let names: string[];
+    try { names = readdirSync(join(root, rel)).sort(); } catch { return; }
+    for (const n of names) {
+      if (n.startsWith('.') || n === 'node_modules' || n === 'dist' || n === 'build') continue;
+      const r = rel ? `${rel}/${n}` : n;
+      let st;
+      try { st = lstatSync(join(root, r)); } catch { continue; }
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) walk(r, depth + 1);
+      else if (st.isFile() && SINK_EXT.test(n) && st.size <= 1024 * 1024 && r !== 'lib/dc.mjs' && files.length < max) files.push(r);
+    }
+  };
+  for (const d of ['public', 'src', 'lib']) walk(d, 1);
+  try { for (const n of readdirSync(root)) if (/^server\./.test(n) && SINK_EXT.test(n)) files.push(n); } catch { /* none */ }
+  for (const f of files) {
+    let text: string;
+    try { text = readFileSync(join(root, f), 'utf-8'); } catch { continue; }
+    text.split('\n').forEach((l, i) => {
+      const m = HTML_SINK_RE.exec(l);
+      if (m) out.push({ file: f, line: i + 1, sink: m[0].includes('dangerously') ? 'dangerouslySetInnerHTML' : m[0].includes('v-html') ? 'v-html' : 'innerHTML' });
+    });
+  }
+  return out;
+}
+
+export interface DataFileRow {
+  path: string;
+  size: number;
+  mtime: string;
+  /** shared | local | excluded | unlisted (an unlisted path stays local). */
+  decl: 'shared' | 'local' | 'excluded' | 'unlisted';
+  db: boolean;
+  /** The K4 name rule refuses it (a dotted part, an instruction name). */
+  badName: boolean;
+  /** Written in the same second as more than 20 other files: one refresh, likely re-fetched. */
+  batch: boolean;
+  tracked: boolean;
+}
+
+/** Every file of the data folder, as `apps data` lists it (pure over a file list, for tests). */
+export function dataFileRows(files: Array<{ rel: string; size: number; mtimeMs: number }>, decl: DataDecl | null, excluded: readonly string[], tracked: readonly string[]): DataFileRow[] {
+  const perSecond = new Map<number, number>();
+  for (const f of files) { const k = Math.floor(f.mtimeMs / 1000); perSecond.set(k, (perSecond.get(k) ?? 0) + 1); }
+  const t = new Set(tracked);
+  return files.map((f) => ({
+    path: f.rel,
+    size: f.size,
+    mtime: new Date(f.mtimeMs).toISOString(),
+    decl: excluded.some((x) => declMatches(x, f.rel)) ? 'excluded'
+      : (decl?.local ?? []).some((x) => declMatches(x.path, f.rel)) ? 'local'
+      : (decl?.shared ?? []).some((x) => declMatches(x.path, f.rel)) ? 'shared' : 'unlisted',
+    db: isDbName(f.rel),
+    badName: pathNameRefusal(f.rel) !== null,
+    batch: (perSecond.get(Math.floor(f.mtimeMs / 1000)) ?? 0) > 20,
+    tracked: t.has(f.rel),
+  }));
+}
+
+const HELD_WORDS: Record<HeldReason, string> = {
+  too_big: 'over 5 MB', db_file: 'a database file', name: 'a dotted or instruction name', not_plain: 'a link or hard link',
+  writing: 'written less than 3 s ago', over_cap: 'over the 25 MB app or 100 MB brain total', not_approved_here: 'not approved by the owner on this Mac', conflict: 'two versions: the owner picks',
+};
+
+const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+/**
+ * May this process settle a two-version file in the owner's name? Like `apps do --confirm`: the
+ * Super, its children, a spawned session and an unattended run never (`needs_owner`).
+ */
+export function resolveRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+  const c = callClaim(env).class;
+  if (c === 'spawned' || c === 'crew' || c === 'run') return c;
+  for (const id of [env.DREAMCONTEXT_TAB_SESSION, env.CLAUDE_CODE_SESSION_ID]) {
+    const s = (id ?? '').trim();
+    if (!s) continue;
+    try { if (isSuperSessionId(s) || isSuperChild(s) || handedOverChildRoot(s)) return 'crew'; } catch { return 'crew'; }
+  }
+  return null;
+}
+
+/** The exact command that approves what was just shown: its count is what the owner saw. */
+export function deletesCommand(slug: string, n: number): string {
+  return `dreamcontext apps data deletes ${slug} --approve ${n} --confirm`;
+}
+
+export type DeletesApprove = (home: string, hash: string, expect: number, nowMs?: number) => { ok: true; approved: number } | { ok: false; reason: 'changed'; waiting: number };
+
+/**
+ * `apps data deletes <slug> [--approve <N> --confirm]` (K6): the deletes this app made that wait for
+ * the owner (`waitingDeletes`: the one set the list shows, the approval takes and the sync holds).
+ * The list ends with the exact command carrying the count it showed. An approval covers exactly
+ * what was shown: `--approve <N>` is passed as `expect`, and when the set changed since (the app
+ * deleted more), nothing is approved and the fresh list comes back with its new command
+ * (`deletes_changed`). Who may say yes is the same rule as `apps data resolve`. Pure over its inputs.
+ */
+export function runDataDeletes(
+  input: { home: string; hash: string; slug: string; approve?: string | number; confirm?: boolean; env?: NodeJS.ProcessEnv; nowMs?: number },
+  deps: { approve?: DeletesApprove; waiting?: typeof waitingDeletes } = {},
+): { code: 0 | 1; lines: string[] } {
+  const listOf = () => {
+    const waiting = (deps.waiting ?? waitingDeletes)(input.home, input.hash, input.nowMs);
+    const lines = [
+      `${waiting.length} delete${waiting.length === 1 ? '' : 's'} of shared files waiting for the owner${waiting.length > PER_SYNC_DELETE_CAP ? ` (more than ${PER_SYNC_DELETE_CAP}: a sync sends none of them without the owner's yes)` : ''}:`,
+      ...waiting.map((t) => `  ${t.path} · ${t.at}`),
+      ...(waiting.length ? [`To send exactly these ${waiting.length}, after the owner says yes in this chat: ${deletesCommand(input.slug, waiting.length)}`] : []),
+    ];
+    return { n: waiting.length, lines };
+  };
+  const shown = listOf();
+  if (input.approve === undefined) return { code: 0, lines: shown.lines };
+  const expect = typeof input.approve === 'number' ? input.approve : /^\d{1,6}$/.test(String(input.approve)) ? Number(input.approve) : NaN;
+  if (!Number.isInteger(expect)) return { code: 1, lines: [`bad_count: --approve takes the count the list showed (${deletesCommand(input.slug, shown.n)}).`] };
+  const what = `Lets ${expect} delete${expect === 1 ? '' : 's'} of ${input.slug}'s shared files go to the team; teammates lose those files on their next pull (each Mac keeps a backup).`;
+  const who = resolveRefusal(input.env ?? process.env);
+  if (who) return { code: 1, lines: [`needs_owner: ${what} The Super Agent, its chats, a spawned session and an unattended run never approve deletes (${who}); the owner does it in a normal chat or the terminal.`] };
+  if (!input.confirm) return { code: 1, lines: [...shown.lines, `needs_confirm: ${what} Say this in one line, and run ${deletesCommand(input.slug, expect)} only after the owner says yes in this chat.`] };
+  const r = (deps.approve ?? approveDeletes)(input.home, input.hash, expect, input.nowMs);
+  if (!r.ok) {
+    const fresh = listOf();
+    return { code: 1, lines: [`deletes_changed: the owner approved ${expect}, but ${r.waiting} wait now; nothing was approved. Show the owner this list and ask again.`, ...fresh.lines] };
+  }
+  return { code: 0, lines: [`${input.slug}: ${r.approved} delete${r.approved === 1 ? '' : 's'} approved; the next sync sends them`] };
+}
 
 export function registerAppsCommand(program: Command): void {
   const apps = program
@@ -334,6 +480,13 @@ export function registerAppsCommand(program: Command): void {
         } else {
           for (const w of iconShapeWarnings(m.manifest.icon)) console.log(`warning icon: ${w}`);
         }
+        // Team data (app-veri-ortak K1, K2): which data is shared is the agent's decision to write down.
+        if (m.manifest.data === null) {
+          console.log(`warning data_undeclared: no "data" field: nothing of this app's data is shared with the team yet. Fix: decide with the four questions of /apps (re-fetchable, personal, secret, big or constantly written = local; hand-made = shared) and write data: {"shared": [...], "local": [...]}; see dreamcontext apps data ${m.manifest.slug}`);
+        }
+        for (const h of dataHtmlSinks(root, m.manifest.data)) {
+          console.log(`warning data_html_sink: ${h.file}:${h.line} writes raw HTML (${h.sink}) in an app that shares data. Fix: draw shared data with textContent; another person wrote it`);
+        }
         // The store page reads the README (app-paylasim-magaza r2): warnings, never a red check.
         const readme = join(root, 'README.md');
         let readmeText: string | null = null;
@@ -343,6 +496,103 @@ export function registerAppsCommand(program: Command): void {
         const change = acts.filter((a) => effectOf(a) === 'change').length;
         const agentTurn = acts.filter((a) => a.usesAgent).length;
         success(`${m.manifest.slug}: valid (${acts.length} tools: ${acts.length - change} read, ${change} change${agentTurn ? `, ${agentTurn} spend usage` : ''}; ${m.manifest.schedules.length} schedules${m.manifest.backend ? ', backend' : ', static'})`);
+      } catch (e) { fail(e); }
+    });
+
+
+  const data = apps
+    .command('data')
+    .description("The app's data and the team: what is shared, what stays on this Mac and why (read only)")
+    .argument('<slug>', 'the app')
+    .option('--json', 'JSON output: {mode, files, goes, held, pending, conflicts}')
+    .action((slug: string, opts: { json?: boolean }) => {
+      try {
+        const p = project();
+        const home = homedir();
+        const rec = getApp(home, p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps list).`);
+        const tracked = trackedAppFiles(rec.projectRoot).get(rec.slug) ?? [];
+        const s = appDataStatus(home, rec, { tracked });
+        const files = s.dataDir ? listDataFiles(s.dataDir).map((f) => ({ rel: f.rel, size: f.st.size, mtimeMs: f.st.mtimeMs })) : [];
+        const rows = dataFileRows(files, s.decl, s.consent?.excluded ?? [], tracked);
+        const conflicts = listConflicts(home, rec.hash).map((c) => ({ path: c.path, kind: c.kind, storedAt: c.storedAt }));
+        const result = { mode: s.mode, held: appPullHeld(home, rec.hash), files: rows, goes: s.shared, heldFiles: s.held, pending: s.pending, sharedPaths: s.sharedPaths, localPaths: s.localPaths, conflicts };
+        if (opts.json) { console.log(fenced('data', JSON.stringify(result, null, 2))); return; }
+        const lines: string[] = [];
+        lines.push(`mode: ${s.mode}${s.decl === null ? ' (no "data" field: nothing is shared)' : ''}${result.held ? ' · a team pull is landing now' : ''}`);
+        for (const e of s.sharedPaths) lines.push(`shared ${e.path} · ${e.files} files · ${kb(e.bytes)} · ${e.state} · ${e.why}`);
+        for (const e of s.localPaths) lines.push(`local  ${e.path} · ${e.why}`);
+        lines.push('', `files (${rows.length}):`);
+        for (const r of rows) {
+          const flags = [r.db ? 'DB' : '', r.badName ? 'NAME' : '', r.batch ? 'one refresh (likely re-fetched)' : '', r.tracked ? 'team' : ''].filter(Boolean).join(', ');
+          lines.push(`  ${r.path} · ${kb(r.size)} · ${r.mtime} · ${r.decl}${flags ? ` · ${flags}` : ''}`);
+        }
+        lines.push('', `dry run: ${s.shared.length} files go to the team (${kb(s.sharedBytes)}), ${s.held.length} stay here:`);
+        for (const g of s.shared) lines.push(`  goes ${g}`);
+        for (const h of s.held) lines.push(`  held ${h.path} · ${h.reason} (${HELD_WORDS[h.reason]})`);
+        if (conflicts.length) {
+          lines.push('', 'two versions (mine is in place, the team\'s is stored):');
+          for (const c of conflicts) lines.push(`  ${c.path} · ${c.kind} · ${c.storedAt}`);
+        }
+        console.log(fenced('data', lines.join('\n')));
+        if (s.decl === null) info('Decide what is shared: write the manifest\'s "data" field (the /apps skill), then the owner approves it once on the Apps page.');
+        if (conflicts.some((c) => c.kind === 'conflict')) info(`After the owner picks in chat: dreamcontext apps data resolve ${slug} <path> --theirs --confirm (or --mine).`);
+      } catch (e) { fail(e); }
+    });
+
+  data
+    .command('resolve <slug> <path>')
+    .description("Settle a file with two versions after the owner picked in chat: --theirs takes the team's, --mine keeps this Mac's")
+    .option('--theirs', "Put the team's stored version in place")
+    .option('--mine', "Keep this Mac's version (the team's stored copy is dropped)")
+    .option('--confirm', 'The owner said which one in this chat')
+    .action((slug: string, path: string, opts: { theirs?: boolean; mine?: boolean; confirm?: boolean }) => {
+      try {
+        const p = project();
+        const home = homedir();
+        if (!!opts.theirs === !!opts.mine) throw new AppsClientError('bad_side', 'Say --theirs or --mine (one of them).');
+        const side = opts.theirs ? 'theirs' : 'mine';
+        const rec = getApp(home, p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps list).`);
+        const hit = listConflicts(home, rec.hash).find((c) => c.path === path);
+        if (!hit) throw new AppsClientError('no_conflict', `${slug} has no stored second version of ${path} (dreamcontext apps data ${slug}).`);
+        const m = readManifest(rec.root);
+        const s = appDataStatus(home, rec);
+        const local = !sharedMember(m.ok ? m.manifest.data : null, s.consent, path);
+        const what = side === 'theirs'
+          ? `Puts the team's version of ${path} in place of this Mac's${local ? '; this path is local on this Mac, so it stays here and is not sent back' : ' (the next sync shares it)'}.`
+          : `Keeps this Mac's version of ${path} and drops the team's stored copy${local ? '; this path is local on this Mac' : ' (the next sync shares yours)'}.`;
+        const who = resolveRefusal();
+        if (who) {
+          error(`needs_owner: ${what} The Super Agent, its chats, a spawned session and an unattended run never pick between two versions (${who}); the owner does it in a normal chat or the terminal.`);
+          process.exit(1);
+        }
+        if (!opts.confirm) {
+          error(`needs_confirm: ${what} Say this in one line, and run it with --confirm only after the owner says which one in this chat.`);
+          process.exit(1);
+        }
+        if (appPullHeld(home, rec.hash)) throw new AppsClientError('paused_for_sync', 'Team data is landing for this app right now; try again in a moment.');
+        if (!checkAppDataChain(rec.projectRoot, rec.slug).ok) throw new AppsClientError('data_folder', 'The app\'s data folder is missing or not a real folder.');
+        const r = resolveConflict(home, rec.hash, appDataDir(rec.projectRoot, rec.slug), path, side);
+        if (!r.ok) throw new AppsClientError(r.error.split(':')[0], r.error);
+        success(side === 'theirs' ? `${slug}: the team's version of ${path} is in place` : `${slug}: this Mac's version of ${path} stays`);
+      } catch (e) { fail(e); }
+    });
+
+  data
+    .command('deletes <slug>')
+    .description("The deletes of shared files that wait for the owner; --approve <N> --confirm sends exactly the N the list showed, after the owner said yes")
+    .option('--approve <count>', 'Send the waiting deletes: the count the list showed (refused when the set changed since)')
+    .option('--confirm', 'The owner said yes to these deletes in this chat')
+    .action((slug: string, opts: { approve?: string; confirm?: boolean }) => {
+      try {
+        const p = project();
+        const home = homedir();
+        const rec = getApp(home, p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps list).`);
+        const r = runDataDeletes({ home, hash: rec.hash, slug, approve: opts.approve, confirm: opts.confirm });
+        if (r.code) { for (const l of r.lines) error(l); process.exit(1); }
+        console.log(r.lines.join('\n'));
       } catch (e) { fail(e); }
     });
 

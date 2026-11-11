@@ -13,6 +13,9 @@ import { runGate, findingId } from '../../src/lib/apps/share/gate.js';
 import { buildPublishTree, publishApp, PublishError, resetUnpublishedCache, unpublishedCached, unpublishedChanges } from '../../src/lib/apps/share/publish.js';
 import { appLogoDir, appLogoPath, setAppLogo } from '../../src/lib/apps/app-logo.js';
 import { installApp, listTrash, previewInstall, restoreFromTrash, uninstallApp, sourceRepo } from '../../src/lib/apps/share/install.js';
+import { readConsent } from '../../src/lib/apps/data-consent.js';
+import { removePullRecord, writePullRecord } from '../../src/lib/apps/data-conflicts.js';
+import { teamHash } from '../../src/lib/apps/data-stage.js';
 import { applyUpdate, autoUpdateOne, checkUpdate, detachApp, setAutoUpdate, undoUpdate } from '../../src/lib/apps/share/update.js';
 import { listShared, clearSharedCache } from '../../src/lib/apps/share/shared.js';
 import { updateAppShare } from '../../src/lib/apps/registry.js';
@@ -352,7 +355,11 @@ describe('install, update, my own copy, uninstall', () => {
     expect(existsSync(join(inst.root, 'public', 'app.js'))).toBe(true);
     // The owner's own logo leaves with the settings and comes back with them (app-logo.ts).
     setAppLogo(home, inst.configId!, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]));
+    // The owner's team-data consent goes with the trash entry and comes back with it (app-veri-ortak K3).
+    mkdirSync(join(home, '.dreamcontext', 'apps', 'share'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'apps', 'share', `${inst.hash}.json`), JSON.stringify({ approved: [], excluded: ['notes/'], declined: false, at: '2026-11-10T00:00:00.000Z' }), { flag: 'w' });
     const t = uninstallApp(home, getApp(home, instProject, 'tahmin')!);
+    expect(readConsent(home, inst.hash)).toBeNull();
     expect(appLogoPath(home, inst.configId)).toBeNull();
     expect(getApp(home, instProject, 'tahmin')).toBeNull();
     expect(existsSync(inst.root)).toBe(false);
@@ -362,6 +369,28 @@ describe('install, update, my own copy, uninstall', () => {
     expect(readAppConfig(home, back.configId)).toEqual({ insight: 'benim-insight' });
     expect(readFileSync(join(back.root, 'public', 'app.js'), 'utf-8')).toBe('export const x = 1;\n');
     expect(appLogoPath(home, back.configId)).toBe(join(appLogoDir(home), `${back.configId}.jpg`));
+    expect(readConsent(home, back.hash)?.excluded).toEqual(['notes/']);
+  });
+
+  it('installs onto the team\'s data folder under its slug; an open team pull of that folder refuses the install (app-veri-ortak K9)', async () => {
+    // The teammate's data for `tahmin` came with the brain: tracked, on disk.
+    git(instProject, 'init', '-q');
+    const team = join(instProject, '_dream_context', 'apps', 'tahmin', 'notes');
+    mkdirSync(team, { recursive: true });
+    writeFileSync(join(team, 'a.json'), '{"note":"from the team"}');
+    git(instProject, 'add', '-f', '--', '_dream_context/apps/tahmin/notes/a.json');
+    // A pull of that folder is open on this Mac: its record sits under the team key.
+    writePullRecord(home, { v: 1, hash: teamHash(instProject, 'tahmin'), slug: 'tahmin', preHead: null, mergeHead: null, phase: 'parked', parked: [], plan: null, at: new Date().toISOString() });
+    await expect(installed()).rejects.toMatchObject({ code: 'team_pull_open' });
+    expect(getApp(home, instProject, 'tahmin')).toBeNull();
+    removePullRecord(home, teamHash(instProject, 'tahmin'));
+    // No pull open: it installs under the same slug and the team's file is untouched.
+    const kur = host('kurucu');
+    const pv = await previewInstall({ home, projectRoot: instProject, ref: 'https://github.com/yayinci/tahmin-app', host: kur });
+    const { rec: inst, renamed } = await installApp({ home, projectRoot: instProject, vault: 'kurucu', previewId: pv.previewId, sha: pv.sha, npm: false });
+    expect(renamed).toBe(false);
+    expect(inst.slug).toBe('tahmin');
+    expect(readFileSync(join(team, 'a.json'), 'utf-8')).toBe('{"note":"from the team"}');
   });
 
   it('a repo that moved to another owner gets no update', async () => {

@@ -29,6 +29,10 @@ import { dc } from './lib/dc.mjs';
 | `dc.embed(view, params)` | ✓ | ✓ | URL of an embeddable screen: chat, insight, tasks, roadmap, team. params: `theme`, `bg`, `surface`, `text`, `accent` |
 | `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs and the page's colours; the iframe's `dcRetheme()` reloads it after a theme change |
 | `dc.api(method, path, body)` | subset | ✓ | any dashboard API route |
+| `dc.data.status()` | ✓ | ✓ | where this app's data lives: `{ mode: 'shared'\|'pending'\|'local'\|'undecided'\|'sync_off', shared: string[], pending: string[], held: {path, reason}[] }`. See "dc.data" below |
+| `dc.data.read(path, validate)` | ✓ | ✓ | one file (`'favorites/a1.json'`), or a folder's files one level down as an array (`'favorites/'`), each passed through `validate` (shared data is someone else's); a missing file is `null`, a missing folder `[]` |
+| `dc.data.write(path, content)` | ✗ | ✓ | writes one file atomically (temp name, then rename) |
+| `dc.data.remove(path)` | ✗ | ✓ | the only real delete of a shared file: it reaches the team |
 
 **An embedded screen reaches this Mac only.** Nothing drawn inside it (a picture, a board, a PDF)
 can load or open anything from the internet: the screen's policy and the window both refuse it, and
@@ -74,6 +78,32 @@ for permission, and until the owner allows it banners stay silent and off screen
 the answer says `banner: true`. The notch row needs no permission.
 
 A backend-less app (only `public/`) can use every ✓-page call; anything backend-only needs a backend.
+
+### dc.data
+
+The hand-made data the team makes in the app builds up in the brain; the manifest's `data` field
+says which paths are shared and the owner approves them once (the `/apps` skill). `dc.data.status()`
+is what the app SHOWS about it, never a fixed sentence of its own. `mode` says what is shared NOW:
+- `shared`: at least one approved shared path is live and syncing to the team (even while a newly
+  declared path still waits for the owner);
+- `pending`: nothing approved yet, and a declared shared path waits for the owner;
+- `local`: declared, nothing shared (`shared: []`, or the owner said "keep it local");
+- `undecided`: no `data` field yet;
+- `sync_off`: the brain's cloud sync is off.
+
+`shared` lists the live shared paths, `pending` the declared paths still waiting for the owner's
+approval, and `held` the files that stay here with a reason code (`too_big`, `db_file`, `name`,
+`not_plain`, `writing`, `over_cap`, `not_approved_here`, `conflict`). Key the app's sentence on
+`mode === 'shared'` alone: "8 records · shared with the team" then, "8 records · only on this Mac"
+for `pending`, `local`, `undecided` and `sync_off` (nothing of it reaches the team yet).
+
+Every `dc.data.*` path resolves inside the calling app's own data folder only; `..`, an absolute
+path and a part starting with a dot are refused. Read shared files with a `validate` function and
+draw them with `textContent`. A file missing on this Mac is never a delete; only `dc.data.remove`
+deletes, and only a shared path of this app. While a team pull is landing the app is paused: calls
+answer 503 `{error:'paused_for_sync'}` for a few seconds (until the merge finishes, if one is left
+open); in the SDK that is a `DcError` with code `paused_for_sync`: catch it and try again in a moment. An older copy of `lib/dc.mjs` lacks these calls: `dreamcontext apps validate --fix-sdk`
+refreshes it.
 
 ### dc.actions and dc.health (backend only)
 

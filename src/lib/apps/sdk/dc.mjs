@@ -5,8 +5,9 @@
 //
 // What runs where: the PAGE reaches only the read/write subset the gateway allows
 // (insights, tasks list/get/create and priority/urgency/tags/dates, roadmap, the agent list,
-// automation runs, notify, schedules, theme, copy, embed). Asking an agent, MCP calls,
-// automations and changing a task's status are BACKEND ONLY and throw `backend_only` in the page.
+// automation runs, notify, schedules, theme, copy, embed, data status and read). Asking an agent,
+// MCP calls, automations, changing a task's status and writing or removing data are BACKEND ONLY
+// and throw `backend_only` in the page.
 // A backend-less app therefore cannot use them: give it a backend.
 
 const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -54,6 +55,25 @@ async function call(method, path, body) {
 }
 
 const enc = encodeURIComponent;
+
+/**
+ * One record of the app's data as the caller may use it: JSON parsed for a `.json` path, the text
+ * otherwise, then the caller's `validate` (a schema check). Shared data is written by someone else:
+ * a record `validate` refuses (returns false or throws), or a `.json` that does not parse, is
+ * dropped (null), never thrown into the page.
+ */
+function checked(path, text, validate) {
+  let value = text;
+  if (/\.json$/i.test(path)) {
+    try { value = JSON.parse(text); } catch { return null; }
+  }
+  if (typeof validate !== 'function') return value;
+  try {
+    const ok = validate(value);
+    if (ok === false || ok === null || ok === undefined) return null;
+    return ok === true ? value : ok;
+  } catch { return null; }
+}
 // A dashboard route is written as the dashboard names it (`/api/tasks`); the gateway serves it at
 // `/__dc/api/tasks`. A path without the `/api` prefix is taken as already relative to it.
 const api = (method, path, body) => call(method, `/__dc/api${path.startsWith('/api/') ? path.slice(4) : path}`, body);
@@ -211,6 +231,36 @@ export const dc = {
     runs: () => api('GET', '/api/automations/runs'),
   },
   schedules: { list: () => call('GET', '/__dc/schedules') },
+  /**
+   * The app's data folder and the team (app-veri-ortak). Every path is relative to the data
+   * folder; `..`, an absolute path and a part starting with a dot are refused. While a team pull
+   * lands, calls answer `paused_for_sync` (503) for a few seconds.
+   */
+  data: {
+    /** Where the data stands NOW: {mode, shared, pending, held}. Show this, never a fixed sentence. */
+    status: () => call('GET', '/__dc/data/status'),
+    /**
+     * One file (`'favorites/a1.json'`), or a folder's files one level down (`'favorites/'`, an
+     * array). `validate(value)` returns true (or the cleaned value) to keep a record; a record it
+     * refuses is dropped: null for a file, left out of the array. Draw it with textContent.
+     * A file not there yet is null, a folder not there yet is []. While a team pull lands it throws
+     * DcError `paused_for_sync` (503): catch it and try again in a moment.
+     */
+    read: async (path, validate) => {
+      const folder = typeof path === 'string' && path.endsWith('/');
+      let r;
+      try { r = await call('GET', `/__dc/data/read?path=${enc(path)}`); } catch (e) {
+        if (e instanceof DcError && e.code === 'not_found') return folder ? [] : null;
+        throw e;
+      }
+      if (Array.isArray(r && r.records)) return r.records.map((x) => checked(x.path, x.text, validate)).filter((v) => v !== null);
+      return r && typeof r.text === 'string' ? checked(r.path, r.text, validate) : null;
+    },
+    /** Write one file atomically (a temp name, then rename). A non-string is saved as JSON. Backend only. */
+    write: (path, content) => { backendOnly('dc.data.write'); return call('POST', '/__dc/data/write', { path, content }); },
+    /** The one real delete of a shared file: it reaches the team. Backend only. */
+    remove: (path) => { backendOnly('dc.data.remove'); return call('POST', '/__dc/data/remove', { path }); },
+  },
   // The app's settings on this Mac (the manifest's `config` template, filled by the owner).
   // Never a secret: those are keys of the app's own .env, read by the backend from process.env.
   config: () => call('GET', '/__dc/config'),

@@ -11,8 +11,12 @@
  */
 
 import { existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, relative } from 'node:path';
 import { checkAppDataChain, scanAppData } from './data-dir.js';
+import { appPullHeld } from './data-conflicts.js';
+import { getApp } from './registry.js';
+import { appHash } from './bundle.js';
 
 /** What the gate knows about one chat, written at spawn under the `chats/**` write deny. */
 export interface BashGateContext {
@@ -25,7 +29,29 @@ export interface BashGateContext {
   projectRoot?: string;
   /** The HOME the chat was prepared for: its `~/.dreamcontext/apps` is protected data too. */
   home?: string;
+  /** The app record's hash (its team-pull record is keyed by it); looked up when absent. */
+  hash?: string;
 }
+
+/**
+ * Is a team pull landing this app's data now (app-veri-ortak K5, "tek kapı")? Then the app's
+ * assistant and a bound member can neither read nor write its data folder. Read from disk every
+ * call (`appPullHeld` itself fails closed). The hash: the context's, else the registry's record,
+ * else an own app's `appHash(projectRoot, slug)`; with no project there is no data folder to hold.
+ */
+export function gatePullHeld(ctx: BashGateContext): boolean {
+  const home = ctx.home ?? homedir();
+  let hash = ctx.hash;
+  if (!hash && ctx.projectRoot) {
+    try { hash = getApp(home, ctx.projectRoot, ctx.slug)?.hash; } catch { hash = undefined; }
+    if (!hash) { try { hash = appHash(ctx.projectRoot, ctx.slug); } catch { hash = undefined; } }
+  }
+  if (!hash) return false;
+  return appPullHeld(home, hash);
+}
+
+/** The refusal while {@link gatePullHeld}. */
+export const PAUSED_FOR_SYNC_REASON = 'paused_for_sync: team data is landing in this app\'s data folder right now; try again in a moment.';
 
 export type BashGateDecision =
   | { decision: 'pass' }
@@ -189,6 +215,8 @@ export function classifyBash(command: string, ctx: BashGateContext): BashGateDec
   if (parts.length > 1 && (verb || isLs)) return { decision: 'deny', reason: `Not run. ${bareForm(ctx)}` };
   if (parts.length === 1 && isLs) {
     const paths = first.slice(1).filter((t) => !t.startsWith('-'));
+    // A team pull lands this app's data: its folder is closed until it is done.
+    if (paths.some((p) => realInside(ctx.dataDir, p)) && gatePullHeld(ctx)) return { decision: 'deny', reason: `Not run: ${PAUSED_FOR_SYNC_REASON}` };
     if (first.slice(1).some((t) => t.startsWith('-') && !/^-[A-Za-z0-9]+$/.test(t))) return ASK('a flag of ls');
     // A link inside the data folder could make `ls -L`/`-R` list another app's names: none allowed.
     const dataOk = (!ctx.projectRoot || checkAppDataChain(ctx.projectRoot, ctx.slug).ok) && (() => {
@@ -218,6 +246,7 @@ export function parseGateContext(text: string): BashGateContext | null {
       slug: r.slug, appRoot: r.appRoot, dataDir: r.dataDir, actions: r.actions.filter((a): a is string => typeof a === 'string'),
       ...(typeof r.projectRoot === 'string' ? { projectRoot: r.projectRoot } : {}),
       ...(typeof r.home === 'string' ? { home: r.home } : {}),
+      ...(typeof r.hash === 'string' ? { hash: r.hash } : {}),
     };
   } catch {
     return null;

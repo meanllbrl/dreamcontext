@@ -17,7 +17,7 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, dirname } from 'node:path';
-import { bundleRunState } from './bundle.js';
+import { APP_SLUG_RE, bundleRunState } from './bundle.js';
 import { resolveContextRoot } from '../context-path.js';
 import { vaultNameForContextRoot } from '../app-link.js';
 import { readDesktopServerFile, shellBundleId } from '../../server/desktop-server-file.js';
@@ -141,6 +141,50 @@ export async function appsApi(
     throw new AppsClientError(String(b.error ?? `http_${r.status}`), String(b.message ?? `HTTP ${r.status}`), r.status);
   }
   return b;
+}
+
+export type SyncPauseResult = 'stopped' | 'not_running' | 'no_server' | 'unknown';
+export const SYNC_PAUSE_TIMEOUT_MS = 15_000;
+
+/**
+ * Before a team pull lands app data (app-veri-ortak K7): ask the server to stop this app's
+ * running backend (`POST /api/apps/:slug/sync-pause`, never launching dreamcontext). `stopped`:
+ * stopped without `stoppedByOwner`; `not_running`: no backend; `no_server`: dreamcontext is not
+ * running, so no backend either; `unknown` (timeout, refusal, any error): the caller skips the
+ * pull for this app. The pull record is written BEFORE this call, so the backend cannot restart.
+ */
+export async function pauseForSync(
+  slug: string,
+  opts: { project?: ProjectRef; cwd?: string; home?: string; timeoutMs?: number } = {},
+): Promise<SyncPauseResult> {
+  if (!APP_SLUG_RE.test(slug)) return 'unknown';
+  try {
+    const project = opts.project ?? resolveProject(opts.cwd ?? process.cwd(), opts.home ?? homedir());
+    const b = await appsApi(project, 'POST', `/api/apps/${encodeURIComponent(slug)}/sync-pause`, {}, {
+      launch: false, timeoutMs: opts.timeoutMs ?? SYNC_PAUSE_TIMEOUT_MS, ...(opts.home ? { home: opts.home } : {}),
+    });
+    const state = b.state ?? b.status;
+    return state === 'stopped' || state === 'not_running' ? state : 'unknown';
+  } catch (e) {
+    return e instanceof AppsClientError && e.code === 'dreamcontext_not_running' ? 'no_server' : 'unknown';
+  }
+}
+
+/** After the pull: let the backend come back (`DELETE` the same route). Best effort, never throws. */
+export async function resumeAfterSync(
+  slug: string,
+  opts: { project?: ProjectRef; cwd?: string; home?: string; timeoutMs?: number } = {},
+): Promise<boolean> {
+  if (!APP_SLUG_RE.test(slug)) return false;
+  try {
+    const project = opts.project ?? resolveProject(opts.cwd ?? process.cwd(), opts.home ?? homedir());
+    await appsApi(project, 'DELETE', `/api/apps/${encodeURIComponent(slug)}/sync-pause`, undefined, {
+      launch: false, timeoutMs: opts.timeoutMs ?? SYNC_PAUSE_TIMEOUT_MS, ...(opts.home ? { home: opts.home } : {}),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

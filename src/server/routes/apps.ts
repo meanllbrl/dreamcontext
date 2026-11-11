@@ -16,6 +16,11 @@
  *   POST   /api/apps/:slug/snapshot   a PNG of the OPEN window (never opens one)
  *   POST   /api/apps/:slug/call       one request to the backend (call lease, sink, 256 KB)
  *   DELETE /api/apps/:slug            unregister; bundle, shots and data pins go, code stays
+ *   POST   /api/apps/:slug/data-share {approve?, exclude?, unexclude?, decline?}: the owner's
+ *                                     consent to share the app's hand-made data (owner page only)
+ *   POST   /api/apps/:slug/sync-pause a team pull is about to land app data: stop the backend
+ *                                     (never `stoppedByOwner`) → {state: 'stopped'|'not_running'}
+ *   DELETE /api/apps/:slug/sync-pause the pull is done: the window's lease may restart it
  *   GET    /api/apps/:slug/chats      the app's conversations (embed proof), newest first
  *   POST   /api/apps/:slug/chats/close  {id}: off the open row, kept in the history (embed proof)
  *   POST   /api/apps/:slug/chats/title  {id, title} (embed proof)
@@ -25,7 +30,7 @@
 
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
@@ -76,6 +81,15 @@ import { readScheduleState, scheduleViews, setScheduleEnabled } from '../../lib/
 import { closeMcpClients, resolveMcpDefinition, readPins, writePin, removePins } from '../../lib/apps/mcp-bridge.js';
 import { reviewMcpDefinition, describeChange, mcpHash } from '../../lib/apps/mcp-review.js';
 import { createProposal } from '../../lib/assistant/proposals.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import { appDataStatus, heldCounts, trackedAppFiles } from '../../lib/apps/others.js';
+import { applyConsentPatch, consentPath } from '../../lib/apps/data-consent.js';
+import { brainShareMode } from '../../lib/apps/data-share.js';
+import { readPullRecord, appPullHeld, listPullRecords as listPullRecordsOf } from '../../lib/apps/data-conflicts.js';
+import { recoverAppPulls } from '../../lib/apps/data-exchange.js';
+import { parseRepoSlug } from '../../lib/git-sync/origin-setup.js';
+import { resolveBrainSyncToken } from '../../lib/git-sync/brain-repo.js';
+import * as git from '../../lib/git-sync/git.js';
 
 type Params = Record<string, string>;
 const CALL_MAX_BYTES = 256 * 1024;
@@ -120,6 +134,7 @@ function runtime(rec: AppRecord): AppRuntime {
     loginPath,
     trackChild: (kill) => trackChild(kill),
     claimPort: (port) => claimOwnedPort(port),
+    onPullHeld: (projectRoot) => retryAppPullRecovery(projectRoot),
   });
 }
 
@@ -331,6 +346,9 @@ export const findAppFor = (contextRoot: string, slug: string, res: ServerRespons
 /** Stop everything an app runs before its folder moves (uninstall). The record stays. */
 export async function retireAppRuntime(rec: AppRecord): Promise<void> {
   for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
+  // Its folder (and with "delete data", its data folder) moves next: the backend's last save
+  // lands first. Best effort: a backend that will not go is killed by stop()'s SIGKILL anyway.
+  try { await existingRuntime(rec.hash)?.stopAndWait(SYNC_PAUSE_EXIT_MS); } catch { /* forgotten below */ }
   forgetRuntime(rec.hash);
   await closeMcpClients(rec.hash);
   await closeGateway(rec.hash);
@@ -407,6 +425,233 @@ async function appSetup(): Promise<{ scheduler: boolean; notifications: boolean 
   };
   setupCache = { at: Date.now(), value };
   return value;
+}
+
+// ─── team data (app-veri-ortak r6, K3, K5, K7, K9) ──────────────────────────────────
+
+export type PullView = 'none' | 'landing' | 'waiting_merge' | 'user_merge';
+
+/**
+ * Where a team pull of this app stands, for the card: no record = `none`; a record and no
+ * `MERGE_HEAD` = `landing` (the data is being put in place); a record and the merge it opened
+ * still open = `waiting_merge` (a deferred merge waits for the agent); a record and a
+ * `MERGE_HEAD` that is not the record's = `user_merge` (the owner's own merge: the card says the
+ * command that finishes it).
+ */
+export function pullViewOf(rec: AppRecord): PullView {
+  if (!appPullHeld(home, rec.hash)) return 'none';
+  let merge: string | null = null;
+  try { merge = git.hasMergeHead(rec.projectRoot) ? git.revParse(rec.projectRoot, 'MERGE_HEAD') : null; } catch { merge = null; }
+  if (!merge) return 'landing';
+  const r = readPullRecord(home, rec.hash);
+  return r && r.ok && r.rec.mergeHead === merge ? 'waiting_merge' : 'user_merge';
+}
+
+/** `owner/repo` of the project's origin, and whether GitHub says it is public (null = unknown yet). */
+const REMOTE_TTL_MS = 60 * 60_000;
+const remoteVisibility = new Map<string, { at: number; public: boolean | null }>();
+const remotePending = new Set<string>();
+const originCache = new Map<string, { at: number; url: string | null }>();
+function remoteOf(projectRoot: string): { name: string; public: boolean | null } | null {
+  // The page polls every 3 s: the origin is asked of git at most once a minute per project.
+  let hitUrl = originCache.get(projectRoot);
+  if (!hitUrl || Date.now() - hitUrl.at > 60_000) {
+    let u: string | null = null;
+    try { u = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { u = null; }
+    hitUrl = { at: Date.now(), url: u };
+    originCache.set(projectRoot, hitUrl);
+  }
+  const url = hitUrl.url;
+  const slug = url ? parseRepoSlug(url) : null;
+  if (!slug) return null;
+  const name = `${slug.owner}/${slug.repo}`;
+  const hit = remoteVisibility.get(name.toLowerCase());
+  if ((!hit || Date.now() - hit.at > REMOTE_TTL_MS) && !remotePending.has(name.toLowerCase())) void lookupVisibility(projectRoot, name);
+  return { name, public: hit?.public ?? null };
+}
+/** One GitHub read per repo an hour, after the reply: the list never waits on the network. */
+async function lookupVisibility(projectRoot: string, name: string): Promise<void> {
+  const key = name.toLowerCase();
+  remotePending.add(key);
+  try {
+    const t = resolveBrainSyncToken(projectRoot);
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const r = await fetch(`https://api.github.com/repos/${name}`, { signal: ctl.signal, headers: { accept: 'application/vnd.github+json', ...(t ? { authorization: `token ${t.token}` } : {}) } });
+      const b = r.ok ? (await r.json()) as { private?: unknown } : null;
+      remoteVisibility.set(key, { at: Date.now(), public: b && typeof b.private === 'boolean' ? !b.private : null });
+    } finally { clearTimeout(timer); }
+  } catch {
+    remoteVisibility.set(key, { at: Date.now(), public: null });
+  } finally {
+    remotePending.delete(key);
+  }
+}
+
+/** The card's `data` field: counts, paths and the agent's reasons; never the data itself. */
+export function appDataField(rec: AppRecord, tracked?: string[]): Record<string, unknown> {
+  try {
+    const s = appDataStatus(home, rec, tracked ? { tracked } : {});
+    const mode = brainShareMode(rec.projectRoot);
+    return {
+      mode: s.mode,
+      // An unreadable manifest is not "undecided" either: nothing to ask the agent from here.
+      declared: readManifest(rec.root).ok ? s.decl !== null : null,
+      sharedCount: s.shared.length,
+      sharedBytes: s.sharedBytes,
+      held: heldCounts(s.held),
+      missing: s.missing,
+      conflicts: s.conflicts,
+      pendingPaths: s.sharedPaths.filter((p) => p.state === 'pending').map((p) => ({ path: p.path, why: p.why, files: p.files, bytes: p.bytes })),
+      sharedPaths: s.sharedPaths,
+      localPaths: s.localPaths,
+      declined: !!s.consent?.declined,
+      remote: remoteOf(rec.projectRoot),
+      syncOff: !mode.fullRepo || !mode.cloudSyncOn,
+      pull: pullViewOf(rec),
+    };
+  } catch {
+    // Unread is not undecided: a read failure says nothing the owner could act on (`declared: null`).
+    return { mode: 'error', declared: null, sharedCount: 0, sharedBytes: 0, held: {}, missing: 0, conflicts: 0, pendingPaths: [], sharedPaths: [], localPaths: [], declined: false, remote: null, syncOff: true, pull: 'none' };
+  }
+}
+
+/**
+ * The owner's own Apps page or nothing (the same gate as apps-share.ts `ownerOnly`): this desktop
+ * app on this Mac, a same-origin click carrying the shell's owner key. Sends the 403.
+ */
+function ownerOnly(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireLocalDesktop(req, res)) return false;
+  if (fromOwnerPage(req)) return true;
+  sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only the owner, on the Apps page, decides which app data the team sees (a click in the dreamcontext app). An agent or a script cannot.'));
+  return false;
+}
+
+/**
+ * POST /api/apps/:slug/data-share {approve?, exclude?, unexclude?, decline?} (K3). The owner's
+ * own Apps page only (the shell's key on a same-origin click): an agent, the Super, its
+ * children, an app's own page and a `curl` get 403 `owner_page_only`. The body is checked path
+ * by path (`applyConsentPatch`: the K1 path rule, at most 20 per list, approvals only of
+ * declared shared paths).
+ */
+export async function handleAppDataShare(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!ownerOnly(req, res)) return;
+  const rec = findApp(contextRoot, params.slug, res);
+  if (!rec) return;
+  const body = await parseJsonBody(req);
+  const m = readManifest(rec.root);
+  if (!m.ok) { sendError(res, 409, 'manifest_invalid', 'The app manifest has problems: fix them first.'); return; }
+  const r = applyConsentPatch(home, rec.hash, m.manifest.data, body ?? {});
+  if (!r.ok) {
+    const code = r.error.split(':')[0];
+    sendError(res, code === 'write_failed' ? 500 : 400, code, r.error);
+    return;
+  }
+  console.log(`  dreamcontext Apps: ${rec.slug} team data consent changed by the owner`);
+  sendJson(res, 200, { ok: true, consent: r.consent, data: appDataField(rec) });
+}
+
+/** Who asked, for the pause log: the run class a CLI sends, else the bare client. */
+function callerOf(req: IncomingMessage): string {
+  const claim = decodeClaim(req.headers[RUN_HEADER]);
+  const ua = String(req.headers['user-agent'] ?? '').slice(0, 60).replace(/[^\x20-\x7e]/g, '');
+  return `${claim.class}${ua ? ` (${ua})` : ''}`;
+}
+
+/**
+ * POST /api/apps/:slug/sync-pause (K7): a team pull is about to land this app's data. The pull
+ * record is already written, so the backend cannot start again; this stops the running one,
+ * WITHOUT `stoppedByOwner` (the owner did not stop it). Registered slug only (404 otherwise),
+ * the dashboard's own loopback gate like every control route, and every pause is logged with its
+ * caller.
+ */
+export async function handleAppSyncPause(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const rec = findApp(contextRoot, params.slug, res);
+  if (!rec) return;
+  holdOpen(req);
+  const rt = existingRuntime(rec.hash);
+  // Never decided from the state: what this runtime STARTED and is not gone yet (a backend, a
+  // build, a start in flight's backend in its health poll) is the live set. The stop moves the
+  // epoch, so a start still before its spawn never spawns. `stopped` only once every live group
+  // is gone; it may still be writing its last save, and the pull parks right after this answer.
+  const running = !!rt && rt.liveChildCount() > 0;
+  const gone = rt ? await rt.stopAndWait(SYNC_PAUSE_EXIT_MS) : true;
+  const what = !running ? 'no backend running' : gone ? 'backend stopped' : 'backend did not exit in time';
+  const line = `[dreamcontext] paused for a team sync: ${what} (asked by ${callerOf(req)})`;
+  rt?.log.push(line);
+  console.log(`  dreamcontext Apps: ${rec.slug} ${line.slice('[dreamcontext] '.length)}`);
+  // Not confirmed gone: 503, which the caller reads as `unknown` (the pull skips this app).
+  if (!gone) { sendError(res, 503, 'pause_timeout', 'The backend did not exit in time; the team pull skips this app.'); return; }
+  sendJson(res, 200, { state: running ? 'stopped' : 'not_running' });
+}
+
+/** How long the pause waits for a backend to be gone: inside the client's 15 s (SYNC_PAUSE_TIMEOUT_MS). */
+export const SYNC_PAUSE_EXIT_MS = 10_000;
+
+/** DELETE /api/apps/:slug/sync-pause: the pull ended; an open window's lease brings it back. */
+export async function handleAppSyncResume(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const rec = findApp(contextRoot, params.slug, res);
+  if (!rec) return;
+  const held = appPullHeld(home, rec.hash);
+  const rt = existingRuntime(rec.hash);
+  rt?.log.push(`[dreamcontext] team sync ${held ? 'still landing: the app stays paused' : 'done'} (asked by ${callerOf(req)})`);
+  if (!held && rt && !rec.stoppedByOwner && liveWindowsOf(rec, rt) > 0) void rt.ensureRunning();
+  sendJson(res, 200, { ok: true, held });
+}
+
+/** The brain lock's stale window (brain-repo.ts BRAIN_LOCK_STALE_MS, not exported there). */
+export const BRAIN_LOCK_STALE_MS = 5 * 60_000;
+
+/**
+ * Server start (K5 "Kurtarma"): a pull this Mac left half done (a crash between the merge and its
+ * commit, or after it) is recovered once, per project of this server, only when a pull record
+ * exists. `recoverAppPulls` takes the brain lock itself; `locked` (a live sync, or a lock younger
+ * than its stale window) is logged and tried again once after {@link BRAIN_LOCK_STALE_MS}; the
+ * gateway and the supervisor retry whenever they meet a held app.
+ */
+export function recoverAppPullsAtStart(opts: { listRecords?: () => unknown[]; retryMs?: number } = {}): void {
+  let any = false;
+  try { any = (opts.listRecords ?? (() => listPullRecordsOf(home)))().length > 0; } catch { any = false; }
+  if (!any) return;
+  let roots: string[] = [];
+  try { roots = [...new Set(listVaults(home).map((v) => real(v.path)))]; } catch { return; }
+  const locked: string[] = [];
+  for (const projectRoot of roots) {
+    try {
+      const r = recoverAppPulls({ gitCwd: projectRoot, contextRoot: join(projectRoot, '_dream_context'), projectRoot, home });
+      for (const n of r.notes) console.log(`  dreamcontext Apps: ${n}`);
+      if (r.recovered.length) console.log(`  dreamcontext Apps: recovered team pulls for ${r.recovered.length} app(s)`);
+      if (r.skipped === 'locked') { locked.push(projectRoot); console.log(`  dreamcontext Apps: team pull recovery skipped for ${basename(projectRoot)} (the brain is locked); trying again in ${Math.round((opts.retryMs ?? BRAIN_LOCK_STALE_MS) / 60_000)} min`); }
+    } catch (e) {
+      console.warn(`  dreamcontext Apps: team pull recovery failed for ${basename(projectRoot)}: ${(e as Error).message}`);
+    }
+  }
+  if (!locked.length) return;
+  const t = setTimeout(() => { for (const p of locked) { recoverTried.delete(p); retryAppPullRecovery(p); } }, opts.retryMs ?? BRAIN_LOCK_STALE_MS);
+  t.unref?.();
+}
+
+const RECOVER_RETRY_MS = 30_000;
+const recoverTried = new Map<string, number>();
+/**
+ * A held app was asked for (gateway, supervisor): try the crash recovery again, at most once
+ * every 30 s per project. `recoverAppPulls` takes the brain lock itself and answers `locked`
+ * while a live sync holds it, so a live pull is never touched.
+ */
+export function retryAppPullRecovery(projectRoot: string): void {
+  const now = Date.now();
+  if (now - (recoverTried.get(projectRoot) ?? 0) < RECOVER_RETRY_MS) return;
+  recoverTried.set(projectRoot, now);
+  try {
+    const r = recoverAppPulls({ gitCwd: projectRoot, contextRoot: join(projectRoot, '_dream_context'), projectRoot, home });
+    if (r.skipped) console.log(`  dreamcontext Apps: team pull recovery skipped (${r.skipped})`);
+    for (const n of r.notes) console.log(`  dreamcontext Apps: ${n}`);
+  } catch (e) {
+    console.warn(`  dreamcontext Apps: team pull recovery failed: ${(e as Error).message}`);
+  }
 }
 
 // ─── the Assistant's app verbs (src/server/routes/assistant.ts holds the gate) ───────
@@ -518,9 +763,11 @@ export async function handleAppsList(req: IncomingMessage, res: ServerResponse, 
   }
   if (!requireLocalDesktop(req, res)) return;
   const registered = listApps(home, projectRootOf(contextRoot));
-  const apps = registered.map((a) => ({ ...publicStatus(a), root: a.root, ...unpublishedField(a) }));
-  // A teammate's app (its knowledge note, no app here) and a removed app's data (plan-veri K5).
-  const others = appOthers(projectRootOf(contextRoot), new Set(registered.map((a) => a.slug)));
+  // One `git ls-files` per list: the team's tracked app files, per slug.
+  const tracked = trackedAppFiles(registered[0]?.projectRoot ?? projectRootOf(contextRoot));
+  const apps = registered.map((a) => ({ ...publicStatus(a), root: a.root, ...unpublishedField(a), data: appDataField(a, tracked.get(a.slug) ?? []) }));
+  // A teammate's app (its data or its knowledge note, no app here) and a removed app's data (plan-veri K5, app-veri-ortak K9).
+  const others = appOthers(projectRootOf(contextRoot), new Set(registered.map((a) => a.slug)), { tracked });
   sendJson(res, 200, { apps, others, platform: process.platform, runner: !!shellRunnerPath(), setup: await appSetup() });
 }
 
@@ -546,7 +793,8 @@ export async function handleAppsLaunchWindow(req: IncomingMessage, res: ServerRe
     url: `${gw.origin}/__dc/enter?code=${gw.mintEnterCode()}`,
     runnerToken,
     title: st.name,
-    state: rec.stoppedByOwner ? 'stopped' : (st.state === 'starting' ? 'running' : st.state),
+    // A team pull holds it: the window opens on its page, which says "Ekipten veri geliyor".
+    state: rec.stoppedByOwner ? 'stopped' : appPullHeld(home, rec.hash) || st.state === 'starting' ? 'running' : st.state,
     theme: readLauncherTheme(),
     ...(st.state === 'error' ? { lastError: st.lastError } : {}),
   });
@@ -693,7 +941,7 @@ export async function handleAppStatus(req: IncomingMessage, res: ServerResponse,
   if (!requireLocalDesktop(req, res)) return;
   const rec = findApp(contextRoot, params.slug, res);
   if (!rec) return;
-  sendJson(res, 200, publicStatus(rec));
+  sendJson(res, 200, { ...publicStatus(rec), data: appDataField(rec) });
 }
 
 export async function handleAppLogs(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
@@ -974,6 +1222,9 @@ export async function handleAppDelete(req: IncomingMessage, res: ServerResponse,
   removeShots(home, rec.hash);
   removePins(home, rec.hash);
   clearAppLogo(home, rec.configId);
+  // The team-data consent dies with the registration (K3): a re-registered app asks again, so
+  // nothing is shared on a choice made for an app that was removed.
+  try { rmSync(consentPath(home, rec.hash), { force: true }); } catch { /* none */ }
   unregisterApp(home, rec.projectRoot, rec.slug);
   sendJson(res, 200, { ok: true, kept: rec.root, note: 'The app code was not deleted.' });
 }

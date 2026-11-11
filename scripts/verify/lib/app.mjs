@@ -116,9 +116,12 @@ export async function openApp({ suite = 'look', build = false, desktop = false }
   return {
     base, home, proj, shots, findings, taken,
     /** Open `path` at each width, run `act`, screenshot, and collect errors and overflow. */
-    async look(path, act = async () => {}, { name = 'page' } = {}) {
+    async look(path, act = async () => {}, { name = 'page', init } = {}) {
       for (const w of WIDTHS) {
         const context = await browser.newContext({ viewport: { width: w.width, height: w.height } });
+        // `init(w)` may answer a script to run before the page's own (e.g. playing the Mac app's shell).
+        const script = init?.(w);
+        if (script) await context.addInitScript(script);
         await markAnnouncementsSeen(context, base);
         const page = await context.newPage();
         const where = `${name}@${w.name}`;

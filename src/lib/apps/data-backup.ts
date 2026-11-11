@@ -18,6 +18,11 @@ import { appsHome } from './registry.js';
 import { ensureAppDataDir, isEmptyDir } from './data-dir.js';
 
 export const BACKUP_KEEP = 5;
+/**
+ * The reason of the copy taken right before a team pull merges into the data folder
+ * (app-veri-ortak K6). Not forced: an unchanged folder's newest copy already is that state.
+ */
+export const BEFORE_TEAM_PULL = 'before-team-pull';
 /** Bigger data is not copied on every change: the owner hears it instead. */
 export const BACKUP_MAX_BYTES = 512 * 1024 * 1024;
 const MAX_ENTRIES = 20_000;

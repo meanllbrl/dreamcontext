@@ -10,6 +10,7 @@ import { publishPrompt } from './publishPrompt';
 import { preparePrompt } from '../../lib/agentPrompt';
 import { requestDelegateAgent } from '../../lib/delegateAgent';
 import { confirmAction } from '../../lib/desktop';
+import { AppDataLine, AppDataTileLine, type AppDataView } from './AppDataNotice';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
 export interface AppRow {
@@ -46,6 +47,8 @@ export interface AppRow {
   unpublished?: boolean;
   configCount?: number;
   configMissing?: string[];
+  /** Its team data (app-veri-ortak K9): mode, counts, the paths awaiting the owner, a pull landing. */
+  data?: AppDataView;
 }
 
 type ShareOpen = 'config' | 'update' | 'detach' | 'uninstall' | null;
@@ -122,6 +125,8 @@ export function AppTile({ app, vault, canLaunch, onOpen, onChanged }: { app: App
           </button>
         ) : <span className="app-card__mac-only">{t('apps.macOnly')}</span>}
       </div>
+      {/* Its data is not decided yet (app-veri-ortak K9): said here on its own tile, never as a row above the shelves. */}
+      <AppDataTileLine app={app} canLaunch={canLaunch} />
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
     </article>
   );
@@ -228,6 +233,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
       />
       <FactStrip facts={facts} />
       <div className="pp-notes-block">
+        <AppDataLine app={app} canLaunch={canLaunch} onChanged={onChanged} />
         {!following && app.publish && app.unpublished && canLaunch && (
           <div className="app-card__note app-card__note--accent app-card__mcp">
             <span>{t('share.card.unpublished')}</span>

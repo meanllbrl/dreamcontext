@@ -3041,7 +3041,10 @@ export function appsSnapshotLine(contextRoot: string, home?: string): string | n
       const m = readManifest(a.root);
       const n = m.ok ? m.manifest.actions.length : 0;
       const tools = n ? ` · ${n} tool${n === 1 ? '' : 's'}` : '';
-      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)}${tools}${appFacts(a.projectRoot, a.slug, a.hash, h)})`;
+      // No `data` field yet (app-veri-ortak K9): the agent that builds the app still has to decide
+      // which data is the team's. A flag only: the snapshot never carries shared content.
+      const undecided = m.ok && m.manifest.data === null ? ' · veri kararı bekliyor' : '';
+      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)}${tools}${appFacts(a.projectRoot, a.slug, a.hash, h)}${undecided})`;
       // Room kept for the ` +NN more` an overflow adds, and the not-installed part.
       if (Buffer.byteLength(names + piece + tail) + 10 + (missing.length ? 40 : 0) > APPS_LINE_MAX) break;
       names += piece;

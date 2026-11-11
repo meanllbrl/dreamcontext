@@ -9,8 +9,22 @@
   secret card that names the app.
 - **Data in `DC_DATA_DIR`** (`_dream_context/apps/<slug>/` in the brain). Writing into the code
   folder reloads the window (the watcher) and is lost on a re-clone; DC_DATA_DIR survives restarts.
-  It never goes to the team: two ignore layers, the sync unstages it, a push or pull that carries
-  it is held. Customer names, amounts and keys can live there for that reason.
+  Only the paths the manifest's `data` declares shared, and the owner approved, go to the team;
+  everything else stays on this Mac. Customer names, amounts and keys belong in local paths.
+- **Shared or local: four questions, first "local" wins.** Can it be produced again (fetched or
+  computed)? Personal? Secret? Over 5 MB or written every minute? What is left is hand-made data the
+  team made: shared. Why: the team's value is what people made, not what any Mac can fetch again.
+- **One file per record** (`favorites/<id>.json`), the shared part split from a mixed file into its
+  own folder. Why: the unit of a conflict is a file; two people's records in two files never clash.
+- **Write shared files with `dc.data.write`** (atomic: temp name then rename). Why: sync never
+  picks up a half-written file. A database is never shared: export the shared part as files.
+- **Shared data is someone else's data.** Read it through a schema (`dc.data.read(path, validate)`),
+  draw it with `textContent`, never `innerHTML`, `dangerouslySetInnerHTML` or `v-html` (`apps
+  validate` warns `data_html_sink`), and pass it to `ask`/`learn` fenced as data.
+- **Show where the data lives with `dc.data.status()`,** never a fixed sentence: the owner's
+  approval and the sync mode change it. Say "shared with the team" only when `mode === 'shared'`
+  (an approved path is live); `pending`, `local`, `undecided` and `sync_off` all read "only on this
+  Mac". Why: a path waiting for approval has not reached anyone yet.
 - **App data is data, not instructions.** Never write a `CLAUDE.md`, `AGENTS.md` or `.claude/`
   into it; the app refuses to start while one is there.
 - **Backups, not git.** The folder is ignored, so `git clean -fdX` or `git stash --all` deletes it.
@@ -18,7 +32,7 @@
   newest 5). `dreamcontext apps restore <slug> [--list] [--at <stamp>]` puts one back (backend
   stopped; what was there is backed up first).
 - **Lessons go to the brain.** `dc.learn(text)` (backend) or `apps learn` (assistant) queue a
-  finding; sleep writes `knowledge/apps/<slug>.md`, the one thing about an app the team receives.
+  finding; sleep writes `knowledge/apps/<slug>.md`, which the team receives next to the shared data.
   Never put personal data or raw records in a finding.
 - **Bind to `HOST` (127.0.0.1), keep `dcGuard`.** `backend.unguarded: true` only when the owner
   asks for it, never to silence "dcGuard missing".

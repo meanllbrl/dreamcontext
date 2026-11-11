@@ -471,7 +471,13 @@ export function revListCount(cwd: string, range: string): number {
 
 /** Reentrancy guard primitive (C3) — a merge is mid-flight iff `.git/MERGE_HEAD` exists. */
 export function hasMergeHead(cwd: string): boolean {
-  return existsSync(join(cwd, '.git', 'MERGE_HEAD'));
+  const dotGit = join(cwd, '.git');
+  if (existsSync(join(dotGit, 'MERGE_HEAD'))) return true;
+  // A plain repo top: its `.git` folder answered. Anything else (a nested brain below the top, a
+  // linked worktree whose `.git` is a FILE pointing at its own git dir): ask git where it is.
+  try { if (statSync(dotGit).isDirectory()) return false; } catch { /* no .git here */ }
+  const p = gitPathFor(cwd, 'MERGE_HEAD');
+  return !!p && existsSync(p);
 }
 
 /**
@@ -504,14 +510,91 @@ export function statusPorcelainTracked(cwd: string, pathspecs?: string[]): strin
   return raw.split('\0').filter((e) => e.length > 0).map((e) => e.slice(3).trim());
 }
 
-/** Stage every change in the repo (used when `cwd` IS the brain repo root — `separate` mode). */
-export function stageAll(cwd: string): void {
-  run(cwd, ['add', '-A']);
+/**
+ * Stage every change in the repo. `excludes` are `:(exclude)` pathspecs (app-veri-ortak K5: the
+ * brain's `apps/` is never staged by the general stage); with them the positive spec is `:/`, the
+ * whole repo from its top, exactly what a bare `git add -A` takes.
+ */
+export function stageAll(cwd: string, excludes: string[] = []): void {
+  if (!excludes.length) { run(cwd, ['add', '-A']); return; }
+  addAllExcept(cwd, [':/'], excludes);
 }
 
 /** Stage only a path scope (used for `in-tree` mode — must never touch the rest of the code repo). */
-export function stagePath(cwd: string, relPath: string): void {
-  run(cwd, ['add', '-A', '--', relPath]);
+export function stagePath(cwd: string, relPath: string, excludes: string[] = []): void {
+  if (!excludes.length) { run(cwd, ['add', '-A', '--', relPath]); return; }
+  addAllExcept(cwd, [relPath], excludes);
+}
+
+/** `:(top,icase,exclude)x` → `:(top,icase)x`; `:(exclude)x` → `x`: the folder an exclusion names. */
+function keptOf(exclude: string): string {
+  const m = exclude.match(/^:\(([^)]*)\)([\s\S]*)$/);
+  if (!m) return exclude.replace(/^:!/, '');
+  const magic = m[1].split(',').filter((x) => x && x !== 'exclude');
+  return magic.length ? `:(${magic.join(',')})${m[2]}` : m[2];
+}
+
+/** The plain path an exclusion names (no magic), lower-cased, for comparing git's report. */
+function plainOf(exclude: string): string {
+  return exclude.replace(/^:\([^)]*\)/, '').replace(/^:!/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * `git add -A -- <positive> <excludes>`, the index entries under the excluded folders kept EXACTLY
+ * as they were (app-veri-ortak K5: the general stage never touches the brain's `apps/`; a
+ * force-added tracked entry is neither refreshed nor dropped).
+ *
+ * Two facts of real git (2.50) shape it. (1) An exclusion naming an IGNORED folder (`/apps/` is
+ * ignored in both privacy layers) makes `git add` print "The following paths are ignored…" and
+ * exit 1, though it staged everything else and left that folder alone. That report, and only
+ * that report about the excluded folders, is not a failure; any other error still throws (the
+ * report is read under LC_ALL=C). (2) Belt and braces: the entries under the excluded folders are
+ * read before and after; any difference is put back (`update-index -z --index-info`), so the
+ * invariant holds whatever git did.
+ */
+function addAllExcept(cwd: string, positive: string[], excludes: string[]): void {
+  const kept = excludes.map(keptOf);
+  // Read and restore from the repo top: `ls-files` and `--index-info` speak top-relative paths there.
+  const top = topLevel(cwd) ?? cwd;
+  const before = indexEntries(top, kept);
+  try {
+    run(cwd, ['-c', 'advice.addIgnoredFile=false', 'add', '-A', '--', ...positive, ...excludes], { env: { ...process.env, LC_ALL: 'C' } });
+  } catch (err) {
+    if (!onlyIgnoredReportOf(err, excludes)) throw err;
+  }
+  const after = indexEntries(top, kept);
+  const key = (e: IndexEntry) => `${e.mode} ${e.sha} ${e.stage}`;
+  const was = new Map<string, string[]>();
+  for (const e of before) was.set(e.path, [...(was.get(e.path) ?? []), key(e)]);
+  const now = new Map<string, string[]>();
+  for (const e of after) now.set(e.path, [...(now.get(e.path) ?? []), key(e)]);
+  const changed = [...new Set([...was.keys(), ...now.keys()])].filter((p) => (was.get(p) ?? []).sort().join('|') !== (now.get(p) ?? []).sort().join('|'));
+  if (!changed.length) return;
+  const zero = '0'.repeat(before[0]?.sha.length ?? after[0]?.sha.length ?? 40);
+  const lines: string[] = [];
+  for (const p of changed) lines.push(`0 ${zero}\t${p}`);
+  for (const e of before) if (changed.includes(e.path)) lines.push(`${e.mode} ${e.sha} ${e.stage}\t${e.path}`);
+  try {
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd: top, input: lines.map((l) => `${l}\0`).join(''), stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (err) {
+    const e = err as { stderr?: Buffer | string };
+    throw new GitSyncError(`git update-index --index-info failed: ${String(e.stderr ?? '').trim()}`);
+  }
+}
+
+/** Is this `git add` failure ONLY the "paths are ignored" report, about the excluded folders? */
+function onlyIgnoredReportOf(err: unknown, excludes: string[]): boolean {
+  const text = String((err as GitSyncError).stderr ?? '').trim();
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length || !/^The following paths are ignored by one of your \.gitignore files:$/.test(lines[0])) return false;
+  const listed = lines.slice(1).filter((l) => !/^hint:/i.test(l));
+  if (!listed.length) return false;
+  const folders = excludes.map(plainOf);
+  // git prints the paths relative to `cwd` (a nested brain's project folder): matched by suffix.
+  return listed.every((l) => {
+    const p = l.replace(/\/+$/, '').toLowerCase();
+    return folders.some((f) => p === f || f.endsWith(`/${p}`) || p.startsWith(`${f}/`));
+  });
 }
 
 /**
@@ -850,6 +933,158 @@ export function treeChildren(cwd: string, rev: string, dir: string): { name: str
     children.push({ name: line.slice(tab + 1).split('/').pop() ?? '', mode: line.split(' ')[0] });
   }
   return children;
+}
+
+// ─── App data exchange helpers (app-veri-ortak K5) ─────────────────────────────────────────
+// Every path below is repo-relative and passed as `:(top,literal)<path>`, so it means exactly
+// that file wherever `cwd` sits inside the work tree and a `*` in a name is never a glob.
+
+/** `:(top,literal)<path>`: one exact repo-relative path. */
+export function exactSpec(repoPath: string): string {
+  return `:(top,literal)${repoPath}`;
+}
+
+function runBuffer(cwd: string, args: string[]): Buffer {
+  try {
+    return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  } catch (err) {
+    const e = err as { stderr?: Buffer | string; message?: string };
+    throw new GitSyncError(`git ${args.join(' ')} failed: ${String(e.stderr ?? '').trim() || e.message || 'unknown error'}`);
+  }
+}
+
+/** Chunked so a long path list never exceeds the argv limit. */
+function inChunks(paths: string[], fn: (chunk: string[]) => void): void {
+  for (let i = 0; i < paths.length; i += 200) fn(paths.slice(i, i + 200));
+}
+
+/** `git add -f` of exact paths, past every ignore rule. THROWS when git cannot. */
+export function forceAddExact(cwd: string, repoPaths: string[]): void {
+  inChunks(repoPaths, (c) => run(cwd, ['add', '-f', '--', ...c.map(exactSpec)]));
+}
+
+/** `git rm --cached` of exact paths (the files stay on disk). THROWS when git cannot. */
+export function removeCachedExact(cwd: string, repoPaths: string[]): void {
+  inChunks(repoPaths, (c) => run(cwd, ['rm', '--cached', '-q', '--ignore-unmatch', '--', ...c.map(exactSpec)]));
+}
+
+export interface IndexEntry { path: string; mode: string; sha: string; stage: number }
+
+/** Index entries under the pathspecs (`ls-files -s`). THROWS when git cannot answer. */
+export function indexEntries(cwd: string, pathspecs: string[]): IndexEntry[] {
+  const out: IndexEntry[] = [];
+  for (const rec of run(cwd, ['ls-files', '-s', '-z', '--', ...pathspecs]).split('\0')) {
+    const m = rec.match(/^(\d{6}) ([0-9a-f]+) (\d)\t([\s\S]+)$/);
+    if (m) out.push({ mode: m[1], sha: m[2], stage: Number(m[3]), path: m[4] });
+  }
+  return out;
+}
+
+/** Tracked paths whose work-tree file differs from the index (deleted ones included). THROWS. */
+export function changedInWorktree(cwd: string, pathspecs: string[]): string[] {
+  return run(cwd, ['diff', '--name-only', '-z', '--no-renames', '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+/** Paths that differ between two revisions (or `a...b`), repo-relative. THROWS. */
+export function diffNames(cwd: string, range: string, pathspecs: string[]): string[] {
+  return run(cwd, ['diff', '--name-only', '-z', '--no-renames', range, '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+export interface IntroducedEntry { path: string; mode: string; sha: string; deleted: boolean }
+
+/**
+ * What ONE commit introduces: `diff-tree -r -c --root`, so a merge lists only the paths its result
+ * differs from EVERY parent in (the resolution), a plain commit its own changes. The result side's
+ * mode and blob. THROWS when git cannot answer.
+ */
+export function introducedEntries(cwd: string, commit: string, pathspecs: string[] = []): IntroducedEntry[] {
+  const args = ['diff-tree', '-r', '-c', '-z', '--raw', '--no-abbrev', '--no-renames', '--no-commit-id', '--root', commit];
+  const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
+  const out: IntroducedEntry[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const meta = parts[i];
+    if (!meta.startsWith(':')) continue;
+    const colons = meta.match(/^:+/)![0].length;
+    const fields = meta.slice(colons).split(' ');
+    // `colons` parents: modes = parents + 1 (the result last), then as many shas, then status.
+    const modes = fields.slice(0, colons + 1);
+    const shas = fields.slice(colons + 1, colons * 2 + 2);
+    const status = fields[colons * 2 + 2] ?? '';
+    const path = parts[i + 1];
+    i++;
+    if (!path) continue;
+    const mode = modes[modes.length - 1] ?? '000000';
+    out.push({ path, mode, sha: shas[shas.length - 1] ?? '', deleted: mode === '000000' || status.startsWith('D') });
+  }
+  return out;
+}
+
+/** A blob's size in bytes (`cat-file -s`). THROWS. */
+export function blobSize(cwd: string, sha: string): number {
+  const n = parseInt(run(cwd, ['cat-file', '-s', sha]).trim(), 10);
+  if (!Number.isFinite(n)) throw new GitSyncError(`cat-file -s ${sha}: not a number`);
+  return n;
+}
+
+/** The bytes of a blob (`<sha>` or `<rev>:<path>`), or null when absent. */
+export function readBlob(cwd: string, spec: string): Buffer | null {
+  try {
+    return runBuffer(cwd, ['cat-file', 'blob', spec]);
+  } catch {
+    return null;
+  }
+}
+
+export interface LongTreeEntry { path: string; mode: string; type: string; sha: string; size: number }
+
+/** Every entry under `dir/` of `rev`, recursively, with sizes (`ls-tree -r -l`). THROWS. */
+export function treeEntriesLong(cwd: string, rev: string, dir: string): LongTreeEntry[] {
+  const out: LongTreeEntry[] = [];
+  for (const rec of run(cwd, ['ls-tree', '-r', '-l', '-z', '--full-tree', rev, '--', `${dir}/`]).split('\0')) {
+    const m = rec.match(/^(\d{6}) (\w+) ([0-9a-f]+)\s+(-|\d+)\t([\s\S]+)$/);
+    if (m) out.push({ mode: m[1], type: m[2], sha: m[3], size: m[4] === '-' ? 0 : Number(m[4]), path: m[5] });
+  }
+  return out;
+}
+
+/** `git checkout <rev> -- <exact paths>`: index AND work tree back to `rev`. THROWS. */
+export function checkoutExact(cwd: string, rev: string, repoPaths: string[]): void {
+  inChunks(repoPaths, (c) => run(cwd, ['checkout', rev, '--', ...c.map(exactSpec)]));
+}
+
+/** A conflicted path's stages present in the index (1 base, 2 ours, 3 theirs). THROWS. */
+export function unmergedStages(cwd: string, repoPath: string): number[] {
+  return indexEntries(cwd, [exactSpec(repoPath)]).map((e) => e.stage).filter((s) => s > 0);
+}
+
+/** Resolve one conflicted path to one side: `checkout --ours|--theirs` then `add`. THROWS. */
+export function takeSide(cwd: string, repoPath: string, side: 'ours' | 'theirs'): void {
+  run(cwd, ['checkout', `--${side}`, '--', exactSpec(repoPath)]);
+  run(cwd, ['add', '-f', '--', exactSpec(repoPath)]);
+}
+
+/** The sha MERGE_HEAD names, or null when no merge is open (git-dir aware, worktrees included). */
+export function mergeHeadSha(cwd: string): string | null {
+  try {
+    return run(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The index entries under `pathspecs` back to HEAD's (a staged add drops out, a staged change is
+ * undone, a HEAD entry stays): `git reset -q HEAD -- <specs>`; with no HEAD yet, every entry goes.
+ * The work tree is never touched. THROWS when git cannot.
+ */
+export function resetIndexToHead(cwd: string, pathspecs: string[]): void {
+  if (currentSha(cwd)) run(cwd, ['reset', '-q', 'HEAD', '--', ...pathspecs]);
+  else removeFromIndexForce(cwd, pathspecs);
+}
+
+/** `git merge --abort`, its failure reported (never swallowed). THROWS. */
+export function abortMergeStrict(cwd: string): void {
+  run(cwd, ['merge', '--abort']);
 }
 
 /** This repo's configured `user.email` (local, else global), or null. */

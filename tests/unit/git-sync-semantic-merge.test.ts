@@ -29,11 +29,21 @@ import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
  */
 vi.mock('../../src/lib/git-sync/git.js', () => {
   const fixtures = new Map<string, { base: string; ours: string; theirs: string }>();
+  const stages = new Map<string, number[]>();
+  const taken: { path: string; side: string }[] = [];
   return {
     __setFixture: (path: string, v: { base: string; ours: string; theirs: string }) => fixtures.set(path, v),
     __clearFixtures: () => fixtures.clear(),
     readOursTheirsBase: (_cwd: string, path: string) => fixtures.get(path) ?? { base: '', ours: '', theirs: '' },
     addPath: () => {},
+    // app-veri-ortak K5 `app-data` lane: the stages a conflicted app file has, and the side taken.
+    __stages: stages,
+    __taken: taken,
+    unmergedStages: (_cwd: string, path: string) => stages.get(path) ?? [1, 2, 3],
+    takeSide: (_cwd: string, path: string, side: string) => {
+      if (path.includes('broken')) throw new Error('git could not');
+      taken.push({ path, side });
+    },
   };
 });
 
@@ -620,5 +630,31 @@ describe('git-sync/semantic-merge — mergeTaskObjectionsJson (state/.task-objec
     const b = JSON.stringify([rec('obj_1', { applied: { action: 'x', at: '2026-10-23T12:00:00Z' }, note: 'late' })]);
     expect(JSON.parse(mergeTaskObjectionsJson('[]', a, b).merged)[0].note).toBe('late');
     expect(JSON.parse(mergeTaskObjectionsJson('[]', b, a).merged)[0].note).toBe('late');
+  });
+});
+
+describe('git-sync/semantic-merge — the app-data lane (app-veri-ortak K5)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m = gitMock as any;
+  it('app data is never blended and never deferred to the agent: theirs into index and disk; a modify/delete keeps the side not deleted', () => {
+    m.__taken.length = 0;
+    m.__stages.set('_dream_context/apps/rakip/favorites/a.json', [1, 2, 3]);
+    m.__stages.set('_dream_context/apps/rakip/favorites/gone-theirs.json', [1, 2]);
+    m.__stages.set('_dream_context/Apps/rakip/favorites/gone-ours.json', [1, 3]);
+    const r = resolveConflicts('/x', ['_dream_context/apps/rakip/favorites/a.json', '_dream_context/apps/rakip/favorites/gone-theirs.json', '_dream_context/Apps/rakip/favorites/gone-ours.json'], { fullRepo: true, appsPrefix: '_dream_context/apps/' });
+    expect(r.resolved).toHaveLength(3);
+    expect(r.deferredToAgent).toEqual([]);
+    expect(m.__taken).toEqual([
+      { path: '_dream_context/apps/rakip/favorites/a.json', side: 'theirs' },
+      { path: '_dream_context/apps/rakip/favorites/gone-theirs.json', side: 'ours' },
+      { path: '_dream_context/Apps/rakip/favorites/gone-ours.json', side: 'theirs' },
+    ]);
+  });
+
+  it('a side git cannot take is left for the human (class app-data); without appsPrefix the lane is off', () => {
+    const r = resolveConflicts('/x', ['_dream_context/apps/rakip/broken.json'], { fullRepo: true, appsPrefix: '_dream_context/apps/' });
+    expect(r.deferredToHuman).toEqual([{ path: '_dream_context/apps/rakip/broken.json', class: 'app-data' }]);
+    const off = resolveConflicts('/x', ['src/a.ts'], { fullRepo: true });
+    expect(off.deferredToHuman[0].class).toBe('code');
   });
 });
