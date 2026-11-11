@@ -46,6 +46,7 @@ then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## 
 | Back to its own assistant | `dreamcontext apps assign <slug> --own` |
 | Give it a scheduled job | `dreamcontext automations create <slug> --app <app> …` |
 | See which data is shared, local or held | `dreamcontext apps data <slug>` (read only, with a dry run) |
+| See or approve the deletes this app made that wait for the team | `dreamcontext apps data deletes <slug>` (read only); after the owner says yes in chat, `apps data deletes <slug> --approve <N> --confirm` (N = the count the list showed) |
 | Settle a file with two versions | after the owner picks in chat, `dreamcontext apps data resolve <slug> <path> --theirs --confirm` (or `--mine`) |
 | Bring its data back | `dreamcontext apps restore <slug> [--list] [--at <stamp>]` (backend stopped) |
 | Re-add a removed app | `dreamcontext apps new <slug>` (its code and data come back) |

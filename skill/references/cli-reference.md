@@ -301,7 +301,8 @@ dreamcontext apps open|start <slug>                  # open or bring forward (cl
 dreamcontext apps stop <slug>                        # backend down until the owner opens it again
 dreamcontext apps tools [slug] [--json]              # tools of the apps on THIS Mac + the project's not installed here (alias: actions)
 dreamcontext apps do <slug> <tool> [--input '<json>'] [--json] [--confirm]   # reads run; a change needs --confirm after the owner's yes
-#   --json: {ok, app, tool, effect, status, body, bodyFile?, bytes, truncated, ms}; body is null over 16 KB, the whole answer is in bodyFile
+#   --json: {ok, app, appName, tool, toolTitle, effect, status, body, bodyFile?, bytes, truncated, ms}; body is null over 16 KB, the whole answer is in bodyFile.
+#   The JSON sits inside the same nonce fence as the plain answer and a closing "✓ <App> › <Tool>" line follows: parse the part between the fence lines, not stdout whole.
 dreamcontext apps call <slug> <METHOD> <path> [--body '<json>'] [--confirm]
 dreamcontext apps catalog remove <slug>              # owner only: drop an app from the brain's app list
 dreamcontext apps screenshot <slug> [--out <png>]    # open window only, else app_not_open
