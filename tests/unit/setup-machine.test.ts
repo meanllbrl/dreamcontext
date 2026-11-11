@@ -195,6 +195,19 @@ describe('runMachinePhase', () => {
     expect(isFixActive('git-install')).toBe(false);
   });
 
+  it('a Claude account folder that cannot be prepared fails the sign-in step with its reason, not the whole setup', async () => {
+    // Never a fallback to the machine's own account: nothing is spawned for that step.
+    const deps = fakeDeps({
+      reports: [{ ...FRESH, plan: ['claude-signin', 'cli-install'] }],
+      interactiveEnv: () => { throw new Error('This Claude account\'s folder could not be tidied up'); },
+    });
+    const r = await runMachinePhase({ mode: 'interactive' }, deps);
+    expect(deps.interactive).toEqual([]);
+    expect(deps.fixes).toContain('cli-install');
+    expect(deps.lines.some((l) => /could not be tidied up/.test(l))).toBe(true);
+    expect(r).toBeDefined();
+  });
+
   it('a declined fix is not run', async () => {
     const deps = fakeDeps({ reports: [{ ...FRESH, plan: ['cli-install'] }], confirm: async () => false });
     await runMachinePhase({ mode: 'interactive' }, deps);

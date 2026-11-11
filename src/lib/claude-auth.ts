@@ -291,9 +291,10 @@ function runProbe(dir: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
     // The three states are not interchangeable: `CLAUDE_CONFIG_DIR=$HOME` would move the CLI's
     // projects directory to `~/projects`, and leaving an INHERITED value in place would ask
     // this judge about whichever account the parent process happened to be running as.
-    const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawn>;
     try {
+      // Inside the try: preparing a sandbox can refuse, and that is an answer, not a crash.
+      const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
       // A cwd outside every project (never the server's own cwd).
       child = bin
         ? spawn(bin, ['auth', 'status', '--json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env })

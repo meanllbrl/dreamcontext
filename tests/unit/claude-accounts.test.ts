@@ -6,7 +6,7 @@
  * follow a symlink out of the sandbox into the real `~/.claude/projects`.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -173,6 +173,16 @@ describe('accountEnvFor — account #0 CLEARS the variable, it does not merely s
     expect(accountEnvFor(sandboxDirFor('b', HOME), HOME)).toEqual({
       CLAUDE_CONFIG_DIR: sandboxDirFor('b', HOME),
     });
+  });
+
+  it('lays the sandbox\'s shared links BEFORE handing the env out, so no spawn can run in a bare sandbox', () => {
+    // 2026-11-11: a `claude` run with a sandbox env before the links existed made a REAL
+    // `projects/` and `plugins/` there, and the account locked. The env itself now prepares it.
+    const dir = sandboxDirFor('fresh', HOME);
+    rmSync(dir, { recursive: true, force: true });
+    accountEnvFor(dir, HOME);
+    expect(lstatSync(join(dir, 'projects')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(dir, 'plugins')).isSymbolicLink()).toBe(true);
   });
 });
 

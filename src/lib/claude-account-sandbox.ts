@@ -4,15 +4,18 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { assertConfinedConfigDir, isRealHomeConfigDir } from './claude-accounts.js';
 
@@ -168,6 +171,134 @@ function inspectShared(linkPath: string, target: string): SharedState {
   return existsSync(pointsAt) ? 'correct' : 'dangling';
 }
 
+/** `base`, or `base.1`, `base.2`, … — the first name nothing sits at yet. */
+function freePath(base: string): string {
+  if (!lexists(base)) return base;
+  for (let n = 1; ; n++) {
+    const candidate = `${base}.${n}`;
+    if (!lexists(candidate)) return candidate;
+  }
+}
+
+function lexists(p: string): boolean {
+  try { lstatSync(p); return true; } catch { return false; }
+}
+
+/** Park `src` under the dated backup folder at `rel`, never over anything already there. */
+function park(src: string, backupRoot: string, rel: string): void {
+  const dest = freePath(join(backupRoot, rel));
+  mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
+  renameSync(src, dest);
+}
+
+/**
+ * Move everything in the real directory `src` into `dst` WITHOUT overwriting anything.
+ * Never follows a symlink on either side (`lstat` only): a link found in the sandbox is parked
+ * as the link itself, and a link found in the real store is treated as a clash, so nothing is
+ * ever written through one. A same-name clash keeps both: the real one stays, the sandbox one
+ * is parked in the backup. A path that vanished meanwhile (a second spawn healing the same
+ * sandbox) is skipped.
+ */
+function mergeInto(src: string, dst: string, backupRoot: string, rel: string): void {
+  for (const name of readdirSync(src)) {
+    const from = join(src, name);
+    const to = join(dst, name);
+    const relName = join(rel, name);
+    let fromStat: ReturnType<typeof lstatSync>;
+    try { fromStat = lstatSync(from); } catch { continue; }
+    let toStat: ReturnType<typeof lstatSync> | null = null;
+    try { toStat = lstatSync(to); } catch { /* free: move it straight in */ }
+
+    if (fromStat.isSymbolicLink()) { park(from, backupRoot, relName); continue; }
+    if (toStat === null) { renameSync(from, to); continue; }
+    if (fromStat.isDirectory() && toStat.isDirectory()) {
+      mergeInto(from, to, backupRoot, relName);
+      try { rmdirSync(from); } catch { /* not empty: whatever is left stays where it was */ }
+      continue;
+    }
+    park(from, backupRoot, relName);
+  }
+}
+
+/**
+ * Where a heal keeps what it could not merge: OUTSIDE the sandbox, because removing an account
+ * deletes its sandbox whole (`removeClaudeAccount`), and a backup must outlive that.
+ * `~/.dreamcontext/claude-account-backups/<id>/backup-<date>/`.
+ */
+export function sandboxBackupDir(sandboxDir: string, home: string = homedir(), now: Date = new Date()): string {
+  return join(home, '.dreamcontext', 'claude-account-backups', basename(sandboxDir), `backup-${now.toISOString().slice(0, 10)}`);
+}
+
+/**
+ * A real file or directory sits where a shared link belongs. It got there because a `claude`
+ * ran with this `CLAUDE_CONFIG_DIR` before the links existed (the CLI creates `projects/`
+ * and `plugins/` itself). Heal it instead of locking the account out:
+ *   • a directory is MERGED into the real `~/.claude/<entry>` (nothing overwritten; a clash
+ *     keeps both, the sandbox copy in {@link sandboxBackupDir}), then removed;
+ *   • a file: the real one wins, the sandbox one is backed up (or moved in, when the real one
+ *     does not exist yet).
+ *
+ * The stray entry is first RENAMED to a private staging name and merged only from there. Two
+ * processes healing the same sandbox at once (the app server and an automation) would
+ * otherwise race: once one lays the link, the other's paths would run THROUGH it and move the
+ * real store's own files into the backup. Only the process that wins the rename merges; the
+ * loser re-inspects. The real store must resolve to `~/.claude/<entry>` (realpath containment),
+ * so a planted link can never redirect where the files go.
+ */
+function healRealEntry(linkPath: string, target: string, realClaudeDir: string, entry: string, home: string): void {
+  const sandboxDir = dirname(linkPath);
+  const backupRoot = sandboxBackupDir(sandboxDir, home);
+  const staging = join(sandboxDir, `.healing-${entry}-${process.pid}-${randomBytes(4).toString('hex')}`);
+  try {
+    renameSync(linkPath, staging);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return; // another process took it
+    throw err;
+  }
+  const staged = lstatSync(staging);
+  if (staged.isSymbolicLink()) {
+    // Lost a race to a process that had just laid the link: put it back, or drop our copy.
+    try { renameSync(staging, linkPath); } catch { rmSync(staging, { force: true }); }
+    return;
+  }
+  try {
+    mergeStaged(staging, staged.isDirectory(), target, realClaudeDir, entry, backupRoot);
+  } catch (err) {
+    // Whatever was not moved yet goes back where the user would look for it, or, when a racing
+    // heal already relaid the link there, to the backup (never left inside the sandbox, which
+    // removing the account deletes).
+    if (lexists(staging)) {
+      try {
+        if (!lexists(linkPath)) renameSync(staging, linkPath);
+        else park(staging, backupRoot, entry);
+      } catch { /* left at its staging name; nothing deleted */ }
+    }
+    throw err;
+  }
+}
+
+function mergeStaged(staging: string, isDir: boolean, target: string, realClaudeDir: string, entry: string, backupRoot: string): void {
+  if (!lexists(target) && isDir) mkdirSync(target, { recursive: true });
+  if (lexists(target) && realpathSync(target) !== join(realpathSync(realClaudeDir), entry)) {
+    throw new Error(`${target} does not resolve inside ${realClaudeDir}`);
+  }
+
+  if (isDir) {
+    if (!lstatSync(target).isDirectory()) { park(staging, backupRoot, entry); return; }
+    mergeInto(staging, target, backupRoot, entry);
+    // Anything still here could not be merged by name; it is kept, never deleted.
+    if (readdirSync(staging).length === 0) rmdirSync(staging);
+    else park(staging, backupRoot, entry);
+    return;
+  }
+  if (!lexists(target)) {
+    mkdirSync(dirname(target), { recursive: true });
+    renameSync(staging, target);
+    return;
+  }
+  park(staging, backupRoot, entry);
+}
+
 /**
  * Lay one shared symlink, reconciling whatever is there now.
  *
@@ -175,22 +306,26 @@ function inspectShared(linkPath: string, target: string): SharedState {
  *   • `missing` /
  *     `wrong-target` → (re)laid.
  *   • `dangling`     → the TARGET is recreated (e.g. `~/.claude` was wiped), then relaid.
- *   • `real-file`    → **LOUD FAILURE**. Neither skipped silently (that account would sit in
- *                      an isolated transcript store forever, which is the exact bug sharing
- *                      exists to prevent) nor silently overwritten (that would destroy
- *                      whatever accumulated there while the link was broken). The spawn is
- *                      refused for a NAMED reason and the path is reported to the user.
+ *   • `real-file`    → HEALED ({@link healRealEntry}): its contents join the real store,
+ *                      nothing is overwritten, clashes are kept in a dated backup outside the
+ *                      sandbox, then the link is laid. Refused only when that move itself
+ *                      fails, with what to do, the stray entry back where it was.
  */
-function reconcileShared(linkPath: string, target: string, isDir: boolean): void {
-  const state = inspectShared(linkPath, target);
+function reconcileShared(linkPath: string, target: string, isDir: boolean, realClaudeDir: string, entry: string, home: string, attempt = 0): void {
+  let state = inspectShared(linkPath, target);
   if (state === 'correct') return;
   if (state === 'real-file') {
-    throw new SandboxError(
-      `A real file or directory is sitting where a shared Claude path must be a symlink: ${linkPath}\n` +
-      `Nothing was changed. Move or delete it (its contents are yours), then try again — ` +
-      `overwriting it silently could destroy work, and skipping it would strand this account ` +
-      `in a separate transcript store.`,
-    );
+    try {
+      healRealEntry(linkPath, target, realClaudeDir, entry, home);
+    } catch (err) {
+      throw new SandboxError(
+        `This Claude account's folder could not be tidied up: ${linkPath}\n` +
+        `Its files were not deleted (${(err as Error).message}). Quit dreamcontext, move that ` +
+        `folder to your Desktop, then open dreamcontext again; it rebuilds the folder by itself.`,
+      );
+    }
+    state = inspectShared(linkPath, target);
+    if (state === 'correct') return;
   }
   if (state === 'dangling' || !existsSync(target)) {
     // The shared target itself is gone. Recreate it so the link is not born broken.
@@ -204,7 +339,17 @@ function reconcileShared(linkPath: string, target: string, isDir: boolean): void
     rmSync(linkPath, { force: true });
   }
   mkdirSync(dirname(linkPath), { recursive: true });
-  symlinkSync(target, linkPath, isDir ? 'dir' : 'file');
+  try {
+    symlinkSync(target, linkPath, isDir ? 'dir' : 'file');
+  } catch (err) {
+    // Another spawn healing the same sandbox got there first: look again (a few times, as a
+    // racing heal can hold the path at its staging name for a moment).
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      if (inspectShared(linkPath, target) === 'correct') return;
+      if (attempt < 5) return reconcileShared(linkPath, target, isDir, realClaudeDir, entry, home, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 // ─── The entry point ──────────────────────────────────────────────────────────
@@ -260,7 +405,7 @@ export function ensureSandbox(configDir: string, home: string = homedir()): Ensu
   for (const entry of SHARED_SANDBOX_ENTRIES) {
     const target = join(realClaudeDir, entry);
     const isDir = entry.indexOf('.') === -1;
-    reconcileShared(join(dir, entry), target, isDir);
+    reconcileShared(join(dir, entry), target, isDir, realClaudeDir, entry, home);
   }
 
   return { configDir: dir, created: isNew };

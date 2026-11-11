@@ -58,6 +58,9 @@ vi.mock('../../src/lib/claude-accounts.js', async (importOriginal) => {
   return {
     ...real,
     listClaudeAccounts: vi.fn(() => state.accounts),
+    // The fixture's sandbox dirs are made-up paths: the env is the pure mapping here, without
+    // preparing a sandbox on disk (that is `claude-account-sandbox.test.ts`'s job).
+    accountEnvFor: vi.fn((dir: string) => (dir === homedir() ? { CLAUDE_CONFIG_DIR: undefined } : { CLAUDE_CONFIG_DIR: dir })),
     // The register lives in `state`, so ids resolve there; account #0 is the real HOME.
     resolveConfigDir: vi.fn((id: string | null) => {
       const acc = state.accounts.find((a) => a.id === id);
