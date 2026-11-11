@@ -205,6 +205,12 @@ function isInside(parent: string, child: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+/** An element a file the `draw` skill built carries: a string id and an Excalidraw type. A kit spec's blocks carry neither. */
+function isExcalidrawElement(e: unknown): boolean {
+  const o = e as { id?: unknown; type?: unknown } | null;
+  return !!o && typeof o.id === 'string' && o.id.length > 0 && typeof o.type === 'string';
+}
+
 /**
  * While a board agent runs, `--file` may come ONLY from its two writable folders: its scratch
  * folder (`$DREAMCONTEXT_AGENT_SCRATCH`) and `<brain>/automations/output/<self>/`. The content
@@ -1120,6 +1126,10 @@ export function registerWhiteboardCommand(program: Command): void {
         : null;
       const name = basename((opts.spec ?? opts.file) as string);
       const source = fromSpec ? fromSpec.elements : readImportSource(readFileSync(assertFileInScope(opts.file as string), 'utf-8'), name);
+      // A kit spec passed to --file used to import nothing and say "✓ Imported 0 elements".
+      if (!fromSpec && source.length > 0 && !source.some(isExcalidrawElement)) {
+        throw new WhiteboardValidationError(`${name} holds no Excalidraw elements: this looks like a spec, use --spec ${opts.file as string}`);
+      }
       const at = parseAt(opts.at);
       const anchor = parseAnchor(opts);
       const size = sourceBBox(source);

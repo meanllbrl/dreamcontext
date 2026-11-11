@@ -228,6 +228,28 @@ describe('a whiteboard selection on the page block (board writing field, 2026-11
     expect(read('dashboard/src/components/sleepy/chat/TranscriptItem.tsx')).toContain("(n) => t('whiteboard.field.selCount').replace('{n}', String(n))");
   });
 
+  it('an empty region rides after the selection tail, with or without sel=, and round-trips on both sides', () => {
+    const cases: server.PageContextRef[] = [
+      { page: 'whiteboards', board: 'launch-plan', area: [40, -80, 320, 240] },
+      { page: 'whiteboards', board: 'launch-plan', sel, area: [40, -80, 320, 240] },
+    ];
+    expect(server.pageContextBlock(cases[0])).toBe('[On page whiteboards board=launch-plan area=40,-80,320,240]');
+    expect(server.pageContextBlock(cases[1])).toBe('[On page whiteboards board=launch-plan sel=9 box=120,-40,860,410 ids=rect-a,txt_b,Card-3 area=40,-80,320,240]');
+    for (const ref of cases) {
+      expect(client.pageContextBlock(ref)).toBe(server.pageContextBlock(ref));
+      for (const side of [server, client]) expect(side.splitPageContext(`buraya elma\n\n${side.pageContextBlock(ref)}`)).toEqual({ text: 'buraya elma', page: ref });
+    }
+    // Rounded and clamped like box; a region without a size or with a non-number is left out.
+    expect(server.pageAreaTail([1.6, -2.4, 300.5, 99_999_999])).toBe(' area=2,-2,301,9999999');
+    expect(client.pageAreaTail([1.6, -2.4, 300.5, 99_999_999])).toBe(' area=2,-2,301,9999999');
+    for (const bad of [[0, 0, 0, 10], [0, 0, 10, -4], [0, 0, NaN, 10], [0, 0, 10], null]) expect(server.pageAreaTail(bad as never)).toBe('');
+    expect(server.splitPageContext('x\n\n[On page whiteboards board=q3 area=0,0,-1,1]').page).toBeNull();
+  });
+
+  it('the Super is told what area= means', () => {
+    expect(read('src/server/chat-modes.ts')).toMatch(/\\`area=<x>,<y>,<w>,<h>\\` is an empty region the owner chose: place the new drawing inside it/);
+  });
+
   it('the Super is told what sel/box/ids mean and to delegate with them verbatim', () => {
     const prompt = read('src/server/chat-modes.ts');
     expect(prompt).toMatch(/sel=<n> box=<x>,<y>,<w>,<h> ids=<id>/);

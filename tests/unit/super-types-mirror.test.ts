@@ -78,7 +78,7 @@ describe('super types — server record <-> window mirror', () => {
     }
     expect(String(client.PAGE_CONTEXT_RE)).toBe(String(server.PAGE_CONTEXT_RE));
     expect(client.MAX_PAGE_VIEW).toBe(server.MAX_PAGE_VIEW);
-    for (const r of [{ page: 'tasks', view: 'Sprint "2"', filters: 2 }, { page: 'whiteboards', board: 'q3-plan' }, { page: 'lab', insight: 'mrr' }]) {
+    for (const r of [{ page: 'tasks', view: 'Sprint "2"', filters: 2 }, { page: 'whiteboards', board: 'q3-plan' }, { page: 'lab', insight: 'mrr' }, { page: 'whiteboards', board: 'q3-plan', area: [10, 20, 300, 200] as [number, number, number, number] }, { page: 'whiteboards', board: 'q3-plan', sel: { n: 2, box: [0, 0, 5, 5] as [number, number, number, number], ids: ['a', 'b'] }, area: [-10, 20, 300, 200] as [number, number, number, number] }]) {
       expect(client.pageContextBlock(r)).toBe(server.pageContextBlock(r));
       expect(client.splitPageContext(`hi\n\n${client.pageContextBlock(r)}`)).toEqual(server.splitPageContext(`hi\n\n${server.pageContextBlock(r)}`));
     }
