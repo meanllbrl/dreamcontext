@@ -5,7 +5,7 @@
  *   dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/app-data-notice.mjs
  *
  * A scratch vault in full-repo mode with cloud sync on (a local bare remote) holds three apps:
- *   - "Rival Watch" (`rakip`): declares `notes/` shared + `visits.json` local (the template), so the
+ *   - "Rival Watch" (`rakip`): declares `notes/` shared + `visits.json` local (it writes its own `data` block), so the
  *     first-share notice shows its paths with a tick each, Share and Keep local;
  *   - "Old Tool" (`eski`): no `data` field, so its own tile says the shared data is not decided yet
  *     (and nothing about it is stacked above the shelves);
@@ -59,6 +59,14 @@ try {
   put(join(dc, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], setupVersion: '1', brainRepo: { mode: 'full-repo', enabled: true, autoSync: false } }));
 
   cli('apps', 'new', 'rakip', '--name', 'Rival Watch');
+  // The template shares nothing (the agent decides per app): this fixture decides for itself.
+  const rakipManifest = join(`${app.proj}-apps`, 'rakip', 'dreamcontext-app.json');
+  const rm = JSON.parse(readFileSync(rakipManifest, 'utf-8'));
+  rm.data = {
+    shared: [{ path: 'notes/', why: 'The team\'s hand-made data: notes people write in the app, one file per note' }],
+    local: [{ path: 'visits.json', why: 'A visit counter this Mac produces again on its own' }],
+  };
+  writeFileSync(rakipManifest, `${JSON.stringify(rm, null, 2)}\n`);
   put(join(dc, 'apps', 'rakip', 'notes', 'fb-001.json'), JSON.stringify({ id: 'fb-001', note: 'try this hook' }));
   put(join(dc, 'apps', 'rakip', 'notes', 'tt-002.json'), JSON.stringify({ id: 'tt-002', note: 'strong paywall' }));
   put(join(dc, 'apps', 'rakip', 'visits.json'), '{"visits":12}');

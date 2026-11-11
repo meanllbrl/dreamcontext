@@ -9,7 +9,7 @@
       "does": "Answers a greeting and how many times the app was visited.", "output": "{hello, visits}", "topics": ["hello", "visits"] }
   ],
   "data": {
-    "shared": [ { "path": "notes/", "why": "The team's hand-made data: notes people write in the app, one file per note" } ],
+    "shared": [],
     "local": [ { "path": "visits.json", "why": "A visit counter this Mac produces again on its own" } ]
   }
 }
