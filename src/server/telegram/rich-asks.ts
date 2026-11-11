@@ -6,9 +6,10 @@
  *    (the record is re-issued per tap, same binding); a single-select marks its pick the same way;
  *  - **Not ekle** under each question: the owner's next text is that question's note;
  *  - under the last question **Gönder** (single use) and **Belirsiz, tekrar sor**;
- *  - option previews (markup) as ONE album of pictures built by the server just before the
- *    buttons, and the `--show` / plan-approval cards with the question, when pictures are allowed
- *    (a live Telegram turn or streaming, no secret pending; N3); otherwise nothing extra.
+ *  - the `--show` / plan-approval cards first, as their own group, when pictures are allowed
+ *    (a live Telegram turn or streaming, no secret pending; N3); then each question's option
+ *    previews (markup), drawn by the server, each its OWN message right above its question,
+ *    captioned "A · label" as the question's line names it (never in an album with anything).
  * The answer goes the way each kind already goes: the Super's own ask → `superAnswerText` (or
  * `superUnclearText`) as an owner turn under a fresh Telegram ref; a child's escalated question
  * → `answerChildQuestion` (`cleanPhoneAnswer` inside); the Super chat's own AskUserQuestion →
@@ -21,16 +22,16 @@ import { answerChildQuestion, superAnswerText, superUnclearText, unclearMessage 
 import { readSuperState } from '../../lib/super/store.js';
 import type { SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type AnswerPending } from '../../lib/telegram/contract.js';
-import { formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
+import { drawingCaption, drawingKey, drawingTag, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
-import { dreamHtmlPage } from '../../lib/telegram/render.js';
+import { dreamHtmlPage, fitDrawing } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import { NOT_SENT, cardOut, notSentLine } from './cards.js';
 import { answerMemberPick } from './member-picks.js';
 import type { PreviewShooter } from './page-shot.js';
-import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictures, sendWhole, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
@@ -105,64 +106,74 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     a.messages[qi] = { messageId: hub.buttonMessageId(rec) ?? 0, html };
   }
 
-  /** One option's drawing as PNG: the Mac window's sealed renderer when it is open, else
-   *  headless Chromium (owner 2026-11-09: "çizim gözükmüyor"). Null = it could not be drawn. */
-  async function drawPreview(sessionId: string, preview: string): Promise<Buffer | null> {
-    const plan = dreamHtmlPage(preview);
+  /** One option's drawing as PNG (owner 2026-11-09: "çizim gözükmüyor"), fitted so nothing is
+   *  lost off its right edge (render.ts fitDrawing). Headless Chromium first: it draws at a
+   *  phone's width and widens when that would shrink content (page-shot.ts); once it gives
+   *  nothing in an ask (`tries.headless`), the ask's other drawings skip it (no 40 s wait each).
+   *  Else the Mac window's sealed renderer, at the chat's width. Null = it could not be drawn. */
+  async function drawPreview(sessionId: string, preview: string, tries: { headless: boolean }): Promise<Buffer | null> {
+    const fitted = fitDrawing(preview);
+    const plan = dreamHtmlPage(fitted);
     if (!plan.ok) return null;
+    if (deps.shoot && tries.headless) {
+      const shot = await deps.shoot(fitted).catch(() => null);
+      if (shot) return shot;
+      tries.headless = false;
+    }
     const pngs = await deps.snapshot(sessionId, plan.page, plan.width).catch(() => null);
-    if (pngs?.[0]) return pngs[0];
-    return deps.shoot ? deps.shoot(preview).catch(() => null) : null;
+    return pngs?.[0] ?? null;
   }
 
-  /** Option previews (always, as pictures) and, when pictures are allowed, the ask's `--show`
-   *  cards, before the buttons. Returns the `qi:label` keys whose drawing reached Telegram. */
-  async function sendAskPictures(ab: ActiveBinding, sessionId: string, questions: readonly RichQuestion[], itemId: string | null, showCards: boolean, misses: string[]): Promise<Set<string>> {
+  /** The ask's `--show` cards (when pictures are allowed), BEFORE its drawings and never in one
+   *  album with them: their own group, each picture with its own "N · name" caption and a
+   *  numbered list (pictures.ts sendPictures). */
+  async function sendShowCards(ab: ActiveBinding, sessionId: string, itemId: string): Promise<void> {
+    if (!ab.contextRoot) return;
+    const s = await readSuperState(ab.contextRoot).catch(() => null);
+    const show = s?.askShows?.find((x) => x.item === itemId);
     const items: MediaItem[] = [];
-    const keyOf = new Map<MediaItem, string>();
-    for (const [qi, q] of questions.entries()) {
-      for (const o of q.options) {
-        if (!o.preview?.trim()) continue;
-        if (items.length >= 10) { misses.push(`${o.label}: over 10 pictures`); continue; }
-        const png = await drawPreview(sessionId, o.preview);
-        if (!png) { misses.push(`${o.label}: not drawn`); continue; }
-        const it: MediaItem = { kind: 'photo', file: pngFile(o.label, png), title: o.label };
-        items.push(it);
-        keyOf.set(it, `${qi}:${o.label}`);
-      }
+    for (const id of show?.cards ?? []) {
+      const c = s!.containers.find((k) => k.id === id);
+      if (!c || items.length >= 10) continue;
+      const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot }, c);
+      if (out.kind === 'media') {
+        items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
+        // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
+        for (const d of out.items.filter((m) => m.kind === 'document')) {
+          if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
+        }
+      } else await hub.reply(ab, out.line);
     }
-    if (showCards && itemId && ab.contextRoot) {
-      const s = await readSuperState(ab.contextRoot).catch(() => null);
-      const show = s?.askShows?.find((x) => x.item === itemId);
-      for (const id of show?.cards ?? []) {
-        const c = s!.containers.find((k) => k.id === id);
-        if (!c || items.length >= 10) continue;
-        const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot }, c);
-        if (out.kind === 'media') {
-          items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
-          // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
-          for (const d of out.items.filter((m) => m.kind === 'document')) {
-            if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
-          }
-        } else await hub.reply(ab, out.line);
-      }
+    if (!items.length) return;
+    const { unsent } = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Soruyla ilgili resim:' : `Soruyla ilgili ${n} resim:`) });
+    if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
+  }
+
+  /** One question's option drawings, right above its message, in option order: each its own
+   *  message, seen whole (pictures.ts sendWhole), captioned "A · label" as the question's line
+   *  names it (owner 2026-11-11: two drawings in one album with stage pictures, no way to tell
+   *  which option is which). Adds the `qi:oi` keys (ask-format.ts drawingKey) that reached
+   *  Telegram to `drawn`; `budget` caps the drawings of the whole ask (10, as one album held). */
+  async function sendDrawings(ab: ActiveBinding, sessionId: string, q: RichQuestion, qi: number, drawn: Set<string>, budget: { left: number }, misses: string[], tries: { headless: boolean }): Promise<void> {
+    for (const [oi, o] of q.options.entries()) {
+      if (!o.preview?.trim()) continue;
+      const key = drawingKey(qi, oi);
+      if (budget.left <= 0) { misses.push(`${o.label}: over 10 pictures`); continue; }
+      const png = await drawPreview(sessionId, o.preview, tries);
+      if (!png) { misses.push(`${o.label}: not drawn`); continue; }
+      budget.left--;
+      const it: MediaItem = { kind: 'photo', file: pngFile(`${drawingTag(oi)}-${o.label}`, png), title: o.label };
+      if (!fitsTelegram(it)) { misses.push(`${o.label}: too large for Telegram, not sent`); continue; }
+      if (await sendWhole(ab, it, pictureCaption(drawingCaption(oi, o.label)))) drawn.add(key);
+      else misses.push(`${o.label}: Telegram refused the picture`);
     }
-    const drawn = new Set<string>();
-    if (!items.length) return drawn;
-    const { sent, unsent } = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Çizim:' : `${n} çizim:`) });
-    for (const m of sent) { const k = keyOf.get(m); if (k) drawn.add(k); }
-    for (const m of unsent) if (keyOf.has(m)) misses.push(`${m.title}: ${fitsTelegram(m) ? 'Telegram refused the picture' : "too large for Telegram, not sent"}`);
-    // A drawing that did not go is said on its own option's line ("çizim Mac'te"); a --show card here.
-    const cards = unsent.filter((m) => !keyOf.has(m));
-    if (cards.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${cards.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
-    return drawn;
   }
 
   /** A question with drawings: one log line saying how many went and why the others did not
    *  (the message itself already says "Çizimi Mac'te" on each option that did not go). Counted
-   *  by `qi:label`, the key the notes use, so two options with one label count once. */
+   *  by `qi:oi`, the key the notes use. */
   function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[]): void {
-    const wanted = new Set(questions.flatMap((q, qi) => q.options.filter((o) => o.preview?.trim()).map((o) => `${qi}:${o.label}`))).size;
+    const wanted = questions.reduce((n, q) => n + q.options.filter((o) => o.preview?.trim()).length, 0);
     if (!wanted) return;
     const why = drawn.size < wanted && misses.length ? ` (${misses.join('; ')})` : '';
     appendAskLog(hub.home, `${id} pictures ${drawn.size}/${wanted}${drawn.size < wanted ? ' NOT ALL SENT' : ''}${why}`);
@@ -182,10 +193,11 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const secret = secretPending(opts.sessionId);
     const cards = !!(hub.telegramTurnOf(opts.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secret;
     const misses: string[] = [];
-    const drawn = secret ? new Set<string>() : await sendAskPictures(ab, opts.sessionId, questions, opts.itemId ?? null, cards, misses)
-      .catch((err) => { misses.push(`pictures failed: ${redactSecrets(String((err as Error)?.message ?? err)).slice(0, 120)}`); return new Set<string>(); });
+    const fail = (err: unknown) => { misses.push(`pictures failed: ${redactSecrets(String((err as Error)?.message ?? err)).slice(0, 120)}`); };
+    if (cards && opts.itemId) await sendShowCards(ab, opts.sessionId, opts.itemId).catch(fail);
     const logId = opts.itemId ?? (target.kind === 'super-ask' ? target.item.id : target.kind === 'member' ? target.mirror : target.requestId);
-    logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+    // Kept live: a text fallback after a question that did not go names what already went.
+    const drawn = new Set<string>();
     drawnById.delete(logId);
     drawnById.set(logId, drawn);
     if (drawnById.size > 200) drawnById.delete(drawnById.keys().next().value as string);
@@ -196,7 +208,17 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     asks.set(a.id, a);
     if (asks.size > 200) asks.delete(asks.keys().next().value as string);
     const head = { title: opts.title ? cleanTitle(opts.title, 120) : undefined, lead: opts.lead };
-    for (let i = 0; i < questions.length; i++) await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
+    const budget = { left: 10 };
+    const tries = { headless: true };
+    try {
+      for (let i = 0; i < questions.length; i++) {
+        // Its drawings always (they are part of the question), never while a secret is pending.
+        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries).catch(fail);
+        await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
+      }
+    } finally {
+      logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+    }
     return { askId: a.id, messages: a.messages.slice() };
   }
 

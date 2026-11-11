@@ -185,7 +185,8 @@ describe('a child\'s two-question card, one clean message per question', () => {
     expect(msgs[0]).toContain('Onay kartı bu çizimdeki gibi olsun mu? (1/2)');
     expect(msgs[0]).not.toContain('options:');
     expect(msgs[0]).not.toContain("ne zaman gitsin");
-    expect(msgs[0]).toContain('• <b>Bu taslak olur</b>: Çizimi yukarıda.');
+    expect(msgs[0]).toContain('• <b>A · Bu taslak olur</b> (çizim A)');
+    expect(tg.calls.find((c) => c.method === 'sendPhoto')!.params.caption).toBe('A · Bu taslak olur');
     expect(msgs[1]).not.toContain('App onay kartı');
     expect(msgs[1]).toContain("ne zaman gitsin? (2/2)");
     const photoAt = tg.calls.findIndex((c) => c.method === 'sendPhoto');
@@ -240,7 +241,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• <b>Bu taslak olur</b>: Çizimi yukarıda. Çubukta');
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• <b>A · Bu taslak olur</b> (çizim A): Çubukta');
     await vi.waitFor(() => expect(askLog()).toMatch(/q-child pictures 1\/1(?! NOT)/));
   });
 

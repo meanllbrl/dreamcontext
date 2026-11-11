@@ -18,11 +18,13 @@ import { randomBytes } from 'node:crypto';
 import { SANDBOX_CSP, buildChatSrcdocServer } from '../../lib/telegram/chat-kit.js';
 import { chatHtmlTokens } from '../../lib/telegram/kit-tokens.js';
 import { authoredSecretHit } from '../../lib/telegram/render.js';
-import { SERVER_RENDER_WIDTH_PX } from '../../lib/telegram/contract.js';
+import { DRAWING_RENDER_WIDTH_PX, SERVER_RENDER_WIDTH_PX } from '../../lib/telegram/contract.js';
 import { findChromium, runChromium } from './page-pdf.js';
 
 export const SHOT_TIMEOUT_MS = 20_000;
-export const SHOT_MAX_HEIGHT_PX = 2400;
+/** A drawing taller than this is cut at the bottom; this tall it already goes as a document
+ *  (pictures.ts sendWhole), so the cap is only a fence against a runaway page. */
+export const SHOT_MAX_HEIGHT_PX = 6000;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export type PreviewShooter = (html: string) => Promise<Buffer | null>;
@@ -34,17 +36,25 @@ export function previewPage(html: string, measure: boolean): string | null {
   if (!measure) return doc;
   const i = doc.lastIndexOf('</body>');
   // After the kit's layout timers: report the laid-out height by a same-origin navigation.
-  const script = '<script>window.addEventListener("load",function(){setTimeout(function(){'
-    + 'var h=Math.ceil(Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0));'
-    + 'location.replace(location.pathname+"?h="+h);},600);});</script>';
+  const script = '<script>window.__dcNoFit=1;window.addEventListener("load",function(){setTimeout(function(){'
+    // Content wider than its box anywhere (a long <pre> line, a no-wrap row, a wide table): the
+    // page is too narrow for it (the caller may draw it wider).
+    + 'var o=document.documentElement.scrollWidth>window.innerWidth+1?1:0;'
+    + 'if(!o){var a=document.querySelectorAll("*");for(var i=0;i<a.length;i++){var e=a[i];if(e.clientWidth&&e.scrollWidth>e.clientWidth+1){o=1;break;}}}'
+    // Then fitted as the shot will be (render.ts fitDrawing), so the height is the fitted one.
+    + 'if(window.__dcFit)window.__dcFit();'
+    + 'var h=Math.ceil(Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0)*(parseFloat(document.documentElement.style.zoom)||1));'
+    + 'location.replace(location.pathname+"?h="+h+"&o="+o);},600);});</script>';
   return i < 0 ? `${doc}${script}` : `${doc.slice(0, i)}${script}${doc.slice(i)}`;
 }
 
-/** Serves `page` at one unguessable path; `?h=<n>` on it records the height and serves a blank page. */
-function serve(page: string): Promise<{ url: string; height: () => number | null; close: () => void }> {
+/** Serves `page` at one unguessable path; `?h=<n>&o=<0|1>` on it records the height and whether
+ *  content overflowed, and serves a blank page. */
+function serve(page: string): Promise<{ url: string; height: () => number | null; overflow: () => boolean; close: () => void }> {
   const path = `/${randomBytes(16).toString('hex')}.html`;
   const body = Buffer.from(page, 'utf8');
   let height: number | null = null;
+  let overflow = false;
   const server = createServer((req, res) => {
     const u = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (req.method !== 'GET' || u.pathname !== path) { res.writeHead(404).end(); return; }
@@ -52,6 +62,7 @@ function serve(page: string): Promise<{ url: string; height: () => number | null
     if (h !== null) {
       const n = Number(h);
       if (Number.isFinite(n) && n > 0) height = Math.ceil(n);
+      overflow = u.searchParams.get('o') === '1';
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': SANDBOX_CSP }).end('<!doctype html><title>.</title>');
       return;
     }
@@ -63,7 +74,7 @@ function serve(page: string): Promise<{ url: string; height: () => number | null
     server.listen(0, '127.0.0.1', () => {
       const a = server.address();
       if (!a || typeof a === 'string') { server.close(); fail(new Error('no port')); return; }
-      done({ url: `http://127.0.0.1:${a.port}${path}`, height: () => height, close: () => { server.closeAllConnections?.(); server.close(); } });
+      done({ url: `http://127.0.0.1:${a.port}${path}`, height: () => height, overflow: () => overflow, close: () => { server.closeAllConnections?.(); server.close(); } });
     });
   });
 }
@@ -83,16 +94,27 @@ export function shotArgs(dir: string, pageUrl: string, width: number, height: nu
   ];
 }
 
-export async function shootPreview(bin: string, html: string, timeoutMs = SHOT_TIMEOUT_MS, width = SERVER_RENDER_WIDTH_PX): Promise<Buffer | null> {
+/**
+ * One preview → PNG. With `wide` (wider than `width`): the page is measured at `width` first, and
+ * when any of its content overflows there (it would be cut off) it is drawn at `wide` instead, so
+ * a drawing is narrow (its text big on a phone) only when nothing of it is lost.
+ */
+export async function shootPreview(bin: string, html: string, timeoutMs = SHOT_TIMEOUT_MS, width = SERVER_RENDER_WIDTH_PX, wide?: number): Promise<Buffer | null> {
   const measurePage = previewPage(html, true);
   const page = previewPage(html, false);
   if (!measurePage || !page) return null;
   const dir = mkdtempSync(join(tmpdir(), 'dc-preview-shot-'));
   const opened: { close: () => void }[] = [];
   try {
-    const m = await serve(measurePage);
+    let m = await serve(measurePage);
     opened.push(m);
     await runChromium(bin, shotArgs(dir, m.url, width, 100, null), timeoutMs);
+    if (wide && wide > width && m.overflow()) {
+      width = wide;
+      m = await serve(measurePage);
+      opened.push(m);
+      await runChromium(bin, shotArgs(dir, m.url, width, 100, null), timeoutMs);
+    }
     // A short window: scrollHeight is never below the viewport, so the page reports its own height.
     const height = Math.min(Math.max(m.height() ?? 800, 120), SHOT_MAX_HEIGHT_PX);
     const s = await serve(page);
@@ -113,7 +135,9 @@ let queue: Promise<unknown> = Promise.resolve();
 
 /** One preview → PNG bytes, or null. Serialised with itself: one Chromium at a time. */
 export function makePreviewShooter(opts: { chromium?: () => string | null; shoot?: (bin: string, html: string) => Promise<Buffer | null> } = {}): PreviewShooter {
-  const shoot = opts.shoot ?? ((bin: string, html: string) => shootPreview(bin, html));
+  // At a phone's width (the drawing goes as a photo the phone shows full width), unless that
+  // would cut its content: then at the chat's width, whole.
+  const shoot = opts.shoot ?? ((bin: string, html: string) => shootPreview(bin, html, SHOT_TIMEOUT_MS, DRAWING_RENDER_WIDTH_PX, SERVER_RENDER_WIDTH_PX));
   return (html) => {
     const job = queue.then(async () => {
       const bin = (opts.chromium ?? findChromium)();

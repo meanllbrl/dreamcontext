@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAskCardMessages, formatAskQuestionHtml } from '../../src/lib/telegram/ask-format.js';
+import { drawingCaption, drawingTag, formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../src/lib/telegram/ask-format.js';
 import { TG_TEXT_MAX } from '../../src/lib/telegram/contract.js';
 import { richQuestionsOf } from '../../src/server/telegram/rich-asks.js';
 import { registryQuestions, readPendingQuestion } from '../../src/lib/assistant/chat-registry.js';
@@ -74,6 +74,41 @@ describe('formatAskQuestionHtml', () => {
   });
 });
 
+describe('an option\'s drawing is named by its letter (owner 2026-11-11: "hangisi sade hangisi?")', () => {
+  const q = { question: 'Sade hâline mi geçsin?', options: [
+    { label: 'Sade hâline geçsin', description: 'Tek başlık', preview: '<div>a</div>' },
+    { label: 'Şu anki gibi kalsın', preview: '<div>b</div>' },
+    { label: 'Başka', description: 'Notuna yaz' },
+  ] };
+
+  it('the letter follows the option\'s place, and the caption is "A · label"', () => {
+    expect([0, 1, 2].map(drawingTag)).toEqual(['A', 'B', 'C']);
+    expect(drawingCaption(1, '  Şu anki\n gibi kalsın ')).toBe('B · Şu anki gibi kalsın');
+  });
+
+  it('a drawn option\'s line carries the same letter as its picture, even with no note', () => {
+    const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:0', '0:1'])));
+    expect(html).toContain('• <b>A · Sade hâline geçsin</b> (çizim A): Tek başlık');
+    expect(html).toContain('• <b>B · Şu anki gibi kalsın</b> (çizim B)');
+    expect(html).toContain('• <b>Başka</b>: Notuna yaz');
+    expect(html).not.toContain('yukarıda');
+  });
+
+  it('a drawing that did not go has no letter and says it is on the Mac', () => {
+    const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:0'])));
+    expect(html).toContain('• <b>A · Sade hâline geçsin</b> (çizim A)');
+    expect(html).toContain("• <b>Şu anki gibi kalsın</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
+  });
+
+  it('a long message trims the notes but never a drawn option\'s letter line', () => {
+    const long = { ...q, description: 'x'.repeat(3000), options: q.options.map((o) => ({ ...o, description: 'y'.repeat(900) })) };
+    const html = formatAskQuestionHtml(withDrawingNotes(long, 0, new Set(['0:0', '0:1'])), { max: 400 });
+    expect(html.length).toBeLessThanOrEqual(400);
+    expect(html).toContain('<b>A · Sade hâline geçsin</b> (çizim A)');
+    expect(html).toContain('<b>B · Şu anki gibi kalsın</b> (çizim B)');
+  });
+});
+
 describe('descriptions reach the senders', () => {
   it('a child AskUserQuestion keeps its title, description and option descriptions', () => {
     const pq = readPendingQuestion({
@@ -90,5 +125,16 @@ describe('descriptions reach the senders', () => {
     const [q] = richQuestionsOf([card]);
     expect(q.description).toBe(card.description);
     expect(q.options[0].description).toBe('Küçük iş, yerel commit, push yok');
+  });
+});
+
+describe('two options with one label', () => {
+  it('the letter follows the option that was drawn, by its place, never by its label', () => {
+    const q = { question: 'Hangisi?', options: [{ label: 'Kart', preview: '<p>1</p>' }, { label: 'Kart', preview: '<p>2</p>' }] };
+    // The first did not draw, the second did: the line and the picture both say B.
+    const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:1'])));
+    expect(html).toContain('• <b>B · Kart</b> (çizim B)');
+    expect(html).not.toContain('çizim A');
+    expect(html).toContain("• <b>Kart</b>: Çizimi Mac'te");
   });
 });

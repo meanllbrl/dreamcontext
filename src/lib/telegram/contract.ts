@@ -384,6 +384,9 @@ export type RenderCardResult =
 /** `html_snapshot`: one at a time, at most 6 a minute (A6, R5). Server-built pages render at 720 CSS px (T5). */
 export const HTML_SNAPSHOT_PER_MIN = 6;
 export const SERVER_RENDER_WIDTH_PX = 720;
+/** A question option's drawing is drawn at a phone's width, so a photo shown full width on the
+ *  phone keeps its text near the size it was written at (720 halved it: owner 2026-11-11). */
+export const DRAWING_RENDER_WIDTH_PX = 420;
 export const RENDER_MAX_EDGE_PX = 2048;
 export const RENDER_MAX_SLICES = 4;
 

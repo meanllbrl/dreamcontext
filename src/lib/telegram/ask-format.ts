@@ -11,6 +11,7 @@
  *   question description
  *
  *   • label: option description   (only options that HAVE one)
+ *   • A · label (çizim A): ...     (an option whose drawing went above, its caption "A · label")
  *
  * Buttons keep only the labels (the caller's keyboard). Every text is redacted and HTML-escaped
  * here; the whole message stays under Telegram's 4096 characters by trimming the descriptions
@@ -22,7 +23,7 @@ import { escapeHtml, redactSecrets } from './format.js';
 export interface AskCardQuestion {
   question: string;
   description?: string;
-  options?: readonly { label: string; description?: string }[];
+  options?: readonly { label: string; description?: string; tag?: string }[];
 }
 
 export interface AskCardOpts {
@@ -55,21 +56,40 @@ function clip(raw: string | undefined, max: number): string {
 }
 
 /** An option as every sender may carry it: a drawing (`preview`, dream-html) beside its note. */
-export interface DrawnOption { label: string; description?: string; preview?: string }
+export interface DrawnOption { label: string; description?: string; preview?: string; tag?: string }
+
+/** An option's letter (A, B, C...), by its place in the question: the drawing's caption and the
+ *  question's line carry the same one, so he knows which picture is which option. */
+export function drawingTag(oi: number): string {
+  return String.fromCharCode(65 + Math.max(0, Math.min(25, oi)));
+}
+
+/** Which drawing went: question index and option index (never the label: two options may share one). */
+export function drawingKey(qi: number, oi: number): string {
+  return `${qi}:${oi}`;
+}
+
+/** A drawing's own caption: "A · Sade hâline geçsin" (plain text; the sender escapes it). */
+export function drawingCaption(oi: number, label: string): string {
+  return `${drawingTag(oi)} · ${redactSecrets(label).replace(/\s+/g, ' ').trim()}`;
+}
 
 /**
  * An option that carries a drawing says where it is (owner 2026-11-09: an option with only a
- * preview showed nothing on Telegram). `drawn` holds the `qi:label` keys whose picture went;
- * every other drawing is said to be on the Mac. The note goes FIRST: the message trims option
- * notes from their end when it is long, and a cut note would hide a drawing that never came.
+ * preview showed nothing on Telegram). `drawn` holds the `drawingKey`s whose picture went:
+ * such an option gets its letter (`tag`), drawn on its line as "A · label (çizim A)", the
+ * caption its picture carries (owner 2026-11-11: "hangisi sade hangisi?"). Every other drawing
+ * is said to be on the Mac; that note goes FIRST, since the message trims option notes from
+ * their end when it is long, and a cut note would hide a drawing that never came.
  */
 export function withDrawingNotes<Q extends { options: readonly DrawnOption[] }>(q: Q, qi: number, drawn: ReadonlySet<string>): Q {
   if (!q.options.some((o) => o.preview?.trim())) return q;
   return {
     ...q,
-    options: q.options.map((o) => {
+    options: q.options.map((o, oi) => {
       if (!o.preview?.trim()) return o;
-      const where = drawn.has(`${qi}:${o.label}`) ? 'Çizimi yukarıda.' : "Çizimi Mac'te (Telegram'a çizilemedi).";
+      if (drawn.has(drawingKey(qi, oi))) return { ...o, tag: drawingTag(oi) };
+      const where = "Çizimi Mac'te (Telegram'a çizilemedi).";
       return { ...o, description: o.description?.trim() ? `${where} ${o.description.trim()}` : where };
     }),
   };
@@ -92,9 +112,12 @@ export function formatAskQuestionHtml(q: AskCardQuestion, opts: AskCardOpts = {}
     const parts = [top];
     const d = descMax > 0 ? clip(q.description, descMax) : '';
     if (d) parts.push(escapeHtml(d));
-    const rows = optMax > 0
-      ? described.map((o) => ({ l: clip(o.label, 60), d: clip(o.description, optMax) })).filter((r) => r.d).map((r) => `• <b>${escapeHtml(r.l)}</b>: ${escapeHtml(r.d)}`)
-      : [];
+    // A drawn option keeps its line (its letter names its picture) even when its note is cut.
+    const rows = (q.options ?? [])
+      .filter((o) => o.tag || described.includes(o))
+      .map((o) => ({ t: o.tag, l: clip(o.label, 60), d: optMax > 0 ? clip(o.description, optMax) : '' }))
+      .filter((r) => r.t || r.d)
+      .map((r) => `• <b>${r.t ? `${escapeHtml(r.t)} · ` : ''}${escapeHtml(r.l)}</b>${r.t ? ` (çizim ${escapeHtml(r.t)})` : ''}${r.d ? `: ${escapeHtml(r.d)}` : ''}`);
     if (rows.length) parts.push(rows.join('\n'));
     return `${parts.join('\n\n')}${foot}`;
   };
