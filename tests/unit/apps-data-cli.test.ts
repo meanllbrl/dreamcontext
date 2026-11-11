@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dataFileRows, dataHtmlSinks, resolveRefusal, runDataDeletes } from '../../src/cli/commands/apps.js';
+import { dataFileRows, dataFolderWithoutSlash, dataHtmlSinks, resolveRefusal, runDataDeletes } from '../../src/cli/commands/apps.js';
 import { addTombstone } from '../../src/lib/apps/data-deletes.js';
 import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
 import { appDataStatus, listDataFiles } from '../../src/lib/apps/others.js';
@@ -243,5 +243,16 @@ describe('dc.data.read on what is not there yet, and while a pull lands', () => 
     expect(await dc.data.read('favorites/a.json', () => true)).toBeNull();
     paused = true;
     await expect(dc.data.read('favorites/', () => true)).rejects.toSatisfy((e: unknown) => e instanceof DcError && (e as { code: string }).code === 'paused_for_sync');
+  });
+});
+
+describe('apps validate: data_path_is_folder (B7)', () => {
+  it('names a shared path that is a folder but has no trailing slash; a slash, a glob or a file is silent', () => {
+    const home = tmp();
+    const { dir } = app(home, undefined, { 'favorites/a.json': '{}', 'one.json': '{}' });
+    const d = (...paths: string[]): DataDecl => ({ shared: paths.map((path) => ({ path, why: 'x' })), local: [] });
+    expect(dataFolderWithoutSlash(dir, d('favorites'))).toEqual(['favorites']);
+    expect(dataFolderWithoutSlash(dir, d('favorites/', 'favorites/*', 'one.json', 'missing'))).toEqual([]);
+    expect(dataFolderWithoutSlash(dir, null)).toEqual([]);
   });
 });
