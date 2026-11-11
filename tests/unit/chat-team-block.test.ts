@@ -350,9 +350,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- Which tool and model: `## Tools on this Mac` (a later `<super-tools>` replaces it) lists what is ready.',
       '  `--tool codex|antigravity --model <id>`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he',
       '  names to that list, never refuse it; a tool not ready: tell him the one step.',
-      // 2026-11-07 (app-araclari): an app on this Mac may already answer; a changing tool is never the Super's.
+      // 2026-11-07 (app-araclari): an app on this Mac may already answer. 2026-11-12 (gece-apps C1): the gate
+      // lets the main Super run a changing tool in a turn the owner opened, so the line says so (same row count).
       '- An app on this Mac may already answer: `dreamcontext apps tools`, then `apps do <app> <tool>` for one that',
-      '  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.',
+      '  reads. One that changes: `--confirm` after his yes, only in a turn he opened. Your children ask you.',
       // 2026-11-08 (model-secimi): the work to model map rides in the briefing.
       "- Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets",
       "  it): haiku `low` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,",
@@ -409,7 +410,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       // rev 38 (2026-11-09, super-rutin): a scheduled job's turn.
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
-      expect.stringContaining('<super-brief rev=39>'),
+      expect.stringContaining('<super-brief rev=40>'),
     ]);
     expect(after.length).toBe(before.length + 58); // +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });

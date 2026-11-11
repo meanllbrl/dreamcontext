@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { superBriefState } from '../../src/server/chat-mode-drift.js';
-import { SUPER_BRIEF_TEXT, superBriefing } from '../../src/server/chat-modes.js';
+import { SUPER_BRIEF_TEXT, memberSlotOf, superBriefing } from '../../src/server/chat-modes.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_MARKER, SUPER_BRIEF_REV } from '../../src/lib/super/types.js';
 
 const j = (...rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n');
@@ -204,5 +204,15 @@ describe('superBriefState', () => {
       expect(t).toContain('never blame his screen.');
       expect(t).toContain('ask a reworded card with what was missing, never the same card.');
     }
+  });
+  it('rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool after his yes; a member Super only when its approved file names it', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(40);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('One that changes: `--confirm` after his yes, only in a turn he opened. Your children ask you.');
+      expect(t).not.toContain('is refused for you and your children');
+    }
+    const member = superBriefing(undefined, memberSlotOf({ slug: 'rota', title: 'Rota', prompt: 'You keep the routes.' }));
+    expect(member).toContain('One that changes runs only if your approved member file names it; else he runs it in the app.');
+    expect(member).not.toContain('Your children ask you.');
   });
 });

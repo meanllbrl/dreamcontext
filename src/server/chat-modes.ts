@@ -611,7 +611,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`--tool codex|antigravity --model <id>\`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he
   names to that list, never refuse it; a tool not ready: tell him the one step.
 - An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
-  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.
+  reads. ${member ? 'One that changes runs only if your approved member file names it; else he runs it in the app.' : 'One that changes: `--confirm` after his yes, only in a turn he opened. Your children ask you.'}
 - Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
   it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
   even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,
