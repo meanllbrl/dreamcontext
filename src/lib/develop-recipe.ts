@@ -27,14 +27,20 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
 
 /**
  * The repeat limit in the words a lead needs (2026-10-31): `builder heavy` counts browser runs,
- * builds and full suites per branch and phase (lib/run-budget.ts), so a rule that lived here as
- * prose and did not hold is now the command's. The numbers live there, never here.
+ * builds and full suites (lib/run-budget.ts), so a rule that lived here as prose and did not hold
+ * is now the command's. The numbers live there, never here. Since 2026-11-12 (audit OR-8) it
+ * counts per code tree, so the fix after a review needs no `--because`; and a red keeps its log
+ * (OR-3: 81% of red checks were re-run only to read their output).
  */
-const REPEAT_LIMIT = `\`builder heavy\` counts browser runs, builds and full test suites per branch, phase and command,
-and a red browser run or build earns one more. A red full suite earns none: while its record is red, a second full
-run exits 77 and prints \`dreamcontext builder test --failed\`, which reruns only its files. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
-the proof you have, or, when the run is truly needed, \`builder heavy --because "<why>" -- <cmd>\`,
-recorded in \`builder budget\`. That works once per run and command; past it you stop and ask the owner.
+const REPEAT_LIMIT = `A red check prints where its whole output is kept and its first failures: READ that log, never
+re-run a check to see more of its output, and never pipe it through \`tail\`/\`grep\`.
+\`builder heavy\` counts browser runs, builds and full test suites per code tree: a run on code
+that changed is new proof and always runs; the same check on the same code is refused (a red
+browser run or build earns one more there, for load or a flaky harness).
+A red full suite earns none: while its record is red, a second full run exits 77 and prints
+\`dreamcontext builder test --failed\`, which reruns only its files. Exit 77 = NOTHING ran: read the result you have, or
+change the code. \`--because "<why>"\` is not part of a normal run: only a repeat on unchanged
+code needs it, once per run and command, recorded in \`builder budget\`; past it you stop and ask the owner.
 A check that already passed on the same code does not run again: \`builder heavy\` and \`builder test\`
 print its receipt (when, the command, its log) and exit 0 at once, and a type check also reuses one across
 Markdown and version-only changes. \`--fresh\` runs it anyway. Give \`builder heavy\` the check alone: a

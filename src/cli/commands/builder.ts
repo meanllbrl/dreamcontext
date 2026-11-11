@@ -20,7 +20,7 @@ import {
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
 import { HEAVY_HOT_WAIT_S, acquireHeavyReporting, queueReport } from '../../lib/heavy-acquire.js';
-import { contentTree, describeHit, dropReceipt, exitNotOwned, findReceipt, gitToplevel, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
+import { contentTree, describeHit, dropReceipt, exitNotOwned, findReceipt, firstFailures, gitToplevel, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
 import {
   CEILING_STREAK_LIMIT, branchOf, buildCommand, buildInputsChanged, configOf, distCheck, distGateApplies, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree,
   readSuiteRecord, recordToplevel, suiteLogPath, suiteRecordId, suiteRecordPath, writeSuiteRecord, type DistProof, type SuiteRecord,
@@ -179,7 +179,7 @@ export function builderBudget(deps: BuilderDeps): void {
   const cwd = deps.cwd();
   const file = readBudget(budgetPath(cwd));
   const scope = currentScope(cwd);
-  deps.print(`limits per phase: ${Object.entries(BUDGET_LIMITS).map(([k, n]) => `${k} ${n}`).join(', ')}; a red earns one more; light lane under ${LIGHT_LANE_MAX_LINES} lines`);
+  deps.print(`limits per code tree: ${Object.entries(BUDGET_LIMITS).map(([k, n]) => `${k} ${n}`).join(', ')}; changed code runs again free; a red earns one more; light lane under ${LIGHT_LANE_MAX_LINES} lines`);
   deps.print(scope ? `now: ${scope.branch} ${scope.run} ${scope.phase}` : 'now: no run open on this branch, nothing is limited');
   for (const [key, b] of Object.entries(file.buckets)) deps.print(`${key}: ${b.runs} run(s), ${b.reds} red`);
   for (const o of file.overruns) deps.print(`over the limit ${o.at} ${o.bucket}: "${o.reason}" (${o.command})`);
@@ -402,6 +402,20 @@ function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null;
   }
 }
 
+/**
+ * A red check's one closing line: where its whole output is kept and the first failures in it, so
+ * the agent reads the log instead of running the check again through another tail (audit OR-3).
+ */
+function printRed(deps: BuilderDeps, log: string, code: number, killed: string | undefined): void {
+  deps.printErr(`builder heavy: RED (${killed ? `stopped: ${killed}` : `exit ${code}`}), its whole output is kept: ${log}`);
+  const first = firstFailures(log);
+  if (first.length) {
+    deps.printErr('  first failures:');
+    for (const l of first) deps.printErr(`    ${l.trim()}`);
+  }
+  deps.printErr('  Read that log (Read tool or grep on the file); never re-run the check to see more of its output.');
+}
+
 /** `--detach`: start the check as its own process, print its id once it exists, return. */
 async function heavyDetach(deps: BuilderDeps, argv: string[], opts: HeavyOptions): Promise<number> {
   const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -565,7 +579,10 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
   const target = step?.target ?? '';
-  const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
+  const open = kind ? currentScope(deps.cwd()) : null;
+  // Repeats are counted per code tree (run-budget.ts, audit OR-8): changed code is new proof.
+  const codeTop = open ? gitToplevel(deps.cwd()) : null;
+  const scope: BudgetScope | null = open ? { ...open, tree: codeTop ? contentTree(recordToplevel(codeTop)) : null } : null;
   const pick = queueOf(command, scripts, (files) => countRelatedTests(deps.cwd(), files));
   const label = safeLabel(command, scripts);
   const budget = budgetPath(deps.cwd());
@@ -577,9 +594,9 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
     ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laneFromGit(deps.cwd()) : undefined)
     : null;
   if (over && opts.because === undefined) {
-    deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran, and running it again will not help.`);
-    deps.printErr(`  Is the proof already there? Use it. A fix goes through "builder test --related <files>".`);
-    deps.printErr(`  Is this run truly needed? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
+    deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran: the same check on the same code gives the same answer.`);
+    deps.printErr('  Read the result you have (its log), never re-run to see more. Change the code and it runs again, no flag needed.');
+    deps.printErr(`  A flaky run (machine load, the harness) truly needs one more? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
     return HEAVY_OVER_BUDGET_EXIT;
   }
   if (over && kind && scope && becauseSpent(readBudget(budget), scope, target)) {
@@ -632,7 +649,10 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   // The output is kept (it is the receipt's log, and a suite's record log) and shown as it comes, or its last --tail lines.
   const suiteLog = recordable ? suiteLogPath(suite.top, suite.branch, suite.target) : null;
-  const logPath = suiteLog ?? (before && receiptPlan ? scratchLog(receiptPlan.toplevel) : null);
+  // Every run keeps its output until it is judged: a green one hands it to its receipt, a red one
+  // keeps it so it is read, not re-run (audit OR-3). Pruned with the receipts.
+  const logTop = receiptPlan?.toplevel ?? (() => { const t = gitToplevel(deps.cwd()); return t ? recordToplevel(t) : null; })();
+  const logPath = suiteLog ?? (logTop ? scratchLog(logTop) : null);
   let logFd: number | null = null;
   try { logFd = logPath ? openSync(logPath, 'w') : null; } catch { logFd = null; }
   const kept: string[] = [];
@@ -694,8 +714,9 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
       }
       if ((code !== 0 || killed) && receiptPlan && before) dropReceipt(receiptPlan, before);
       if (recordable) settleSuite(deps, suite, { exit: killed ? null : code, killed, command, log: logPath, startTree, prev: red, because, dist: proof });
-      else if (logPath) rmSync(logPath, { force: true });
-      if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
+      else if (logPath && code === 0 && !killed) rmSync(logPath, { force: true });
+      else if (logPath) printRed(deps, logPath, code, killed);
+      if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now(), recordable ? null : logPath);
       recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: killed === 'ceiling' ? null : code, waits, ...(killed === 'ceiling' ? { reason: 'ceiling' } : {}) });
       held.release();
       resolveExit(code);

@@ -10,15 +10,23 @@ import type { LanePick } from './run-lane.js';
  * Measured 2026-10-31 over 20 Develop sessions: 6 browser runs a session where the rule said 1-2,
  * 13 minutes an hour re-running checks after the reviewer, and the proof share of a session up
  * from 40% to 53% after "tests and builds run once" was written down as prose. So the command
- * counts now: per branch, phase and command, a browser run, a full build or a full test suite
- * past its limit is REFUSED before anything starts. A red browser run or build earns one more, to
- * see the fix go green. A red full suite earns none: its red files are kept in its suite record
- * (lib/suite-record.ts) and rerun alone by `builder test --failed` (owner, 2026-11-08).
+ * counts now: per branch, run, CODE TREE and command, a browser run, a full build or a full test
+ * suite past its limit is REFUSED before anything starts. A red browser run or build earns one
+ * more on the same tree (load, a flaky harness). A red full suite earns none: its red files are
+ * kept in its suite record (lib/suite-record.ts) and rerun alone by `builder test --failed`
+ * (owner, 2026-11-08).
+ *
+ * Per tree, not per phase (2026-11-12, audit OR-8): counted per phase, a build after the review's
+ * fix was a repeat, so 22% of check commands carried `--because` and 31 build overruns cited code
+ * that had changed since. A run on code that changed is new proof and always free; the same check
+ * on the same code gives the same answer, and that repeat is what is refused. The tree is the
+ * receipt's (check-receipt.ts contentTree): tracked edits plus untracked files that are not ignored.
  *
  * A valid check must not trap an agent: `--because "<reason>"` runs it anyway, ONCE per run and
- * command, and leaves a record in the budget file, shown by `dreamcontext builder budget`. A
- * second one is refused like any other run: past that the owner decides. Everything here fails
- * open (no git, a broken file): the limit saves minutes, and it is not worth a blocked check.
+ * command, and leaves a record in the budget file, shown by `dreamcontext builder budget`. It is
+ * off the normal path: only a repeat on unchanged code needs it. A second one is refused like any
+ * other run: past that the owner decides. Everything here fails open (no git, no tree, a broken
+ * file): the limit saves minutes, and it is not worth a blocked check.
  *
  * Only a run is limited, and it says so itself, because a code worktree holds no brain and so
  * cannot read goal-live: `builder open <slug>` starts counting, `builder test --wave N` opens wave
@@ -28,7 +36,7 @@ import type { LanePick } from './run-lane.js';
  * tests/unit/run-budget.test.ts pins it.
  */
 
-/** Runs of one command in one phase, before the extra run a red earns. */
+/** Runs of one command on one code tree, before the extra run a red earns. */
 export const BUDGET_LIMITS = { browser: 2, build: 1, suite: 1 } as const;
 
 export type BudgetKind = keyof typeof BUDGET_LIMITS;
@@ -315,7 +323,7 @@ export function packageScripts(cwd: string): Record<string, string> {
   }
 }
 
-export interface BudgetBucket { runs: number; reds: number; last: string }
+export interface BudgetBucket { runs: number; reds: number; last: string; /** The log of its last red run, kept so a repeat is answered by reading it. */ log?: string }
 
 export interface BudgetOverrun { at: string; bucket: string; kind: BudgetKind; command: string; reason: string }
 
@@ -370,9 +378,13 @@ function fresh(bucket: BudgetBucket | undefined, nowMs: number): BudgetBucket | 
   return bucket && nowMs - Date.parse(bucket.last) <= BUDGET_BUCKET_MAX_AGE_MS ? bucket : undefined;
 }
 
-export interface BudgetScope { branch: string; run: string; phase: string }
+/** `tree`: the code the check runs on (null or absent = unknown, and the phase counts instead). */
+export interface BudgetScope { branch: string; run: string; phase: string; tree?: string | null }
 
-export const scopeKey = (s: BudgetScope, target: string): string => `${s.branch} ${s.run} ${s.phase} ${target}`;
+/** Short enough to read in `builder budget`, long enough never to collide inside one run. */
+const treeTag = (tree: string): string => `tree:${tree.slice(0, 12)}`;
+
+export const scopeKey = (s: BudgetScope, target: string): string => `${s.branch} ${s.run} ${s.tree ? treeTag(s.tree) : s.phase} ${target}`;
 
 /**
  * Why this run may not start, or null. A light change has two refusals of its own: a browser
@@ -386,7 +398,8 @@ export function refusal(file: BudgetFile, scope: BudgetScope, kind: BudgetKind, 
   const bucket = fresh(file.buckets[scopeKey(scope, target)], nowMs);
   const allowed = allowedRuns(kind, bucket);
   if ((bucket?.runs ?? 0) < allowed) return null;
-  return `${bucket!.runs} run(s) of ${target} already in phase "${scope.phase}" of ${scope.branch} (limit ${allowed}${bucket!.reds > 0 ? ', the extra run after a red included' : ''})`;
+  const where = scope.tree ? `on this exact code (${treeTag(scope.tree)})` : `in phase "${scope.phase}"`;
+  return `${bucket!.runs} run(s) of ${target} already ${where} of ${scope.branch} (limit ${allowed}${bucket!.reds > 0 ? ', the extra run after a red included' : ''})${bucket!.log ? `; its last red log: ${bucket!.log}` : ''}`;
 }
 
 /** Has this run already spent its one way out on this command? Any phase counts. */
@@ -402,19 +415,20 @@ export function recordStart(path: string, scope: BudgetScope, kind: BudgetKind, 
     const key = scopeKey(scope, target);
     const at = new Date(nowMs).toISOString();
     const prev = fresh(file.buckets[key], nowMs);
-    file.buckets[key] = { runs: (prev?.runs ?? 0) + 1, reds: prev?.reds ?? 0, last: at };
+    file.buckets[key] = { runs: (prev?.runs ?? 0) + 1, reds: prev?.reds ?? 0, last: at, ...(prev?.log ? { log: prev.log } : {}) };
     if (overrun) file.overruns.push({ at, bucket: key, kind, command: overrun.command.slice(0, 300), reason: overrun.reason.slice(0, 500) });
     writeBudget(path, file, nowMs);
   } catch { /* the budget never fails a check */ }
 }
 
-export function recordRed(path: string, scope: BudgetScope, target: string, nowMs: number): void {
+export function recordRed(path: string, scope: BudgetScope, target: string, nowMs: number, log?: string | null): void {
   try {
     const file = readBudget(path);
     const b = file.buckets[scopeKey(scope, target)];
     if (!b) return;
     b.reds += 1;
     b.last = new Date(nowMs).toISOString();
+    if (log) b.log = log;
     writeBudget(path, file, nowMs);
   } catch { /* the budget never fails a check */ }
 }

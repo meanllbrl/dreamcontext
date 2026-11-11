@@ -143,6 +143,25 @@ describe('refusal', () => {
     expect(refusal(readBudget(path), scope, 'build', 'build:cli', NOW)).toBeNull();
   });
 
+  it('with a code tree, counts per tree: a phase move is no reset, changed code is free', () => {
+    const t1 = { ...scope, tree: 'a'.repeat(40) };
+    recordStart(path, t1, 'build', 'build', NOW);
+    expect(refusal(readBudget(path), t1, 'build', 'build', NOW)).toMatch(/on this exact code \(tree:aaaaaaaaaaaa\)/);
+    // The review's fix moved the phase, not the code: still the same answer.
+    expect(refusal(readBudget(path), { ...t1, phase: 'end' }, 'build', 'build', NOW)).toMatch(/1 run\(s\) of build/);
+    // The fix changed the code: new proof, no flag needed.
+    expect(refusal(readBudget(path), { ...t1, tree: 'b'.repeat(40) }, 'build', 'build', NOW)).toBeNull();
+  });
+
+  it('a red keeps its log on the bucket, and the refusal names it', () => {
+    const t1 = { ...scope, tree: 'c'.repeat(40) };
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    recordRed(path, t1, 'scripts/verify/look.mjs', NOW, '/x/run-1.log');
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    expect(refusal(readBudget(path), t1, 'browser', 'scripts/verify/look.mjs', NOW)).toMatch(/its last red log: \/x\/run-1\.log/);
+  });
+
   it('forgets a bucket once it is old', () => {
     recordStart(path, scope, 'build', 'build', NOW);
     expect(refusal(readBudget(path), scope, 'build', 'build', NOW + BUDGET_BUCKET_MAX_AGE_MS + 1)).toBeNull();
@@ -177,6 +196,8 @@ describe('builder heavy stops a run past the limit', () => {
     // A Node script, not `sh`: npm runs scripts through cmd.exe on Windows.
     writeFileSync(join(repo, 'build.cjs'), "require('fs').appendFileSync('ran.txt', 'ran\\n'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { build: 'node build.cjs' } }));
+    // What a build writes is ignored, as dist/ is: the code tree is what the build reads.
+    writeFileSync(join(repo, '.gitignore'), 'ran.txt\nslots/\n');
   });
   afterEach(() => { delete process.env.FAKE_EXIT; rmSync(repo, { recursive: true, force: true }); });
   const runs = () => { try { return String(readFileSync(join(repo, 'ran.txt'), 'utf-8').split('\n').filter(Boolean).length); } catch { return '0'; } };
@@ -208,16 +229,41 @@ describe('builder heavy stops a run past the limit', () => {
     expect(overruns[0].reason).toBe('the owner asked for a clean rebuild');
   });
 
-  it('a new phase, moved by the commands a run already makes, starts a new count', async () => {
+  it('counts per code tree (audit OR-8): a phase move is no reset, a code change runs free', async () => {
     markPhase(repo, 'build', 'task', Date.now());
     expect(await heavy()).toBe(0);
     expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
-    markPhase(repo, 'w1', 'task', Date.now());
-    expect(await heavy()).toBe(0);
+    expect(err.join('\n')).toMatch(/on this exact code/);
+    expect(err.join('\n')).toMatch(/Change the code and it runs again, no flag needed/);
+    // The end phase on the same code is the same answer.
     builderLane(deps, { from: 'HEAD' });
+    expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
+    // The review's fix changed the code: the build runs, no --because.
+    writeFileSync(join(repo, 'fix.ts'), 'export const x = 1;\n');
     expect(await heavy()).toBe(0);
     expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
-    expect(Object.keys(readBudget(budgetPath(repo)).buckets).sort()).toEqual(['work task build build', 'work task end build', 'work task w1 build']);
+    expect(runs()).toBe('2');
+    const keys = Object.keys(readBudget(budgetPath(repo)).buckets);
+    expect(keys).toHaveLength(2);
+    for (const k of keys) expect(k).toMatch(/^work task tree:[0-9a-f]{12} build$/);
+    expect(readBudget(budgetPath(repo)).overruns).toHaveLength(0);
+  });
+
+  it('a red keeps its whole log, prints where and the first failures, and says read it, never re-run (audit OR-3)', async () => {
+    writeFileSync(join(repo, 'build.cjs'), "require('fs').appendFileSync('ran.txt', 'ran\\n'); console.log('compiling'); console.log(' FAIL  tests/a.test.ts > adds'); console.log('error TS2322: Type string is not number'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
+    process.env.FAKE_EXIT = '1';
+    expect(await heavy()).toBe(1);
+    const text = err.join('\n');
+    const log = /its whole output is kept: (\S+)/.exec(text)?.[1];
+    expect(log).toBeTruthy();
+    expect(readFileSync(log!, 'utf-8')).toContain('compiling');
+    expect(text).toMatch(/first failures:\n\s+FAIL {2}tests\/a\.test\.ts > adds\n\s+error TS2322/);
+    expect(text).toMatch(/never re-run the check to see more/);
+    // A green run leaves no stray log behind.
+    delete process.env.FAKE_EXIT;
+    err.length = 0;
+    expect(await heavy()).toBe(0);
+    expect(err.join('\n')).not.toMatch(/whole output is kept/);
   });
 
   it('no open run limits nothing: a plain chat builds as often as it needs', async () => {

@@ -620,6 +620,31 @@ export function describeHit(hit: ReceiptHit, nowMs: number = Date.now()): string
   return `RECEIPT, not re-run: "${r.command}" passed ${why}, ${when}, took ${took(r.ms)}${r.fresh ? ' (a --fresh run)' : ''}${r.log ? `; log ${r.log}` : ''}. Same code, same result; --fresh runs it again.`;
 }
 
+/** A line that names a failure: vitest/jest FAIL and ×, a tsc error, a thrown or asserted error. */
+const FAIL_LINE = /(?:^|\s)(?:FAIL|FAILED|✗|×)\s|\berror TS\d+|^\s*(?:Error|TypeError|ReferenceError|AssertionError)\b|^\s*(?:npm ERR!|ERR!)\s|\bAssertionError\b|\bexpected .+ to /;
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * The first `n` failure lines of a red run's log, deduplicated, colour codes stripped (audit OR-3:
+ * 81% of red checks were re-run only to read their output through another grep or tail). [] when
+ * the log is unreadable or names no failure the patterns know; the log path is printed either way.
+ */
+export function firstFailures(path: string | null | undefined, n = 8): string[] {
+  if (!path) return [];
+  let text: string;
+  try { text = readFileSync(path, 'utf-8'); } catch { return []; }
+  const out: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(ANSI, '').trimEnd();
+    if (!FAIL_LINE.test(line)) continue;
+    const short = line.length > 240 ? `${line.slice(0, 237)}...` : line;
+    if (!out.includes(short)) out.push(short);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
 /** The last `n` lines of a stored log, '' when unreadable. */
 export function logTail(path: string | undefined, n: number): string {
   if (!path) return '';
