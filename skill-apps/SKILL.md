@@ -167,7 +167,8 @@ chat (the permission is read at session start).
   safety door (fixed-point decoded, no `//`, nothing under `/__dc`).
 - **A tool that only reads is a GET.** A GET with no `danger` reads; everything else CHANGES
   (sends, pays, writes, deletes), `"effect": "read"` on a POST included. A change runs only with
-  `--confirm` after the owner's yes; unattended only when an approved job lists it (`--app-tools`).
+  `--confirm` after the owner's yes; unattended only when an approved job or member lists it
+  (`automations edit <slug> --app-tools`), or when this app itself called the member (`dc.team.ask`).
 - **A tool is not done without** `does` (what it does and answers, one or two lines), `params`
   (each input with its `type`: string, number, boolean, date, enum with `choices`; `required`;
   `desc`), and `topics` (words a question may use). Optional: `output`, `usesAgent: true` (it runs

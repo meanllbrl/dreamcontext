@@ -161,7 +161,7 @@ describe('dreamcontext apps do (the real CLI)', () => {
     expect(r.out).toContain('Echo App › How many hits (reads)');
     const j = await cli(['apps', 'do', 'echo', 'hits', '--json']);
     const body = JSON.parse(j.out.slice(j.out.indexOf('{'), j.out.lastIndexOf('}') + 1));
-    expect(Object.keys(body).sort()).toEqual(['app', 'appName', 'body', 'effect', 'ms', 'ok', 'status', 'tool', 'toolTitle', 'truncated'].sort());
+    expect(Object.keys(body).sort()).toEqual(['app', 'appName', 'body', 'bytes', 'effect', 'ms', 'ok', 'status', 'tool', 'toolTitle', 'truncated'].sort());
     expect(body).toMatchObject({ ok: true, app: 'echo', appName: 'Echo App', tool: 'hits', effect: 'read', status: 200, truncated: false });
   }, 120_000);
 
@@ -198,7 +198,9 @@ describe('dreamcontext apps do (the real CLI)', () => {
     const r = await cli(['apps', 'do', 'echo', 'big', '--input', '{"n":20000}', '--json']);
     expect(r.code).toBe(0);
     const body = JSON.parse(r.out.slice(r.out.indexOf('{'), r.out.lastIndexOf('}') + 1));
-    expect(body.body).toBeUndefined();
+    // `body` stays in the shape (null over 16 KB): a parser never meets a missing key.
+    expect(body.body).toBeNull();
+    expect(body.bytes).toBeGreaterThan(16 * 1024);
     expect(body.bodyFile).toMatch(/\.dreamcontext\/apps\/out\/[0-9a-f]{16}\//);
     expect(statSync(body.bodyFile).mode & 0o777).toBe(0o600);
     expect(statSync(dirname(body.bodyFile)).mode & 0o777).toBe(0o700);

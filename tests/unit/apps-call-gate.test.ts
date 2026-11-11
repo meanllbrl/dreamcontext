@@ -26,6 +26,7 @@ describe('callClaim: every real env names its class (first match wins)', () => {
     ['Super session', { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_CHAT_TAB: '1' }, 'crew'],
     ['Super child', { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_AGENT_CHAT: '' }, 'crew'],
     ["a member Super's child", { DREAMCONTEXT_MEMBER_CREW: 'ua-manager', DREAMCONTEXT_AGENT_CHAT: 'ua-manager' }, 'crew'],
+    ["a member's own Super", { DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_MEMBER_SUPER: 'ua-manager', DREAMCONTEXT_MEMBER_CREW: '' }, 'crew'],
     ['automation run env (runner.ts)', { DREAMCONTEXT_AUTOMATION_SLUG: 'nightly', DREAMCONTEXT_AUTOMATION_RUN: '2026-11-07T08:00:00.000Z', DREAMCONTEXT_AUTOMATION_SLOT: '' }, 'run'],
     ['agent run with AGENT_SELF and a chat mark (run wins over chat)', { DREAMCONTEXT_AGENT_CHAT: 'x', DREAMCONTEXT_AGENT_SELF: 'ua', DREAMCONTEXT_AUTOMATION_RUN: 'r' }, 'run'],
     ['scoped agent run with only AGENT_SELF', { DREAMCONTEXT_AGENT_SELF: 'ua' }, 'run'],
@@ -39,6 +40,17 @@ describe('callClaim: every real env names its class (first match wins)', () => {
   ];
   it.each(table)('%s', (_name, env, want) => {
     expect(callClaim(env).class).toBe(want);
+  });
+
+  it("a member's crew names its member; main's crew and an unsure mark name none", () => {
+    expect(callClaim({ DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_MEMBER_SUPER: 'ua-manager' })).toEqual({ class: 'crew', member: 'ua-manager' });
+    expect(callClaim({ DREAMCONTEXT_MEMBER_CREW: 'ua-manager' })).toEqual({ class: 'crew', member: 'ua-manager' });
+    expect(callClaim({ DREAMCONTEXT_MEMBER_CREW: '*' })).toEqual({ class: 'crew' });
+    expect(callClaim({ DREAMCONTEXT_SUPER_CREW: '1' })).toEqual({ class: 'crew' });
+    expect(decodeClaim(encodeClaim({ class: 'crew', member: 'ua' }))).toEqual({ class: 'crew', member: 'ua' });
+    // Only a crew claim carries a member; a bad slug is dropped.
+    expect(decodeClaim('{"class":"owner","member":"ua"}')).toEqual({ class: 'owner' });
+    expect(decodeClaim('{"class":"crew","member":"../x"}')).toEqual({ class: 'crew' });
   });
 
   it('a run carries its job and run id; empty strings count as unset', () => {
@@ -173,21 +185,30 @@ describe('gateAppCall', () => {
     }
   });
 
-  it('confirm: the owner and a chat pass; spawned and crew never', () => {
+  it('confirm: the owner and a chat pass; spawned and a crew outside the main Super do not, and say how to allow it', () => {
     expect(call('POST', '/api/notify-test', 'owner', { confirm: true })).toMatchObject({ ok: true, effect: 'change' });
     expect(call('POST', '/api/notify-test', 'chat', { confirm: true })).toMatchObject({ ok: true });
-    expect(call('POST', '/api/notify-test', 'spawned', { confirm: true })).toMatchObject({ ok: false, http: 403, code: 'needs_owner' });
-    expect(call('POST', '/api/notify-test', 'crew', { confirm: true })).toMatchObject({ ok: false, http: 403, code: 'needs_owner' });
+    const spawned = call('POST', '/api/notify-test', 'spawned', { confirm: true });
+    expect(spawned).toMatchObject({ ok: false, http: 403, code: 'needs_owner' });
+    const crew = call('POST', '/api/notify-test', 'crew', { confirm: true });
+    expect(crew).toMatchObject({ ok: false, http: 403, code: 'needs_owner' });
+    for (const v of [spawned, crew]) expect(v.ok ? '' : v.message).toMatch(/To allow it: /);
+    expect(crew.ok ? '' : crew.message).toMatch(/Super Agent/);
     expect(call('POST', '/api/q', 'owner', { confirm: true })).toMatchObject({ ok: true, timeoutMs: 120_000 });
   });
 
-  it('a Super conversation is crew whatever its header claims (an adopted owner chat)', async () => {
+  it("the main Super Agent's own session passes like an owner chat; its child is crew whatever its header claims", async () => {
     const { noteSuperState } = await import('../../src/lib/super/store.js');
     const { emptySuperState } = await import('../../src/lib/super/types.js');
     const kid = '0f0f0f0f-1111-2222-3333-444444444444';
-    noteSuperState(ctx, { ...emptySuperState(), session: 'aaaaaaaa-1111-2222-3333-444444444444', enabled: true, children: { [kid]: { sessionId: kid, brief: '', adopted: true, startedAt: 1 } } } as never);
+    const main = 'aaaaaaaa-1111-2222-3333-444444444444';
+    noteSuperState(ctx, { ...emptySuperState(), session: main, enabled: true, children: { [kid]: { sessionId: kid, brief: '', adopted: true, startedAt: 1 } } } as never);
     expect(call('POST', '/api/notify-test', 'owner', { confirm: true, sessions: [kid] })).toMatchObject({ ok: false, code: 'needs_owner' });
-    expect(call('POST', '/api/notify-test', 'chat', { confirm: true, sessions: ['aaaaaaaa-1111-2222-3333-444444444444'] })).toMatchObject({ ok: false, code: 'needs_owner' });
+    expect(call('POST', '/api/notify-test', 'crew', { confirm: true, sessions: [main] })).toMatchObject({ ok: true, effect: 'change' });
+    expect(call('POST', '/api/notify-test', 'chat', { confirm: true, sessions: [main] })).toMatchObject({ ok: true });
+    // Its session never lifts a builder or a peer it started (they carry the spawned mark).
+    expect(call('POST', '/api/notify-test', 'spawned', { confirm: true, sessions: [main] })).toMatchObject({ ok: false, code: 'needs_owner' });
+    expect(call('POST', '/api/notify-test', 'run', { confirm: true, sessions: [main] })).toMatchObject({ ok: false, code: 'needs_owner' });
     expect(call('POST', '/api/notify-test', 'owner', { confirm: true, sessions: ['99999999-1111-2222-3333-444444444444'] })).toMatchObject({ ok: true });
     noteSuperState(ctx, emptySuperState() as never);
   });
@@ -252,7 +273,7 @@ describe('gateAppCall', () => {
       expect(run('ua', R)).toMatchObject({ ok: false, code: 'needs_owner' }); // two at once: false
     });
 
-    it('a say run: its opening entry decides while its own job runs; Super\'s say and an app\'s words never', async () => {
+    it('a say run: its opening entry decides while its own job runs; Super\'s say never, an app only on its own tools', async () => {
       const { appendThreadEntry } = await import('../../src/lib/automations/threads.js');
       const runJob = (runId: string) => ({ id: `run-${runId}`, slug: 'ua', status: 'running' as const, startedAt: 1, finishedAt: null, outcome: null, error: null, runId });
       const A = '2026-11-07T11:00:00.000Z';
@@ -263,14 +284,65 @@ describe('gateAppCall', () => {
       appendThreadEntry(ctx, 'ua', { runId: B, kind: 'user', text: 'super asks', via: 'super' });
       seed(ctx, { run: runJob(B) });
       expect(run('ua', B)).toMatchObject({ ok: false, code: 'needs_owner' });
+      // The app's own member (owner 2026-11-11): this app started the run, so its tools run; another app's do not.
       const C = '2026-11-07T13:00:00.000Z';
       appendThreadEntry(ctx, 'ua', { runId: C, kind: 'user', text: 'app asks', via: 'app', app: 'yuk' });
       seed(ctx, { run: runJob(C) });
+      expect(run('ua', C)).toMatchObject({ ok: true, effect: 'change' });
+      const C2 = '2026-11-07T13:30:00.000Z';
+      appendThreadEntry(ctx, 'ua', { runId: C2, kind: 'user', text: 'other app asks', via: 'app', app: 'other-app' });
+      seed(ctx, { run: runJob(C2) });
+      const refused = run('ua', C2);
+      expect(refused).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(refused.ok ? '' : refused.message).toContain('automations edit ua --app-tools yuk/notify-test');
+      // The app's run ended: nothing in flight vouches any more.
+      clear();
       expect(run('ua', C)).toMatchObject({ ok: false, code: 'needs_owner' });
       // No job in this process (a scheduled fire): false.
       const D = '2026-11-07T14:00:00.000Z';
       appendThreadEntry(ctx, 'ua', { runId: D, kind: 'user', text: 'owner', via: 'dashboard' });
       expect(run('ua', D)).toMatchObject({ ok: false, code: 'needs_owner' });
+    });
+  });
+
+  describe("a member's approved call.app_tools (app-arac-izin)", () => {
+    const as = (claim: Record<string, unknown>) =>
+      gate(ctx, rec, actions, { method: 'POST', path: '/api/notify-test', confirm: true, claim: claim as never }, { home });
+
+    it('its Super, its children and its called runs run the tool once the owner approved it; a pending edit adds none', async () => {
+      const { createAgent, setAppTools, getAgent } = await import('../../src/lib/agents/store.js');
+      const { getRunTarget } = await import('../../src/lib/automations/store.js');
+      const { approveAutomation } = await import('../../src/lib/automations/registry.js');
+      createAgent(ctx, { slug: 'kurucu', title: 'Kurucu', prompt: 'p' }, { approve: { now: new Date() } });
+      const before = as({ class: 'crew', member: 'kurucu' });
+      expect(before).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(before.ok ? '' : before.message).toContain('automations edit kurucu --app-tools yuk/notify-test');
+
+      setAppTools(ctx, 'kurucu', ['yuk/notify-test']);
+      expect(getRunTarget(ctx, 'kurucu', 'agent', home)!.appTools).toEqual(['yuk/notify-test']);
+      // Written, not approved: the approved version (no tools) is what may run.
+      expect(as({ class: 'crew', member: 'kurucu' })).toMatchObject({ ok: false, code: 'needs_owner' });
+
+      approveAutomation(rec.projectRoot, getRunTarget(ctx, 'kurucu', 'agent', home)!, new Date(), home);
+      expect(as({ class: 'crew', member: 'kurucu' })).toMatchObject({ ok: true, effect: 'change' });
+      expect(as({ class: 'run', automation: 'kurucu', run: 'R' })).toMatchObject({ ok: true });
+      // Another member, main's crew and another tool of the app: no.
+      expect(as({ class: 'crew', member: 'other' })).toMatchObject({ ok: false, code: 'needs_owner' });
+      expect(as({ class: 'crew' })).toMatchObject({ ok: false, code: 'needs_owner' });
+      const send = gate(ctx, rec, [...actions, { id: 'send', title: 'Send', method: 'POST', path: '/api/send' }], { method: 'POST', path: '/api/send', confirm: true, claim: { class: 'crew', member: 'kurucu' } }, { home });
+      expect(send).toMatchObject({ ok: false, code: 'needs_owner' });
+
+      // An unsplit on-call file (`automations create --mode call --app-tools`): its call target carries them.
+      const { createAutomation } = await import('../../src/lib/automations/store.js');
+      createAutomation(ctx, { slug: 'callme', title: 'Call me', mode: 'call', prompt: 'p', appTools: ['yuk/notify-test'] });
+      expect(getRunTarget(ctx, 'callme', 'agent', home)!.appTools).toEqual(['yuk/notify-test']);
+      // `--app` stays a schedule's, and its refusal names the way.
+      expect(() => createAutomation(ctx, { slug: 'callme-2', title: 'K2', mode: 'call', prompt: 'p', app: 'yuk' })).toThrow(/takes --app-tools without --app/);
+
+      // Cleared: the call block loses it, and the hash moves again (the owner approves the removal).
+      setAppTools(ctx, 'kurucu', []);
+      expect(getAgent(ctx, 'kurucu')!.call.appTools).toBeUndefined();
+      expect(getRunTarget(ctx, 'kurucu', 'agent', home)!.appTools).toBeUndefined();
     });
   });
 

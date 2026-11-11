@@ -90,6 +90,7 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
           flow: m.flow ?? null,
           enabled: m.enabled,
           notify: m.notify,
+          ...(m.appTools?.length ? { appTools: [...m.appTools] } : {}),
         }
       : { ...DEFAULT_CALL_SETTINGS },
     migratedFrom: m.id,
@@ -217,6 +218,7 @@ export function composeRun(
     outputInstructions: call.outputInstructions,
     flow: call.flow ?? null,
     job: '',
+    ...(call.appTools?.length ? { appTools: [...call.appTools] } : {}),
     ...identity,
     // Unhashed: where the agent's own approval lives (D1). Its call target only: a routine bound to
     // a global agent belongs to its project, and is approved in that project's bucket.

@@ -830,7 +830,8 @@ async function doReconcileReplyThreads(
 
 // ─── Who started the turn in flight (app-araclari plan r3 §4.2 (b), security re-review) ──────
 
-/** Only the owner's own page writes these: an app's or the Super Agent's words never count. */
+/** Only the owner's own page writes these: an app's or the Super Agent's words never count here
+ *  (an app's own member is let through for that app only, by `runStartedByApp`). */
 const OWNER_VIA: readonly ThreadEntry['via'][] = ['dashboard'];
 
 /**
@@ -857,6 +858,21 @@ export function jobStartedByOwner(contextRoot: string, slug: string, runId: stri
   }
   const entry = readThread(contextRoot, slug, { runId }).find((e) => e.id === entryId);
   return !!entry && entry.runId === runId && entry.kind === 'user' && OWNER_VIA.includes(entry.via) && !entry.app;
+}
+
+/**
+ * Which app started `slug`'s run `runId`, while its own job runs here (app-arac-izin, owner
+ * 2026-11-11): the run's opening entry was written by the server's own `/__dc/team/say` path
+ * (`via: 'app'`, `app: <slug>`), never by a caller. Null for any other run, for a run with no
+ * live job in this process, and while a reply turn of someone else's is being delivered into it.
+ */
+export function runStartedByApp(contextRoot: string, slug: string, runId: string): string | null {
+  if (!slug || !runId) return null;
+  if ([...replyJobs.values()].some((j) => j.slug === slug && j.runId === runId && j.status === 'running' && j.phase === 'delivering')) return null;
+  const live = [...(jobs.get(contextRoot)?.values() ?? [])].filter((j) => j.slug === slug && j.runId === runId && j.status === 'running');
+  if (live.length !== 1) return null;
+  const opening = readThread(contextRoot, slug, { runId }).find((e) => e.runId === runId && e.kind === 'user');
+  return opening && opening.via === 'app' && typeof opening.app === 'string' && opening.app ? opening.app : null;
 }
 
 /** Tests stand in for jobs this process would have started: a reply job, or a run's own job. */

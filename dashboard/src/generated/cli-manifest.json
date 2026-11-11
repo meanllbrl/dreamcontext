@@ -749,6 +749,16 @@
       ]
     },
     {
+      "path": "automations edit",
+      "desc": "Change what a job or a member may run through an app while nobody watches; the owner's approval card asks again",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--app-tools"
+      ]
+    },
+    {
       "path": "automations enable",
       "desc": "Enable an automation (tick will consider it again)",
       "args": [

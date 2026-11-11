@@ -42,9 +42,9 @@ import { getApp, listApps, real, unregisterApp, updateApp, type AppRecord } from
 import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SECRET_HEADER } from '../../lib/apps/supervisor.js';
 import { readManifest, ACTION_METHODS, effectOf, toolTimeoutSec, type AppAction, type ToolEffect } from '../../lib/apps/manifest.js';
 import { decodeClaim, RUN_HEADER, type CallClaim } from '../../lib/apps/call-claim.js';
-import { handedOverChildRoot, isSuperChild, isSuperSessionId } from '../../lib/super/store.js';
+import { handedOverChildRoot, isSuperChild, isSuperSessionId, superOfSession } from '../../lib/super/store.js';
 import { getAutomation } from '../../lib/automations/store.js';
-import { jobStartedByOwner } from '../automation-job.js';
+import { jobStartedByOwner, runStartedByApp } from '../automation-job.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, appHash, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
@@ -824,12 +824,37 @@ function superSession(sessions: readonly string[] | undefined): boolean {
   return false;
 }
 
+/** Is one of these conversations the main Super Agent's own session (the owner talks to it)? The
+ *  server's own record decides, never the caller's class. A member's Super is not main. */
+function mainSuperSession(sessions: readonly string[] | undefined): boolean {
+  for (const id of sessions ?? []) {
+    if (!id) continue;
+    try { if (superOfSession(id)?.superId === 'main') return true; } catch { /* cannot tell: not main */ }
+  }
+  return false;
+}
+
+/** Does `slug`'s APPROVED version name `ref` in its `app_tools`? Judged on the version that may
+ *  run: a pending edit never adds an app tool (`approvedTarget`). Both the slot's file and the
+ *  agent's call target (a member's `call.app_tools`) count: the owner approved each. */
+function approvedAppTool(contextRoot: string, slug: string, ref: string, home: string | undefined): boolean {
+  const targets = [getAutomation(contextRoot, slug, home), getRunTarget(contextRoot, slug, 'agent', home)];
+  for (const m of targets) {
+    if (!m) continue;
+    const view = approvedTarget(projectRootOf(contextRoot), m, home);
+    if (view.verdict.approved && view.manifest.appTools?.includes(ref)) return true;
+  }
+  return false;
+}
+
 /**
  * THE gate, called by `handleAppCall` (CLI, MCP, a raw loopback POST) and `runAppAction` (the
- * Assistant). A read passes. A change needs `confirm`, and then who is asking decides:
- * `spawned` and `crew` (and any Super conversation, whatever it claims) never; an unattended
- * `run` only with this tool in its approved job's `app_tools`, or in a turn the owner started
- * from the dashboard; the owner's chats and terminal pass. A header can only take rights away.
+ * Assistant). A read passes. A change needs `confirm`, and then who is asking decides
+ * (app-arac-izin, owner 2026-11-11: no dead ends, every refusal says what the owner does):
+ * the owner's chats, terminal and the main Super Agent's own session pass; `spawned` never; a
+ * member's Super or child with a tool its approved member file names; an unattended `run` with a
+ * tool its approved job (or member) names, in a turn the owner started from the dashboard, or
+ * when this very app started the run (`dc.team.ask`: the app's own member on its own app).
  */
 export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readonly AppAction[], call: GateCall, deps: { home?: string } = {}): GateVerdict {
   const method = call.method.toUpperCase();
@@ -848,24 +873,34 @@ export function gateAppCall(contextRoot: string, rec: AppRecord, actions: readon
   if (!call.confirm && !call.schedule) {
     return { ok: false, http: 409, code: 'needs_confirm', message: `${action ? `"${action.title}"` : `${method} ${call.path.split('?')[0]}`} changes something. Say in one line what it will do, and run it with --confirm only after the owner says yes in this chat.`, ...(tool ? { tool } : {}) };
   }
-  const refuse = (why: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} The owner can run it in a normal chat or in the app's window.`, ...(tool ? { tool } : {}) });
-  let cls = call.claim.class;
-  if (superSession(call.sessions)) cls = 'crew';
-  if (cls === 'spawned') return refuse('A changing app tool does not run from a session no owner is typing in.');
-  if (cls === 'crew') return refuse('The Super Agent and its chats never run a changing app tool.');
+  const pass: GateVerdict = { ok: true, effect, action, timeoutMs };
+  const ref = `${rec.slug}/${action?.id ?? '<tool>'}`;
+  // Every refusal says what the owner does to allow it (one line), never a bare needs_owner.
+  const refuse = (why: string, allow: string): GateVerdict => ({ ok: false, http: 403, code: 'needs_owner', message: `${why} To allow it: ${allow}`, ...(tool ? { tool } : {}) });
+  const editLine = (slug: string): string => action && !ambiguous
+    ? `the owner runs \`dreamcontext automations edit ${slug} --app-tools ${ref}\` and approves ${slug}'s card again (or runs the tool himself in a chat, the Super Agent or the app's window).`
+    : `this call names no single tool of ${rec.slug}, so only the owner can run it, in a chat, the Super Agent or the app's window.`;
+  const cls = call.claim.class;
+  if (cls === 'spawned') return refuse('This session runs with nobody at the keyboard (a builder, a peer delivery, a cross-tool ask or sleep).', `the owner runs it in a chat, the Super Agent or the app's window.`);
+  // The main Super Agent's own session: the owner is there, as in a normal chat (owner 2026-11-11).
+  if (mainSuperSession(call.sessions) && (cls === 'crew' || cls === 'owner' || cls === 'chat')) return pass;
+  if (cls === 'crew' || superSession(call.sessions)) {
+    const member = cls === 'crew' ? call.claim.member : undefined;
+    if (member && action && !ambiguous && approvedAppTool(contextRoot, member, ref, deps.home)) return pass;
+    if (member) return refuse(`${member}'s own work runs a changing app tool only when its approved member file names it.`, editLine(member));
+    return refuse('A Super Agent child runs a changing app tool only through the Super Agent itself.', `ask the Super Agent to run it in its own session (it can), or the owner runs it in a chat or the app's window.`);
+  }
   if (cls === 'run') {
     const slug = call.claim.automation ?? '';
-    if (action && slug && !ambiguous) {
-      const m = getAutomation(contextRoot, slug, deps.home);
-      const ref = `${rec.slug}/${action.id}`;
-      // Judged on the version that may run: a pending edit never adds an app tool (`approvedTarget`).
-      const view = m ? approvedTarget(projectRootOf(contextRoot), m, deps.home) : null;
-      if (view && view.verdict.approved && view.manifest.appTools?.includes(ref)) return { ok: true, effect, action, timeoutMs };
-    }
-    if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return { ok: true, effect, action, timeoutMs };
-    return refuse(`An unattended run changes things only with a tool its approved job names (app_tools: ${rec.slug}/${action?.id ?? '<tool>'}).`);
+    if (action && slug && !ambiguous && approvedAppTool(contextRoot, slug, ref, deps.home)) return pass;
+    if (slug && call.claim.run && jobStartedByOwner(contextRoot, slug, call.claim.run)) return pass;
+    // The app's own member (`dc.team.ask` from this app's backend): the app installed and approved
+    // on this Mac is the owner's proof, for this app's tools only (owner 2026-11-11).
+    if (slug && call.claim.run && runStartedByApp(contextRoot, slug, call.claim.run) === rec.slug) return pass;
+    if (!slug) return refuse('An unattended run that names no job changes nothing through an app.', `the owner runs it in a chat, the Super Agent or the app's window.`);
+    return refuse(`An unattended run of ${slug} changes things only with a tool its approved job or member names (app_tools: ${ref}).`, editLine(slug));
   }
-  return { ok: true, effect, action, timeoutMs };
+  return pass;
 }
 
 /** Session ids a caller sent in the `x-dc-run` header (`sessions`), at most 4, uuid-shaped. */

@@ -376,7 +376,7 @@ export function registerAppsCommand(program: Command): void {
     .description("Run one of an installed app's tools and take its own answer (no Claude turn, no usage limit)")
     .option('--input <json>', "Input: query for GET, JSON body otherwise (checked against the tool's params)")
     .option('--confirm', 'The owner said yes to this CHANGE in this chat (a tool that changes refuses without it)')
-    .option('--json', 'JSON output: {ok, app, appName, tool, toolTitle, effect, status, body|bodyFile, truncated, ms}')
+    .option('--json', 'JSON output: {ok, app, appName, tool, toolTitle, effect, status, body, bodyFile?, bytes, truncated, ms}; over 16 KB body is null and the answer is in bodyFile')
     .action(async (slug: string, action: string, opts: { input?: string; confirm?: boolean; json?: boolean }) => {
       try {
         const p = project();
@@ -418,7 +418,9 @@ export function registerAppsCommand(program: Command): void {
         if (opts.json) {
           console.log(fenced(`do ${action}`, JSON.stringify({
             ok: Number(r.status) < 400, app: slug, appName: manifest.name, tool: a.id, toolTitle: a.title, effect, status: r.status,
-            ...(bodyFile ? { bodyFile } : { body: shown }), truncated: text.endsWith('…[truncated at 256 KB]'), ms: typeof r.ms === 'number' ? r.ms : null,
+            // `body` is always there (no shape change for a parser): the answer up to 16 KB, null
+            // over it, with the whole answer in `bodyFile` (app-arac-izin, Kitup 2026-11-11).
+            body: bodyFile ? null : shown, ...(bodyFile ? { bodyFile } : {}), bytes, truncated: text.endsWith('…[truncated at 256 KB]'), ms: typeof r.ms === 'number' ? r.ms : null,
           }, null, 2)));
         } else if (bodyFile) {
           console.log(fenced(`do ${action} status=${r.status}`, `${bytes} bytes, written to ${bodyFile} (data from the app; read only the part you need)`));
