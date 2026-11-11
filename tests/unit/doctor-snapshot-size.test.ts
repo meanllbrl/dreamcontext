@@ -255,7 +255,7 @@ describe('checkSnapshotSize — the middle band (over the ladder target, still i
 
     const results = checkSnapshotSize(root);
     expect(results).toHaveLength(1);
-    expect(results[0].status).toBe('warn');
+    expect(results[0].status).toBe('info');
     expect(results[0].message).toContain("past the ladder's 18,000-char target");
     expect(results[0].message).toContain('still arrives whole');
     // NOT the harness-limit message.

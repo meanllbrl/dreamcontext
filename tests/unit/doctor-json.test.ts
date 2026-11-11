@@ -42,7 +42,7 @@ describe('buildDoctorReport', () => {
   it('reports version 1 and a summary that matches the checks', () => {
     const report = buildDoctorReport(results);
     expect(report.version).toBe(1);
-    expect(report.summary).toEqual({ ok: 1, warn: 1, error: 1 });
+    expect(report.summary).toEqual({ ok: 1, info: 0, warn: 1, error: 1 });
     expect(report.checks).toHaveLength(3);
   });
 
