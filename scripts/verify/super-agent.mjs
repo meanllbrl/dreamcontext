@@ -1507,17 +1507,8 @@ async function motion(engineName, browserType, base) {
   await page.waitForTimeout(1200);
   const reopen = await page.evaluate(() => window.__reopen);
   ok(`${engineName}: re-opened while handed over, the page is covered only after the zoom-in lands`, reopen.expandAt !== null && reopen.coverAt !== null && !reopen.coverDuringZoom && reopen.coverAt - reopen.expandAt >= 250, JSON.stringify(reopen));
-  // The What's New popup renders inside the page, above the surface: the cover lets it show.
-  const popupCv = await page.evaluate(() => {
-    const m = document.querySelector('.shell-main');
-    const probe = document.createElement('div');
-    probe.className = 'announcements-modal';
-    m.appendChild(probe);
-    const withPopup = getComputedStyle(m).contentVisibility;
-    probe.remove();
-    return { withPopup, without: getComputedStyle(m).contentVisibility };
-  });
-  ok(`${engineName}: the What's New popup is never hidden under the cover`, popupCv.withPopup !== 'hidden' && popupCv.without === 'hidden', JSON.stringify(popupCv));
+  const coverCv = await page.evaluate(() => getComputedStyle(document.querySelector('.shell-main')).contentVisibility);
+  ok(`${engineName}: the covered page skips its paint`, coverCv === 'hidden', coverCv);
   ok(`${engineName}: no console errors`, errors.length === 0, errors.slice(0, 5).join('\n'));
   await context.close();
 

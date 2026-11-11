@@ -8,7 +8,7 @@
  *
  * So every absolute link goes to the OS default browser instead. This is installed
  * once, on the document, in capture phase — chat answers, knowledge and task
- * documents, announcements, the About page all inherit it with no per-surface wiring,
+ * documents, the About page all inherit it with no per-surface wiring,
  * which matters because the markdown surfaces render links the app never authored.
  *
  * Root-relative links are left alone: they are in-app routes and download endpoints, and
@@ -94,7 +94,7 @@ export function externalUrlForClick(e: LinkClick): string | null {
  * clickable chips — but that is a per-message DOM effect, and a per-message effect is the
  * wrong place for the one rule that decides whether the app survives a click. This is that
  * rule, in one document-level place, for every markdown surface (chat, knowledge, tasks,
- * core, announcements) at once.
+ * core) at once.
  *
  * NOT contained, deliberately:
  *   • `#frag`      — an in-page anchor, the browser's own business;

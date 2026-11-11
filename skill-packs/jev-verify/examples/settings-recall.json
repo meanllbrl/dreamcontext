@@ -3,7 +3,6 @@
   "url": "http://127.0.0.1:4173/?vault=proj&page=settings",
   "device": "desktop",
   "steps": [
-    { "dismiss": ".announcements-modal-scrim" },
     { "click": "role=button[name='Recall']" },
     { "waitFor": "[role=radiogroup][aria-label='Recall']" },
     {

@@ -314,11 +314,11 @@
   50% { transform: translateY(-4px); }
 }
 
-/* ─── Unread-count badge (Announcements) ─────────────────────────────────── */
+/* ─── Unread-count badge (AI Team) ───────────────────────────────────────── */
 /* Distinct from the first-run nudge above: the nudge marks a surface that has
    never been opened and repaints the whole row for as long as that's true;
    this badge marks a genuine unread COUNT, sits quietly at the trailing edge,
-   and disappears the moment the inbox is marked read (see useAnnouncementInbox)
+   and disappears the moment the feed is marked read (see useNavBadges)
    without touching the row's color or motion. */
 .sidebar-badge {
   display: inline-flex;
@@ -562,7 +562,7 @@
  * The default is a var() FALLBACK, never a declaration on this element — declaring
  * `--nav-hue` here would win over the group's inherited value and every badge would
  * be grey. It makes the mapping TOTAL: an item outside any group (the footer's
- * announcements and sync buttons) renders byte-for-byte as it did before this existed. */
+ * sync button) renders byte-for-byte as it did before this existed. */
 .sidebar-icon {
   display: inline-flex;
   align-items: center;

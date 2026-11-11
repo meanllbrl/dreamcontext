@@ -1,8 +1,8 @@
 /* The image viewer is the only surface in the app that deliberately covers the
    whole window, header included: a screenshot is being examined, and every strip
    of chrome left showing is a strip of the picture taken away. It sits above the
-   full-screen overlay (1100) because the announcement reader opens it from inside
-   one. The ✕ is top-RIGHT — top-left is where the desktop shell's traffic lights
+   full-screen overlay (1100) because a surface may open it from inside one.
+   The ✕ is top-RIGHT — top-left is where the desktop shell's traffic lights
    live. */
 
 .image-viewer {

@@ -292,10 +292,6 @@ Local-path gomulu gorseller iceren task'lar GitHub'a sync edilirken: push, gorse
   ```
   Beklenen: `--dry-run` yazmaz, sadece raporlar; `--fix` etiketleri vocab'a normalize eder; ikinci kosum **idempotent** (degisiklik yok). `--json` ciktisi makine-okunur.
 
-- [ ] **dashboard taxonomy page**  
-  Adim: Dashboard > Taxonomy.  
-  Beklenen: Facet chipleri, kullanim sayilari ve alias okuma gorunumu var.
-
 ---
 
 ## 6. Features and PRD Freshness
@@ -463,7 +459,7 @@ dreamcontext dashboard --port 4173 --vault /tmp/dctest
 ```
 
 - [ ] **navigation shell (Sleepy Search & Ask page KALDIRILDI)**  
-  Beklenen: Brain/Tasks/Knowledge/Features/Core/Council/Taxonomy/Sleep ve Packs/Settings gruplari + **Agent** sekmesi gorunur. Eski "Search & Ask / Sleepy" dashboard sayfasi **artik yok** — yerini Agent surface (bolum 12) aldi.
+  Beklenen: Brain/Tasks/Knowledge/Features/Core/Council/Sleep ve Packs/Settings gruplari + **Agent** sekmesi gorunur. Eski "Search & Ask / Sleepy" dashboard sayfasi **artik yok** — yerini Agent surface (bolum 12) aldi.
 
 - [ ] **static 404 instead of SPA fallback (v0.10.x)**  
   Adim: Var olmayan bir `/assets/<eski-chunk>.js` iste (or. `curl -i http://localhost:4173/assets/does-not-exist.js`).  

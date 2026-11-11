@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { Page } from '../../dashboard/src/components/layout/Sidebar';
 import { _resetShownSurface, markProjectSwitch, planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../dashboard/src/lib/projectSwitchPage';
 
-const PAGES: Page[] = ['relations', 'tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'packs', 'taxonomy', 'announcements', 'whiteboards', 'stats', 'apps'];
+const PAGES: Page[] = ['relations', 'tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'packs', 'whiteboards', 'stats', 'apps'];
 const all = () => true;
 
 beforeEach(() => _resetShownSurface());

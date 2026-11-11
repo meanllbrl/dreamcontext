@@ -18,7 +18,6 @@ const ATOM = 'components/sleepy/chat/MediaEmbed.tsx';
  */
 const SHOWCASE_CLIPS: Record<string, string> = {
   'components/about/Hero.tsx': 'the About hero: autoplay, muted, loop, webm+mp4 sources, no controls',
-  'components/announcements/AnnouncementStory.tsx': 'a What is New story clip: poster, autoplay when silent, controls when it has sound',
 };
 
 function walk(dir: string, out: string[] = []): string[] {

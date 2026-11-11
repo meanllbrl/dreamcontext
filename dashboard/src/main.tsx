@@ -33,6 +33,8 @@ try {
   const now = Date.now();
   sweepExpiredPins(now);
   sweepExpiredChecklists(now);
+  // Retired 0.41.14 with the What's New popup: its read marks have no reader left.
+  localStorage.removeItem('dreamcontext.dashboard.announcementsSeen');
 } catch (err) {
   console.error('[boot] storage sweep failed (continuing):', err);
 }

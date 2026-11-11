@@ -264,7 +264,7 @@ describe('super-orchestration guide: every command, flag, skill and agent exists
       for (const f of readdirSync(join(ROOT, dir)).filter((x) => x.endsWith('.md'))) readName(join(ROOT, dir, f));
     }
     const slash = [...new Set(spans.filter((s) => /^\/[a-z-]+$/.test(s)).map((s) => s.slice(1)))];
-    expect(slash.length).toBeGreaterThanOrEqual(7);
+    expect(slash.length).toBeGreaterThanOrEqual(6);
     expect(slash.filter((n) => !skillNames.has(n))).toEqual([]);
     for (const agent of ['dreamcontext-explore', 'reviewer']) {
       expect(FLAT).toContain(agent);

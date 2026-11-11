@@ -69,11 +69,10 @@ function stripFrontmatter(raw: string): string {
 }
 
 interface CorePageProps {
-  onNavigateTaxonomy?: () => void;
   focus?: FocusTarget;
 }
 
-export function CorePage({ onNavigateTaxonomy, focus }: CorePageProps = {}) {
+export function CorePage({ focus }: CorePageProps = {}) {
   const { t } = useI18n();
   const api = useApi();
   const queryClient = useQueryClient();
@@ -182,20 +181,6 @@ export function CorePage({ onNavigateTaxonomy, focus }: CorePageProps = {}) {
     }
 
     if (!activeFile || !fileDetail) return null;
-
-    // taxonomy.json has a dedicated page — short-circuit with a navigation prompt.
-    if (activeFile === 'taxonomy.json' && onNavigateTaxonomy) {
-      return (
-        <div className="core-taxonomy-link">
-          <p className="core-taxonomy-link-hint">
-            This file is managed by the Taxonomy system.
-          </p>
-          <button className="btn btn--primary" onClick={onNavigateTaxonomy}>
-            Open Taxonomy page
-          </button>
-        </div>
-      );
-    }
 
     if (viewTab === 'preview') {
       if (activeFile.endsWith('.sql') && fileDetail.content) {

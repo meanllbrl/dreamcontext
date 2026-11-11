@@ -227,7 +227,7 @@ child that spots a mistake tells you; only you amend. Each refusal says what to 
 
 - **Runtime proof of a server or UI** → a child running `/jev-verify` in that worktree.
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
-- **Release** → the release checklist pattern + `/announcements`; the publish step is outward (§2).
+- **Release** → the release checklist pattern; the publish step is outward (§2).
 - **Every big code unit has ONE task** (Plan creates it); a small fix (1-3 files) has none. Recall before splitting. A metric →
   a Lab insight (never retyped). A board → `dreamcontext whiteboard` (an explanation on it is
   drawn, `whiteboard kit`; never a note stack). A recurring job → `dreamcontext automations`

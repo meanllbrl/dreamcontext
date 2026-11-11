@@ -105,11 +105,11 @@ async function expandAll(page) {
 }
 
 const PAGES = ['tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'knowledge', 'brain', 'settings',
-  'council', 'core', 'taxonomy', 'sleep', 'packs', 'announcements'];
+  'council', 'core', 'sleep', 'packs'];
 const TITLES = {
   tasks: 'Tasks', automations: 'AI Team', lab: 'Insights', roadmap: 'Roadmap', hypotheses: 'Hypotheses', whiteboards: 'Whiteboard',
-  knowledge: 'Knowledge', brain: 'Map', settings: 'Settings', council: 'Council', core: 'Core', taxonomy: 'Taxonomy',
-  sleep: 'Sleep Cycle', packs: 'Packs', announcements: 'Announcements',
+  knowledge: 'Knowledge', brain: 'Map', settings: 'Settings', council: 'Council', core: 'Core',
+  sleep: 'Sleep Cycle', packs: 'Packs',
 };
 
 const browser = await chromium.launch();
