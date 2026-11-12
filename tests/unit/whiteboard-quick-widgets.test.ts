@@ -6,7 +6,7 @@ import {
   placeQuickWidgets, prepareQuickWidgets, projectFileInside, QuickWidgetRefusal, QUICK_HTML_MAX, readQuickWidget,
 } from '../../src/lib/whiteboards/quick-widgets.js';
 import { answerDeclines, applyQuickEdit, readAnswer, undoQuickEdit, QuickEditRefusal, type QuickJournalRecord } from '../../src/lib/whiteboards/quick-edit.js';
-import { catalogText, readQuickCatalog } from '../../src/lib/whiteboards/quick-catalog.js';
+import { catalogText, readQuickCatalog, resolveByTitle } from '../../src/lib/whiteboards/quick-catalog.js';
 import { widgetPayloadFor } from '../../src/lib/whiteboards/widget-add.js';
 import { identityKey } from '../../src/lib/whiteboards/store.js';
 import { elementBBox } from '../../src/lib/whiteboards/ops.js';
@@ -62,12 +62,23 @@ describe('quick edit widgets: names resolved against the vault', () => {
     expect(refusalOf(() => prepareQuickWidgets(root, [{ kind: 'task', ref: 'no-such-task' }])).why).toBe('not_found');
   });
 
+  it('review r1: a name the catalog may have cut resolves by its exact title across the vault; two with that title, or a near one, are refused', () => {
+    expect(prepareQuickWidgets(root, [{ kind: 'task', ref: 'fix  the LOGIN' }])[0].payload.ref).toBe('fix-login');
+    expect(prepareQuickWidgets(root, [{ kind: 'insight', ref: 'mrr' }])[0].payload.ref).toBe('mrr');
+    writeFileSync(join(root, 'state', 'odeme.md'), '---\nname: Ödeme sayfası\nstatus: todo\n---\n');
+    expect(resolveByTitle(root, 'task', 'ÖDEME SAYFASI')).toBe('odeme');
+    expect(refusalOf(() => prepareQuickWidgets(root, [{ kind: 'task', ref: 'Fix login' }])).why).toBe('not_found');
+    writeFileSync(join(root, 'state', 'fix-login-2.md'), '---\nname: Fix the login\nstatus: todo\n---\n');
+    expect(resolveByTitle(root, 'task', 'Fix the login')).toBeNull();
+    expect(refusalOf(() => prepareQuickWidgets(root, [{ kind: 'task', ref: 'Fix the login' }])).why).toBe('not_found');
+  });
+
   it('a web card: https and project files only; localhost, absolute, outside and symlinked paths are refused', () => {
     expect(prepareQuickWidgets(root, [{ kind: 'web', url: 'https://example.com' }])[0].payload.url).toBe('https://example.com/');
     expect(prepareQuickWidgets(root, [{ kind: 'web', url: 'docs/plan.html' }])[0].payload.url).toBe('docs/plan.html');
     symlinkSync(join(outside, 'secret.html'), join(project, 'docs', 'link.html'));
     symlinkSync(outside, join(project, 'out'));
-    for (const url of ['http://localhost:5173', 'http://127.0.0.1/a.html', `${outside}/secret.html`, `file://${outside}/secret.html`,
+    for (const url of ['http://localhost:5173', 'http://127.0.0.1/a.html', 'https://localhost:5173', 'https://127.0.0.1/a', 'https://[::1]/', 'https://app.localhost/', `${outside}/secret.html`, `file://${outside}/secret.html`,
       '../secret.html', 'docs/../../secret.html', 'docs/link.html', 'out/secret.html', 'docs/missing.html', 'javascript:alert(1)']) {
       expect(refusalOf(() => prepareQuickWidgets(root, [{ kind: 'web', url }])).why, url).toBe('web');
     }
@@ -135,5 +146,16 @@ describe('quick edit widgets: the catalog', () => {
     const text = catalogText(big, 16_000);
     expect(text.length).toBeLessThanOrEqual(16_000);
     expect(JSON.parse(text).insights).toEqual([['mrr', 'MRR']]);
+  });
+
+  it('review r1: a cut list says so (shown, total) and the budget stays filled', () => {
+    const cat = readQuickCatalog(root);
+    const big = { ...cat, tasks: Array.from({ length: 2000 }, (_, i) => [`t-${i}`, 'x'.repeat(60)] as [string, string]) };
+    const text = catalogText(big, 16_000);
+    const out = JSON.parse(text);
+    expect(out.cut.tasks).toEqual([out.tasks.length, 2000]);
+    expect(out.tasks[0][0]).toBe('t-0');
+    expect(text.length).toBeGreaterThan(15_000);
+    expect(JSON.parse(catalogText(cat)).cut).toBeUndefined();
   });
 });

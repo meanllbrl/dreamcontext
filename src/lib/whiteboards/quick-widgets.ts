@@ -20,6 +20,7 @@ import { elementBBox, liveElements, unionBBox, type BBox } from './ops.js';
 import { nextIndices } from './store.js';
 import { classifyWebTarget } from './validate.js';
 import { widgetBox, widgetElementAt, widgetPayloadFor, widgetRefExists, WidgetInputError } from './widget-add.js';
+import { resolveByTitle } from './quick-catalog.js';
 import {
   WIDGET_GRID, isCardColor, isWidgetKind, isWidgetSize, pageRefKind,
   type CardColor, type WhiteboardElement, type WidgetKind, type WidgetPayload, type WidgetSize,
@@ -129,6 +130,14 @@ function checkLengths(w: QuickWidget): void {
   }
 }
 
+/** An https address that is not this machine (no localhost, loopback or unspecified host). */
+function httpsElsewhere(href: string): boolean {
+  const u = new URL(href);
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const local = host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '0.0.0.0' || host === '::1' || host === '::';
+  return u.protocol === 'https:' && !local;
+}
+
 /**
  * Every widget of an answer, checked and built into a payload (no board needed, no lock held).
  * Throws {@link QuickWidgetRefusal} on the first one that may not be added: all or nothing.
@@ -138,31 +147,35 @@ export function prepareQuickWidgets(root: string, widgets: readonly QuickWidget[
   for (const w of widgets) {
     checkLengths(w);
     const title = w.title?.trim() || undefined;
+    let ref = w.ref?.trim();
     if (w.kind === 'insight' || w.kind === 'task' || w.kind === 'lab-card' || w.kind === 'agent' || w.kind === 'knowledge') {
-      const ref = w.ref?.trim();
       if (!ref) throw new QuickWidgetRefusal(w.kind, 'bad', '');
       // A page may also be a project file: the same inside-the-project rule as a web card.
       const isPath = w.kind === 'knowledge' && pageRefKind(ref) !== 'knowledge';
-      const exists = isPath ? projectFileInside(root, ref) : widgetRefExists(root, w.kind, ref);
-      if (!exists) throw new QuickWidgetRefusal(w.kind, 'not_found', shown(ref));
+      if (isPath ? !projectFileInside(root, ref) : !widgetRefExists(root, w.kind, ref)) {
+        // Not a slug: the owner's own words, matched by exact title across the whole vault.
+        const found = isPath ? null : resolveByTitle(root, w.kind, ref);
+        if (!found) throw new QuickWidgetRefusal(w.kind, 'not_found', shown(ref));
+        ref = found;
+      }
     }
     let url: string | undefined;
     if (w.kind === 'web') {
       const t = classifyWebTarget(w.url, opts.selfOrigin);
-      const ok = t.ok && (t.kind === 'url' ? new URL(t.href).protocol === 'https:' : !t.absolute && projectFileInside(root, t.path));
+      const ok = t.ok && (t.kind === 'url' ? httpsElsewhere(t.href) : !t.absolute && projectFileInside(root, t.path));
       if (!ok) throw new QuickWidgetRefusal('web', 'web', shown(w.url));
       url = w.url!.trim();
     }
     let payload: Omit<WidgetPayload, 'v' | 'kind'>;
     try {
       payload = widgetPayloadFor(root, w.kind, {
-        ref: w.ref?.trim(), title, text: w.text, url, items: w.items?.map((s) => s.trim()).filter(Boolean),
+        ref, title, text: w.text, url, items: w.items?.map((s) => s.trim()).filter(Boolean),
         size: w.size, color: w.color,
       }, opts);
     } catch (err) {
       if (err instanceof WidgetInputError) {
         const why: WidgetRefusalWhy = err.problem === 'not_found' ? 'not_found' : err.problem === 'web' ? 'web' : 'bad';
-        throw new QuickWidgetRefusal(w.kind, why, shown(w.ref ?? w.url ?? w.title));
+        throw new QuickWidgetRefusal(w.kind, why, shown(ref ?? w.url ?? w.title));
       }
       throw err;
     }

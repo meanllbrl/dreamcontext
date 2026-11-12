@@ -3,7 +3,8 @@
  * anything up): a compact list of this vault's insights, tasks, knowledge pages, lab cards and
  * agents, slug + title. It rides in the user message, OUTSIDE the cached system prompt, bounded
  * by {@link QUICK_CATALOG_MAX}. It is a hint only: the server resolves every name the model picks
- * against the vault itself (`widgetRefExists`), so a name missing here is refused, never guessed.
+ * against the vault itself (`widgetRefExists`, then {@link resolveByTitle}: an exact, unique title
+ * across the WHOLE vault), so a name cut from this list still resolves, and nothing is guessed.
  */
 import { basename, join } from 'node:path';
 import { existsSync, lstatSync, statSync } from 'node:fs';
@@ -63,18 +64,47 @@ export function readQuickCatalog(root: string): QuickCatalog {
   };
 }
 
-/** The catalog as one JSON line, at most `max` characters: the longest lists halve first. */
+const KEYS = ['insights', 'tasks', 'knowledge', 'labCards', 'agents'] as const;
+
+/**
+ * The catalog as one JSON line, at most `max` characters. Over budget, the longest list loses its
+ * tail (oldest rows) a little at a time, so the budget stays filled; a list that lost rows is named
+ * in `cut` (shown, total), so the model never presents a slice as the whole (review r1).
+ */
 export function catalogText(cat: QuickCatalog, max = QUICK_CATALOG_MAX): string {
   const c: QuickCatalog = { ...cat };
-  let out = JSON.stringify(c);
-  let guard = 0;
-  while (out.length > max && guard++ < 64) {
-    const key = (Object.keys(c) as (keyof QuickCatalog)[]).reduce((a, b) => (c[a].length >= c[b].length ? a : b));
+  const text = () => {
+    const cut = Object.fromEntries(KEYS.filter((k) => c[k].length < cat[k].length).map((k) => [k, [c[k].length, cat[k].length]]));
+    return JSON.stringify(Object.keys(cut).length ? { ...c, cut } : c);
+  };
+  let out = text();
+  while (out.length > max) {
+    const key = KEYS.reduce((a, b) => (c[a].length >= c[b].length ? a : b));
     if (c[key].length === 0) break;
-    c[key] = c[key].slice(0, Math.floor(c[key].length / 2));
-    out = JSON.stringify(c);
+    // Shed in proportion to the overshoot (at least one row): few steps, no budget left unused.
+    const over = (out.length - max) / out.length;
+    c[key] = c[key].slice(0, Math.max(0, c[key].length - Math.max(1, Math.ceil(c[key].length * over))));
+    out = text();
   }
   return out.length > max ? JSON.stringify({ insights: [], tasks: [], knowledge: [], labCards: [], agents: [] }) : out;
+}
+
+const KIND_LIST: Record<string, keyof QuickCatalog> = { insight: 'insights', task: 'tasks', knowledge: 'knowledge', 'lab-card': 'labCards', agent: 'agents' };
+// Case folded both ways for Turkish: I/ı and İ/i meet, so "ÖDEME SAYFASI" is "Ödeme sayfası" and "LOGIN" is "login".
+const norm = (s: string): string => s.normalize('NFC').toLowerCase().replace(/i\u0307/g, 'i').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
+
+/**
+ * A widget name the catalog did not carry, read against the whole vault: the slug whose title is
+ * exactly that name (case and spacing aside), when exactly one has it. Null otherwise: no near
+ * match, no guess.
+ */
+export function resolveByTitle(root: string, kind: string, name: string): string | null {
+  const list = KIND_LIST[kind];
+  if (!list) return null;
+  const want = norm(name);
+  if (!want) return null;
+  const hits = readQuickCatalog(root)[list].filter((r) => norm(r[1]) === want || norm(r[0]) === want);
+  return hits.length === 1 ? hits[0][0] : null;
 }
 
 const cache = new Map<string, { at: number; sig: string; text: string }>();

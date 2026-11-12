@@ -459,7 +459,7 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
       return (all[1] ?? all[0])?.[1].replace(/\\'/g, "'") ?? k;
     };
     const line = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'insight', why: 'not_found', name: 'churn' } }), tr);
-    expect(line).toEqual({ kind: 'failed', text: 'Bu projede "churn" adında bir insight yok; tahtada bir şey değişmedi.' });
+    expect(line).toEqual({ kind: 'failed', text: 'Bu projede "churn" adında bir insight bulunamadı; tahtada bir şey değişmedi.' });
     const web = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'web', why: 'web', name: 'http://localhost:3000' } }), tr);
     expect((web as { text: string }).text).toContain('https');
     for (const why of ['not_found', 'web', 'too_long', 'bad']) {
