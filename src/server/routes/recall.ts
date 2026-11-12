@@ -12,6 +12,8 @@ import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import { haikuRecall, makeClaudeExecutor } from '../../lib/recall-query-extractor.js';
 import { resolveRecallMode } from '../../cli/commands/sleep.js';
 import { hybridPromptRecall, toWirePromptHit } from '../../cli/commands/hook.js';
+import { hybridVaultSearch, toWireQueryHit } from '../../cli/commands/memory.js';
+import { minTier, resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import { realpathSync } from 'node:fs';
@@ -137,15 +139,44 @@ export async function handleRecallGet(
   }
 }
 
+const SERVED_TIERS: readonly RecallTier[] = ['local', 'cloud-index', 'cloud'];
+
 /**
- * POST /api/recall/prompt  { prompt, root }
+ * The tier this server runs for a request: exactly the one the caller resolved (absent = 'local', what every
+ * hook before this field sent). The caller already dropped to local inside a spawned session or past the
+ * daily cap; the server re-checks the vault's own limits (consent, key, daily cap) with no environment of
+ * its own, so its env can never lift a tier. Null when it cannot serve that tier as asked: one it does not
+ * know (an older or newer caller), or one the vault does not allow here (say the recall key lives only in
+ * the caller's env). The caller then recalls itself, at its own tier, instead of getting a quieter answer.
+ */
+export function servedTier(requested: unknown, contextRoot: string, home?: string): RecallTier | null {
+  const want = requested === undefined ? 'local' : requested;
+  if (typeof want !== 'string' || !(SERVED_TIERS as readonly string[]).includes(want)) return null;
+  const tier = want as RecallTier;
+  return minTier(tier, resolvePromptTier(contextRoot, {}, home).tier) === tier ? tier : null;
+}
+
+/** Parse the `types` list of a query request; undefined = every type. */
+function bodyTypes(raw: unknown): CorpusType[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const types = raw.filter((t): t is CorpusType => typeof t === 'string' && (ALL_TYPES as string[]).includes(t));
+  return types.length > 0 ? types : undefined;
+}
+
+/**
+ * POST /api/recall/prompt  { prompt, root, tier?, kind?, topK?, types?, minLevel? }
  *
- * The prompt hook's hybrid recall, run here for it. A hook is a fresh process per prompt, so it
- * loads the e5 model every time (~5 CPU-seconds, ~450 MB); this server keeps it loaded. Same
- * function as the hook's in-process path (`hybridPromptRecall`), local tier only, so the hook
- * prints the same block either way. This machine only (loopback socket). `root` is not a vault
- * selector: it must name the vault this request already resolved to, or the hook is told to
- * recall itself (409), as it is when the model or index is not ready here.
+ * Recall run here, for a CLI process on this machine: this server keeps the query model, the vector index
+ * and the parsed corpus cache in memory, where a hook or a `memory recall` is a fresh process that loads all
+ * three every time (~2.4 s per prompt measured on a cloud-index vault). Two shapes:
+ *   - default: the prompt hook's hybrid recall (`hybridPromptRecall`), so the hook prints the same block
+ *     either way.
+ *   - `kind: 'query'`: `memory recall`'s hybrid search (`hybridVaultSearch`) with its topK, types and level;
+ *     the answer echoes `kind` so a caller can tell it from an older server's prompt answer.
+ * `tier` is the caller's resolved tier (see {@link servedTier}). This machine only (loopback socket). `root`
+ * is not a vault selector: it must name the vault this request already resolved to. Anything this server
+ * cannot serve (another vault, an unknown tier, the model or index not ready here) is a 409 and the caller
+ * recalls itself.
  */
 export async function handleRecallPromptPost(
   req: IncomingMessage,
@@ -169,12 +200,25 @@ export async function handleRecallPromptPost(
     sendError(res, 409, 'other_vault', 'This server is not serving that vault.');
     return;
   }
-  if (!hybridReady(contextRoot, 'hybrid', 'local')) {
-    sendError(res, 409, 'not_ready', 'The local model or index is not ready here.');
+  const tier = servedTier(body?.tier, contextRoot);
+  if (tier === null) {
+    sendError(res, 409, 'not_ready', 'This server cannot serve that recall tier.');
+    return;
+  }
+  if (!hybridReady(contextRoot, 'hybrid', tier)) {
+    sendError(res, 409, 'not_ready', 'The recall model or index is not ready here.');
     return;
   }
   try {
-    const r = await hybridPromptRecall(prompt, contextRoot, 'local');
+    if (body?.kind === 'query') {
+      const topRaw = typeof body.topK === 'number' ? body.topK : 10;
+      const topK = Number.isFinite(topRaw) ? Math.max(1, Math.min(50, Math.floor(topRaw))) : 10;
+      const minLevel = body.minLevel === 1 || body.minLevel === 2 || body.minLevel === 3 ? body.minLevel : undefined;
+      const r = await hybridVaultSearch(contextRoot, prompt, topK, bodyTypes(body.types), minLevel, tier);
+      sendJson(res, 200, { kind: 'query', corpusSize: r.corpusSize, timing: r.timing, hits: r.hits.map(toWireQueryHit) });
+      return;
+    }
+    const r = await hybridPromptRecall(prompt, contextRoot, tier);
     sendJson(res, 200, { label: r.label, timing: r.timing, hits: r.hits.map(toWirePromptHit) });
   } catch (err) {
     sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');

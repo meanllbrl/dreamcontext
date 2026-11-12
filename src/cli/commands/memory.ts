@@ -1,7 +1,10 @@
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { Command } from 'commander';
+import { request as httpRequest } from 'node:http';
+import { listVaults } from '../../lib/vaults.js';
+import { resolveDashboardPort } from './hook.js';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve as resolvePath } from 'node:path';
 import chalk from 'chalk';
 import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -13,6 +16,7 @@ import {
   docLevel,
   isFederated,
   CORPUS_TYPES,
+  type CorpusDoc,
   type CorpusType,
   type RecallHit,
 } from '../../lib/recall.js';
@@ -258,11 +262,131 @@ export function cloudFallbackNote(timing: RecallTiming): string | null {
 }
 
 /**
+ * The hybrid search `memory recall` runs for the current vault: BM25+dense over the cached corpus, with the
+ * project's alias groups, at `tier` (hybridSearch caps it at what the vault consented to). The CLI runs it
+ * in-process; the dashboard server runs the same function for it (POST /api/recall/prompt, `kind: 'query'`)
+ * with the query model and the index already loaded.
+ */
+export async function hybridVaultSearch(
+  root: string,
+  query: string,
+  topK: number,
+  types: CorpusType[] | undefined,
+  minLevel: number | undefined,
+  tier: RecallTier,
+  home?: string,
+): Promise<{ hits: RecallHit[]; corpusSize: number; timing: RecallTiming }> {
+  const corpus = buildCorpusCached(root, {
+    ...(types ? { types } : {}),
+    ...(minLevel ? { minLevel } : {}),
+  });
+  const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none' };
+  const hits = await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(loadProjectVocabulary(root)), tier, timing, ...(home ? { home } : {}) });
+  return { hits, corpusSize: corpus.length, timing };
+}
+
+/** One `memory recall` hit as the server sends it: exactly what the CLI prints and filters on. */
+export interface WireQueryHit {
+  score: number;
+  rankScore: number;
+  snippet: string;
+  doc: Pick<CorpusDoc, 'type' | 'path' | 'relPath' | 'slug' | 'title' | 'description' | 'tags' | 'product' | 'level' | 'federated'>;
+}
+
+export function toWireQueryHit(h: RecallHit): WireQueryHit {
+  const d = h.doc;
+  return {
+    score: h.score,
+    rankScore: h.rankScore,
+    snippet: h.snippet,
+    doc: {
+      type: d.type, path: d.path, relPath: d.relPath, slug: d.slug, title: d.title, description: d.description, tags: d.tags,
+      ...(d.product !== undefined ? { product: d.product } : {}),
+      ...(d.level !== undefined ? { level: d.level } : {}),
+      ...(d.federated !== undefined ? { federated: d.federated } : {}),
+    },
+  };
+}
+
+function fromWireQueryHit(w: WireQueryHit): RecallHit {
+  const doc = { ...w.doc, body: '', tokens: [], tokenSet: new Set<string>(), termFreq: new Map<string, number>() } as CorpusDoc;
+  return { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+}
+
+/**
+ * How long `memory recall` waits for the app's server. Its first query after a start loads the query
+ * model (~1-2 s); a cloud tier may spend its 3.5 s stage budget. Past this the CLI searches itself.
+ */
+export const QUERY_VIA_SERVER_TIMEOUT_MS = 6000;
+
+/**
+ * Ask the running app's server to run {@link hybridVaultSearch} for this vault. Null on any miss (no server,
+ * another vault, an older server without `kind: 'query'`, not ready there, a timeout, a malformed answer):
+ * the caller then searches in-process, exactly as before. Never throws.
+ */
+export function queryViaServer(
+  root: string,
+  query: string,
+  topK: number,
+  types: CorpusType[] | undefined,
+  minLevel: number | undefined,
+  tier: RecallTier,
+  opts: { port?: number; timeoutMs?: number; home?: string } = {},
+): Promise<{ hits: RecallHit[]; corpusSize: number; timing: RecallTiming } | null> {
+  const port = opts.port ?? resolveDashboardPort();
+  const timeoutMs = opts.timeoutMs ?? QUERY_VIA_SERVER_TIMEOUT_MS;
+  let vault: string | null = null;
+  try {
+    const projectRoot = resolvePath(dirname(root));
+    vault = listVaults(opts.home).find((v) => resolvePath(v.path) === projectRoot)?.name ?? null;
+  } catch { /* unregistered: the server's own vault must then be this one */ }
+  const body = JSON.stringify({
+    kind: 'query', prompt: query, root, tier, topK,
+    ...(types ? { types } : {}),
+    ...(minLevel ? { minLevel } : {}),
+  });
+  return new Promise((resolveQuery) => {
+    let settled = false;
+    const done = (v: { hits: RecallHit[]; corpusSize: number; timing: RecallTiming } | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveQuery(v);
+    };
+    const timer = setTimeout(() => { req.destroy(); done(null); }, timeoutMs);
+    const headers: Record<string, string | number> = { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) };
+    if (vault) headers['x-dreamcontext-vault'] = vault;
+    const req = httpRequest({ host: '127.0.0.1', port, path: '/api/recall/prompt', method: 'POST', headers }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return done(null);
+        try {
+          const parsed = JSON.parse(data) as { kind?: unknown; hits?: unknown; corpusSize?: unknown; timing?: unknown };
+          // An older server answers this body as a prompt recall: no `kind` echo, so it is not ours.
+          if (parsed.kind !== 'query' || !Array.isArray(parsed.hits) || typeof parsed.corpusSize !== 'number') return done(null);
+          const timing = parsed.timing as RecallTiming | null;
+          if (!timing || typeof timing.fallback !== 'string' || typeof timing.tier !== 'string') return done(null);
+          done({ hits: (parsed.hits as WireQueryHit[]).map(fromWireQueryHit), corpusSize: parsed.corpusSize, timing });
+        } catch {
+          done(null);
+        }
+      });
+      res.on('error', () => done(null));
+    });
+    req.on('error', () => done(null));
+    req.end(body);
+  });
+}
+
+/**
  * The current vault's own recall, in the vault's recall mode (the SAME source of truth the hook and
  * the dashboard read): hybrid BM25+dense fusion when it is selected AND already warm, else plain BM25.
  * `hybridReady` guarantees `memory recall` never blocks on a first-time download or index build. Every
  * hybrid shortfall (not ready, or a fallback inside the search) is one dim stderr line, so `--json` /
- * `--plain` stdout stays clean and BM25 is never served silently.
+ * `--plain` stdout stays clean and BM25 is never served silently. With the app running, the hybrid search
+ * runs in its server, which keeps the query model, the index and the corpus warm.
  */
 async function currentVaultRecall(
   root: string,
@@ -271,11 +395,6 @@ async function currentVaultRecall(
   types: CorpusType[] | undefined,
   minLevel: number | undefined,
 ): Promise<{ hits: RecallHit[]; corpusSize: number }> {
-  const corpus = buildCorpusCached(root, {
-    ...(types ? { types } : {}),
-    ...(minLevel ? { minLevel } : {}),
-  });
-  const vocab = loadProjectVocabulary(root);
   const mode = resolveRecallMode(root);
   // The tier comes from the vault's own consent (spawned sessions and the daily cap downgrade it);
   // hybridSearch re-derives it, so this can only ever ask for less than consent allows.
@@ -284,13 +403,21 @@ async function currentVaultRecall(
   if (mode === 'hybrid' && !useHybrid) {
     console.error(chalk.dim(`  (${hybridNotReadyNote(root, resolved)})`));
   }
-  if (!useHybrid) return { hits: bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) }), corpusSize: corpus.length };
-  const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none' };
-  const hits = await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(vocab), tier: resolved.tier, timing });
+  if (!useHybrid) {
+    const corpus = buildCorpusCached(root, {
+      ...(types ? { types } : {}),
+      ...(minLevel ? { minLevel } : {}),
+    });
+    return { hits: bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(loadProjectVocabulary(root)) }), corpusSize: corpus.length };
+  }
+  const remote = process.env.DREAMCONTEXT_RECALL_VIA_SERVER === '0'
+    ? null
+    : await queryViaServer(root, query, topK, types, minLevel, resolved.tier);
+  const { hits, corpusSize, timing } = remote ?? await hybridVaultSearch(root, query, topK, types, minLevel, resolved.tier);
   const note = cloudFallbackNote(timing);
   if (note) console.error(chalk.dim(`  (${note})`));
-  if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') console.error(JSON.stringify(timing));
-  return { hits, corpusSize: corpus.length };
+  if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') console.error(JSON.stringify({ ...timing, viaServer: remote !== null }));
+  return { hits, corpusSize };
 }
 
 export function registerMemoryCommand(program: Command): void {
