@@ -82,6 +82,9 @@ describe('memory recall in a hybrid vault with a connected peer', () => {
     for (const k of [...ENV_KEYS, 'HOME', 'DREAMCONTEXT_RECALL_MODE', 'DREAMCONTEXT_RECALL_TIMING']) { saved[k] = process.env[k]; delete process.env[k]; }
     process.env.HOME = home;
     process.env.DREAMCONTEXT_RECALL_MODE = 'hybrid';
+    // Never ask a live app on the machine running the suite: these drive the in-process search.
+    saved.DREAMCONTEXT_RECALL_VIA_SERVER = process.env.DREAMCONTEXT_RECALL_VIA_SERVER;
+    process.env.DREAMCONTEXT_RECALL_VIA_SERVER = '0';
   });
 
   afterEach(() => {
@@ -108,7 +111,7 @@ describe('memory recall in a hybrid vault with a connected peer', () => {
     expect(err).toContain('hybrid recall selected but not warmed — using BM25');
   });
 
-  it('--top bounds the whole list: peers take at most half, the current vault fills the rest', async () => {
+  it('--top bounds the whole list, and a full own list keeps its slots against peers that are no stronger', async () => {
     const cur = makeVault(base, 'cur', home);
     const peer = makeVault(base, 'peer', home);
     for (let i = 0; i < 8; i++) {
@@ -121,8 +124,21 @@ describe('memory recall in a hybrid vault with a connected peer', () => {
     const { out } = await runMemory(['memory', 'recall', 'rate limiting middleware', '--top', '5', '--json']);
     const keys: string[] = JSON.parse(out).hits.map((h: { key: string }) => h.key);
     expect(keys).toHaveLength(5);
-    expect(keys.filter((k) => k.startsWith('peer::'))).toHaveLength(2);
-    expect(keys.slice(0, 3).every((k) => k.startsWith('cur::'))).toBe(true);
+    expect(keys.every((k) => k.startsWith('cur::'))).toBe(true);
+  });
+
+  it('a peer fills the slots the own vault left empty, at most half of --top', async () => {
+    const cur = makeVault(base, 'cur', home);
+    const peer = makeVault(base, 'peer', home);
+    writeKnowledge(cur, 'cur-0', 'rate limiting middleware design note');
+    for (let i = 0; i < 8; i++) writeKnowledge(peer, `peer-${i}`, `rate limiting middleware design note ${i}`);
+    addConnection(join(cur, '_dream_context'), 'cur', 'peer', 'both', null, home);
+    process.chdir(cur);
+
+    const { out } = await runMemory(['memory', 'recall', 'rate limiting middleware', '--top', '6', '--json']);
+    const keys: string[] = JSON.parse(out).hits.map((h: { key: string }) => h.key);
+    expect(keys[0]).toBe('cur::knowledge/cur-0');
+    expect(keys.filter((k) => k.startsWith('peer::'))).toHaveLength(3);
   });
 
   it('cloud-index ready: the current vault runs its own tier, so a doc BM25 cannot match leads, peers follow', async () => {

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import { handleRecallPromptPost, servedTier } from '../../src/server/routes/recall.js';
-import { queryViaServer, toWireQueryHit } from '../../src/cli/commands/memory.js';
+import { mergePeerHits, queryViaServer, toWireQueryHit } from '../../src/cli/commands/memory.js';
 import { grantVaultConsent, setRecallCloudKey } from '../../src/lib/recall-cloud-config.js';
 import type { CorpusDoc, RecallHit } from '../../src/lib/recall.js';
 
@@ -178,5 +178,32 @@ describe('queryViaServer (memory recall through the app)', () => {
     const port = await new Promise<number>((r) => server.listen(0, '127.0.0.1', () => r((server.address() as { port: number }).port)));
     await queryViaServer('/v/_dream_context', 'q', 5, undefined, undefined, 'local', { port, home });
     expect(header).toBe('acme');
+  });
+});
+
+describe('mergePeerHits: the peer share is a cap, not a floor (MM-7)', () => {
+  const fh = (vault: string, slug: string, score: number) => ({ ...hit(slug, score), vault, key: `${vault}::knowledge/${slug}` });
+  const own = [fh('cur', 'a', 5), fh('cur', 'b', 3), fh('cur', 'c', 1.5), fh('cur', 'd', 0)];
+
+  it('a full own list keeps every slot against peers that do not beat what they would push out', () => {
+    const peers = [fh('peer', 'x', 1.4), fh('peer', 'y', 0.5)];
+    expect(mergePeerHits(own, peers, 4).map((h) => h.key)).toEqual(own.map((h) => h.key));
+  });
+
+  it('a strong peer pushes out the last own hit only, and needs the raw-score floor to do it', () => {
+    expect(mergePeerHits(own, [fh('peer', 'x', 1.9)], 4).map((h) => h.key)).toEqual(own.map((h) => h.key)); // beats 0 but under 2.0
+    expect(mergePeerHits(own, [fh('peer', 'x', 2.5)], 4).map((h) => h.key))
+      .toEqual(['cur::knowledge/a', 'cur::knowledge/b', 'cur::knowledge/c', 'peer::knowledge/x']);
+  });
+
+  it('peers never take more than half, however strong', () => {
+    const peers = [fh('peer', 'x', 9), fh('peer', 'y', 9), fh('peer', 'z', 9)];
+    const keys = mergePeerHits(own, peers, 4).map((h) => h.key);
+    expect(keys).toEqual(['cur::knowledge/a', 'cur::knowledge/b', 'peer::knowledge/x', 'peer::knowledge/y']);
+  });
+
+  it('empty own slots go to peers with no score test, still capped', () => {
+    const keys = mergePeerHits([fh('cur', 'a', 5)], [fh('peer', 'x', 0.1), fh('peer', 'y', 0.1), fh('peer', 'z', 0.1)], 4).map((h) => h.key);
+    expect(keys).toEqual(['cur::knowledge/a', 'peer::knowledge/x', 'peer::knowledge/y']);
   });
 });

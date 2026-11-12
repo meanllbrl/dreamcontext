@@ -2,6 +2,7 @@ import { basename, dirname } from 'node:path';
 import {
   bm25Search,
   isFederated,
+  type CorpusDoc,
   type CorpusType,
   type RecallHit,
 } from './recall.js';
@@ -51,6 +52,8 @@ export interface CrossVaultRecallOptions {
   minLevel?: number;
   /** Reference time for the recency multiplier (determinism in tests). */
   now?: Date;
+  /** Peers serve curated docs only: no session digests, and no changelog unless `types` names it ({@link isPeerNoise}). */
+  curatedPeers?: boolean;
 }
 
 /**
@@ -68,6 +71,12 @@ export interface CrossVaultTarget {
    */
   label?: string;
   current?: boolean;
+}
+
+/** A peer doc that never serves across the boundary: a session digest, or a changelog entry nobody asked for. */
+export function isPeerNoise(doc: CorpusDoc, types?: CorpusType[]): boolean {
+  if (doc.type === 'task' && doc.slug.startsWith('digest#')) return true;
+  return doc.type === 'changelog' && !(types ?? []).includes('changelog');
 }
 
 /** `<vault>::<type>/<slug>` — the namespaced key used everywhere a hit is keyed. */
@@ -139,7 +148,13 @@ export function crossVaultRecall(
       // return nothing on exactly the machines that have automations.
       // Agents are prompts too (`agents/<slug>.md`): the same exclusion.
       // App tools (`app:<slug>/<id>`) are THIS Mac's installed apps: never read across a vault.
-      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent' && doc.type !== 'app'));
+      .filter((doc) => isCurrent || (doc.type !== 'automation' && doc.type !== 'agent' && doc.type !== 'app'))
+      // `curatedPeers`: a peer's session digests (another project's machine-written session summaries) and
+      // its changelog entries took slots on most turns and were never opened (audit MM-7: 54 of 579 peer
+      // slots were digests, 0 of 579 peer hits used). The per-turn paths (the prompt hook, `memory recall`)
+      // ask for a peer's curated docs only; its changelog only when asked for by type. The Assistant's
+      // cross-brain search keeps them: "what happened in X" is answered by X's digests.
+      .filter((doc) => isCurrent || opts.curatedPeers !== true || !isPeerNoise(doc, opts.types));
 
     const label = target.label ?? target.name;
     const vaultHits = bm25Search(query, corpus, topK, { now });

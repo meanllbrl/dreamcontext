@@ -94,6 +94,32 @@ export function parseTypes(value: string | undefined): CorpusType[] | undefined 
   return filtered.length > 0 ? filtered : undefined;
 }
 
+/** The raw BM25 score a peer hit needs before it may push one of this vault's own hits out (the hook's gate). */
+export const PEER_DISPLACE_MIN_SCORE = 2.0;
+
+/**
+ * This vault's own hits (in their order) followed by peer hits, at most `topK` in all. Peers take at most
+ * half of `topK`, and that is a CAP, not a floor: a peer hit fills a slot the own vault left empty, or
+ * pushes out the last own hit only when its raw BM25 score is at least {@link PEER_DISPLACE_MIN_SCORE}
+ * and beats that hit's raw score (both raw scores are flat BM25; the hybrid rank score is not comparable).
+ * The old rule gave peers half the list on every query: 30 peer slots in 15 test queries, 2 relevant (MM-7).
+ */
+export function mergePeerHits(own: FederatedHit[], peers: FederatedHit[], topK: number): FederatedHit[] {
+  const cap = Math.floor(topK / 2);
+  let kept = Math.min(own.length, topK);
+  const taken: FederatedHit[] = [];
+  for (const p of peers) {
+    if (taken.length >= cap) break;
+    if (kept + taken.length < topK) { taken.push(p); continue; }
+    const displaced = own[kept - 1];
+    if (kept > 0 && p.score >= PEER_DISPLACE_MIN_SCORE && p.score > displaced.score) {
+      kept--;
+      taken.push(p);
+    }
+  }
+  return [...own.slice(0, kept), ...taken];
+}
+
 /**
  * Cross-vault recall output (P1.2/P1.3). Builds the target vault set from the
  * flags — current vault always included — then renders vault-tagged hits in
@@ -127,8 +153,7 @@ function recallFederated(
 
   // `localHits`: the current vault was already searched by its own recall mode (hybrid, which can
   // reach a doc BM25 never matched, e.g. across languages). Its hits lead in their own order; the
-  // peers are BM25 and follow. The two scores are not comparable, so the budget is explicit: peers get
-  // at most half of `topK`, the current vault fills the rest, and the total never exceeds `topK`.
+  // peers are BM25 and follow, under {@link mergePeerHits}: a cap, never a floor.
   // Without `localHits`, every vault (current included) is one BM25 merge.
   const currentLabel = currentTarget.label ?? currentTarget.name;
   const result = crossVaultRecall(query, {
@@ -136,17 +161,17 @@ function recallFederated(
     topK,
     types,
     minLevel,
+    curatedPeers: true,
   });
   const skipped = result.skipped;
-  const peerHits = localHits === undefined ? result.hits : result.hits.slice(0, Math.floor(topK / 2));
-  const hits: FederatedHit[] = localHits === undefined ? result.hits : [
-    ...localHits
+  const hits: FederatedHit[] = localHits === undefined ? result.hits : mergePeerHits(
+    localHits
       // The same serving exclusion crossVaultRecall applies: ingested-from-peer copies stay home.
       .filter((h) => !isFederated(h.doc))
-      .slice(0, topK - peerHits.length)
       .map((h) => ({ ...h, vault: currentLabel, key: namespacedKey(currentLabel, h.doc.type, h.doc.slug) })),
-    ...peerHits,
-  ];
+    result.hits,
+    topK,
+  );
 
   if (opts.json) {
     const payload = hits.map((h) => ({
