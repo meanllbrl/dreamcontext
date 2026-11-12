@@ -60,7 +60,7 @@ import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning } from '../../lib/super/ask-summary.js';
+import { askWarning, queueAskWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -2231,6 +2231,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const batch = c.state.session ? superOpenBatch(c.state.session) : null;
     const now = Date.now();
     let shown: ReturnType<typeof applyAskShow> = null;
+    let readCards = 0;
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
@@ -2238,9 +2239,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         q.ownerText = text;
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
         shown = applyAskShow(s, q.id, prep, c.who.contextRoot, now, s.children[child] ? child : undefined);
+        readCards = readCardsOf(s, shown).length;
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
+    // A plan child's question escalated with no report card of the plan: sent anyway, the Super
+    // is told (owner 2026-11-12).
+    const warning = queueAskWarning(c.state.children[child]?.mode, readCards);
     // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
     // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
     // turn's end no second ping; one nobody saw keeps the reply's own notch row.
@@ -2248,7 +2253,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
   },
 
   'queue-done': async (c, b, res) => {

@@ -167,6 +167,22 @@ function toolResultText(item: TurnItem): { text: string; isError: boolean } {
   }
 }
 
+/**
+ * A tool's question has no description field (Codex, Antigravity): what it writes above the
+ * question (the plan summary a Plan chat must give, plan-question.ts) becomes the card's
+ * description, the last line its question. A one-line question, or one whose last line is not
+ * a question, stays as it is.
+ */
+export function splitQuestionLead(text: string): { question: string; description?: string } {
+  const lines = text.split(/\r?\n/);
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (lines.length < 2) return { question: text };
+  const last = lines[lines.length - 1].trim();
+  if (!/[?？]$/u.test(last) || last.length > 400) return { question: text };
+  const description = lines.slice(0, -1).join('\n').trim();
+  return description ? { question: last, description } : { question: last };
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -748,7 +764,12 @@ export class ToWire {
     if (this.openAsks.has(item.requestId)) return [];
     this.openAsks.add(item.requestId);
     if (item.responseMode === 'message') this.asyncAsks.add(item.requestId);
-    this.questionsByRequest.set(item.requestId, item.questions.map((q) => ({ id: q.id, question: q.question })));
+    // Lines above the question (a Plan child's summary, plan-question.ts) are its description:
+    // the card's title stays the question. The answer comes back keyed by that shorter text.
+    // Two questions the split would make the same text keep their whole text (answers key by it).
+    const cut = item.questions.map((q) => ({ q, ...splitQuestionLead(q.question) }));
+    const split = new Set(cut.map((c) => c.question)).size === cut.length ? cut : item.questions.map((q) => ({ q, question: q.question, description: undefined }));
+    this.questionsByRequest.set(item.requestId, split.map(({ q, question }) => ({ id: q.id, question })));
     return [{
       type: 'control_request',
       request_id: this.wireIdFor(item.requestId),
@@ -757,8 +778,9 @@ export class ToWire {
         tool_name: 'AskUserQuestion',
         requires_user_interaction: true,
         input: {
-          questions: item.questions.map((q) => ({
-            question: q.question,
+          questions: split.map(({ q, question, description }) => ({
+            question,
+            ...(description ? { description } : {}),
             header: q.header.slice(0, 12),
             multiSelect: q.multiSelect ?? false,
             // T3 fills a missing description with the label (Codex's async options are bare labels): no echo.

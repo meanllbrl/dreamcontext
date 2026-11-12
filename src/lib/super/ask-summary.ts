@@ -38,3 +38,13 @@ export function askWarning(spec: SuperAskSpec, readCards: number): string | null
   const long = spec.questions.some((q) => q.options.some((o) => !!o.preview && textOf(o.preview).length > MAX_PREVIEW_TEXT));
   return long ? LONG_PREVIEW_WARNING : null;
 }
+
+export const PLAN_QUEUE_ASK_WARNING = `This escalates a plan child's question with no report card of its plan. It went as it is (its own card opens with the plan's summary); now give him the plan in this turn's text. Next time ${REPORT_HOW}.`;
+
+/**
+ * The warning for a `super queue ask` of a child's question, else null. Pure. A plan child asks
+ * about its plan (owner 2026-11-12): the Super's escalation shows the plan whole, as a report card.
+ */
+export function queueAskWarning(childMode: string | undefined, readCards: number): string | null {
+  return childMode === 'plan' && readCards === 0 ? PLAN_QUEUE_ASK_WARNING : null;
+}

@@ -849,7 +849,8 @@ video.chat-msg-user-media-el { cursor: default; }
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.chat-surveycard-desc { margin: -2px 0 2px; color: var(--color-text-secondary); font-size: 12.5px; line-height: 1.5; }
+/* A plan summary rides here as lines and "- " bullets (plan-question.ts): its line breaks stay. */
+.chat-surveycard-desc { margin: -2px 0 2px; color: var(--color-text-secondary); font-size: 12.5px; line-height: 1.5; white-space: pre-line; }
 /* The option's number — the key that picks it. Tertiary so it reads as a hint, not a label. */
 .chat-surveycard-opt-key {
   flex: 0 0 auto;
