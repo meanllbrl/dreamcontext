@@ -25,7 +25,7 @@ import {
   type ObjectionRecord,
 } from '../../lib/task-objection.js';
 import { RULES_REL_PATH, mergeRule, readRules, revertRule, setRule, unlearnedIds } from '../../lib/task-filing-rules.js';
-import { inheritFromParent, isMappedWaveChild, openChildren, validateParentLink, waveChildren } from '../../lib/task-parent.js';
+import { inheritFromParent, isMappedWaveChild, validateParentLink, waveChildren } from '../../lib/task-parent.js';
 import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 import {
   appendDeclined,
@@ -64,6 +64,7 @@ import { runTaskJob } from '../../lib/agents/task-host.js';
 import { deliverTask, reviewTask } from '../../lib/agents/task-delivery.js';
 import { insideAgentRun } from '../../lib/automations/types.js';
 import { authorLabel, cliStatusAuthor, statusChangeEntry } from '../../lib/task-history.js';
+import { closeOpenChildren, closesChildren } from '../../lib/task-close-children.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -565,17 +566,14 @@ async function blockOnSleepEvalGate(backend: TaskBackend, root: string, slug: st
 }
 
 /**
- * A parent closes only after its sub-tasks: done-kind is refused while any child is still open
- * (cancelled children never block). Prints the open children and returns true to refuse.
+ * A parent closed to a done- or cancelled-kind status takes its open sub-tasks with it, each
+ * with the same status and the log line "closed with its parent" (owner, 2026-11-12).
  */
-async function blockOnOpenChildren(backend: TaskBackend, slug: string): Promise<boolean> {
-  const all = (await backend.list()).map((t) => ({ slug: t.name, parent_task: t.parent_task, status: t.status }));
-  const open = openChildren(all, slug, statusSet());
-  if (open.length === 0) return false;
-  error(`"${slug}" has ${open.length} open sub-task(s): ${open.map((t) => `${t.slug} (${t.status})`).join(', ')}. `
-    + 'Close or cancel them first, or move the parent to in_review.');
-  process.exitCode = 1;
-  return true;
+async function closeChildrenWith(backend: TaskBackend, slug: string, status: string): Promise<void> {
+  const defs = statusSet();
+  if (!closesChildren(defs, status)) return;
+  const closed = await closeOpenChildren(backend, slug, status, defs, cliStatusAuthor());
+  if (closed.length > 0) info(`Closed with its parent (${status}): ${closed.join(', ')}`);
 }
 
 /** `--rests-on a, b` → ['a', 'b']. */
@@ -2004,8 +2002,6 @@ export function registerTasksCommand(program: Command): void {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
-      if (await blockOnOpenChildren(backend, slug)) return;
-
       let summary: string;
       if (summaryParts.length > 0) {
         summary = summaryParts.join(' ');
@@ -2019,6 +2015,7 @@ export function registerTasksCommand(program: Command): void {
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
+      await closeChildrenWith(backend, slug, 'completed');
       await backend.complete(slug, summary, { by: authorLabel(cliStatusAuthor()) });
       endTaskJobIfClosed(ensureContextRoot(), slug);
       success(`Task completed: ${slug}`);
@@ -2056,9 +2053,9 @@ export function registerTasksCommand(program: Command): void {
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       }
-      if (isDone(defs, newStatus) && await blockOnOpenChildren(backend, slug)) return;
       if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
+      await closeChildrenWith(backend, slug, newStatus);
       const reason = reasonParts.join(' ').trim();
       // Who moved it rides the heading (lib/task-history.ts): owner, agent:<slug>, claude, sleep.
       await backend.addChangelog(slug, statusChangeEntry(newStatus, cliStatusAuthor(), defs, reason || null), { createIfMissing: true });

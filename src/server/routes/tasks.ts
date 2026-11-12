@@ -22,7 +22,8 @@ import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
 import { endTaskJobIfClosed, reconcileTaskRows, startDueTaskJobs, stopTaskAction, taskIdOfRow, unassignTaskJob } from '../../lib/agents/task-starter.js';
-import { parseStatusHistory, recordStatusChange } from '../../lib/task-history.js';
+import { parseStatusHistory, recordStatusChange, type StatusAuthor } from '../../lib/task-history.js';
+import { closeOpenChildren, closesChildren } from '../../lib/task-close-children.js';
 import { agentJobDetailOf, agentJobOf, type AgentJob } from '../../lib/agents/task-job-api.js';
 import { readTaskJobs } from '../../lib/agents/task-jobs.js';
 import { listInboxRows, resolveInboxRow } from '../../lib/owner-inbox.js';
@@ -58,7 +59,6 @@ import {
   childrenOf,
   inheritFromParent,
   isMappedWaveChild,
-  openChildren,
   validateParentLink,
   type ParentLinkTask,
 } from '../../lib/task-parent.js';
@@ -1383,16 +1383,6 @@ export async function handleTasksUpdate(
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
     }
-    // A parent closes only after its sub-tasks (cancelled ones never block), the same gate
-    // `tasks status`/`tasks complete` apply.
-    if (isDone(statuses, updates.status)) {
-      const open = openChildren(await parentLinkTasks(backend), slug, statuses);
-      if (open.length > 0) {
-        sendError(res, 409, 'parent_has_open_children',
-          `This task has ${open.length} open sub-task(s): ${open.map((t) => t.slug).join(', ')}. Close or cancel them first.`);
-        return;
-      }
-    }
     // The sleep-eval close gate, the same one `tasks status`/`tasks complete` apply. A plan's
     // mapped wave is exempt (task-parent.ts isMappedWaveChild).
     if (isDone(statuses, updates.status)) {
@@ -1526,7 +1516,13 @@ export async function handleTasksUpdate(
   // Who moved it (C1-13): a status changed from the dashboard is the owner's.
   if (typeof updates.status === 'string' && updates.status !== existing.status) {
     const viaApp = appFromHeader(req, contextRoot);
-    await recordStatusChange(backend, slug, { to: updates.status, who: viaApp ? { kind: 'app', slug: viaApp } : { kind: 'owner' }, defs: loadStatuses(contextRoot) });
+    const who: StatusAuthor = viaApp ? { kind: 'app', slug: viaApp } : { kind: 'owner' };
+    const defsNow = loadStatuses(contextRoot);
+    // A parent closed from the board takes its open sub-tasks with it (owner, 2026-11-12).
+    if (closesChildren(defsNow, updates.status)) {
+      for (const child of await closeOpenChildren(backend, slug, updates.status, defsNow, who)) endTaskJobIfClosed(contextRoot, child);
+    }
+    await recordStatusChange(backend, slug, { to: updates.status, who, defs: defsNow });
     // A task its owner closed ends its agent's job (a live run is stopped, nothing reopens it).
     endTaskJobIfClosed(contextRoot, slug);
     task = (await backend.get(slug)) ?? task;

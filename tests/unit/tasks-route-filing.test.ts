@@ -125,14 +125,12 @@ describe('POST /api/tasks — filed_by on every path', () => {
 });
 
 describe('PATCH /api/tasks/:slug — the close gate and the parent check', () => {
-  it('a parent with an open sub-task cannot complete (409, names it); a cancelled one never blocks', async () => {
+  it('a parent closed to completed or cancelled takes its open sub-tasks with it, with a log line', async () => {
     const r = await call(handleTasksUpdate, { slug: 'parent' }, { status: 'completed' }, 'PATCH');
-    expect(r.status).toBe(409);
-    expect(r.body.error).toBe('parent_has_open_children');
-    expect(r.body.message).toContain('kid');
-    expect(fmOf('parent').status).toBe('todo');
-    await call(handleTasksUpdate, { slug: 'kid' }, { status: 'cancelled' }, 'PATCH');
-    expect((await call(handleTasksUpdate, { slug: 'parent' }, { status: 'completed' }, 'PATCH')).status).toBe(200);
+    expect(r.status).toBe(200);
+    expect(fmOf('parent').status).toBe('completed');
+    expect(fmOf('kid').status).toBe('completed');
+    expect(readFileSync(join(ctx, 'state', 'kid.md'), 'utf-8')).toContain('closed with its parent');
   });
 
   it('re-sending the parent a sub-task already has is not validated again', async () => {

@@ -31,7 +31,8 @@ import { findTaskHead } from '../../lib/agents/task-jobs.js';
 import { foreignOwner, NotOwnerError } from '../../lib/agents/owner.js';
 import { loadStatuses } from '../../lib/overrides.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
-import { isMappedWaveChild, openChildren } from '../../lib/task-parent.js';
+import { isMappedWaveChild } from '../../lib/task-parent.js';
+import { closeOpenChildren } from '../../lib/task-close-children.js';
 
 /**
  * Agents ride the brain sync (AI Team v2, wave B1): the migration notice, this machine's
@@ -164,11 +165,7 @@ async function completeDeliveryAction(contextRoot: string, slug: string): Promis
     return { ok: false, code: 'not_delivered', message: 'That task has no delivery waiting for your approval.' };
   }
   const statuses = loadStatuses(contextRoot);
-  const all = (await backend.list()).map((s) => ({ slug: s.name, parent_task: s.parent_task, status: s.status }));
-  const open = openChildren(all, slug, statuses);
-  if (open.length > 0) {
-    return { ok: false, code: 'parent_has_open_children', message: `This task has ${open.length} open sub-task(s): ${open.map((t) => t.slug).join(', ')}. Close or cancel them first.` };
-  }
+  await closeOpenChildren(backend, slug, 'completed', statuses, { kind: 'owner' });
   const parent = task.parent_task ? await backend.get(task.parent_task) : null;
   const gate = checkCloseGate(contextRoot, slug, task.parent_task ?? null, { exempt: !!(parent && isMappedWaveChild(parent, task)) });
   if (gate.applies && !gate.ok) return { ok: false, code: 'sleep_eval_gate', message: gate.message };

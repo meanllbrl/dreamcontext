@@ -139,17 +139,22 @@ describe('waves: list --parent --json, the close gate, readiness', () => {
     expect(rows.map((r) => [r.name, r.wave])).toEqual([['2-dalga-ui', 2], ['sleep-found', null]]);
   });
 
-  it('a parent with open sub-tasks cannot complete; cancelled children never block', async () => {
+  it('closing a parent closes its open sub-tasks with the same status; a cancelled child stays cancelled', async () => {
     await plan();
-    expect(await cli('complete', 'the-parent', 'done')).toBe(1);
-    expect(printed()).toMatch(/3 open sub-task\(s\)/);
-    expect(await cli('status', 'the-parent', 'completed')).toBe(1);
-    expect(fmOf('the-parent').status).toBe('todo');
-    await cli('complete', '1-dalga-api', 'ok');
-    await cli('complete', '2-dalga-ui', 'ok');
     await cli('status', 'sleep-found', 'cancelled', 'not needed');
     expect(await cli('complete', 'the-parent', 'done')).toBe(0);
     expect(fmOf('the-parent').status).toBe('completed');
+    expect(fmOf('1-dalga-api').status).toBe('completed');
+    expect(fmOf('2-dalga-ui').status).toBe('completed');
+    expect(fmOf('sleep-found').status).toBe('cancelled');
+    expect(readFileSync(join(ctx, 'state', '1-dalga-api.md'), 'utf-8')).toContain('closed with its parent');
+  });
+
+  it('cancelling a parent cancels its open sub-tasks', async () => {
+    await plan();
+    expect(await cli('status', 'the-parent', 'cancelled', 'dropped')).toBe(0);
+    expect(fmOf('1-dalga-api').status).toBe('cancelled');
+    expect(fmOf('2-dalga-ui').status).toBe('cancelled');
   });
 
   it('tasks ready passes a multi-wave map with no wave sub-tasks and never asks for them (waves live inside the task)', async () => {
