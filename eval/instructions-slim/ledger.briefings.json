@@ -1,0 +1,222 @@
+[
+  {
+    "match": "When to leave prose for HTML at all (rarely), and the kit that HTML is written against",
+    "disposition": "corrected-stale-fact",
+    "reason": "Code comment: the kit no longer lives in this briefing, so the comment now names where it went.",
+    "home": "src/server/chat-surface.ts",
+    "anchor": "the grammar and kit live in the draw skill (skill-draw/references/chat-html.md)"
+  },
+  {
+    "match": "<div class=\"dc-node dc-node--decision\" id=\"hit\">In cache?</div>",
+    "disposition": "corrected-stale-fact",
+    "reason": "The dc-graph example moved verbatim into the draw skill's chat-html reference (IN-8); in the TS source it was one escaped paragraph, there it is a fenced block, so the unit cannot match as a whole.",
+    "home": "skill-draw/references/chat-html.md",
+    "anchor": "<div class=\"dc-node dc-node--decision\" id=\"hit\">In cache?</div>"
+  },
+  {
+    "match": "return `- Before you split work, read the orchestration guide",
+    "disposition": "corrected-stale-fact",
+    "reason": "IN-12: the guide was read in 1 of 19 Super sessions; the rows every split needs now ride in the briefing and the guide is lookup only.",
+    "home": "src/server/chat-modes.ts",
+    "anchor": "The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example)"
+  },
+  {
+    "match": "read it with `dreamcontext tasks show X`",
+    "disposition": "corrected-stale-fact",
+    "reason": "IN-13: `tasks show` does not exist (checked against the CLI manifest); a task is read from its file.",
+    "home": "src/server/chat-modes.ts",
+    "anchor": "On `[About task X]` read its file, `_dream_context/state/X.md`."
+  },
+  {
+    "match": "Read it ONCE when the owner hands you several jobs at once, then split",
+    "disposition": "corrected-stale-fact",
+    "reason": "IN-12: the guide is lookup only; the briefing carries the split rules.",
+    "home": "skill/references/super-orchestration.md",
+    "anchor": "For the Super Agent only, for lookup: your briefing carries the split, mode, model, worktree and"
+  },
+  {
+    "match": "Develop needs a task; Plan creates one",
+    "disposition": "corrected-stale-fact",
+    "reason": "TK-1/TK-4: the Super is the only task filer and passes `--task` to the plan and develop child; Develop also runs small work with no task.",
+    "home": "skill/references/super-orchestration.md",
+    "anchor": "Only you file a task, only for big work: ONE (`tasks create`),"
+  },
+  {
+    "match": "Not this skill: draw it in the reply as the surface's `dream-html` `dc-graph`",
+    "disposition": "corrected-stale-fact",
+    "reason": "IN-8: the dream-html grammar now lives in this skill, so a Chat-view drawing routes here to references/chat-html.md.",
+    "home": "skill-draw/SKILL.md",
+    "anchor": "Draw it in the reply as a `dream-html` `dc-graph`: [references/chat-html.md](references/chat-html.md)"
+  },
+
+  {
+    "match": "AI agent persistent context management system",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded to 'Persistent project memory through the dreamcontext CLI' in the new description."
+  },
+  {
+    "match": "Activate when working on any project that has an _dream_context/ directory, when managing tasks",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the new description keeps the directory trigger and the entity names (task, feature, knowledge, insight, objective, automation, trigger); the long enumeration was trimmed. The skill's body still covers each entity."
+  },
+  {
+    "match": "Also activate when work should repeat on a schedule with nobody asking",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: kept in short form ('Work that repeats on a schedule (every morning, her gün) is an automation here, never a hand-rolled cron or launchd job')."
+  },
+  {
+    "match": "Provides structured memory, task lifecycle management, scheduled automations",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: a feature list, not a trigger; the skill's body and its references carry each capability."
+  },
+  {
+    "match": "Build a dreamcontext App: a local web app that belongs to THIS project",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: shortened to one sentence; Dock icon and notifications are in the skill body."
+  },
+  {
+    "match": "Load when the user invokes `/apps`, or asks for \"an app\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the main triggers stay (/apps, an app, an admin panel, a dashboard I can open, dreamcontext apps); 'a tool with its own window' and 'an ad manager' dropped."
+  },
+  {
+    "match": "Load when the user asks to \"debate this\", \"get second opinions\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: triggers kept except 'run this by council'; council was invoked 0 times in 30 days."
+  },
+  {
+    "match": "Orchestrates 3-10 persona CLI sessions across N rounds",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: mechanics, not a trigger; the skill body describes the rounds, board and synthesizer."
+  },
+  {
+    "match": "Load when a dreamcontext brain has grown additively and needs a periodic refactor pass",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded into the new one-sentence description (refactor a brain that grew additively)."
+  },
+  {
+    "match": "Triggers: \"curate the brain\", \"re-organize my context\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: three triggers kept; curator was invoked 0 times in 30 days. The drift cases are in the skill body."
+  },
+  {
+    "match": "This is the interactive, sub-agent-driven brain REFACTOR",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the operations list (move, merge, split, rename, re-type, retire) and 'the pass sleep won't do' stay in the new description; the rest is in the skill body."
+  },
+  {
+    "match": "Load when a question needs synthesis across a LARGE or MULTI-PROJECT dreamcontext corpus",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded ('Cited synthesis across a large or multi-project dreamcontext corpus ... beyond one dreamcontext-explore pass')."
+  },
+  {
+    "match": "Triggers: \"deep research the brain\", \"research this across my projects\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: two triggers kept; the skill was invoked 0 times in 30 days."
+  },
+  {
+    "match": "This is the heavy, iterative, sub-agent-driven counterpart to `dreamcontext-explore`",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: mechanics; the skill body describes the fan-out, verification and cited report."
+  },
+  {
+    "match": "Universal design rules for any UI an agent builds: hierarchy before deletion",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the rule list is shortened; each rule is a section of the skill body."
+  },
+  {
+    "match": "Sub-skills: product-ui (app screens: information architecture",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the sub-skill names stay; what each covers is in the skill body's router."
+  },
+  {
+    "match": "Load BEFORE you draw anything someone keeps",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: 'Load BEFORE you draw a diagram, flowchart, chart, wireframe, mockup or board'; the skill now also covers Chat-view drawings, so 'someone keeps' was dropped."
+  },
+  {
+    "match": "A plain Excalidraw file uses the builders; a whiteboard uses the builders plus live widgets",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the skill body's section 1 says the same (a number is a live insight widget, never a drawn chart)."
+  },
+  {
+    "match": "Triggers: draw, sketch, diagram, flowchart, chart, wireframe, mockup",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: nine triggers kept in EN and TR (draw, diagram, wireframe, excalidraw, whiteboard, çiz, diyagram, şema, tahtaya çiz)."
+  },
+  {
+    "match": "Load when the user wants to drive a non-trivial goal to completion",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded ('Drive a non-trivial goal to completion under sub-agent orchestration')."
+  },
+  {
+    "match": "Triggers: \"drive this goal to completion\", \"subagent-driven development\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: three triggers kept; goal-skill was invoked 0 times in 11 days."
+  },
+  {
+    "match": "Use for work too large or risky for a single straight-line pass",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the tier router in the skill body says when it applies."
+  },
+  {
+    "match": "Load when a project's dreamcontext brain is missing or sparse and needs to be",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded ('Bootstrap a missing or sparse dreamcontext brain')."
+  },
+  {
+    "match": "Triggers: \"initialize my brain\", \"set up dreamcontext from my docs\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: two triggers and the no _dream_context case kept; initializer was invoked 0 times in 30 days."
+  },
+  {
+    "match": "This is the interactive, sub-agent-driven bootstrap",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: 'into knowledge, features and tasks' kept; the rest is the skill body."
+  },
+  {
+    "match": "It is the single bootstrap surface for dreamcontext",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the codebase-only and trivial-scaffold paths are in the skill body."
+  },
+  {
+    "match": "Load when the user invokes `/multi-review`, says \"multi-reviewer\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: three triggers kept."
+  },
+  {
+    "match": "Routes the diff to relevant specialist sub-agents in parallel",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded ('a router sends the diff to ... specialists in parallel, and one report comes back')."
+  },
+  {
+    "match": "Load when the user asks to sync/reconcile the dreamcontext brain repo with a team",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded; /dream-sync, 'sync the brain' and the awaiting-merge report from brain sync or the snapshot stay."
+  },
+  {
+    "match": "Triggers: \"/dream-sync\", \"sync the brain\", \"reconcile with the team\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: the internal status names (already-awaiting-agent, awaiting-agent) were dropped; a paused brain sync itself prints 'run /dream-sync to reconcile' (src/cli/commands/brain.ts), and the description keeps the awaiting-merge case."
+  },
+  {
+    "match": "This is the agent half of the semantic-merge contract",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: kept as 'The agent half of a team brain sync'; which files the CLI resolves is in the skill body."
+  },
+  {
+    "match": "Watch a video the way a human would",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: reworded ('Watch a video like a human: a time-mapped transcript with the on-screen visuals described inline')."
+  },
+  {
+    "match": "Triggers: \"watch this video\", \"şu videoyu izle\", \"videoyu analiz et\"",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: three triggers plus 'a video file or link' kept."
+  },
+  {
+    "match": "Produces a curated <video>.transcript.md NEXT TO the source video",
+    "disposition": "deleted",
+    "reason": "IN-9 description cap: 'saved next to the video' kept; the use-case continuations are in the skill body."
+  }
+]
