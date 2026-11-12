@@ -14,6 +14,7 @@ import {
   pragmatistAllowed, renderNextAction, renderStopCard, PLAN_BUDGET_BASE, PLAN_LEDGER_VERSION, PLAN_LENSES, CODE_LENSES, isCodeLedger, loopCommand,
   type FindingLevel, type Ledger, type LedgerEvent, type LedgerRound, type PlanState,
 } from '../../lib/plan-ledger.js';
+import { lintWaveMap } from '../../lib/plan-lint.js';
 import { PLAN_REVIEW_RULES } from '../../lib/plan-review-rules.js';
 import {
   assertSafePath, ensurePlansDir, ledgerPath, packetPath, planDir, planFilePath, PlanStoreError, readExternalNoLink,
@@ -160,6 +161,12 @@ export interface PacketInput {
   prevReviews: Array<{ name: string; text: string }>;
 }
 
+/** The wave-map lint as a packet block (empty when it has nothing to say). */
+function lintBlock(snapshotText: string): string[] {
+  const lint = lintWaveMap(snapshotText);
+  return lint.length === 0 ? [] : ['## Wave map lint (mechanical: raise it as a finding when it holds)', ...lint.map((l) => `- ${l}`), ''];
+}
+
 /** Everything a lens reads, in one text. The lead adds only the lens name. */
 export function buildPacketText(p: PacketInput): string {
   const sect = (title: string): string => planSection(p.snapshotText, title) || '(none written)';
@@ -175,6 +182,7 @@ export function buildPacketText(p: PacketInput): string {
     '## Out of scope', sect('Out of scope'), '',
     '## Environment', sect('Environment'), '',
     '## Changes in this revision', sect('Changes in this revision'), '',
+    ...lintBlock(p.snapshotText),
     `## Previous round${p.prevReviews.length > 0 ? ` (r${p.round - 1})` : ''}: raw reviews of every lens, verbatim`,
   ];
   if (p.prevReviews.length === 0) out.push('(none: this is the first round)');
@@ -207,7 +215,7 @@ export function buildPacketText(p: PacketInput): string {
   return out.join('\n') + '\n';
 }
 
-export async function planPacket(deps: PlanDeps, plan: string, lens: string): Promise<{ text: string; path: string; round: number; opened: boolean }> {
+export async function planPacket(deps: PlanDeps, plan: string, lens: string): Promise<{ text: string; path: string; round: number; opened: boolean; lint: string[] }> {
   if (!(PLAN_LENSES as readonly string[]).includes(lens)) throw new PlanRefusal(`--lens must be one of ${PLAN_LENSES.join(', ')}.`);
   return withPlanLock(deps.root, plan, () => {
     const ledger = loadLedger(deps, plan);
@@ -267,10 +275,11 @@ export async function planPacket(deps: PlanDeps, plan: string, lens: string): Pr
       if (existsSync(p)) prevReviews.push({ name: `r${prev!.n}-${l}.md`, text: readSafe(deps.root, p) });
     }
     const snapFile = snapshotPath(deps.root, plan, round.n);
-    const text = buildPacketText({ ledger, state, round: round.n, lens, snapshotFile: snapFile, snapshotText: readSafe(deps.root, snapFile), prevReviews });
+    const snapshotText = readSafe(deps.root, snapFile);
+    const text = buildPacketText({ ledger, state, round: round.n, lens, snapshotFile: snapFile, snapshotText, prevReviews });
     const path = packetPath(deps.root, plan, round.n, lens);
     writeSafe(deps.root, path, text);
-    return { text, path, round: round.n, opened };
+    return { text, path, round: round.n, opened, lint: lintWaveMap(snapshotText) };
   });
 }
 
@@ -537,7 +546,7 @@ export async function planLink(deps: PlanDeps, plan: string): Promise<string> {
   return withPlanLock(deps.root, plan, async () => {
     const ledger = loadLedger(deps, plan);
     const gaps = planGateGaps(readPlanLedgers(deps.root), ledger.task);
-    if (gaps.length > 0) throw new PlanRefusal(`Not linked: the plan gate refuses ${ledger.task}:\n${gaps.map((g) => `- ${g.problem}`).join('\n')}`);
+    if (gaps.length > 0) throw new PlanRefusal(`Not linked: the plan gate refuses ${ledger.task}:\n${gaps.map((g) => `- ${g.problem}`).join('\n')}\nBuilding past this is the owner's call, never the Super's: ask him as an owner card (build anyway / revise / drop) and act on his answer.`);
     const s = computePlanState(ledger);
     if (s.abandoned) throw new PlanRefusal(`Plan ${plan} was abandoned; it is never linked.`);
     const snapFile = snapshotPath(deps.root, plan, s.latestComplete);
@@ -614,7 +623,8 @@ export function registerPlanCommand(program: Command): void {
     .action((name: string, opts: { lens: string; print?: boolean }) => run(async () => {
       const r = await planPacket(defaultDeps(), name, opts.lens);
       if (opts.print) return r.text;
-      return `${r.opened ? `Round ${r.round} opened.` : `Round ${r.round}.`} Packet for ${opts.lens}: ${r.path}\nDispatch prompt: "Lens: ${opts.lens}. Read ${r.path} and follow it."`;
+      const lintNote = r.lint.length > 0 ? `\nWave map lint (mechanical; fix plan.md in the next revision, or confirm it is wrong):\n${r.lint.map((l) => `- ${l}`).join('\n')}` : '';
+      return `${r.opened ? `Round ${r.round} opened.` : `Round ${r.round}.`} Packet for ${opts.lens}: ${r.path}\nDispatch prompt: "Lens: ${opts.lens}. Read ${r.path} and follow it."${lintNote}`;
     }));
 
   plan
