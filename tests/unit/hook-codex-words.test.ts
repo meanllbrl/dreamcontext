@@ -25,8 +25,9 @@ describe('prompt hook in Codex words', () => {
       writeFileSync(join(ctx, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1' }));
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, DREAMCONTEXT_BRAIN_SYNC: '0', DREAMCONTEXT_RECALL_CLOUD: '0', CLAUDE_PROJECT_DIR: proj };
       for (const k of ['DREAMCONTEXT_CHAT_TAB', 'CLAUDE_CODE_SESSION_ID', 'DREAMCONTEXT_CONTEXT_BY', 'DREAMCONTEXT_SKILLS_HOOK']) delete env[k];
+      // One session per run: the long blocks print in full only on a session's first prompt.
       const run = (format: string[]) => spawnSync(process.execPath, [CLI, 'hook', 'user-prompt-submit', ...format], {
-        cwd: proj, env, input: JSON.stringify({ prompt: 'how does the checkout work', session_id: 'acme-1' }), encoding: 'utf-8', timeout: 60_000,
+        cwd: proj, env, input: JSON.stringify({ prompt: 'how does the checkout work', session_id: `acme-${format.length}` }), encoding: 'utf-8', timeout: 60_000,
       });
       const codex = run(['--format', 'codex']);
       expect(codex.status, codex.stderr).toBe(0);

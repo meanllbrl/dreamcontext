@@ -12,7 +12,7 @@ import {
   hybridHeaderLabel,
   recallGatePasses,
   recallTimingLine,
-  renderRecallBlock,
+  renderRecallBlock, hitSize,
   selectPromptRecall,
 } from '../../src/cli/commands/hook.js';
 import { cloudFallbackNote, hybridNotReadyNote } from '../../src/cli/commands/memory.js';
@@ -69,14 +69,14 @@ describe('K=5 rendering', () => {
     const body = lines.slice(2);
     // Ranks 1-3: path, Why and the excerpt (three lines each).
     for (let i = 0; i < RECALL_FULL_RENDER_RANKS; i++) {
-      expect(body[i * 3]).toBe(`  [knowledge] ${hits[i].doc.relPath}`);
+      expect(body[i * 3]).toBe(`  [knowledge] ${hits[i].doc.relPath}  (${hitSize(hits[i].doc.body)})`);
       expect(body[i * 3 + 1]).toBe(`    Why: why ${i}`);
       expect(body[i * 3 + 2]).toMatch(/^ {4}> zzw\d recallshared/);
     }
-    // Ranks 4-5: exactly one line each, `[type] relPath — title`, no Why and no excerpt.
+    // Ranks 4-5: exactly one line each, `[type] relPath — title  (size)`, no Why and no excerpt.
     expect(body).toHaveLength(RECALL_FULL_RENDER_RANKS * 3 + 2);
-    expect(body[9]).toBe(`  [knowledge] ${hits[3].doc.relPath} — ${hits[3].doc.title}`);
-    expect(body[10]).toBe(`  [knowledge] ${hits[4].doc.relPath} — ${hits[4].doc.title}`);
+    expect(body[9]).toBe(`  [knowledge] ${hits[3].doc.relPath} — ${hits[3].doc.title}  (${hitSize(hits[3].doc.body)})`);
+    expect(body[10]).toBe(`  [knowledge] ${hits[4].doc.relPath} — ${hits[4].doc.title}  (${hitSize(hits[4].doc.body)})`);
   });
 
   it('keeps the insight read directive at any rank, including a one-line rank', () => {

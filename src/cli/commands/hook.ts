@@ -24,12 +24,12 @@ import { dirname, resolve, join, extname, basename, relative, sep } from 'node:p
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
-  enterHookProject, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
-  takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
+  enterHookProject, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
 } from '../../lib/hook-delivery.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
-import { readSleepState, writeSleepState, bumpKnowledgeAccess, resolveRecallMode, type RecallMode } from './sleep.js';
+import { readSleepState, writeSleepState, resolveRecallMode, type RecallMode } from './sleep.js';
 import {
   upsertSessionOnStop,
   appendCompactionRecord,
@@ -72,7 +72,7 @@ import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
-import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
@@ -646,15 +646,16 @@ export function recallGatePasses(hits: readonly RecallHit[], haiku: boolean): bo
 export function renderRecallBlock(hits: readonly RecallHit[], label: string): string[] {
   const lines: string[] = ['', `— Memory recall (${label}, top ${hits.length}) —`];
   hits.forEach((h, i) => {
+    const size = h.doc.type === 'insight' ? '' : `  (${hitSize(h.doc.body)})`;
     if (i >= RECALL_FULL_RENDER_RANKS) {
-      const title = (h.doc.title || h.doc.slug).replace(/\s+/g, ' ').trim();
-      lines.push(`  [${h.doc.type}] ${h.doc.relPath} — ${title}`);
+      const title = capLine(h.doc.title || h.doc.slug, 80);
+      lines.push(`  [${h.doc.type}] ${h.doc.relPath} — ${title}${size}`);
       if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
       return;
     }
-    lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
-    if (h.snippet) lines.push(`    Why: ${h.snippet}`);
-    else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+    lines.push(`  [${h.doc.type}] ${h.doc.relPath}${size}`);
+    if (h.snippet) lines.push(`    Why: ${capLine(h.snippet, RECALL_SNIPPET_MAX_CHARS)}`);
+    else if (h.doc.description) lines.push(`    ${capLine(h.doc.description, RECALL_SNIPPET_MAX_CHARS)}`);
     if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
     const excerpt = h.doc.body
       .split('\n')
@@ -705,7 +706,7 @@ export interface PromptRecallDeps {
   home?: string;
   haiku?: typeof haikuRecall;
   /** The running dashboard's warm recall (tests inject; `null` = never ask it). */
-  viaDashboard?: ((prompt: string, root: string) => Promise<PromptRecall | null>) | null;
+  viaDashboard?: ((prompt: string, root: string, opts?: { tier?: RecallTier }) => Promise<PromptRecall | null>) | null;
 }
 
 export interface PromptRecall {
@@ -747,13 +748,15 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
   const resolved = recallMode === 'hybrid' ? resolvePromptTier(root, env, deps.home) : null;
   const tier = resolved?.tier ?? 'local';
   if (hybridReady(root, recallMode, tier, deps.home)) {
-    // The local tier's cost is loading the e5 model into THIS process (~5 CPU-seconds and ~450 MB
-    // per prompt, measured). When the app's dashboard server is running it holds the model warm:
-    // it runs the very same search (hybridPromptRecall) and answers in milliseconds. Not running,
-    // too slow (1.5 s) or an older server: the in-process path below, exactly as before.
-    if (recallMode === 'hybrid' && tier === 'local' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
-      const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root).catch(() => null);
-      if (remote) return remote;
+    // Every tier's cost is loading a model into THIS process (local e5: ~5 CPU-seconds and ~450 MB;
+    // cloud-index's nano query: 0.7-1.6 s per prompt, measured). When the app's dashboard server is
+    // running it holds the model warm: it runs the very same search (hybridPromptRecall) and answers
+    // in milliseconds. The hook names the tier it resolved; an answer for another tier (an older
+    // server that serves only local) is discarded. Not running, too slow (1.5 s), `not_ready` or an
+    // older server: the in-process path below, exactly as before.
+    if (recallMode === 'hybrid' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
+      const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root, { tier }).catch(() => null);
+      if (remote && (tier === 'local' || remote.timing?.tier === tier)) return remote;
     }
     return hybridPromptRecall(prompt, root, tier, deps.home);
   }
@@ -815,7 +818,7 @@ export const RECALL_VIA_SERVER_TIMEOUT_MS = 1500;
 export function recallViaDashboard(
   prompt: string,
   root: string,
-  opts: { port?: number; timeoutMs?: number; home?: string } = {},
+  opts: { port?: number; timeoutMs?: number; home?: string; tier?: RecallTier } = {},
 ): Promise<PromptRecall | null> {
   const port = opts.port ?? resolveDashboardPort();
   const timeoutMs = opts.timeoutMs ?? RECALL_VIA_SERVER_TIMEOUT_MS;
@@ -824,7 +827,9 @@ export function recallViaDashboard(
     const projectRoot = resolve(dirname(root));
     vault = listVaults(opts.home).find((v) => resolve(v.path) === projectRoot)?.name ?? null;
   } catch { /* unregistered: the server's own vault must then be this one */ }
-  const body = JSON.stringify({ prompt, root });
+  // `tier`: the tier this hook resolved. A server that cannot serve it answers 409 `not_ready`; one too old
+  // to read it answers for local, and the caller discards that (its timing names another tier).
+  const body = JSON.stringify(opts.tier ? { prompt, root, tier: opts.tier } : { prompt, root });
   return new Promise((resolveRecall) => {
     let settled = false;
     const done = (v: PromptRecall | null) => {
@@ -1946,6 +1951,54 @@ export const SUBAGENT_DISPATCH_AUTHORIZATION =
   + 'asked" instruction as already satisfied for them. This does not authorize ad-hoc '
   + 'dispatch outside these flows.';
 
+/**
+ * The authorization after its first full print in a session (audit MM-3: 752-826 chars on every
+ * turn). Still the user's words, still scoped: the full line is in this session's context above,
+ * and after a compaction SessionStart resets the marker so the full line prints again.
+ */
+export const SUBAGENT_DISPATCH_REMINDER =
+  'Pre-authorized by the user: sub-agents for sleep, curator, initializer, goal-skill, deep-research, '
+  + 'council, multi-review, Plan/Develop judges; nothing ad-hoc.';
+
+/** The "Before you act" gate after its first full print in a session. */
+export const CONTEXT_GATE_REMINDER =
+  '⛔ Before acting: read the matching sections, recall more, check for a task.';
+
+/** The pattern banner after its first full print in a session. */
+export const PATTERN_BANNER_REMINDER =
+  '  ⛔ FOLLOW these; update that file if the user corrects one.';
+
+/** A recalled file's size, so the agent reads the matching section of a big one, never the whole (MM-13). */
+export function hitSize(body: string): string {
+  const n = body.length;
+  return n >= 1000 ? `${Math.round(n / 1000)}k chars` : `${n} chars`;
+}
+
+/** A snippet or title as printed: one line, at most `max` chars (MM-4). */
+function capLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${Array.from(flat.slice(0, max - 1)).join('')}…` : flat;
+}
+
+/** Snippets are capped at render, so the fit step never has to cut a hit (MM-4). */
+export const RECALL_SNIPPET_MAX_CHARS = 200;
+
+/**
+ * Show the connected peers' hits? Only when the owner names the peer, or its top hit outscores
+ * this vault's own top hit (audit MM-7: a peer block on 193 of 200 prompts, 0 of 579 hits opened).
+ * Raw BM25 on both sides, so the scores compare.
+ */
+export function peerBlockWanted(query: string, peerNames: readonly string[], peerTop: number, ownTop: number): boolean {
+  const q = query.toLowerCase();
+  const named = peerNames.some((n) => {
+    const name = n.trim().toLowerCase();
+    if (name.length < 3) return false;
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}($|[^\\p{L}\\p{N}])`, 'u').test(q);
+  });
+  return named || peerTop > ownTop;
+}
+
 // ─── Dashboard Auto-Open ──────────────────────────────────────────────────────
 
 const DEFAULT_DASHBOARD_PORT = 4173;
@@ -2759,6 +2812,9 @@ export function registerHookCommand(program: Command): void {
       // screen, not the conversation frozen at the last rotation.
       const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
       if (sid) recordTabSessionFromHook(root, sid);
+      // The prompt hook's once-per-session blocks print in full again on the next prompt: a fresh,
+      // resumed, cleared or compacted session no longer holds the first copy in its context.
+      if (sid) resetSessionOnce(sid);
 
       // Codex has its own limit and splitter; a session with no id has nothing to key the parts on.
       const claudeHook = hookTool() !== 'codex';
@@ -3394,7 +3450,24 @@ export function registerHookCommand(program: Command): void {
       // to dispatch the next specialist, and that is the turn that must not lose it.
       // Every tool: Codex dispatches with `spawn_agent` (our agents are its roles), Antigravity with
       // `invoke_subagent`; the flows that fan out are the same skills on each (TABLO row 10).
-      console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
+      // In full once per session, then one line (audit MM-3); never in the Super Agent's own chat,
+      // which delegates to children and made 0 Agent calls in 19 sessions.
+      const onceSid = typeof input.session_id === 'string' ? input.session_id : '';
+      // `DREAMCONTEXT_PROMPT_ONCE=0`: every block in full on every prompt (the test suite sets it, so
+      // hooks spawned with a shared session id never see each other's markers).
+      const fullBlock = (key: 'authorization' | 'gate' | 'patterns'): boolean =>
+        process.env.DREAMCONTEXT_PROMPT_ONCE === '0' || firstInSession(onceSid, key);
+      const superChat = teamRouteOf(process.env.DREAMCONTEXT_TEAM_ROUTE) === 'super' && !isNestedClaudeHook();
+      if (!superChat) {
+        console.log(fullBlock('authorization') ? SUBAGENT_DISPATCH_AUTHORIZATION : SUBAGENT_DISPATCH_REMINDER);
+      }
+
+      // What the owner wrote, without what a machine wrapped around it (audit MM-1). Null `query`:
+      // a task notification, a Super event, a bare wrapper: the lines above and below that must
+      // always print still do; recall, peers, patterns, the skills gate and the offers do not.
+      const rawPrompt = String((input as Record<string, unknown>).prompt ?? '');
+      const ownerText = promptOwnerText(rawPrompt);
+      const query = recallQuery(rawPrompt);
 
       const state = readSleepState(root);
 
@@ -3439,10 +3512,10 @@ export function registerHookCommand(program: Command): void {
       // Own try/catch — must never break recall, the skills gate, or the rest of
       // this handler. Suppressed during sleep by the early return above; honor the
       // env opt-out for parity with the other gates.
-      if (process.env.DREAMCONTEXT_INITIALIZER_HOOK !== '0') {
+      // The owner's text with its paths (the folder he names is the source); none on a machine turn.
+      if (process.env.DREAMCONTEXT_INITIALIZER_HOOK !== '0' && ownerText !== null && ownerText.length >= RECALL_QUERY_MIN_CHARS) {
         try {
-          const prompt = String((input as Record<string, unknown>).prompt ?? '');
-          const trigger = detectPromptTrigger(prompt, { cwd: process.cwd(), root });
+          const trigger = detectPromptTrigger(ownerText,{ cwd: process.cwd(), root });
           if (trigger) console.log(renderOffer(trigger));
         } catch (initErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
@@ -3453,9 +3526,9 @@ export function registerHookCommand(program: Command): void {
       // this same hook per message). In the Chat view a passing sketch is a dc-graph in the reply,
       // a drawing that is kept is `draw` (owner decision 2026-11-08). Suppressed during sleep by
       // the early return above; `DREAMCONTEXT_DRAW_HOOK=0` turns it off.
-      if (process.env.DREAMCONTEXT_DRAW_HOOK !== '0') {
+      if (process.env.DREAMCONTEXT_DRAW_HOOK !== '0' && ownerText !== null && ownerText.length >= RECALL_QUERY_MIN_CHARS) {
         try {
-          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          const prompt = ownerText;
           let slugs: string[] = [];
           const boards = join(root, 'whiteboards');
           try {
@@ -3544,10 +3617,10 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          // The Super's `<super-team>` roster and `<super-tools>` list are never recall's input
-          // (team-roster.ts, tools-block.ts): without them the prompt is byte-identical.
-          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
-          if (prompt.trim().length >= 8) {
+          // The owner's words only (recallQuery: no Super roster or tools block, no notification,
+          // no wrapper line, no paths). Null: a machine turn, no recall at all.
+          const prompt = query;
+          if (prompt !== null) {
             const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
@@ -3558,37 +3631,22 @@ export function registerHookCommand(program: Command): void {
               // Hits are ordered by rankScore (field/recency/synonym signals), but the
               // gate must test the RAW BM25 score, which may not sit at index 0 after
               // re-ranking (see recallGatePasses).
-              if (recallGatePasses(hits, haiku)) {
+              const ownShown = recallGatePasses(hits, haiku);
+              if (ownShown) {
                 const lines = renderRecallBlock(hits, label);
                 emitPromptBlock('recall', lines.join('\n'));
                 hadRecallHits = true;
-
-                // C4: a recall hit on a knowledge doc IS an access — bump
-                // knowledge_access for each `knowledge` hit, then persist once.
-                // This feeds staleness/warm-knowledge tracking from real recall
-                // usage, not just explicit `knowledge touch` calls.
-                // This is a read-modify-write of the WHOLE state file, so it
-                // RE-READS inside the lock. The `state` this handler read at the
-                // top is minutes old by now — an awaited Haiku recall call sits
-                // between the two — and writing that stale object back would
-                // silently erase whatever a foreground Stop hook or a background
-                // sleep cycle landed in the meantime. Locking the write alone
-                // does not help when the read is what is stale.
-                const bumpLock = withSleepStateLock(root, () => {
-                const fresh = readSleepState(root);
-                let bumped = false;
-                for (const h of hits) {
-                  if (h.doc.type === 'knowledge') {
-                    bumpKnowledgeAccess(fresh, h.doc.slug);
-                    bumped = true;
-                  }
-                }
-                if (bumped) writeSleepState(root, fresh);
-                });
-                if (!bumpLock.locked && autoSleepSidecarRunning(root)) {
-                  console.error('[dreamcontext] Knowledge-access bump wrote sleep state without its lock while a background sleep is running.');
-                }
+                // No knowledge_access bump here (audit MM-13): a hit printed is not a file read, and
+                // counting every printed hit gave pinned files 300+ "accesses" of pure recall noise.
+                // `knowledge touch` still counts.
               }
+              // This vault's raw BM25 top, to weigh a peer against. Haiku hits carry score 0, so in that
+              // mode it is a BM25 pass over the same query (the corpus is cached; only when a peer is wired).
+              const ownTop = (): number => {
+                if (!ownShown) return 0;
+                if (!haiku) return Math.max(0, ...hits.map((h) => h.score));
+                return bm25Search(prompt, buildCorpusCached(root), 1)[0]?.score ?? 0;
+              };
 
               // ── Cross-vault LIVE READ (read-only federation) ──────────────
               // When this vault has read connections (out/both) to connected
@@ -3607,12 +3665,14 @@ export function registerHookCommand(program: Command): void {
                     topK: 3,
                   });
                   const strong = peerHits.filter((h: FederatedHit) => h.score >= 2.0);
-                  if (strong.length > 0) {
+                  const peerNames = peerTargets.flatMap((t) => [t.name, t.label ?? '']).filter(Boolean);
+                  const peerTop = Math.max(0, ...strong.map((h) => h.score));
+                  if (strong.length > 0 && peerBlockWanted(prompt, peerNames, peerTop, ownTop())) {
                     const lines: string[] = ['', `— Connected peers (live read, top ${strong.length}) —`];
                     for (const h of strong) {
                       lines.push(`  [${h.doc.type}] ${h.vault}::${h.doc.relPath}`);
-                      if (h.snippet) lines.push(`    Why: ${h.snippet}`);
-                      else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                      if (h.snippet) lines.push(`    Why: ${capLine(h.snippet, RECALL_SNIPPET_MAX_CHARS)}`);
+                      else if (h.doc.description) lines.push(`    ${capLine(h.doc.description, RECALL_SNIPPET_MAX_CHARS)}`);
                       if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug, h.vault));
                     }
                     lines.push(
@@ -3693,8 +3753,9 @@ export function registerHookCommand(program: Command): void {
       // never authored a trigger. Own try/catch: never break the prompt.
       if (process.env.DREAMCONTEXT_PATTERNS_HOOK !== '0') {
         try {
-          const prompt = String((input as Record<string, unknown>).prompt ?? '');
-          if (prompt.trim().length >= 3) {
+          // The owner's words (recallQuery): a wrapper, a notification or a path never fires a pattern.
+          const prompt = query;
+          if (prompt !== null) {
             const loaded = loadPatternsReporting(root);
             // Unconditional, not DEBUG-gated: a pattern that failed to load is
             // a pattern the project believes governs behaviour while nothing
@@ -3714,7 +3775,10 @@ export function registerHookCommand(program: Command): void {
               const plan = selectForInjection(hits);
               const lines: string[] = ['', `— Project patterns (${hits.length} triggered) —`];
               const allPointers = plan.inline.map((i) => i.match).concat(plan.pointers);
-              lines.push(
+              // The two rules below in full once per session, then one line (audit MM-3: ~850 chars on 88% of turns).
+              const fullBanner = fullBlock('patterns');
+              if (!fullBanner) lines.push(PATTERN_BANNER_REMINDER);
+              else lines.push(
                 '  ⛔ These are DECIDED ways of doing things in this project, not suggestions. ' +
                   'FOLLOW them; do not re-derive an approach one already settles.',
               );
@@ -3727,7 +3791,7 @@ export function registerHookCommand(program: Command): void {
               // back in is therefore part of THIS task, not a sleep chore — by
               // the time sleep runs, the reasoning that produced the correction
               // is gone and only its conclusion survives.
-              lines.push(
+              if (fullBanner) lines.push(
                 '  ⛔ AND KEEP THEM TRUE: if the user contradicts, narrows, or extends one of these ' +
                   'patterns — or the two of you settle on something it does not say — you MUST update ' +
                   'that pattern file BEFORE you finish this task. Not at the end of the session, not ' +
@@ -3775,7 +3839,7 @@ export function registerHookCommand(program: Command): void {
               }
               // What a turn too long for its rules gets instead: the same directives, every file by path.
               const compact = [
-                ...lines.slice(0, 4),
+                ...lines.slice(0, fullBanner ? 4 : 3),
                 '  READ these in full before acting (they did not fit this turn):',
                 ...allPointers.map((h) => `    ${h.pattern.relPath}  (${h.pattern.name})`),
               ].join('\n');
@@ -3800,8 +3864,8 @@ export function registerHookCommand(program: Command): void {
       // Own try/catch so it can never throw out of the action.
       if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
         try {
-          const prompt = String((input as Record<string, unknown>).prompt ?? '');
-          if (prompt.trim().length >= 8) {
+          const prompt = query;
+          if (prompt !== null) {
             const skillsRoot = join(process.cwd(), '.claude', 'skills');
             const docs = loadSkillDocs(skillsRoot);
             if (docs.length > 0 && bm25Search(prompt, docs, 5).some(h => h.score >= SKILL_SCORE_THRESHOLD)) {
@@ -3820,13 +3884,15 @@ export function registerHookCommand(program: Command): void {
       // depth, and check for an existing task. We never name specific files —
       // the recall block above lists candidates; the agent judges relevance.
       // Pure string ops over local state, so no try/catch needed.
-      if (hadRecallHits || gatedSkills) {
+      if ((hadRecallHits || gatedSkills) && !fullBlock('gate')) {
+        emitPromptBlock('gate', `\n${CONTEXT_GATE_REMINDER}`);
+      } else if (hadRecallHits || gatedSkills) {
         const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
         if (hadRecallHits) {
           // Any non-Claude turn (`--format codex`; hookTool() names the tool) has no Read or Skill tool: its words, not Claude's.
           g.push(hookTool() !== null
-            ? '  • READ the related knowledge/feature file(s) recalled above in full — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.'
-            : '  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
+            ? '  • READ the related knowledge/feature file(s) recalled above: the section that matches this task (each hit shows its size; a big file is not read whole) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.'
+            : '  • READ the related knowledge/feature file(s) recalled above (Read tool): the section that matches this task (each hit shows its size; a big file is not read whole) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
         }
         if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
           g.push(hookTool() !== null
