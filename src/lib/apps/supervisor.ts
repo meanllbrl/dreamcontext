@@ -508,6 +508,11 @@ export class AppRuntime {
     this.state = 'starting';
     this.lastError = null;
     this.warnings = [];
+    // The code folder was moved or deleted (D8): say what to do, not "dreamcontext-app.json not found".
+    if (!existsSync(this.rec.root)) {
+      this.setError(`The app's folder is missing (${this.rec.root}). Put it back, or ask Claude to remove the app.`);
+      return;
+    }
     const m = readManifest(this.rec.root);
     if (!m.ok) {
       this.setError(`manifest: ${m.errors.map((e: ManifestProblem) => `${e.field}: ${e.problem}`).join('; ')}`);
@@ -616,7 +621,7 @@ export class AppRuntime {
         else if (cancelled) resolve(false); // a stop ended it: not a failure to report
         else {
           if (this.state === 'starting') this.setError(`build failed (exit ${code})`);
-          else this.lastError = `build failed (exit ${code}); the running version stays`;
+          else this.lastError = `build failed (exit ${code})${this.staysTail()}`;
           resolve(false);
         }
       });
@@ -722,7 +727,7 @@ export class AppRuntime {
       const why = exited !== undefined ? `the backend exited (code ${exited}) before its health answered` : `health ${be.health} did not answer 200 within ${HEALTH_TIMEOUT_MS / 1000} s`;
       if (mine !== this.epoch) return null; // a stop ended this start: its failure is not the next one's
       if (this.state === 'starting') this.setError(why);
-      else this.lastError = `${why}; the running version stays`;
+      else this.lastError = `${why}${this.staysTail()}`;
       return null;
     }
     const problem = await this.checkBackend(b);
@@ -730,7 +735,7 @@ export class AppRuntime {
       killGroup(child);
       if (mine !== this.epoch) return null;
       if (this.state === 'starting') this.setError(problem);
-      else this.lastError = `${problem}; the running version stays`;
+      else this.lastError = `${problem}${this.staysTail()}`;
       return null;
     }
     return b;
@@ -917,6 +922,11 @@ export class AppRuntime {
     this.debounce = setTimeout(() => { this.debounce = null; void this.update(); }, DEBOUNCE_MS);
   }
 
+  /** "; the running version stays" only while a backend still runs (D7b): never on a crashed app. */
+  private staysTail(): string {
+    return this.backend ? '; the running version stays' : '';
+  }
+
   /** A rolling update: the new version replaces the running one only if it is healthy. */
   update(): Promise<void> {
     if (this.updating) { this.rerun = true; return this.updating; }
@@ -936,7 +946,7 @@ export class AppRuntime {
       const before = this.state;
       const m = readManifest(this.rec.root);
       if (!m.ok) {
-        this.lastError = `manifest: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}; the running version stays`;
+        this.lastError = `manifest: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}${this.staysTail()}`;
         return;
       }
       this.manifest = m.manifest;

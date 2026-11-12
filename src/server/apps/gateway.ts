@@ -126,8 +126,8 @@ export function pausedForSync(req: IncomingMessage, res: ServerResponse, path: s
   if (res.headersSent) { res.destroy(); return; }
   const html = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="3"><title>Ekipten veri geliyor</title>'
     + '<body style="font:14px -apple-system,sans-serif;padding:32px;color:#666"><h1 style="font-size:18px">Ekipten veri geliyor</h1>'
-    + '<p>Takım arkadaşlarının verisi yerine konuyor. Bitince app kendiliğinden açılır.</p>'
-    + '<p lang="en">Team data is landing. The app opens again by itself when it is done.</p></body>';
+    + '<p>Takım arkadaşlarının verisi yerine konuyor. Bitince app kendiliğinden açılır. Uzun sürerse Claude\'dan ekip eşitlemesini bitirmesini iste.</p>'
+    + '<p lang="en">Team data is landing. The app opens again by itself when it is done. If this stays, ask Claude to finish the team sync.</p></body>';
   res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '3', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'X-Content-Type-Options': 'nosniff' });
   res.end(method === 'HEAD' ? undefined : html);
 }
