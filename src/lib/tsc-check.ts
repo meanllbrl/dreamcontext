@@ -14,13 +14,18 @@
  *   sees its own type errors, in the same turn or at its end.
  * - A project whose last check took over {@link SLOW_TSC_MS} stops checking on every edit: the
  *   files edited in the turn are checked once, at Stop.
+ * - A Stop never waits on a check that cannot answer in time: when the project's last check ran
+ *   into the cap, or took longer than {@link STOP_INLINE_MAX_MS}, the Stop starts the check
+ *   DETACHED (`bg.json`, `bg.out`, `bg.code`) and returns at once. The next PostToolUse or Stop
+ *   of any session collects its answer. Measured 2026-11-12: 6% of Stops sat ~30 s on a check
+ *   that hit the cap and reported nothing.
  *
  * State lives in `<tmpdir>/dreamcontext-tsc-<uid>/<hash of the tsconfig path>/` (0700, checked to be
  * this user's own real directory before every use; otherwise the edit is checked on its own): `lock`, `meta.json`
  * (the tsconfig and the last check's duration), `pending/`, `results/<session>/`. Everything
  * here is best-effort: a failure in this module must never break an edit.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync,
@@ -31,6 +36,10 @@ import { relPosix } from './paths.js';
 
 /** A project whose last check took longer than this is checked once per turn, at Stop. */
 export const SLOW_TSC_MS = 4000;
+/** A Stop runs the check itself only when the last one finished under this; else it detaches it. */
+export const STOP_INLINE_MAX_MS = 20_000;
+/** A detached check still running after this is ended and the project keeps its cap verdict. */
+export const BG_TIMEOUT_MS = 180_000;
 /** A lock older than this is reclaimed even when its holder still looks alive. */
 export const TSC_LOCK_STALE_MS = 60_000;
 /** The per-check cap (today's PostToolUse cap). */
@@ -70,7 +79,16 @@ export interface TscCheckOpts {
    * nothing. Unset = Stop has room.
    */
   stopBudgetMs?: number;
+  /** Starts a detached check (tests inject one). Default: {@link defaultTscBackground}. */
+  background?: TscBackgroundStarter;
 }
+
+/**
+ * Start `tsc` for `projectRoot` detached from this process: its combined output goes to `out`,
+ * and its exit code to `code` once it ends (the file appears last, so it marks the end). Returns
+ * the child's pid, or null when no check can be started this way.
+ */
+export type TscBackgroundStarter = (projectRoot: string, files: { out: string; code: string }) => number | null;
 
 interface PendingEntry {
   name: string;
@@ -82,16 +100,19 @@ interface PendingEntry {
 interface Meta {
   tsconfig?: string;
   lastMs?: number;
-  /** When a check last ran into the full {@link TSC_TIMEOUT_MS} cap (cleared by one that finishes). */
+  /** When a check last ran into the full {@link TSC_TIMEOUT_MS} cap. Kept until a check FINISHES
+   *  (inline or detached): until then no hook runs one inline, it would be cut off again. */
   capHitAt?: number;
+  /** When a detached check last failed to finish; none is started again for a while. */
+  bgFailedAt?: number;
 }
 
-/** After a check hit the cap, no check is tried for this long: it would be cut off again. */
-const CAP_BACKOFF_MS = 10 * 60 * 1000;
+/** After a detached check failed to finish, no other is started for this long. */
+const BG_FAIL_BACKOFF_MS = 10 * 60 * 1000;
 
-/** The project's check cannot finish within the cap: trying again soon only burns 30 s. */
-function overCap(meta: Meta, nowMs: number): boolean {
-  return typeof meta.capHitAt === 'number' && nowMs - meta.capHitAt < CAP_BACKOFF_MS;
+/** The project's check cannot finish within the cap: an inline try only burns 30 s. */
+function overCap(meta: Meta): boolean {
+  return typeof meta.capHitAt === 'number';
 }
 
 /** Resolve a binary from the project's own node_modules/.bin. */
@@ -128,6 +149,29 @@ export const defaultTscRunner: TscRunner = (projectRoot, timeoutMs) => {
       return { output: out.trim() ? out : null, ms };
     }
     return { output: null, ms }; // tsc not installed or another non-TS failure
+  }
+};
+
+/**
+ * The detached check: the project's own `tsc` (never `npx`, which may download or prompt with
+ * nobody waiting), in its own process group, under a POSIX `sh` that writes the exit code last.
+ * Windows has no such shell here: null, and a capped project stays unchecked there as before.
+ */
+export const defaultTscBackground: TscBackgroundStarter = (projectRoot, files) => {
+  if (process.platform === 'win32') return null;
+  const bin = localBin('tsc', projectRoot);
+  if (!bin) return null;
+  try {
+    const child = spawn('/bin/sh', [
+      '-c',
+      '"$1" --noEmit --pretty false --incremental > "$2" 2>&1; echo $? > "$3.tmp" && mv "$3.tmp" "$3"',
+      'dreamcontext-tsc', bin, files.out, files.code,
+    ], { cwd: projectRoot, detached: true, stdio: 'ignore' });
+    child.on('error', () => { /* reaped by the next harvest as a dead run */ });
+    child.unref();
+    return typeof child.pid === 'number' ? child.pid : null;
+  } catch {
+    return null;
   }
 };
 
@@ -259,10 +303,12 @@ function stateDirs(baseDir?: string): string[] {
  * Collect (and remove) the errors other hooks' checks found in this session's files, across every
  * project. `skipFile`: a file the caller has a fresher answer for (its own check just ran).
  */
-export function takeTscResults(sessionId: string, opts: { baseDir?: string; skipFile?: string } = {}): string[] {
+export function takeTscResults(sessionId: string, opts: { baseDir?: string; skipFile?: string; now?: () => number } = {}): string[] {
   const messages: string[] = [];
   const skip = opts.skipFile ? resolve(opts.skipFile) : null;
   for (const dir of stateDirs(opts.baseDir)) {
+    // A detached check that ended since: its answers land in the results read just below.
+    harvestBg(dir, (opts.now ?? Date.now)());
     const sdir = join(dir, 'results', safeSession(sessionId));
     let names: string[];
     try {
@@ -393,22 +439,125 @@ function runRound(ctx: RoundCtx, timeoutMs: number, self: { sessionId: string; f
     return undefined;
   }
   writeMeta(ctx.dir, { tsconfig: readMeta(ctx.dir).tsconfig, lastMs: run.ms });
+  const own = answerPending(ctx.dir, ctx.projectRoot, snapshot, run.output, ranAt, self);
+  sweepOld(ctx.dir, nowMs);
+  return own;
+}
+
+/**
+ * Hand one finished check's output to every edit filed before it started, and drop those
+ * entries. Returns `self`'s errors instead of writing them (undefined when it was not among them).
+ */
+function answerPending(
+  dir: string, projectRoot: string, snapshot: PendingEntry[], output: string | null, ranAt: number,
+  self: { sessionId: string; file: string } | null,
+): string | null | undefined {
   const selfFile = self ? resolve(self.file) : null;
   let own: string | null | undefined;
   const answered = new Set<string>();
   for (const p of snapshot) {
-    const errors = filterTscErrors(run.output, p.file, ctx.projectRoot);
+    const errors = filterTscErrors(output, p.file, projectRoot);
     const key = `${p.sessionId}\0${p.file}`;
     if (self && p.sessionId === self.sessionId && p.file === selfFile) {
       own = errors;
     } else if (!answered.has(key)) {
-      writeResult(ctx.dir, p.sessionId, p.file, errors, ranAt);
+      writeResult(dir, p.sessionId, p.file, errors, ranAt);
     }
     answered.add(key);
-    try { rmSync(join(ctx.dir, 'pending', p.name), { force: true }); } catch { /* gone */ }
+    try { rmSync(join(dir, 'pending', p.name), { force: true }); } catch { /* gone */ }
   }
-  sweepOld(ctx.dir, nowMs);
   return own;
+}
+
+// ─── The detached check ───────────────────────────────────────────────────────
+
+interface BgRun {
+  /** 0 while the starter has not returned yet (the claim is written first). */
+  pid: number;
+  startedAt: number;
+  /** The pending entries filed before it started: the ones its output answers. */
+  snapshot: string[];
+}
+
+const bgFile = (dir: string, name: 'bg.json' | 'bg.out' | 'bg.code') => join(dir, name);
+
+function clearBg(dir: string): void {
+  for (const n of ['bg.json', 'bg.out', 'bg.code'] as const) {
+    try { rmSync(bgFile(dir, n), { force: true }); } catch { /* gone */ }
+  }
+}
+
+/**
+ * Collect a detached check that has ended: answer the edits it saw, record its time, and lift
+ * the cap verdict (it finished). One that outlived {@link BG_TIMEOUT_MS} is ended and the cap
+ * verdict stays. Returns whether one is still running (no other check should start meanwhile).
+ */
+function harvestBg(dir: string, nowMs: number): boolean {
+  const run = readJson<BgRun>(bgFile(dir, 'bg.json'));
+  if (!run || typeof run.startedAt !== 'number') return false;
+  const age = nowMs - run.startedAt;
+  if (!existsSync(bgFile(dir, 'bg.code'))) {
+    const pid = typeof run.pid === 'number' ? run.pid : 0;
+    if (pid === 0 && age < 10_000) return true; // being started right now
+    if (pid > 0 && pidAlive(pid) && age < BG_TIMEOUT_MS) return true;
+    // Over its time, or gone without an exit code: no answer. The edits stay pending.
+    if (pid > 0 && pidAlive(pid)) {
+      try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }
+    }
+    const meta = readMeta(dir);
+    writeMeta(dir, { ...meta, bgFailedAt: nowMs, ...(age >= BG_TIMEOUT_MS ? { capHitAt: nowMs } : {}) });
+    clearBg(dir);
+    return false;
+  }
+  // Claim the harvest: only one reader answers the edits.
+  const claimed = `${bgFile(dir, 'bg.json')}.${process.pid}.harvest`;
+  try { renameSync(bgFile(dir, 'bg.json'), claimed); } catch { return false; }
+  try {
+    let output: string | null = null;
+    try { output = readFileSync(bgFile(dir, 'bg.out'), 'utf-8'); } catch { /* none */ }
+    let ms = age;
+    try { ms = Math.max(0, statSync(bgFile(dir, 'bg.code')).mtimeMs - run.startedAt); } catch { /* keep age */ }
+    const snapshot = new Set(Array.isArray(run.snapshot) ? run.snapshot : []);
+    const tsconfig = readMeta(dir).tsconfig;
+    writeMeta(dir, { tsconfig, lastMs: Math.round(ms) });
+    if (tsconfig) {
+      const entries = listPending(dir).filter((p) => snapshot.has(p.name));
+      answerPending(dir, dirname(tsconfig), entries, output && output.trim() ? output : null, run.startedAt, null);
+    }
+    sweepOld(dir, nowMs);
+  } finally {
+    try { rmSync(claimed, { force: true }); } catch { /* gone */ }
+    try { rmSync(bgFile(dir, 'bg.out'), { force: true }); } catch { /* gone */ }
+    try { rmSync(bgFile(dir, 'bg.code'), { force: true }); } catch { /* gone */ }
+  }
+  return false;
+}
+
+/** Start a detached check for every edit pending now, unless one runs or recently failed. */
+function startBg(dir: string, projectRoot: string, starter: TscBackgroundStarter, nowMs: number): boolean {
+  if (harvestBg(dir, nowMs)) return true;
+  const meta = readMeta(dir);
+  if (typeof meta.bgFailedAt === 'number' && nowMs - meta.bgFailedAt < BG_FAIL_BACKOFF_MS) return false;
+  const snapshot = listPending(dir).map((p) => p.name);
+  if (snapshot.length === 0) return false;
+  const claim: BgRun = { pid: 0, startedAt: nowMs, snapshot };
+  try {
+    writeFileSync(bgFile(dir, 'bg.json'), JSON.stringify(claim), { flag: 'wx' });
+  } catch {
+    return true; // another hook claimed it first
+  }
+  for (const n of ['bg.out', 'bg.code'] as const) {
+    try { rmSync(bgFile(dir, n), { force: true }); } catch { /* none */ }
+  }
+  let pid: number | null = null;
+  try { pid = starter(projectRoot, { out: bgFile(dir, 'bg.out'), code: bgFile(dir, 'bg.code') }); } catch { pid = null; }
+  if (!pid) {
+    try { rmSync(bgFile(dir, 'bg.json'), { force: true }); } catch { /* gone */ }
+    return false;
+  }
+  // A check that already ended was harvested from the claim: nothing to record then.
+  if (existsSync(bgFile(dir, 'bg.json'))) writeAtomic(bgFile(dir, 'bg.json'), JSON.stringify({ ...claim, pid }));
+  return true;
 }
 
 /** Drop entries a session never collected (it ended, or crashed) once they are a day old. */
@@ -449,14 +598,19 @@ export function checkEditedFile(tsconfigPath: string, filePath: string, opts: Ts
   const dir = tscStateDir(tsconfigPath, opts.baseDir);
   const started = opts.startedAt ?? now();
   ensureDir(dir, tsconfigPath);
-  if (overCap(readMeta(dir), now())) {
-    // This project's check does not finish within the cap: as before, no answer for this edit.
-    return takeTscResults(opts.sessionId, { baseDir: opts.baseDir });
-  }
+  // Filed even when no check runs now: the detached check a Stop starts answers it.
   addPending(dir, opts.sessionId, filePath, now());
+  // A detached check is running, or the project's check does not finish within the cap: no
+  // inline check (it would race the detached one, or be cut off again).
+  if (harvestBg(dir, now()) || overCap(readMeta(dir))) {
+    return takeTscResults(opts.sessionId, { baseDir: opts.baseDir, now });
+  }
 
   const lastMs = readMeta(dir).lastMs ?? 0;
-  const deferToStop = lastMs > SLOW_TSC_MS && (opts.stopBudgetMs ?? Infinity) >= lastMs + 2000;
+  // A check too slow for a Stop is still deferred to it where the Stop can start it detached:
+  // run here it would hold this edit for up to 25 s and likely hit the cap.
+  const stopDetaches = lastMs > STOP_INLINE_MAX_MS && (opts.background !== undefined || process.platform !== 'win32');
+  const deferToStop = lastMs > SLOW_TSC_MS && ((opts.stopBudgetMs ?? Infinity) >= lastMs + 2000 || stopDetaches);
   let own: string | null | undefined;
   if (!deferToStop) {
     const ctx: RoundCtx = { dir, projectRoot: dirname(resolve(tsconfigPath)), runner, now };
@@ -481,7 +635,7 @@ export function checkEditedFile(tsconfigPath: string, filePath: string, opts: Ts
     }
   }
 
-  const messages = takeTscResults(opts.sessionId, { baseDir: opts.baseDir, skipFile: own !== undefined ? filePath : undefined });
+  const messages = takeTscResults(opts.sessionId, { baseDir: opts.baseDir, now, skipFile: own !== undefined ? filePath : undefined });
   if (own) messages.unshift(own);
   return messages;
 }
@@ -489,7 +643,9 @@ export function checkEditedFile(tsconfigPath: string, filePath: string, opts: Ts
 /**
  * Stop: check this session's edits nobody has checked yet (a slow project's whole turn, or an
  * edit filed after the last check), waiting for a check already running, then hand back every
- * error found in the session's files.
+ * error found in the session's files. A check that cannot answer inside a Stop (the project hit
+ * the cap, its last check took over {@link STOP_INLINE_MAX_MS}, or it does not fit the time left)
+ * is started detached instead; its answer reaches the session at its next PostToolUse or Stop.
  */
 export function checkAtStop(sessionId: string, opts: Omit<TscCheckOpts, 'sessionId' | 'stopBudgetMs'> = {}): string[] {
   const now = opts.now ?? Date.now;
@@ -499,11 +655,19 @@ export function checkAtStop(sessionId: string, opts: Omit<TscCheckOpts, 'session
     const mine = () => listPending(dir).some((p) => p.sessionId === sessionId);
     if (!mine()) continue;
     const tsconfig = readMeta(dir).tsconfig;
-    if (!tsconfig || !existsSync(tsconfig) || overCap(readMeta(dir), now())) continue;
-    const ctx: RoundCtx = { dir, projectRoot: dirname(tsconfig), runner, now };
+    if (!tsconfig || !existsSync(tsconfig)) continue;
+    // A detached check is running: it answers these edits later, nobody waits for it here.
+    if (harvestBg(dir, now()) || !mine()) continue;
+    const meta = readMeta(dir);
+    const lastMs = meta.lastMs ?? 0;
     // Only what fits before the hook's own timeout: a check cut off by Claude Code answers
     // nobody, and its edits stay pending for the next hook to answer.
     const fits = () => deadline - now() >= (readMeta(dir).lastMs ?? 0) + 500;
+    if (overCap(meta) || lastMs > STOP_INLINE_MAX_MS || !fits()) {
+      startBg(dir, dirname(tsconfig), opts.background ?? defaultTscBackground, now());
+      continue;
+    }
+    const ctx: RoundCtx = { dir, projectRoot: dirname(tsconfig), runner, now };
     while (fits()) {
       if (acquire(dir, now())) {
         try {
@@ -518,12 +682,13 @@ export function checkAtStop(sessionId: string, opts: Omit<TscCheckOpts, 'session
       if (!mine()) break;
     }
   }
-  return takeTscResults(sessionId, { baseDir: opts.baseDir });
+  return takeTscResults(sessionId, { baseDir: opts.baseDir, now });
 }
 
 /** Cheap: does this session have an edit nobody checked yet, or an answer waiting? (Stop asks first.) */
-export function tscWorkFor(sessionId: string, baseDir?: string): boolean {
+export function tscWorkFor(sessionId: string, baseDir?: string, now: () => number = Date.now): boolean {
   for (const dir of stateDirs(baseDir)) {
+    harvestBg(dir, now());
     if (listPending(dir).some((p) => p.sessionId === sessionId)) return true;
     try {
       if (readdirSync(join(dir, 'results', safeSession(sessionId))).some((n) => n.endsWith('.json'))) return true;

@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import {
-  checkEditedFile, checkAtStop, takeTscResults, tscStateDir, tscWorkFor, SLOW_TSC_MS, TSC_TIMEOUT_MS, type TscRunner,
+  checkEditedFile, checkAtStop, takeTscResults, tscStateDir, tscWorkFor, SLOW_TSC_MS, TSC_TIMEOUT_MS, STOP_INLINE_MAX_MS, BG_TIMEOUT_MS,
+  type TscRunner, type TscBackgroundStarter,
 } from '../../src/lib/tsc-check.js';
 
 let root: string;
@@ -39,6 +41,29 @@ function fakeRunner(broken: Set<string>, ms = 100, during?: () => void) {
     }
   };
   return { runner, calls, maxActive: () => maxActive };
+}
+
+/**
+ * A fake detached check: a real detached `sleep` (alive, safe to end) stands for tsc until
+ * `finish` writes its output and exit code, exactly where the real sh wrapper writes them.
+ */
+const sleepers: number[] = [];
+afterEach(() => { for (const pid of sleepers.splice(0)) { try { process.kill(-pid); } catch { /* ended */ } } });
+function fakeBackground() {
+  const started: Array<{ out: string; code: string }> = [];
+  const start: TscBackgroundStarter = (_root, files) => {
+    started.push(files);
+    const child = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    sleepers.push(child.pid!);
+    return child.pid!;
+  };
+  const finish = (output: string, code: number) => {
+    const f = started[started.length - 1];
+    writeFileSync(f.out, output);
+    writeFileSync(f.code, `${code}\n`);
+  };
+  return { start, started, finish };
 }
 
 describe('checkEditedFile', () => {
@@ -256,28 +281,89 @@ describe('a check cut off by its timeout answers nobody', () => {
 });
 
 describe('a project whose check cannot finish within the cap', () => {
-  it('is not retried for ten minutes, per edit or at Stop, then is tried again', () => {
+  it('keeps the cap verdict until a check finishes: no inline check per edit or at Stop, the Stop starts one detached', () => {
     let clock = Date.now();
     const now = () => clock;
     let calls = 0;
-    let slowAsEver = true;
     const runner: TscRunner = () => {
       calls++;
-      return slowAsEver ? { output: null, ms: TSC_TIMEOUT_MS, timedOut: true } : { output: 'src/a.ts(1,1): error TS1: x', ms: 800 };
+      return { output: null, ms: TSC_TIMEOUT_MS, timedOut: true };
     };
     checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now, budgetMs: 1_000_000 });
     const afterCap = calls;
     expect(afterCap).toBeGreaterThanOrEqual(1);
-    clock += 60_000;
+    // An hour later the verdict still holds: nothing runs inline, the edit is filed.
+    clock += 60 * 60_000;
+    const bg = fakeBackground();
     expect(checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now })).toEqual([]);
-    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000 })).toEqual([]);
+    expect(tscWorkFor('s1', base, now)).toBe(true);
+    const t0 = Date.now();
+    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start })).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(2000); // the Stop did not wait for it
     expect(calls).toBe(afterCap);
-    clock += 10 * 60_000;
-    slowAsEver = false;
-    // Still measured as slow (~30 s): the edit is deferred, and the Stop's check answers it.
-    expect(checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now })).toEqual([]);
-    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000 })).toEqual([expect.stringMatching(/^TypeScript errors in a\.ts/)]);
-    expect(calls).toBe(afterCap + 1);
+    expect(bg.started).toHaveLength(1);
+    // A second Stop while it runs starts no other and waits for nothing.
+    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start })).toEqual([]);
+    expect(bg.started).toHaveLength(1);
+    // It ends with an error in a.ts: the next Stop reports it, and the cap verdict is lifted.
+    clock += 45_000;
+    bg.finish('src/a.ts(1,1): error TS1: x', 1);
+    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start })).toEqual([expect.stringMatching(/^TypeScript errors in a\.ts/)]);
+    const meta = JSON.parse(readFileSync(join(tscStateDir(tsconfig, base), 'meta.json'), 'utf-8')) as Record<string, unknown>;
+    expect(meta.capHitAt).toBeUndefined();
+    expect(typeof meta.lastMs).toBe('number');
+    expect(calls).toBe(afterCap);
+  });
+
+  it('a detached check past its time is ended, answers nobody, and keeps the verdict', () => {
+    let clock = Date.now();
+    const now = () => clock;
+    const runner: TscRunner = () => ({ output: null, ms: TSC_TIMEOUT_MS, timedOut: true });
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now, budgetMs: 1_000_000 });
+    const bg = fakeBackground();
+    checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start });
+    expect(bg.started).toHaveLength(1);
+    clock += BG_TIMEOUT_MS + 1000;
+    expect(tscWorkFor('s1', base, now)).toBe(true); // the edit is still unanswered
+    const dir = tscStateDir(tsconfig, base);
+    expect(existsSync(join(dir, 'bg.json'))).toBe(false);
+    const meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf-8')) as Record<string, unknown>;
+    expect(typeof meta.capHitAt).toBe('number');
+    // No new detached check right after a failed one.
+    checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start });
+    expect(bg.started).toHaveLength(1);
+  });
+});
+
+describe('a Stop never waits on a slow check', () => {
+  it('an edit to a project too slow for a Stop is not checked inline even when the Stop has little room', () => {
+    const slow = fakeRunner(new Set(), STOP_INLINE_MAX_MS + 60_000);
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner: slow.runner, baseDir: base });
+    expect(slow.calls).toHaveLength(1);
+    // A 43 s Stop cannot hold an 80 s check, but it starts it detached: the edit waits for that.
+    checkEditedFile(tsconfig, file('b.ts'), { sessionId: 's1', runner: slow.runner, baseDir: base, stopBudgetMs: 41_500, background: fakeBackground().start });
+    expect(slow.calls).toHaveLength(1);
+    expect(tscWorkFor('s1', base)).toBe(true);
+  });
+
+  it('a project whose last check took over the inline limit is checked detached; edits filed after it started wait for the next', () => {
+    const broken = new Set(['a.ts']);
+    const slow = fakeRunner(broken, STOP_INLINE_MAX_MS + 1000);
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner: slow.runner, baseDir: base });
+    expect(slow.calls).toHaveLength(1);
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner: slow.runner, baseDir: base }); // deferred to Stop
+    expect(slow.calls).toHaveLength(1);
+    const bg = fakeBackground();
+    expect(checkAtStop('s1', { runner: slow.runner, baseDir: base, budgetMs: 43_000, background: bg.start })).toEqual([]);
+    expect(slow.calls).toHaveLength(1);
+    expect(bg.started).toHaveLength(1);
+    // An edit lands while it runs: no inline check races it.
+    checkEditedFile(tsconfig, file('b.ts'), { sessionId: 's1', runner: slow.runner, baseDir: base });
+    expect(slow.calls).toHaveLength(1);
+    bg.finish('src/a.ts(1,7): error TS2322: x', 1);
+    // The next PostToolUse collects a.ts's answer; b.ts is still pending for the next check.
+    expect(takeTscResults('s1', { baseDir: base })).toEqual([expect.stringMatching(/^TypeScript errors in a\.ts/)]);
+    expect(tscWorkFor('s1', base)).toBe(true);
   });
 });
 
