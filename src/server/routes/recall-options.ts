@@ -14,6 +14,7 @@ import {
 import { recentUserPrompts } from '../../lib/recent-prompts.js';
 import { sendError, sendJson } from '../middleware.js';
 import { requireLocalDashboardRead } from './recall-cloud.js';
+import { corpusFingerprint, createCorpusMemo } from '../corpus-memo.js';
 
 /**
  * `GET /api/recall/options` — what Settings → Recall shows besides the choice itself: the measured
@@ -45,6 +46,8 @@ export interface RecallOptionsRoutes {
 
 export function createRecallOptionsRoutes(overrides: Partial<RecallOptionsRouteDeps> = {}): RecallOptionsRoutes {
   const deps = (): RecallOptionsRouteDeps => ({ ...defaultDeps(), ...overrides });
+  // The share is a pure function of the corpus: read it again only when the corpus changed.
+  const shares = createCorpusMemo<number | null>();
 
   const options: RecallOptionsRoutes['options'] = async (req, res, _params, root) => {
     if (!requireLocalDashboardRead(req)) {
@@ -55,7 +58,8 @@ export function createRecallOptionsRoutes(overrides: Partial<RecallOptionsRouteD
     const d = deps();
     let turkishShare: number | null = null;
     try {
-      turkishShare = turkishShareOf(d.loadCorpus(root));
+      const docs = d.loadCorpus(root);
+      turkishShare = shares.get(root, corpusFingerprint(docs), () => turkishShareOf(docs));
     } catch (err) {
       // No honest language reading: the recommendation then keeps the default. Class and code only, never a message.
       console.error(`[recall-options] corpus read failed: ${err instanceof Error ? err.name : 'unexpected error'}`);

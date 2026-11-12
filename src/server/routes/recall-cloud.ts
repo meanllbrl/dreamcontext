@@ -30,6 +30,7 @@ import {
 import { voiceStatus } from '../../lib/voice/config.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isLoopback } from './agent-spawn-shared.js';
+import { corpusFingerprint, createCorpusMemo } from '../corpus-memo.js';
 
 /**
  * `/api/recall/cloud/*` — Settings' hands on the opt-in cloud recall tiers: status, the key, consent,
@@ -149,6 +150,9 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
   const deps = (): RecallCloudRouteDeps => ({ ...defaultDeps(), ...overrides });
   const homeOf = (): string => deps().home ?? homedir();
   const runs = new Map<string, IndexRun>();
+  // The plan is a pure function of the corpus and the built index (whose meta stamps every write):
+  // computed again only when either changed. Display only: a build surveys the corpus itself.
+  const plans = createCorpusMemo<CloudIndexPlan>();
 
   const indexSnapshot = (root: string) => {
     const run = runs.get(root);
@@ -178,14 +182,15 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
     const d = deps();
     const home = homeOf();
     const status: RecallCloudStatus = recallCloudStatus(root, home);
+    const meta = readVectorMeta(root, VOYAGE);
     let plan: CloudIndexPlan | null = null;
     try {
-      plan = planCloudIndex(root, VOYAGE, d.loadCorpus(root));
+      const docs = d.loadCorpus(root);
+      plan = plans.get(root, `${corpusFingerprint(docs)}:${meta?.updatedAt ?? 'none'}`, () => planCloudIndex(root, VOYAGE, docs));
     } catch {
       plan = null; // the card then cannot offer to enable: it has nothing honest to disclose
     }
     const rerank = DEFAULT_RERANK_MODEL;
-    const meta = readVectorMeta(root, VOYAGE);
     return {
       ...status,
       indexReady: cloudIndexReady(root, VOYAGE),
@@ -336,7 +341,7 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
     sendJson(res, 200, indexSnapshot(root));
   };
 
-  return { status, setKey, copyVoiceKey, enable, disable, startIndex, indexStatus, reset: () => { runs.clear(); } };
+  return { status, setKey, copyVoiceKey, enable, disable, startIndex, indexStatus, reset: () => { runs.clear(); plans.clear(); } };
 }
 
 export const recallCloudRoutes = createRecallCloudRoutes();
