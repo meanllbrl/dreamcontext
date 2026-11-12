@@ -258,6 +258,11 @@ export interface PatternDoc {
   bodyKeys: Set<string>;
   /** True when the author supplied `triggers:`/`aliases:` — reporting only. */
   authored: boolean;
+  /**
+   * `generated: true` in the frontmatter: a view another command writes (the learned-rules view of
+   * `dreamcontext learn`). Still listed, but inert: no `/` shim, never matched, never pasted inline.
+   */
+  generated?: boolean;
 }
 
 /**
@@ -480,6 +485,7 @@ export function loadPatternsReporting(contextRoot: string): PatternLoadResult {
         context,
         bodyKeys: foldKeys(content),
         authored: authoredTriggers.length > 0,
+        ...(fm.generated === true ? { generated: true } : {}),
       });
     } catch (err) {
       // Must never break the prompt hook — but must never be silent either.
@@ -744,6 +750,7 @@ export function matchPatterns(prompt: string, patterns: PatternDoc[]): PatternMa
   const matches: PatternMatch[] = [];
 
   for (const pattern of patterns) {
+    if (pattern.generated) continue; // a generated view is inert: its rules reach agents another way
     // Every name key the prompt hit, and the ones that are not ordinary words.
     // An ordinary word (weight 0) is never evidence on its own, on either channel.
     const hitAll = alignedHits(pattern.keys, promptKeys);
@@ -855,7 +862,7 @@ export function syncPatternShims(projectRoot: string, contextRoot: string): Shim
   const written: string[] = [];
   const removed: string[] = [];
 
-  const wanted = new Map(patterns.map((p) => [`${p.slashName}.md`, shimBody(p)]));
+  const wanted = new Map(patterns.filter((p) => !p.generated).map((p) => [`${p.slashName}.md`, shimBody(p)]));
 
   if (existsSync(dir)) {
     for (const name of readdirSync(dir)) {
@@ -964,6 +971,7 @@ export function selectForInjection(
   let used = 0;
 
   for (const [i, match] of matches.entries()) {
+    if (match.pattern.generated) { pointers.push(match); continue; }
     let body: string;
     try {
       body = readFileSync(match.pattern.file, 'utf-8');

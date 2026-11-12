@@ -52,6 +52,7 @@ import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
 import { registerLinkCommand } from './commands/link.js';
 import { registerPatternsCommand } from './commands/patterns.js';
+import { registerLearnCommand } from './commands/learn.js';
 import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
 import { registerAppsCommand } from './commands/apps.js';
@@ -81,6 +82,7 @@ export function createProgram(): Command {
   registerFeaturesCommand(program);
   registerKnowledgeCommand(program);
   registerPatternsCommand(program);
+  registerLearnCommand(program);
   registerTasksCommand(program);
   registerWhiteboardCommand(program);
   registerRoadmapCommand(program);

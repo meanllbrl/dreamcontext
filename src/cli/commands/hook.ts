@@ -73,6 +73,7 @@ import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
@@ -3490,6 +3491,9 @@ export function registerHookCommand(program: Command): void {
       const rawPrompt = String((input as Record<string, unknown>).prompt ?? '');
       const ownerText = promptOwnerText(rawPrompt);
       const query = recallQuery(rawPrompt);
+      // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
+      // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
+      if (ownerText !== null && detectRememberIntent(ownerText)) console.log(REMEMBER_INTENT_LINE);
 
       const state = readSleepState(root);
 
@@ -3813,10 +3817,11 @@ export function registerHookCommand(program: Command): void {
               // knowledge/patterns/hook-delivered-must-not-miss-rules.md. A
               // pattern that the user has just contradicted is worse than no
               // pattern: it will keep being injected, keep being obeyed, and the
-              // same correction will keep being typed. Folding the correction
-              // back in is therefore part of THIS task, not a sleep chore — by
-              // the time sleep runs, the reasoning that produced the correction
-              // is gone and only its conclusion survives.
+              // same correction will keep being typed. So the awake agent folds
+              // the correction in during THIS task, while the reasoning behind it
+              // is still in context; sleep also reads his words and learns the
+              // rules he repeats (`dreamcontext learn --by sleep`), as the
+              // second net, never the only one.
               if (fullBanner) lines.push(
                 '  ⛔ AND KEEP THEM TRUE: if the user contradicts, narrows, or extends one of these ' +
                   'patterns — or the two of you settle on something it does not say — you MUST update ' +
