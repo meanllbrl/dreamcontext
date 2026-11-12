@@ -10,7 +10,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
+import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StageGroupLights, StripMarks, stripStartFor } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
@@ -20,7 +20,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { STAGE, LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
@@ -1317,6 +1317,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
           style={{ ['--bar-x' as string]: `${plan.centre.x + plan.centre.width}px`, ['--bar-mid' as string]: `${plan.centre.y + plan.centre.height / 2}px` }} onClick={toggleBar}>
           {t('super.chat.toMini')}
         </button>
+      )}
+      {plan.controls && plan.layout && shownGroup && (
+        <StageGroupLights rect={{ x: STAGE.MARGIN, y: plan.controls.y, width: 0, height: plan.controls.height }} closable={remote ? 0 : closableIn([shownGroup]).length}
+          onClose={() => closeGroups([shownGroup])} onMinimize={exitPresentation} />
       )}
       {plan.controls && plan.layout && (
         <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} />

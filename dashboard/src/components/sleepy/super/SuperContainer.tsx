@@ -545,7 +545,7 @@ const LIGHT_GLYPHS = {
  * full screen, always in colour; hover or keyboard focus on the row shows the glyph in each dot.
  * The dot is 12 px, the button around it 24 px, so every control is a full-size target.
  */
-export function CardLights({ close, minimize, zoom, floating }: { close: Light; minimize: Light; zoom: Light; floating?: boolean }) {
+export function CardLights({ close, minimize, zoom, floating }: { close: Light; minimize: Light; zoom?: Light; floating?: boolean }) {
   const { t } = useI18n();
   const one = (tone: keyof typeof LIGHT_GLYPHS, l: Light) => {
     const off = !l.onClick;
@@ -572,7 +572,7 @@ export function CardLights({ close, minimize, zoom, floating }: { close: Light; 
       {one('close', close)}
       {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}
       {minimize.onClick && one('minimize', minimize)}
-      {one('zoom', zoom)}
+      {zoom && one('zoom', zoom)}
     </div>
   );
 }

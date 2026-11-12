@@ -116,6 +116,8 @@ export const STAGE = {
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
    *  the switcher offers (none for a single choice). */
   EXIT_W: 132,
+  /** The opened group's own window controls (two lights in a pill), at the band's left end. */
+  GROUP_LIGHTS_W: 60,
   SWITCH_SEG_W: 96,
   /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
    *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
@@ -925,16 +927,19 @@ function bands(f: Frame, centre: Rect, pill = false, controls?: Rect): { queue: 
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
   // grows as an overlay only while the owner points at it). A presentation's controls hold the
   // band's right end: the pill stops a gap before them.
+  // A presentation's left end holds the opened group's own window controls: the queue starts after them.
+  const lead = controls ? STAGE.GROUP_LIGHTS_W + STAGE.GAP : 0;
   if (f.phone) {
     const i = STAGE.PHONE_BAND_INSET;
     return {
-      queue: { x: i, y: f.bandTop, width: Math.max(0, f.width - 2 * i), height: STAGE.BAND },
+      queue: { x: i + lead, y: f.bandTop, width: Math.max(0, f.width - 2 * i - lead), height: STAGE.BAND },
       dock: { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.width - 2 * STAGE.MARGIN), height: STAGE.BAND },
     };
   }
   const right = controls ? Math.max(f.content.x, controls.x - STAGE.GAP) : f.content.x + f.content.width;
-  const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - f.content.x));
-  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), right - qw);
+  const left = f.content.x + lead;
+  const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - left));
+  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, left), right - qw);
   return {
     queue: { x: qx, y: f.bandTop, width: qw, height: STAGE.BAND },
     dock: pill

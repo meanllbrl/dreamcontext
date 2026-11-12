@@ -12,7 +12,7 @@
  * No tokens spent; everything is fictional ("Pocket Ledger").
  *
  * Proves: the group panel's "Open all" shows all three pictures at once (no overlap, each
- * readable); "Back to the group" leaves the presentation and reopens the group's panel; a
+ * readable); "Minimize group" (was "Back to the group") leaves the presentation and reopens the group's panel; a
  * double-click on the group tile does the same as "Open all"; `super present <group>` opens it
  * straight into that view.
  *
@@ -35,7 +35,7 @@ const SCRATCH = join(tmpdir(), `dreamcontext-verify-super-group-present-${proces
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'pocket-ledger');
 const CLI = join(REPO, 'dist', 'index.js');
-const OUT = join(REPO, 'tmp', 'super-group-present');
+const OUT = process.env.VERIFY_OUT || join(REPO, 'tmp', 'super-group-present');
 const REPORTS = join(SCRATCH, 'reports.ndjson');
 
 const SHOTS = ['shots/card-1440.png', 'shots/bind-dialog-1440.png', 'shots/unbind-dialog-1440.png'];
@@ -239,7 +239,7 @@ try {
   server = await startServer(port);
   const base = `http://127.0.0.1:${port}`;
   browser = await pw.chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: process.env.VERIFY_SCHEME === 'dark' ? 'dark' : 'light' });
   const page = await context.newPage();
   lastPage = page;
   const errors = [];
@@ -259,7 +259,12 @@ try {
   if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
   await sleep(1500);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  if (!(await page.locator('[data-testid="super-handover-btn"]:visible').count())) {
+    // The new shell lists the Super Agent in its drawer; the row opens it.
+    await page.locator('[data-testid="drawer-super-row"]').first().click().catch(() => {});
+    await sleep(1500);
+  }
+  if (await page.locator('[data-testid="super-handover-btn"]:visible').count()) await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
   ok('the three pictures are one group', await until(page, async () => record().groups.some((g) => g.cards.length === 3), 60000),
     JSON.stringify(readNd(REPORTS)));
@@ -287,10 +292,11 @@ try {
     ok(`${label}: all three pictures are on screen at once`, rects && rects.length === 3 && rects.every((r) => r.where === 'present' && r.img?.done), JSON.stringify(rects));
     ok(`${label}: …side by side, none covering another, each a readable size`, rects && rects.length === 3
       && !rects.some((a, i) => rects.some((b, j) => i < j && overlap(a, b))) && rects.every((r) => r.img && r.img.w >= 280), JSON.stringify(rects));
-    ok(`${label}: …and the way back says "Back to the group"`, (await page.locator('[data-testid="super-stage-exit"][data-to-group="true"]:visible').innerText().catch(() => '')).trim() === 'Back to the group');
+    ok(`${label}: …the group has its own close and minimize on the left, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
+      && (await page.locator('[data-testid="super-stage-group-minimize"]:visible').count()) === 1 && (await page.locator('[data-testid="super-stage-exit"]:visible').count()) === 0);
   };
   const backToGroup = async (label) => {
-    await page.locator('[data-testid="super-stage-exit"]:visible').click();
+    await page.locator('[data-testid="super-stage-group-minimize"]:visible').click();
     ok(`${label}: one click leaves the presentation and reopens the group`, await until(page, async () => record().view?.mode === 'float'
       && (await page.locator('[data-testid="super-group-panel"]:visible').count()) === 1, 8000), JSON.stringify(record().view));
     await settle(page);
@@ -401,22 +407,41 @@ try {
     ok(`${spec.label}: …each shows its content, side by side, none covering another, each readable`,
       cards.length === spec.n && cards.every(hasContent) && cards.every((c) => c.img !== false) && !cards.some((a, i) => cards.some((b, j) => i < j && overlap(a, b)))
       && cards.every((c) => c.w >= 280 && c.h >= 200), JSON.stringify(cards));
-    ok(`${spec.label}: …and the way back says "Back to the group"`, (await page.locator('[data-testid="super-stage-exit"][data-to-group="true"]:visible').innerText().catch(() => '')).trim() === 'Back to the group');
+    ok(`${spec.label}: …the group has its own close and minimize on the left, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
+      && (await page.locator('[data-testid="super-stage-group-minimize"]:visible').count()) === 1 && (await page.locator('[data-testid="super-stage-exit"]:visible').count()) === 0);
     await page.screenshot({ path: join(OUT, `7-${spec.label.replace(/ /g, '-')}-all-1440.png`) });
     if (spec.way === 'double-click') {
       await page.locator('[data-testid="super-surface"]').click({ position: { x: 5, y: 450 } }).catch(() => {});
       await page.keyboard.press('Escape');
     } else {
-      await page.locator('[data-testid="super-stage-exit"]:visible').click();
+      await page.locator('[data-testid="super-stage-group-minimize"]:visible').click();
     }
     ok(`${spec.label}: one action leaves the presentation and reopens the group`, await until(page, async () => record().view?.mode === 'float'
       && (await page.locator('[data-testid="super-group-panel"]:visible').count()) === 1, 8000), JSON.stringify(record().view));
     await settle(page);
     const items = await page.locator('[data-testid="super-group-panel"] [data-testid="super-group-item"]').count();
     ok(`${spec.label}: …its panel lists the ${spec.n} cards; the group is unchanged`, items === spec.n && record().groups.find((x) => x.id === grp.id)?.cards.length === spec.n, String(items));
+    await sleep(800); // let the stage finish leaving the presentation before the next key
     await page.keyboard.press('Escape');
     await until(page, async () => (await page.locator('[data-testid="super-group-panel"]:visible').count()) === 0, 4000);
     await settle(page);
+  }
+
+  console.log('\n── the group own red button closes the whole group (after the ask)');
+  {
+    const grp = record().groups.find((x) => x.cards.length >= 2);
+    const gt = page.locator(`[data-testid="super-group"][data-group-id="${grp.id}"]`);
+    await gt.click();
+    await page.locator('[data-testid="super-group-panel-open-all"]:visible').click();
+    ok('the group is presented again', await until(page, async () => record().view?.mode === 'present', 8000));
+    await settle(page);
+    await page.locator('[data-testid="super-stage-group-close"]:visible').click();
+    ok('the red button asks before closing the group', await until(page, async () => (await page.locator('[data-testid="super-stage-group-close-choice"]:visible').count()) === 1, 4000));
+    await page.screenshot({ path: join(OUT, '8-close-group-ask-1440.png') });
+    await page.locator('[data-testid="super-stage-group-close-end"]:visible').click();
+    ok('confirming closes the whole group and the presentation ends', await until(page, async () => !record().groups.some((x) => x.id === grp.id) && record().view?.mode !== 'present', 10000), JSON.stringify(record().view));
+    await settle(page);
+    await page.screenshot({ path: join(OUT, '9-group-closed-1440.png') });
   }
 
   ok('no console errors', errors.length === 0, errors.slice(0, 5).join('\n'));

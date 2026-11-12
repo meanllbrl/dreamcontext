@@ -1,11 +1,11 @@
-import type { KeyboardEvent } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { STAGE, type Rect, type StagePlan, type StripPlan } from './superLayout';
 import { KindTile } from './SuperTiles';
 import type { PresentLayout, SuperContainer, SuperStateView } from '../../../lib/superTypes';
 import { useI18n } from '../../../context/I18nContext';
 import type { ChatSession } from '../chatSession';
 import { ChatTile, type AsksOwner } from './AgentCard';
-import { chatStatus, type RemoteRow } from './SuperContainer';
+import { chatStatus, CardLights, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { toneOfStatus } from './superHandover';
 
@@ -85,7 +85,37 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
           ))}
         </div>
       )}
-      <button type="button" className="super-stage-exit" data-testid="super-stage-exit" data-to-group={toGroup ? 'true' : undefined} onClick={onExit} title="Esc">{t(toGroup ? 'super.stage.backToGroup' : 'super.stage.exit')}</button>
+      {/* An opened group leaves through its own window controls (StageGroupLights), on the left. */}
+      {!toGroup && <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>}
+    </div>
+  );
+}
+
+/**
+ * The opened group's own window controls at the top band's left end (owner 2026-11-12): red closes
+ * the whole group (after the same ask the group panel uses), yellow minimises it back to its
+ * collapsed card. A card's own red button inside keeps closing that card only.
+ */
+export function StageGroupLights({ rect, closable, onClose, onMinimize }: {
+  rect: Rect; closable: number; onClose: () => void; onMinimize: () => void;
+}) {
+  const { t } = useI18n();
+  const [ask, setAsk] = useState(false);
+  return (
+    <div className="super-stage-group-lights" data-testid="super-stage-group-lights" style={{ left: rect.x, top: rect.y, height: rect.height }}>
+      <CardLights
+        close={{ label: t('super.group.closeCards'), onClick: closable > 0 ? () => setAsk((v) => !v) : undefined, testId: 'super-stage-group-close' }}
+        minimize={{ label: t('super.group.minimize'), onClick: onMinimize, testId: 'super-stage-group-minimize' }}
+      />
+      {ask && closable > 0 && (
+        <div className="super-close-choice super-stage-group-ask" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-stage-group-close-choice">
+          <span className="super-close-choice-q">{t('super.group.closeAsk')}</span>
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-stage-group-close-end"
+            onClick={() => { setAsk(false); onClose(); }}>
+            {t('super.group.closeEnd').replace('{n}', String(closable))}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

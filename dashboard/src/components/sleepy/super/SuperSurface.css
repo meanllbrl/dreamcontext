@@ -2042,3 +2042,20 @@
   font-size: var(--font-size-xs);
 }
 .super-turn-card-closed-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
+
+/* An opened group's own window controls, at the left end of the top band (owner 2026-11-12). */
+.super-stage-group-lights {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: center;
+}
+.super-stage-group-lights > .super-card-lights {
+  position: static;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+.super-stage-group-ask { top: calc(100% + var(--space-1)); left: 0; right: auto; }
