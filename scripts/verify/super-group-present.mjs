@@ -292,7 +292,7 @@ try {
     ok(`${label}: all three pictures are on screen at once`, rects && rects.length === 3 && rects.every((r) => r.where === 'present' && r.img?.done), JSON.stringify(rects));
     ok(`${label}: …side by side, none covering another, each a readable size`, rects && rects.length === 3
       && !rects.some((a, i) => rects.some((b, j) => i < j && overlap(a, b))) && rects.every((r) => r.img && r.img.w >= 280), JSON.stringify(rects));
-    ok(`${label}: …the group has its own close and minimize on the left, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
+    ok(`${label}: …the toolbar has Close group and Minimize, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
       && (await page.locator('[data-testid="super-stage-group-minimize"]:visible').count()) === 1 && (await page.locator('[data-testid="super-stage-exit"]:visible').count()) === 0);
   };
   const backToGroup = async (label) => {
@@ -407,7 +407,7 @@ try {
     ok(`${spec.label}: …each shows its content, side by side, none covering another, each readable`,
       cards.length === spec.n && cards.every(hasContent) && cards.every((c) => c.img !== false) && !cards.some((a, i) => cards.some((b, j) => i < j && overlap(a, b)))
       && cards.every((c) => c.w >= 280 && c.h >= 200), JSON.stringify(cards));
-    ok(`${spec.label}: …the group has its own close and minimize on the left, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
+    ok(`${spec.label}: …the toolbar has Close group and Minimize, and no "Back to the group" button`, (await page.locator('[data-testid="super-stage-group-close"]:visible').count()) === 1
       && (await page.locator('[data-testid="super-stage-group-minimize"]:visible').count()) === 1 && (await page.locator('[data-testid="super-stage-exit"]:visible').count()) === 0);
     await page.screenshot({ path: join(OUT, `7-${spec.label.replace(/ /g, '-')}-all-1440.png`) });
     if (spec.way === 'double-click') {

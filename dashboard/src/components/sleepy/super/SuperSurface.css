@@ -2043,19 +2043,6 @@
 }
 .super-turn-card-closed-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
 
-/* An opened group's own window controls, at the left end of the top band (owner 2026-11-12). */
-.super-stage-group-lights {
-  position: absolute;
-  z-index: var(--sz-queue);
-  display: flex;
-  align-items: center;
-}
-.super-stage-group-lights > .super-card-lights {
-  position: static;
-  padding: 2px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-md);
-}
-.super-stage-group-ask { top: calc(100% + var(--space-1)); left: 0; right: auto; }
+/* An opened group's close and minimize sit in the presentation's toolbar; the ask opens under them. */
+.super-stage-group-ask { position: absolute; top: calc(100% + var(--space-1)); right: 0; left: auto; white-space: nowrap; z-index: var(--sz-queue); }
+.super-stage-exit--group:disabled { opacity: 0.5; cursor: default; }

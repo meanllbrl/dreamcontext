@@ -116,8 +116,8 @@ export const STAGE = {
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
    *  the switcher offers (none for a single choice). */
   EXIT_W: 132,
-  /** The opened group's own window controls (two lights in a pill), at the band's left end. */
-  GROUP_LIGHTS_W: 60,
+  /** An opened group's two text buttons (close group, minimize) take the exit's place. */
+  GROUP_EXIT_W: 232,
   SWITCH_SEG_W: 96,
   /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
    *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
@@ -371,6 +371,8 @@ export interface PlanOptions {
   /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
    *  whose count fits. */
   layoutChoices?: number;
+  /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
+  groupExit?: boolean;
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
   /** The bar's MEASURED height (JobBar publishes it, superJobsStore `useQueueHeight`). A card row
@@ -927,19 +929,16 @@ function bands(f: Frame, centre: Rect, pill = false, controls?: Rect): { queue: 
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
   // grows as an overlay only while the owner points at it). A presentation's controls hold the
   // band's right end: the pill stops a gap before them.
-  // A presentation's left end holds the opened group's own window controls: the queue starts after them.
-  const lead = controls ? STAGE.GROUP_LIGHTS_W + STAGE.GAP : 0;
   if (f.phone) {
     const i = STAGE.PHONE_BAND_INSET;
     return {
-      queue: { x: i + lead, y: f.bandTop, width: Math.max(0, f.width - 2 * i - lead), height: STAGE.BAND },
+      queue: { x: i, y: f.bandTop, width: Math.max(0, f.width - 2 * i), height: STAGE.BAND },
       dock: { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.width - 2 * STAGE.MARGIN), height: STAGE.BAND },
     };
   }
   const right = controls ? Math.max(f.content.x, controls.x - STAGE.GAP) : f.content.x + f.content.width;
-  const left = f.content.x + lead;
-  const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - left));
-  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, left), right - qw);
+  const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - f.content.x));
+  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), right - qw);
   return {
     queue: { x: qx, y: f.bandTop, width: qw, height: STAGE.BAND },
     dock: pill
@@ -1332,7 +1331,7 @@ function planWith(
     const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
-    const cw = STAGE.EXIT_W + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const cw = (opts.groupExit ? STAGE.GROUP_EXIT_W : STAGE.EXIT_W) + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
