@@ -17,6 +17,7 @@ import { nextNeed, rowOverflow } from '../../dashboard/src/pages/whiteboards/use
 import {
   CLICK_SLOP_PX, FIELD_MODE_KEY, QUICK_SCOPE_MAX, REGION_MIN_PX, addedIds, areaOf, dragOutcome, effectiveMode, failKey, lineOfJob, undoRefusalKey,
   quickEditScope, readFieldMode, regionChipText, startRefusalKey, writeFieldMode, type ScopeElement,
+  QUICK_MODEL_KEY, quickReady, readQuickModel, writeQuickModel,
 } from '../../dashboard/src/components/whiteboard/quickEditLogic.js';
 
 const sel = (over: Partial<SelectionRef> = {}): SelectionRef => ({ n: 2, ids: ['a1', 'b2'], box: [10, 20, 300, 40], one: null, ...over });
@@ -297,6 +298,38 @@ const tq = (k: string) => ({
 describe('the mode switch (Decision 1, 2; criteria 1, 17)', () => {
   const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, m }; };
 
+  it('the quick edit model: Sonnet until picked, then one pick per machine; anything unreadable is Sonnet', () => {
+    const store = mem();
+    expect(readQuickModel(store)).toEqual({ tool: 'claude', model: 'sonnet' });
+    writeQuickModel(store, { tool: 'antigravity', model: '' });
+    expect(JSON.parse(store.m.get(QUICK_MODEL_KEY)!)).toEqual({ tool: 'antigravity', model: '' });
+    expect(readQuickModel(store)).toEqual({ tool: 'antigravity', model: '' });
+    writeQuickModel(store, { tool: 'codex', model: 'gpt-5.5' });
+    expect(readQuickModel(store)).toEqual({ tool: 'codex', model: 'gpt-5.5' });
+    for (const raw of ['{', '{"tool":"gpt","model":"x"}', '{"tool":"codex"}', '{"tool":"claude","model":""}', JSON.stringify({ tool: 'codex', model: 'x'.repeat(65) })]) {
+      store.m.set(QUICK_MODEL_KEY, raw);
+      expect(readQuickModel(store), raw).toEqual({ tool: 'claude', model: 'sonnet' });
+    }
+    const broken = { getItem: () => { throw new Error('x'); }, setItem: () => { throw new Error('x'); } };
+    expect(readQuickModel(broken)).toEqual({ tool: 'claude', model: 'sonnet' });
+    expect(() => writeQuickModel(broken, { tool: 'codex', model: '' })).not.toThrow();
+    expect(failKey('tool')).toBe('whiteboard.quick.err.tool');
+    expect(failKey('gate')).toBe('whiteboard.quick.err.gate');
+  });
+
+  it('review r1: a Claude sign-out with Sonnet picked keeps the quick mode (and its model chip) when Codex or Gemini is ready', () => {
+    const codex = [{ tool: 'claude', ready: false }, { tool: 'codex', ready: true }];
+    expect(quickReady(false, codex)).toBe(true);
+    expect(effectiveMode('quick', true, quickReady(false, codex))).toBe('quick');
+    expect(effectiveMode('super', false, quickReady(false, [{ tool: 'antigravity', ready: true }]))).toBe('quick');
+    // Nothing ready anywhere: the mode closes, as before.
+    expect(quickReady(false, [{ tool: 'codex', ready: false }, { tool: 'antigravity', ready: false }])).toBe(false);
+    expect(quickReady(false, undefined)).toBe(false);
+    expect(quickReady(true, undefined)).toBe(true);
+    // A Claude tool row never stands in for the Claude sign-in check.
+    expect(quickReady(false, [{ tool: 'claude', ready: true }])).toBe(false);
+  });
+
   it('Hızlı düzenle is the default; the last pick is remembered per machine', () => {
     const store = mem();
     expect(readFieldMode(store)).toBe('quick');
@@ -370,7 +403,7 @@ describe('the empty region (Decision 12; criterion 2)', () => {
     expect(splitPageContext(text).page?.area).toEqual([40, -80, 320, 240]);
     expect(composeFieldMessage('buraya elma', 'q3', null, [1, 2, 30, 40])).toBe('buraya elma\n\n[On page whiteboards board=q3 area=1,2,30,40]');
     const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
-    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\), attachments: quickAttachmentPaths\(carried\) \}\)/);
+    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\), attachments: quickAttachmentPaths\(carried\), tool: qModel\.tool, model: qModel\.model \}\)/);
   });
 
   it('Escape, a shape selection and another board clear it; the canvas never saves it', () => {
@@ -479,7 +512,7 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(startRefusalKey(409, 'busy')).toBe('whiteboard.quick.busy');
     expect(startRefusalKey(429, 'rate')).toBe('whiteboard.quick.rate');
     expect(startRefusalKey(413, 'scope_too_big')).toBe('whiteboard.quick.tooBig');
-    expect(startRefusalKey(412, 'no_claude')).toBe('whiteboard.quick.noClaude');
+    expect(startRefusalKey(412, 'no_claude')).toBe('whiteboard.quick.claudeOut');
     expect(startRefusalKey(500, '')).toBe('whiteboard.quick.failed');
   });
 

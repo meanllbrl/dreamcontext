@@ -21,8 +21,41 @@ export function writeFieldMode(store: ModeStore | null | undefined, mode: FieldM
   try { store?.setItem(FIELD_MODE_KEY, mode); } catch { /* private mode: the pick lasts this page */ }
 }
 
-/** The mode the field really runs: Super's segment needs Super on; quick needs a Claude account.
- *  With neither, the pick stands and the send is disabled with the reason. */
+// ── the quick edit's model (owner 2026-11-12): one pick per machine, every board ─────────────
+
+export type QuickTool = 'claude' | 'codex' | 'antigravity';
+export interface QuickModel { tool: QuickTool; model: string }
+export const QUICK_MODEL_KEY = 'dreamcontext.whiteboard.quickModel';
+/** Sonnet, as before the picker: fast and cheap for one drawing. */
+export const DEFAULT_QUICK_MODEL: QuickModel = { tool: 'claude', model: 'sonnet' };
+
+/** The remembered pick; anything unreadable is Sonnet. An empty model = that tool's default. */
+export function readQuickModel(store: ModeStore | null | undefined): QuickModel {
+  try {
+    const raw = JSON.parse(store?.getItem(QUICK_MODEL_KEY) ?? 'null') as Partial<QuickModel> | null;
+    if (raw && (raw.tool === 'claude' || raw.tool === 'codex' || raw.tool === 'antigravity') && typeof raw.model === 'string' && raw.model.length <= 64) {
+      if (raw.tool === 'claude' && !raw.model) return DEFAULT_QUICK_MODEL;
+      return { tool: raw.tool, model: raw.model };
+    }
+  } catch { /* unreadable: the default */ }
+  return DEFAULT_QUICK_MODEL;
+}
+
+export function writeQuickModel(store: ModeStore | null | undefined, pick: QuickModel): void {
+  try { store?.setItem(QUICK_MODEL_KEY, JSON.stringify(pick)); } catch { /* private mode: the pick lasts this page */ }
+}
+
+/**
+ * Can the quick edit run on this Mac at all (review r1): a signed-in Claude, or a ready Codex or
+ * Antigravity. Never the PICKED tool alone: a Claude sign-out with Sonnet still picked must leave
+ * the mode, and so the model chip, reachable when another tool could do the edit.
+ */
+export function quickReady(claudeOk: boolean, tools: ReadonlyArray<{ tool: string; ready: boolean }> | undefined): boolean {
+  return claudeOk || !!tools?.some((t) => (t.tool === 'codex' || t.tool === 'antigravity') && t.ready);
+}
+
+/** The mode the field really runs: Super's segment needs Super on; quick needs a ready tool
+ *  (quickReady). With neither, the pick stands and the send is disabled with the reason. */
 export function effectiveMode(picked: FieldMode, superOn: boolean, quickOk: boolean): FieldMode {
   if (picked === 'super' && !superOn && quickOk) return 'quick';
   if (picked === 'quick' && !quickOk && superOn) return 'super';
@@ -152,7 +185,7 @@ export interface QuickJobView {
 }
 
 /** The server's failure codes the field words itself; any other code reads as the generic line. */
-const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write', 'unrecorded']);
+const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write', 'unrecorded', 'tool', 'gate']);
 export const failKey = (code: string | undefined): string => (code && FAIL_CODES.has(code) ? `whiteboard.quick.err.${code}` : 'whiteboard.quick.failed');
 
 const WIDGET_WHYS = new Set(['not_found', 'web', 'too_long', 'bad']);
@@ -222,7 +255,8 @@ export function startRefusalKey(status: number, code: string): string {
   if (code === 'busy' || status === 409) return 'whiteboard.quick.busy';
   if (code === 'rate' || status === 429) return 'whiteboard.quick.rate';
   if (code === 'scope_too_big' || status === 413) return 'whiteboard.quick.tooBig';
-  if (code === 'no_claude' || status === 412) return 'whiteboard.quick.noClaude';
+  // Only a Claude pick is refused so: the field stays open, another model can be picked.
+  if (code === 'no_claude' || status === 412) return 'whiteboard.quick.claudeOut';
   if (status === 404) return 'whiteboard.field.deleted';
   return 'whiteboard.quick.failed';
 }

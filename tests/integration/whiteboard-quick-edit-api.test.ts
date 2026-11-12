@@ -15,6 +15,8 @@ import { handleCors, isCrossSiteWrite, sendError } from '../../src/server/middle
 import { createWhiteboard, identityKey, mutateWhiteboard, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { resetQuickJobsForTests, setQuickDepsForTests, QUICK_MAX_PER_MINUTE } from '../../src/lib/whiteboards/quick-edit-jobs.js';
 import type { ClaudeExecution } from '../../src/lib/automations/runner.js';
+import { readJournal } from '../../src/lib/whiteboards/quick-edit.js';
+import { NO_ENV_GATE } from '../../src/lib/t3-bridge/env-gate.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
 import { deniedForEveryone } from '../../src/lib/apps/page-routes.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
@@ -49,16 +51,24 @@ function call(method: string, path: string, body?: unknown, vault = 'a'): Promis
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── the fake claude ──
-interface Spawned { args: string[]; stdin?: string; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[] }
+interface Spawned {
+  args: string[]; stdin?: string; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[];
+  /** A Codex / Antigravity run: the program, its timeout, its working folder, and the turn file read while it ran. */
+  command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string; turn?: string; pictureOnDisk?: boolean;
+}
 let spawned: Spawned[] = [];
 let auto: ((args: string[]) => unknown) | null = null;
 const envelope = (answer: unknown) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', structured_output: answer, total_cost_usd: 0.004 });
 
-function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void; stdin?: string }): Promise<ClaudeExecution> {
+function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void; stdin?: string; command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string }): Promise<ClaudeExecution> {
   return new Promise((resolve) => {
     const child = Object.assign(new EventEmitter(), { pid: 90000 + spawned.length });
+    const turnArg = args.find((a) => a.startsWith('--prompt-file='));
+    const turn = turnArg ? readFileSync(turnArg.slice('--prompt-file='.length), 'utf-8') : undefined;
+    const pic = turn?.match(/^\[Picture 1: (.+)\]$/m)?.[1];
     const entry: Spawned = {
-      args, child, killed: [], stdin: opts.stdin,
+      args, child, killed: [], stdin: opts.stdin, command: opts.command, timeoutMs: opts.timeoutMs, cwd: opts.cwd, turn,
+      pictureOnDisk: pic ? (() => { try { return readFileSync(pic).length > 0; } catch { return false; } })() : undefined,
       resolve: (stdout) => resolve({ spawned: true, timedOut: false, exitCode: 0, stdout, stderrTail: '', startedAt: new Date(), finishedAt: new Date(), result: null }),
     };
     spawned.push(entry);
@@ -392,6 +402,99 @@ describe('quick edit attachments (owner 12 Nov: dropped and pasted pictures and 
     const bin = drop('veri.bin', Buffer.from([0, 1, 2, 255, 254]));
     const bad = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'oku', attachments: [bin] })).body.job);
     expect(bad.refusal).toMatchObject({ why: 'type', name: 'veri.bin' });
+    expect(spawned).toHaveLength(0);
+  });
+});
+
+describe('quick edit model pick (owner 12 Nov: "maybe I will use Gemini on the whiteboard")', () => {
+  // What `t3-run` prints: the claude -p shape, the answer as text (no schema flag there).
+  const toolEnvelope = (answer: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '```json\n' + JSON.stringify(answer) + '\n```', total_cost_usd: 0.011, dc_tool: 'codex', ...extra });
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000002000000010802000000' + '7b40e8dd0000000c4944415408d763f8cfc0f01f0005fe02fedb4a7a1e0000000049454e44ae426082', 'hex');
+  beforeEach(() => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), bridge: () => ({ node: '/n/node', cli: '/c/cli.js' }) });
+  });
+
+  it('a Claude pick runs that model; no pick is Sonnet', async () => {
+    auto = () => ({ reply: 'ok', notBoard: false, add: [] });
+    const slug = await boardWith([rect('A')]);
+    await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', tool: 'claude', model: 'haiku' })).body.job);
+    expect(spawned[0].args[spawned[0].args.indexOf('--model') + 1]).toBe('haiku');
+    expect(spawned[0].command).toBeUndefined();
+  });
+
+  it('Codex: its read-only headless run in an empty temp folder, the same answer applied the same way, the model journaled', async () => {
+    const slug = await boardWith([rect('A'), rect('B', 300)]);
+    const job = (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'yeşil yap', tool: 'codex', model: 'gpt-5.5', scope: { ids: ['A'], identities: identitiesOf(slug, ['A']) } })).body.job;
+    await pause(20);
+    const sp = spawned[0];
+    expect(sp.command).toEqual({ file: '/n/node', prefix: ['/c/cli.js'] });
+    expect(sp.args.slice(0, 3)).toEqual(['t3-run', '--surface', 'board-quick']);
+    expect(sp.args).toContain('--model');
+    expect(sp.args[sp.args.indexOf('--model') + 1]).toBe('gpt-5.5');
+    expect(sp.args).not.toContain('--tool');
+    expect(sp.timeoutMs).toBe(120_000);
+    // The turn file sits in the run's own temp folder, which holds nothing else of the project.
+    const turnArg = sp.args.find((a) => a.startsWith('--prompt-file='))!;
+    expect(turnArg.slice('--prompt-file='.length).startsWith(sp.cwd! + '/')).toBe(true);
+    expect(sp.cwd).not.toContain(roots.a);
+    expect(sp.turn).toMatch(/^SYS\n/);
+    expect(sp.turn).toContain('"notBoard"');
+    expect(sp.turn).toContain('Request from the owner: yeşil yap');
+    sp.resolve(toolEnvelope({ reply: 'Yeşil yapıldı.', notBoard: false, update: [{ id: 'A', fill: 'green' }] }));
+    const view = await settle(slug, job);
+    expect(view.state).toBe('done');
+    expect(view.costUsd).toBe(0.011);
+    expect(readWhiteboard(roots.a, slug).board.elements.find((e) => e.id === 'A')!.backgroundColor).toBe('#b2f2bb');
+    expect(readJournal(roots.a, slug).at(-1)!.model).toBe('codex:gpt-5.5');
+  });
+
+  it('Antigravity (Gemini): names the tool; a picture is a file in that folder, named on its own line', async () => {
+    const dir = join(roots.a, 'tmp', 'agent-drops');
+    mkdirSync(dir, { recursive: true });
+    const shot = join(dir, `${Date.now()}-ekran.png`);
+    writeFileSync(shot, PNG);
+    const slug = await boardWith([rect('A')]);
+    const job = (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'bunu tahtaya koy', tool: 'antigravity', model: '', attachments: [shot] })).body.job;
+    await pause(20);
+    const sp = spawned[0];
+    expect(sp.args[sp.args.indexOf('--tool') + 1]).toBe('antigravity');
+    expect(sp.args).not.toContain('--model');
+    expect(sp.turn).toContain(`[Picture 1: ${sp.cwd}/picture-1.png]`);
+    expect(sp.pictureOnDisk).toBe(true);
+    sp.resolve(toolEnvelope({ reply: 'Resim kondu.', notBoard: false, pictures: [1] }, { dc_tool: 'antigravity', total_cost_usd: null }));
+    const view = await settle(slug, job);
+    expect(view.state).toBe('done');
+    expect(readWhiteboard(roots.a, slug).board.elements.some((e) => e.type === 'image')).toBe(true);
+  });
+
+  it('a tool that cannot run the turn fails as `tool`, nothing written; Claude being signed out does not block it', async () => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: false, reason: 'no_claude', text: 'x' }), bridge: () => ({ node: '/n/node', cli: '/c/cli.js' }) });
+    const slug = await boardWith([rect('A')]);
+    const before = readFileSync(file(slug), 'utf-8');
+    const start = await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', tool: 'codex', model: '' });
+    expect(start.status).toBe(202);
+    await pause(20);
+    spawned[0].resolve(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Codex is signed out.', total_cost_usd: 0 }));
+    const view = await settle(slug, start.body.job);
+    expect(view).toMatchObject({ state: 'failed', code: 'tool' });
+    expect(readFileSync(file(slug), 'utf-8')).toBe(before);
+    // Codex's one-time Mac approval missing: its own code, so the page says how to give it.
+    const g = (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', tool: 'codex' })).body.job;
+    await pause(20);
+    spawned[1].resolve(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: NO_ENV_GATE, total_cost_usd: 0 }));
+    expect(await settle(slug, g)).toMatchObject({ state: 'failed', code: 'gate' });
+    // No Node for the bridge: refused before any spawn.
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), bridge: () => null });
+    const v2 = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', tool: 'antigravity' })).body.job);
+    expect(v2).toMatchObject({ state: 'failed', code: 'tool' });
+    expect(spawned).toHaveLength(2);
+  });
+
+  it('a pick that is not a tool or a model name is refused 400 before any spawn', async () => {
+    const slug = await boardWith([rect('A')]);
+    for (const bad of [{ tool: 'gpt' }, { tool: 'claude', model: 'gpt-5.5' }, { tool: 'codex', model: 'sonnet' }, { tool: 'codex', model: 'gpt 5' }, { tool: 'codex', model: '--yolo' }, { tool: 'antigravity', model: 7 }]) {
+      expect((await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', ...bad })).status, JSON.stringify(bad)).toBe(400);
+    }
     expect(spawned).toHaveLength(0);
   });
 });

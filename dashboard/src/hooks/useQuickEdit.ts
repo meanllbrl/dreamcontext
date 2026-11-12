@@ -18,6 +18,9 @@ export interface QuickStartBody {
   area: { x: number; y: number; w: number; h: number } | null;
   /** Uploaded paths of the pictures and files dropped or pasted into the field. */
   attachments?: string[];
+  /** The model pick: `claude` | `codex` | `antigravity`, and its model ('' = the tool's default). */
+  tool?: string;
+  model?: string;
 }
 
 export type QuickStart = { ok: true; job: string } | { ok: false; status: number; code: string; message: string };

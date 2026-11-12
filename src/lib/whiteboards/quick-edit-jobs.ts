@@ -28,15 +28,20 @@ import { prepareQuickWidgets, QuickWidgetRefusal, type Placeable, type PreparedW
 import { quickCatalogText } from './quick-catalog.js';
 import { prepareQuickPictures, QuickAttachmentRefusal, quickTurnLine, readQuickAttachments, type QuickAttachment } from './quick-attachments.js';
 import { WhiteboardValidationError } from './errors.js';
+import { pickLabel, quickToolArgs, quickToolPrompt, type QuickPick } from './quick-edit-tools.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
+import { NO_ENV_GATE } from '../t3-bridge/env-gate.js';
 
 export const QUICK_TIMEOUT_MS = 60_000;
+/** Codex and Antigravity read the ~60k prompt as a fresh thread each time: a longer wait. */
+export const QUICK_TOOL_TIMEOUT_MS = 120_000;
 export const QUICK_MAX_RUNNING = 3;
 export const QUICK_MAX_PER_MINUTE = 30;
 export const QUICK_JOB_TTL_MS = 10 * 60_000;
 
 export type QuickJobState = 'queued' | 'running' | 'applying' | 'done' | 'failed' | 'stopped';
 /** Why a job failed, as a code: the page words it in the owner's language (review r1). */
-export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write' | 'unrecorded' | 'widget' | 'attachment';
+export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write' | 'unrecorded' | 'widget' | 'attachment' | 'tool' | 'gate';
 
 export interface QuickJobView {
   state: QuickJobState;
@@ -71,6 +76,8 @@ export interface QuickJobRequest {
   area: QuickArea | null;
   /** Paths the composer's upload returned; only files in the vault's drop folder are read. */
   attachments?: string[];
+  /** Which model answers (quick-edit-tools.ts); absent = Claude Sonnet. */
+  pick?: QuickPick;
   selfOrigin?: string;
 }
 
@@ -103,6 +110,8 @@ export interface QuickDeps {
   /** Tests: the status answer and the process-group kill. */
   status?: () => QuickStatus;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
+  /** Tests: the node and CLI a Codex or Antigravity run starts (null = no Node new enough). */
+  bridge?: () => { node: string; cli: string } | null;
 }
 
 const jobs = new Map<string, Job>();
@@ -122,6 +131,15 @@ export function resetQuickJobsForTests(): void {
   lanes.clear();
   starts.length = 0;
   deps = {};
+}
+
+/** A tool run's error envelope with no answer in it: its words, for the log; '' otherwise. */
+function toolRefused(stdout: string): string {
+  const t = stdout.trim().split('\n').reverse().find((l) => l.startsWith('{')) ?? '';
+  try {
+    const d = JSON.parse(t) as { is_error?: unknown; result?: unknown };
+    return d.is_error === true ? String(d.result ?? 'the tool refused the turn').slice(0, 300) : '';
+  } catch { return ''; }
 }
 
 /** The model's sentence, plus a line when the drawing was kept readable and so outgrew the area. */
@@ -185,7 +203,7 @@ export function startQuickEdit(root: string, slug: string, req: QuickJobRequest)
   lane.push(key);
   lanes.set(boardKey, lane);
   // A safety net: the key dies even if nothing ever settles it.
-  expireLater(job, QUICK_JOB_TTL_MS + QUICK_TIMEOUT_MS);
+  expireLater(job, QUICK_JOB_TTL_MS + QUICK_TOOL_TIMEOUT_MS);
   if (lane.length === 1) void run(job);
   return { ok: true, job: id };
 }
@@ -289,21 +307,42 @@ async function run(job: Job): Promise<void> {
     writeFileSync(systemFile, systemPrompt());
     const catalog = deps.catalog ? deps.catalog() : quickCatalogText(job.root);
     const message = quickEditUserMessage(job.req.text, input, undefined, catalog);
-    // With attachments the turn goes in on stdin (pictures are image blocks); without, as before.
-    const stdin = atts.length ? quickTurnLine(message, atts) : undefined;
-    const args = quickEditArgs(systemPrompt(), message, systemFile, { stdin: !!stdin });
-    const exec = deps.exec ?? executeClaudeDetached;
+    const pick: QuickPick = job.req.pick ?? { tool: 'claude', model: QUICK_MODEL };
+    const onClaude = pick.tool === 'claude';
+    let args: string[];
+    let stdin: string | undefined;
+    let command: { file: string; prefix: string[] } | undefined;
     let env = deps.env;
-    if (!env) {
-      const dir = resolveConfigDir(chatSpawnAccount().id ?? null);
-      ensureSandbox(dir);
-      env = accountEnvFor(dir);
+    if (onClaude) {
+      // With attachments the turn goes in on stdin (pictures are image blocks); without, as before.
+      stdin = atts.length ? quickTurnLine(message, atts) : undefined;
+      args = quickEditArgs(systemPrompt(), message, systemFile, { stdin: !!stdin, model: pick.model });
+      if (!env) {
+        const dir = resolveConfigDir(chatSpawnAccount().id ?? null);
+        ensureSandbox(dir);
+        env = accountEnvFor(dir);
+      }
+    } else {
+      // Codex / Antigravity: their read-only headless run, in this empty temp folder (quick-edit-tools.ts).
+      const bridge = deps.bridge ? deps.bridge() : (() => {
+        const node = bridgeNode();
+        const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+        return node && cli ? { node, cli } : null;
+      })();
+      if (!bridge) { failed(job, 'tool', 'no Node new enough for the bridge'); return; }
+      const promptFile = join(cwd, 'turn.md');
+      writeFileSync(promptFile, quickToolPrompt(systemPrompt(), message, atts, cwd, randomBytes(8).toString('hex')));
+      args = quickToolArgs(pick, promptFile);
+      command = { file: bridge.node, prefix: [bridge.cli] };
+      env ??= {};
     }
+    const exec = deps.exec ?? executeClaudeDetached;
     const tModel = (deps.now ?? Date.now)();
     const r: ClaudeExecution = await exec(args, {
       cwd,
-      timeoutMs: QUICK_TIMEOUT_MS,
+      timeoutMs: onClaude ? QUICK_TIMEOUT_MS : QUICK_TOOL_TIMEOUT_MS,
       env,
+      ...(command ? { command } : {}),
       ...(stdin !== undefined ? { stdin } : {}),
       onSpawned: (child) => {
         job.child = child;
@@ -312,11 +351,16 @@ async function run(job: Job): Promise<void> {
     });
     const modelMs = (deps.now ?? Date.now)() - tModel;
     if (job.stopRequested) return;
-    if (!r.spawned) { failed(job, 'spawn', 'claude did not start'); return; }
-    if (r.timedOut) { failed(job, 'timeout', `no answer in ${QUICK_TIMEOUT_MS / 1000} s`); return; }
+    if (!r.spawned) { failed(job, 'spawn', `${pick.tool} did not start`); return; }
+    if (r.timedOut) { failed(job, 'timeout', `no answer in ${(onClaude ? QUICK_TIMEOUT_MS : QUICK_TOOL_TIMEOUT_MS) / 1000} s`); return; }
     const parsed = parseQuickEditAnswer(r.stdout);
     if (!parsed.ok) {
-      failed(job, parsed.reason === 'limit' ? 'limit' : 'unreadable', parsed.reason === 'limit' ? 'account limit' : 'answer not readable');
+      // A Codex or Antigravity run that could not start its turn (signed out, no gate) says so in
+      // an error envelope: that is the tool, not an unreadable answer.
+      const toolError = !onClaude && parsed.reason !== 'limit' ? toolRefused(r.stdout) : '';
+      // Codex's one-time Mac approval is missing: the page says how to give it (a guard explains).
+      const code: QuickFailCode = parsed.reason === 'limit' ? 'limit' : toolError.startsWith(NO_ENV_GATE.slice(0, 40)) ? 'gate' : toolError ? 'tool' : 'unreadable';
+      failed(job, code, parsed.reason === 'limit' ? 'account limit' : toolError || 'answer not readable');
       job.view.costUsd = parsed.costUsd;
       return;
     }
@@ -333,7 +377,7 @@ async function run(job: Job): Promise<void> {
     const pictures = prepareQuickPictures(job.root, job.slug, answer.pictures ?? [], atts);
     if (job.stopRequested) return;
     job.view = { ...job.view, state: 'applying' };
-    await apply(job, answer, scope, identities, built, widgets, pictures, textLimit, parsed.costUsd, { modelMs, t0 });
+    await apply(job, answer, scope, identities, built, widgets, pictures, textLimit, parsed.costUsd, { modelMs, t0 }, pickLabel(pick));
   } catch (err) {
     if (job.stopRequested) return;
     if (job.committed) failed(job, 'unrecorded', 'the board was written; its record was not');
@@ -357,6 +401,7 @@ async function apply(
   textLimit: number,
   costUsd: number | null,
   t: { modelMs: number; t0: number },
+  model: string,
 ): Promise<void> {
   let outcome: ReturnType<typeof applyQuickEdit> | null = null;
   const recordId = randomBytes(16).toString('base64url');
@@ -373,7 +418,7 @@ async function apply(
       for (const id of [...o.added, ...o.changed]) { const el = written.get(id); if (el) after[id] = identityKey(el); }
       const rec: QuickJournalRecord = {
         id: recordId, at: new Date().toISOString(), text: job.req.text.slice(0, 2000), reply: replyWith(answer.reply, o.grew, job.req.text),
-        added: o.added, changed: o.changed, before: o.before, after, costUsd, model: QUICK_MODEL, undone: false,
+        added: o.added, changed: o.changed, before: o.before, after, costUsd, model, undone: false,
       };
       writeJournal(job.root, job.slug, [...readJournal(job.root, job.slug, job.req.selfOrigin), rec]);
     },

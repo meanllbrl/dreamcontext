@@ -1,6 +1,7 @@
 /**
  * THE QUICK EDIT (plan tahta-hizli-duzenle r4, C2-C5). The owner types a change on the whiteboard
- * page and one headless `claude -p` (Sonnet, medium, NO tools) answers ONE JSON edit. This module
+ * page and one headless run answers ONE JSON edit: `claude -p` (Sonnet by default, medium, NO
+ * tools), or the model the owner picked on Codex or Antigravity (quick-edit-tools.ts). This module
  * is the server's half: what the model is told, what it gets to read, how its answer is parsed,
  * and the one gate that applies it to the board (`applyQuickEdit`), plus the undo and its journal.
  *
@@ -472,11 +473,11 @@ function safeKitReference(): string {
  * `systemFile`: the prompt is the whole draw skill (~60k chars), past the 32k command-line cap of
  * Windows, so a run passes it as a file; without one it rides argv (tests, small prompts).
  */
-export function quickEditArgs(system: string, user: string, systemFile?: string, opts: { stdin?: boolean } = {}): string[] {
+export function quickEditArgs(system: string, user: string, systemFile?: string, opts: { stdin?: boolean; model?: string } = {}): string[] {
   return [
     // A turn with pictures goes in on stdin as one stream-json line (images are content blocks).
     ...(opts.stdin ? ['-p', '--input-format', 'stream-json', '--verbose'] : ['-p', user]),
-    '--model', QUICK_MODEL,
+    '--model', opts.model || QUICK_MODEL,
     '--effort', QUICK_EFFORT,
     '--output-format', opts.stdin ? 'stream-json' : 'json',
     '--tools', '',

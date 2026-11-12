@@ -44,7 +44,7 @@ describe('headless envelopes', () => {
   });
 
   it('the read-only surfaces are read-only on both tools and carry no brain write path', () => {
-    for (const s of ['light', 'ask', 'approval-question'] as const) {
+    for (const s of ['light', 'ask', 'approval-question', 'board-quick'] as const) {
       expect(envelopeMode(s, 'codex')).toBe('default');
       expect(envelopeMode(s, 'antigravity')).toBe('read');
       expect(HEADLESS_ENVELOPES[s].brain).toBe(false);
@@ -70,6 +70,8 @@ describe('headless envelopes', () => {
   it('the run command names Antigravity only when asked, before the extra roots', () => {
     expect(toolRunArgs({ tool: 'antigravity', surface: 'sleep', prompt: 'p', extraRoots: ['/r'] })).toEqual(['t3-run', '--surface', 'sleep', '--prompt=p', '--tool', 'antigravity', '--extra-root', '/r']);
     expect(toolRunArgs({ tool: 'codex', surface: 'sleep', prompt: 'p' })).toEqual(['t3-run', '--surface', 'sleep', '--prompt=p']);
+    // A turn past the command-line cap rides in a file (the quick edit's ~60k prompt).
+    expect(codexRunArgs({ surface: 'board-quick', prompt: 'ignored', promptFile: '/t/turn.md', tool: 'antigravity' })).toEqual(['t3-run', '--surface', 'board-quick', '--prompt-file=/t/turn.md', '--tool', 'antigravity']);
   });
 
   it('a board agent stays on Claude: Codex proved no read-denies', () => {

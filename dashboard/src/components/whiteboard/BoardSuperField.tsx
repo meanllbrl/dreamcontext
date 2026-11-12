@@ -24,9 +24,11 @@ import {
   type CanvasBox, type SaveKind,
 } from './superFieldLogic';
 import {
-  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, readFieldMode, regionChipText, startRefusalKey, undoRefusalKey, writeFieldMode,
-  type FieldMode, type QuickJobView, type QuickLine, type Region,
+  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, quickReady, readFieldMode, readQuickModel, regionChipText, startRefusalKey, undoRefusalKey, writeFieldMode,
+  writeQuickModel, type FieldMode, type QuickJobView, type QuickLine, type QuickModel, type QuickTool, type Region,
 } from './quickEditLogic';
+import { ModelChip } from '../settings/window/ModelChip';
+import { useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useQuickEdit } from '../../hooks/useQuickEdit';
 import type { WhiteboardCanvasApi } from './LazyWhiteboardCanvas';
 import { useVaultId } from '../../context/VaultContext';
@@ -119,7 +121,13 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   // ── the mode and the quick edit ──
   const quick = useQuickEdit(board);
   const superOn = !!presence?.on;
-  const quickOk = quick.status?.ok !== false;
+  // The model the quick edit runs on: one pick for this Mac, every board (Sonnet until changed).
+  const [qModel, setQModel] = useState<QuickModel>(() => readQuickModel(storage()));
+  const pickModel = (tool: QuickTool, model: string) => { const next = { tool, model }; setQModel(next); writeQuickModel(storage(), next); };
+  // The mode (and so the chip) needs ANY ready tool; a Claude pick with Claude signed out is
+  // refused at send with "pick another model" (review r1), never by hiding the way to pick one.
+  const agentTools = useAgentTools().data;
+  const quickOk = quickReady(quick.status?.ok !== false, agentTools);
   const [picked, setPicked] = useState<FieldMode>(() => readFieldMode(storage()));
   const mode = effectiveMode(picked, superOn, quickOk);
   const pick = (m: FieldMode) => { setPicked(m); writeFieldMode(storage(), m); };
@@ -252,7 +260,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       const scope = canvasApi()?.quickScope() ?? null;
       if (scope && scope.ids.length > QUICK_SCOPE_MAX) { setNote({ text: t('whiteboard.quick.tooBig'), bad: true }); return; }
       const carried = await settledAtts();
-      const r = await quick.start({ text: words, scope, area: areaOf(area), attachments: quickAttachmentPaths(carried) });
+      const r = await quick.start({ text: words, scope, area: areaOf(area), attachments: quickAttachmentPaths(carried), tool: qModel.tool, model: qModel.model });
       if (!r.ok) {
         // Refused in band: nothing started, the words stay in the field.
         setNote({ text: t(startRefusalKey(r.status, r.code)), bad: true });
@@ -412,6 +420,19 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
             <span className="bsf-chip-text">{boardName}</span>
           </span>
           <span className="bsf-chips-spacer" />
+          {mode === 'quick' && (
+            <ModelChip
+              value={{ tool: qModel.tool, model: qModel.model, effort: '' }}
+              fallback={qModel.model ? undefined : { model: '', effort: '', text: t('whiteboard.quick.toolDefault') }}
+              target={{ efforts: [] }}
+              onPick={(tool, model) => pickModel(tool, model)}
+              onEffort={() => undefined}
+              withAntigravity
+              className="bsf-model"
+              label={t('whiteboard.quick.model')}
+              testId="board-quick-model"
+            />
+          )}
           <span className="bsf-modes" role="group" aria-label={t('whiteboard.quick.modes')} data-testid="board-field-modes">
             <button
               type="button"
