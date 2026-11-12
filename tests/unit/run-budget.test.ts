@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { builderHeavy, builderLane, type BuilderDeps } from '../../src/cli/commands/builder.js';
+import { dirname, join } from 'node:path';
+import { HEAVY_BUILD_FIRST_EXIT, builderHeavy, builderLane, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import {
   BUDGET_BUCKET_MAX_AGE_MS, BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, budgetPath, classifyHeavy, directHeavy, readBudget,
-  currentScope, heavyStep, markPhase, recordRed, recordStart, refusal, shellQuote, shellSegments, type BudgetScope,
+  HARNESS_FREE_RUNS, VERIFY_HARNESS_EXIT, currentScope, drivesDist, heavyStep, markPhase, recordRed, staleDistFor, recordStart, refusal, shellQuote, shellSegments, type BudgetScope,
 } from '../../src/lib/run-budget.js';
 
 describe('classifyHeavy', () => {
@@ -143,6 +143,25 @@ describe('refusal', () => {
     expect(refusal(readBudget(path), scope, 'build', 'build:cli', NOW)).toBeNull();
   });
 
+  it('with a code tree, counts per tree: a phase move is no reset, changed code is free', () => {
+    const t1 = { ...scope, tree: 'a'.repeat(40) };
+    recordStart(path, t1, 'build', 'build', NOW);
+    expect(refusal(readBudget(path), t1, 'build', 'build', NOW)).toMatch(/on this exact code \(tree:aaaaaaaaaaaa\)/);
+    // The review's fix moved the phase, not the code: still the same answer.
+    expect(refusal(readBudget(path), { ...t1, phase: 'end' }, 'build', 'build', NOW)).toMatch(/1 run\(s\) of build/);
+    // The fix changed the code: new proof, no flag needed.
+    expect(refusal(readBudget(path), { ...t1, tree: 'b'.repeat(40) }, 'build', 'build', NOW)).toBeNull();
+  });
+
+  it('a red keeps its log on the bucket, and the refusal names it', () => {
+    const t1 = { ...scope, tree: 'c'.repeat(40) };
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    recordRed(path, t1, 'scripts/verify/look.mjs', NOW, '/x/run-1.log');
+    recordStart(path, t1, 'browser', 'scripts/verify/look.mjs', NOW);
+    expect(refusal(readBudget(path), t1, 'browser', 'scripts/verify/look.mjs', NOW)).toMatch(/its last red log: \/x\/run-1\.log/);
+  });
+
   it('forgets a bucket once it is old', () => {
     recordStart(path, scope, 'build', 'build', NOW);
     expect(refusal(readBudget(path), scope, 'build', 'build', NOW + BUDGET_BUCKET_MAX_AGE_MS + 1)).toBeNull();
@@ -177,6 +196,8 @@ describe('builder heavy stops a run past the limit', () => {
     // A Node script, not `sh`: npm runs scripts through cmd.exe on Windows.
     writeFileSync(join(repo, 'build.cjs'), "require('fs').appendFileSync('ran.txt', 'ran\\n'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { build: 'node build.cjs' } }));
+    // What a build writes is ignored, as dist/ is: the code tree is what the build reads.
+    writeFileSync(join(repo, '.gitignore'), 'ran.txt\nslots/\n');
   });
   afterEach(() => { delete process.env.FAKE_EXIT; rmSync(repo, { recursive: true, force: true }); });
   const runs = () => { try { return String(readFileSync(join(repo, 'ran.txt'), 'utf-8').split('\n').filter(Boolean).length); } catch { return '0'; } };
@@ -208,16 +229,41 @@ describe('builder heavy stops a run past the limit', () => {
     expect(overruns[0].reason).toBe('the owner asked for a clean rebuild');
   });
 
-  it('a new phase, moved by the commands a run already makes, starts a new count', async () => {
+  it('counts per code tree (audit OR-8): a phase move is no reset, a code change runs free', async () => {
     markPhase(repo, 'build', 'task', Date.now());
     expect(await heavy()).toBe(0);
     expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
-    markPhase(repo, 'w1', 'task', Date.now());
-    expect(await heavy()).toBe(0);
+    expect(err.join('\n')).toMatch(/on this exact code/);
+    expect(err.join('\n')).toMatch(/Change the code and it runs again, no flag needed/);
+    // The end phase on the same code is the same answer.
     builderLane(deps, { from: 'HEAD' });
+    expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
+    // The review's fix changed the code: the build runs, no --because.
+    writeFileSync(join(repo, 'fix.ts'), 'export const x = 1;\n');
     expect(await heavy()).toBe(0);
     expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
-    expect(Object.keys(readBudget(budgetPath(repo)).buckets).sort()).toEqual(['work task build build', 'work task end build', 'work task w1 build']);
+    expect(runs()).toBe('2');
+    const keys = Object.keys(readBudget(budgetPath(repo)).buckets);
+    expect(keys).toHaveLength(2);
+    for (const k of keys) expect(k).toMatch(/^work task tree:[0-9a-f]{12} build$/);
+    expect(readBudget(budgetPath(repo)).overruns).toHaveLength(0);
+  });
+
+  it('a red keeps its whole log, prints where and the first failures, and says read it, never re-run (audit OR-3)', async () => {
+    writeFileSync(join(repo, 'build.cjs'), "require('fs').appendFileSync('ran.txt', 'ran\\n'); console.log('compiling'); console.log(' FAIL  tests/a.test.ts > adds'); console.log('error TS2322: Type string is not number'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
+    process.env.FAKE_EXIT = '1';
+    expect(await heavy()).toBe(1);
+    const text = err.join('\n');
+    const log = /its whole output is kept: (\S+)/.exec(text)?.[1];
+    expect(log).toBeTruthy();
+    expect(readFileSync(log!, 'utf-8')).toContain('compiling');
+    expect(text).toMatch(/first failures:\n\s+FAIL {2}tests\/a\.test\.ts > adds\n\s+error TS2322/);
+    expect(text).toMatch(/never re-run the check to see more/);
+    // A green run leaves no stray log behind.
+    delete process.env.FAKE_EXIT;
+    err.length = 0;
+    expect(await heavy()).toBe(0);
+    expect(err.join('\n')).not.toMatch(/whole output is kept/);
   });
 
   it('no open run limits nothing: a plain chat builds as often as it needs', async () => {
@@ -235,5 +281,115 @@ describe('builder heavy stops a run past the limit', () => {
     expect(await heavy()).toBe(0);
     expect(await heavy()).toBe(HEAVY_OVER_BUDGET_EXIT);
     expect(runs()).toBe('2');
+  });
+});
+
+/** Audit OR-5: a verify script's own setup failure costs no run, and an old build is refused before the queue. */
+describe('builder heavy and the browser preflight', () => {
+  let repo: string; let err: string[]; let deps: BuilderDeps;
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
+  const put = (rel: string, text: string) => { mkdirSync(dirname(join(repo, rel)), { recursive: true }); writeFileSync(join(repo, rel), text); };
+  const age = (rel: string, secondsAgo: number) => { const t = new Date(Date.now() - secondsAgo * 1000); utimesSync(join(repo, rel), t, t); };
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'dc-heavy-preflight-'));
+    git('init', '-q', '-b', 'work');
+    err = [];
+    deps = { cwd: () => repo, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => join(repo, 'slots'), heavyLimit: async () => 2 };
+    put('.gitignore', 'ran.txt\nslots/\ndist/\n');
+    put('scripts/verify/lib/preflight.mjs', 'export const HARNESS_EXIT = 78;\n');
+    // Stands in for a verify script: counts its runs, exits as told.
+    put('scripts/verify/dev.mjs', "import { appendFileSync } from 'node:fs';\nappendFileSync('ran.txt', 'ran\\n'); process.exit(Number(process.env.FAKE_EXIT || 0));\n");
+    put('scripts/verify/built.mjs', "// openApp({ build: true })\nimport { appendFileSync } from 'node:fs';\nappendFileSync('ran.txt', 'ran\\n');\n");
+    put('src/a.ts', 'export const a = 1;\n');
+    put('dashboard/src/b.tsx', 'export const b = 1;\n');
+    put('dist/index.js', '');
+    put('dist/dashboard/index.html', '');
+    put('dashboard/dist/index.html', '');
+    put('scripts/verify/own-vite.mjs', "// fromDash('@vitejs/plugin-react/dist/index.js'): its own Vite on the source\nimport { appendFileSync } from 'node:fs';\nappendFileSync('ran.txt', 'ran\\n');\n");
+    git('add', '-A'); git('-c', 'user.email=a@b.c', '-c', 'user.name=a', 'commit', '-q', '-m', 'i');
+    for (const f of ['src/a.ts', 'dashboard/src/b.tsx', 'scripts/verify/dev.mjs', 'scripts/verify/built.mjs']) age(f, 600);
+    for (const f of ['dashboard/dist/index.html', 'dist/index.js', 'dist/dashboard/index.html']) age(f, 300);
+  });
+  afterEach(() => { delete process.env.FAKE_EXIT; rmSync(repo, { recursive: true, force: true }); });
+  const runs = () => { try { return readFileSync(join(repo, 'ran.txt'), 'utf-8').split('\n').filter(Boolean).length; } catch { return 0; } };
+  const heavy = (script: string, o: { because?: string; env?: string } = {}) => {
+    const cwd = process.cwd(); process.chdir(repo);
+    const { env, ...rest } = o;
+    // As the refusal prints it: one quoted line, run through a shell.
+    return builderHeavy(deps, env ? [`${env} node scripts/verify/${script}`] : ['node', `scripts/verify/${script}`], { maxWait: '5', ...rest }).finally(() => process.chdir(cwd));
+  };
+
+  it('a HARNESS exit is given back twice on the same code, then counts like any red', async () => {
+    markPhase(repo, 'look', 'task', Date.now());
+    process.env.FAKE_EXIT = String(VERIFY_HARNESS_EXIT);
+    expect(await heavy('dev.mjs')).toBe(VERIFY_HARNESS_EXIT);
+    expect(err.join('\n')).toMatch(/HARNESS: the check stopped in its own setup and tested nothing of the product; this run is not counted \(1 of 2 on this code\)/);
+    expect(await heavy('dev.mjs')).toBe(VERIFY_HARNESS_EXIT);
+    let [bucket] = Object.values(readBudget(budgetPath(repo)).buckets);
+    expect(bucket).toMatchObject({ runs: 0, reds: 0, harness: HARNESS_FREE_RUNS });
+    err.length = 0;
+    expect(await heavy('dev.mjs')).toBe(VERIFY_HARNESS_EXIT);
+    expect(err.join('\n')).toMatch(/uncounted HARNESS runs on this code are spent: this one counts/);
+    [bucket] = Object.values(readBudget(budgetPath(repo)).buckets);
+    expect(bucket).toMatchObject({ runs: 1, reds: 1, harness: HARNESS_FREE_RUNS });
+    // The product was never reached, so the browser limit is still whole: 2 more runs, plus the red's one.
+    delete process.env.FAKE_EXIT;
+    expect(await heavy('dev.mjs')).toBe(0);
+    expect(await heavy('dev.mjs')).toBe(0);
+    expect(await heavy('dev.mjs')).toBe(HEAVY_OVER_BUDGET_EXIT);
+    expect(runs()).toBe(5);
+  });
+
+  it('an ordinary red is still counted', async () => {
+    markPhase(repo, 'look', 'task', Date.now());
+    process.env.FAKE_EXIT = '1';
+    expect(await heavy('dev.mjs')).toBe(1);
+    const [bucket] = Object.values(readBudget(budgetPath(repo)).buckets);
+    expect(bucket).toMatchObject({ runs: 1, reds: 1 });
+    expect(bucket.harness).toBeUndefined();
+  });
+
+  it('a script on the built app is refused before the queue while dist/ is older than the code, and names the build', async () => {
+    // No run open: the build check stands on its own, outside the repeat limit.
+    expect(await heavy('built.mjs')).toBe(0);
+    put('src/a.ts', 'export const a = 2;\n');
+    err.length = 0;
+    expect(await heavy('built.mjs')).toBe(HEAVY_BUILD_FIRST_EXIT);
+    const text = err.join('\n');
+    expect(text).toMatch(/dist\/index\.js is older than src\/a\.ts/);
+    expect(text).toMatch(/NOTHING ran, nothing was counted/);
+    expect(text).toMatch(/builder heavy -- npm run build:cli/);
+    expect(text).toMatch(/older build on purpose\? builder heavy -- 'DC_VERIFY_DIST=dist\/index\.js '\\''node'\\'' '\\''scripts\/verify\/built\.mjs'\\'''/);
+    expect(runs()).toBe(1);
+    // --because passes no stale build: the script would stop on it as HARNESS.
+    expect(await heavy('built.mjs', { because: 'before shots on the old build' })).toBe(HEAVY_BUILD_FIRST_EXIT);
+    // A dev-server script never reads dist/, nor one whose only dist path is a dependency's: they run.
+    expect(await heavy('dev.mjs')).toBe(0);
+    expect(await heavy('own-vite.mjs')).toBe(0);
+    // Built again: it runs.
+    put('dist/index.js', '// rebuilt\n');
+    expect(await heavy('built.mjs')).toBe(0);
+    // The dashboard is measured on Vite's own output: a CLI build re-copies it, fresh mtime and all.
+    put('dashboard/src/b.tsx', 'export const b = 2;\n');
+    put('dist/index.js', '// build:cli again\n'); put('dist/dashboard/index.html', '<!-- the old copy -->');
+    err.length = 0;
+    expect(await heavy('built.mjs')).toBe(HEAVY_BUILD_FIRST_EXIT);
+    expect(err.join('\n')).toMatch(/dashboard\/dist\/index\.html is older than dashboard\/src\/b\.tsx.*\n.*npm run build$/m);
+    // An older build on purpose: the env prefix both sides honor.
+    expect(await heavy('built.mjs', { env: 'DC_VERIFY_DIST=dist/index.js' })).toBe(0);
+    expect(runs()).toBe(5);
+  });
+
+  it('applies only where the preflight file is, and DC_VERIFY_DIST on the line opts out', () => {
+    expect(drivesDist('node scripts/verify/built.mjs', 'scripts/verify/built.mjs', repo)).toBe(true);
+    expect(drivesDist('node scripts/verify/look.mjs --build', 'scripts/verify/look.mjs', repo)).toBe(true);
+    expect(drivesDist('DC_VERIFY_DIST=tmp/old/index.js node scripts/verify/built.mjs', 'scripts/verify/built.mjs', repo)).toBe(false);
+    expect(drivesDist('node scripts/verify/dev.mjs', 'scripts/verify/dev.mjs', repo)).toBe(false);
+    expect(drivesDist('node scripts/verify/own-vite.mjs', 'scripts/verify/own-vite.mjs', repo)).toBe(false);
+    expect(drivesDist('node scripts/verify/look.mjs --build-only-x', 'scripts/verify/look.mjs', repo)).toBe(false);
+    put('src/a.ts', 'export const a = 3;\n');
+    expect(staleDistFor(repo)?.why).toMatch(/src\/a\.ts/);
+    rmSync(join(repo, 'scripts/verify/lib/preflight.mjs'));
+    expect(staleDistFor(repo)).toBeNull();
   });
 });

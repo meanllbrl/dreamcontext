@@ -577,3 +577,85 @@ describe('waves live inside the task (both recipes, owner 2026-11-09)', () => {
     });
   }
 });
+
+/**
+ * 2026-11-12, overnight audit (B10). OR-4: a build and browser pass before the end review was
+ * redone after its fixes in 83% of the runs that did one, so the code is reviewed first and the
+ * build and the observed check run once, after the code PASS. OR-3/OR-8: a red keeps its log and
+ * repeats are counted per code tree, so `--because` leaves the normal path. TK-1: the recipe runs
+ * with no task (small work), and a child never files one.
+ */
+describe('the end of a run: code review first, build and observed check once after its PASS', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    const end = recipe.slice(recipe.indexOf('## 3.'), recipe.indexOf('## 4.'));
+    it(`${name}: the observed check and the final check come after the end reviewer and its verdict`, () => {
+      const reviewer = end.indexOf(name === 'develop' ? 'ONE `reviewer` sub-agent' : 'ONE `reviewer` (model opus');
+      expect(reviewer).toBeGreaterThan(-1);
+      expect(end.indexOf('The observed check, ONCE, after the code PASS')).toBeGreaterThan(reviewer);
+      expect(end.indexOf('The final check, ONCE, after the last PASS')).toBeGreaterThan(reviewer);
+      expect(end).toMatch(/Nothing of this runs before the code PASS/);
+      // Exactly one observed check in the section: no second copy before the review.
+      expect(end.split('The observed check').length - 1).toBe(1);
+    });
+  }
+
+  it('develop: the verdict is recorded before the final check, and a red final check is reviewed with its ticks', () => {
+    const end = D.slice(D.indexOf('## 3.'), D.indexOf('## 4.'));
+    expect(end.indexOf('Record the verdict BEFORE anything else')).toBeLessThan(end.indexOf('The final check, ONCE'));
+    expect(end).toMatch(/the fix's reviewer also\s+reads the ticks and their evidence/);
+  });
+
+  it('fan-out: the all-REVIEWED ticks review runs after the final check', () => {
+    expect(R).toMatch(/then this reviewer still runs, after the final check, over the\s+task's ticks/);
+  });
+});
+
+describe('a red check is read, not re-run; repeats are per code tree', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    it(`${name}: read the kept log, never re-run to see more; changed code needs no --because`, () => {
+      expect(recipe).toMatch(/READ that log, never\s+re-run a check to see more of its output/);
+      expect(recipe).toMatch(/per code tree: a run on code\s+that changed is new proof and always runs/);
+      expect(recipe).toMatch(/`--because "<why>"` is not part of a normal run/);
+      expect(recipe).not.toMatch(/per branch, phase and command/);
+    });
+  }
+});
+
+describe('develop runs with no task (small work)', () => {
+  it('names the no-task path before set-up: no task, no sub-task, the run name, no tasks lines', () => {
+    const top = D.slice(0, D.indexOf('## 0.'));
+    expect(top).toMatch(/NO TASK IN YOUR BRIEF = small work/);
+    expect(top).toMatch(/create none, and never a sub-task/);
+    expect(top).toMatch(/every\s+`dreamcontext tasks \.\.\.` line below is skipped/);
+    expect(top).toMatch(/\$ROOT\/tmp\/develop\/\$S\/run\.md and into your last reply/);
+    expect(top).toMatch(/--goal "<what the brief asks>"/);
+    expect(top).toMatch(/STOP and tell the Super; only the Super or the owner opens the\s+ONE task/);
+  });
+
+  it('the close points a task-less run at its last reply', () => {
+    expect(D).toMatch(/Close by the task's Validation method \(no task: your last reply/);
+  });
+
+  it('the loop it names accepts a task-less open', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(join(__dirname, '../../src/cli/commands/review-loop.ts'), 'utf-8');
+    expect(src).toMatch(/\.option\('--goal <text>'/);
+  });
+});
+
+/** B10 review (2026-11-12): with the observed check after the code PASS, its ticks get their own clean reader on every path. */
+describe('the ticks the observed check made are read by a clean reviewer, green or red', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    it(`${name}: the ticks review follows the observed check, before the close, with its own brief`, () => {
+      const end = recipe.slice(recipe.indexOf('## 3.'), recipe.indexOf('## 4.'));
+      const ticks = end.indexOf('The ticks review, whenever the observed check ticked a criterion (its check green or red)');
+      expect(ticks).toBeGreaterThan(end.indexOf('The observed check, ONCE'));
+      expect(ticks).toBeLessThan(end.indexOf('Close by the task'));
+      expect(end).toMatch(/ONE fresh `reviewer` \(model opus, effort high, not in the background\) with the TICKS\s+brief/);
+      const briefs = recipe.slice(recipe.indexOf('TICKS: "'), recipe.indexOf('VALIDATOR: "'));
+      expect(briefs).toMatch(/Open every screenshot/);
+      expect(briefs).toMatch(/a tick with no screenshot, or one\s+that does not show it, or console errors the tick ignores, is FAIL/);
+    });
+  }
+});

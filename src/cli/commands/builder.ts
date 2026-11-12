@@ -20,7 +20,7 @@ import {
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
 import { HEAVY_HOT_WAIT_S, acquireHeavyReporting, queueReport } from '../../lib/heavy-acquire.js';
-import { contentTree, describeHit, dropReceipt, exitNotOwned, findReceipt, gitToplevel, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
+import { contentTree, describeHit, dropReceipt, exitNotOwned, findReceipt, firstFailures, gitToplevel, logTail, planShellReceipt, receiptState, scratchLog, writeReceipt, type ReceiptPlan } from '../../lib/check-receipt.js';
 import {
   CEILING_STREAK_LIMIT, branchOf, buildCommand, buildInputsChanged, configOf, distCheck, distGateApplies, distProof, distProofHeld, judgeSuiteRun, parseVitestLog, pinTree,
   readSuiteRecord, recordToplevel, suiteLogPath, suiteRecordId, suiteRecordPath, writeSuiteRecord, type DistProof, type SuiteRecord,
@@ -29,7 +29,7 @@ import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-q
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
   BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
-  recordRed, recordStart, refusal, shellQuote, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
+  HARNESS_FREE_RUNS, VERIFY_HARNESS_EXIT, VERIFY_OLD_BUILD_ON_PURPOSE, drivesDist, recordHarness, recordRed, recordStart, refusal, shellQuote, staleDistFor, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
@@ -179,7 +179,7 @@ export function builderBudget(deps: BuilderDeps): void {
   const cwd = deps.cwd();
   const file = readBudget(budgetPath(cwd));
   const scope = currentScope(cwd);
-  deps.print(`limits per phase: ${Object.entries(BUDGET_LIMITS).map(([k, n]) => `${k} ${n}`).join(', ')}; a red earns one more; light lane under ${LIGHT_LANE_MAX_LINES} lines`);
+  deps.print(`limits per code tree: ${Object.entries(BUDGET_LIMITS).map(([k, n]) => `${k} ${n}`).join(', ')}; changed code runs again free; a red earns one more; light lane under ${LIGHT_LANE_MAX_LINES} lines`);
   deps.print(scope ? `now: ${scope.branch} ${scope.run} ${scope.phase}` : 'now: no run open on this branch, nothing is limited');
   for (const [key, b] of Object.entries(file.buckets)) deps.print(`${key}: ${b.runs} run(s), ${b.reds} red`);
   for (const o of file.overruns) deps.print(`over the limit ${o.at} ${o.bucket}: "${o.reason}" (${o.command})`);
@@ -402,6 +402,20 @@ function settleSuite(deps: BuilderDeps, ctx: SuiteCtx, o: { exit: number | null;
   }
 }
 
+/**
+ * A red check's one closing line: where its whole output is kept and the first failures in it, so
+ * the agent reads the log instead of running the check again through another tail (audit OR-3).
+ */
+function printRed(deps: BuilderDeps, log: string, code: number, killed: string | undefined): void {
+  deps.printErr(`builder heavy: RED (${killed ? `stopped: ${killed}` : `exit ${code}`}), its whole output is kept: ${log}`);
+  const first = firstFailures(log);
+  if (first.length) {
+    deps.printErr('  first failures:');
+    for (const l of first) deps.printErr(`    ${l.trim()}`);
+  }
+  deps.printErr('  Read that log (Read tool or grep on the file); never re-run the check to see more of its output.');
+}
+
 /** `--detach`: start the check as its own process, print its id once it exists, return. */
 async function heavyDetach(deps: BuilderDeps, argv: string[], opts: HeavyOptions): Promise<number> {
   const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -565,21 +579,37 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
   const target = step?.target ?? '';
-  const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
+  const open = kind ? currentScope(deps.cwd()) : null;
+  // Repeats are counted per code tree (run-budget.ts, audit OR-8): changed code is new proof.
+  const codeTop = open ? gitToplevel(deps.cwd()) : null;
+  const scope: BudgetScope | null = open ? { ...open, tree: codeTop ? contentTree(recordToplevel(codeTop)) : null } : null;
   const pick = queueOf(command, scripts, (files) => countRelatedTests(deps.cwd(), files));
   const label = safeLabel(command, scripts);
   const budget = budgetPath(deps.cwd());
   // A build of changed inputs is not a repeat: the exit-5 hint "build first" must never be refused.
   const top = kind === 'build' ? gitToplevel(deps.cwd()) : null;
   const newBuild = kind === 'build' && top !== null && buildInputsChanged(recordToplevel(top));
+  // A script on the built app, while dist/ is older than the code, proves old code (audit OR-5):
+  // refused before the queue, with the build that fixes it. The one way past it is the env prefix
+  // the script's own preflight honors too: --because would pass here and stop there (HARNESS).
+  if (kind === 'browser') {
+    const distTop = gitToplevel(deps.cwd());
+    const stale = distTop && drivesDist(command, target, distTop) ? staleDistFor(distTop) : null;
+    if (stale) {
+      deps.printErr(`builder heavy: build first: this browser check runs the built app, and ${stale.why}. NOTHING ran, nothing was counted.`);
+      deps.printErr(`  Build, then run it again: dreamcontext builder heavy -- ${stale.build}`);
+      deps.printErr(`  Looking at an older build on purpose? builder heavy -- ${shellQuote(`${VERIFY_OLD_BUILD_ON_PURPOSE} ${argv.length === 1 ? argv[0] : argv.map(shellQuote).join(' ')}`)}`);
+      return HEAVY_BUILD_FIRST_EXIT;
+    }
+  }
   // Asked before the wait for the lock, so a refused run costs no queueing.
   const over = kind && scope && !newBuild
     ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laneFromGit(deps.cwd()) : undefined)
     : null;
   if (over && opts.because === undefined) {
-    deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran, and running it again will not help.`);
-    deps.printErr(`  Is the proof already there? Use it. A fix goes through "builder test --related <files>".`);
-    deps.printErr(`  Is this run truly needed? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
+    deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran: the same check on the same code gives the same answer.`);
+    deps.printErr('  Read the result you have (its log), never re-run to see more. Change the code and it runs again, no flag needed.');
+    deps.printErr(`  A flaky run (machine load, the harness) truly needs one more? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
     return HEAVY_OVER_BUDGET_EXIT;
   }
   if (over && kind && scope && becauseSpent(readBudget(budget), scope, target)) {
@@ -632,7 +662,10 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   }
   // The output is kept (it is the receipt's log, and a suite's record log) and shown as it comes, or its last --tail lines.
   const suiteLog = recordable ? suiteLogPath(suite.top, suite.branch, suite.target) : null;
-  const logPath = suiteLog ?? (before && receiptPlan ? scratchLog(receiptPlan.toplevel) : null);
+  // Every run keeps its output until it is judged: a green one hands it to its receipt, a red one
+  // keeps it so it is read, not re-run (audit OR-3). Pruned with the receipts.
+  const logTop = receiptPlan?.toplevel ?? (() => { const t = gitToplevel(deps.cwd()); return t ? recordToplevel(t) : null; })();
+  const logPath = suiteLog ?? (logTop ? scratchLog(logTop) : null);
   let logFd: number | null = null;
   try { logFd = logPath ? openSync(logPath, 'w') : null; } catch { logFd = null; }
   const kept: string[] = [];
@@ -694,8 +727,17 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
       }
       if ((code !== 0 || killed) && receiptPlan && before) dropReceipt(receiptPlan, before);
       if (recordable) settleSuite(deps, suite, { exit: killed ? null : code, killed, command, log: logPath, startTree, prev: red, because, dist: proof });
-      else if (logPath) rmSync(logPath, { force: true });
-      if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
+      else if (logPath && code === 0 && !killed) rmSync(logPath, { force: true });
+      else if (logPath) printRed(deps, logPath, code, killed);
+      // A verify script that stopped in its own setup tested nothing: its run is given back (audit OR-5).
+      const harness = code === VERIFY_HARNESS_EXIT && kind === 'browser' && !killed;
+      const given = harness && scope ? recordHarness(budget, scope, target, Date.now()) : null;
+      if (harness) {
+        deps.printErr(given !== null
+          ? `builder heavy: HARNESS: the check stopped in its own setup and tested nothing of the product; this run is not counted (${given} of ${HARNESS_FREE_RUNS} on this code). Fix the setup or the script.`
+          : `builder heavy: HARNESS: the check stopped in its own setup${scope ? `, and the ${HARNESS_FREE_RUNS} uncounted HARNESS runs on this code are spent: this one counts` : ''}. Fix the setup or the script.`);
+      }
+      if (code !== 0 && kind && scope && given === null) recordRed(budget, scope, target, Date.now(), recordable ? null : logPath);
       recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: killed === 'ceiling' ? null : code, waits, ...(killed === 'ceiling' ? { reason: 'ceiling' } : {}) });
       held.release();
       resolveExit(code);
@@ -737,7 +779,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .option('--wait <id>', `Block on a detached check (at most ${HEAVY_WAIT_SLICE_S / 60} min a call; call again) and exit with its exit (${HEAVY_DIED_EXIT} = it died with no result)`)
     .option('--max-run <minutes>', `Kill the check and its whole process group after this many minutes of running (default ${HEAVY_MAX_RUN_MIN})`)
     .addOption(new Option('--run-id <id>').hideHelp())
-    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite needs a fresh build first). A whole-suite run keeps a record of its red files`)
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's ${VERIFY_HARNESS_EXIT} = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files`)
     .action(async (command: string[], opts: HeavyOptions) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });
@@ -763,7 +805,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .command('open')
     .argument('<slug>', 'The task slug')
     .option('--phase <name>', 'The phase this run enters', 'build')
-    .description('A run starts on this branch: `heavy` counts repeats from here on, per phase')
+    .description('A run starts on this branch: `heavy` counts repeats from here on, per code tree (changed code runs again)')
     .action((slug: string, opts: { phase: string }) => {
       markPhase(deps.cwd(), opts.phase, slug, Date.now());
       appendLedger(ledgerPath(deps.cwd()), { type: 'mark', run: slug, what: 'open', at: Date.now() });
