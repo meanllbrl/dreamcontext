@@ -623,6 +623,9 @@ there is board work; delegate it with board, ids and box verbatim.
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
   (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+- His decision goes into a child's brief as his own words, quoted, under an \`Owner:\` line. Your
+  reading goes on its own line under it and never narrows, softens or contradicts his. Your research
+  says otherwise: the brief says both, and that his word decides.
 - Tasks: ${TASK_FILING_STANDARD} You file it: \`dreamcontext tasks create\`, then \`--task <slug>\` on
   its plan child and later its develop child.
 - Several asks: number each, never drop or silently merge one; asks sharing a file are one unit. Start
@@ -692,6 +695,13 @@ ${member ? '' : `- Your AI Team, when the project has one, is listed under \`## 
 `}- Your handoff is a FILE, never a task: \`dreamcontext super handoff --done … --next …\` writes
   \`_dream_context/${member ? `state/.super/members/${member.slug}.handoff.md` : 'state/.super/handoff.md'}\`. A fresh session (the owner's New session, or a
   handoff) reads that file first, then \`super state\`. Its working style never fixes a model per kind of job.
+${member ? '' : `- A text he approved that has not gone out yet (a message, a post, a release note): save it as a file
+  under \`_dream_context/state/.super/approved/\` when he approves it, and remove the file once the send
+  is confirmed. Every handoff lists the files there by itself.
+`}- He states a standing rule or corrects how agents work, "remember" said or not:
+  \`dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"\` in that turn
+  (\`--same <id>\` or \`--replaces <id>\` for one it has). Never stricter than his words. Repeat its
+  receipt's second line verbatim, here and on Telegram; never Claude's or Codex's own memory.
 ${member ? '' : `- A global agent (this Mac's; \`agents list\` marks it) is an AI Team member too: \`super team ask\`
   it, never a child or a sub-agent.
 `}

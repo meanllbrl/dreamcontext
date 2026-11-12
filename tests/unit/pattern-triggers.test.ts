@@ -391,11 +391,13 @@ describe('the keep-them-true rule ships in the hook, not only in prose', () => {
     expect(HOOK_SRC).toContain('do not silently skip it');
   });
 
-  it('keeps sleep out of pattern CONTENT', () => {
+  it('keeps sleep out of pattern CONTENT: his rules go through `learn`, never into a pattern file', () => {
     const sleepRef = readFileSync(join(__dirname, '..', '..', 'skill', 'references', 'sleep.md'), 'utf-8');
     const sleepAgent = readFileSync(join(__dirname, '..', '..', 'agents', 'sleep-product.md'), 'utf-8');
-    expect(sleepRef).toContain('Sleep does NOT fold user corrections into patterns');
-    expect(sleepAgent).toContain('Never fold a user correction into a pattern');
+    expect(sleepRef).toContain('a pattern file is never rewritten to hold a rule');
+    expect(sleepAgent).toContain('a pattern file is never rewritten to hold one');
+    expect(sleepRef).not.toContain('Sleep does NOT fold user corrections into patterns');
+    expect(sleepAgent).not.toContain('Never fold a user correction into a pattern');
   });
 });
 
