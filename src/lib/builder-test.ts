@@ -29,7 +29,9 @@ export interface TestPlan {
   tests: { pkg: string; runner: TestRunner; related: string[]; explicit: string[] }[];
 }
 
-export interface Failure { key: string; file: string; message: string }
+/** `test`: the test's id (`describe > … > it`), null for a file that failed to load, absent for a
+ *  type-check or run error. A base-red record matches on it (suite-record.ts splitBaseRed). */
+export interface Failure { key: string; file: string; message: string; test?: string | null }
 
 /** A wave number, or 'final' for the run-end check after the last wave. */
 export type TestWave = number | 'final';
@@ -125,7 +127,7 @@ export function parseTscErrors(output: string, pkgDir: string, root: string): Fa
 
 interface JsonReport {
   numTotalTests?: number;
-  testResults?: { name: string; status?: string; message?: string; assertionResults?: { fullName: string; status: string; failureMessages?: string[] }[] }[];
+  testResults?: { name: string; status?: string; message?: string; assertionResults?: { fullName: string; title?: string; ancestorTitles?: string[]; status: string; failureMessages?: string[] }[] }[];
 }
 
 /** vitest `--reporter=json` and jest `--json` share this shape. */
@@ -139,11 +141,12 @@ export function parseTestReport(json: string, root: string): { total: number; fi
     const failed = (suite.assertionResults ?? []).filter((a) => a.status === 'failed');
     for (const a of failed) {
       const msg = firstLine((a.failureMessages ?? []).join('\n'));
-      failures.push({ key: `${file} > ${a.fullName} :: ${msg}`, file, message: msg });
+      const test = typeof a.title === 'string' ? [...(a.ancestorTitles ?? []), a.title].filter(Boolean).join(' > ') : a.fullName;
+      failures.push({ key: `${file} > ${a.fullName} :: ${msg}`, file, message: msg, test });
     }
     if (failed.length === 0 && suite.status === 'failed') {
       const msg = firstLine(suite.message ?? 'failed to load');
-      failures.push({ key: `${file} :: suite failed: ${msg}`, file, message: msg });
+      failures.push({ key: `${file} :: suite failed: ${msg}`, file, message: msg, test: null });
     }
   }
   return { total: r.numTotalTests ?? 0, files, failures };

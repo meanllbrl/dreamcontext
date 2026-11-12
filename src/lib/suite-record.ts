@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { contentTree, distFingerprint, receiptsDir } from './check-receipt.js';
 import { packageScripts } from './run-budget.js';
@@ -136,13 +136,46 @@ export function readSuiteRecord(toplevel: string, branch: string | null, target:
   }
 }
 
-export function writeSuiteRecord(r: SuiteRecord): void {
+/**
+ * `o.tests`: the red test ids this record stands for, when the caller holds them (a `--failed`
+ * rerun's report); otherwise they are read off the record's own log. A red or green record on a
+ * clean commit also writes that commit's base-red record ({@link noteBaseRed}).
+ */
+export function writeSuiteRecord(r: SuiteRecord, o: { tests?: BaseRedTest[] } = {}): void {
   const path = suiteRecordPath(r.toplevel, r.branch, r.target);
   if (!path) return;
   mkdirSync(resolve(path, '..'), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(r, null, 1)}\n`);
   renameSync(tmp, path);
+  if (r.state === 'green' && r.greenTree) noteBaseRed(r.toplevel, r.greenTree, []);
+  if (r.state === 'red' && r.redTree) noteBaseRed(r.toplevel, r.redTree, provenOnThisCode(r, o.tests ?? redIdsFromLog(r)));
+}
+
+/**
+ * A red in a test that runs the built CLI says nothing about the code unless `dist/` was a green
+ * build of that very tree: a lead who commits `src/` and runs the suite before rebuilding gets ~13
+ * such reds. Those ids are left out of the base-red record then, so they can never hide a job's own.
+ */
+function provenOnThisCode(r: SuiteRecord, ids: BaseRedTest[]): BaseRedTest[] {
+  try {
+    if (!r.redTree || !ids.length || distCheck(r.toplevel, r.redTree).ok) return ids;
+    const spawn = new Set(cliSpawnTests(r.toplevel, r.config));
+    return ids.filter((t) => !spawn.has(t.file));
+  } catch { return []; }
+}
+
+/** A red record's test ids from its log, mapped onto its repo-relative files; a red file the log
+ *  does not name stays as a load failure, which only ever matches a load failure. */
+function redIdsFromLog(r: SuiteRecord): BaseRedTest[] {
+  let ids: BaseRedTest[] = [];
+  try { ids = r.log ? parseVitestFailedIds(readFileSync(r.log, 'utf-8')) : []; } catch { ids = []; }
+  // vitest prints paths from the folder it ran in: map each onto the record's own file.
+  const toRecord = (f: string) => r.files.find((x) => x === f || x.endsWith(`/${f}`));
+  const out: BaseRedTest[] = [];
+  for (const t of ids) { const file = toRecord(t.file); if (file) out.push({ file, test: t.test }); }
+  for (const f of r.files) if (!out.some((t) => t.file === f)) out.push({ file: f, test: null });
+  return out;
 }
 
 /** Pin a record's tree under refs/dc-suite/<id>/<which>, so `git gc` keeps it. false on failure. */
@@ -184,6 +217,7 @@ export function suiteRecordsHere(toplevel: string, branch: string | null, o: { n
  * worktree is gone goes. Its logs and tree refs go with it. Never throws.
  */
 export function pruneSuiteRecords(dir: string, now: number = Date.now()): void {
+  pruneBaseRed(dir, now);
   // The logs of slug-less `--failed` runs: kept 14 days, like a receipt.
   try {
     const runs = join(dir, 'suite-runs');
@@ -540,4 +574,237 @@ export function suiteRedOpen(cwd: string): boolean {
 /** The toplevel as records key it (real path). */
 export function recordToplevel(toplevel: string): string {
   try { return realpathSync(toplevel); } catch { return toplevel; }
+}
+
+// ─── base reds: what was already red on a commit (audit OR-2) ────────────────
+
+/**
+ * The full suite is red on most cuts, so every job forked from one sees the same reds in its own
+ * checks and proves "red on base" again (79 task files carry such a proof). A whole-suite record
+ * written on a CLEAN checkout (its tree is HEAD's) also leaves a base-red record keyed by HEAD's
+ * commit: the failing test ids, nothing else. `builder test` reads the nearest such record among
+ * HEAD's ancestors and prints a failure it lists as `BASE-RED (not yours)`, outside the FAIL list.
+ *
+ * A real regression must not hide behind it, so a failure counts as base-red only when ALL hold:
+ * the same test id (file + describe path + name; a load failure only matches a load failure), the
+ * record's commit is an ancestor of HEAD, and the test FILE is unchanged since that commit. A newer
+ * record (a green cut writes an empty one) supersedes an older one: that is how a red expires.
+ */
+export interface BaseRedTest { file: string; /** `describe > … > it`; null = the file failed to load. */ test: string | null }
+export interface BaseRedRecord { v: 1; sha: string; tree: string; at: string; tests: BaseRedTest[] }
+
+/** One test's id as both vitest reporters can give it: the describe path and title, ` > ` joined. */
+export const testIdOf = (ancestors: readonly string[], title: string): string => [...ancestors, title].filter(Boolean).join(' > ');
+
+const SHA = /^[0-9a-f]{40,64}$/;
+
+function baseRedDir(toplevel: string): string | null {
+  const d = receiptsDir(toplevel);
+  return d ? join(d, 'base-red') : null;
+}
+
+/** The failed test ids in a vitest default-reporter log (Failed Tests / Failed Suites blocks). */
+export function parseVitestFailedIds(raw: string): BaseRedTest[] {
+  const out = new Map<string, BaseRedTest>();
+  let block: string | null = null;
+  for (const line of stripAnsi(raw).split(/\r?\n/)) {
+    const head = BLOCK.exec(line);
+    if (head && !/\[\d+\/\d+\]/.test(line)) { block = head[1]; continue; }
+    if (/^\s*Test Files\s/.test(line)) { block = null; continue; }
+    if (block !== 'Failed Tests' && block !== 'Failed Suites') continue;
+    const m = /^ FAIL {2}(\S+)(.*)$/.exec(line);
+    if (!m) continue;
+    const rest = m[2].trim();
+    const t: BaseRedTest = block === 'Failed Suites' || !rest.startsWith('>') ? { file: m[1], test: null } : { file: m[1], test: rest.slice(1).trim() };
+    out.set(`${t.file}\0${t.test ?? ''}`, t);
+  }
+  return [...out.values()];
+}
+
+/** HEAD's commit when `tree` is exactly HEAD's tree (a clean checkout), else null. */
+function cleanHead(toplevel: string, tree: string): string | null {
+  try {
+    const sha = git(toplevel, ['rev-parse', '--verify', 'HEAD^{commit}']);
+    return SHA.test(sha) && git(toplevel, ['rev-parse', `${sha}^{tree}`]) === tree ? sha : null;
+  } catch { return null; }
+}
+
+/**
+ * Write what a suite run proved on a clean commit: its red test ids, or none on a green. A run on
+ * uncommitted code proves nothing about a commit and writes nothing. Never throws.
+ */
+export function noteBaseRed(toplevel: string, tree: string, tests: readonly BaseRedTest[], now: number = Date.now()): string | null {
+  try {
+    const sha = cleanHead(toplevel, tree);
+    const dir = baseRedDir(toplevel);
+    if (!sha || !dir) return null;
+    mkdirSync(dir, { recursive: true });
+    const rec: BaseRedRecord = { v: 1, sha, tree, at: new Date(now).toISOString(), tests: [...tests].sort((a, b) => `${a.file}\0${a.test ?? ''}`.localeCompare(`${b.file}\0${b.test ?? ''}`)) };
+    const path = join(dir, `${sha}.json`);
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(rec, null, 1)}\n`);
+    renameSync(tmp, path);
+    return path;
+  } catch { return null; }
+}
+
+function readBaseRed(path: string): BaseRedRecord | null {
+  try {
+    if (!lstatSync(path).isFile()) return null;
+    const r = JSON.parse(readFileSync(path, 'utf-8')) as BaseRedRecord;
+    const ok = r?.v === 1 && SHA.test(r.sha) && SHA.test(r.tree) && typeof r.at === 'string' && !Number.isNaN(Date.parse(r.at))
+      && Array.isArray(r.tests) && r.tests.every((t) => typeof t?.file === 'string' && (t.test === null || typeof t.test === 'string'));
+    return ok ? r : null;
+  } catch { return null; }
+}
+
+/**
+ * The commit this branch grew from, or null when that cannot be told for sure. Read off the
+ * branch's reflog: its oldest entry must be `branch: Created from …`, and every later entry only
+ * the branch's own commits (`commit:`, `commit (amend):`). A rebase, merge, reset, pull or
+ * fast-forward took in other code (perhaps a later fix of a base red), and an expired or missing
+ * creation entry may leave one of the branch's own commits as the oldest: any of these, a detached
+ * HEAD, or no reflog = unknown, and nothing counts as base-red. Any doubt is the job's.
+ */
+export function forkPoint(toplevel: string): string | null {
+  try {
+    const branch = branchOf(toplevel);
+    if (!branch) return null;
+    const rows = git(toplevel, ['reflog', 'show', '--format=%H %gs', `refs/heads/${branch}`, '--']).split('\n').filter(Boolean);
+    if (rows.length === 0) return null;
+    const oldest = rows[rows.length - 1];
+    const sha = oldest.slice(0, oldest.indexOf(' '));
+    if (!SHA.test(sha) || !oldest.slice(sha.length + 1).startsWith('branch: Created from')) return null;
+    const ownOnly = rows.slice(0, -1).every((row) => /^[0-9a-f]+ commit(?: \(amend\))?: /.test(row));
+    return ownOnly ? sha : null;
+  } catch { return null; }
+}
+
+/**
+ * The base-red record of the nearest recorded commit at or before this branch's fork point
+ * ({@link forkPoint}), or null. Records on the branch's own commits never count.
+ */
+export function nearestBaseRed(toplevel: string, o: { fork?: string | null } = {}): BaseRedRecord | null {
+  const dir = baseRedDir(toplevel);
+  if (!dir || !existsSync(dir)) return null;
+  const fork = o.fork === undefined ? forkPoint(toplevel) : o.fork;
+  if (!fork) return null;
+  let best: { rec: BaseRedRecord; distance: number } | null = null;
+  for (const f of readdirSync(dir)) {
+    if (!/^[0-9a-f]{40,64}\.json$/.test(f)) continue;
+    const rec = readBaseRed(join(dir, f));
+    if (!rec || `${rec.sha}.json` !== f) continue;
+    let distance: number;
+    try {
+      // Not an ancestor of the fork point (or gone): the range of commits the fork lacks must be empty.
+      if (git(toplevel, ['rev-list', '--count', `${fork}..${rec.sha}`]) !== '0') continue;
+      distance = Number(git(toplevel, ['rev-list', '--count', `${rec.sha}..${fork}`]));
+    } catch { continue; }
+    if (!Number.isFinite(distance)) continue;
+    if (!best || distance < best.distance || (distance === best.distance && Date.parse(rec.at) > Date.parse(best.rec.at))) best = { rec, distance };
+  }
+  return best?.rec ?? null;
+}
+
+export interface FailureLike { file: string; test?: string | null; key: string }
+
+/**
+ * Split failures into the job's own and those already red on its base. `tree` is the code as it is
+ * now (default: the content tree); a failure in a test file changed since the base stays the job's.
+ * A tsc failure, or a failure with no test id, is always the job's. Any doubt: the job's.
+ */
+export function splitBaseRed<F extends FailureLike>(toplevel: string, failures: readonly F[], o: { tree?: string | null; record?: BaseRedRecord | null } = {}): { mine: F[]; baseRed: F[]; record: BaseRedRecord | null } {
+  const candidates = failures.filter((f) => f.test !== undefined && !f.key.startsWith('tsc '));
+  if (candidates.length === 0) return { mine: [...failures], baseRed: [], record: null };
+  const record = o.record === undefined ? nearestBaseRed(toplevel) : o.record;
+  if (!record || record.tests.length === 0) return { mine: [...failures], baseRed: [], record };
+  const now = o.tree === undefined ? contentTree(toplevel) : o.tree;
+  const diff = now ? treeDiff(toplevel, record.tree, now) : null;
+  if (!diff) return { mine: [...failures], baseRed: [], record };
+  const changed = new Set(diff.map((d) => d.path));
+  const known = new Set(record.tests.map((t) => `${t.file}\0${t.test ?? ''}`));
+  const mine: F[] = [];
+  const baseRed: F[] = [];
+  for (const f of failures) {
+    const hit = f.test !== undefined && !f.key.startsWith('tsc ') && !changed.has(f.file) && known.has(`${f.file}\0${f.test ?? ''}`);
+    (hit ? baseRed : mine).push(f);
+  }
+  return { mine, baseRed, record };
+}
+
+/** Base-red records go after {@link SUITE_RECORD_MAX_AGE_MS}: a red that old is the cut's business. */
+function pruneBaseRed(dir: string, now: number): void {
+  const d = join(dir, 'base-red');
+  try {
+    for (const f of existsSync(d) ? readdirSync(d) : []) {
+      try { if (now - statSync(join(d, f)).mtimeMs > SUITE_RECORD_MAX_AGE_MS) rmSync(join(d, f), { force: true }); } catch { /* pruned */ }
+    }
+  } catch { /* nothing to prune */ }
+}
+
+// ─── a new worktree's dist/ (audit OR-2 b) ──────────────────────────────────
+
+/** The folders {@link distFingerprint} hashes that exist in `toplevel`: `dist` and `<dir>/dist`. */
+function distRoots(toplevel: string): string[] {
+  const out: string[] = [];
+  const isDir = (p: string) => { try { const s = lstatSync(p); return s.isDirectory() && !s.isSymbolicLink(); } catch { return false; } };
+  if (isDir(join(toplevel, 'dist'))) out.push('dist');
+  try {
+    for (const e of readdirSync(toplevel, { withFileTypes: true })) {
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'dist' && isDir(join(toplevel, e.name, 'dist'))) out.push(`${e.name}/dist`);
+    }
+  } catch { /* none */ }
+  return out;
+}
+
+function siblingWorktrees(toplevel: string): string[] {
+  try {
+    const self = recordToplevel(toplevel);
+    return git(toplevel, ['worktree', 'list', '--porcelain']).split('\n')
+      .filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9))
+      .filter((p) => existsSync(p) && recordToplevel(p) !== self);
+  } catch { return []; }
+}
+
+/**
+ * A fresh worktree has no `dist/`, so every test that runs the built CLI goes red there (27 task
+ * files note ~13 such reds). Copy the build from a sibling worktree whose `dist/` is a green build
+ * of THIS code, and keep it only when the copy hashes like the receipt. Cheap first: only a green
+ * build receipt whose tree differs from this one only in {@link SUITE_DIST_ALLOW} names a candidate,
+ * and only that sibling's dist is hashed. A worktree with anything at a dist path, or code no
+ * sibling built, gets nothing: the caller says "build first". Synchronous: CLI use only (never on
+ * the server's request path). Never throws.
+ */
+export function seedDist(toplevel: string, o: { tree?: string | null; sources?: string[] } = {}): { from: string | null; why: string } {
+  try {
+    if (distRoots(toplevel).length > 0 || existsSync(join(toplevel, 'dist'))) return { from: null, why: 'this worktree already has a dist/' };
+    const tree = o.tree === undefined ? contentTree(toplevel) : o.tree;
+    if (!tree) return { from: null, why: 'the content tree could not be written' };
+    const siblings = new Set((o.sources ?? siblingWorktrees(toplevel)).map(recordToplevel));
+    const tried = new Set<string>();
+    for (const r of buildReceipts(toplevel)) {
+      const src = r.toplevel ? recordToplevel(r.toplevel) : null;
+      if (!src || !siblings.has(src) || tried.has(`${src}\0${r.outputs}`)) continue;
+      tried.add(`${src}\0${r.outputs}`);
+      const diff = treeDiff(toplevel, r.tree, tree);
+      if (!diff || !diff.every((d) => distAllowed(d.path))) continue;
+      if (distFingerprint(src) !== r.outputs) continue;
+      const roots = distRoots(src);
+      // Nothing of ours is ever replaced or removed: every target must be absent before the copy.
+      if (roots.length === 0 || roots.some((x) => { try { lstatSync(join(toplevel, x)); return true; } catch { return false; } })) continue;
+      // Only a root this call copied whole is ever removed again: a second `builder test` that lost
+      // the race to the same empty worktree must not delete the winner's copy.
+      const made: string[] = [];
+      try {
+        for (const x of roots) {
+          mkdirSync(resolve(join(toplevel, x), '..'), { recursive: true });
+          cpSync(join(src, x), join(toplevel, x), { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+          made.push(x);
+        }
+        if (distFingerprint(toplevel) === r.outputs) return { from: src, why: `copied from ${src}, a green build of this code` };
+      } catch { /* undone below */ }
+      for (const x of made) rmSync(join(toplevel, x), { recursive: true, force: true });
+    }
+    return { from: null, why: 'no other worktree holds a green build of this code' };
+  } catch { return { from: null, why: 'the build could not be copied' }; }
 }

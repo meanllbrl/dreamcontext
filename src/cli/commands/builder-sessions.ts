@@ -45,9 +45,10 @@ import {
 } from '../../lib/builder-spawn.js';
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
-import { contentTree, describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
+import { contentTree, describeHit, distFingerprint, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
 import {
-  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, seedDist, splitBaseRed, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+  type BaseRedTest,
 } from '../../lib/suite-record.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
@@ -693,7 +694,9 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     return 0;
   }
 
-  const failures: Failure[] = [];
+  if (plan.tests.length > 0) noteDist(deps, root);
+
+  let failures: Failure[] = [];
   const notRun: string[] = [];
   const ranTsc = new Set<string>();
   const tscFailedNow = new Set<string>();
@@ -759,6 +762,11 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     }
   }
 
+  // Already red on the base this branch grew from: printed apart, never counted (audit OR-2).
+  const split = splitBaseRed(recordToplevel(root), failures);
+  failures = split.mine;
+  const baseRed = split.baseRed;
+
   // State: what ran this time replaces its earlier status; what did not run keeps it.
   state.runs += 1;
   state.tscFailed = [...new Set([...state.tscFailed.filter((p) => !ranTsc.has(p)), ...tscFailedNow])].sort();
@@ -779,19 +787,39 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     deps.print(`FAIL ${owner ?? `? (no lane owns ${f.file})`}: ${f.key}${again}`);
   }
   if (failures.length > MAX_PRINTED_FAILURES) deps.print(`... and ${failures.length - MAX_PRINTED_FAILURES} more (see the logs above)`);
+  if (baseRed.length > 0 && split.record) {
+    deps.print(`${baseRed.length} failure(s) were already red on ${split.record.sha.slice(0, 12)}, the base this branch grew from (recorded ${split.record.at.slice(0, 16).replace('T', ' ')}): not yours, not counted. The cut's suite owns them.`);
+    for (const f of baseRed.slice(0, MAX_PRINTED_FAILURES)) deps.print(`BASE-RED (not yours): ${f.key}`);
+    if (baseRed.length > MAX_PRINTED_FAILURES) deps.print(`... and ${baseRed.length - MAX_PRINTED_FAILURES} more base-red`);
+  }
   for (const n of notRun) deps.print(`NOT RUN: ${n} (the wait ran out, could not start, or killed; the line above names who is ahead and your place is kept): do other work first, then run the same command`);
 
   const remaining = state.tscFailed.length > 0 || Object.keys(state.failedTests).length > 0;
   if (failures.length === 0 && notRun.length === 0 && !remaining) {
     rmSync(sp, { force: true });
+    const besides = baseRed.length > 0 ? ` (${baseRed.length} base-red, not yours)` : '';
     deps.print(uncovered.length === 0
-      ? `wave ${wave}: GREEN`
+      ? `wave ${wave}: GREEN${besides}`
       : `wave ${wave}: nothing failed, but NOT GREEN: no test covers ${uncovered.join(', ')}. Add --also <test files>, or say in the report that it is untested`);
     return 0;
   }
   writeTestState(sp, state);
   if (failures.length > 0 || remaining) return 1;
   return HEAVY_LOCK_BUSY_EXIT;
+}
+
+/**
+ * A worktree with no `dist/` turns every CLI-spawn test red for a reason the job did not cause.
+ * Copy a sibling's green build of this code when there is one; otherwise say so before the run.
+ */
+function noteDist(deps: SessionDeps, root: string): void {
+  try {
+    const top = recordToplevel(root);
+    if (distFingerprint(top) !== '' || !distGateApplies(top)) return;
+    const seeded = seedDist(top);
+    if (seeded.from) deps.print(`dist/: this worktree had none; ${seeded.why}`);
+    else deps.print(`dist/: this worktree has none and ${seeded.why}, so the tests that run the built CLI will fail. Build first: dreamcontext builder heavy -- ${buildCommand(top) ?? 'npm run build'}`);
+  } catch { /* the run says what it finds */ }
 }
 
 const relativeTo = (root: string, p: string) => p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
@@ -874,6 +902,7 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
     deps.print(`${name}: rerunning ${explicit.length} file(s) by name (${r.files.length - gone.length} red${cli.length ? `, ${cli.length} CLI-spawn` : ''}) + tests related to ${related.length} changed file(s) since ${base!.slice(0, 12)}`);
     const tag = `${r.id}-${Date.now()}`;
     const failureFiles: string[] = [];
+    const redIds: BaseRedTest[] = [];
     const ranFiles = new Set<string>();
     let worstExit = 0;
     let noReport = false;
@@ -892,6 +921,7 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
       const report = parseTestReport(readFileSync(out, 'utf-8'), top);
       for (const f of report.files) ranFiles.add(f);
       failureFiles.push(...report.failures.map((f) => f.file));
+      for (const f of report.failures) if (f.test !== undefined) redIds.push({ file: f.file, test: f.test });
       if (mode === 'related' && report.total > RELATED_TEST_CEILING) deps.print(`${name}: ${report.total} tests: the scope of the diff ran close to the whole suite, because ${related.length} file(s) changed since ${base!.slice(0, 12)} reach most tests (scope of the diff, not a second full run)`);
       deps.print(`${name} ${mode}: ${report.total} test(s), ${new Set(report.failures.map((f) => f.file)).size} file(s) red (log ${relativeTo(top, log)})`);
     }
@@ -905,7 +935,9 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
       deps.print(`${name}: GREEN, the record is closed and kept (green tree ${now.slice(0, 12)}); a second --failed says "nothing open"`);
       codes.push(RECORD_GREEN_EXIT);
     } else if (j.state === 'red' && now && pinTree(top, r.id, 'red', now)) {
-      writeSuiteRecord({ ...r, state: 'red', files: j.files, redTree: now, reason: j.reason, at });
+      // A required file that ran no tests has no id: it stands as a load failure.
+      const ids = [...redIds, ...j.files.filter((f) => !redIds.some((t) => t.file === f)).map((file) => ({ file, test: null }))];
+      writeSuiteRecord({ ...r, state: 'red', files: j.files, redTree: now, reason: j.reason, at }, { tests: ids });
       deps.print(`${name}: still RED, ${j.files.length} file(s): fix them, then the same command again`);
       for (const f of j.files) deps.print(`  red: ${f}`);
       codes.push(RECORD_RED_EXIT);
