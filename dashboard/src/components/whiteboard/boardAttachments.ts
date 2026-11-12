@@ -8,7 +8,7 @@
  * - Ask Super: the message carries them exactly as a Chat message does (`[Picture N: <path>]`,
  *   a quoted path for a file), composed by the Chat's own `composeOutgoing`.
  */
-import { composeOutgoing, type Attachment } from '../sleepy/chat/composerScratch';
+import { composeOutgoing, removeAttachment, type Attachment } from '../sleepy/chat/composerScratch';
 import { refToken } from '../sleepy/chat/composerRefs';
 import { quotePath } from '../../lib/agentComposer';
 
@@ -22,12 +22,20 @@ export const boardAttachConv = (board: string): string => `board-field:${board}`
 export const fieldAttachments = (staged: readonly Attachment[]): Attachment[] =>
   staged.filter((a) => a.kind === 'image' || a.kind === 'file');
 
-/** Still on their way to disk: a send waits for them. */
-export const anyUploading = (atts: readonly Attachment[]): boolean => atts.some((a) => a.uploading && !a.failed);
+/** Sendable: uploaded, not refused. */
+const sendable = (a: Attachment): boolean => !a.failed && !a.uploading && !!a.path;
+
+/**
+ * After a send, take off exactly the chips that went (review r1): a picture dropped while the send
+ * was on its way stays for the next request, never wiped as if it had been sent.
+ */
+export function dropCarried(conv: string, carried: readonly Attachment[]): void {
+  for (const a of carried) if (sendable(a)) removeAttachment(conv, a.id);
+}
 
 /** The uploaded paths a quick edit sends (a refused upload is left out, its chip says so). */
 export function quickAttachmentPaths(atts: readonly Attachment[]): string[] {
-  return atts.filter((a) => !a.failed && !a.uploading && !!a.path).map((a) => a.path!).slice(0, BOARD_ATTACH_MAX);
+  return atts.filter(sendable).map((a) => a.path!).slice(0, BOARD_ATTACH_MAX);
 }
 
 /**
@@ -36,8 +44,8 @@ export function quickAttachmentPaths(atts: readonly Attachment[]): string[] {
  * after the words, the way a Chat message with its pictures after the text reads.
  */
 export function superMessageWith(text: string, atts: readonly Attachment[]): string {
-  const sendable = atts.filter((a) => !a.failed && !a.uploading && !!a.path).map((a) => ({ ...a, inline: true, pending: false }));
-  if (!sendable.length) return text;
-  const draft = `${text}\n${sendable.map((a) => refToken(a)).join(' ')}`;
-  return composeOutgoing(draft, sendable, null, quotePath).message;
+  const going = atts.filter(sendable).map((a) => ({ ...a, inline: true, pending: false }));
+  if (!going.length) return text;
+  const draft = `${text}\n${going.map((a) => refToken(a)).join(' ')}`;
+  return composeOutgoing(draft, going, null, quotePath).message;
 }

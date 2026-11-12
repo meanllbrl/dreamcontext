@@ -33,12 +33,12 @@ import { useVaultId } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
 import { agentFileUrl } from '../../api/client';
 import {
-  dropSentAttachments, pendingUploads, readScratch, removeAttachment, stageUpload, subscribeScratch, type Attachment,
+  pendingUploads, readScratch, removeAttachment, stageUpload, subscribeScratch, type Attachment,
 } from '../sleepy/chat/composerScratch';
 import { GLYPH_IMAGE } from '../sleepy/chat/composerRefs';
 import { PictureChip } from '../sleepy/chat/ComposerRefLayer';
 import { chipThumbFor } from '../sleepy/chat/picturePeekBox';
-import { BOARD_ATTACH_MAX, boardAttachConv, fieldAttachments, quickAttachmentPaths, superMessageWith } from './boardAttachments';
+import { BOARD_ATTACH_MAX, boardAttachConv, dropCarried, fieldAttachments, quickAttachmentPaths, superMessageWith } from './boardAttachments';
 import '../sleepy/chat/composer.css';
 import './BoardSuperField.css';
 
@@ -224,7 +224,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       const res = sendFromPage(bus, text);
       if (!res.accepted) { setNote({ text: refusal(res.reason), bad: true }); return; }
       // The field is read-only while a send settles, so the draft is still exactly what went.
-      if (!ask) { setDraft((cur) => (cur === sent ? '' : cur)); dropSentAttachments(conv); }
+      if (!ask) { setDraft((cur) => (cur === sent ? '' : cur)); dropCarried(conv, carried); }
       else setLine(null);
       if (saved === 'unsaved') setNote({ text: t('whiteboard.field.unsaved'), bad: false });
       setTrack({ ...startTrack(msgRef(text), presenceRef.current, Date.now()), box });
@@ -262,7 +262,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       job = r.job;
       setDraft((cur) => (cur.trim() === words ? '' : cur));
       setLastAsk({ words, sel, area, atts: carried });
-      dropSentAttachments(conv);
+      dropCarried(conv, carried);
       setLine(null);
       setRuns((cur) => [...cur, { job: r.job, startedAt: Date.now() }]);
       onQuickBoxRef.current(box);

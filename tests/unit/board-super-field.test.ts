@@ -254,7 +254,7 @@ describe('where the field sits (review r1/r2: one rule decides the painted box)'
 
   it('a send settles read-only, so the draft is exactly what went; the track knows a steered turn', () => {
     expect(src).toMatch(/readOnly=\{sending\}/);
-    expect(src).toMatch(/if \(!ask\) \{ setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\); dropSentAttachments\(conv\); \}/);
+    expect(src).toMatch(/if \(!ask\) \{ setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\); dropCarried\(conv, carried\); \}/);
     expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
   });
 });

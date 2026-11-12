@@ -6,7 +6,8 @@ import {
   dropName, QuickAttachmentRefusal, QUICK_IMAGE_BYTES, QUICK_TEXT_FILE_BYTES, quickTurnLine, readQuickAttachments,
 } from '../../src/lib/whiteboards/quick-attachments.js';
 import { parseQuickEditAnswer, quickEditArgs, readAnswer, resultLine } from '../../src/lib/whiteboards/quick-edit.js';
-import { boardAttachConv, quickAttachmentPaths, superMessageWith } from '../../dashboard/src/components/whiteboard/boardAttachments.js';
+import { boardAttachConv, dropCarried, quickAttachmentPaths, superMessageWith } from '../../dashboard/src/components/whiteboard/boardAttachments.js';
+import { addAttachments, readScratch } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 import { composeFieldMessage } from '../../dashboard/src/components/whiteboard/superFieldLogic.js';
 import { PAGE_CONTEXT_RE } from '../../dashboard/src/lib/superTypes.js';
 import type { Attachment } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
@@ -86,6 +87,18 @@ describe('the board composer: what each mode sends', () => {
     expect(quickAttachmentPaths([att({}), att({ path: undefined, uploading: true }), att({ failed: true, path: undefined }), att({ kind: 'file', name: 'a.txt', path: '/v/a.txt' })]))
       .toEqual(['/v/_dream_context/tmp/agent-drops/1-shot.png', '/v/a.txt']);
     expect(boardAttachConv('b1')).toBe('board-field:b1');
+  });
+
+  it('review r1: a send takes off exactly the chips that went; one dropped meanwhile, or refused, stays', () => {
+    const conv = boardAttachConv('carry');
+    const went = att({});
+    const later = att({ name: 'later.png', path: '/v/_dream_context/tmp/agent-drops/2-later.png' });
+    const refused = att({ failed: true, path: undefined });
+    addAttachments(conv, [went, refused]);
+    const carried = readScratch(conv).attachments.slice();
+    addAttachments(conv, [later]);
+    dropCarried(conv, carried);
+    expect(readScratch(conv).attachments.map((x) => x.id).sort()).toEqual([later.id, refused.id].sort());
   });
 
   it('Ask Super: the Chat message lines, between the words and the page line the Super reads last', () => {
