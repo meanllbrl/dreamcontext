@@ -97,7 +97,7 @@ export function parseSuperHandoffEntries(text: string): string[] {
 
 /** The whole file for `entries` (newest first), trimmed to the caps by dropping the oldest. */
 export function renderSuperHandoffFile(entries: readonly string[], updated: string): string {
-  const head = `---\ntype: super-handoff\nupdated: "${updated}"\n---\n\n${HEADING}\n\nThe Super Agent's handoff, newest first. A fresh super session reads the top entry first, then runs \`dreamcontext super state\`.\n`;
+  const head = `---\ntype: super-handoff\nupdated: "${updated}"\n---\n\n${HEADING}\n\nThe Super Agent's handoff, newest first. A fresh super session reads the top entry first, then runs \`dreamcontext super state --brief\` (children and queue; plain \`super state\` adds cards and machine facts).\n`;
   let kept = entries.slice(0, MAX_ENTRIES);
   const render = () => `${head}\n${kept.join('\n\n')}\n`;
   let out = render();

@@ -5,6 +5,7 @@ import {
 import { startHandoffRun, type HandoffRun, type HandoffStage } from '../../lib/handoff-progress.js';
 import { startRotating, takeFreshDelivered } from '../../lib/super/fresh-session.js';
 import { superHandoffTask } from '../../lib/super/handoff-file.js';
+import { withResumeDigest } from '../../lib/super/resume-digest.js';
 import { superOfSession } from '../../lib/super/store.js';
 import { superKnownLanguage } from '../../lib/super/inbox.js';
 import { withOwnerLanguage } from '../../lib/super/owner-language.js';
@@ -57,7 +58,9 @@ export function handleRotationAtResult(input: RotationInput): RotationDecision {
   // Both are USER frames, so both open turns (see turnsInFlight's header in agent-chat.ts).
   input.writeUserTurn('/clear');
   // A fresh Super session has no message of his to copy the language from: the turn names it.
-  const prompt = handoffContinuePrompt(rec, { fallback: decision === 'fallback' });
+  // The digest (START tree, changed paths, open review, next command) saves the successor the
+  // rediscovery that cost a median 28 tool calls before its first edit (audit OR-9).
+  const prompt = withResumeDigest(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }), rec, contextRoot, pane);
   input.writeUserTurn(input.isSuper ? withOwnerLanguage(prompt, superKnownLanguage(pane)) : prompt);
   input.startRun(startHandoffRun({
     task: rec.task,
