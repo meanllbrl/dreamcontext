@@ -77,7 +77,8 @@ function stripDocumentedMentions(content: string): string {
 
 export interface CheckResult {
   name: string;
-  status: 'ok' | 'warn' | 'error';
+  /** `info` is a fact worth reading that needs no action: it never counts as a warning. */
+  status: 'ok' | 'info' | 'warn' | 'error';
   message: string;
   /** Stable diagnostic slug (e.g. `doctor/core-file-ceiling`). Derived from `name` when unset. */
   code?: string;
@@ -91,7 +92,7 @@ export interface CheckResult {
 
 export interface DoctorReport {
   version: 1;
-  summary: { ok: number; warn: number; error: number };
+  summary: { ok: number; info?: number; warn: number; error: number };
   checks: Array<CheckResult & { code: string }>;
 }
 
@@ -107,6 +108,7 @@ export function buildDoctorReport(results: CheckResult[]): DoctorReport {
     version: 1,
     summary: {
       ok: checks.filter((r) => r.status === 'ok').length,
+      info: checks.filter((r) => r.status === 'info').length,
       warn: checks.filter((r) => r.status === 'warn').length,
       error: checks.filter((r) => r.status === 'error').length,
     },
@@ -1461,8 +1463,10 @@ export function checkSnapshotSize(root: string): CheckResult[] {
         + `${withThousands(budgetChars)}-char target (${withThousands(budgetTokens)} tok x 4), so sections `
         + 'are already demoting, though it still arrives whole under the '
         + `${withThousands(limit)} chars the session hooks can carry.`;
+    // Info, not a warning: the ladder demoting sections is its job, and the snapshot still arrives
+    // whole. A warning here pushed the state specialist to archive live decisions (audit SL-5).
     return [...missingParts, {
-      name: NAME, status: 'warn', message,
+      name: NAME, status: ladderOff ? 'warn' : 'info', message,
       code: 'doctor/snapshot-over-budget',
       evidence: { chars, budgetChars, harnessLimit: limit, ladderOff },
     }];
@@ -1474,6 +1478,72 @@ export function checkSnapshotSize(root: string): CheckResult[] {
     message:
       `Snapshot size — ${withThousands(chars)} chars `
       + `(${pct}% of the ${withThousands(limit)} chars the session hooks can carry)`,
+  }];
+}
+
+/** The Node floor the package declares (`engines.node`), mirrored here because dist has no package.json. */
+export const NODE_ENGINES_FLOOR = [22, 16, 0] as const;
+
+/**
+ * Hooks and every CLI start run on whatever Node the shebang finds. Below the floor the bundle
+ * still runs but `module.enableCompileCache` is a no-op, so each start is ~110 ms slower
+ * (audit SP-2: `--version` 290 ms on Node 20.19 vs 168 ms on 22.16).
+ */
+export function checkNodeVersion(version: string = process.versions.node, execPath: string = process.execPath): CheckResult {
+  const NAME = 'Node version';
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  const floorText = NODE_ENGINES_FLOOR.join('.');
+  if (!m) return { name: NAME, status: 'ok', message: `Node version — ${version} (could not compare with the ${floorText} floor)` };
+  const v = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const below = v[0] - NODE_ENGINES_FLOOR[0] || v[1] - NODE_ENGINES_FLOOR[1] || v[2] - NODE_ENGINES_FLOOR[2];
+  if (below >= 0) return { name: NAME, status: 'ok', message: `Node version — ${version} (floor ${floorText})` };
+  return {
+    name: NAME, status: 'warn',
+    message:
+      `Node ${version} runs dreamcontext, but the package needs ${floorText}+. It still works, but every hook and CLI start is `
+      + 'about 110 ms slower (the compile cache is off), and a hook fires on most tool calls. '
+      + `Switch the default Node to ${floorText}+ and reinstall the global CLI (running: ${execPath}).`,
+    code: 'doctor/node-below-floor',
+    subject: { node: version },
+    evidence: { running: version, floor: floorText, execPath },
+    supportedFixes: [`make Node ${floorText}+ the default (e.g. \`nvm alias default 22.16.0\`), then reinstall the global CLI`],
+  };
+}
+
+/** Days after which a queued write counts as stuck rather than in flight. */
+const QUEUE_STALE_DAYS = 3;
+
+/**
+ * The offline write-ahead queue of the task mirror. Ops pile up when the remote cannot be reached
+ * or refuses the token, and the remote board goes stale without any sign (audit SL-7).
+ */
+export function checkTaskSyncQueue(root: string, now: number = Date.now()): CheckResult[] {
+  const NAME = 'Task sync queue';
+  let ops: Array<{ slug?: string; ts?: number }>;
+  try {
+    ops = new SyncLedger(root).readQueue();
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(ops)) return [];
+  ops = ops.filter((o) => o && typeof o === 'object');
+  if (ops.length === 0) return [];
+  const stamps = ops.map((o) => o.ts).filter((t): t is number => typeof t === 'number' && t > 0);
+  const oldest = stamps.length ? Math.min(...stamps) : null;
+  const ageDays = oldest === null ? 0 : Math.max(0, Math.floor((now - oldest) / 86_400_000));
+  const slugs = new Set(ops.map((o) => o.slug)).size;
+  const since = oldest === null ? 'an unknown date' : new Date(oldest).toISOString().slice(0, 10);
+  const stale = ageDays >= QUEUE_STALE_DAYS;
+  return [{
+    name: NAME,
+    status: stale ? 'warn' : 'info',
+    message: stale
+      ? `Task sync queue — ${ops.length} op(s) on ${slugs} task(s) have waited since ${since} (${ageDays} days). `
+        + 'The remote board is stale for them: check the task backend sign-in or token (`dreamcontext tasks sync`).'
+      : `Task sync queue — ${ops.length} op(s) on ${slugs} task(s) waiting to reach the remote board (oldest ${since}).`,
+    code: 'doctor/task-sync-queue',
+    evidence: { ops: ops.length, tasks: slugs, oldestTs: oldest, ageDays },
+    ...(stale ? { supportedFixes: ['renew the task backend token, then run `dreamcontext tasks sync`'] } : {}),
   }];
 }
 
@@ -1776,6 +1846,8 @@ export function registerDoctorCommand(program: Command): void {
         ...checkSnapshotSize(root),
         ...checkContextDelivery(root),
         ...checkTmpSize(root),
+        checkNodeVersion(),
+        ...checkTaskSyncQueue(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))
@@ -1826,10 +1898,10 @@ export function registerDoctorCommand(program: Command): void {
         return;
       }
 
-      const icons = { ok: chalk.green('✓'), warn: chalk.yellow('⚠'), error: chalk.red('✗') };
+      const icons = { ok: chalk.green('✓'), info: chalk.cyan('ℹ'), warn: chalk.yellow('⚠'), error: chalk.red('✗') };
       const errors = results.filter(r => r.status === 'error');
       const warnings = results.filter(r => r.status === 'warn');
-      const ok = results.filter(r => r.status === 'ok');
+      const ok = results.filter(r => r.status === 'ok' || r.status === 'info');
 
       for (const r of results) {
         console.log(`  ${icons[r.status]} ${r.message}`);
