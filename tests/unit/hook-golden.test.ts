@@ -9,6 +9,8 @@
  * overnight prompt-hook diet (B1) moved two lines of user-prompt-submit.txt on purpose: each recall
  * hit prints its size and the gate says to read the matching section, not the whole file; this
  * runs the same harness on the CURRENT build and compares every hook's stdout, stderr and exit.
+ * 2026-11-12 (audit MM-9) removed exactly one block from session-start.txt: the empty
+ * `## Marketing` state (8 lines), which the snapshot now omits until the surface holds something.
  * The fixture's context sits over the handoff threshold, so the nudge path (`maybeNudge`, which
  * W1 extended with `context_tokens`) is in the output.
  *

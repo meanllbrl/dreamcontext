@@ -118,7 +118,7 @@ Current focus: proving the snapshot's section joins are byte-stable.
   Objectives: improve-recall-mechanism
   Feature: login-flow
   Custom fields: estimate=3d
-- (+1 more active task(s), all todo — see commands below)
+- Report snapshot size from doctor [todo, 2026-01-04] -> _dream_context/state/beta-doctor-check.md
 
 (search: `dreamcontext memory recall "<q>" --types task` · filter/browse: `dreamcontext tasks list [-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--objective <slug>] [--feature <slug>]`)
 
@@ -155,7 +155,7 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Lab (Analytics Insights)
 
-- Active Vaults [Adoption]: no data yet vaults · never synced
+- Stale, never synced or demo (1): Active Vaults (`active-vaults`) — last value: `dreamcontext lab show <slug>`
 
 Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.
 
@@ -183,37 +183,7 @@ Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` o
 
 > !!! ÇOK ÖNEMLİ !!! Bu pattern'lar projenin KURALLARIDIR (çoğu soul'dan taşınmıştır) — yapacağın işle ilişkili olanları MUTLAKA OKU!
 
-- **patterns/beacon-pattern-05**
-- **patterns/beacon-pattern-15**
-- **patterns/beacon-pattern-25**
-- **patterns/beacon-pattern-35**
-- **patterns/cobalt-pattern-06**
-- **patterns/cobalt-pattern-16**
-- **patterns/cobalt-pattern-26**
-- **patterns/cobalt-pattern-36**
-- **patterns/delta-pattern-07**
-- **patterns/delta-pattern-17**
-- **patterns/delta-pattern-27**
-- **patterns/delta-pattern-37**
-- **patterns/ember-pattern-08**
-- **patterns/ember-pattern-18**
-- **patterns/ember-pattern-28**
-- **patterns/ember-pattern-38**
-- **patterns/fjord-pattern-09**
-- **patterns/fjord-pattern-19**
-- **patterns/fjord-pattern-29**
-- **patterns/fjord-pattern-39**
-- **patterns/harbor-pattern-10**
-- **patterns/harbor-pattern-20**
-- **patterns/harbor-pattern-30**
-- **patterns/harbor-pattern-40**
-- **patterns/lantern-pattern-01**
-- **patterns/lantern-pattern-11**
-- **patterns/lantern-pattern-21**
-- **patterns/lantern-pattern-31**
-- **patterns/meadow-pattern-02**
-- **patterns/meadow-pattern-12**
-- (+10 more pattern(s): patterns/meadow-pattern-22, patterns/meadow-pattern-32, patterns/orchard-pattern-04, patterns/orchard-pattern-14, patterns/orchard-pattern-24, patterns/orchard-pattern-34, patterns/quarry-pattern-03, patterns/quarry-pattern-13, patterns/quarry-pattern-23, patterns/quarry-pattern-33 — `dreamcontext knowledge index`)
+- 40 pattern(s) in `_dream_context/knowledge/patterns/`, not listed: the prompt hook names the ones your prompt touches · browse: `dreamcontext patterns list` · load one: `/patterns <slug or keywords>`
 
 (+62 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
 
@@ -225,7 +195,7 @@ Recall already spans these. To search one directly: `dreamcontext memory recall 
 
 
 ---
-_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2430 tok vs 2000 tok).
+_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2173 tok vs 2000 tok).
 Demoted to their floors: people-roster, extended-core, tasks, bookmarks, changelog, releases, features, knowledge-index, connected-projects.
 Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —
 but you are reading a thinner brain than this project has. FIX: slim the core files below their

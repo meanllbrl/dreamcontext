@@ -20,6 +20,10 @@ import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE, BRIEFING_RECOVERY_NOTE } from '.
  * ladder (directives, override, every pinned file / pattern / feature NAMED or
  * COUNTED), and that a small brain is left exactly as it was.
  *
+ * Since 2026-11-12 the default is the LEAN form (overnight audit MM-11): project
+ * line, recall line, pinned knowledge, a pattern count, the task rule. The old
+ * inventory form is `form: 'full'`, kept for briefing by agent type.
+ *
  * The large vault is fictional (synthetic-fixtures pattern): no real project,
  * person or path appears in it.
  */
@@ -107,7 +111,10 @@ function namedOrCounted(text: string, slugs: string[], noun: string): number {
   // Feature roster: "- a, b (+N more feature(s))": the N are counted, not named.
   const counted = [...text.matchAll(new RegExp(`\\(\\+(\\d+) more ${escaped}\\)`, 'g'))]
     .reduce((sum, m) => sum + Number(m[1]), 0);
-  return named + unnamed + counted;
+  // Pattern count line: "- N pattern(s) in `_dream_context/knowledge/patterns/`, not listed".
+  const whole = [...text.matchAll(new RegExp(`- (\\d+) ${escaped} in \``, 'g'))]
+    .reduce((sum, m) => sum + Number(m[1]), 0);
+  return named + unnamed + counted + whole;
 }
 
 let tmp: string;
@@ -149,55 +156,55 @@ describe('resolveSubagentBriefingBudget', () => {
   });
 });
 
-describe('sub-agent briefing on a large brain', () => {
+describe('sub-agent briefing on a large brain (lean, the default)', () => {
   let vault: LargeVault;
   beforeEach(() => { vault = buildLargeVault(join(tmp, 'project')); });
 
-  it('fits the hard cap, budget note included, without exhausting the ladder', () => {
+  it('fits in about 1,200 tokens with no ladder and no budget note', () => {
     const m = measureSubagentBriefing({ root: vault.context });
-    expect(m.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
     expect(m.overBudget).toBe(false);
-    expect(m.demoted.length).toBeGreaterThan(0);
-    expect(m.bodyChars).toBeLessThanOrEqual(SUBAGENT_BRIEFING_BUDGET_TOKENS * 4);
+    expect(m.demoted).toEqual([]);
+    expect(m.clipped).toEqual([]);
+    expect(m.text.length).toBeLessThanOrEqual(4_800);
+    expect(m.text).not.toContain('Budget note');
+    expect(m.text).not.toContain('EXHAUSTED');
   });
 
-  it('keeps the directive first, the recall line, and the task-format override', () => {
+  it('opens with the brain and the recall line, and points at the task-format override', () => {
     const text = generateSubagentBriefing({ root: vault.context });
-    expect(text.indexOf('MANDATORY')).toBeGreaterThan(-1);
-    expect(text.indexOf('MANDATORY')).toBeLessThan(500);
-    expect(text).toContain('MUST check the feature list');
-    expect(text).toContain('BEFORE using Glob, Grep, or searching code');
+    expect(text.startsWith('# Agent Context -- Sub-agent Briefing')).toBe(true);
+    expect(text.indexOf(RECALL_GUIDANCE)).toBeGreaterThan(-1);
+    expect(text.indexOf(RECALL_GUIDANCE)).toBeLessThan(300);
     expect(text).toContain('ACTIVE TASK-FORMAT OVERRIDE:');
-    expect(text).toContain('Estimate');
-    // A sub-agent asked to draw reads the draw skill first, even on a vault this large.
+    expect(text).toContain('`_dream_context/overrides/task.md`');
+    // The override's BODY is one Read away, not inlined.
+    expect(text).not.toContain('Estimate');
+    expect(text).toContain('Project: **northwind-atlas**');
     expect(text).toContain('Drawing (an `.excalidraw.md`, a diagram file, a whiteboard): read `.claude/skills/draw/SKILL.md` first');
   });
 
-  it('names every pinned file', () => {
+  it('names every pinned file and counts every pattern, with a way to find the ones that apply', () => {
     const text = generateSubagentBriefing({ root: vault.context });
     for (const slug of vault.pinned) expect(text).toContain(slug);
-  });
-
-  it('names or counts every pattern and every feature', () => {
-    const text = generateSubagentBriefing({ root: vault.context });
     expect(namedOrCounted(text, vault.patterns, 'pattern(s)')).toBe(vault.patterns.length);
-    expect(namedOrCounted(text, vault.features, 'feature(s)')).toBe(vault.features.length);
+    expect(text).toContain('dreamcontext patterns match');
+    // A sub-agent gets no prompt hook: the snapshot's wording would be untrue here.
+    expect(text).not.toContain('the prompt hook names');
   });
 
-  it('carries the shared guidance verbatim and a briefing-specific budget note', () => {
+  it('carries no inventory rosters and no Task Awareness block', () => {
     const text = generateSubagentBriefing({ root: vault.context });
-    expect(text).toContain(RECALL_GUIDANCE);
-    expect(text).toContain(TASK_CREATE_GUIDANCE);
-    expect(text).toContain('sections demoted to fit the briefing budget');
-    expect(text).toContain(BRIEFING_RECOVERY_NOTE);
-    // Untrue for the briefing: at the floor, features and knowledge have no path.
-    expect(text).not.toContain('keeps its file path above');
-    expect(text).not.toContain('snapshot budget');
+    for (const slug of vault.features) expect(text).not.toContain(slug);
+    expect(text).not.toContain('route-task-');
+    expect(text).not.toContain('## Task Awareness');
+    expect(text).not.toContain('## Active Tasks');
+    expect(text).not.toContain('## Core Files');
+    expect(text).not.toContain('ask the user');
+    expect(text).toContain('there is no user to ask');
   });
 
   it('is unbounded with budgetTokens: null, and on the DREAMCONTEXT_SNAPSHOT_BUDGET=off switch', () => {
     const unbounded = generateSubagentBriefing({ root: vault.context, budgetTokens: null });
-    expect(unbounded.length).toBeGreaterThan(SUBAGENT_BRIEFING_MAX_CHARS);
     expect(unbounded).not.toContain('Budget note');
     process.env.DREAMCONTEXT_SNAPSHOT_BUDGET = 'off';
     expect(generateSubagentBriefing({ root: vault.context })).toBe(unbounded);
@@ -209,8 +216,68 @@ describe('sub-agent briefing on a large brain', () => {
     expect(generateSubagentBriefing({ root: vault.context })).toBe(byDefault);
   });
 
-  it('keeps every name at the floor, with the budget note excluded from the body count', () => {
+  it('keeps every pinned name and the pattern count at the floor', () => {
     const floor = measureSubagentBriefing({ root: vault.context, budgetTokens: 1 });
+    expect(floor.overBudget).toBe(true);
+    expect(floor.bodyChars).toBeLessThan(floor.text.length);
+    for (const slug of vault.pinned) expect(floor.text).toContain(slug);
+    expect(namedOrCounted(floor.text, vault.patterns, 'pattern(s)')).toBe(vault.patterns.length);
+    expect(floor.text).toContain('is still over budget');
+  });
+});
+
+describe('sub-agent briefing on a large brain (form: full)', () => {
+  let vault: LargeVault;
+  beforeEach(() => { vault = buildLargeVault(join(tmp, 'project')); });
+
+  it('fits the hard cap, budget note included, without exhausting the ladder', () => {
+    const m = measureSubagentBriefing({ root: vault.context, form: 'full' });
+    expect(m.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
+    expect(m.overBudget).toBe(false);
+    expect(m.demoted.length).toBeGreaterThan(0);
+    expect(m.bodyChars).toBeLessThanOrEqual(SUBAGENT_BRIEFING_BUDGET_TOKENS * 4);
+  });
+
+  it('keeps the directive first, the recall line, and the task-format override', () => {
+    const text = generateSubagentBriefing({ root: vault.context, form: 'full' });
+    expect(text.indexOf('MANDATORY')).toBeGreaterThan(-1);
+    expect(text.indexOf('MANDATORY')).toBeLessThan(500);
+    expect(text).toContain('MUST check the feature list');
+    expect(text).toContain('BEFORE using Glob, Grep, or searching code');
+    expect(text).toContain('ACTIVE TASK-FORMAT OVERRIDE:');
+    expect(text).toContain('Estimate');
+    expect(text).toContain('Drawing (an `.excalidraw.md`, a diagram file, a whiteboard): read `.claude/skills/draw/SKILL.md` first');
+  });
+
+  it('names every pinned file', () => {
+    const text = generateSubagentBriefing({ root: vault.context, form: 'full' });
+    for (const slug of vault.pinned) expect(text).toContain(slug);
+  });
+
+  it('names or counts every pattern and every feature', () => {
+    const text = generateSubagentBriefing({ root: vault.context, form: 'full' });
+    expect(namedOrCounted(text, vault.patterns, 'pattern(s)')).toBe(vault.patterns.length);
+    expect(namedOrCounted(text, vault.features, 'feature(s)')).toBe(vault.features.length);
+  });
+
+  it('carries the shared guidance verbatim and a briefing-specific budget note', () => {
+    const text = generateSubagentBriefing({ root: vault.context, form: 'full' });
+    expect(text).toContain(RECALL_GUIDANCE);
+    expect(text).toContain(TASK_CREATE_GUIDANCE);
+    expect(text).toContain('sections demoted to fit the briefing budget');
+    expect(text).toContain(BRIEFING_RECOVERY_NOTE);
+    expect(text).not.toContain('keeps its file path above');
+    expect(text).not.toContain('snapshot budget');
+  });
+
+  it('is unbounded with budgetTokens: null', () => {
+    const unbounded = generateSubagentBriefing({ root: vault.context, budgetTokens: null, form: 'full' });
+    expect(unbounded.length).toBeGreaterThan(SUBAGENT_BRIEFING_MAX_CHARS);
+    expect(unbounded).not.toContain('Budget note');
+  });
+
+  it('keeps every name at the floor, with the budget note excluded from the body count', () => {
+    const floor = measureSubagentBriefing({ root: vault.context, budgetTokens: 1, form: 'full' });
     expect(floor.overBudget).toBe(true);
     expect(floor.bodyChars).toBeLessThan(floor.text.length);
     for (const slug of vault.pinned) expect(floor.text).toContain(slug);
@@ -223,25 +290,29 @@ describe('sub-agent briefing on a large brain', () => {
 
 describe('sub-agent briefing on a small brain', () => {
   it('fits at level 0: the ladder does not run and the render equals the unbounded one', () => {
-    const m = measureSubagentBriefing({ root: SMALL_VAULT_CONTEXT });
-    expect(m.demoted).toEqual([]);
-    expect(m.text).not.toContain('Budget note');
-    expect(m.text).toBe(generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT, budgetTokens: null }));
+    for (const form of ['lean', 'full'] as const) {
+      const m = measureSubagentBriefing({ root: SMALL_VAULT_CONTEXT, form });
+      expect(m.demoted).toEqual([]);
+      expect(m.text).not.toContain('Budget note');
+      expect(m.text).toBe(generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT, budgetTokens: null, form }));
+    }
   });
 
-  it('keeps the full level-0 shapes the integration suite pins', () => {
-    const text = generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT });
+  it('keeps the full level-0 shapes under form: full', () => {
+    const text = generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT, form: 'full' });
     expect(text).toContain('# Agent Context -- Sub-agent Briefing');
     expect(text).toContain('--> Read: _dream_context/knowledge/features/login-flow.md');
     expect(text).toContain('## Knowledge Index');
     expect(text).toContain('## Core Files');
     expect(text).toContain('## Task Awareness');
-    expect(text).toContain('save this plan as an dreamcontext task');
+    // A sub-agent has no user: the plan goes back to its dispatcher.
+    expect(text).toContain('return the plan to the agent that dispatched you');
+    expect(text).not.toContain('ask the user');
     expect(text).toContain('## Context Directory');
   });
 
-  it('no longer teaches the three stale facts', () => {
-    const text = generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT });
+  it('no longer teaches the three stale facts (full form)', () => {
+    const text = generateSubagentBriefing({ root: SMALL_VAULT_CONTEXT, form: 'full' });
     expect(text).not.toContain('BM25');
     expect(text).not.toContain('user (1)');
     expect(text).not.toContain('--status pending');

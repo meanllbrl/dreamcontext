@@ -89,6 +89,13 @@ export const TASKS_DETAIL_FLOOR_CHARS = 400;
 /** Exceptions line name-packing budget at rung 1 / at the floor. */
 export const TASKS_EXCEPTIONS_CHARS = 450;
 export const TASKS_EXCEPTIONS_FLOOR_CHARS = 250;
+/**
+ * Tasks NAMED with their path at every demoted rung: the detailed entries,
+ * topped up with the most recently updated of the rest as one-liners.
+ */
+export const TASKS_NAMED_TOTAL = 5;
+/** Name cap (word-safe) on those recency one-liners. */
+export const TASKS_RECENT_NAME_CHARS = 90;
 // TASKS_ROSTER_CHARS was retired 2026-07-30: the routine-name roster is no
 // longer rendered (Fable judge verdict) — exceptions are named, the rest is a
 // per-status count, and the footer teaches the filter surface.
@@ -201,21 +208,9 @@ export const CONNECTED_L2_CHARS = 300;
  * the agent sees "acme-payments" and has no idea what it is.
  */
 export const CONNECTED_PEER_ID_CHARS = 90;
-/**
- * Per-pattern brief in the Knowledge Index (first sentence, word-safe). Owner
- * decision 2026-07-30: every pattern title is ALWAYS visible with one short
- * clause — enough to know the pattern exists and when it applies; the deep
- * keyword-ranked pattern surface is the patterns run's scope.
- */
-export const PATTERN_BRIEF_CHARS = 80;
-/**
- * The patterns block at the knowledge index FLOOR: slugs only, packed whole
- * with a named tail. Rules must never fold into anonymous folder inventory
- * (the soul-split migration moves rule-bearing conditionals here), so unlike
- * every other knowledge folder the patterns list keeps its own warned block
- * at the deepest rung. ~19 live patterns on the largest vault fit under this.
- */
-export const PATTERNS_FLOOR_CHARS = 1_000;
+// PATTERN_BRIEF_CHARS and PATTERNS_FLOOR_CHARS were retired 2026-11-12 with the
+// pattern-name roster (overnight audit MM-9/MM-10): the prompt hook names the
+// patterns a prompt touches, so the snapshot keeps pinned patterns plus a count.
 /**
  * The other-people roster at rung 1: one `- **Name** (`person:slug`) — role`
  * line per teammate. Sized like the peer roster above because it is the same
@@ -337,18 +332,24 @@ export type NeverEvictSectionId =
  * this order, not the render order.
  *
  * The soul and the active person's constitution are absent by design, not by
- * omission: both are never-evict, so neither has a rank at all. `lab` at 140 is
- * therefore the end of the road — when it reaches its floor the ladder is
- * exhausted, and anything still over the limit is a CONSTITUTION (soul or
- * person) that needs slimming by extraction, which the banner and
+ * omission: both are never-evict, so neither has a rank at all. `people-roster`
+ * at 110 is therefore the end of the road — when it reaches its floor the
+ * ladder is exhausted, and anything still over the limit is a CONSTITUTION
+ * (soul or person) that needs slimming by extraction, which the banner and
  * `dreamcontext doctor` say out loud.
  *
- * The scale is sparse (10-140, with 150 and 160 free) so a future section
- * can be slotted between two existing ones without renumbering. Every value
- * stays above the largest plausible array index, so a section that somehow
- * escapes the typed constructors and falls back to `?? arrayIndex` can never
- * interleave into the middle of this scale — it sorts first and gets demoted
- * first, which is the safe failure direction.
+ * Objectives, theses and Lab demote BEFORE tasks (overnight audit MM-9,
+ * 2026-11-12): over 3,625 tool calls in 40 sessions the agent ran lab, roadmap
+ * and theses 0 times and tasks 128 times, and 9 of 16 sessions that opened a
+ * task card opened one the squeezed list had not shown. Each of the three is
+ * floored (names stay), so going first costs prose, never a routing key.
+ *
+ * The scale is sparse so a future section can be slotted between two existing
+ * ones without renumbering. Every value stays above the largest plausible
+ * array index, so a section that somehow escapes the typed constructors and
+ * falls back to `?? arrayIndex` can never interleave into the middle of this
+ * scale — it sorts first and gets demoted first, which is the safe failure
+ * direction.
  */
 export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   'warm-knowledge': 10,
@@ -363,21 +364,27 @@ export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   // fires on a well-slept vault.
   memory: 80,
   bookmarks: 90,
+  objectives: 92,
+  theses: 94,
+  lab: 96,
   tasks: 100,
   // 110 was the slot reserved for exactly this: the people roster, added by the
   // people-first layout. Everyone in it stays NAMED at its floor, so demoting it
   // costs a role label, never an identity.
   'people-roster': 110,
-  objectives: 120,
-  theses: 130,
-  lab: 140,
   // dreamcontext Apps: one line naming this project's apps (and the verb that lists their
   // actions). Cut right after warm knowledge: an agent asked about an app runs `apps list`.
   apps: 15,
-  // 150 and 160 intentionally free — they were the user file's and the soul's
-  // ranks before both became never-evict. Nothing should reclaim them without a
-  // reason to demote AFTER Lab.
+  // 120-160 are free: objectives (120), theses (130) and lab (140) moved below
+  // tasks, and 150/160 were the user file's and the soul's ranks before both
+  // became never-evict.
 };
+
+/**
+ * Names of the stale, never-synced and demo insights, packed into ONE Lab line
+ * (title + slug each, ~45 chars). Fresh insights keep their own valued lines.
+ */
+export const LAB_QUIET_NAMES_CHARS = 600;
 
 // ─── Sub-agent briefing (SubagentStart) ─────────────────────────────────────
 //

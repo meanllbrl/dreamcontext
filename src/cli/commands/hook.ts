@@ -59,7 +59,7 @@ import {
 import { resolveTranscript, listSubagentTranscripts } from '../../lib/transcript-locate.js';
 import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 import { generateId } from '../../lib/id.js';
-import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
+import { briefingFormForAgent, generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
@@ -3360,7 +3360,12 @@ export function registerHookCommand(program: Command): void {
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
-      const briefing = generateSubagentBriefing();
+      // The dispatched agent's type picks the briefing: the brain's own agents
+      // (sleep, explore, curator, initializer) get the inventory, every other
+      // one the lean form. No stdin or no type is lean (audit MM-11).
+      const input = readStdin();
+      const agentType = input?.agent_type ?? input?.subagent_type;
+      const briefing = generateSubagentBriefing({ form: briefingFormForAgent(agentType) });
       if (!briefing) process.exit(0);
 
       // SubagentStart hooks must output JSON with hookSpecificOutput.additionalContext

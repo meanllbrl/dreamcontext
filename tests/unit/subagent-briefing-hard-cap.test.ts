@@ -5,6 +5,9 @@
  * task-format override, the project line with its linked repos) can overflow
  * the cap on their own; the cap clips them, override first, each with a pointer
  * to where the full text lives. Fixture names are fictional.
+ *
+ * The override is only INLINED by the full form (`form: 'full'`); the lean
+ * default points at the file, so there only the linked repos can overflow.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -60,11 +63,11 @@ afterEach(() => {
 describe('the sub-agent briefing hard cap', () => {
   it('stays within 12,000 chars with an oversized override and many linked repos', () => {
     const root = buildOversizedVault(400, 400);
-    const unbounded = measureSubagentBriefing({ root, budgetTokens: null });
+    const unbounded = measureSubagentBriefing({ root, budgetTokens: null, form: 'full' });
     // The fixture really is oversized, otherwise this test proves nothing.
     expect(unbounded.text.length).toBeGreaterThan(SUBAGENT_BRIEFING_MAX_CHARS * 2);
 
-    const m = measureSubagentBriefing({ root });
+    const m = measureSubagentBriefing({ root, form: 'full' });
 
     expect(m.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
     expect(m.clipped[0]).toBe('task-override');
@@ -74,26 +77,26 @@ describe('the sub-agent briefing hard cap', () => {
   });
 
   it('clips the override first, and the linked repos only when that is not enough', () => {
-    const overrideOnly = measureSubagentBriefing({ root: buildOversizedVault(3, 600) });
+    const overrideOnly = measureSubagentBriefing({ root: buildOversizedVault(3, 600), form: 'full' });
     expect(overrideOnly.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
     expect(overrideOnly.clipped).toEqual(['task-override']);
     expect(overrideOnly.text).toContain('lantern-service-003');
 
     rmSync(join(tmp, 'project'), { recursive: true, force: true });
-    const both = measureSubagentBriefing({ root: buildOversizedVault(600, 600) });
+    const both = measureSubagentBriefing({ root: buildOversizedVault(600, 600), form: 'full' });
     expect(both.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
     expect(both.clipped).toContain('project');
     expect(both.text).toContain('`dreamcontext link ls` lists every one');
   });
 
   it('keeps the awareness rules when it clips', () => {
-    const m = measureSubagentBriefing({ root: buildOversizedVault(400, 400) });
+    const m = measureSubagentBriefing({ root: buildOversizedVault(400, 400), form: 'full' });
     expect(m.text).toContain('## Task Awareness');
     expect(m.text).toContain('dreamcontext tasks create');
   });
 
   it('leaves an unbounded render (budget switched off) alone', () => {
-    const m = measureSubagentBriefing({ root: buildOversizedVault(400, 400), budgetTokens: null });
+    const m = measureSubagentBriefing({ root: buildOversizedVault(400, 400), budgetTokens: null, form: 'full' });
     expect(m.clipped).toEqual([]);
     expect(m.text.length).toBeGreaterThan(SUBAGENT_BRIEFING_MAX_CHARS);
   });
@@ -101,5 +104,19 @@ describe('the sub-agent briefing hard cap', () => {
   it('clips nothing when the briefing already fits', () => {
     const m = measureSubagentBriefing({ root: buildOversizedVault(2, 3) });
     expect(m.clipped).toEqual([]);
+  });
+
+  it('lean form: never inlines the override, and clips only the linked repos', () => {
+    const small = measureSubagentBriefing({ root: buildOversizedVault(3, 600) });
+    expect(small.clipped).toEqual([]);
+    expect(small.text).toContain('ACTIVE TASK-FORMAT OVERRIDE:');
+    expect(small.text).not.toContain('Rule 1:');
+
+    rmSync(join(tmp, 'project'), { recursive: true, force: true });
+    const many = measureSubagentBriefing({ root: buildOversizedVault(600, 600) });
+    expect(many.text.length).toBeLessThanOrEqual(SUBAGENT_BRIEFING_MAX_CHARS);
+    expect(many.clipped).toEqual(['project']);
+    expect(many.text).toContain('`dreamcontext link ls` lists every one');
+    expect(many.text).toContain('## Tasks');
   });
 });

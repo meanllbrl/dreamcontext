@@ -162,7 +162,7 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Lab (Analytics Insights)
 
-- Active Vaults [Adoption]: no data yet vaults · never synced
+- Stale, never synced or demo (1): Active Vaults (`active-vaults`) — last value: `dreamcontext lab show <slug>`
 
 Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.
 

@@ -594,6 +594,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+
+/** A demoted task roster's recency one-liner: `- name [status, date] -> _dream_context/state/<slug>.md`. */
+const RECENT_TASK_LINE = /^- (?!\*\*|\().* \[[^\]]+, [^\]]*\] -> _dream_context\/state\/[^ ]+\.md$/;
+
 describe('fixture #1 — the pre-change never-evict tier now fits', () => {
   let vault: Vault;
 
@@ -725,9 +729,12 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     // the per-status count. The three must sum to the true total.
     const tasksBlock = sectionBlock(text, '## Active Tasks');
     const detailedCount = tasksBlock.split('\n').filter((l) => l.startsWith('- **')).length;
+    // Recency one-liners (audit MM-9): name [status, date] -> path.
+    const recentCount = tasksBlock.split('\n').filter((l) => RECENT_TASK_LINE.test(l)).length;
+    expect(detailedCount + recentCount, 'five tasks are named with their path').toBe(5);
     const attention = /\(\+(\d+) more task\(s\) needing attention:/.exec(tasksBlock);
     const counted = /\(\+(\d+) more active task\(s\),/.exec(tasksBlock);
-    const accounted = detailedCount
+    const accounted = detailedCount + recentCount
       + (attention ? Number(attention[1]) : 0)
       + (counted ? Number(counted[1]) : 0);
     expect(accounted, 'detailed + attention + counted must equal the active total')
@@ -999,39 +1006,34 @@ describe('fixture #1 — the pre-change never-evict tier now fits', () => {
     expect(block).toContain('peer-vault-04');
   });
 
-  it('patterns keep their own WARNED block at every rung — never anonymous inventory', () => {
+  it('patterns keep their WARNED block at every rung, as pinned names plus a count', () => {
     // The soul-split migration moves rule-bearing conditionals into
-    // knowledge/patterns/ — rendered as ordinary folder inventory they would
-    // demote RULES to trivia (owner requirement 2026-07-30: "pinlenmiş
-    // haliyle, sert uyarılarla").
+    // knowledge/patterns/ (owner requirement 2026-07-30: "pinlenmiş haliyle,
+    // sert uyarılarla"). Since 2026-11-12 the prompt hook names the patterns a
+    // prompt touches, so the snapshot keeps the banner, names PINNED patterns,
+    // and counts the rest with the commands that find them (audit MM-9/MM-10).
     mkdirSync(join(vault.ctxRoot, 'knowledge', 'patterns'), { recursive: true });
     for (let i = 0; i < 3; i++) {
       writeFileSync(
         join(vault.ctxRoot, 'knowledge', 'patterns', `rule-pack-${pad(i, 2)}.md`),
-        `---\nname: Rule pack ${pad(i, 2)}\ndescription: "PATTERN_RULE_${pad(i, 2)}: ${prose(200, `Pattern ${pad(i, 2)}`)}"\ntags: [patterns]\n---\n\nBody.\n`,
+        `---\nname: Rule pack ${pad(i, 2)}\ndescription: "PATTERN_RULE_${pad(i, 2)}: ${prose(200, `Pattern ${pad(i, 2)}`)}"\ntags: [patterns]\n${i === 0 ? 'pinned: true\n' : ''}---\n\nBody.\n`,
         'utf-8',
       );
     }
 
-    // Level 0: banner + title + path + a short first-sentence brief.
-    const full = withBudget('off', () => generateSnapshot(vault.ctxRoot));
-    expect(full).toContain('### Patterns (kurallar):');
-    expect(full).toContain("Bu pattern'lar projenin KURALLARIDIR");
-    expect(full).toContain(
-      '- **patterns/rule-pack-00** (_dream_context/knowledge/patterns/rule-pack-00.md): PATTERN_RULE_00',
-    );
-    // The brief is capped word-safe — never the whole description.
-    expect(full).not.toContain(prose(200, 'Pattern 00'));
-
-    // FLOOR: the banner and every slug survive; briefs drop; and patterns
-    // never appear in the anonymous folder grouping.
-    const { text, budget } = withBudget(MAX_PRESSURE_BUDGET, () => measureSnapshot(vault.ctxRoot));
-    expect(budget.demoted.find((d) => d.id === 'knowledge-index')?.level).toBe(2);
-    const block = sectionBlock(text, '## Knowledge Index');
-    expect(block).toContain("Bu pattern'lar projenin KURALLARIDIR");
-    for (let i = 0; i < 3; i++) expect(block).toContain(`- **patterns/rule-pack-${pad(i, 2)}**`);
-    expect(block).not.toContain('- **_dream_context/knowledge/patterns/**');
-    expect(block).not.toContain('PATTERN_RULE_00:');
+    for (const budget of ['off', MAX_PRESSURE_BUDGET]) {
+      const { text } = withBudget(budget, () => measureSnapshot(vault.ctxRoot));
+      const block = sectionBlock(text, '## Knowledge Index');
+      expect(block, `@ ${budget}`).toContain('### Patterns (kurallar):');
+      expect(block, `@ ${budget}`).toContain("Bu pattern'lar projenin KURALLARIDIR");
+      // The pinned pattern stays named with its path, in the pinned block.
+      expect(block, `@ ${budget}`).toContain('**patterns/rule-pack-00** (_dream_context/knowledge/patterns/rule-pack-00.md)');
+      // The other two are an honest count with the ways to find them.
+      expect(block, `@ ${budget}`).toContain('- 2 pattern(s) in `_dream_context/knowledge/patterns/`, not listed');
+      expect(block, `@ ${budget}`).toContain('`dreamcontext patterns list`');
+      expect(block, `@ ${budget}`).not.toContain('patterns/rule-pack-01');
+      expect(block, `@ ${budget}`).not.toContain('PATTERN_RULE_01');
+    }
   });
 
   it('every inventory section keeps its search/browse footer at the FLOOR', () => {
@@ -1153,12 +1155,18 @@ describe('fixture #1 variant — a backlog far larger than any name budget', () 
     }
     expect(attention).not.toContain('…');
 
-    // The routine 160 todo are a COUNT, never names.
-    expect(block).toContain('- (+160 more active task(s), all todo — see commands below)');
+    // The routine todo are a COUNT, never names (160 less any the recency
+    // one-liners named).
+    const routineMatch = /- \(\+(\d+) more active task\(s\), all todo — see commands below\)/.exec(block);
+    expect(routineMatch).not.toBeNull();
+    const routine = Number((routineMatch as RegExpExecArray)[1]);
+    expect(routine).toBeGreaterThanOrEqual(156);
 
-    // Full accounting: detailed + attention + counted = 200.
+    // Full accounting: detailed + recency one-liners + attention + counted = 200.
     const detailedCount = block.split('\n').filter((l) => l.startsWith('- **')).length;
-    expect(detailedCount + Number(attTotal) + 160).toBe(200);
+    const recentCount = block.split('\n').filter((l) => RECENT_TASK_LINE.test(l)).length;
+    expect(detailedCount + recentCount).toBe(5);
+    expect(detailedCount + recentCount + Number(attTotal) + routine).toBe(200);
   });
 
   it('marks EXCEPTIONAL statuses on the named roster, and only those', () => {
