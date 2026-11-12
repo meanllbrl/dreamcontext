@@ -2802,18 +2802,20 @@ export function ChatPane({
   // marks arriving) is followed again, only ever down. Skipped once the reader has moved (r1 E9).
   const anchorKeyNow = follow.anchorKey();
   const unreadReady = superUnread.ready;
+  const historyPending = !!conv.historyPending;
   const landedRef = useRef(false);
   const openedAtRef = useRef(performance.now());
   useLayoutEffect(() => {
-    // Nothing to land on yet (the marks can load before the transcript): the first landing waits,
-    // unspent, for the first anchor (end review r1).
-    if (!unreadReady || !anchorKeyNow) return;
+    // The first landing judges the WHOLE transcript: it waits, unspent, until the read marks are in,
+    // a resumed transcript has landed (live frames can come first, end review r2) and there is
+    // an anchor at all (end review r1).
+    if (!unreadReady || historyPending || !anchorKeyNow) return;
     const first = !landedRef.current;
     landedRef.current = true;
     if (!stickRef.current || glideRef.current) return;
     if (first && lastActivityAtRef.current > openedAtRef.current) return;
     scrollToBottom(first);
-  }, [anchorKeyNow, unreadReady, scrollToBottom]);
+  }, [anchorKeyNow, unreadReady, historyPending, scrollToBottom]);
   // The doors to a question (the band's Answer, the agenda's waiting row): showQuestionCard asks
   // this pane through the event, and the pane says where it went (K1 = A).
   useEffect(() => {
