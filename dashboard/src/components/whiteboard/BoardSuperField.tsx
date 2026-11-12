@@ -100,6 +100,12 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   const [now, setNow] = useState(() => Date.now());
   const followers = useRef<{ stopped: boolean }[]>([]);
   useEffect(() => () => { followers.current.forEach((f) => { f.stopped = true; }); onQuickBoxRef.current(null); }, []);
+  // The running box goes when the last run ends (not at mount: nothing ran yet).
+  const hadRuns = useRef(false);
+  useEffect(() => {
+    if (runs.length > 0) { hadRuns.current = true; return; }
+    if (hadRuns.current) { hadRuns.current = false; onQuickBoxRef.current(null); }
+  }, [runs.length]);
   // "Çiziyor · N sn": a second's tick only while something runs.
   useEffect(() => {
     if (runs.length === 0) return undefined;
@@ -235,11 +241,8 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     followers.current = followers.current.filter((f) => f !== signal);
     if (signal.stopped) return;
     // Functional: two followers can end before a render (review r1), and a stale list would bring one back.
-    setRuns((cur) => {
-      const left = cur.filter((x) => x.job !== job);
-      if (left.length === 0) onQuickBoxRef.current(null);
-      return left;
-    });
+    // The box clears in an effect when the last run ends: an updater runs during render, never a parent's setter.
+    setRuns((cur) => cur.filter((x) => x.job !== job));
     if (!view) { setLine({ kind: 'failed', text: t('whiteboard.quick.failed') }); return; }
     landJob(view, before);
   }, [draft, region, selection, flush, canvasApi, quick, t]); // eslint-disable-line react-hooks/exhaustive-deps
