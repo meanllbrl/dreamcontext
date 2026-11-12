@@ -139,3 +139,13 @@ describe('MM-12: the dense gate scales with query length', () => {
     expect(shouldSkipDense([hit(gate.rawLead * 2, 10), hit(1, 1)], gate, terms)).toBe(false);
   });
 });
+
+describe('MM-8: every surface that folds says so', () => {
+  it('memory recall prints the folded count and its wire carries it', async () => {
+    const { familyNote, toWireQueryHit } = await import('../../src/cli/commands/memory.js');
+    const hit: RecallHit = { doc: mkDoc('state/snap-plan.md', 'x'), score: 4, rankScore: 4, snippet: '', family: 1 };
+    expect(familyNote(hit)).toBe('  (+1 more file of this task)');
+    expect(familyNote({ family: undefined })).toBe('');
+    expect(toWireQueryHit(hit).family).toBe(1);
+  });
+});

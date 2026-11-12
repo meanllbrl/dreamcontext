@@ -44,6 +44,7 @@ describe('the dashboard search path', () => {
     const src = file.slice(start, end);
     const corpusHelper = file.slice(file.indexOf('function corpusFor('), file.indexOf('\n}\n', file.indexOf('function corpusFor(')));
     for (const part of [src, corpusHelper]) expect(part).not.toMatch(/resolvePromptTier|readVaultTier|servedTier|tier\s*:/);
-    expect(src).toMatch(/hybridSearch\(query, corpus, contextRoot, topK\)/);
+    // Its only option is the unfolded list (no tier: `tier\s*:` above stays banned).
+    expect(src).toMatch(/hybridSearch\(query, corpus, contextRoot, topK, \{ collapseFamilies: false \}\)/);
   });
 });

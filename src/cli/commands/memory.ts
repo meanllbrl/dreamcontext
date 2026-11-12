@@ -190,6 +190,8 @@ function recallFederated(
       level: docLevel(h.doc),
       score: Number(h.score.toFixed(4)),
       snippet: h.snippet,
+      // Other files of this task folded under this hit (its assets, an archived copy); absent when none.
+      ...(h.family ? { moreFilesOfTask: h.family } : {}),
     }));
     console.log(JSON.stringify({
       query,
@@ -209,7 +211,7 @@ function recallFederated(
     }
     for (const h of hits) {
       console.log(`[${h.vault}::${TYPE_LABELS[h.doc.type]}] ${levelBadge(docLevel(h.doc))} ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
-      console.log(`  ${h.doc.relPath}`);
+      console.log(`  ${h.doc.relPath}${familyNote(h)}`);
       if (h.doc.description) console.log(`  ${h.doc.description}`);
       if (h.snippet) {
         for (const line of h.snippet.split('\n')) console.log(`    ${line}`);
@@ -231,7 +233,7 @@ function recallFederated(
     const score = chalk.dim(`score ${h.score.toFixed(3)}`);
     const level = chalk.dim(levelBadge(docLevel(h.doc)));
     console.log(`  ${vaultBadge}${typeBadge} ${level} ${slug}  ${score}`);
-    console.log(`    ${chalk.dim(h.doc.relPath)}`);
+    console.log(`    ${chalk.dim(h.doc.relPath + familyNote(h))}`);
     if (h.doc.description) console.log(`    ${h.doc.description}`);
     if (h.doc.tags.length > 0) {
       console.log(`    ${chalk.dim('tags: ' + h.doc.tags.join(', '))}`);
@@ -315,7 +317,18 @@ export interface WireQueryHit {
   score: number;
   rankScore: number;
   snippet: string;
+  /** Files of the same task folded under this hit (absent from an older server). */
+  family?: number;
   doc: Pick<CorpusDoc, 'type' | 'path' | 'relPath' | 'slug' | 'title' | 'description' | 'tags' | 'product' | 'level' | 'federated'>;
+}
+
+/**
+ * ` (+N more files of this task)` when recall folded a task's other matching files (its assets, an
+ * archived copy) under this hit, so a match that lives only in a plan draft is never hidden without a
+ * trace: the rest sit in the task's `state/assets/<slug>/` folder.
+ */
+export function familyNote(h: Pick<RecallHit, 'family'>): string {
+  return h.family ? `  (+${h.family} more file${h.family === 1 ? '' : 's'} of this task)` : '';
 }
 
 export function toWireQueryHit(h: RecallHit): WireQueryHit {
@@ -324,6 +337,7 @@ export function toWireQueryHit(h: RecallHit): WireQueryHit {
     score: h.score,
     rankScore: h.rankScore,
     snippet: h.snippet,
+    ...(h.family ? { family: h.family } : {}),
     doc: {
       type: d.type, path: d.path, relPath: d.relPath, slug: d.slug, title: d.title, description: d.description, tags: d.tags,
       ...(d.product !== undefined ? { product: d.product } : {}),
@@ -335,7 +349,9 @@ export function toWireQueryHit(h: RecallHit): WireQueryHit {
 
 function fromWireQueryHit(w: WireQueryHit): RecallHit {
   const doc = { ...w.doc, body: '', tokens: [], tokenSet: new Set<string>(), termFreq: new Map<string, number>() } as CorpusDoc;
-  return { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+  const hit: RecallHit = { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+  if (typeof w.family === 'number' && w.family > 0) hit.family = w.family;
+  return hit;
 }
 
 /**
@@ -535,6 +551,7 @@ export function registerMemoryCommand(program: Command): void {
             level: docLevel(h.doc),
             score: Number(h.score.toFixed(4)),
             snippet: h.snippet,
+            ...(h.family ? { moreFilesOfTask: h.family } : {}),
           }));
           console.log(JSON.stringify({ query, corpusSize, hits: payload }, null, 2));
           return;
@@ -550,7 +567,7 @@ export function registerMemoryCommand(program: Command): void {
         if (opts.plain) {
           for (const h of hits) {
             console.log(`[${TYPE_LABELS[h.doc.type]}] ${levelBadge(docLevel(h.doc))} ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
-            console.log(`  ${h.doc.relPath}`);
+            console.log(`  ${h.doc.relPath}${familyNote(h)}`);
             if (h.doc.description) console.log(`  ${h.doc.description}`);
             if (h.snippet) {
               for (const line of h.snippet.split('\n')) console.log(`    ${line}`);
@@ -568,7 +585,7 @@ export function registerMemoryCommand(program: Command): void {
           const score = chalk.dim(`score ${h.score.toFixed(3)}`);
           const level = chalk.dim(levelBadge(docLevel(h.doc)));
           console.log(`  ${typeBadge} ${level} ${slug}  ${score}`);
-          console.log(`    ${chalk.dim(h.doc.relPath)}`);
+          console.log(`    ${chalk.dim(h.doc.relPath + familyNote(h))}`);
           if (h.doc.description) console.log(`    ${h.doc.description}`);
           if (h.doc.tags.length > 0) {
             console.log(`    ${chalk.dim('tags: ' + h.doc.tags.join(', '))}`);
