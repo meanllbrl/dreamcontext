@@ -66,6 +66,7 @@ import fg from './glob.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';
+import { HOOK_OUTPUT_MAX_CHARS } from './snapshot-budget.js';
 
 // ─── Folding ────────────────────────────────────────────────────────────────
 
@@ -892,15 +893,22 @@ export function syncPatternShims(projectRoot: string, contextRoot: string): Shim
 /**
  * How many characters of pattern prose one prompt may carry.
  *
- * Patterns are only injected when they actually matched, which on the measured
- * traffic is a minority of prompts — so this budget is not paid per turn, it is
- * paid per RELEVANT turn. At the vault's median pattern size (~5.5k chars) it
- * admits two patterns whole plus pointers to the rest.
+ * It lives INSIDE the prompt hook's own output, which the harness cuts at
+ * `HOOK_OUTPUT_MAX_CHARS` (9,800). The old 12,000 was larger than the whole
+ * hook, so a pasted body almost never survived the fit step: the audit
+ * (2026-11-12) counted 4 of 830 firings that arrived inline. The reserve keeps
+ * room for the must-not-miss lines, the recall block and this block's own
+ * banner and frame; what is left (4,000) carries a short pattern whole (a third
+ * of this project's) and the rest as pointers.
  *
  * Override with DREAMCONTEXT_PATTERN_BUDGET (0 disables injection and falls back
  * to pointers, which is the pre-injection behaviour).
  */
-export const DEFAULT_INJECTION_BUDGET = 12000;
+export const PATTERN_HOOK_RESERVE_CHARS = 5_800;
+export const DEFAULT_INJECTION_BUDGET = HOOK_OUTPUT_MAX_CHARS - PATTERN_HOOK_RESERVE_CHARS;
+
+/** Room the banner and the `│` frame of the pattern block take beside a body. */
+const PATTERN_FRAME_CHARS = 2_000;
 
 /** A shim sync that has not finished in this long left a dead lock behind. */
 const SHIM_LOCK_STALE_MS = 30_000;
@@ -939,6 +947,13 @@ export interface InjectionPlan {
  */
 export const FIRST_MATCH_CEILING_FACTOR = 3;
 
+/**
+ * The most a top match may carry: a multiple of the budget, and never more than
+ * the hook can print. Past the hook's own cap a body cannot land whole anyway.
+ */
+export function firstMatchCeiling(budget: number): number {
+  return Math.min(budget * FIRST_MATCH_CEILING_FACTOR, HOOK_OUTPUT_MAX_CHARS - PATTERN_FRAME_CHARS);
+}
 
 export function selectForInjection(
   matches: PatternMatch[],
@@ -963,7 +978,7 @@ export function selectForInjection(
     const first = i === 0 && budget > 0;
     if (!first && used + body.length > budget) { pointers.push(match); continue; }
     if (first) {
-      const ceiling = budget * FIRST_MATCH_CEILING_FACTOR;
+      const ceiling = firstMatchCeiling(budget);
       if (body.length > ceiling) {
         // Truncation is a last resort, so it says so rather than pretending the
         // pattern ended — a silently halved argument is how a rule gets

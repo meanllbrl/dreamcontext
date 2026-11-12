@@ -19,8 +19,11 @@ import {
   MAX_PATTERN_FILE_BYTES,
   FIRST_MATCH_CEILING_FACTOR,
   MAX_PATTERN_MATCHES,
+  DEFAULT_INJECTION_BUDGET,
+  firstMatchCeiling,
   stripNonProse,
 } from '../../src/lib/patterns.js';
+import { HOOK_OUTPUT_MAX_CHARS } from '../../src/lib/snapshot-budget.js';
 
 /**
  * Spec for pattern triggering — the mechanism that makes a documented pattern
@@ -624,3 +627,11 @@ describe('audit MM-6 (2026-11-12): the gate fired on 9 prompts in 10', () => {
   });
 });
 
+describe('audit MM-4 (2026-11-12): the inline budget fits inside the hook', () => {
+  it('pattern prose cannot outgrow the one hook that carries it', () => {
+    expect(DEFAULT_INJECTION_BUDGET).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
+    expect(firstMatchCeiling(DEFAULT_INJECTION_BUDGET)).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
+    // An explicit huge override still cannot ask for more than the hook prints.
+    expect(firstMatchCeiling(1_000_000)).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
+  });
+});
