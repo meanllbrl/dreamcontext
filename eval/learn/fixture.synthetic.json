@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "project": "Lumen Ledger",
+  "person": "Ada Kestrel",
+  "note": "Synthetic turns only: a fictional project (Lumen Ledger) and a fictional owner (Ada Kestrel). Same shape as the frozen set's derived files (scripts/learn-eval/lib.ts). No real owner words.",
+  "turns": [
+    { "n": 0, "at": "2026-03-02T09:00:00.000Z", "sid": "syn-sess-0001", "proj": "D", "surf": "super", "kind": "typed", "own": "Lumen Ledger raporunu bana kısa yaz, sonucu ilk satırda söyle." },
+    { "n": 1, "at": "2026-03-02T09:20:00.000Z", "sid": "syn-sess-0001", "proj": "D", "surf": "super", "kind": "typed", "own": "Ada Kestrel burada: fatura modülünü bugün bitirelim." },
+    { "n": 2, "at": "2026-03-04T11:00:00.000Z", "sid": "syn-sess-0002", "proj": "D", "surf": "telegram", "kind": "typed", "own": "yine uzun yazmışsın, Lumen Ledger raporu kısa olacak ve sonuç ilk satırda." },
+    { "n": 3, "at": "2026-03-04T11:30:00.000Z", "sid": "syn-sess-0002", "proj": "D", "surf": "telegram", "kind": "answer", "own": "Evet, CSV olarak ver." },
+    { "n": 4, "at": "2026-03-05T08:00:00.000Z", "sid": "syn-sess-0003", "proj": "D", "surf": "super", "kind": "typed", "own": "Gece derlemesi geçtiyse bir daha çalıştırma." },
+    { "n": 5, "at": "2026-03-05T08:05:00.000Z", "sid": "syn-sess-0003", "proj": "D", "surf": "super", "kind": "typed", "own": "geçen derlemeyi yine çalıştırma demiştim." },
+    { "n": 6, "at": "2026-03-06T10:00:00.000Z", "sid": "syn-sess-0004", "proj": "D", "surf": "plan", "kind": "answer", "own": "Faturayı PDF değil CSV olarak dışa aktar." },
+    { "n": 7, "at": "2026-03-07T10:00:00.000Z", "sid": "syn-sess-0005", "proj": "T", "surf": "basic", "kind": "typed", "own": "Harbor Notes ekranında bizim tasarım düzenini kullan." },
+    { "n": 8, "at": "2026-03-08T10:00:00.000Z", "sid": "syn-sess-0006", "proj": "T", "surf": "basic", "kind": "answer", "own": "Tasarım düzeni yine bizimki olsun." },
+    { "n": 9, "at": "2026-03-08T12:00:00.000Z", "sid": "syn-sess-0006", "proj": "T", "surf": "basic", "kind": "typed", "own": "Bugün hava güzel, öğleden sonra bakarız." }
+  ],
+  "clusters": [
+    { "id": "S1", "group": "A", "scope": "D", "rule": "Keep reports short and put the verdict on the first line", "turns": [0, 2], "landing": "same" },
+    { "id": "S2", "group": "A", "scope": "D", "rule": "Never rerun a nightly build that already passed", "turns": [4, 5], "landing": "lost" },
+    { "id": "S3", "group": "B", "scope": "D", "rule": "Export invoices as CSV, not PDF", "turns": [3, 6], "landing": "later" },
+    { "id": "S4", "group": "T", "scope": "T", "rule": "Use our design layout on every Harbor Notes screen", "turns": [7, 8], "landing": "pre" }
+  ],
+  "repeats": [
+    { "cid": "S1", "n": 2, "at": "2026-03-04T11:00:00.000Z", "sid": "syn-sess-0002", "proj": "D", "surf": "telegram", "g": "C", "act": "S", "where": "in the session-start snapshot", "charsBetween": 120000 },
+    { "cid": "S2", "n": 5, "at": "2026-03-05T08:05:00.000Z", "sid": "syn-sess-0003", "proj": "D", "surf": "super", "g": "N", "act": "S", "where": "rule half never written anywhere", "charsBetween": null },
+    { "cid": "S4", "n": 8, "at": "2026-03-08T10:00:00.000Z", "sid": "syn-sess-0006", "proj": "T", "surf": "basic", "g": "N", "act": "S", "where": "pattern listed by title, body never read", "charsBetween": null },
+    { "cid": "S3", "n": 6, "at": "2026-03-06T10:00:00.000Z", "sid": "syn-sess-0004", "proj": "D", "surf": "plan", "g": "N", "act": "S", "where": "in-app fast-edit agent; directive only in main-session hook", "charsBetween": null }
+  ],
+  "childBriefs": [
+    { "cid": "S1", "brief": "Owner: \"Lumen Ledger raporunu bana kısa yaz, sonucu ilk satırda söyle.\"\nSuper: build the invoice export and report back in short form." }
+  ],
+  "machine": [
+    "[super event] child lumen-export finished: invoice export. Its branch is ready to merge.",
+    "[task notification] nightly build for Lumen Ledger completed with 0 failures.",
+    "[schedule] Lumen Ledger weekly digest ran at 08:00."
+  ]
+}
