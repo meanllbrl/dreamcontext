@@ -2531,12 +2531,34 @@ export interface SubagentBriefingOptions {
   budgetTokens?: number | null;
   /**
    * `lean` (the default): project line, recall line, pinned knowledge, a
-   * pattern count and the task rule. `full`: the old inventory form (features,
-   * knowledge, objectives, core files, tasks). Nothing passes `full` yet; it
-   * is the seam for briefing by agent type, where sleep, explore, curator and
-   * initializer keep the inventory (audit MM-11, wave 2).
+   * pattern count and the task rule. `full`: the inventory form (features,
+   * knowledge, objectives, core files, tasks). The hook picks it from the
+   * dispatched agent's type with {@link briefingFormForAgent}.
    */
-  form?: 'lean' | 'full';
+  form?: SubagentBriefingForm;
+}
+
+export type SubagentBriefingForm = 'lean' | 'full';
+
+/**
+ * Which briefing a dispatched sub-agent gets, by its agent type (the
+ * SubagentStart hook's `agent_type`).
+ *
+ * The agents whose job IS the brain keep the inventory: the sleep specialists
+ * reconcile it, dreamcontext-explore routes searches through it, and the
+ * curator and initializer workers reorganise or fill it. Everything else
+ * (reviewers, the review router, goal and council agents, Explore,
+ * general-purpose, a project's own agents) gets the lean form: 88% of runs
+ * are reviewers or the router, and they barely open the rosters (audit MM-11,
+ * wave 2). An unknown or missing type is lean.
+ *
+ * A plugin-scoped type (`plugin:sleep-state`) is read by its last segment.
+ */
+export function briefingFormForAgent(agentType: unknown): SubagentBriefingForm {
+  if (typeof agentType !== 'string') return 'lean';
+  const name = agentType.trim().toLowerCase().split(':').pop() ?? '';
+  if (name === 'dreamcontext-explore') return 'full';
+  return /^(sleep|curator|initializer)-[a-z0-9-]+$/.test(name) ? 'full' : 'lean';
 }
 
 /** The briefing plus what the ladder did to it. */
@@ -2888,7 +2910,8 @@ function pushBriefingProject(root: string, sections: BudgetSection[], clippable:
 
 /**
  * The full (inventory) briefing: objectives, features, knowledge, core files,
- * tasks and the task-awareness rules. Only reachable through `form: 'full'`.
+ * tasks and the task-awareness rules. Reached through `form: 'full'`, which the
+ * hook passes for the brain's own agents ({@link briefingFormForAgent}).
  */
 function fullBriefingParts(root: string): BriefingParts {
   const sections: BudgetSection[] = [];
@@ -3079,7 +3102,8 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
 
 /**
  * The SubagentStart briefing as plain text (no chalk), budgeted. See
- * {@link measureSubagentBriefing}; the hook calls this with no arguments.
+ * {@link measureSubagentBriefing}; the hook passes the form for the dispatched
+ * agent's type.
  */
 export function generateSubagentBriefing(opts: SubagentBriefingOptions = {}): string {
   return measureSubagentBriefing(opts).text;
