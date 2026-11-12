@@ -63,12 +63,13 @@ import {
   // See the note on `renderCoreFile` below and in `snapshot-caps.ts`.
   MEMORY_DEEP_ITEM_CHARS, MEMORY_DEEP_PER_SECTION_CHARS,
   TASKS_DETAIL_CHARS, TASKS_DETAIL_MAX, TASKS_DETAIL_FLOOR_CHARS,
-  TASKS_EXCEPTIONS_CHARS, TASKS_EXCEPTIONS_FLOOR_CHARS,
+  TASKS_EXCEPTIONS_CHARS, TASKS_EXCEPTIONS_FLOOR_CHARS, TASKS_NAMED_TOTAL, TASKS_RECENT_NAME_CHARS,
   FEATURES_L2_CHARS, FEATURES_ROSTER_CHARS,
   PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS,
   BOOKMARKS_L1_CHARS, BOOKMARK_ITEM_CHARS,
   EXTENDED_CORE_L1_CHARS, EXTENDED_CORE_SUMMARY_CHARS, RELEASES_L1_CHARS, RELEASES_LATEST_SUMMARY_CHARS,
-  CONNECTED_PEER_ID_CHARS, PATTERN_BRIEF_CHARS, PATTERNS_FLOOR_CHARS,
+  LAB_QUIET_NAMES_CHARS,
+  CONNECTED_PEER_ID_CHARS,
   CONNECTED_L1_CHARS, CONNECTED_L2_CHARS, PEOPLE_ROSTER_L1_CHARS,
   OBJECTIVES_L2_CHARS, OBJECTIVE_ITEM_CHARS, THESES_CLAIM_CHARS,
   PEER_MAIL_FULL_CHARS, PEER_MAIL_LIST_CHARS, PEER_MAIL_LINE_CHARS,
@@ -201,19 +202,6 @@ function namedRosterTail(names: string[], budget: number, noun: string, recovery
 }
 
 /**
- * Pattern index lines: slug and path, plus one short clause when `withBrief`.
- * Shared by the snapshot and the sub-agent briefing.
- */
-function patternIndexLines(entries: ReturnType<typeof buildKnowledgeIndex>, withBrief: boolean): string[] {
-  return entries.map((e) => {
-    const brief = withBrief && e.description
-      ? `: ${shrinkBody(e.description, PATTERN_BRIEF_CHARS, false)}`
-      : '';
-    return `- **${e.slug}** (_dream_context/knowledge/${e.slug}.md)${brief}`;
-  });
-}
-
-/**
  * The count line standing in for non-pinned, non-pattern knowledge. Shared by
  * the snapshot's knowledge index (every rung) and the sub-agent briefing's floor
  * so both teach the same two recovery commands.
@@ -225,26 +213,28 @@ function knowledgeRestLine(count: number): string {
 }
 
 /**
- * The patterns block at its FLOOR: slugs only, banner intact, packed with a
- * named tail. Rules must never fold into anonymous inventory, however deep the
- * ladder goes, in the snapshot and in the sub-agent briefing alike.
+ * The patterns block, at every rung of the snapshot and the briefing: the hard
+ * banner and ONE count line that says where the rules come from. Pinned
+ * patterns stay named in the pinned block above it.
+ *
+ * Until 2026-11-12 every pattern was listed by slug (with a short clause at
+ * level 0), because no other surface named them. The prompt hook now names the
+ * patterns a prompt touches, every turn, and `/patterns` browses them, so the
+ * roster was a third copy: ~2,400 chars a session, repeated into every
+ * sub-agent briefing (overnight audit MM-9/MM-10). The banner stays: these are
+ * still rules, never trivia.
  */
-function patternsFloorLines(patternEntries: ReturnType<typeof buildKnowledgeIndex>): string[] {
+function patternsCountLines(
+  patternEntries: ReturnType<typeof buildKnowledgeIndex>,
+  surface: 'snapshot' | 'briefing',
+): string[] {
   if (patternEntries.length === 0) return [];
-  return [
-    '### Patterns (kurallar):\n',
-    PATTERNS_BANNER,
-    ...packToCharBudget(
-      patternEntries,
-      (e) => `- **${e.slug}**`,
-      PATTERNS_FLOOR_CHARS,
-      (rest) => namedRosterTail(
-        rest.map((e) => e.slug), PATTERNS_FLOOR_CHARS,
-        'pattern(s)', '`dreamcontext knowledge index`',
-      ),
-    ),
-    '',
-  ];
+  const where = `- ${patternEntries.length} pattern(s) in \`_dream_context/knowledge/patterns/\`, not listed`;
+  // A sub-agent gets no prompt hook, so it is taught to ask for its own matches.
+  const how = surface === 'snapshot'
+    ? ': the prompt hook names the ones your prompt touches · browse: `dreamcontext patterns list` · load one: `/patterns <slug or keywords>`'
+    : ': find the ones your job touches with `dreamcontext patterns match "<your job in a few words>"` · browse: `dreamcontext patterns list`';
+  return ['### Patterns (kurallar):\n', PATTERNS_BANNER, where + how, ''];
 }
 
 /** Recovery pointer for anything that lives inside `core/2.memory.md`. */
@@ -993,36 +983,50 @@ function renderObjectivesSection(root: string): { full: string; demotions: strin
   }
 }
 
+/** How much one insight's cache can be trusted, for the snapshot's split. */
+type InsightFreshness = 'fresh' | 'stale' | 'never';
+
+/** A demo insight ships with the template: its slug or its title says so. */
+function isDemoInsight(slug: string, title: string): boolean {
+  return slug.startsWith('demo-') || /^demo:/i.test(title.trim());
+}
+
 /** One insight's snapshot line: title / latest+unit / staleness (vs ttl) / group. */
-function insightSnapshotLine(root: string, slug: string, title: string, group: string | null, unit: string | null, ttlMinutes: number): string {
+function insightSnapshotLine(root: string, slug: string, title: string, group: string | null, unit: string | null, ttlMinutes: number): { line: string; freshness: InsightFreshness } {
   const cache = readCache(root, slug);
   const latest = cache?.latest !== null && cache?.latest !== undefined ? String(cache.latest) : 'no data yet';
   const unitStr = unit ? ` ${unit}` : '';
   let staleness = 'never synced';
+  let freshness: InsightFreshness = 'never';
   if (cache?.fetchedAt) {
     const ageMin = (Date.now() - Date.parse(cache.fetchedAt)) / 60_000;
     if (Number.isFinite(ageMin)) {
-      staleness = ageMin >= ttlMinutes ? `stale (${Math.round(ageMin / 60)}h old)` : 'fresh';
+      freshness = ageMin >= ttlMinutes ? 'stale' : 'fresh';
+      staleness = freshness === 'stale' ? `stale (${Math.round(ageMin / 60)}h old)` : 'fresh';
     }
   }
   const errBadge = cache?.error ? ' — ⚠ last sync failed' : '';
   const groupStr = group ? ` [${group}]` : '';
-  return `- ${title}${groupStr}: ${latest}${unitStr} · ${staleness}${errBadge}`;
+  return { line: `- ${title}${groupStr}: ${latest}${unitStr} · ${staleness}${errBadge}`, freshness };
 }
 
 /**
- * Lab (analytics insights) section: budget-demotable full → one-liners. Cache-
- * only (never triggers a fetch). Must NEVER crash the snapshot on a malformed
- * manifest — every failure degrades to `null` (section omitted).
+ * Lab (analytics insights) section. Cache-only (never triggers a fetch). Must
+ * NEVER crash the snapshot on a malformed manifest — every failure degrades to
+ * `null` (section omitted).
  *
- * The ladder deliberately stops at the one-liners (`maxDemotionLevel: 1` at the
- * flush site). There used to be a level-2 "N insight(s) — `lab list` for
- * details" rung, and on both live vaults the ladder took it: the agent saw
- * `- 21 insight(s)` and nothing else, so it could not tell that "what's our
- * MRR?" was already answered in the brain and went and fetched the number from
- * outside — the exact failure SKILL.md Operational Rule 13 exists to prevent.
- * The rung saved ~1KB on a 100KB snapshot and cost the section its whole
- * purpose, so it is gone.
+ * The section has no cheaper rung. There used to be a "N insight(s) — `lab
+ * list` for details" rung, and on both live vaults the ladder took it: the
+ * agent saw `- 21 insight(s)` and nothing else, so it could not tell that
+ * "what's our MRR?" was already answered in the brain and went and fetched the
+ * number from outside — the exact failure SKILL.md Operational Rule 13 exists
+ * to prevent.
+ *
+ * Every insight stays NAMED by title and slug. A fresh one keeps its own line
+ * with its latest value; a stale, never-synced or demo one has no value worth
+ * trusting, so they share ONE line of names (packed to LAB_QUIET_NAMES_CHARS,
+ * with an honest count past it) and the command that reads the cache. Eight template demos 271 h stale cost ~700 chars a session
+ * before this split (overnight audit MM-9, 2026-11-12).
  */
 function renderLabSection(root: string): { full: string; demotions: string[] } | null {
   try {
@@ -1032,14 +1036,28 @@ function renderLabSection(root: string): { full: string; demotions: string[] } |
     // No '' element after the header: its trailing '\n' already yields the one
     // conventional blank line — a second one rendered as a double gap.
     const headerLines = ['## Lab (Analytics Insights)\n'];
-    const lines = insights.map((m) =>
-      insightSnapshotLine(root, m.slug, m.title, m.group, m.unit, m.refresh.ttl_minutes));
+    const fresh: string[] = [];
+    const quiet: string[] = [];
+    for (const m of insights) {
+      const { line, freshness } = insightSnapshotLine(root, m.slug, m.title, m.group, m.unit, m.refresh.ttl_minutes);
+      if (freshness === 'fresh' && !isDemoInsight(m.slug, m.title)) fresh.push(line);
+      else quiet.push(`${m.title} (\`${m.slug}\`)`);
+    }
+    const quietLine: string[] = [];
+    if (quiet.length > 0) {
+      const named: string[] = [];
+      let used = 0;
+      for (const name of quiet) {
+        if (named.length > 0 && used + name.length + 2 > LAB_QUIET_NAMES_CHARS) break;
+        named.push(name);
+        used += name.length + 2;
+      }
+      const omitted = quiet.length - named.length;
+      quietLine.push(`- Stale, never synced or demo (${quiet.length}): ${named.join(', ')}`
+        + `${omitted > 0 ? ` — +${omitted} unnamed` : ''} — last value: \`dreamcontext lab show <slug>\``);
+    }
 
-    // Name + latest value for EVERY insight, at every budget (owner decision
-    // 2026-07-30 reaffirmed: this is what lets Rule 13 answer "what's our MRR?"
-    // from the snapshot). The pointer line survives with them, so there is no
-    // cheaper render at all — the section simply never demotes.
-    const fullBody = [...headerLines, ...lines, '',
+    const fullBody = [...headerLines, ...fresh, ...quietLine, '',
       'Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.', ''];
 
     return { full: fullBody.join('\n'), demotions: [] };
@@ -1089,6 +1107,9 @@ function buildThesesSection(root: string, config: SetupConfig | null): BudgetSec
       return !Number.isNaN(updated) && updated >= cutoff;
     });
     const blocked = theses.filter((t) => t.blocked_on_instrumentation);
+    // Nothing open, nothing flipped, nothing blocked: "0 · 0 · 0" is an empty
+    // state, not context. The board command is one `theses list` away.
+    if (open.length === 0 && recentFlips.length === 0 && blocked.length === 0) return null;
     // Top TWO open claims + one summary line + the pointer (owner decision
     // 2026-07-30: "the most active one or two are enough — the rest is a
     // 'go here' sentence").
@@ -1557,7 +1578,7 @@ export function measureSnapshot(
           EXTENDED_CORE_L1_CHARS,
           (rest) => namedRosterTail(
             rest.map((entry) => entry.name), EXTENDED_CORE_L1_CHARS,
-            'core file(s)', '`dreamcontext core list`',
+            'core file(s)', 'the `_dream_context/core/` folder',
           ),
         ),
         '',
@@ -1583,6 +1604,8 @@ export function measureSnapshot(
     // Demoted design (Fable judge verdict, owner-approved 2026-07-30):
     //   1. Detailed entries — the activity-sorted head always, then only
     //      in_progress entries, whole blocks packed into a char budget.
+    //   1b. Recency one-liners — the most recently updated of the rest, name +
+    //      status + path, topping the named list up to TASKS_NAMED_TOTAL.
     //   2. "Needs attention" line — every not-detailed task whose status is
     //      not routine-queue (todo/planned) OR whose priority is critical,
     //      named with a [status] marker via the namedRosterTail contract.
@@ -1606,8 +1629,17 @@ export function measureSnapshot(
         detailed.push(e);
         used += cost;
       }
+      // Fill to TASKS_NAMED_TOTAL with the most recently updated of the rest,
+      // one line each: name, status and the path the agent opens. The audit
+      // (MM-9) found 9 of 16 card-opening sessions opened a task the squeezed
+      // list had not shown, so recency names the likeliest next card.
       const detailedSet = new Set(detailed);
-      const rest = sorted.filter((e) => !detailedSet.has(e));
+      const recent = sorted
+        .filter((e) => !detailedSet.has(e))
+        .sort((a, b) => b.updated.localeCompare(a.updated))
+        .slice(0, Math.max(0, TASKS_NAMED_TOTAL - detailed.length));
+      const shownSet = new Set([...detailed, ...recent]);
+      const rest = sorted.filter((e) => !shownSet.has(e));
 
       const attention = rest.filter((e) =>
         !isQuietStatus(e.status, taskStatuses) || isActive(taskStatuses, e.status) || e.priority === 'critical');
@@ -1615,6 +1647,8 @@ export function measureSnapshot(
 
       const out: string[] = ['## Active Tasks\n'];
       out.push(...detailed.map((e) => e.text));
+      out.push(...recent.map((e) =>
+        `- ${capAtWordBoundary(e.name, TASKS_RECENT_NAME_CHARS)} [${e.status}, ${e.updated.slice(0, 10)}] -> _dream_context/state/${e.slug}.md`));
       if (attention.length > 0) {
         out.push(namedRosterTail(
           attention.map((e) => (isActive(taskStatuses, e.status) && e.priority === 'critical'
@@ -1982,7 +2016,7 @@ export function measureSnapshot(
     try {
       const releases = readJsonArray<Record<string, unknown>>(releasesPath);
       if (releases.length > 0) {
-        const planning = releases.filter(r => r.status === 'planning');
+        const allPlanning = releases.filter(r => r.status === 'planning');
         // 'superseded' entries were never published, and the ARRAY ORDER of a
         // hand-edited RELEASES.json is not a timeline — pick the latest
         // actually-released version by semver, not by position. (This vault's
@@ -1993,6 +2027,18 @@ export function measureSnapshot(
           ? [...released].sort((a, b) =>
             compareVersions(String(b.version ?? ''), String(a.version ?? '')))[0]
           : null;
+        // A planning entry at or below the latest release is a local cut that
+        // went out inside it (or never will): not upcoming. Fourteen of them
+        // listed 0.41.1-0.41.12 under a released 0.41.13 (audit MM-9). They
+        // leave the list but stay counted, so nothing disappears silently.
+        const planning = latestReleased
+          ? allPlanning.filter((p) =>
+            compareVersions(String(p.version ?? ''), String(latestReleased.version ?? '')) > 0)
+          : allPlanning;
+        const pastPlanning = allPlanning.length - planning.length;
+        const pastPlanningLine = pastPlanning > 0
+          ? [`- (+${pastPlanning} planning entr${pastPlanning === 1 ? 'y' : 'ies'} at or below ${String(latestReleased?.version ?? '')}, not listed: \`_dream_context/core/RELEASES.json\`)`]
+          : [];
         // Empty fields disappear instead of rendering as '()' or a dangling
         // ':'. `sumCap` bounds the summary at the demoted rung (word-safe) —
         // level 0 keeps the full narrative.
@@ -2020,6 +2066,7 @@ export function measureSnapshot(
                 'planned version(s)', '`_dream_context/core/RELEASES.json`',
               ),
             ));
+            out.push(...pastPlanningLine);
             out.push('');
           }
           if (latestReleased) {
@@ -2038,6 +2085,7 @@ export function measureSnapshot(
             const taskCount = Array.isArray(p.tasks) ? p.tasks.length : 0;
             parts.push(`- ${ver}: ${sum}${taskCount > 0 ? ` (${taskCount} task(s))` : ''}`);
           }
+          parts.push(...pastPlanningLine);
           parts.push('');
         }
 
@@ -2155,13 +2203,10 @@ export function measureSnapshot(
   }
 
   // 9. Knowledge Index — level 0 is ALREADY compact (owner decision
-  // 2026-07-30): ONLY pinned entries carry descriptions; every pattern is
-  // listed by title with ONE short clause (the deep keyword-ranked pattern
-  // surface is the patterns run's scope — until then the titles must never be
-  // invisible); everything else is grouped folder names. Descriptions for the
-  // rest live one `dreamcontext knowledge index` / recall away — and the old
-  // Warm Knowledge previews are gone with the same doctrine: non-pinned
-  // knowledge is NAMED, never summarized.
+  // 2026-07-30): ONLY pinned entries carry descriptions. Non-pinned patterns
+  // and the rest of knowledge are one count line each with the commands that
+  // find them (patterns since 2026-11-12: the prompt hook now names the ones a
+  // prompt touches). Non-pinned knowledge is never summarized here.
   const knowledgeEntries = buildKnowledgeIndex(root);
   if (knowledgeEntries.length > 0) {
     const pinnedEntries = knowledgeEntries.filter((e) => e.pinned);
@@ -2183,46 +2228,29 @@ export function measureSnapshot(
 
     const patternEntries = nonPinnedEntries.filter((e) => e.slug.startsWith('patterns/'));
     const restEntries = nonPinnedEntries.filter((e) => !e.slug.startsWith('patterns/'));
-    const patternLines = (withBrief: boolean): string[] => patternIndexLines(patternEntries, withBrief);
 
     // Non-pinned, non-pattern knowledge is NOT listed at all (owner decision
     // 2026-07-30: "pinlenmemiş knowledge'ları listelemeyelim — sadece
     // komutlarla nasıl aranabileceğini gösterelim"). One honest count + the
     // search/browse commands replace the old grouped folder inventory.
     const restLine = knowledgeRestLine(restEntries.length);
-
-    const renderBody = (patternsWithBrief: boolean): string[] => {
-      const out: string[] = [];
-      if (patternEntries.length > 0) {
-        out.push('### Patterns (kurallar):\n');
-        out.push(PATTERNS_BANNER);
-        out.push(...patternLines(patternsWithBrief));
-        out.push('');
-      }
-      if (restEntries.length > 0) {
-        out.push(restLine);
-        out.push('');
-      }
-      return out;
-    };
+    const restBlock = restEntries.length > 0 ? [restLine, ''] : [];
 
     parts.push('## Knowledge Index\n');
     parts.push(...pinnedBlockFull);
-    parts.push(...renderBody(true));
+    parts.push(...patternsCountLines(patternEntries, 'snapshot'));
+    parts.push(...restBlock);
 
     flushDemotable('knowledge-index', [
-      // Rung 1: pattern briefs drop — titles + paths only, banner intact.
-      () => ['## Knowledge Index\n', ...pinnedBlockFull, ...renderBody(false)].join('\n'),
-      // Rung 2: the pinned block is BOUNDED (the only rung where it is — an
+      // The only rung: the pinned block is BOUNDED (the only place it is — an
       // unbounded pin block was the one term nothing capped; see
-      // renderPinnedBlock); patterns keep their own warned block (slugs only);
-      // the rest stays the same count + search-commands line as level 0.
+      // renderPinnedBlock). Patterns and the rest are already a count each.
       () => [
         '## Knowledge Index\n',
         ...(pinnedEntries.length > 0
           ? renderPinnedBlock(pinnedEntries, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS)
           : []),
-        ...patternsFloorLines(patternEntries),
+        ...patternsCountLines(patternEntries, 'snapshot'),
         ...(restEntries.length > 0 ? [restLine] : []),
         '',
       ].join('\n'),
@@ -2489,6 +2517,14 @@ export interface SubagentBriefingOptions {
    * as given.
    */
   budgetTokens?: number | null;
+  /**
+   * `lean` (the default): project line, recall line, pinned knowledge, a
+   * pattern count and the task rule. `full`: the old inventory form (features,
+   * knowledge, objectives, core files, tasks). Nothing passes `full` yet; it
+   * is the seam for briefing by agent type, where sleep, explore, curator and
+   * initializer keep the inventory (audit MM-11, wave 2).
+   */
+  form?: 'lean' | 'full';
 }
 
 /** The briefing plus what the ladder did to it. */
@@ -2688,9 +2724,6 @@ function briefingKnowledgeSection(root: string): BudgetSection | null {
   }
   full.push('');
 
-  const patternsBlock = (withBrief: boolean): string[] => (patterns.length > 0
-    ? ['### Patterns (kurallar):\n', PATTERNS_BANNER, ...patternIndexLines(patterns, withBrief), '']
-    : []);
   const restNamed = (): string[] => (rest.length > 0
     ? [
       '### Other knowledge:\n',
@@ -2708,13 +2741,13 @@ function briefingKnowledgeSection(root: string): BudgetSection | null {
     : []);
 
   return briefingSection('knowledge-index', full.join('\n'), [
-    // Rung 1: every pinned file and pattern stays described; other knowledge
-    // keeps its name only.
+    // Rung 1: every pinned file stays described, patterns are counted, other
+    // knowledge keeps its name only.
     () => [
       '## Knowledge Index\n',
       BRIEFING_KNOWLEDGE_PATHS,
       ...renderPinnedBlock(pinned, PINNED_ITEM_CHARS, Number.POSITIVE_INFINITY),
-      ...patternsBlock(true),
+      ...patternsCountLines(patterns, 'briefing'),
       ...restNamed(),
     ].join('\n'),
     // Rung 2: the snapshot's own floor, so both surfaces fail the same way.
@@ -2722,7 +2755,7 @@ function briefingKnowledgeSection(root: string): BudgetSection | null {
       '## Knowledge Index\n',
       BRIEFING_KNOWLEDGE_PATHS,
       ...renderPinnedBlock(pinned, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS),
-      ...patternsFloorLines(patterns),
+      ...patternsCountLines(patterns, 'briefing'),
       ...(rest.length > 0 ? [knowledgeRestLine(rest.length)] : []),
       '',
     ].join('\n'),
@@ -2802,27 +2835,50 @@ function briefingTasksSection(root: string): BudgetSection | null {
   ]);
 }
 
-/**
- * Build the SubagentStart briefing and report what its budget ladder did.
- *
- * Lighter than the snapshot: no soul, person or memory content, no sleep state,
- * no changelog. It carries the project line, objectives, features, the
- * knowledge index, core files, active tasks and the task-awareness rules.
- *
- * Every sub-agent pays for this before its first tool call, so it is budgeted
- * (`SUBAGENT_BRIEFING_BUDGET_TOKENS`). Level 0 is the full render, unchanged
- * for a brain small enough to fit; past the budget, sections demote cheapest
- * loss first (objectives, tasks, core files, knowledge, features), and every
- * pinned file, pattern and feature stays named or counted. The directives, the
- * task-format override, the project line and the awareness rules never demote,
- * but the total is a HARD cap (`SUBAGENT_BRIEFING_MAX_CHARS`): if those blocks
- * alone overflow it, the override and then the linked repos are clipped with a
- * pointer to their full text (`enforceBriefingCap`). Unbounded renders are exempt.
- */
-export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): SubagentBriefingMeasure {
-  const root = opts.root ?? resolveContextRoot();
-  if (!root) return { text: '', bodyChars: 0, overBudget: false, demoted: [], clipped: [] };
+/** Briefing parts under construction: the sections and the blocks the hard cap may clip. */
+interface BriefingParts {
+  sections: BudgetSection[];
+  clippable: ClippableBlock[];
+}
 
+/** Project summary (first meaningful soul line) and the linked repos glance. Never demotes. */
+function pushBriefingProject(root: string, sections: BudgetSection[], clippable: ClippableBlock[]): void {
+  const project: string[] = [];
+  const soulPath = join(root, 'core', '0.soul.md');
+  if (existsSync(soulPath)) {
+    const { data, content } = readFrontmatter(soulPath);
+    const projectName = typeof data.name === 'string' ? data.name : '';
+    const summaryLine = content.split('\n').find((l) => {
+      const t = l.trim();
+      return t && !t.startsWith('#') && !t.startsWith('>') && !t.startsWith('<!--') && !t.startsWith('---');
+    });
+    if (projectName || summaryLine) {
+      let summary = projectName ? `**${projectName}**` : '';
+      if (summaryLine) {
+        const capped = capAtWordBoundary(summaryLine.trim(), 120);
+        summary += summary ? `: ${capped}` : capped;
+      }
+      project.push(`Project: ${summary}\n`);
+    }
+  }
+  const linkedGlance = renderLinkedReposGlance(root, 'briefing');
+  if (linkedGlance) project.push(...linkedGlance);
+  if (project.length > 0) {
+    const text = project.join('\n');
+    sections.push({ id: 'project', neverEvict: true, text });
+    clippable.push({
+      id: 'project',
+      text,
+      pointer: '- (linked repos clipped to fit the briefing cap: `dreamcontext link ls` lists every one)',
+    });
+  }
+}
+
+/**
+ * The full (inventory) briefing: objectives, features, knowledge, core files,
+ * tasks and the task-awareness rules. Only reachable through `form: 'full'`.
+ */
+function fullBriefingParts(root: string): BriefingParts {
   const sections: BudgetSection[] = [];
   const clippable: ClippableBlock[] = [];
 
@@ -2854,36 +2910,8 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
     });
   }
 
-  // 3. Project summary (first meaningful soul line) and linked repos.
-  const project: string[] = [];
-  const soulPath = join(root, 'core', '0.soul.md');
-  if (existsSync(soulPath)) {
-    const { data, content } = readFrontmatter(soulPath);
-    const projectName = typeof data.name === 'string' ? data.name : '';
-    const summaryLine = content.split('\n').find((l) => {
-      const t = l.trim();
-      return t && !t.startsWith('#') && !t.startsWith('>') && !t.startsWith('<!--') && !t.startsWith('---');
-    });
-    if (projectName || summaryLine) {
-      let summary = projectName ? `**${projectName}**` : '';
-      if (summaryLine) {
-        const capped = capAtWordBoundary(summaryLine.trim(), 120);
-        summary += summary ? `: ${capped}` : capped;
-      }
-      project.push(`Project: ${summary}\n`);
-    }
-  }
-  const linkedGlance = renderLinkedReposGlance(root, 'briefing');
-  if (linkedGlance) project.push(...linkedGlance);
-  if (project.length > 0) {
-    const text = project.join('\n');
-    sections.push({ id: 'project', neverEvict: true, text });
-    clippable.push({
-      id: 'project',
-      text,
-      pointer: '- (linked repos clipped to fit the briefing cap: `dreamcontext link ls` lists every one)',
-    });
-  }
+  // 3. Project summary and linked repos.
+  pushBriefingProject(root, sections, clippable);
 
   // 4. Demotable sections, in reading order (features first: most actionable).
   for (const section of [
@@ -2905,7 +2933,7 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
       'Big work is linked to ONE task in `_dream_context/state/`, its waves logged inside it. A small fix (1-3 files, one clear fix, no plan round) opens no task: its commits and the release note carry it. A sub-task only when the owner asks.',
       'If you are creating a plan or completing big work:',
       '- Check if an existing task in Active Tasks above relates to this work',
-      '- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an dreamcontext task?"',
+      '- If planning: return the plan to the agent that dispatched you; it decides whether the plan becomes a task (a sub-agent has no user to ask).',
       `- ${TASK_CREATE_GUIDANCE}`,
       '- To log progress: `dreamcontext tasks log <name> "what was done"`',
       '',
@@ -2918,6 +2946,96 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
       '',
     ].join('\n'),
   });
+
+  return { sections, clippable };
+}
+
+/** The lean briefing's opening lines: what the brain is and how to search it. */
+const LEAN_BRIEFING_HEADER = [
+  '# Agent Context -- Sub-agent Briefing\n',
+  'This project keeps its decisions, features, knowledge and tasks in `_dream_context/`.',
+  `${RECALL_GUIDANCE}`,
+  'Feature PRDs: `_dream_context/knowledge/features/<slug>.md` · every knowledge file: `dreamcontext knowledge index` · tasks: `dreamcontext tasks list`.\n',
+].join('\n');
+
+/** Where a sub-agent stands on tasks: it reports to its dispatcher, it has no user. */
+const LEAN_BRIEFING_TASKS = [
+  '## Tasks\n',
+  'You report to the agent that dispatched you; there is no user to ask. Open a task only when your instructions say so.',
+  'Log on a task your instructions name: `dreamcontext tasks log <slug> "<what was done>"`.',
+  'Drawing (an `.excalidraw.md`, a diagram file, a whiteboard): read `.claude/skills/draw/SKILL.md` first.',
+  '',
+].join('\n');
+
+/**
+ * The lean briefing (the default): project line, recall line, pinned knowledge
+ * and a pattern count. No feature, knowledge, objective, core-file or task
+ * rosters and no Task Awareness block.
+ *
+ * Why: 88% of sub-agent runs are reviewers or the review router, and over 60
+ * sub-agent transcripts the full form's rosters drew 15 knowledge reads and 17
+ * recalls in 1,489 tool calls. That form was 9.5k chars, over its budget on
+ * every one of 320 briefings ("ladder EXHAUSTED", 105 hard-cut), and its Task
+ * Awareness block told a sub-agent to ask a user it does not have (overnight
+ * audit MM-11, 2026-11-12). The lean form aims at ~1,200 tokens; recall finds
+ * the rest.
+ */
+function leanBriefingParts(root: string): BriefingParts {
+  const sections: BudgetSection[] = [];
+  const clippable: ClippableBlock[] = [];
+  sections.push({ id: 'header', neverEvict: true, text: LEAN_BRIEFING_HEADER });
+
+  // The task-format override is one pointer, not its body: most sub-agents
+  // never touch a task, and the one that does reads the file.
+  if (loadTaskOverride(root)) {
+    sections.push({
+      id: 'task-override',
+      neverEvict: true,
+      text: 'ACTIVE TASK-FORMAT OVERRIDE: this project sets its own task shape and statuses. Read `_dream_context/overrides/task.md` before creating or reconciling a task.\n',
+    });
+  }
+
+  pushBriefingProject(root, sections, clippable);
+
+  // Pinned knowledge (verbatim description, then bare names under pressure)
+  // and the pattern count. The only demotable section.
+  const entries = buildKnowledgeIndex(root);
+  const pinned = entries.filter((e) => e.pinned);
+  const patterns = entries.filter((e) => !e.pinned && e.slug.startsWith('patterns/'));
+  if (pinned.length > 0 || patterns.length > 0) {
+    const render = (pinBudget: number): string => [
+      '## Pinned knowledge\n',
+      ...renderPinnedBlock(pinned, PINNED_ITEM_CHARS, pinBudget),
+      ...patternsCountLines(patterns, 'briefing'),
+    ].join('\n');
+    sections.push(briefingSection('knowledge-index', render(Number.POSITIVE_INFINITY), [
+      () => render(PINNED_KNOWLEDGE_CHARS),
+    ]));
+  }
+
+  sections.push({ id: 'awareness', neverEvict: true, text: LEAN_BRIEFING_TASKS });
+  return { sections, clippable };
+}
+
+/**
+ * Build the SubagentStart briefing and report what its budget ladder did.
+ *
+ * Lighter than the snapshot: no soul, person or memory content, no sleep state,
+ * no changelog. The default is the lean form (`leanBriefingParts`); `form:
+ * 'full'` renders the inventory form (`fullBriefingParts`).
+ *
+ * Every sub-agent pays for this before its first tool call, so it is budgeted
+ * (`SUBAGENT_BRIEFING_BUDGET_TOKENS`). Past the budget, demotable sections
+ * shrink cheapest loss first and every pinned file stays named or counted. The
+ * never-demote blocks are capped too (`SUBAGENT_BRIEFING_MAX_CHARS`): if they
+ * alone overflow it, the clippable blocks are cut with a pointer to their full
+ * text (`enforceBriefingCap`). Unbounded renders are exempt.
+ */
+export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): SubagentBriefingMeasure {
+  const root = opts.root ?? resolveContextRoot();
+  if (!root) return { text: '', bodyChars: 0, overBudget: false, demoted: [], clipped: [] };
+
+  const { sections, clippable } = opts.form === 'full' ? fullBriefingParts(root) : leanBriefingParts(root);
 
   const budgetTokens = opts.budgetTokens === undefined
     ? resolveSubagentBriefingBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET, hookTool() ?? undefined)

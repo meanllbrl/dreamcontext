@@ -925,7 +925,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).toContain('test');
   });
 
-  it('includes active tasks', () => {
+  it('does not list tasks: the lean briefing teaches the command instead', () => {
     // Create a task file
     mkdirSync(join(ctx, 'state'), { recursive: true });
     writeFileSync(join(ctx, 'state', 'fix-auth-bug.md'), [
@@ -940,11 +940,11 @@ describe('hook subagent-start (integration)', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('fix-auth-bug');
-    expect(ctx_text).toContain('in_progress');
+    expect(ctx_text).not.toContain('fix-auth-bug');
+    expect(ctx_text).toContain('`dreamcontext tasks list`');
   });
 
-  it('includes knowledge index', () => {
+  it('does not list unpinned knowledge: the lean briefing teaches the index command', () => {
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     writeFileSync(join(ctx, 'knowledge', 'api-patterns.md'), [
       '---',
@@ -959,9 +959,8 @@ describe('hook subagent-start (integration)', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('api-patterns');
-    expect(ctx_text).toContain('REST API design patterns');
-    expect(ctx_text).toContain('[api, architecture]');
+    expect(ctx_text).not.toContain('api-patterns');
+    expect(ctx_text).toContain('`dreamcontext knowledge index`');
   });
 
   it('surfaces pinned knowledge as a prioritized index reference (body not inlined)', () => {
@@ -1069,20 +1068,18 @@ describe('hook subagent-start (integration)', () => {
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
     expect(ctx_text).toContain('Sub-agent Briefing');
-    expect(ctx_text).toContain('MANDATORY');
+    expect(ctx_text).toContain('dreamcontext memory recall');
   });
 
-  it('includes context directory reference', () => {
+  it('says where the brain is and where feature PRDs live', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('Context Directory');
-    expect(ctx_text).toContain('_dream_context/core/');
-    expect(ctx_text).toContain('_dream_context/knowledge/');
-    expect(ctx_text).toContain('features/');
+    expect(ctx_text).toContain('`_dream_context/`');
+    expect(ctx_text).toContain('`_dream_context/knowledge/features/<slug>.md`');
   });
 
-  it('includes extended core files index', () => {
+  it('does not list extended core files (the lean briefing has no inventory)', () => {
     writeFileSync(join(ctx, 'core', '4.tech_stack.md'), [
       '---',
       'name: Tech Stack',
@@ -1096,12 +1093,11 @@ describe('hook subagent-start (integration)', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('Core Files');
-    expect(ctx_text).toContain('Tech Stack');
-    expect(ctx_text).toContain('TypeScript CLI with Node.js');
+    expect(ctx_text).not.toContain('Core Files');
+    expect(ctx_text).not.toContain('TypeScript CLI with Node.js');
   });
 
-  it('includes features in briefing with name, status, and why', () => {
+  it('does not list features (the full form does; recall finds them)', () => {
     mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
     writeFileSync(join(ctx, 'knowledge', 'features', 'web-dashboard.md'), [
       '---',
@@ -1122,34 +1118,28 @@ describe('hook subagent-start (integration)', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('## Features');
-    expect(ctx_text).toContain('web-dashboard');
-    expect(ctx_text).toContain('Tags: frontend, architecture');
-    expect(ctx_text).toContain('visual interface');
-    expect(ctx_text).toContain('Tasks: web-dashboard');
-    // Each feature includes a direct read path
-    expect(ctx_text).toContain('--> Read: _dream_context/knowledge/features/web-dashboard.md');
+    expect(ctx_text).not.toContain('## Features');
+    expect(ctx_text).not.toContain('web-dashboard');
   });
 
-  it('includes top-priority directive to check context before searching', () => {
+  it('opens with the recall directive, before any searching', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('MANDATORY');
-    expect(ctx_text).toContain('MUST check the feature list');
-    expect(ctx_text).toContain('BEFORE using Glob, Grep, or searching code');
-    // Directive should appear near the start (within first 500 chars)
-    expect(ctx_text.indexOf('MANDATORY')).toBeLessThan(500);
+    expect(ctx_text).toContain('before Glob/Grep');
+    expect(ctx_text.indexOf('RECALL:')).toBeGreaterThan(-1);
+    expect(ctx_text.indexOf('RECALL:')).toBeLessThan(300);
   });
 
-  it('includes Task Awareness section with plan-to-task workflow', () => {
+  it('tells a sub-agent it reports to its dispatcher, not to a user', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('## Task Awareness');
-    expect(ctx_text).toContain('linked to ONE task');
-    expect(ctx_text).toContain('dreamcontext tasks create');
-    expect(ctx_text).toContain('save this plan as an dreamcontext task');
+    expect(ctx_text).toContain('## Tasks');
+    expect(ctx_text).toContain('there is no user to ask');
+    expect(ctx_text).toContain('dreamcontext tasks log');
+    expect(ctx_text).not.toContain('## Task Awareness');
+    expect(ctx_text).not.toContain('ask the user');
   });
 });
 

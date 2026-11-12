@@ -10,10 +10,15 @@ import { execFileSync } from 'node:child_process';
  * to. This pins that the built command's JSON stays under the hard cap on a
  * large brain, and that the one escape hatch (DREAMCONTEXT_SNAPSHOT_BUDGET=off)
  * lifts it. Needs `dist/` (npm run build); the vault is fictional.
+ *
+ * Since 2026-11-12 the hook renders the LEAN briefing (audit MM-11): on this
+ * brain it fits in ~1,200 tokens with no ladder, so the escape hatch changes
+ * nothing.
  */
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 const MAX_CHARS = 9_500; // SUBAGENT_BRIEFING_MAX_CHARS
+const LEAN_CHARS = 4_800; // ~1,200 tokens, the lean form's target
 
 function write(file: string, content: string): void {
   mkdirSync(dirname(file), { recursive: true });
@@ -59,16 +64,19 @@ describe('hook subagent-start budget (integration)', () => {
 
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-  it('stays under the hard cap on a large brain with the default budget', () => {
+  it('renders the lean briefing on a large brain: no rosters, no ladder', () => {
     const text = briefing(project, home);
+    expect(text.length).toBeLessThanOrEqual(LEAN_CHARS);
     expect(text.length).toBeLessThanOrEqual(MAX_CHARS);
-    expect(text).toContain('MANDATORY');
-    expect(text).toContain('sections demoted to fit the briefing budget');
+    expect(text).toContain('# Agent Context -- Sub-agent Briefing');
+    expect(text).toContain('dreamcontext memory recall');
+    for (let i = 1; i <= 8; i++) expect(text).toContain(`pinned-${i}`);
+    expect(text).toContain('40 pattern(s)');
+    expect(text).not.toContain('route-feature-');
+    expect(text).not.toContain('Budget note');
   });
 
-  it('is unbounded when DREAMCONTEXT_SNAPSHOT_BUDGET=off', () => {
-    const text = briefing(project, home, 'off');
-    expect(text.length).toBeGreaterThan(MAX_CHARS);
-    expect(text).not.toContain('Budget note');
+  it('is the same lean render when DREAMCONTEXT_SNAPSHOT_BUDGET=off', () => {
+    expect(briefing(project, home, 'off')).toBe(briefing(project, home));
   });
 });

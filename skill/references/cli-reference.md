@@ -823,17 +823,17 @@ The never-evict `person` section covers all three shapes that block can take: th
 
 **Memory demotes only when it is over the core ceiling.** `core/2.memory.md` is sleep's already-distilled working set: at or under the 4,000-char core ceiling it renders **in full, no rungs**, with one pointer line to the history beyond it (`dreamcontext memory recall`) — a rung there would compress what sleep already compressed. Over the ceiling (an unslept vault) the ladder below applies, and the `doctor` core-size error names the file so the fix lands on sleep, not the renderer. Unlike the constitutions this cut is safe: every demoted entry stays one `memory recall` away.
 
-**Demotion order (cheapest-loss first).** Order is a per-section rank on a 10–140 scale, independent of render order — so `memory` renders near the top but is given up well after the inventory sections below it:
+**Demotion order (cheapest-loss first).** Order is a per-section rank on a 10–110 scale, independent of render order — so `memory` renders near the top but is given up well after the inventory sections below it:
 
-`changelog` → `releases` → `extended-core` → `connected-projects` → `knowledge-index` → `features` → `memory` → `bookmarks` → `tasks` → `people-roster` → `objectives` → `theses`
+`changelog` → `releases` → `extended-core` → `connected-projects` → `knowledge-index` → `features` → `memory` → `bookmarks` → `objectives` → `theses` → `tasks` → `people-roster`
 
-The chain **ends at `theses`**. Lab has no rungs at all (every insight's name + latest value renders at every budget — Rule 13), and level 0 is itself compact since 2026-07-30: features are name + status + path lines, non-pinned knowledge is grouped folder names (only PINNED entries carry descriptions; every pattern is titled with one short clause), and the old Warm Knowledge preview section is gone. When the ladder is exhausted, anything still over the limit is a constitution that needs slimming, which the banner says out loud.
+The chain **ends at `people-roster`**. Objectives and theses give way before tasks (2026-11-12): agents open task cards far more than the roadmap or theses, and both stay floored. Lab has no rungs at all, and level 0 is itself compact: features are name + status + path lines, non-pinned knowledge is one count line, patterns are the banner plus one count line (pinned ones stay named; the prompt hook names the ones a prompt touches), and the old Warm Knowledge preview section is gone. Empty states are omitted: Marketing with nothing in it, Learning with nothing open, flipped or blocked. Upcoming Versions lists only planning entries above the latest release (older ones are counted). At every demoted rung the task list names five tasks with their path (the detailed head, then the most recently updated). When the ladder is exhausted, anything still over the limit is a constitution that needs slimming, which the banner says out loud.
 
 **Floors — sections that stop early because their remaining content IS the point:**
 
 | Section | Floor | Why |
 |---|---|---|
-| `lab` | no rungs — never demotes | Metric names + latest values must survive, or you cannot tell a metric question is already answered here and you fetch it from outside (Operational Rule 13). There is no cheaper render at all. |
+| `lab` | no rungs — never demotes | Every insight stays named, or you cannot tell a metric question is already answered here and you fetch it from outside (Operational Rule 13). A fresh insight keeps its line with its latest value; stale, never-synced and demo insights share one line of names and slugs (`dreamcontext lab show <slug>` reads the cached value). |
 | `theses` | rung 1 | The top open claims survive; a bare `N open · N flipped` count tells you nothing. |
 | `objectives` | rung 2 | One compact line per objective survives; a bare `N objective(s)` count leaves "weigh decisions against these outcomes" unsatisfiable. |
 | `bookmarks` | rung 2 | ★★★ bookmarks stay verbatim — they are the primary consolidation signal. With no ★★★ at all, the floor keeps the ★★ tier (first sentence each) instead of a bare count; ★ stays behind an accurate count. |
@@ -856,13 +856,11 @@ The chain **ends at `theses`**. Lab has no rungs at all (every insight's name + 
 
 ## Sub-agent briefing budget
 
-Every sub-agent starts with a briefing from the SubagentStart hook (`hook subagent-start`). It is budgeted separately from the SessionStart snapshot: **at most 9,500 chars in total** on Claude (12,000 on Codex, 2,900 tokens), the budget note included, with a ladder body budget of 2,200 tokens (about 8,800 chars). A small brain renders in full; a mature one demotes through the same curated ladder the snapshot uses, and nothing is raw-truncated.
+Every sub-agent starts with a briefing from the SubagentStart hook (`hook subagent-start`). Since 2026-11-12 it is the **lean** form, about 1,200 tokens: the recall directive and where features, knowledge and tasks live; a one-line pointer to an active task-format override (`_dream_context/overrides/task.md`); the project line with linked repos; every **pinned** knowledge file with its path; the pattern banner with a count and `dreamcontext patterns match "<your job>"`; and the task rule (a sub-agent reports to its dispatcher, there is no user to ask, it opens a task only when its instructions say so). There are no feature, knowledge, objective, core-file or task rosters: `dreamcontext memory recall` finds them.
 
-- **Never demoted:** the header (the MANDATORY check-context-first line and the recall directive), an active task-format override, the project line with linked repos, and the task-awareness block.
-- **Hard cap:** the 9,500 chars hold even when those never-demoted blocks alone are too big. The task-format override is clipped first, then the linked-repos list, each at a line boundary with a one-line pointer to the full text (`_dream_context/overrides/task.md`, `dreamcontext link ls`). The cap is lifted only with the budget itself (the switch below).
-- **Demotion order, cheapest loss first:** objectives, then the active task list, then the core-files index, then the knowledge index, then features. Features go last because the briefing tells the agent to check them before searching.
-- **What always stays named:** every pinned knowledge file (with its path) and every pattern; features and other knowledge are listed by name or counted in a `+N` tail, never silently dropped.
-- **Recovery:** when anything was demoted, the budget note names the sections and the commands that recover the rest: `dreamcontext memory recall "<keywords>"` and `dreamcontext knowledge index`.
+- **Budget:** at most 9,500 chars in total on Claude (12,000 on Codex), the budget note included, with a ladder body budget of 2,200 tokens. The lean form fits far under it; only a very large pinned block demotes (descriptions drop, every pin stays named with its path).
+- **Hard cap:** the 9,500 chars hold even when the never-demoted blocks alone are too big: the linked-repos list is clipped at a line boundary with a pointer to `dreamcontext link ls`.
+- **The full form** (objectives, features, knowledge, core files, tasks, task awareness) is still in the code behind an option, for the planned briefing by agent type (sleep, explore, curator and initializer keep the inventory). Nothing selects it yet.
 - **Switch:** `DREAMCONTEXT_SNAPSHOT_BUDGET=off` (or `0`/`false`) lifts this budget as well as the snapshot's; a numeric value applies to the SessionStart snapshot only.
 
 ## Detail behind the SKILL.md summaries

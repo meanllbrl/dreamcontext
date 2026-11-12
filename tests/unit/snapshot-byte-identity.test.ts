@@ -83,8 +83,13 @@ import {
  * `## Code lives outside the brain` block after the linked-repos glance) ran
  * it a fourth time — *exactly four added lines* in BOTH goldens, and in the
  * floor golden the same four plus the budget note's token count (2322 → 2430,
- * the block itself; no rung moved). `BASE_SHA` still records the last SHA at
- * which leg (a) was non-circular.
+ * the block itself; no rung moved). The overnight snapshot diet (2026-11-12,
+ * audit MM-9) ran it a fifth time — in BOTH goldens *exactly one changed line*
+ * (the never-synced insight joins the one stale/demo Lab line); in the floor
+ * golden that line, the routine-task count line becoming one recency one-liner,
+ * the 31-line pattern roster becoming one count line, and the budget note's
+ * token count (2430 → 2173). `BASE_SHA` still records the last SHA at which
+ * leg (a) was non-circular.
  *
  * `expected.txt` intentionally has NO trailing newline: `generateSnapshot`
  * returns trimmed text and the golden is that text verbatim. An editor or
@@ -455,8 +460,8 @@ describe('snapshot byte-identity: floor rungs (leg e)', () => {
   it('actually reaches the knowledge-index floor (the leg is not vacuous)', () => {
     const text = generateSnapshot(CONTEXT);
     expect(text).toContain('Budget note');
-    // Rung 2 lists patterns by slug only, packed with a counted tail.
-    expect(text).toMatch(/\+\d+ more pattern\(s\)/);
+    // Patterns are a count line at every rung since 2026-11-12 (audit MM-9).
+    expect(text).toMatch(/- \d+ pattern\(s\) in `_dream_context\/knowledge\/patterns\/`, not listed/);
     expect(text).toContain('more knowledge file(s), not listed');
   });
 
