@@ -13,7 +13,7 @@
  *         offers the install button, the unshared one does not.
  *   UI    a chat turn (a scripted stand-in for claude) runs `apps do` and answers with two
  *         app-install buttons: the row says "<App> › <tool> (reads)"; the shared repo's button
- *         opens the install sheet; the unshared one says who to ask. The app card reads
+ *         opens the install sheet; the unshared one says who to ask. The app page reads
  *         "2 tools · 1 changes things". Screenshots at 390 and 1440, no console errors.
  *
  *   npm run build && dreamcontext builder heavy -- node scripts/verify/app-tools.mjs [--out <dir>]
@@ -212,10 +212,26 @@ async function ui(port) {
   for (const w of [1440, 390]) {
     const { ctx, page } = await open(w);
     await page.goto(`${base}/?vault=proj&page=apps`, { waitUntil: 'domcontentloaded' });
-    const card = page.locator('.app-card').filter({ hasText: 'Ziyaret Sayacı' }).first();
-    const ok = await until(async () => (await card.innerText()).includes('2 tools'), 20_000, page);
-    const text = ok ? (await card.innerText()).replace(/\s+/g, ' ') : '';
-    check(ok && text.includes('1 changes things'), `@${w} the app card reads "2 tools · 1 changes things"`, text);
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    // The new shell can open on Chat (or with the chat surface over Apps): go to Apps by the rail, as the
+    // owner would. Desktop has Apps on the rail; the phone has it under More.
+    const rail = page.getByTestId('ns-rail-apps');
+    if (await rail.isVisible().catch(() => false)) await rail.click();
+    else {
+      await page.getByTestId('ns-rail-more').click().catch(() => {});
+      await page.getByRole('menuitem', { name: /^(Apps|Uygulamalar)/ }).first().click().catch(() => {});
+    }
+    // The tile is one line; the tool count lives on the app's own page ("2" over "tools").
+    const tile = page.locator('.app-tile').filter({ hasText: 'Ziyaret Sayacı' }).first();
+    const tileUp = await until(async () => (await tile.count()) > 0, 20_000, page);
+    check(tileUp, `@${w} the Apps page draws a tile for Ziyaret Sayacı`);
+    if (tileUp) await tile.locator('.app-tile__open').click().catch(() => {});
+    const sheet = page.locator('[role="dialog"]').filter({ hasText: 'Ziyaret Sayacı' }).last();
+    const ok = await until(async () => /\b2\s*tools\b/.test((await sheet.innerText()).replace(/\s+/g, ' ')), 20_000, page);
+    const text = ok ? (await sheet.innerText()).replace(/\s+/g, ' ') : '';
+    check(ok, `@${w} the app page shows its 2 tools`, text);
+    // The write-tool notice. A merge dropped it from AppCard.tsx once (apps.tools.change is unused); keep this red until it is back.
+    check(ok && /\b1\s*changes things\b/.test(text), `@${w} the app page says 1 tool changes things`, text);
     await shot(page, `apps-card-${w}`);
     await ctx.close();
   }
@@ -253,7 +269,9 @@ async function ui(port) {
       await shot(page, 'install-sheet-1440');
       await page.keyboard.press('Escape');
       await page.waitForTimeout(500);
-      // Back to the chat for the second button.
+      // Back to the chat for the second button: the sheet closed on the Apps page, so go by the rail.
+      await page.getByTestId('ns-rail-chat').click().catch(() => {});
+      await page.waitForTimeout(1000);
       for (const sel of ['.agent-fab', '.agent-overlay-head']) {
         const el = page.locator(sel).first();
         if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1000); }

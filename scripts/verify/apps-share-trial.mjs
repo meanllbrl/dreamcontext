@@ -344,7 +344,7 @@ try {
     const { page, context } = await open('pub');
     const grant = await handOff(page, 'Hava Notu', '1-yayinla-sohbet');
     await context.close();
-    check((await cliPublish('hava-notu', 'not-the-grant', '--invite', INSTALLER)).out.includes('Publishing needs the owner'), 'publish: a made-up grant was not refused');
+    check((await cliPublish('hava-notu', 'not-the-grant', '--invite', INSTALLER)).out.includes('owner_page_only'), 'publish: a made-up grant was not refused');
     const k = await open('pub');
     const otherGrant = await handOff(k.page, 'Kreatif Takip', null);
     await k.context.close();
