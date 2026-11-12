@@ -11,8 +11,10 @@ import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   RERANK_MODELS,
   appendCloudAudit,
+  churnSentence,
   copyVoiceKeyToRecall,
   grantVaultConsent,
+  indexStopSentence,
   recallCloudKeyInfo,
   recallCloudStatus,
   revokeVaultConsent,
@@ -142,7 +144,8 @@ export function cloudStatus(deps: CloudCliDeps, opts: { json?: boolean } = {}): 
   const s = report.spend;
   deps.print(`  Spend: vault lifetime $${s.vaultLifetimeUsd.toFixed(4)}, last 24 h index $${s.indexSpend24hUsd.toFixed(4)} (cap $${s.maxIndexUsd24h}), per build cap $${s.maxIndexUsd}`);
   deps.print(`  Cloud queries today: ${s.todayQueries}/${s.maxQueriesPerDay}`);
-  if (report.churnGuard) deps.print(`  ${chalk.yellow('Churn guard tripped')}: automatic index builds are paused until you run \`dreamcontext recall cloud index\` yourself.`);
+  if (report.indexStop) deps.print(`  ${chalk.yellow('Index stale')}: ${indexStopSentence(report.indexStop)}`);
+  if (report.churn) deps.print(`  ${chalk.dim('Churn noticed')}: ${churnSentence(report.churn)}`);
   return 0;
 }
 
@@ -274,7 +277,6 @@ const ABORT_TEXT: Record<NonNullable<BuildCloudIndexResult['aborted']>, string> 
   max_usd: 'the estimated cost exceeds the per-build cap (raise it with --max-usd)',
   eval_cap: 'the eval spend ceiling was reached',
   daily_index_cap: 'the rolling 24 h automatic index cap is reached',
-  churn_guard: 'the churn guard paused automatic builds (run `recall cloud index` yourself to clear it)',
   lock_busy: 'another build is already running for this vault',
   throttled: 'an automatic build started less than 30 minutes ago',
 };
@@ -291,7 +293,7 @@ export async function cloudIndex(deps: CloudCliDeps, opts: { maxUsd?: string; au
   if (maxUsd === null) { deps.printErr(bad('--max-usd must be a positive number.')); return 1; }
   const root = deps.root();
   // Only a person at a terminal runs an explicit build; anything else gets the automatic guards
-  // (throttle, churn guard, rolling cap), so a script can never clear the churn guard.
+  // (throttle, rolling 24 h cap), so a script can never spend past the automatic cap.
   const human = !opts.auto && deps.isTTY() && spawnMarkerFromEnv(deps.env) === null;
   try {
     const result = await deps.build(root, VOYAGE, deps.loadCorpus(root), { trigger: human ? 'explicit' : 'auto', home: deps.home, maxUsd });

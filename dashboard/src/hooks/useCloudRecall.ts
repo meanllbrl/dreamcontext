@@ -36,7 +36,10 @@ export interface CloudRecallStatus {
     vaultLifetimeUsd: number;
     todayQueries: number;
   };
-  churnGuard: boolean;
+  /** Report only (never a pause): automatic builds kept re-embedding what they embedded before. */
+  churn: { strikes: number; embedded: number | null; reembedded: number | null } | null;
+  /** Automatic index updates stopped (a spend cap, a failure): the meaning index is as of `asOf`. */
+  indexStop: { reason: 'daily_index_cap' | 'max_usd' | 'failed'; since: string; asOf: string | null; estUsd: number | null; error: string | null } | null;
   indexReady: boolean;
   indexCoverage: { coveredDocs: number; eligibleTotal: number } | null;
   plan: CloudRecallPlan | null;
@@ -53,6 +56,8 @@ export interface CloudIndexStatus {
   total: number;
   spentUsd: number;
   error: string | null;
+  /** The last run's failure, also while an older index is still ready (absent from an older server). */
+  lastError?: string | null;
   coverage: { coveredDocs: number; eligibleTotal: number } | null;
 }
 
@@ -63,7 +68,7 @@ export interface EnableCloudRecall {
 }
 
 const STATUS_KEY = ['recall-cloud-status'] as const;
-const INDEX_KEY = ['recall-cloud-index-status'] as const;
+export const INDEX_KEY = ['recall-cloud-index-status'] as const;
 
 /** The card's status. Never retried: a 403 means "not the dashboard on this computer" and is final. */
 export function useCloudRecallStatus() {

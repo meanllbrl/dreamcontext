@@ -510,14 +510,17 @@ export interface OwnerInboxRow {
   kind: 'secret-held' | 'app-data-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
     // Task jobs (AI Team v2 C1): each dies when its task moves on. `ref` is the task slug.
     | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
-    | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck';
+    | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck'
+    // The automatic cloud recall index stopped updating: `update-index` runs it (embeddings/index-stop.ts).
+    | 'recall-index-stopped';
   ref: string;
   agent: string | null;
   title: string;
   detail?: string;
   actions: ('start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
     | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over'
-    | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back')[];
+    | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back'
+    | 'update-index')[];
   createdAt: string;
 }
 

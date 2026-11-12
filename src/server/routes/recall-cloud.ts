@@ -140,6 +140,8 @@ export interface RecallCloudRoutes {
   enable: (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, root: string) => Promise<void>;
   disable: (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, root: string) => Promise<void>;
   startIndex: (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, root: string) => Promise<void>;
+  /** Start or join an explicit build; null when it runs, `not_consented` for a local vault. */
+  kick: (root: string, o?: { maxUsd?: number }) => null | 'not_consented';
   indexStatus: (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, root: string) => Promise<void>;
   /** Test-only: forget every build run. */
   reset: () => void;
@@ -173,6 +175,8 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
       total: run?.total ?? 0,
       spentUsd: run?.spentUsd ?? 0,
       error: state === 'error' ? (run?.error ?? 'unexpected') : null,
+      // The last run's failure even when an older index is still ready: the agenda's Update says it failed.
+      lastError: run?.state === 'error' ? (run.error ?? 'unexpected') : null,
       coverage: meta ? { coveredDocs: meta.coveredDocs, eligibleTotal: meta.eligibleTotal } : null,
     };
   };
@@ -303,13 +307,13 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
     sendJson(res, 200, { ok: true, ...fullStatus(root) });
   };
 
-  const startIndex: RecallCloudRoutes['startIndex'] = async (req, res, _params, root) => {
-    if (!requireLocalDashboardWrite(req)) { refuse(res); return; }
-    if (!root) { sendError(res, 400, 'no_vault', 'No vault selected.'); return; }
-    if (readVaultTier(root, homeOf()) === 'local') {
-      sendError(res, 409, 'not_consented', 'Enable a cloud tier (with a key) before building the cloud index.');
-      return;
-    }
+  /**
+   * Start (or join) the owner's explicit build of one vault. Shared by Settings' Update and the
+   * owner-inbox row an automatic stop raises; both are an owner's press on the local dashboard.
+   * `maxUsd` raises the per-build cap for that one build (the row names the cost before he presses).
+   */
+  const kick: RecallCloudRoutes['kick'] = (root, o = {}) => {
+    if (readVaultTier(root, homeOf()) === 'local') return 'not_consented';
     // Single flight per vault: a second press while a build runs joins it.
     if (runs.get(root)?.state !== 'building') {
       const d = deps();
@@ -320,6 +324,7 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
           const result = await d.build(root, VOYAGE, d.loadCorpus(root), {
             trigger: 'explicit',
             home: homeOf(),
+            ...(o.maxUsd !== undefined ? { maxUsd: o.maxUsd } : {}),
             onProgress: (done, total, spentUsd) => { run.done = done; run.total = total; run.spentUsd = spentUsd; },
           });
           run.spentUsd = result.spentUsd;
@@ -332,6 +337,16 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
         }
       })();
     }
+    return null;
+  };
+
+  const startIndex: RecallCloudRoutes['startIndex'] = async (req, res, _params, root) => {
+    if (!requireLocalDashboardWrite(req)) { refuse(res); return; }
+    if (!root) { sendError(res, 400, 'no_vault', 'No vault selected.'); return; }
+    if (kick(root) === 'not_consented') {
+      sendError(res, 409, 'not_consented', 'Enable a cloud tier (with a key) before building the cloud index.');
+      return;
+    }
     sendJson(res, 200, { ok: true, ...indexSnapshot(root) });
   };
 
@@ -341,7 +356,7 @@ export function createRecallCloudRoutes(overrides: Partial<RecallCloudRouteDeps>
     sendJson(res, 200, indexSnapshot(root));
   };
 
-  return { status, setKey, copyVoiceKey, enable, disable, startIndex, indexStatus, reset: () => { runs.clear(); plans.clear(); } };
+  return { status, setKey, copyVoiceKey, enable, disable, startIndex, indexStatus, kick, reset: () => { runs.clear(); plans.clear(); } };
 }
 
 export const recallCloudRoutes = createRecallCloudRoutes();

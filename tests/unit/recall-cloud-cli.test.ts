@@ -321,14 +321,12 @@ describe('spawnCloudIndexRefresh', () => {
     expect(JSON.stringify(launch.mock.calls)).not.toContain(SECRET);
   });
 
-  it('skips for throttle, churn guard, the rolling cap and a live build lock', () => {
+  it('skips for throttle, the rolling cap and a live build lock, never for churn', () => {
     consented();
     const launch = vi.fn();
     const run = () => spawnCloudIndexRefresh(root, 'sleep', { home, launch, cliEntry: '/x/cli.js' });
     writeMeta({ lastAutoStartAt: new Date().toISOString() });
     expect(run().reason).toBe('throttled');
-    writeMeta({ churnStrikes: 3 });
-    expect(run().reason).toBe('churn_guard');
     writeMeta({});
     writeFileSync(join(root, '.embeddings', 'voyage-4.build.lock'), '{}');
     expect(run().reason).toBe('lock_busy');
@@ -336,5 +334,13 @@ describe('spawnCloudIndexRefresh', () => {
     recordCloudUsage(root, 'index', 5, { auto: true }, home);
     expect(run().reason).toBe('daily_index_cap');
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('launches a vault the old churn guard paused (strikes 3): the index never stops updating', () => {
+    consented();
+    const launch = vi.fn();
+    writeMeta({ churnStrikes: 3 });
+    expect(spawnCloudIndexRefresh(root, 'sleep', { home, launch, cliEntry: '/x/cli.js' })).toEqual({ spawned: true, reason: null });
+    expect(launch).toHaveBeenCalledTimes(1);
   });
 });

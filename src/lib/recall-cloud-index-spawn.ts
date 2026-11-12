@@ -3,15 +3,15 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  CHURN_STRIKE_LIMIT,
   RECALL_KEY_ENV,
   readRecallCloudConfig,
   readVaultTier,
   rollingIndexSpendUsd,
 } from './recall-cloud-config.js';
 import { AUTO_THROTTLE_MS, readVectorMeta } from './embeddings/vector-store.js';
+import { noteIndexStop } from './embeddings/index-stop.js';
 
-export type SpawnSkipReason = 'tier_local' | 'throttled' | 'churn_guard' | 'daily_index_cap' | 'lock_busy';
+export type SpawnSkipReason = 'tier_local' | 'throttled' | 'daily_index_cap' | 'lock_busy';
 
 export interface SpawnCloudIndexResult {
   spawned: boolean;
@@ -64,8 +64,8 @@ function defaultLaunch(cliEntry: string, cwd: string, env: NodeJS.ProcessEnv): v
 
 /**
  * Refresh the cloud index after a sleep, detached and never awaited. Only a vault that consented to
- * a cloud tier gets one; the same guards the build enforces (throttle, churn guard, rolling 24 h cap,
- * one build per vault) are checked here too so a skipped run costs no process. The hook never calls
+ * a cloud tier gets one; the same guards the build enforces (throttle, rolling 24 h cap, one build per
+ * vault) are checked here too so a skipped run costs no process. The hook never calls
  * this: index refresh happens at `sleep done` and through an explicit `recall cloud index`.
  */
 export function spawnCloudIndexRefresh(
@@ -77,10 +77,11 @@ export function spawnCloudIndexRefresh(
   if (readVaultTier(contextRoot, home) === 'local') return { spawned: false, reason: 'tier_local' };
 
   const meta = readVectorMeta(contextRoot, 'voyage-4');
-  if (meta && meta.churnStrikes >= CHURN_STRIKE_LIMIT) return { spawned: false, reason: 'churn_guard' };
   const last = meta?.lastAutoStartAt ? Date.parse(meta.lastAutoStartAt) : NaN;
   if (Number.isFinite(last) && Date.now() - last < AUTO_THROTTLE_MS) return { spawned: false, reason: 'throttled' };
   if (rollingIndexSpendUsd({}, home) >= readRecallCloudConfig(home).spend.maxIndexUsd24h) {
+    // The index goes stale until the window rolls: said to the owner once, never silent.
+    noteIndexStop(contextRoot, { reason: 'daily_index_cap' }, home);
     return { spawned: false, reason: 'daily_index_cap' };
   }
   if (buildLockFresh(contextRoot)) return { spawned: false, reason: 'lock_busy' };

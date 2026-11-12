@@ -9,7 +9,9 @@ import {
 } from '../../src/lib/embeddings/vector-store.js';
 import { VOYAGE_DIMS } from '../../src/lib/embeddings/nano.js';
 import { acquireFileLock } from '../../src/lib/file-lock.js';
-import { grantVaultConsent, recordCloudUsage, revokeVaultConsent, setRecallCloudKey } from '../../src/lib/recall-cloud-config.js';
+import { grantVaultConsent, recallCloudStatus, recordCloudUsage, revokeVaultConsent, setRecallCloudKey } from '../../src/lib/recall-cloud-config.js';
+import { readIndexStop, rearmIndexStop } from '../../src/lib/embeddings/index-stop.js';
+import { closeInboxRows, listInboxRows } from '../../src/lib/owner-inbox.js';
 
 const KEY = 'or-test-key-0123456789';
 let tmp: string;
@@ -178,23 +180,111 @@ describe('caps and guards', () => {
     expect((await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).aborted).toBeNull();
   });
 
-  it('trips the churn guard after repeated re-embedding, and an explicit build clears it', async () => {
+  const unthrottle = (): void => {
+    const m = readVectorMeta(root, 'voyage-4')!;
+    m.lastAutoStartAt = null;
+    writeFileSync(join(root, '.embeddings', 'voyage-4.meta.json'), JSON.stringify(m));
+  };
+
+  it('reports repeated re-embedding but never pauses an automatic build; an explicit build resets the count', async () => {
     const docs = corpus(3);
     await buildCloudIndex(root, 'voyage-4', docs, base);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       rmSync(join(root, '.embeddings', 'voyage-4.json'));
       rmSync(join(root, '.embeddings', 'voyage-4.f32'));
-      await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' }).catch(() => undefined);
-      const m = readVectorMeta(root, 'voyage-4')!;
-      m.lastAutoStartAt = null;
-      writeFileSync(join(root, '.embeddings', 'voyage-4.meta.json'), JSON.stringify(m));
+      fetchSpy.mockClear();
+      const r = await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' });
+      // owner 2026-11-12: the index never stops on its own judgement, the spend caps hold money
+      expect(r.aborted).toBeNull();
+      expect(sentInputs()).toBe(3);
+      unthrottle();
     }
-    expect(readVectorMeta(root, 'voyage-4')!.churnStrikes).toBeGreaterThanOrEqual(3);
-    fetchSpy.mockClear();
-    expect((await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).aborted).toBe('churn_guard');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const m = readVectorMeta(root, 'voyage-4')!;
+    expect(m.churnStrikes).toBe(4);
+    expect(m.lastChurn).toMatchObject({ embedded: 3, reembedded: 3 });
+    expect(recallCloudStatus(root, home).churn).toEqual({ strikes: 4, embedded: 3, reembedded: 3 });
     expect((await buildCloudIndex(root, 'voyage-4', docs, base)).aborted).toBeNull();
     expect(readVectorMeta(root, 'voyage-4')!.churnStrikes).toBe(0);
+  });
+
+  it('migrates strikes counted before unique doc keys: a vault paused at 3 builds on the next automatic run, as a baseline', async () => {
+    const docs = corpus(3);
+    await buildCloudIndex(root, 'voyage-4', docs, base);
+    const m = readVectorMeta(root, 'voyage-4')! as unknown as Record<string, unknown>;
+    m.churnStrikes = 3;
+    delete m.churnRule;
+    delete m.lastChurn;
+    writeFileSync(join(root, '.embeddings', 'voyage-4.meta.json'), JSON.stringify(m));
+    expect(recallCloudStatus(root, home).churn).toBeNull();
+    // the collision's evicted rows come back: all re-embedded, yet the baseline build is no strike
+    rmSync(join(root, '.embeddings', 'voyage-4.json'));
+    rmSync(join(root, '.embeddings', 'voyage-4.f32'));
+    expect((await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).aborted).toBeNull();
+    expect(readVectorMeta(root, 'voyage-4')).toMatchObject({ churnStrikes: 0, churnRule: 2 });
+  });
+
+  it('keeps two tasks\' same-named side files indexed: a second automatic build embeds nothing', async () => {
+    const side = (task: string, body: string): CorpusDoc => {
+      const d = mkDoc('plan-r1', body, 'task', join(root, 'state', 'assets', task));
+      return { ...d, relPath: `state/assets/${task}/plan-r1.md` };
+    };
+    const docs = [side('alpha-task', 'alpha plan round one body'), side('beta-task', 'beta plan round one body'), ...corpus(2)];
+    expect((await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).embedded).toBe(4);
+    const keys = new Set(loadVectorIndex(root, 'voyage-4')!.chunks.map((c) => c.docKey));
+    expect(keys).toContain('task/assets/alpha-task/plan-r1');
+    expect(keys).toContain('task/assets/beta-task/plan-r1');
+    unthrottle();
+    fetchSpy.mockClear();
+    expect(await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).toMatchObject({ embedded: 0, reused: 4, aborted: null });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(readVectorMeta(root, 'voyage-4')!.churnStrikes).toBe(0);
+  });
+
+  it('a capped automatic build marks the index stale and tells the owner once; the next landed build clears both', async () => {
+    const docs = corpus(2);
+    await buildCloudIndex(root, 'voyage-4', docs, base);
+    recordCloudUsage(root, 'index', 5, { auto: true }, home);
+    const project = join(root, '..');
+    const rows = () => listInboxRows(project, home).filter((r) => r.kind === 'recall-index-stopped');
+    for (let i = 0; i < 2; i++) {
+      expect((await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' })).aborted).toBe('daily_index_cap');
+    }
+    expect(readIndexStop(root)).toMatchObject({ reason: 'daily_index_cap', asOf: readVectorMeta(root, 'voyage-4')!.updatedAt });
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0].actions).toEqual(['update-index', 'dismiss']);
+    // dismissed: a further stopped build of the same run raises nothing again
+    closeInboxRows(project, () => true, home);
+    await buildCloudIndex(root, 'voyage-4', docs, { ...base, trigger: 'auto' });
+    expect(rows()).toHaveLength(0);
+    expect(recallCloudStatus(root, home).indexStop).toMatchObject({ reason: 'daily_index_cap' });
+    // the owner's Update is an explicit build: past the rolling cap, it lands and clears the stale state
+    expect((await buildCloudIndex(root, 'voyage-4', docs, base)).aborted).toBeNull();
+    expect(readIndexStop(root)).toBeNull();
+    expect(recallCloudStatus(root, home).indexStop).toBeNull();
+  });
+
+  it('a failing automatic build keeps the stale date at the last landing, and a failed Update raises the row again', async () => {
+    const docs = corpus(2);
+    await buildCloudIndex(root, 'voyage-4', docs, base);
+    const landed = readVectorMeta(root, 'voyage-4')!.updatedAt;
+    const project = join(root, '..');
+    const rows = () => listInboxRows(project, home).filter((r) => r.kind === 'recall-index-stopped');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('no', { status: 401 })));
+    const more = [...docs, mkDoc('fresh', 'a new doc that needs embedding')];
+    for (let i = 0; i < 2; i++) {
+      await expect(buildCloudIndex(root, 'voyage-4', more, { ...base, trigger: 'auto' })).rejects.toMatchObject({ kind: 'auth' });
+      unthrottle();
+    }
+    // persist() stamped a fresh updatedAt on each failed build; the stop stays as of the real landing
+    expect(readVectorMeta(root, 'voyage-4')!.updatedAt).not.toBe(landed);
+    expect(readIndexStop(root)).toMatchObject({ reason: 'failed', error: 'auth', asOf: landed });
+    expect(rows()).toHaveLength(1);
+    // his Update (re-armed, row kept open) fails again: the row is raised, never silent
+    rearmIndexStop(root);
+    closeInboxRows(project, () => true, home);
+    await expect(buildCloudIndex(root, 'voyage-4', more, base)).rejects.toMatchObject({ kind: 'auth' });
+    expect(rows()).toHaveLength(1);
+    expect(readIndexStop(root)!.asOf).toBe(landed);
   });
 
   it('allows one build per vault (lock_busy)', async () => {

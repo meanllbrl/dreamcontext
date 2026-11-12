@@ -32,12 +32,15 @@ export type InboxKind =
   | 'task-question'
   | 'task-stalled'
   | 'task-review'
-  | 'task-stuck';
+  | 'task-stuck'
+  /** The automatic cloud recall index stopped updating (a spend cap, a failure): Update runs it (embeddings/index-stop.ts). */
+  | 'recall-index-stopped';
 
 export type InboxAction =
   | 'start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
   | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over'
-  | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back';
+  | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back'
+  | 'update-index';
 
 export interface InboxRow {
   id: string;

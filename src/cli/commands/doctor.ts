@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { recallCloudStatus } from '../../lib/recall-cloud-config.js';
+import { churnSentence, indexStopSentence, recallCloudStatus } from '../../lib/recall-cloud-config.js';
 import { cloudIndexReady } from '../../lib/embeddings/vector-store.js';
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -838,7 +838,8 @@ export function checkObjectives(root: string): CheckResult[] {
  */
 /**
  * Cloud recall tier: where the vault stands (local by default), and anything an owner should look at —
- * a grant made from the dashboard, a stale consent, a missing key, a tripped churn guard, an unbuilt index.
+ * a grant made from the dashboard, a stale consent, a missing key, an index that stopped updating, an
+ * unbuilt index. Churn is reported with its evidence; it never pauses anything.
  */
 export function checkRecallTier(root: string, home?: string): CheckResult[] {
   const name = 'Recall tier';
@@ -849,7 +850,8 @@ export function checkRecallTier(root: string, home?: string): CheckResult[] {
   if (st.consent === 're-consent-required') problems.push('consent is stale (the disclosure changed): run `dreamcontext recall cloud enable <tier>` again');
   if (!st.key) problems.push('consented, but no recall key is set, so recall runs on the local tier');
   if (st.consentSurface === 'dashboard') problems.push('consent was granted from the dashboard: confirm that was you (~/.dreamcontext/recall-cloud-audit.log)');
-  if (st.churnGuard) problems.push('the churn guard paused automatic index builds: run `dreamcontext recall cloud index` yourself');
+  if (st.indexStop) problems.push(`the meaning index is stale: ${indexStopSentence(st.indexStop)}`);
+  if (st.churn) problems.push(`churn noticed: ${churnSentence(st.churn)}`);
   if (st.consent === 'valid' && !cloudIndexReady(root, 'voyage-4')) problems.push('the cloud index is not built yet: run `dreamcontext recall cloud index`');
   if (problems.length === 0) return [{ name, status: 'ok', message: `${st.tier} (consent via ${st.consentSurface}, key ${st.keySource})` }];
   return [{
@@ -857,7 +859,7 @@ export function checkRecallTier(root: string, home?: string): CheckResult[] {
     status: 'warn',
     message: `${st.tier}: ${problems.join('; ')}`,
     code: 'doctor/recall-tier',
-    evidence: { tier: st.tier, consent: st.consent, surface: st.consentSurface, key: st.key, churnGuard: st.churnGuard },
+    evidence: { tier: st.tier, consent: st.consent, surface: st.consentSurface, key: st.key, indexStop: st.indexStop, churn: st.churn },
     supportedFixes: [fix],
   }];
 }

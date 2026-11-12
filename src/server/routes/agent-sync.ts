@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { INDEX_STOP_INBOX_KIND, readIndexStop, rearmIndexStop } from '../../lib/embeddings/index-stop.js';
+import { recallCloudRoutes, requireLocalDashboardWrite } from './recall-cloud.js';
 import { dirname } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner } from './owner-guard.js';
@@ -174,6 +176,27 @@ async function completeDeliveryAction(contextRoot: string, slug: string): Promis
   return { ok: true };
 }
 
+/**
+ * The owner's Update on a stopped cloud index. His press is the human gate an automatic build lacks:
+ * an explicit build, past the rolling 24 h cap; a per-build cap stop gets its named estimate (+25%) as
+ * this one build's cap. Only the local dashboard may press it. The stop is re-armed, so a build that
+ * stops again raises his row again instead of going quiet.
+ */
+export function answerIndexUpdate(
+  req: IncomingMessage,
+  contextRoot: string,
+  kick: (root: string, o?: { maxUsd?: number }) => null | 'not_consented',
+): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  if (!requireLocalDashboardWrite(req)) return { ok: false, status: 403, code: 'forbidden', message: 'Only the local dashboard can start an index update.' };
+  const stop = readIndexStop(contextRoot);
+  const maxUsd = stop?.reason === 'max_usd' && stop.estUsd !== null ? stop.estUsd * 1.25 : undefined;
+  if (kick(contextRoot, maxUsd !== undefined ? { maxUsd } : {}) === 'not_consented') {
+    return { ok: false, status: 409, code: 'not_consented', message: 'Cloud recall is off for this vault, so there is no index to update.' };
+  }
+  rearmIndexStop(contextRoot);
+  return { ok: true };
+}
+
 export async function handleAgentsInboxAction(
   req: IncomingMessage,
   res: ServerResponse,
@@ -201,6 +224,13 @@ export async function handleAgentsInboxAction(
         return;
       }
       resolveInboxRow(projectRoot, row.id);
+      sendJson(res, 200, { ok: true, rows: listInboxRows(projectRoot) });
+      return;
+    }
+    if (row.kind === INDEX_STOP_INBOX_KIND && action === 'update-index') {
+      const answer = answerIndexUpdate(req, contextRoot, recallCloudRoutes.kick);
+      if (!answer.ok) { sendError(res, answer.status, answer.code, answer.message); return; }
+      // Not resolved: the row goes when the build lands (index-stop.ts clearIndexStop).
       sendJson(res, 200, { ok: true, rows: listInboxRows(projectRoot) });
       return;
     }
