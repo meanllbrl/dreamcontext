@@ -43,6 +43,7 @@ const LEDGER_DIR = dirname(fileURLToPath(import.meta.url));
 
 const SLEEP_SHARED_HOMES = [
   'skill/references/sleep-specialists.md',
+  'skill/references/sleep-conditional.md',
   'skill/references/sleep.md',
   '_dream_context/knowledge/features/sleep-fanout-architecture.md',
   '_dream_context/knowledge/features/sleep-consolidation.md',

@@ -364,30 +364,35 @@ export function renderNudge(
   opts: { superAgent?: boolean; child?: SuperChildContext } = {},
 ): string {
   const slug = activeSlug || '<task-slug>';
+  // A Super child with no task hands off into its JOB RECORD, never a new task (audit TK-3): a
+  // child never files one (agent-filing-guard.ts), so "create one" would only meet a refusal.
+  const jobRecord = !opts.superAgent && !activeSlug && !!opts.child;
   // The Super Agent hands off into its own FILE, never a task (super/handoff-file.ts).
-  const into = opts.superAgent ? 'your handoff file' : 'the task';
+  const into = opts.superAgent ? 'your handoff file' : jobRecord ? 'your last reply to the Super' : 'the task';
   const next = Math.max(contextTokens, cfg.nudgeAt) + cfg.remindEvery;
   // ONE command carrying every part. It refuses while any part is missing (see
   // lib/handoff-readiness.ts) — the old two-step `log` then `handoff` let a session pin
   // the task having skipped the log.
   const steps = opts.superAgent
     ? [`  ${superHandoffCommand(HANDOFF_FIELDS)}`]
-    : [
-      `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
-      activeSlug
-        ? ''
-        : opts.child
-          // A Super child never borrows the brain's newest task: that is somebody else's job.
-          // A job with no task is small work, which needs none (owner, 2026-11-09); only work
-          // too big for one session earns its one task, here.
-          ? '  (your job has no task: small work finishes in this session; work too big for it is big work, so `dreamcontext tasks create "<your job>"` then hand off into it)'
-          : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
-    ];
+    : jobRecord
+      // A job with no task is small work (owner, 2026-11-09). Its record is the brief file and the
+      // Super's job row, which reads the child's last reply.
+      ? [`  (your job has no task, and a Super child never opens one: finish small work in this session. If it cannot finish here, end your turn with your whole state in your reply: what is done with its evidence, the exact next step, the decisions made, the files in flight, and the path of the brief file you were given. The Super reads that reply and resumes or re-delegates the job. If the work turned out big, say so: the Super opens its ONE task.)`]
+      : [
+        `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
+        activeSlug
+          ? ''
+          // No task is small work, which needs none (owner, 2026-11-09): never "create one first".
+          : '  (no task is in progress: skip the handoff and keep going, or ask the owner whether this work is big enough for a task; only big work gets one)',
+      ];
   const written = opts.superAgent
     ? 'It writes all of that into your handoff file as one entry and refuses while any part is missing; a fresh session opens on the same stage and reads that file first.'
-    : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
+    : jobRecord
+      ? 'Nothing is pinned: the Super keeps this job and its brief, and a fresh session starts from what your reply says.'
+      : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
 
-  const childLine = opts.child ? superChildNudgeLine(opts.child) : '';
+  const childLine = opts.child ? superChildNudgeLine(opts.child, jobRecord) : '';
   const lines = tone === 'severe'
     ? [
       `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
@@ -403,7 +408,7 @@ export function renderNudge(
     : [
       `[context handoff] This session is carrying ~${k(contextTokens)} context tokens, past the ${k(cfg.nudgeAt)} handoff threshold. Every further turn re-reads all of it, so the same remaining work costs roughly 2–3× more from here than it would in a fresh session.`,
       '',
-      `Hand off unless you have a reason not to — write your whole state into ${into} in one command:`,
+      `Hand off unless you have a reason not to — write your whole state into ${into}${jobRecord ? '' : ' in one command'}:`,
       ...steps,
       written,
       childLine,
@@ -419,10 +424,13 @@ export function renderNudge(
  * the row stay, the Super keeps it as the same child) but in the brain's folder and without the
  * Super's first message, so what that message said has to ride in --next.
  */
-export function superChildNudgeLine(child: SuperChildContext): string {
+export function superChildNudgeLine(child: SuperChildContext, noTask = false): string {
   const where = child.worktree
     ? ` It is told to work in ${child.worktree}${child.branch ? ` on branch ${child.branch}` : ''}.`
     : '';
+  if (noTask) {
+    return `You are a Super Agent's child: your job's record is your brief and the Super's job row, never a task.${where} Put in your reply anything from the Super's first message a fresh session still needs.`;
+  }
   return `You are a Super Agent's child: hand off into YOUR job's task, never another one. A fresh session continues in this same pane, and the Super keeps it as the same child.${where} Put in --next the brief file you were given and anything from the Super's first message it still needs.`;
 }
 

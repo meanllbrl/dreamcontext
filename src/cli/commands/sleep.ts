@@ -1,7 +1,7 @@
 import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
-import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
 import { countFindings } from '../../lib/apps/learn-queue.js';
@@ -40,12 +40,23 @@ import { classifySyncError } from '../../lib/git-sync/failure.js';
 import { resolveBrainSyncToken, resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { renderBrainSyncResult } from './brain.js';
-import { buildCorpus } from '../../lib/recall.js';
-import { refreshEmbeddings, embeddingCacheUsable } from '../../lib/embeddings/store.js';
+import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
+import { embeddingCacheUsable } from '../../lib/embeddings/store.js';
 import { recallCloudStatus } from '../../lib/recall-cloud-config.js';
 import { spawnCloudIndexRefresh } from '../../lib/recall-cloud-index-spawn.js';
 import { registerRecallCloudCommands } from './recall-cloud.js';
-import { loadProjectVocabulary, auditCorpus } from '../../lib/taxonomy.js';
+import { loadProjectVocabulary, auditCorpus, ensureTaxonomyFile } from '../../lib/taxonomy.js';
+import { runTaxonomyFix, isFixExcluded } from './taxonomy.js';
+import {
+  specialistDispatchTable,
+  renderDispatchTable,
+  createPhaseTimer,
+  spawnEmbeddingRefresh,
+  readTaskQueueDepth,
+  isSyncAuthFailure,
+  isTokenRefused,
+  renderStaleRemoteLine,
+} from '../../lib/sleep-cycle-tools.js';
 import {
   readSleepFlags,
   writeSleepFlags,
@@ -59,6 +70,31 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { buildSleepPacket, renderSleepPacket, renderSleepBoard, writeSleepPacket, PACKET_MD_REL, PACKET_BOARD_REL, type SleepPacket } from '../../lib/sleep-packet.js';
+import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { getExistingReleases } from '../../lib/release-discovery.js';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
+import { listPeople } from '../../lib/people-store.js';
+import { isLearningEnabled } from '../../lib/setup-config.js';
+import type { TaskData } from '../../lib/task-backend/types.js';
+import {
+  readCycleReport,
+  recordCycleFlag,
+  recordNoFlags,
+  recordCycleAsks,
+  consumeCycleReport,
+  CYCLE_REPORT_REL,
+} from '../../lib/sleep-cycle-report.js';
+import { auditFeatureLinks } from '../../lib/feature-links.js';
+import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { writeRoadmapBoard } from './roadmap.js';
+import { runRemSleep } from '../../lib/marketing/rem-sleep.js';
+import { withLock as withMarketingLock } from '../../lib/marketing/store.js';
+import { loadCouncilIndex } from '../../lib/council.js';
+import { compactFeature, cutoffDate, oversizedPrds } from '../../lib/feature-compact.js';
+import { featuresDir, featureSlug } from '../../lib/features-path.js';
+import fg from '../../lib/glob.js';
+import { sortByOrder } from '../../lib/task-status.js';
 import { RULES_REL_PATH, readRules, unlearnedIds } from '../../lib/task-filing-rules.js';
 import { appliedObjectionIds, readObjectionsStrict, type ObjectionRecord } from '../../lib/task-objection.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
@@ -76,6 +112,8 @@ import {
   applyConsolidation,
   buildHistoryEntry,
   finalizeSleepState,
+  outputsBoundary,
+  nextOutputsBoundary,
   validateSleepAdd,
   consolidationDepth,
   catchupDebtSplit,
@@ -127,6 +165,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
 
 function getSleepPath(root: string): string {
   return join(root, 'state', '.sleep.json');
@@ -345,6 +384,170 @@ export function filingRulesBrief(root: string): { lines: string[]; json: Record<
   };
 }
 
+/** True when `dir` is a checkout of dreamcontext itself (its package.json names the package). */
+function isDreamcontextCheckout(dir: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')) as { name?: unknown };
+    return pkg.name === 'dreamcontext';
+  } catch {
+    return false;
+  }
+}
+
+/** The pending automation outputs and the apps with findings, as `sleep start` reports them. */
+function pendingSignals(root: string, state: SleepState): { outputs: number; appFindings: Array<{ slug: string; count: number }> } {
+  let outputs = 0;
+  try { outputs = pendingOutputsSince(root, outputsBoundary(state)).outputs.length; } catch { outputs = 0; }
+  let appFindings: Array<{ slug: string; count: number }> = [];
+  try {
+    appFindings = listApps(homedir(), dirname(root))
+      .map((a) => ({ slug: a.slug, count: countFindings(homedir(), a.hash) }))
+      .filter((a) => a.count > 0);
+  } catch { appFindings = []; }
+  return { outputs, appFindings };
+}
+
+/**
+ * SL-1 — gather everything the sleep packet needs and build it. Read-only. The review-kind
+ * tasks are read in full (criteria and changelog); every other task only as its listing row.
+ */
+export async function collectSleepPacket(root: string, opts: { filingRules?: string[]; outputs?: number; appFindings?: number } = {}): Promise<SleepPacket> {
+  const state = readSleepState(root);
+  const projectRoot = dirname(root);
+  const backend = getTaskBackend(root);
+  const statuses = loadStatuses(root);
+  const tasks = await backend.list({ all: true, statuses });
+  const reviewKeys = new Set(statuses.filter((d) => d.kind === 'review').map((d) => d.key));
+  const reviewTasks: TaskData[] = [];
+  for (const t of tasks) {
+    if (!reviewKeys.has(t.status)) continue;
+    const full = await backend.get(basename(t.file, '.md')).catch(() => null);
+    if (full) reviewTasks.push(full);
+  }
+  const repos: Array<{ name: string; path: string }> = [{ name: 'project', path: projectRoot }];
+  try {
+    for (const r of resolveLinkedRepos(projectRoot)) if (r.present && r.path) repos.push({ name: r.name, path: r.path });
+  } catch { /* the project alone */ }
+  let people = 0;
+  try { people = listPeople(root).length; } catch { people = 0; }
+  const signals = opts.outputs === undefined || opts.appFindings === undefined ? pendingSignals(root, state) : null;
+  return buildSleepPacket({
+    contextRoot: root,
+    state,
+    history: readSleepHistory(root),
+    tasks,
+    reviewTasks,
+    statuses,
+    releases: getExistingReleases(root).map((r) => ({ version: r.version, status: r.status ?? 'released' })),
+    // "Installed" means at or below the running CLI, which is only true of dreamcontext's own
+    // brain: any other project's 0.2.0 is not shipped because the CLI is 0.41. Elsewhere only a
+    // released entry in RELEASES.json counts.
+    runningVersion: repos.some((r) => isDreamcontextCheckout(r.path)) ? dreamcontextVersion() : null,
+    activeVersion: getActivePlanningVersion(root),
+    filingRules: opts.filingRules ?? filingRulesBrief(root).lines,
+    repos,
+    people,
+    automationOutputs: opts.outputs ?? signals!.outputs,
+    appFindings: opts.appFindings ?? signals!.appFindings.reduce((a, b) => a + b.count, 0),
+    learning: isLearningEnabled(readSetupConfig(projectRoot)),
+  });
+}
+
+/** SL-4: what `sleep done` compacts — PRDs over this size, entries older than this, newest kept. */
+export const PRD_COMPACT_MIN_CHARS = 20_000;
+export const PRD_COMPACT_DAYS = 30;
+export const PRD_COMPACT_KEEP = 5;
+
+/** The steps after the specialists that need judgment, printed by `sleep start` (SL-3). */
+export function remainingChecklist(): string[] {
+  return [
+    'After the specialists (their reports record flags and asks themselves: `sleep flag add|none`, `sleep asks set`):',
+    '  1. `dreamcontext reflect`: promote a candidate only when it is load-bearing.',
+    '  2. `dreamcontext sleep done "<summary>"` (+ `--product-ran` when sleep-product ran). It runs the roadmap refresh, the feature-link audit, PRD compaction, `mk rem-sleep` and the council count itself.',
+    '  3. Report: relay what `sleep done` printed (escalations, ready-to-close, link drift, slipping objectives, unpromoted debates).',
+  ];
+}
+
+/**
+ * SL-3/SL-4 — the deterministic steps of the flow's tail, run by `sleep done` itself instead of left
+ * to an orchestrator that skipped them in most runs. Each is best-effort and says what it did.
+ * The feature-link step only AUDITS: its heal drops `related_tasks` entries whose task file is
+ * absent, and a delete is never inferred from absence inside an unattended step
+ * (knowledge/patterns/a-delete-is-never-inferred-from-absence.md). It prints the command instead.
+ */
+export async function runSleepTail(root: string, say: { info: (m: string) => void; warn: (m: string) => void }): Promise<void> {
+  try {
+    const objectivesDir = join(root, 'core', 'objectives');
+    if (existsSync(objectivesDir) && readdirSync(objectivesDir).some((f) => f.endsWith('.md'))) {
+      const model = buildRoadmapModel(root);
+      writeRoadmapBoard(root, model);
+      const slipping = model.objectives.filter((o) => o.slipping === true).map((o) => o.slug);
+      say.info(`Roadmap refreshed: ${model.objectives.length} objective(s)${slipping.length ? `, SLIPPING: ${slipping.join(', ')}` : ', none slipping'}.`);
+    }
+  } catch (err) {
+    say.warn(`Roadmap refresh: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    const a = auditFeatureLinks(root);
+    const fixable = a.nonCanonicalFeatureRefs.length + a.missingBackRefs.length + a.missingMemberships.length;
+    const drops = a.ghostTaskRefs.length + a.foreignClaims.length;
+    const human = a.ghostFeatureRefs.length + a.conflictingClaims.length;
+    if (fixable + drops + human > 0) {
+      say.warn(
+        `Feature links: ${fixable} to add or canonicalize, ${drops} to drop (a task file missing or claimed by another feature), ${human} for a human. ` +
+        'Review and fix with `dreamcontext doctor --heal-links` (sleep does not drop links on its own).',
+      );
+    }
+  } catch (err) {
+    say.warn(`Feature-link audit: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    if (existsSync(join(root, 'marketing'))) {
+      const r = await withMarketingLock(async () => runRemSleep({}));
+      if (r.marketingPresent) {
+        say.info(
+          `Marketing rem-sleep: runs kept ${r.runs.kept}, removed ${r.runs.deleted}; insights kept ${r.insights.kept}, removed ${r.insights.deleted}; ` +
+          `learnings merged ${r.learnings.merged}; redacted ${r.redaction.rewritten}.`,
+        );
+        for (const f of [...r.runs.deletedFiles, ...r.insights.deletedFiles].slice(0, 20)) say.info(`  removed ${f}`);
+      }
+    }
+  } catch (err) {
+    say.warn(`Marketing rem-sleep: skipped — ${(err as Error).message ?? err}`);
+  }
+  // SL-4 — PRDs over 20K chars move their Changelog entries older than 30 days (the newest 5
+  // always stay) into knowledge/archive/features/, archive written and read back first.
+  try {
+    const dir = featuresDir(root);
+    const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true, followSymbolicLinks: false }) : [];
+    const big = oversizedPrds(files.map((f) => ({ feature: featureSlug(dir, f), path: f })), PRD_COMPACT_MIN_CHARS);
+    const cutoff = cutoffDate(new Date(), PRD_COMPACT_DAYS);
+    let moved = 0;
+    for (const t of big) {
+      try {
+        const r = compactFeature(root, t.feature, t.path, { cutoff, keepNewest: PRD_COMPACT_KEEP, today: today() });
+        if (r.moved > 0) {
+          moved += r.moved;
+          say.info(`PRD compacted: ${t.feature} moved ${r.moved} changelog entr${r.moved === 1 ? 'y' : 'ies'} (${r.movedChars} chars) → ${r.archives.map((a) => a.slice(root.length + 1)).join(', ')}`);
+        }
+      } catch (err) {
+        say.warn(`PRD compaction: ${t.feature} left as it was — ${(err as Error).message ?? err}`);
+      }
+    }
+    if (big.length > 0 && moved === 0) say.info(`PRDs over ${PRD_COMPACT_MIN_CHARS} chars: ${big.length}, none with changelog entries older than ${PRD_COMPACT_DAYS} days to move.`);
+  } catch (err) {
+    say.warn(`PRD compaction: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    const unpromoted = loadCouncilIndex().filter((e) => e.status === 'complete' && !e.promoted_to_knowledge);
+    if (unpromoted.length > 0) {
+      say.info(`Council: ${unpromoted.length} finished debate(s) not promoted to knowledge (\`dreamcontext council list --unpromoted\`): promote one only if the owner engaged with it.`);
+    }
+  } catch (err) {
+    say.warn(`Council check: skipped — ${(err as Error).message ?? err}`);
+  }
+}
+
 export function registerSleepCommand(program: Command): void {
   const sleep = program
     .command('sleep')
@@ -452,7 +655,7 @@ export function registerSleepCommand(program: Command): void {
     .option('--deep', 'Force a deep consolidation (authorizes destructive knowledge ops)')
     .option('--force', 'Take over an in-progress consolidation lock (a stuck or parallel sleep)')
     .option('--json', 'Emit as JSON (suppresses the human-readable lines below)')
-    .action((opts: { deep?: boolean; force?: boolean; json?: boolean }) => {
+    .action(async (opts: { deep?: boolean; force?: boolean; json?: boolean }) => {
       const root = ensureContextRoot();
       // --json mirrors the `automations tick --json` convention elsewhere in
       // this CLI: suppress the human-readable success/info/warn lines below and
@@ -616,7 +819,7 @@ export function registerSleepCommand(program: Command): void {
         // during its own wave), so `shared` is attached HERE by
         // cross-referencing `listAutomations()`, now that the store module
         // has landed.
-        const pending = pendingOutputsSince(root, state.last_consolidated_at);
+        const pending = pendingOutputsSince(root, outputsBoundary(state));
         const sharedBySlug = new Map(listAutomations(root).map((m) => [m.slug, m.shared]));
         const automationOutputs = {
           outputs: pending.outputs.map((o) => ({ ...o, shared: sharedBySlug.get(o.slug) ?? false })),
@@ -626,7 +829,7 @@ export function registerSleepCommand(program: Command): void {
         if (automationOutputs.outputs.length > 0 || automationOutputs.skipped.length > 0) {
           const slugs = [...new Set(automationOutputs.outputs.map((o) => o.slug))].sort();
           const slugSuffix = slugs.length > 0 ? ` (${slugs.join(', ')})` : '';
-          say.info(`Automation outputs pending consolidation: ${automationOutputs.outputs.length}${slugSuffix}.`);
+          say.info(`Automation outputs pending consolidation: ${automationOutputs.outputs.length}${slugSuffix}. Fire sleep-product, then close with \`sleep done --product-ran\` (without it these outputs stay pending for the next cycle).`);
           // No silent caps: every dropped file is named, never just absent.
           for (const s of automationOutputs.skipped) {
             say.warn(`  skipped ${s.slug} (${s.reason}): ${s.path}`);
@@ -654,6 +857,72 @@ export function registerSleepCommand(program: Command): void {
           if (line.startsWith('!')) say.warn(line.slice(1)); else say.info(line);
         }
 
+        // SL-6 — the taxonomy pass is deterministic, so it runs HERE at zero tokens
+        // instead of as specialist turns at peak context: scaffold the vocabulary,
+        // apply the safe alias rewrites (never inside knowledge/archive/), and hand
+        // sleep-product only what needs judgment, the orphan tags. Best-effort.
+        let taxonomy: { created: boolean; rewrites: number; files: number; orphans: Array<{ tag: string; count: number }> } | null = null;
+        try {
+          const created = ensureTaxonomyFile(root);
+          const vocab = loadProjectVocabulary(root);
+          // The mtime-validated cache: a warm brain pays milliseconds, not a full parse.
+          const corpus = buildCorpusCached(root);
+          const fix = runTaxonomyFix(root, vocab, true, corpus);
+          // Re-read after the rewrite so the orphan count is what is left now.
+          const after = fix.files.length > 0 ? buildCorpusCached(root) : corpus;
+          // Archives are frozen, so their tags are nobody's decision: left out of the list.
+          const live = after.filter((d) => !isFixExcluded(d.relPath));
+          const buckets = auditCorpus(live.map((d) => ({ slug: d.slug, tags: d.tags })), loadProjectVocabulary(root));
+          const counts = new Map<string, number>();
+          for (const t of buckets.orphan) counts.set(t, (counts.get(t) ?? 0) + 1);
+          const orphans = [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+          taxonomy = { created, rewrites: fix.totalRewrites, files: fix.files.length, orphans };
+          const head = orphans.slice(0, 12).map((o) => `${o.tag} (${o.count})`).join(', ');
+          say.info(
+            `Taxonomy done${created ? ' (core/taxonomy.json created)' : ''}: ${fix.totalRewrites} tag(s) normalized in ${fix.files.length} file(s). ` +
+            (orphans.length > 0
+              ? `${orphans.length} orphan tag(s) need a vocab decision; pass this list to sleep-product: ${head}${orphans.length > 12 ? ', …' : ''}.`
+              : 'No orphan tags.'),
+          );
+        } catch (err) {
+          say.warn(`Taxonomy pass: skipped — ${(err as Error).message ?? err}`);
+        }
+
+        // SL-12 — what each specialist runs on. The dispatcher passes exactly
+        // this; a habit of passing one model to every sub-agent would otherwise
+        // override the pins the brain chose in Settings › Sleep.
+        const dispatch = specialistDispatchTable(projectRoot);
+        for (const line of renderDispatchTable(dispatch)) say.info(line);
+
+        // SL-3 — an unfinished cycle's report is carried, never wiped: its observations are
+        // still observations. Then the steps left after the specialists.
+        const carried = readCycleReport(root);
+        if (carried.reported_by.length > 0 || carried.asks) {
+          say.info(`Carried from an unfinished cycle: ${carried.flags.length} flag(s) recorded by ${carried.reported_by.join(', ') || 'nobody'} (${CYCLE_REPORT_REL}); sleep done reads them with this cycle's.`);
+        }
+        for (const line of remainingChecklist()) say.info(line);
+
+        // SL-1 — the packet: what every specialist used to rebuild by hand (sessions oldest →
+        // newest with every owner-typed turn, the open board, ready-to-close, git, flags, and
+        // the facts that switch prompt sections off). Best-effort: without it the specialists
+        // fall back to building their input themselves, and the line says so.
+        let packetPath: string | null = null;
+        try {
+          const packet = await collectSleepPacket(root, {
+            filingRules: filingRules.lines,
+            outputs: automationOutputs.outputs.length,
+            appFindings: appFindings.reduce((a, b) => a + b.count, 0),
+          });
+          packetPath = writeSleepPacket(root, packet).md;
+          say.info(
+            `Sleep packet: _dream_context/${PACKET_MD_REL} (${packet.sessions.length} session(s) oldest to newest with the owner's turns, git, flags) ` +
+            `and _dream_context/${PACKET_BOARD_REL} (${packet.board.open.length} open task(s), ${packet.ready_to_close.length} ready to close). ` +
+            'Give both paths to every specialist (the board matters to sleep-tasks); they read them instead of rebuilding them.',
+          );
+        } catch (err) {
+          say.warn(`Sleep packet: not written — ${(err as Error).message ?? err}. Specialists build their input by hand this cycle.`);
+        }
+
         if (asJson) {
           console.log(JSON.stringify({
             epoch: state.sleep_started_at,
@@ -665,6 +934,9 @@ export function registerSleepCommand(program: Command): void {
             automationOutputs,
             appFindings,
             filingRules: filingRules.json,
+            taxonomy,
+            dispatch,
+            packet: packetPath,
           }, null, 2));
         }
       } finally {
@@ -672,6 +944,89 @@ export function registerSleepCommand(program: Command): void {
         // or throw). The durable epoch — not this file — carries the lock onward.
         releaseFileLock(startLockPath);
       }
+    });
+
+  // --- flag (SL-3: specialists record their own observations) ---
+  const flag = sleep
+    .command('flag')
+    .description('Record a recurring problem this cycle observed (specialists run this themselves; sleep done reads it)');
+  flag
+    .command('add')
+    .argument('<key>', 'Stable key, byte-identical every cycle: recurring-task:<slug>, ceiling-blocked:<file>, task-candidate:<topic>, …')
+    .argument('<label...>', 'One line: what recurred and the evidence')
+    .option('--task <slug>', 'The task this flag escalates (none for a task-candidate)')
+    .option('--by <specialist>', 'Who observed it (sleep-tasks, sleep-state, sleep-product, …)', 'agent')
+    .action((key: string, labelParts: string[], opts: { task?: string; by: string }) => {
+      const root = ensureContextRoot();
+      const parsed = parseFlagOption(`${key}::${labelParts.join(' ')}${opts.task ? `::${opts.task}` : ''}`);
+      if (!parsed || /\s/.test(parsed.key)) {
+        error('A flag needs a key without spaces and a label.', 'Example: dreamcontext sleep flag add recurring-task:fix-x "still todo after 3 cycles" --task fix-x --by sleep-tasks');
+        process.exitCode = 1;
+        return;
+      }
+      const r = recordCycleFlag(root, parsed, opts.by);
+      success(`Flag recorded: ${parsed.key} (${r.flags.length} this cycle). sleep done tracks the streak.`);
+    });
+  flag
+    .command('none')
+    .description('Say you looked and nothing recurred (so a cycle with no flags still counts as reported)')
+    .option('--by <specialist>', 'Who looked', 'agent')
+    .action((opts: { by: string }) => {
+      const root = ensureContextRoot();
+      recordNoFlags(root, opts.by);
+      success(`Recorded: ${opts.by} reported no recurring problem this cycle.`);
+    });
+  flag
+    .command('list')
+    .description('This cycle\'s recorded flags and the streaks kept so far')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const cycle = readCycleReport(root);
+      const kept = readSleepFlags(root);
+      if (opts.json) { console.log(JSON.stringify({ cycle, kept }, null, 2)); return; }
+      console.log(header('This cycle'));
+      console.log(`  reported by: ${cycle.reported_by.join(', ') || 'nobody yet'}`);
+      for (const f of cycle.flags) console.log(`  ${f.key} · ${f.label}${f.task_slug ? ` · ${f.task_slug}` : ''} (${f.by})`);
+      console.log(header('Streaks'));
+      if (kept.length === 0) console.log(chalk.dim('  none'));
+      for (const f of kept) console.log(`  ${f.key} · ${f.consecutive_cycles} cycle(s) · ${f.label}`);
+    });
+
+  // --- asks (SL-3: sleep-tasks records where the owner's asks landed) ---
+  sleep
+    .command('asks')
+    .description('Record where the owner\'s asks landed this cycle (sleep-tasks)')
+    .command('set')
+    .argument('<counts>', 'criterion=a,subtask=b,task=c,unplaced=d')
+    .option('--by <specialist>', 'Who placed them', 'sleep-tasks')
+    .action((raw: string, opts: { by: string }) => {
+      const root = ensureContextRoot();
+      const parsed = parseAsks(raw);
+      if (!parsed.ok) {
+        error(`"${raw}" is not criterion=a,subtask=b,task=c,unplaced=d.`, 'Example: dreamcontext sleep asks set criterion=3,subtask=0,task=1,unplaced=2');
+        process.exitCode = 1;
+        return;
+      }
+      recordCycleAsks(root, parsed.counts, opts.by);
+      success(`${parsed.line} — recorded; sleep done writes it into the cycle's history.`);
+    });
+
+  // --- packet ---
+  sleep
+    .command('packet')
+    .description('Print the sleep packet: sessions oldest to newest with every owner-typed turn, git since the last sleep, flags; --board for the open board and the tasks ready to close (sleep start writes both to tmp/sleep/)')
+    .option('--json', 'Emit the packet as JSON')
+    .option('--board', 'Print the board half (open board, ready to close, stale reviews) instead of the sessions half')
+    .option('--write', 'Also write it to _dream_context/tmp/sleep/ (packet.md, board.md, packet.json)')
+    .action(async (opts: { json?: boolean; board?: boolean; write?: boolean }) => {
+      const root = ensureContextRoot();
+      const packet = await collectSleepPacket(root);
+      if (opts.write) {
+        const paths = writeSleepPacket(root, packet);
+        if (!opts.json) info(`Written: ${paths.md} and ${paths.board}`);
+      }
+      console.log(opts.json ? JSON.stringify(packet, null, 2) : opts.board ? renderSleepBoard(packet) : renderSleepPacket(packet));
     });
 
   // --- done ---
@@ -697,11 +1052,22 @@ export function registerSleepCommand(program: Command): void {
       '--asks <counts>',
       'Where the owner\'s asks landed this cycle (sleep-tasks report): criterion=a,subtask=b,task=c,unplaced=d',
     )
-    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string }) => {
+    .option(
+      '--product-ran',
+      'sleep-product ran this cycle, so pending automation output counts as consumed (without it, that output stays pending)',
+    )
+    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string; productRan?: boolean }) => {
+      const timer = createPhaseTimer();
       let summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
         return;
+      }
+      // SL-3 — what the specialists recorded themselves this cycle (flags, ask counts).
+      const cycleReport = readCycleReport(ensureContextRoot());
+      if (opts.asks === undefined && cycleReport.asks) {
+        const c = cycleReport.asks.counts;
+        opts.asks = `criterion=${c.criterion},subtask=${c.subtask},task=${c.task},unplaced=${c.unplaced}`;
       }
       // Parsed BEFORE any write, and never a refusal: a malformed value is kept raw with a
       // warning, because refusing this late would leave the cycle half closed.
@@ -779,17 +1145,30 @@ export function registerSleepCommand(program: Command): void {
         history.unshift(buildHistoryEntry(previousDebt, result, summary, today_));
         writeSleepHistory(root, history);
 
+        // SL-9 — automation output counts as consumed only when sleep-product
+        // ran (or nothing was pending). Counted BEFORE the boundary moves.
+        const previousBoundary = outputsBoundary(fresh);
+        const pendingOutputs = previousBoundary ? pendingOutputsSince(root, previousBoundary).outputs.length : 0;
+        const nowISO = new Date().toISOString();
+
         // Finalize and persist the new state exactly once.
-        const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
+        const finalState = finalizeSleepState(result.state, summary, today_, nowISO);
+        finalState.outputs_consumed_at = nextOutputsBoundary({
+          previous: previousBoundary,
+          pendingCount: pendingOutputs,
+          productRan: !!opts.productRan,
+          epoch,
+          nowISO,
+        });
         writeSleepState(root, finalState);
-        return { previousDebt, epoch, today_, finalState };
+        return { previousDebt, epoch, today_, finalState, pendingOutputs };
       });
       if (!doneLock.locked) {
         error('Sleep state is busy — refusing to consolidate from a stale read. Retry in a moment.');
         process.exitCode = 1;
         return;
       }
-      const { previousDebt, epoch, today_, finalState } = doneLock.value;
+      const { previousDebt, epoch, today_, finalState, pendingOutputs } = doneLock.value;
       closeSleepRun(root, finalState.debt);
 
       if (epoch && finalState.sessions.length > 0) {
@@ -797,18 +1176,34 @@ export function registerSleepCommand(program: Command): void {
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
       }
+      if (pendingOutputs > 0 && !opts.productRan) {
+        warn(`${pendingOutputs} automation output(s) were not consolidated this cycle (no --product-ran), so they stay pending for the next sleep.`);
+      }
+      timer.lap('state');
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag
       // observations against the persisted streak, surface a one-line ask for
       // any flag at/over the escalation threshold, and bump the linked task's
       // priority. Best-effort — a flag-tracking bug must never fail `sleep done`.
       try {
-        const observed = opts.flag
+        const passed = opts.flag
           .map(parseFlagOption)
           .filter((f): f is NonNullable<ReturnType<typeof parseFlagOption>> => f !== null);
+        // The specialists' own records plus anything passed by hand; one entry per key.
+        const byKey = new Map<string, { key: string; label: string; task_slug: string | null }>();
+        for (const f of cycleReport.flags) byKey.set(f.key, { key: f.key, label: f.label, task_slug: f.task_slug ?? null });
+        for (const f of passed) byKey.set(f.key, f);
+        const observed = [...byKey.values()];
+        const reported = cycleReport.reported_by.length > 0 || opts.flag.length > 0;
         const prevFlags = readSleepFlags(root);
-        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString());
+        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString(), { reported });
         writeSleepFlags(root, nextFlags);
+        if (!reported && prevFlags.length > 0) {
+          info(`No specialist reported flags this cycle: ${prevFlags.length} flag(s) kept as they were (streaks not advanced).`);
+        } else if (observed.length > 0) {
+          info(`Recidivism flags: ${observed.length} observed this cycle (${nextFlags.filter((f) => f.consecutive_cycles >= 2).length} recurring).`);
+        }
+        consumeCycleReport(root);
 
         // Deferred task candidates get a summary line, not an ask: `escalations`
         // excludes the `task-candidate:` family because such a candidate was
@@ -837,6 +1232,7 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Recidivism tracking: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('flags');
 
       // AC6 (2/2) — orphan-tag curator trigger: >= ORPHAN_TAG_CURATOR_THRESHOLD
       // orphan tags across the corpus auto-creates (or refreshes) a standing
@@ -844,8 +1240,11 @@ export function registerSleepCommand(program: Command): void {
       // Best-effort — a taxonomy audit hiccup must never fail `sleep done`.
       try {
         const vocab = loadProjectVocabulary(root);
-        const corpus = buildCorpus(root);
-        const docs = corpus.map((d) => ({ slug: d.slug, tags: d.tags }));
+        // The only corpus build left in `sleep done` (the embedding refresh is a
+        // detached child now), served from the mtime-validated cache.
+        const corpus = buildCorpusCached(root);
+        // Archives are frozen (never retagged), so their tags cannot count toward the chore.
+        const docs = corpus.filter((d) => !isFixExcluded(d.relPath)).map((d) => ({ slug: d.slug, tags: d.tags }));
         const buckets = auditCorpus(docs, vocab);
 
         const backend = getTaskBackend(root);
@@ -864,11 +1263,12 @@ export function registerSleepCommand(program: Command): void {
           }
         }
 
+        const statuses = loadStatuses(root);
         const plan = planCuratorTask(
           buckets.orphan.length,
           existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
           absorbing,
-          loadStatuses(root),
+          statuses,
         );
         if (plan.action === 'create') {
           await backend.create({
@@ -889,6 +1289,19 @@ export function registerSleepCommand(program: Command): void {
             variant: 'cli',
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        } else if (plan.action === 'reopen') {
+          // The chore shipped once and the orphans came back: reopen the same
+          // task (a create would collide on its fixed slug), with the reason.
+          const openKey = sortByOrder(statuses).find((d) => d.kind === 'open')?.key ?? 'todo';
+          await backend.updateFields(plan.slug, { status: openKey });
+          await backend.addChangelog(
+            plan.slug,
+            `- ${today_}: reopened by sleep: ${buckets.orphan.length} orphan tag(s) came back after the last curator pass.`,
+            { createIfMissing: true },
+          );
+          info(`Curator task reopened: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        } else if (plan.skippedCancelled) {
+          info(`Curator task ${plan.slug} is cancelled, so sleep left it closed (${buckets.orphan.length} orphan tags). Reopen it yourself if you want the pass.`);
         } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
           await backend.addChangelog(
             plan.slug,
@@ -902,6 +1315,11 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('curator');
+
+      // SL-3 — the flow's deterministic tail (roadmap, link audit, mk rem-sleep, council count).
+      await runSleepTail(root, { info, warn });
+      timer.lap('tail');
 
       // AC7 — semantic dedup digest: surface merge/review/create tallies since
       // the epoch in the cycle summary. Best-effort — a log-read hiccup must
@@ -938,6 +1356,7 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Digest GC: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('digests');
 
       // Post-sleep task sync (issue #11): push the consolidation's task updates,
       // then re-mirror. The consolidation touches EVERY reconciled task at once,
@@ -945,6 +1364,7 @@ export function registerSleepCommand(program: Command): void {
       // itself under the rate ceiling (so one pass syncs everything) and retries
       // transient failures. Still best-effort: a sync failure must never fail
       // `sleep done` — but it must NEVER fail SILENTLY either.
+      let taskSyncAuthFailed = false;
       try {
         const backend = getTaskBackend(root);
         if (backend.name !== 'local') {
@@ -957,11 +1377,16 @@ export function registerSleepCommand(program: Command): void {
           let report;
           try {
             report = await backend.sync('both', syncOpts);
+            // SL-7 — a token the remote refused OUTRIGHT (nothing moved, every
+            // error a credential refusal) will be refused again: no retry, no
+            // wording that reads as a completion. One task's 403 (a GitHub rate
+            // limit answers 403 too) is NOT that: it keeps the retry below.
+            taskSyncAuthFailed = isTokenRefused(report);
             // Any task that still failed to push leaves the local→remote state
             // incomplete. Retry the whole sync ONCE — the failed tasks are still
             // drift-flagged, so they get re-selected, and the rate window has
             // advanced. One extra pass, not a loop.
-            if (report.failedPushes.length > 0) {
+            if (report.failedPushes.length > 0 && !taskSyncAuthFailed) {
               bar.done();
               warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
               report = await backend.sync('both', syncOpts);
@@ -969,37 +1394,49 @@ export function registerSleepCommand(program: Command): void {
           } finally {
             bar.done();
           }
-          if (report.conflicts.length > 0) {
-            warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
-          }
-          const pushedTotal = report.pushed + report.created;
-          if (pushedTotal > 0 || report.pulled > 0) {
-            info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
-          }
-          // LOUD on residual failure — never a dim one-liner. The mirror is
-          // ahead of the remote; the user must know to re-run.
-          if (report.failedPushes.length > 0) {
-            error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
-            for (const e of report.errors) warn(`  ${e}`);
-            warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
-          } else if (report.errors.length > 0) {
-            // Non-push errors (pull/delete/field) — surface, don't bury.
-            warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
-            for (const e of report.errors) warn(`  ${e}`);
-          }
-          // Data-quality warnings (e.g. an unmapped assignee left unassigned).
-          // The task synced, but assignment silently failing is exactly the
-          // class of bug we refuse to bury — surface every one.
-          if (report.warnings.length > 0) {
-            warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
-            for (const w of report.warnings) warn(`  ${w}`);
+          if (taskSyncAuthFailed) {
+            for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
+            warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+          } else {
+            if (report.conflicts.length > 0) {
+              warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
+            }
+            const pushedTotal = report.pushed + report.created;
+            if (pushedTotal > 0 || report.pulled > 0) {
+              info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
+            }
+            // LOUD on residual failure — never a dim one-liner. The mirror is
+            // ahead of the remote; the user must know to re-run.
+            if (report.failedPushes.length > 0) {
+              error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
+              for (const e of report.errors) warn(`  ${e}`);
+              warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
+            } else if (report.errors.length > 0) {
+              // Non-push errors (pull/delete/field) — surface, don't bury.
+              warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
+              for (const e of report.errors) warn(`  ${e}`);
+            }
+            // Data-quality warnings (e.g. an unmapped assignee left unassigned).
+            // The task synced, but assignment silently failing is exactly the
+            // class of bug we refuse to bury — surface every one.
+            if (report.warnings.length > 0) {
+              warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
+              for (const w of report.warnings) warn(`  ${w}`);
+            }
           }
         }
       } catch (err) {
         // The sync engine itself threw (auth/lock/transport) — best-effort by
         // contract, but visible: a swallowed failure is what hid the last bug.
-        warn(`Task sync: skipped — ${(err as Error).message ?? err}`);
+        // A thrown refusal stopped the whole sync, so it IS a refused token.
+        const message = (err as Error).message ?? String(err);
+        warn(`Task sync: skipped — ${message}`);
+        if (isSyncAuthFailure(message)) {
+          taskSyncAuthFailed = true;
+          warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+        }
       }
+      timer.lap('task-sync');
 
       // Post-sleep whole-project sync (github-cloud-collaboration-brain-repo-sync):
       // fetch/merge/commit/push the whole project (`full-repo`) when autoSync is
@@ -1024,7 +1461,7 @@ export function registerSleepCommand(program: Command): void {
           // run) would leave an earlier background pull's flag stuck `true`
           // forever, even though `sleep done` is exactly the kind of
           // "task-backend sync actually ran" event that should clear it.
-          if ((result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
+          if (!taskSyncAuthFailed && (result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
             const backend = getTaskBackend(root);
             if (backend.name !== 'local') {
               await backend.sync('both');
@@ -1044,6 +1481,7 @@ export function registerSleepCommand(program: Command): void {
           warn(failure.message);
         }
       }
+      timer.lap('brain-sync');
 
       // Post-sleep embedding refresh (decision-embedding-layer: "eager during
       // sleep"). Sleep just rewrote the corpus — the moment the mtime pre-filter
@@ -1051,20 +1489,19 @@ export function registerSleepCommand(program: Command): void {
       // fully authoritative). Gated on an EXISTING cache: a vault that never
       // enabled hybrid recall must never cold-start a 113 MB model download from
       // `sleep done`. Best-effort by the same discipline as the syncs above.
+      //
+      // SL-11 — DETACHED, like the cloud refresh below: `sleep done` used to wait
+      // seconds on model load and embedding. The child runs the same forced
+      // refresh (`embed refresh --force --if-present`) and waits for the cache
+      // lock itself; recall refreshes lazily per query in the meantime.
       try {
-        if (embeddingCacheUsable(root)) {
-          // waitForLock: a concurrent writer (the server's index build, a hook) holds the
-          // vault's cache lock for milliseconds — wait it out (bounded), never clobber it.
-          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true, waitForLock: true });
-          if (res === null) {
-            warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
-          } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {
-            info(chalk.dim(`Embedding index refreshed: +${res.stats.embedded} embedded, −${res.stats.evicted} evicted (${res.index.chunks.length} chunks).`));
-          }
+        if (embeddingCacheUsable(root) && spawnEmbeddingRefresh(dirname(root))) {
+          info(chalk.dim('Embedding index refresh started in the background.'));
         }
       } catch (err) {
         warn(`Embedding refresh: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('embeddings');
 
       // Cloud index refresh: only for a vault that consented to a cloud tier, detached and never
       // awaited (the child enforces throttle, churn guard and the rolling spend cap itself).
@@ -1092,6 +1529,9 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Brain durability check: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('durability');
+      const phases = timer.line();
+      if (phases) info(chalk.dim(phases));
     });
 
   // --- debt ---

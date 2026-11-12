@@ -1405,10 +1405,11 @@ export function buildSleepPrompt(depth: ConsolidationDepth): string {
     `dreamcontext sleep/consolidation flow: pin the epoch with \`dreamcontext sleep ` +
     `start\`, reconcile the task/changelog/knowledge/feature files to current truth ` +
     `as warranted (prefer updating existing entities over creating new ones), then ` +
-    `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
+    `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` ` +
+    `(add --product-ran when sleep-product ran) to ` +
     `reset the debt. ${depthLine} I am explicitly requesting the sub-agent fan-out: ` +
     `dispatch the sleep specialists as PARALLEL sub-agents via the Agent tool ` +
-    `(${SLEEP_ROSTER_CLAUSE}) — ` +
+    `(${SLEEP_ROSTER_CLAUSE}), each on the model \`sleep start\` prints for it — ` +
     `do NOT run those passes inline in your own context. When finished, reply with a ` +
     `SHORT GitHub-flavored Markdown summary (a few bullets) of what was consolidated. ` +
     `Keep it concise.`

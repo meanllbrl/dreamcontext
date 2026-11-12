@@ -338,8 +338,8 @@ Safety rules the planner must apply when building the map:
 - **Waves live inside the ONE task** (owner, 2026-11-09). The task keeps the goal, every
   wave's criteria, the Validation method and the WAVE MAP; each wave's progress, ticks and
   `wN green` line are logged on it. Never open a sub-task per wave: a wave sub-task
-  (`dreamcontext tasks create "Wave N: …" --parent <slug> --basis plan`) only when the owner
-  asks for one. Work small enough for 1-3 files and no plan round is not a goal-skill run and
+  (`dreamcontext tasks create "Wave N: …" --parent <slug> --basis plan --owner-asked "<his words>"`)
+  only when the owner asks for one; without his words an agent's sub-task is refused. Work small enough for 1-3 files and no plan round is not a goal-skill run and
   opens no task at all.
 - **Compiled artifacts marked.** A wave consumes the source of earlier waves, not their
   build output. When a task genuinely consumes a compiled artifact (it runs `dist/`, reads

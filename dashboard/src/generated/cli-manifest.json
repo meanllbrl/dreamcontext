@@ -1342,6 +1342,13 @@
       "group": true
     },
     {
+      "path": "config agent-task-budget",
+      "desc": "How many tasks awake agents may open a day without the owner's words (0-50, default 3)",
+      "args": [
+        "<n>"
+      ]
+    },
+    {
       "path": "config clickup-list",
       "desc": "Set the ClickUp team/space/list the tasks sync against",
       "args": [
@@ -4409,7 +4416,8 @@
         "--quote",
         "--evidence",
         "--neighbor-checked",
-        "--declined-checked"
+        "--declined-checked",
+        "--owner-asked"
       ]
     },
     {

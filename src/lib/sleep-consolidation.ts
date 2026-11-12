@@ -157,6 +157,14 @@ export interface SleepState {
    * same convention as `consolidation_depth` above.
    */
   last_consolidated_at: string | null;
+  /**
+   * Where automation-output consumption actually stands (SL-9). Absent on older
+   * files, which read as `last_consolidated_at` (see `outputsBoundary`). It
+   * advances only when the cycle consumed the outputs (sleep-product ran) or
+   * nothing was pending; a cycle that skipped sleep-product leaves it put, so
+   * the outputs surface again next time instead of being marked read unread.
+   */
+  outputs_consumed_at?: string | null;
   sessions_since_last_sleep: number;
   sessions: SessionRecord[];
   bookmarks: Bookmark[];
@@ -1033,6 +1041,31 @@ export function finalizeSleepState(state: SleepState, summary: string, today: st
   // on the next cycle.
   next.cycle_tasks_filed = [];
   return next;
+}
+
+/** The automation-output consumption boundary: its own field, else the last consolidation. */
+export function outputsBoundary(state: Pick<SleepState, 'last_consolidated_at' | 'outputs_consumed_at'>): string | null {
+  return typeof state.outputs_consumed_at === 'string' ? state.outputs_consumed_at : state.last_consolidated_at;
+}
+
+/**
+ * Where the consumption boundary goes when a cycle closes (SL-9).
+ *  - sleep-product ran, or nothing was pending → the cycle's epoch (falling back
+ *    to now): an output written DURING the cycle surfaces again next time.
+ *  - outputs were pending and sleep-product did not run → it stays where it was,
+ *    so they are offered again. A boundary that was never set (`null`, no cycle
+ *    ever completed) takes `nowISO`, the old first-cycle behaviour: there was
+ *    nothing pending under it anyway.
+ */
+export function nextOutputsBoundary(opts: {
+  previous: string | null;
+  pendingCount: number;
+  productRan: boolean;
+  epoch: string | null;
+  nowISO: string;
+}): string {
+  if (opts.productRan || opts.pendingCount === 0) return opts.epoch ?? opts.nowISO;
+  return opts.previous ?? opts.nowISO;
 }
 
 // ─── internal ────────────────────────────────────────────────────────────────

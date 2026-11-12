@@ -34,7 +34,7 @@ interface FileFix {
   newTags: string[];
 }
 
-interface TaxonomyFixReport {
+export interface TaxonomyFixReport {
   files: FileFix[];
   /** slug -> non-canonical tags with no safe canonical target (need a vocab decision). */
   unresolved: Array<{ slug: string; tags: string[] }>;
@@ -42,12 +42,26 @@ interface TaxonomyFixReport {
 }
 
 /**
- * Compute (and optionally apply) the bulk tag-normalization plan across every
- * knowledge/feature/task file. Reads RAW frontmatter per file (not the
- * corpus-normalized tags) so the plan matches exactly what gets written.
+ * Archives are frozen records: `--fix` never rewrites a file under
+ * `knowledge/archive/`. Rewriting one is a diff nobody asked for (sleep-product
+ * used to revert it by hand), and an archive's tags describe it as it was.
  */
-function runTaxonomyFix(root: string, vocab: Vocabulary, apply: boolean): TaxonomyFixReport {
-  const corpus = buildCorpus(root);
+export function isFixExcluded(relPath: string): boolean {
+  return relPath.replace(/\\/g, '/').startsWith('knowledge/archive/');
+}
+
+/**
+ * Compute (and optionally apply) the bulk tag-normalization plan across every
+ * knowledge/feature/task file except archives. Reads RAW frontmatter per file
+ * (not the corpus-normalized tags) so the plan matches exactly what gets written.
+ * `sleep start` runs it too, handing over the corpus it already built.
+ */
+export function runTaxonomyFix(
+  root: string,
+  vocab: Vocabulary,
+  apply: boolean,
+  corpus: ReturnType<typeof buildCorpus> = buildCorpus(root),
+): TaxonomyFixReport {
   const seen = new Set<string>();
   const files: FileFix[] = [];
   const unresolved: Array<{ slug: string; tags: string[] }> = [];
@@ -55,6 +69,7 @@ function runTaxonomyFix(root: string, vocab: Vocabulary, apply: boolean): Taxono
 
   for (const doc of corpus) {
     if (!FIX_ELIGIBLE_TYPES.has(doc.type)) continue;
+    if (isFixExcluded(doc.relPath)) continue;
     if (seen.has(doc.path)) continue; // one file = one plan
     seen.add(doc.path);
 

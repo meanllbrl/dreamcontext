@@ -59,21 +59,15 @@ Run the passes in order; do the shared reads once.
 
 ### 0. Read what happened (shared)
 
+**The sleep packet is your input.** `sleep start` writes `_dream_context/tmp/sleep/packet.md` (sessions OLDEST → NEWEST with every turn the owner typed, git since the last sleep on all branches, bookmarks, flags, filing rules, and the **Facts** that switch sections of this prompt off) and `board.md` (the open board, the in-review tasks ready to close, the stale ones). Read them first; `dreamcontext sleep packet` / `--board` rebuilds them if missing. Never rebuild that input by hand: no scripts over `transcript distill`, no `tasks list --all --json`, no re-parsing `.sleep.json` or re-running git for what the packet already holds. (You need `packet.md`, not the board.)
+
+Beyond the packet, only what it does not hold:
+
 ```bash
-# Cutoff: prefer current epoch, fall back to last completed sleep
 CUTOFF=$(jq -r '.sleep_started_at // .last_sleep' _dream_context/state/.sleep.json)
-
-git log --since="$CUTOFF" --pretty=format:'%h %s' | head -50
-git log --since="$CUTOFF" --stat --format=fuller | head -200
-git status --short
-git diff --stat
-git diff --stat --cached
-
-# Per session in the brief
-dreamcontext transcript distill <session_id>
-
-# Knowledge access for staleness pass
-cat _dream_context/state/.sleep.json | jq '.knowledge_access'
+git log --since="$CUTOFF" --stat --format=fuller -- <a path a changelog entry needs> | head -200   # detail for one change
+dreamcontext transcript distill <session_id>    # only a turn the packet names as cut, or a session it could not read
+cat _dream_context/state/.sleep.json | jq '.knowledge_access'   # staleness pass (C2)
 ```
 
 ### Pass A — Changelog & releases
@@ -155,23 +149,7 @@ Applies to `3.style_guide_and_branding.md`, `4.tech_stack.md`, `6.system_flow.md
 
 ### Pass B.5 — People detection (multi-person awareness)
 
-dreamcontext defaults to single-person. Multi-person status is DERIVED from the roster (`_dream_context/people/people.json`) having more than one entry; there is no manual toggle and no `multiPerson` flag, and the retired `.config.json` `people` key must not be read or re-created.
-
-**Detection gate — require ≥2 corroborated signals:**
-
-- **Self-identification in user turns** ("this is Ada", "Kerem asked me to…").
-- **Distinct git authors since the epoch**, after the **shared bot-filter** (drop any author whose kebab-case slug contains `github-actions` or `dependabot`, the `BOT_SLUG_FRAGMENTS` list in `src/lib/attribution.ts`).
-- **Distinct voice / handoff** in the transcript.
-
-Check with `git log --since="$CUTOFF" --format='%an' | sort -u`, and read the roster (`dreamcontext people list`) FIRST: you append, never overwrite.
-
-When the gate is met:
-
-1. **Additive union to the roster — never overwrite.** `dreamcontext people add` is the roster's **only** writer: it upserts without overwriting prose and scaffolds `people/<slug>.md`. A quiet person is NEVER dropped; never hand-edit `people/people.json`; record an email only when you know it (`dreamcontext people add "Ada" --email ada@example.com`, `--role backend` as a structural label).
-2. **Reconcile `people/people.json` ↔ `people/*.md`** (`dreamcontext people list`, `ls _dream_context/people/*.md`, `dreamcontext doctor`): a roster slug with no file → re-scaffold with `dreamcontext people add "<Name>"`; a file with no roster entry is an **orphan: REPORT it, never delete it.** This pass **never deletes a `people/<slug>.md`**.
-3. **Attribution needs no action in the normal case** (the CLI auto-stamps authors, Pass A2).
-
-**Single-person projects (gate NOT met): this entire pass is a NO-OP.** Add nobody, invent no second constitution, pass no `--authors`; the output stays byte-identical to what the CLI produces on its own.
+Runs only when the packet's Facts say `sleep-state runs Pass B.5`, or a session in the packet shows a second person: then read `.claude/skills/dreamcontext/references/sleep-conditional.md` § "sleep-state Pass B.5" and follow it. Otherwise a NO-OP: add nobody, pass no `--authors`, never delete a `people/<slug>.md`.
 
 ### Pass C — Anti-bloat sweep + knowledge staleness flags
 
@@ -184,19 +162,21 @@ dreamcontext doctor   # reports every core file AND every people/<slug>.md over 
 
 **Characters are the binding ceiling; lines are the authoring heuristic. Check `wc -c` first.** `people/*.md` are audited on the same ceilings (the ACTIVE constitution renders verbatim in every snapshot); `people/people.json` is skipped.
 
-**A `doctor` snapshot-size finding** (at or over the limit, or past the 18,000-char ladder target) is a C1 trigger even when every file is under 150 lines: extract from the largest core file by CHARACTERS until doctor is `ok`. A never-evict tier over the limit usually means `0.soul.md` or the ACTIVE `people/<slug>.md`, and extraction is the only fix:
+**A `doctor` snapshot-size finding at or over the hard delivery limit** is a C1 trigger even when every file is under 150 lines: extract from the largest core file by CHARACTERS until that check is `ok` or `info`. `info` (`doctor/snapshot-over-budget`: past the ladder's soft target, still delivered whole) is DONE, never a trigger: the ladder demotes other sections for exactly that. A never-evict tier over the limit usually means `0.soul.md` or the ACTIVE `people/<slug>.md`, and extraction is the only fix:
 - `0.soul.md` — move conditional "when X, do Y" rules to `knowledge/patterns/` (flag for `sleep-product`); keep only the unconditional identity.
 - `people/<slug>.md` — keep only what is true about the PERSON; flag project trivia, workflow recipes and one-off notes for extraction.
 
 Over for another reason (a huge reminder, a task-format override) → a C3 flag, not file churn.
+
+**14-day floor.** Never archive or extract an entry younger than 14 days while its file is under its own ~4,000-char ceiling. A decision dated last week is what the next sessions need on hand; moving it out costs more than the characters it frees.
 
 If a file exceeds ~4,000 chars or ~150 lines:
 - Extract the lowest-value section (flag in your report so `sleep-product` creates a knowledge file; do not create knowledge files yourself).
 - Replace the extracted block with a one-line reference: `> Archived to knowledge/<slug>.md`.
 - Merge into existing entries before adding new ones — never duplicate.
 
-**Standing authority — ceiling vs. promotion collision.** When a promotion the gate genuinely warrants is BLOCKED because the target file is AT its ceiling, you MAY extract the file's OLDEST Technical Decision yourself, directly to `knowledge/archive/<core>-<period>.md` (e.g. `knowledge/archive/2.memory-2026-h1.md`): the one scoped exception to "do not create knowledge files yourself". **Archive-before-delete, no exceptions:**
-1. Write the archive file FIRST, full content, dated.
+**Standing authority — ceiling vs. promotion collision.** When a promotion the gate genuinely warrants is BLOCKED because the target file is AT its ceiling, you MAY extract the file's OLDEST Technical Decision yourself, directly to `knowledge/archive/<core>-<period>.md` (`<period>` = the month, e.g. `knowledge/archive/2.memory-2026-11.md`): the one scoped exception to "do not create knowledge files yourself". **Archive-before-delete, no exceptions:**
+1. Write the archive file FIRST, full content, dated. **One archive file per core file per month**: append to this month's `knowledge/archive/<core>-<period>.md` when it exists, never a second file for the same month. Its `description:` says WHAT the archived entries are about (e.g. "Archived memory decisions: hook latency budget, recall tiers, release cut order"), never why they moved ("archived to bring the snapshot under the limit"), and its `tags:` carry the topics, so `memory recall` finds a decision by its subject.
 2. Verify it landed (`cat` it back, or `dreamcontext knowledge index --plain`).
 3. ONLY THEN replace the source block with `> Archived to knowledge/archive/<core>-<period>.md`.
 4. Promote the new entry into the now-freed space.
@@ -209,14 +189,14 @@ From `knowledge_access` in `.sleep.json`: not accessed in 30+ days → **archiva
 
 #### C3. Recidivism flags — recurring problems for `sleep done --flag`
 
-A problem in YOUR domain that keeps recurring (a Decision stuck behind the ceiling for 2+ cycles, a Known Issue that keeps reappearing, a staleness flag still unresolved) is reported as a flag spec:
+A problem in YOUR domain that keeps recurring (a Decision stuck behind the ceiling for 2+ cycles, a Known Issue that keeps reappearing, a staleness flag still unresolved, a stuck active planning version) is RECORDED by you, one call per flag, and listed in your report:
 
-```
-### Recidivism flags (for `sleep done --flag`)
-- ceiling-blocked:2.memory.md::"2.memory.md at ceiling — WKWebView decision promotion blocked again"
+```bash
+dreamcontext sleep flag add ceiling-blocked:2.memory.md "2.memory.md at ceiling — WKWebView decision promotion blocked again" --by sleep-state
+dreamcontext sleep flag none --by sleep-state        # you looked and nothing recurred
 ```
 
-`sleep done --flag <key>::<label>[::<task-slug>]` is repeatable, one `--flag` per flag (never comma-separated). `sleep done` tracks the streak and escalates at 3 consecutive cycles; you report honestly each cycle.
+The key stays byte-identical every cycle. `sleep done` reads what you recorded, tracks the streak and escalates at 3 consecutive cycles; you report honestly each cycle.
 
 ## Return — single combined report
 
@@ -256,7 +236,7 @@ Dropped-but-load-bearing self-check: <none | anything you saw but did NOT promot
 3. **Single-observation gate for code-reality files** (`3.*`, `4.*`, `6.*`); schema changes are flagged for **sleep-product**.
 4. **Never delete a `people/<slug>.md`.** Orphans get reported, not removed.
 5. **Never auto-release.** Surface readiness; the user decides.
-6. **Anti-bloat is non-negotiable.** ~4,000 chars OR ~150 lines means extract, not append; chars bind. A `doctor` snapshot-size warning is a C1 trigger.
+6. **Anti-bloat is non-negotiable.** ~4,000 chars OR ~150 lines means extract, not append; chars bind. A `doctor` snapshot-size `warn` or `error` is a C1 trigger; `info` is not.
 7. **Flag staleness and taxonomy drift, don't fix them.** Knowledge and tags are `sleep-product`'s (report drift under `taxonomy_drift`).
 8. **Decisions > deliberation.** Save the conclusion and rationale; drop the back-and-forth.
 9. **Surgical edits only on core.** Use Edit, not Write, except when restructuring after extraction.

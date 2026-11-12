@@ -24,6 +24,12 @@ process.env.DREAMCONTEXT_SERVER_PID = String(process.pid);
 //     went red on Linux. A test that needs the desktop sets it itself.
 delete process.env.DREAMCONTEXT_DESKTOP;
 
+// 2c. An agent running the suite passes its own session markers (Claude Code's CLAUDECODE and
+//     CLAUDE_CODE_SESSION_ID, a Codex thread, the brain MCP mark) to every CLI the tests launch,
+//     and `tasks create` then holds them to the agent guard (agent-filing-guard.ts: a daily budget
+//     of 3). CI has none of these. A test that needs an agent session sets them itself.
+for (const key of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'DREAMCONTEXT_VIA_BRAIN_MCP']) delete process.env[key];
+
 // 3. `super delegate` holds a job when THIS machine is short of room (orchestration plan r5 D11).
 //    The suite must not pass or fail by the developer's swap: every test sees a roomy machine
 //    unless it sets its own facts (`setCapacityFactsForTests`), or injects readers.

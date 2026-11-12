@@ -47,11 +47,14 @@ export const SLEEP_AGENT_PROMPT =
   'sleep flow: pin the epoch with `dreamcontext sleep start`, reconcile the task / changelog ' +
   '/ knowledge / feature files to current truth (prefer updating existing entities over ' +
   'creating new ones), then close the cycle with `dreamcontext sleep done "<one-paragraph ' +
-  'summary>"` to reset the debt. I am explicitly requesting the sub-agent fan-out: dispatch ' +
+  'summary>"` (add --product-ran when sleep-product ran) to reset the debt. ' +
+  'I am explicitly requesting the sub-agent fan-out: dispatch ' +
   'the sleep specialists as PARALLEL sub-agents via the Agent tool (sleep-tasks + sleep-state ' +
   'always; sleep-product, sleep-migration and sleep-learn only when their signals fire ' +
-  '(sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext ' +
-  'migrations pending` has output; sleep-learn: learning is enabled and a thesis is due)) — ' +
+  '(sleep-product: knowledge/feature/research signals, or `sleep start` reports automation ' +
+  'output or app findings; sleep-migration: `dreamcontext migrations pending` has output; ' +
+  'sleep-learn: learning is enabled and a thesis is due)), ' +
+  'each on the model `sleep start` prints for it and with the sleep packet paths it prints (the specialists read the packet instead of rebuilding their input), ' +
   'do NOT run those passes inline in your own ' +
   'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 

@@ -16,6 +16,7 @@ import { resolveFeature, taskExists, applyFeatureTaskList, healFeatureRename } f
 import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
 import { migrateKnowledgeAccessKey } from './sleep.js';
 import { fileURLToPath } from 'node:url';
+import { compactFeature, cutoffDate, oversizedPrds } from '../../lib/feature-compact.js';
 
 /**
  * Normalise a free-form feature subfolder path (relative to knowledge/features/):
@@ -388,6 +389,64 @@ export function registerFeaturesCommand(program: Command): void {
       if (healedTasks.length > 0) {
         info(`Repointed related_feature on ${healedTasks.length} task(s): ${healedTasks.join(', ')}`);
       }
+    });
+
+  // Compact (SL-4): old Changelog entries move to a dated archive, byte-verified.
+  features
+    .command('compact')
+    .argument('[name]', 'Feature name or slug (omit with --all)')
+    .option('--all', 'Every PRD over --min-chars')
+    .option('--older-than <days>', 'Move entries dated more than this many days ago', '30')
+    .option('--keep <n>', 'Always keep this many newest entries', '5')
+    .option('--min-chars <n>', 'With --all: only PRDs larger than this', '20000')
+    .option('--dry-run', 'Say what would move, write nothing')
+    .description('Move a PRD\'s old Changelog entries to knowledge/archive/features/<name>-<YYYY-MM>.md (archive written and read back before the PRD changes)')
+    .action((name: string | undefined, opts: { all?: boolean; olderThan: string; keep: string; minChars: string; dryRun?: boolean }) => {
+      // No deprecation notice: compact has no `knowledge` twin, this is its home.
+      const root = ensureContextRoot();
+      const dir = getFeaturesDir();
+      const days = Number.parseInt(opts.olderThan, 10);
+      const keep = Number.parseInt(opts.keep, 10);
+      const minChars = Number.parseInt(opts.minChars, 10);
+      if (!Number.isFinite(days) || days < 1 || !Number.isFinite(keep) || keep < 1 || !Number.isFinite(minChars) || minChars < 0) {
+        error('--older-than and --keep must be at least 1, --min-chars 0 or more.');
+        process.exitCode = 1;
+        return;
+      }
+      let targets: Array<{ feature: string; path: string }>;
+      if (opts.all) {
+        const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true, followSymbolicLinks: false }) : [];
+        targets = oversizedPrds(files.map((f) => ({ feature: featureSlug(dir, f), path: f })), minChars);
+      } else {
+        if (!name) {
+          error('Name a feature, or pass --all.');
+          process.exitCode = 1;
+          return;
+        }
+        const file = findFeatureFile(name);
+        if (!file) {
+          error(`Feature not found: ${name}`);
+          process.exitCode = 1;
+          return;
+        }
+        targets = [{ feature: featureSlug(dir, file), path: file }];
+      }
+      const cutoff = cutoffDate(new Date(), days);
+      let moved = 0;
+      for (const t of targets) {
+        try {
+          const r = compactFeature(root, t.feature, t.path, { cutoff, keepNewest: keep, today: today(), dryRun: opts.dryRun });
+          if (r.skipped) { info(chalk.dim(`${t.feature}: ${r.skipped}`)); continue; }
+          moved += r.moved;
+          const where = r.archives.map((a) => a.slice(root.length + 1)).join(', ');
+          (opts.dryRun ? info : success)(`${t.feature}: ${opts.dryRun ? 'would move' : 'moved'} ${r.moved} entr${r.moved === 1 ? 'y' : 'ies'} (${r.movedChars} chars) → ${where}`);
+        } catch (err) {
+          error(`${t.feature}: ${(err as Error).message}`);
+          process.exitCode = 1;
+        }
+      }
+      if (targets.length === 0) info(`No PRD over ${minChars} chars.`);
+      else if (moved === 0 && !process.exitCode) info('Nothing to move.');
     });
 
   // Doctor: read-only freshness + linkage health check

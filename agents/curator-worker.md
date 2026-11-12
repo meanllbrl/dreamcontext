@@ -20,7 +20,7 @@ skills:
 
 - **dreamcontext-agent-core**: the CLI rules, recall and path safety. The CLI surface that keeps the brain coherent: `knowledge move`,
   `knowledge merge`, `knowledge create`, `features create`/`features set`, `tasks status`,
-  `tasks create` (sentence-style name + mandatory `-w "<why>"`; lean scaffold — never add placeholder sections), `taxonomy add`, `core releases`, `roadmap objective edit`/`depend`/`undepend` (objectives are PO-authored — only status/dependency/link hygiene, never rewrite their prose). Structural ops go through the CLI so
+  `tasks create` (sentence-style name + mandatory `-w "<why>"`; lean scaffold — never add placeholder sections; add `--owner-asked "<the owner's confirmation of the plan, verbatim, from your brief>"`, since without his words agents open only 3 tasks a day and never a sub-task), `taxonomy add`, `core releases`, `roadmap objective edit`/`depend`/`undepend` (objectives are PO-authored — only status/dependency/link hygiene, never rewrite their prose). Structural ops go through the CLI so
   frontmatter, LIFO ordering, the knowledge index, and `[[wikilinks]]` are all kept consistent.
   Verbs and flags: `.claude/skills/dreamcontext/references/cli-reference.md`. The
   feature-vs-knowledge boundary is SKILL.md Rule 4; the folder conventions are

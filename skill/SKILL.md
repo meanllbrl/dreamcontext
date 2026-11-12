@@ -303,10 +303,10 @@ These are the defaults: the deep and overdue edges follow the configured Must Sl
 1. Tell the user you're consolidating.
 2. `dreamcontext sleep start` — pins the epoch (safe clearing).
 3. Build a brief inline (cheap CLI): read `state/.sleep.json`, `git status --short`, `git log` since last sleep, `dreamcontext core releases active`.
-4. Dispatch specialists **in parallel** (one message, multiple Agent calls; never inline, never sequential): sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis is due). Over-fire sleep-product when unsure: it no-ops cheaply.
+4. Dispatch specialists **in parallel** (one message, multiple Agent calls; never inline, never sequential): sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals, or `sleep start` reports automation output or app findings; sleep-migration: `dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis is due). Each on the model `sleep start` prints for it. Over-fire sleep-product when unsure: it no-ops cheaply.
 5. Wait for reports, then `dreamcontext reflect` (promote only genuinely load-bearing terms).
 6. If `core/objectives/` is non-empty, run `dreamcontext roadmap` and surface any 🔴 SLIPPING objectives.
-7. `dreamcontext sleep done "<one-paragraph summary>"` — clears pre-epoch state, resets debt.
+7. `dreamcontext sleep done "<one-paragraph summary>"` — clears pre-epoch state, resets debt. Add `--product-ran` when sleep-product ran.
 8. Report the consolidated summary to the user.
 
 For non-file-change work (decisions, architecture talk): `dreamcontext sleep add <score> "<reason>"`.

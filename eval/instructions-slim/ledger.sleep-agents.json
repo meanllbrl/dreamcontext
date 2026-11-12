@@ -1898,5 +1898,40 @@
     "match": "flag recurring problems in your domain via the c3 block - the orchestrator escalates through sleep done --flag",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Rules."
+  },
+  {
+    "match": "Also read `_dream_context/state/.sleep.json` for `sessions[].last_assistant_message` and `bookmarks[]`",
+    "disposition": "corrected-stale-fact",
+    "reason": "SL-1 (2026-11-12): the sleep packet carries this input; specialists read it instead of rebuilding it.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "its **Bookmarks** come ★★★ first"
+  },
+  {
+    "match": "dreamcontext tasks list --all --json # every task's name + description + status",
+    "disposition": "corrected-stale-fact",
+    "reason": "SL-1 (2026-11-12): the sleep packet carries this input; specialists read it instead of rebuilding it.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "**The BOARD MAP is the packet's `board.md`**"
+  },
+  {
+    "match": "Read `_dream_context/state/.sleep-flags.json` (plain Read) first.",
+    "disposition": "corrected-stale-fact",
+    "reason": "SL-1 (2026-11-12): the sleep packet carries this input; specialists read it instead of rebuilding it.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "The packet's **Recidivism flags** list the streaks so far."
+  },
+  {
+    "match": "`sleep done --flag <key>::<label>[::<task-slug>]` is repeatable, one `--flag` per flag (never comma-separated); `sleep done` tracks the streak and escalates",
+    "disposition": "corrected-stale-fact",
+    "reason": "SL-3 (2026-11-12): specialists record flags themselves with `sleep flag add`; sleep done reads them.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "RECORD each new/continuing recurrence yourself"
+  },
+  {
+    "match": "# Cutoff: prefer current epoch, fall back to last completed sleep",
+    "disposition": "corrected-stale-fact",
+    "reason": "SL-1 (2026-11-12): the sleep packet carries this input; specialists read it instead of rebuilding it.",
+    "home": "agents/sleep-state.md",
+    "anchor": "Beyond the packet, only what it does not hold:"
   }
 ]

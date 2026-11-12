@@ -133,6 +133,11 @@ chose it, and surface it in the Phase 7 report for confirmation.
 
 ### Phase 4 — PROGRESSIVE INGEST (sub-agent fan-out — the core)
 
+Record the owner's confirmation of the map **verbatim** (his reply, or the option he picked: word
+the confirm option as a sentence, e.g. "Yes, ingest this map") and put it in every ingestor's
+brief: each task it files carries it as `--owner-asked "<those words>"`. Without the owner's words
+agents may open only 3 tasks a day, so a backlog import would stop at the third.
+
 Dispatch **`initializer-ingestor`** workers over the confirmed manifest, **one batch per
 context / product / feature-cluster** so each fits comfortably in one agent's context.
 Use `parallel` for independent batches, or `pipeline` when later batches reference earlier
