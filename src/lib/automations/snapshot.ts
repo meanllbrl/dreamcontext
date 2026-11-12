@@ -120,6 +120,10 @@ function readLastConsolidatedAt(contextRoot: string): string | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // The automation-output boundary is its own field once a cycle has set it
+    // (`outputs_consumed_at`, see sleep-consolidation's `outputsBoundary`).
+    const own = (parsed as Record<string, unknown>).outputs_consumed_at;
+    if (typeof own === 'string') return own;
     const v = (parsed as Record<string, unknown>).last_consolidated_at;
     return typeof v === 'string' ? v : null;
   } catch {

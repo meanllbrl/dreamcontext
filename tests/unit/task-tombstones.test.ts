@@ -137,8 +137,8 @@ describe('planCuratorTask no longer resurrects a merged-away chore', () => {
     expect(planCuratorTask(OVER, null, { slug: 'shipped', status: 'completed' }).action).toBe('create');
   });
 
-  it('an existing completed chore with no absorber still re-files (recurrence)', () => {
-    expect(planCuratorTask(OVER, { slug: CURATOR_TASK_SLUG, status: 'completed' }).action).toBe('create');
+  it('an existing completed chore with no absorber is reopened (recurrence; its slug is taken)', () => {
+    expect(planCuratorTask(OVER, { slug: CURATOR_TASK_SLUG, status: 'completed' }).action).toBe('reopen');
   });
 
   it('always carries a real description — never an empty template', () => {

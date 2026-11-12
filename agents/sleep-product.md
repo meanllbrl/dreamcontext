@@ -187,8 +187,8 @@ When the rubric says create:
 
 ```bash
 dreamcontext knowledge create "<descriptive-slug>" \
-  --tags "<comma-separated; pull from \`dreamcontext knowledge tags\`>" \
-  $([ "$PINNED" = "true" ] && echo "--pinned")
+  --tags "<comma-separated; pull from \`dreamcontext knowledge tags\`>"
+dreamcontext memory update "<descriptive-slug>" --pin   # only when it must be pinned
 ```
 
 Single-field changes: `dreamcontext memory update <slug> [--description|--tags|--content|--append|--pin|--unpin]`. Body sections: **Why this exists**, the finding / decision / summary, **Sources**, **Last verified**.
@@ -270,25 +270,18 @@ Distill into ONE file per app, `knowledge/apps/<slug>.md` (create it with `dream
 
 Then, and only then, drop what you processed: `dreamcontext apps learn-done <slug> --through <the last id you wrote in>` (refused unless the note is newer than that finding). A finding that arrived during the cycle stays for the next one. Skipped the app? Drop nothing.
 
-### Pass C — Taxonomy maintenance
+### Pass C — Taxonomy decisions
 
-Run every cycle; it is fast.
-
-```bash
-dreamcontext taxonomy init                    # idempotent: no change if core/taxonomy.json exists
-dreamcontext taxonomy audit                   # see the drift
-dreamcontext taxonomy audit --fix --dry-run   # preview the exact safe rewrites (writes nothing)
-dreamcontext taxonomy audit --fix             # apply: alias/normalizable tags → canonical, corpus-wide
-```
-
-`audit --fix` rewrites ONLY tags resolving to a *different canonical* and never guesses an orphan; it is **the only bulk rewrite you may run**. Then:
+`sleep start` already ran the deterministic half (scaffold `core/taxonomy.json`, the safe `audit --fix` rewrites, never inside `knowledge/archive/`) and printed the orphan tags left; your brief carries that list (`--json`: `taxonomy.orphans`). Do NOT re-run `taxonomy init` or `audit --fix`. No list in your brief → run `dreamcontext taxonomy audit` ONCE. Resolve only what needs judgment:
 
 | Bucket | Action |
 |--------|--------|
-| `orphan` tags (a real concept) | `dreamcontext taxonomy alias <orphan> <canonical>` (or `taxonomy add <facet:value>`), then re-run `taxonomy audit --fix`. |
+| `orphan` tags (a real concept) | `dreamcontext taxonomy alias <orphan> <canonical>` (or `taxonomy add <facet:value>`), then ONE `taxonomy audit --fix` to apply it. |
 | `orphan` tags (typo / leftover) | Remove it from that file's frontmatter surgically. |
 | `nearDups` in vocab | Remove the weaker entry from `core/taxonomy.json` by hand (surgical) and update files using it. |
 | `untagged` docs | Tag them if content is clear; leave stubs. |
+
+Never retag a file under `knowledge/archive/`: archives are frozen records.
 
 Grow the vocabulary for new recurring domain nouns via CLI only:
 
@@ -319,8 +312,7 @@ dreamcontext taxonomy resolve <tag>               # verify classification
 - No-op knowledge signals: <n> (<why>)
 
 ### Taxonomy
-- taxonomy init: <result>
-- audit: <n> tags fixed (<file: old → new>)
+- Orphans resolved: <n> (<tag → alias/add/removed>)
 - Domain Vocabulary: <taxonomy add / taxonomy alias calls>
 
 ### Automation output

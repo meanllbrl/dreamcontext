@@ -40,12 +40,23 @@ import { classifySyncError } from '../../lib/git-sync/failure.js';
 import { resolveBrainSyncToken, resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { renderBrainSyncResult } from './brain.js';
-import { buildCorpus } from '../../lib/recall.js';
-import { refreshEmbeddings, embeddingCacheUsable } from '../../lib/embeddings/store.js';
+import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
+import { embeddingCacheUsable } from '../../lib/embeddings/store.js';
 import { recallCloudStatus } from '../../lib/recall-cloud-config.js';
 import { spawnCloudIndexRefresh } from '../../lib/recall-cloud-index-spawn.js';
 import { registerRecallCloudCommands } from './recall-cloud.js';
-import { loadProjectVocabulary, auditCorpus } from '../../lib/taxonomy.js';
+import { loadProjectVocabulary, auditCorpus, ensureTaxonomyFile } from '../../lib/taxonomy.js';
+import { runTaxonomyFix, isFixExcluded } from './taxonomy.js';
+import {
+  specialistDispatchTable,
+  renderDispatchTable,
+  createPhaseTimer,
+  spawnEmbeddingRefresh,
+  readTaskQueueDepth,
+  isSyncAuthFailure,
+  isTokenRefused,
+  renderStaleRemoteLine,
+} from '../../lib/sleep-cycle-tools.js';
 import {
   readSleepFlags,
   writeSleepFlags,
@@ -59,6 +70,7 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { sortByOrder } from '../../lib/task-status.js';
 import { RULES_REL_PATH, readRules, unlearnedIds } from '../../lib/task-filing-rules.js';
 import { appliedObjectionIds, readObjectionsStrict, type ObjectionRecord } from '../../lib/task-objection.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
@@ -76,6 +88,8 @@ import {
   applyConsolidation,
   buildHistoryEntry,
   finalizeSleepState,
+  outputsBoundary,
+  nextOutputsBoundary,
   validateSleepAdd,
   consolidationDepth,
   catchupDebtSplit,
@@ -127,6 +141,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
 
 function getSleepPath(root: string): string {
   return join(root, 'state', '.sleep.json');
@@ -616,7 +631,7 @@ export function registerSleepCommand(program: Command): void {
         // during its own wave), so `shared` is attached HERE by
         // cross-referencing `listAutomations()`, now that the store module
         // has landed.
-        const pending = pendingOutputsSince(root, state.last_consolidated_at);
+        const pending = pendingOutputsSince(root, outputsBoundary(state));
         const sharedBySlug = new Map(listAutomations(root).map((m) => [m.slug, m.shared]));
         const automationOutputs = {
           outputs: pending.outputs.map((o) => ({ ...o, shared: sharedBySlug.get(o.slug) ?? false })),
@@ -626,7 +641,7 @@ export function registerSleepCommand(program: Command): void {
         if (automationOutputs.outputs.length > 0 || automationOutputs.skipped.length > 0) {
           const slugs = [...new Set(automationOutputs.outputs.map((o) => o.slug))].sort();
           const slugSuffix = slugs.length > 0 ? ` (${slugs.join(', ')})` : '';
-          say.info(`Automation outputs pending consolidation: ${automationOutputs.outputs.length}${slugSuffix}.`);
+          say.info(`Automation outputs pending consolidation: ${automationOutputs.outputs.length}${slugSuffix}. Fire sleep-product, then close with \`sleep done --product-ran\` (without it these outputs stay pending for the next cycle).`);
           // No silent caps: every dropped file is named, never just absent.
           for (const s of automationOutputs.skipped) {
             say.warn(`  skipped ${s.slug} (${s.reason}): ${s.path}`);
@@ -654,6 +669,43 @@ export function registerSleepCommand(program: Command): void {
           if (line.startsWith('!')) say.warn(line.slice(1)); else say.info(line);
         }
 
+        // SL-6 — the taxonomy pass is deterministic, so it runs HERE at zero tokens
+        // instead of as specialist turns at peak context: scaffold the vocabulary,
+        // apply the safe alias rewrites (never inside knowledge/archive/), and hand
+        // sleep-product only what needs judgment, the orphan tags. Best-effort.
+        let taxonomy: { created: boolean; rewrites: number; files: number; orphans: Array<{ tag: string; count: number }> } | null = null;
+        try {
+          const created = ensureTaxonomyFile(root);
+          const vocab = loadProjectVocabulary(root);
+          // The mtime-validated cache: a warm brain pays milliseconds, not a full parse.
+          const corpus = buildCorpusCached(root);
+          const fix = runTaxonomyFix(root, vocab, true, corpus);
+          // Re-read after the rewrite so the orphan count is what is left now.
+          const after = fix.files.length > 0 ? buildCorpusCached(root) : corpus;
+          // Archives are frozen, so their tags are nobody's decision: left out of the list.
+          const live = after.filter((d) => !isFixExcluded(d.relPath));
+          const buckets = auditCorpus(live.map((d) => ({ slug: d.slug, tags: d.tags })), loadProjectVocabulary(root));
+          const counts = new Map<string, number>();
+          for (const t of buckets.orphan) counts.set(t, (counts.get(t) ?? 0) + 1);
+          const orphans = [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+          taxonomy = { created, rewrites: fix.totalRewrites, files: fix.files.length, orphans };
+          const head = orphans.slice(0, 12).map((o) => `${o.tag} (${o.count})`).join(', ');
+          say.info(
+            `Taxonomy done${created ? ' (core/taxonomy.json created)' : ''}: ${fix.totalRewrites} tag(s) normalized in ${fix.files.length} file(s). ` +
+            (orphans.length > 0
+              ? `${orphans.length} orphan tag(s) need a vocab decision; pass this list to sleep-product: ${head}${orphans.length > 12 ? ', …' : ''}.`
+              : 'No orphan tags.'),
+          );
+        } catch (err) {
+          say.warn(`Taxonomy pass: skipped — ${(err as Error).message ?? err}`);
+        }
+
+        // SL-12 — what each specialist runs on. The dispatcher passes exactly
+        // this; a habit of passing one model to every sub-agent would otherwise
+        // override the pins the brain chose in Settings › Sleep.
+        const dispatch = specialistDispatchTable(projectRoot);
+        for (const line of renderDispatchTable(dispatch)) say.info(line);
+
         if (asJson) {
           console.log(JSON.stringify({
             epoch: state.sleep_started_at,
@@ -665,6 +717,8 @@ export function registerSleepCommand(program: Command): void {
             automationOutputs,
             appFindings,
             filingRules: filingRules.json,
+            taxonomy,
+            dispatch,
           }, null, 2));
         }
       } finally {
@@ -697,7 +751,12 @@ export function registerSleepCommand(program: Command): void {
       '--asks <counts>',
       'Where the owner\'s asks landed this cycle (sleep-tasks report): criterion=a,subtask=b,task=c,unplaced=d',
     )
-    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string }) => {
+    .option(
+      '--product-ran',
+      'sleep-product ran this cycle, so pending automation output counts as consumed (without it, that output stays pending)',
+    )
+    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string; productRan?: boolean }) => {
+      const timer = createPhaseTimer();
       let summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
@@ -779,17 +838,30 @@ export function registerSleepCommand(program: Command): void {
         history.unshift(buildHistoryEntry(previousDebt, result, summary, today_));
         writeSleepHistory(root, history);
 
+        // SL-9 — automation output counts as consumed only when sleep-product
+        // ran (or nothing was pending). Counted BEFORE the boundary moves.
+        const previousBoundary = outputsBoundary(fresh);
+        const pendingOutputs = previousBoundary ? pendingOutputsSince(root, previousBoundary).outputs.length : 0;
+        const nowISO = new Date().toISOString();
+
         // Finalize and persist the new state exactly once.
-        const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
+        const finalState = finalizeSleepState(result.state, summary, today_, nowISO);
+        finalState.outputs_consumed_at = nextOutputsBoundary({
+          previous: previousBoundary,
+          pendingCount: pendingOutputs,
+          productRan: !!opts.productRan,
+          epoch,
+          nowISO,
+        });
         writeSleepState(root, finalState);
-        return { previousDebt, epoch, today_, finalState };
+        return { previousDebt, epoch, today_, finalState, pendingOutputs };
       });
       if (!doneLock.locked) {
         error('Sleep state is busy — refusing to consolidate from a stale read. Retry in a moment.');
         process.exitCode = 1;
         return;
       }
-      const { previousDebt, epoch, today_, finalState } = doneLock.value;
+      const { previousDebt, epoch, today_, finalState, pendingOutputs } = doneLock.value;
       closeSleepRun(root, finalState.debt);
 
       if (epoch && finalState.sessions.length > 0) {
@@ -797,6 +869,10 @@ export function registerSleepCommand(program: Command): void {
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
       }
+      if (pendingOutputs > 0 && !opts.productRan) {
+        warn(`${pendingOutputs} automation output(s) were not consolidated this cycle (no --product-ran), so they stay pending for the next sleep.`);
+      }
+      timer.lap('state');
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag
       // observations against the persisted streak, surface a one-line ask for
@@ -837,6 +913,7 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Recidivism tracking: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('flags');
 
       // AC6 (2/2) — orphan-tag curator trigger: >= ORPHAN_TAG_CURATOR_THRESHOLD
       // orphan tags across the corpus auto-creates (or refreshes) a standing
@@ -844,8 +921,11 @@ export function registerSleepCommand(program: Command): void {
       // Best-effort — a taxonomy audit hiccup must never fail `sleep done`.
       try {
         const vocab = loadProjectVocabulary(root);
-        const corpus = buildCorpus(root);
-        const docs = corpus.map((d) => ({ slug: d.slug, tags: d.tags }));
+        // The only corpus build left in `sleep done` (the embedding refresh is a
+        // detached child now), served from the mtime-validated cache.
+        const corpus = buildCorpusCached(root);
+        // Archives are frozen (never retagged), so their tags cannot count toward the chore.
+        const docs = corpus.filter((d) => !isFixExcluded(d.relPath)).map((d) => ({ slug: d.slug, tags: d.tags }));
         const buckets = auditCorpus(docs, vocab);
 
         const backend = getTaskBackend(root);
@@ -864,11 +944,12 @@ export function registerSleepCommand(program: Command): void {
           }
         }
 
+        const statuses = loadStatuses(root);
         const plan = planCuratorTask(
           buckets.orphan.length,
           existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
           absorbing,
-          loadStatuses(root),
+          statuses,
         );
         if (plan.action === 'create') {
           await backend.create({
@@ -889,6 +970,19 @@ export function registerSleepCommand(program: Command): void {
             variant: 'cli',
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        } else if (plan.action === 'reopen') {
+          // The chore shipped once and the orphans came back: reopen the same
+          // task (a create would collide on its fixed slug), with the reason.
+          const openKey = sortByOrder(statuses).find((d) => d.kind === 'open')?.key ?? 'todo';
+          await backend.updateFields(plan.slug, { status: openKey });
+          await backend.addChangelog(
+            plan.slug,
+            `- ${today_}: reopened by sleep: ${buckets.orphan.length} orphan tag(s) came back after the last curator pass.`,
+            { createIfMissing: true },
+          );
+          info(`Curator task reopened: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        } else if (plan.skippedCancelled) {
+          info(`Curator task ${plan.slug} is cancelled, so sleep left it closed (${buckets.orphan.length} orphan tags). Reopen it yourself if you want the pass.`);
         } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
           await backend.addChangelog(
             plan.slug,
@@ -902,6 +996,7 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('curator');
 
       // AC7 — semantic dedup digest: surface merge/review/create tallies since
       // the epoch in the cycle summary. Best-effort — a log-read hiccup must
@@ -938,6 +1033,7 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Digest GC: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('digests');
 
       // Post-sleep task sync (issue #11): push the consolidation's task updates,
       // then re-mirror. The consolidation touches EVERY reconciled task at once,
@@ -945,6 +1041,7 @@ export function registerSleepCommand(program: Command): void {
       // itself under the rate ceiling (so one pass syncs everything) and retries
       // transient failures. Still best-effort: a sync failure must never fail
       // `sleep done` — but it must NEVER fail SILENTLY either.
+      let taskSyncAuthFailed = false;
       try {
         const backend = getTaskBackend(root);
         if (backend.name !== 'local') {
@@ -957,11 +1054,16 @@ export function registerSleepCommand(program: Command): void {
           let report;
           try {
             report = await backend.sync('both', syncOpts);
+            // SL-7 — a token the remote refused OUTRIGHT (nothing moved, every
+            // error a credential refusal) will be refused again: no retry, no
+            // wording that reads as a completion. One task's 403 (a GitHub rate
+            // limit answers 403 too) is NOT that: it keeps the retry below.
+            taskSyncAuthFailed = isTokenRefused(report);
             // Any task that still failed to push leaves the local→remote state
             // incomplete. Retry the whole sync ONCE — the failed tasks are still
             // drift-flagged, so they get re-selected, and the rate window has
             // advanced. One extra pass, not a loop.
-            if (report.failedPushes.length > 0) {
+            if (report.failedPushes.length > 0 && !taskSyncAuthFailed) {
               bar.done();
               warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
               report = await backend.sync('both', syncOpts);
@@ -969,37 +1071,49 @@ export function registerSleepCommand(program: Command): void {
           } finally {
             bar.done();
           }
-          if (report.conflicts.length > 0) {
-            warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
-          }
-          const pushedTotal = report.pushed + report.created;
-          if (pushedTotal > 0 || report.pulled > 0) {
-            info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
-          }
-          // LOUD on residual failure — never a dim one-liner. The mirror is
-          // ahead of the remote; the user must know to re-run.
-          if (report.failedPushes.length > 0) {
-            error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
-            for (const e of report.errors) warn(`  ${e}`);
-            warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
-          } else if (report.errors.length > 0) {
-            // Non-push errors (pull/delete/field) — surface, don't bury.
-            warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
-            for (const e of report.errors) warn(`  ${e}`);
-          }
-          // Data-quality warnings (e.g. an unmapped assignee left unassigned).
-          // The task synced, but assignment silently failing is exactly the
-          // class of bug we refuse to bury — surface every one.
-          if (report.warnings.length > 0) {
-            warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
-            for (const w of report.warnings) warn(`  ${w}`);
+          if (taskSyncAuthFailed) {
+            for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
+            warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+          } else {
+            if (report.conflicts.length > 0) {
+              warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
+            }
+            const pushedTotal = report.pushed + report.created;
+            if (pushedTotal > 0 || report.pulled > 0) {
+              info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
+            }
+            // LOUD on residual failure — never a dim one-liner. The mirror is
+            // ahead of the remote; the user must know to re-run.
+            if (report.failedPushes.length > 0) {
+              error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
+              for (const e of report.errors) warn(`  ${e}`);
+              warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
+            } else if (report.errors.length > 0) {
+              // Non-push errors (pull/delete/field) — surface, don't bury.
+              warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
+              for (const e of report.errors) warn(`  ${e}`);
+            }
+            // Data-quality warnings (e.g. an unmapped assignee left unassigned).
+            // The task synced, but assignment silently failing is exactly the
+            // class of bug we refuse to bury — surface every one.
+            if (report.warnings.length > 0) {
+              warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
+              for (const w of report.warnings) warn(`  ${w}`);
+            }
           }
         }
       } catch (err) {
         // The sync engine itself threw (auth/lock/transport) — best-effort by
         // contract, but visible: a swallowed failure is what hid the last bug.
-        warn(`Task sync: skipped — ${(err as Error).message ?? err}`);
+        // A thrown refusal stopped the whole sync, so it IS a refused token.
+        const message = (err as Error).message ?? String(err);
+        warn(`Task sync: skipped — ${message}`);
+        if (isSyncAuthFailure(message)) {
+          taskSyncAuthFailed = true;
+          warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+        }
       }
+      timer.lap('task-sync');
 
       // Post-sleep whole-project sync (github-cloud-collaboration-brain-repo-sync):
       // fetch/merge/commit/push the whole project (`full-repo`) when autoSync is
@@ -1024,7 +1138,7 @@ export function registerSleepCommand(program: Command): void {
           // run) would leave an earlier background pull's flag stuck `true`
           // forever, even though `sleep done` is exactly the kind of
           // "task-backend sync actually ran" event that should clear it.
-          if ((result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
+          if (!taskSyncAuthFailed && (result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
             const backend = getTaskBackend(root);
             if (backend.name !== 'local') {
               await backend.sync('both');
@@ -1044,6 +1158,7 @@ export function registerSleepCommand(program: Command): void {
           warn(failure.message);
         }
       }
+      timer.lap('brain-sync');
 
       // Post-sleep embedding refresh (decision-embedding-layer: "eager during
       // sleep"). Sleep just rewrote the corpus — the moment the mtime pre-filter
@@ -1051,20 +1166,19 @@ export function registerSleepCommand(program: Command): void {
       // fully authoritative). Gated on an EXISTING cache: a vault that never
       // enabled hybrid recall must never cold-start a 113 MB model download from
       // `sleep done`. Best-effort by the same discipline as the syncs above.
+      //
+      // SL-11 — DETACHED, like the cloud refresh below: `sleep done` used to wait
+      // seconds on model load and embedding. The child runs the same forced
+      // refresh (`embed refresh --force --if-present`) and waits for the cache
+      // lock itself; recall refreshes lazily per query in the meantime.
       try {
-        if (embeddingCacheUsable(root)) {
-          // waitForLock: a concurrent writer (the server's index build, a hook) holds the
-          // vault's cache lock for milliseconds — wait it out (bounded), never clobber it.
-          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true, waitForLock: true });
-          if (res === null) {
-            warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
-          } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {
-            info(chalk.dim(`Embedding index refreshed: +${res.stats.embedded} embedded, −${res.stats.evicted} evicted (${res.index.chunks.length} chunks).`));
-          }
+        if (embeddingCacheUsable(root) && spawnEmbeddingRefresh(dirname(root))) {
+          info(chalk.dim('Embedding index refresh started in the background.'));
         }
       } catch (err) {
         warn(`Embedding refresh: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('embeddings');
 
       // Cloud index refresh: only for a vault that consented to a cloud tier, detached and never
       // awaited (the child enforces throttle, churn guard and the rolling spend cap itself).
@@ -1092,6 +1206,9 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Brain durability check: skipped — ${(err as Error).message ?? err}`);
       }
+      timer.lap('durability');
+      const phases = timer.line();
+      if (phases) info(chalk.dim(phases));
     });
 
   // --- debt ---

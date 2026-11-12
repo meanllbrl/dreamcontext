@@ -135,8 +135,8 @@ describe('planCuratorTask', () => {
     expect(planCuratorTask(150, { slug: CURATOR_TASK_SLUG, status: 'todo' }).action).toBe('refresh');
   });
 
-  it('at the threshold, existing COMPLETED task: create (orphans recurred)', () => {
-    expect(planCuratorTask(150, { slug: CURATOR_TASK_SLUG, status: 'completed' }).action).toBe('create');
+  it('at the threshold, existing COMPLETED task: reopen (orphans recurred; a create would collide)', () => {
+    expect(planCuratorTask(150, { slug: CURATOR_TASK_SLUG, status: 'completed' }).action).toBe('reopen');
   });
 
   it('above the threshold, existing in_progress task: refresh', () => {

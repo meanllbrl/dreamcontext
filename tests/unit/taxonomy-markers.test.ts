@@ -16,9 +16,11 @@ const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 describe('agents/sleep-product.md markers', () => {
   const content = readFileSync(join(ROOT, 'agents', 'sleep-product.md'), 'utf-8');
 
-  it("has the '### Pass C — Taxonomy maintenance' heading", () => {
+  it("has the '### Pass C — Taxonomy decisions' heading", () => {
     // Pass A and Pass B use ### level; Pass C must be at the same level.
-    expect(content).toContain('### Pass C — Taxonomy maintenance');
+    // `sleep start` runs the deterministic half; Pass C keeps only the judgment.
+    expect(content).toContain('### Pass C — Taxonomy decisions');
+    expect(content).toContain('Do NOT re-run `taxonomy init` or `audit --fix`');
   });
 
   it('has a Taxonomy return sub-section in the report block', () => {

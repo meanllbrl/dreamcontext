@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonArray, writeJsonArray } from './json-file.js';
-import { DEFAULT_STATUSES, isTerminal, type StatusDef } from './task-status.js';
+import { DEFAULT_STATUSES, isCancelled, isTerminal, type StatusDef } from './task-status.js';
 
 export interface SleepFlag {
   /** Stable identity for the recurring problem, e.g. `recurring-task:<slug>`. */
@@ -197,16 +197,23 @@ export interface CuratorTaskPlan {
   /**
    * `refresh-absorbing` — the chore was merged into ANOTHER task that is still
    * open; log the orphan count there instead of re-filing a duplicate.
+   * `reopen` — the chore's own task is COMPLETED and orphans recurred: move it
+   * back to an open status. Creating it again collided on the fixed slug, which
+   * silently killed the trigger for good once the first pass shipped.
+   * `none` also covers a CANCELLED chore: the owner dropped it, and a sleep
+   * never brings back what the owner cancelled (`skippedCancelled` says so).
    */
-  action: 'create' | 'refresh' | 'refresh-absorbing' | 'none';
+  action: 'create' | 'refresh' | 'refresh-absorbing' | 'reopen' | 'none';
   slug: string;
   name: string;
   description: string;
+  /** True when the count warranted the chore but its task is cancelled. */
+  skippedCancelled?: boolean;
 }
 
 /**
  * Decide whether the orphan-tag count warrants a curator task, and whether an
- * existing one should be refreshed (still open) or recreated (a prior pass
+ * existing one should be refreshed (still open) or reopened (a prior pass
  * completed but orphans recurred). Pure — the caller owns the actual
  * create/update task-backend call.
  *
@@ -235,10 +242,16 @@ export function planCuratorTask(
   if (orphanCount < ORPHAN_TAG_CURATOR_THRESHOLD) {
     return { action: 'none', slug, name, description };
   }
-  // TERMINAL by kind: a cancelled curator task is as closed as a completed one —
-  // it is recreated, never "refreshed" back to life.
   if (existing && !isTerminal(statuses, existing.status)) {
     return { action: 'refresh', slug, name, description };
+  }
+  // The chore's own file exists but is terminal. Completed → reopen it (a
+  // create would collide on the fixed slug). Cancelled → the owner's call stands.
+  if (existing) {
+    if (isCancelled(statuses, existing.status)) {
+      return { action: 'none', slug, name, description, skippedCancelled: true };
+    }
+    return { action: 'reopen', slug, name, description };
   }
   // The chore's own file is gone or done — but if the work was ABSORBED by a
   // task that is still open, that task is where the count belongs.
