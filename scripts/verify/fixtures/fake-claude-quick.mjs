@@ -14,7 +14,8 @@
  */
 const args = process.argv.slice(2);
 const msg = args[args.indexOf('-p') + 1] ?? '';
-const request = (/^Request from the owner: (.*)$/m.exec(msg)?.[1] ?? '').toLowerCase();
+const typed = /^Request from the owner: (.*)$/m.exec(msg)?.[1] ?? '';
+const request = typed.toLocaleLowerCase('tr');
 const fence = /<board-data-[0-9a-f]+>\n([\s\S]*?)\n<\/board-data-/.exec(msg);
 const data = fence ? JSON.parse(fence[1]) : { scope: [], near: [], board: null };
 
@@ -48,11 +49,12 @@ if (/buraya .*(çiz|ekle)/.test(request)) {
   });
 }
 
-const rename = /adını (.+?) yap/.exec(request);
+// The new name as the owner typed it (lowercasing and re-capitalising breaks on ç: "SeçEnek").
+const rename = /adını (.+?) yap/i.exec(typed);
 if (rename && data.scope.length) {
   // A kit card is a rectangle and its free label in one group: the label is the text to change.
   const target = data.scope.find((s) => s.type === 'text') ?? data.scope[0];
-  const name = rename[1].replace(/\b\w/g, (c) => c.toUpperCase());
+  const name = rename[1];
   answer({ reply: `Adı ${name} oldu.`, notBoard: false, update: [{ id: target.id, text: name }] });
 }
 
