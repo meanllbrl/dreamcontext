@@ -14,7 +14,6 @@ import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { header, success, error, info } from '../../lib/format.js';
 import { promptInput } from '../../lib/prompt.js';
 import { slugify } from '../../lib/id.js';
-import { DEFAULT_AGENT_TASK_BUDGET, MAX_AGENT_TASK_BUDGET, resolveAgentTaskBudget, sanitizeAgentTaskBudget } from '../../lib/agent-filing-guard.js';
 import {
   hasSecretsFile,
   maskToken,
@@ -139,8 +138,6 @@ function printConfig(projectRoot: string): void {
       ? chalk.green('on') + chalk.dim(` (firm at ${Math.round(handoff.nudgeAt / 1000)}k, severe at ${Math.round(handoff.hardAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
       : chalk.yellow('off') + chalk.dim(' (`dreamcontext config context-handoff on`)')}`,
   );
-  const budget = resolveAgentTaskBudget(cfg.agentTaskBudget);
-  console.log(`  Agent tasks:    ${budget} a day${cfg.agentTaskBudget === undefined ? chalk.dim(' (default; `dreamcontext config agent-task-budget <n>`)') : ''}`);
   console.log(`  Setup version:  ${chalk.dim(cfg.setupVersion)}`);
 }
 
@@ -251,24 +248,6 @@ export function registerConfigCommand(program: Command): void {
         success('Context handoff off — no nudge, and the hooks do no extra work.');
       }
       info(chalk.dim('This is the VAULT default (it rides to teammates) and the only switch for terminal sessions. Desktop Chat panes toggle it per pane.'));
-    });
-
-  config
-    .command('agent-task-budget <n>')
-    .description(`How many tasks awake agents may open a day without the owner's words (0-${MAX_AGENT_TASK_BUDGET}, default ${DEFAULT_AGENT_TASK_BUDGET})`)
-    .action((raw: string) => {
-      const projectRoot = requireProjectRoot();
-      if (!projectRoot) return;
-      const budget = /^\d+$/.test(raw.trim()) ? sanitizeAgentTaskBudget(Number(raw.trim())) : undefined;
-      if (budget === undefined) {
-        error(`The budget must be a whole number from 0 to ${MAX_AGENT_TASK_BUDGET}.`, `Got '${raw}'.`);
-        process.exitCode = 1;
-        return;
-      }
-      updateSetupConfig(projectRoot, { agentTaskBudget: budget });
-      success(budget === 0
-        ? 'Agents open no task without the owner\'s words (--owner-asked).'
-        : `Agents may open ${budget} task${budget === 1 ? '' : 's'} a day; past that they need the owner's words (--owner-asked).`);
     });
 
   config

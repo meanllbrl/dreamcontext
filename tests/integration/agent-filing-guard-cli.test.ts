@@ -47,44 +47,27 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe('tasks create inside an agent session', () => {
-  it('the owner at his terminal is never held to the budget', () => {
+  it('the owner at his terminal files freely', () => {
     for (let i = 1; i <= 5; i++) expect(cli(`tasks create "owner task ${i}" -w "why" --by human`).code).toBe(0);
   });
 
-  it('agents file 3 a day; the 4th is refused with the reason and the way out; his words file it', () => {
-    for (let i = 1; i <= 3; i++) expect(cli(`tasks create "agent job number ${i}" -w "why"`, AGENT).code).toBe(0);
-    const refused = cli('tasks create "agent job number 4" -w "why"', AGENT);
-    expect(refused.code).toBe(1);
-    expect(refused.out).toContain('budget 3 a day');
-    expect(refused.out).toContain('--owner-asked');
-    expect(refused.out).toContain('dreamcontext config agent-task-budget <n>');
-
-    const asked = cli(`tasks create "agent job number 4" -w "why" --owner-asked "${OWNER_WORDS}"`, AGENT);
+  it('agents have no daily count (owner, 2026-11-12); his words are recorded as the ask', () => {
+    for (let i = 1; i <= 5; i++) expect(cli(`tasks create "agent job number ${i}" -w "why"`, AGENT).code).toBe(0);
+    const asked = cli(`tasks create "agent job number 6" -w "why" --owner-asked "${OWNER_WORDS}"`, AGENT);
     expect(asked.code).toBe(0);
-    const body = taskText('agent-job-number-4');
+    const body = taskText('agent-job-number-6');
     expect(body).toContain('filed_by: agent');
     expect(body).toContain('kind: ask');
     expect(body).toContain(OWNER_WORDS);
-    // An owner-confirmed batch (the initializer's manifest) is never cut at the budget.
-    for (let i = 5; i <= 8; i++) {
-      expect(cli(`tasks create "agent job number ${i}" -w "why" --owner-asked "${OWNER_WORDS}"`, AGENT).code).toBe(0);
-    }
-    // And his asks spend nothing: the unasked count is still 3, so the next unasked one is refused.
-    expect(cli('tasks create "agent job number 9" -w "why"', AGENT).code).toBe(1);
   });
 
-  it('--by human inside an agent session is recorded as the agent it is, and counts', () => {
-    for (let i = 1; i <= 3; i++) expect(cli(`tasks create "claimed human ${i}" -w "why" --by human`, AGENT).code).toBe(0);
+  it('--by human inside an agent session is recorded as the agent it is', () => {
+    expect(cli('tasks create "claimed human 1" -w "why" --by human', AGENT).code).toBe(0);
     expect(taskText('claimed-human-1')).toContain('filed_by: agent');
-    expect(cli('tasks create "claimed human 4" -w "why" --by human', AGENT).code).toBe(1);
   });
 
-  it('the owner sets the budget; 0 refuses the first one', () => {
-    expect(cli('config agent-task-budget 0').code).toBe(0);
-    const r = cli('tasks create "anything at all" -w "why"', AGENT);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain('agent task budget = 0');
-    expect(cli('config agent-task-budget x').code).toBe(1);
+  it('the old budget command is gone', () => {
+    expect(cli('config agent-task-budget 0').code).not.toBe(0);
   });
 
   it('an agent never opens a sub-task without the owner\'s words, a plan wave included', () => {

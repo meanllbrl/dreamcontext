@@ -74,7 +74,7 @@ export const MIN_SLEEP_WHY_CHARS = 40;
  * sub-task under its parent) pass like `human`: neither is the cycle, so neither counts toward
  * its cap or meets its gates. Who counts as sleep is decided once, in filing-basis.ts. An agent
  * running inside a session is held instead by agent-filing-guard.ts (no Super child files, no
- * sub-task, a daily budget) and by gate 5 alone ({@link assertAgentNeighbor}).
+ * sub-task) and by gate 5 alone ({@link assertAgentNeighbor}).
  */
 export type FilingActor = 'human' | 'agent' | 'plan' | 'sleep' | 'unknown';
 
@@ -243,7 +243,7 @@ export async function assertTaskFilingBar(input: FilingBarInput): Promise<Filing
 
 /**
  * Gate 5 (the near-twin task) for an AWAKE agent (audit TK-2). The rest of the bar stays the
- * cycle's: an agent has no cap per cycle (agent-filing-guard.ts holds its daily budget) and no
+ * cycle's: an agent has no cap per cycle (agent-filing-guard.ts holds its rules, no daily count) and no
  * Why floor. Same availability rule as the cycle's gate: when the model or the task index is
  * missing it passes with the notice, and it never downloads or embeds the corpus inline.
  */

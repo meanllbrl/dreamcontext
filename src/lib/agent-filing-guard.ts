@@ -8,28 +8,24 @@ import { spawnMarkerFromEnv } from './session-origin.js';
  * agent passed like the owner, and 88% of the board came through that door: the Super opened a
  * task per delegated job, its children opened one when their brief named none, and plans opened
  * wave sub-tasks. The owner's rule (2026-11-09) is "a task only for big work, ONE task, a
- * sub-task only when I ask". Prose alone did not hold it, so three mechanical refusals do:
+ * sub-task only when I ask". Prose alone did not hold it, so two mechanical refusals do:
  *
  *   1. A Super Agent's child never files. Only the Super or the owner opens the one task.
  *   2. An agent never opens a sub-task (`--parent`), a plan's wave included.
- *   3. Agents together file at most N tasks a day (config `agentTaskBudget`, default 3).
  *
  * Each refusal names its reason and the way out (owner rule: a guard asks or explains, it never
- * silently locks). The way out for all three is the owner's own words: `--owner-asked "<words>"`
+ * silently locks). The way out for both is the owner's own words: `--owner-asked "<words>"`
  * records an ask basis and lifts the guard. A batch the owner confirmed (the initializer's
  * manifest, a curator plan, waves he asked for) is his ask too: each filing quotes his
- * confirmation, so a bulk import is never cut at the budget. An agent can lie there, but the lie is on the record
+ * confirmation. An agent can lie there, but the lie is on the record
  * (the task page shows the quote) and the owner can object to it.
+ * There is no daily count (owner, 2026-11-12: the budget was removed).
  *
  * WHO IS AN AGENT is read from the environment, never from `--by`: an agent told to "pass
  * `--by human`" mid-cycle would otherwise walk straight past. The owner at his own terminal has
  * none of these variables; the dashboard's form goes through POST /api/tasks, which this guard
  * does not touch.
  */
-
-export const DEFAULT_AGENT_TASK_BUDGET = 3;
-/** The budget a config may set: 0 (agents file nothing without the owner's words) to 50. */
-export const MAX_AGENT_TASK_BUDGET = 50;
 
 export type AgentSessionKind = 'claude' | 'codex' | 'brain-mcp' | 'spawned';
 
@@ -47,37 +43,6 @@ export function agentSessionOf(env: NodeJS.ProcessEnv): AgentSessionKind | null 
   return null;
 }
 
-/** A configured budget, sanitized: an integer 0..50, else undefined (the default applies). */
-export function sanitizeAgentTaskBudget(raw: unknown): number | undefined {
-  if (typeof raw !== 'number' || !Number.isInteger(raw)) return undefined;
-  if (raw < 0 || raw > MAX_AGENT_TASK_BUDGET) return undefined;
-  return raw;
-}
-
-export function resolveAgentTaskBudget(configured: number | undefined): number {
-  return sanitizeAgentTaskBudget(configured) ?? DEFAULT_AGENT_TASK_BUDGET;
-}
-
-/**
- * How many tasks agents filed on `day` (YYYY-MM-DD): `filed_by` agent or plan, created that day,
- * WITHOUT the owner's words. A task filed on his ask (`filing_basis.kind: ask`, which
- * `--owner-asked` records) is his, so it never spends the budget for the ones he did not ask for.
- * `day` is the UTC date `today()` stamps into `created_at`, so the two always agree.
- */
-export function agentTasksFiledOn(
-  tasks: ReadonlyArray<{ created_at?: string | null; filed_by?: string | null; filing_basis?: { kind?: string; quote?: string } | null }>,
-  day: string,
-): number {
-  let n = 0;
-  for (const t of tasks) {
-    if (t.filed_by !== 'agent' && t.filed_by !== 'plan') continue;
-    // His ask, held to --owner-asked's own floor: a one-word "quote" is no way out of the count.
-    if (t.filing_basis?.kind === 'ask' && !quoteTooThin(t.filing_basis.quote ?? '')) continue;
-    if (String(t.created_at ?? '').slice(0, 10) === day) n++;
-  }
-  return n;
-}
-
 export interface AgentGuardInput {
   /** Who decideFiling says is filing. Only `agent` and `plan` are guarded. */
   filedBy: string;
@@ -87,13 +52,9 @@ export interface AgentGuardInput {
   ownerAsked: string | null;
   /** This session is a live child of a Super Agent (super/handoff-task.ts `superChildContext`). */
   superChild: boolean;
-  /** Tasks agents already filed today. */
-  filedToday: number;
-  /** The daily budget in force. */
-  budget: number;
 }
 
-export type AgentGuardCode = 'owner_asked_too_thin' | 'super_child' | 'parent_needs_owner' | 'daily_budget';
+export type AgentGuardCode = 'owner_asked_too_thin' | 'super_child' | 'parent_needs_owner';
 
 export type AgentGuardVerdict =
   | { ok: true; ownerAsked: boolean }
@@ -135,20 +96,6 @@ export function checkAgentFiling(input: AgentGuardInput): AgentGuardVerdict {
       message: `Not filed: an agent opens a sub-task only when the owner asks for one (owner rule, 2026-11-09). `
         + `Add it to ${input.parent} as a criterion instead: dreamcontext tasks insert ${input.parent} acceptance_criteria "…"; `
         + 'a plan\'s waves are logged on that one task. ' + OWNER_WAY,
-    };
-  }
-
-  if (input.filedToday >= input.budget) {
-    const what = input.budget === 0
-      ? 'this brain lets agents open no task without the owner\'s words (agent task budget = 0)'
-      : `agents already opened ${input.filedToday} tasks today (budget ${input.budget} a day)`;
-    return {
-      ok: false,
-      code: 'daily_budget',
-      message: `Not filed: ${what}. A task is only for big work. `
-        + 'Put this on the task it belongs to as a criterion (dreamcontext tasks insert <slug> acceptance_criteria "…"), '
-        + 'or ask the owner whether it deserves its own task. ' + OWNER_WAY
-        + ' The owner can change the budget: dreamcontext config agent-task-budget <n>.',
     };
   }
 

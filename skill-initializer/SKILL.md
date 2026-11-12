@@ -135,8 +135,8 @@ chose it, and surface it in the Phase 7 report for confirmation.
 
 Record the owner's confirmation of the map **verbatim** (his reply, or the option he picked: word
 the confirm option as a sentence, e.g. "Yes, ingest this map") and put it in every ingestor's
-brief: each task it files carries it as `--owner-asked "<those words>"`. Without the owner's words
-agents may open only 3 tasks a day, so a backlog import would stop at the third.
+brief: each task it files carries it as `--owner-asked "<those words>"`. Without the owner's words a
+Super child files nothing and no agent opens a sub-task.
 
 Dispatch **`initializer-ingestor`** workers over the confirmed manifest, **one batch per
 context / product / feature-cluster** so each fits comfortably in one agent's context.

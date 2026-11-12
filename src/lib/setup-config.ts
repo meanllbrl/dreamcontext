@@ -115,11 +115,6 @@ export interface SetupConfig {
    * M0 fact in `~/.dreamcontext/local/`, never in this file).
    */
   agentSync?: true;
-  /**
-   * How many tasks awake agents may open a day without the owner's words (agent-filing-guard.ts).
-   * Absent ⇒ 3. 0 ⇒ none. Set with `dreamcontext config agent-task-budget <n>`.
-   */
-  agentTaskBudget?: number;
 }
 
 /**
@@ -652,7 +647,6 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       sleep: sanitizeSleep(parsed.sleep),
       contextHandoff: sanitizeContextHandoff(parsed.contextHandoff),
       agentSync: (parsed as { agentSync?: unknown }).agentSync === true ? true : undefined,
-      agentTaskBudget: sanitizeIntInRange((parsed as { agentTaskBudget?: unknown }).agentTaskBudget, 0, 50),
     };
   } catch {
     return null;
@@ -701,7 +695,6 @@ export function updateSetupConfig(
     contextHandoff: patch.contextHandoff ?? existing.contextHandoff,
     // Never written false: once on, a rewrite keeps it on.
     agentSync: patch.agentSync ?? existing.agentSync,
-    agentTaskBudget: patch.agentTaskBudget ?? existing.agentTaskBudget,
   };
   writeSetupConfig(projectRoot, next);
   return next;
