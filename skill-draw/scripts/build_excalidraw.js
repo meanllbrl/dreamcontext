@@ -89,15 +89,17 @@ const FULL_WIDTH_TYPES = ['appBar', 'tabBar', 'listRow', 'searchField', 'segment
 function screenWithItems(e) {
   const { items, gap, ...shell } = e;
   const build = COMPOSITES[e.type];
-  return build(Object.assign({}, shell, {
-    content: (inner) => LAYOUTS.stack({
-      x: inner.x, y: inner.y, gap: gap == null ? 10 : gap,
-      items: items.map((it) => {
-        const spec = (it && typeof it === 'object' && FULL_WIDTH_TYPES.includes(it.type) && it.w == null) ? Object.assign({}, it, { w: inner.w }) : it;
-        return expandElements([spec]);
-      }),
+  const fill = (inner) => LAYOUTS.stack({
+    x: inner.x, y: inner.y, gap: gap == null ? 10 : gap,
+    items: items.map((it) => {
+      const spec = (it && typeof it === 'object' && FULL_WIDTH_TYPES.includes(it.type) && it.w == null) ? Object.assign({}, it, { w: inner.w }) : it;
+      return expandElements([spec]);
     }),
-  }));
+  });
+  if (e.type === 'device') return build(Object.assign({}, shell, { content: fill }));
+  // windowFrame has no `content` callback: it hands back `.inner`, the parts go in after it.
+  const frame = build(shell);
+  return [].concat(frame, fill(frame.inner));
 }
 
 function expandElements(list) {

@@ -243,6 +243,10 @@ describe('the kit reference', () => {
     for (const b of blocks.slice(1)) {
       const out = buildSpecDrawing(b, 'screen.json');
       expect(out.audit).toEqual({ overlaps: 0, buriedText: 0, longLines: 0, wallOfText: 0 });
+      // the parts really are drawn: the same shell with no items is smaller
+      const bare = JSON.parse(b);
+      delete bare.elements[0].items;
+      expect(out.elements.length, 'the items drew').toBeGreaterThan(buildSpecDrawing(JSON.stringify(bare), 'bare.json').elements.length + 5);
     }
     for (const t of ['device', 'windowFrame', 'appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'toggle', 'slider', 'icon', 'iconButton', 'avatar', 'imagePlaceholder', 'navbar', 'input', 'button', 'textRows']) {
       expect(TYPES, t).toContain(t);
