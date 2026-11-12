@@ -432,6 +432,7 @@ import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
 import { DRAW_SKILL, GUARDED_SKILLS, guardedFileSha, installGuardedSpec, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
 import { ADOPTED_AGENT_SHAS } from '../../lib/core-guarded-skill/adopted-agents.js';
 import { retireExcalidraw } from '../../lib/retired-packs.js';
+import { RETIRED_CORE_AGENT_SHAS } from '../../lib/retired-packs/stopped.js';
 import { installAgentForPlatform } from '../../lib/install-agents.js';
 
 // ─── File Resolution ────────────────────────────────────────────────────────
@@ -475,8 +476,10 @@ function recordIfManifest(
  * upgraded from an older release would keep the file (and keep offering the agent)
  * forever. `sleep-federation` retired 2026-09-30: federation reads peers live at
  * recall time, so there is nothing for a sleep specialist to drain or distribute.
+ * `review-coordinator` retired 2026-05-26 (the main agent synthesizes a multi-review itself) but
+ * was never pruned: it still sat in upgraded projects' agent listing (audit IN-16, 2026-11-12).
  */
-export const RETIRED_CORE_AGENTS = ['sleep-federation'] as const;
+export const RETIRED_CORE_AGENTS = ['sleep-federation', 'review-coordinator'] as const;
 
 /**
  * Delete the installed copy of every retired core agent that is still exactly
@@ -519,7 +522,14 @@ export function pruneRetiredCoreAgents(projectRoot: string, manifest?: Manifest)
       continue;
     }
     if (declaredName !== name) continue; // same file name, not our agent
-    if (isCustomizedAgent(content, recorded?.files[rel]?.baselineSha)) {
+    // With no recorded baseline, an agent that has a shipped-hash table must match a version we
+    // shipped: a pack copy was never recorded as `agent`, so its bytes are the only proof it is ours.
+    const baseline = recorded?.files[rel]?.baselineSha;
+    const shipped = RETIRED_CORE_AGENT_SHAS[`${name}.md`];
+    const edited = baseline || !shipped
+      ? isCustomizedAgent(content, baseline)
+      : !shipped.includes(guardedFileSha(Buffer.from(content, 'utf-8')));
+    if (edited) {
       notes.push(chalk.dim(`Kept ${rel} because it was edited. The ${name} agent is retired and never dispatched; \`dreamcontext update\` may still list it as a stale file to remove.`));
       continue;
     }

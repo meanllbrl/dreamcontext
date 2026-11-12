@@ -82,3 +82,8 @@ export const GOAL_SKILL_OLD_ASSET_SHAS: Readonly<Record<string, readonly string[
   'goal-skill-viewer.cjs': ['d474ce80bc6f89d9f10624b1d631e9d4660c87cea08fb1a6b670c30eddd7099f', 'c5a69f1d46c04c55b07ea862c89578bdc9a5af63b5be45f24c6c6cb15336ecc0', 'f8e7b586b8fa485503a8d6036312fda32311023a029fef67feb8aa797e8fc944'],
   'statusline-goalskill.cjs': ['ac343560266ef99d8f9bb28378705224d025a135cbb3fe35e5a8790324d37d85', '869e3a633a5062a89d72d7964fd436e3252eba6c73b0fd24eccfdabe4b54b50b'],
 };
+
+/** Retired core agents with no manifest record to prove them ours, by file name: an unedited copy matches one of these. */
+export const RETIRED_CORE_AGENT_SHAS: Readonly<Record<string, readonly string[]>> = {
+  'review-coordinator.md': ['1da49fe302c8dad1946e432466b38755b7e619c49a29a549a16620c6899b999e'],
+};

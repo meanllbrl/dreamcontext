@@ -9,6 +9,22 @@ import {
 } from '../../src/cli/commands/install-skill.js';
 import { emptyManifest, readManifest, recordFile, writeManifest } from '../../src/lib/manifest.js';
 import { agentBaselineSha } from '../../src/lib/sleep-specialist-frontmatter.js';
+import { guardedFileSha } from '../../src/lib/core-guarded-skill.js';
+
+/** A stand-in for the review-coordinator bytes we shipped (the real ones live only in old git history). */
+const COORD_REL = '.claude/agents/review-coordinator.md';
+const COORD_SHIPPED = '---\nname: review-coordinator\ndescription: retired\n---\n\n# Coordinator as shipped\n';
+
+vi.mock('../../src/lib/retired-packs/stopped.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/lib/retired-packs/stopped.js')>();
+  const { createHash } = await import('node:crypto');
+  const fake = createHash('sha256').update('---\nname: review-coordinator\ndescription: retired\n---\n\n# Coordinator as shipped\n', 'utf-8').digest('hex');
+  return {
+    ...real,
+    REAL_RETIRED_CORE_AGENT_SHAS: real.RETIRED_CORE_AGENT_SHAS,
+    RETIRED_CORE_AGENT_SHAS: { 'review-coordinator.md': [...real.RETIRED_CORE_AGENT_SHAS['review-coordinator.md'], fake] },
+  };
+});
 
 /**
  * Retiring a shipped core agent (sleep-federation, 2026-09-30).
@@ -91,6 +107,40 @@ describe('pruneRetiredCoreAgents', () => {
 
   it('is a no-op when nothing is installed', () => {
     expect(pruneRetiredCoreAgents(projectRoot)).toEqual([]);
+  });
+});
+
+describe('review-coordinator (retired 2026-05-26, pruned since 2026-11-12)', () => {
+  function put(content: string): void {
+    mkdirSync(join(projectRoot, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(projectRoot, COORD_REL), content);
+  }
+
+  it('is retired, and the table holds the one version the multi-review pack shipped', async () => {
+    expect([...RETIRED_CORE_AGENTS]).toContain('review-coordinator');
+    const mod = await import('../../src/lib/retired-packs/stopped.js') as unknown as { REAL_RETIRED_CORE_AGENT_SHAS: Record<string, readonly string[]> };
+    expect(mod.REAL_RETIRED_CORE_AGENT_SHAS['review-coordinator.md']).toEqual(['1da49fe302c8dad1946e432466b38755b7e619c49a29a549a16620c6899b999e']);
+    expect(guardedFileSha(Buffer.from(COORD_SHIPPED))).toHaveLength(64);
+  });
+
+  it('removes an unrecorded copy whose bytes are a version we shipped', () => {
+    put(COORD_SHIPPED);
+    const notes = pruneRetiredCoreAgents(projectRoot);
+    expect(existsSync(join(projectRoot, COORD_REL))).toBe(false);
+    expect(notes.join('\n')).toContain('Removed the retired review-coordinator agent');
+  });
+
+  it('removes a shipped copy with CRLF line endings (a Windows checkout)', () => {
+    put(COORD_SHIPPED.split('\n').join('\r\n'));
+    pruneRetiredCoreAgents(projectRoot);
+    expect(existsSync(join(projectRoot, COORD_REL))).toBe(false);
+  });
+
+  it('keeps an unrecorded copy someone edited, and says so', () => {
+    put(COORD_SHIPPED.replace('as shipped', 'with my own steps'));
+    const notes = pruneRetiredCoreAgents(projectRoot);
+    expect(readFileSync(join(projectRoot, COORD_REL), 'utf-8')).toContain('with my own steps');
+    expect(notes.join('\n')).toContain('because it was edited');
   });
 });
 
